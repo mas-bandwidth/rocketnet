@@ -50,7 +50,7 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
   server stopped before synchronous destroy joins and frees resources. An early
   destroy logs and counts the misuse, then completes the shutdown and join
   itself with bounded updates and no sleep; a worker that has not exited is
-  logged and its object kept, not freed. Long soak, load and profiling runs remain part of hardening.
+  logged and its object kept, not freed. An early destroy on a threaded transport normally keeps the object, and a second destroy after completion frees it. Long soak, load and profiling runs remain part of hardening.
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).

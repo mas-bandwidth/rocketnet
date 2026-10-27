@@ -76,7 +76,7 @@ int main( int argc, char ** argv )
     // the public client's pre-send checks take it too
     CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     struct rocketnet_client_config_t config;
-    rocketnet_client_default_config( &config );
+    CHECK( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     config.transport = "portable";
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
     CHECK( client != NULL );

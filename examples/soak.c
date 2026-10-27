@@ -437,7 +437,7 @@ int main( int argc, char ** argv ) {
     struct rocketnet_server_config_t s_cfg;
     struct rocketnet_client_config_t c_cfg;
     // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
-    rocketnet_server_default_config( &s_cfg );
+    CHECK( rocketnet_server_default_config( &s_cfg ) == ROCKETNET_STATUS_OK );
     s_cfg.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( s_cfg.backend_public_key, dev_backend_public_key, sizeof( s_cfg.backend_public_key ) );
     CHECK( rocketnet_client_default_config( &c_cfg ) == ROCKETNET_STATUS_OK );
@@ -694,7 +694,8 @@ int main( int argc, char ** argv ) {
     CHECK( disconnected );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
     soak_shutdown( clients, num_clients, server ); server = NULL;
-    rocketnet_term(); inited = false;
+    const enum rocketnet_status_t term_status = rocketnet_term(); inited = false;
+    CHECK( term_status == ROCKETNET_STATUS_OK );
     // destroy never needs more memory than the run did (Linux: VmHWM)
     CHECK( g_life.shutdown_peak_rss <= g_life.running_peak_rss );
     const struct soak_alloc_t allocation_stats = soak_alloc_read();
@@ -727,7 +728,7 @@ int main( int argc, char ** argv ) {
 
 cleanup:
     if ( !g_life.shut_down ) soak_shutdown( clients, num_clients, server );
-    if ( inited ) rocketnet_term();
+    if ( inited && rocketnet_term() != ROCKETNET_STATUS_OK ) exit_code = 1;
     const struct soak_alloc_t final_allocations = soak_alloc_read();
     if (final_allocations.live_allocs || final_allocations.live_bytes) {
         printf("FAIL: arena still has live SDK allocations\n");

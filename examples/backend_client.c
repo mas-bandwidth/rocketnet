@@ -38,12 +38,25 @@ int main( int argc, char ** argv )
         return 1;
     }
 
-    rocketnet_init( NULL, NULL, NULL );
+    const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
+    if ( init_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: init: %s\n", rocketnet_status_name( init_status ) );
+        return 1;
+    }
 
     // the packet filter is the title's, shared with its servers
     const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
     struct rocketnet_client_config_t config;
-    rocketnet_client_default_config( &config );
+    const enum rocketnet_status_t client_config_status = rocketnet_client_default_config( &config );
+    if ( client_config_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     config.transport = "portable";
     memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
     config.state_change_callback = state_changed;
@@ -52,7 +65,9 @@ int main( int argc, char ** argv )
     if ( !client || create_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create: %s\n", rocketnet_status_name( create_status ) );
-        rocketnet_term();
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
 
@@ -63,7 +78,9 @@ int main( int argc, char ** argv )
     {
         printf( "FAIL: connect refused: %s\n", rocketnet_status_name( status ) );
         rn_cli_client_stop_and_destroy( client );
-        rocketnet_term();
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
     printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
@@ -106,7 +123,12 @@ int main( int argc, char ** argv )
     rocketnet_client_disconnect( client );
     printf( "client state after disconnect: %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     rn_cli_client_stop_and_destroy( client );
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     printf( received ? "PASS\n" : "FAIL: the echo did not arrive\n" );
     return received ? 0 : 1;
 }

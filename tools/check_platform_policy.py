@@ -60,6 +60,7 @@ COLUMNS = {
     "tier": "tier",
     "workflow": "workflow",
     "runner label": "label",
+    "per commit functional": "functional",
 }
 
 
@@ -142,6 +143,76 @@ def label_tokens(label):
     return tokens
 
 
+def job_blocks(text):
+    """Split a workflow into the text of each top-level job.
+
+    Policy: docs/PLATFORMS.md, "What supported promises". A job starts at a
+    line indented two spaces that ends in a colon, inside the jobs: section,
+    and runs to the next such line.
+    """
+    blocks = []
+    current = None
+    in_jobs = False
+    for line in text.splitlines():
+        if re.match(r"^jobs:\s*$", line):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+            current = []
+            blocks.append(current)
+        if current is not None:
+            current.append(line)
+    return ["\n".join(block) for block in blocks]
+
+
+def runner_text(block):
+    """Return the runs-on and runner: lines of a job, comments excluded.
+
+    Policy: docs/PLATFORMS.md, "What supported promises". A runner token in a
+    comment or a shell case is not a runner, so only these lines name one.
+    """
+    return "\n".join(
+        line for line in block.splitlines()
+        if re.match(r"^\s*(?:runs-on|runner):|.*\brunner:\s", line) and not line.lstrip().startswith("#")
+    )
+
+
+def check_functional(row, text):
+    """Return the failures for a supported row's per-commit functional claim.
+
+    Policy: docs/PLATFORMS.md, "What supported promises", item 1. A supported
+    row declares what functional coverage its per-commit leg runs: `full`
+    followed by the step name of the whole-suite step, or `subset:` followed
+    by the step names, separated by semicolons, of the steps that run the
+    subset. Every named step must occur in a job of the named workflow that
+    also holds every token of the row's runner label, so the claim is backed
+    by a step on that runner and not by a step on another one.
+    """
+    name = f"{row['os']} / {row['arch']} / {row['compiler']}"
+    value = row.get("functional", "")
+    if is_placeholder(value):
+        return [f"{name}: supported row declares no per-commit functional step "
+                f"(write `full: <step>` or `subset: <step>; <step>`)"]
+    match = re.match(r"^(full|subset)\s*:\s*(.+)$", value)
+    if not match:
+        return [f"{name}: per-commit functional {value!r} is not `full: <step>` or `subset: <step>; ...`"]
+    steps = [step.strip() for step in match.group(2).split(";") if step.strip()]
+    tokens = label_tokens(row["label"])
+    blocks = [block for block in job_blocks(text)
+              if all(token in runner_text(block) for token in tokens)]
+    failures = []
+    for step in steps:
+        pattern = re.compile(r"^\s*(?:-\s+)?name:\s*[\"']?" + re.escape(step), re.MULTILINE)
+        if not any(pattern.search(block) for block in blocks):
+            failures.append(
+                f"{name}: per-commit functional step {step!r} is not a step name "
+                f"in any job of {row['workflow']} that holds the runner label {row['label']!r}"
+            )
+    return failures
+
+
 def check_row(row, workflow_cache):
     """Return the failures for one table row.
 
@@ -185,6 +256,8 @@ def check_row(row, workflow_cache):
             f"does not appear in {workflow}"
             for token in missing
         ]
+    if tier == "supported":
+        return check_functional(row, text)
     return []
 
 
