@@ -493,7 +493,35 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --enforce-rss]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list | --enforce-rss]\n", argv[0] );
+    return 2;
+}
+
+// --list prints every registered case, one name per line: the names --run
+// accepts, nightly cases included. A CI step checks the names it will run
+// against this list before it runs any of them.
+inline int suite_list( int ( *count )(), const char * ( *name_at )( int ) )
+{
+    for ( int i = 0; i < count(); i++ )
+        printf( "%s\n", name_at( i ) );
+    fflush( stdout );
+    return 0;
+}
+
+// --run of a name this binary does not register runs nothing and exits 2,
+// naming the case, so a stale case list fails loudly rather than silently.
+inline bool suite_case_registered( int ( *count )(), const char * ( *name_at )( int ), const char * name )
+{
+    for ( int i = 0; i < count(); i++ )
+        if ( std::strcmp( name_at( i ), name ) == 0 )
+            return true;
+    return false;
+}
+
+inline int suite_unregistered( char ** argv, const char * name )
+{
+    printf( "check failed: %s is not a registered case of %s (--list names them)\n", name, argv[0] );
+    fflush( stdout );
     return 2;
 }
 
@@ -787,6 +815,8 @@ inline int suite_main( int argc, char ** argv,
         enforce_case_rss = true;
         argc = 1;
     }
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list( count, name_at );
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
@@ -794,6 +824,8 @@ inline int suite_main( int argc, char ** argv,
         for ( int i = 3; i < argc; i++ )
             if ( argv[i][0] == '-' )
                 return suite_usage( argv );
+        if ( !suite_case_registered( count, name_at, argv[2] ) )
+            return suite_unregistered( argv, argv[2] );
         // Under a suite run the parent already captures this process, so
         // stream straight through; a second capture would lose lines when the
         // parent kills the process group at the time limit.
@@ -1102,6 +1134,8 @@ inline int suite_main( int argc, char ** argv,
         enforce_case_rss = true;
         argc = 1;
     }
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list( count, name_at );
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
@@ -1109,6 +1143,8 @@ inline int suite_main( int argc, char ** argv,
         for ( int i = 3; i < argc; i++ )
             if ( argv[i][0] == '-' )
                 return suite_usage( argv );
+        if ( !suite_case_registered( count, name_at, argv[2] ) )
+            return suite_unregistered( argv, argv[2] );
         return worker( argv[2] );
     }
     for ( int i = 1; i < argc; i++ )
