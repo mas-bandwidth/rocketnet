@@ -125,5 +125,8 @@ int main( void )
                 __CPROVER_assert( frames[i] == model[i], "held prefix matches the push order" );
         }
     }
+#if defined(REACHABILITY_CONTROL)
+    __CPROVER_assert( 0, "xdp-free-list reachability control" );
+#endif
     return 0;
 }

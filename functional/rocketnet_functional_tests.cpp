@@ -10946,8 +10946,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #if defined(__linux__)
     { "test_gso_transport_linux_sendmmsg_errors", rocketnet_test_linux_gso_sendmmsg_errors, NULL },
     { "test_gso_transport_linux_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors, NULL },
-    { "test_io_uring_transport_linux_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors, NULL },
-    { "test_io_uring_transport_linux_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors, NULL },
+    { "test_io_uring_transport_linux_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors, rocketnet_server_uring_available },
+    { "test_io_uring_transport_linux_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors, rocketnet_server_uring_available },
     { "test_gso_server_refuses_explicit_port_in_use", rocketnet_test_linux_gso_refuses_explicit_port_in_use, NULL },
     { "test_uring_server_refuses_explicit_port_in_use", rocketnet_test_linux_uring_refuses_explicit_port_in_use, NULL },
 #if ROCKETNET_XDP
@@ -11219,15 +11219,66 @@ static const int rocketnet_functional_num_tests = (int) ( sizeof( rocketnet_func
 // the table entries that run on this host, in table order
 static int rocketnet_functional_here[rocketnet_functional_num_tests];
 
+// the name a SKIPPED line prints for a row's runs_here predicate
+static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( predicate == rocketnet_server_uring_available )
+        return "rocketnet_server_uring_available";
+    if ( predicate == rocketnet_test_posix_io_uring_offered )
+        return "rocketnet_test_posix_io_uring_offered";
+    if ( predicate == rocketnet_test_posix_xdp_offered )
+        return "rocketnet_test_posix_xdp_offered";
+    if ( predicate == rocketnet_test_linux_xdp_weather_runs_here )
+        return "rocketnet_test_linux_xdp_weather_runs_here";
+    if ( predicate == rocketnet_test_server_receive_low_tick_measurement_requested )
+        return "rocketnet_test_server_receive_low_tick_measurement_requested";
+    if ( predicate == rocketnet_test_server_pin_allows_gso )
+        return "rocketnet_test_server_pin_allows_gso";
+    if ( predicate == rocketnet_test_server_pin_allows_xdp )
+        return "rocketnet_test_server_pin_allows_xdp";
+    if ( predicate == rocketnet_test_server_pin_allows_io_uring )
+        return "rocketnet_test_server_pin_allows_io_uring";
+#endif
+#if defined(__linux__) && ROCKETNET_XDP
+    if ( predicate == rocketnet_test_xdp_veth_runs_here )
+        return "rocketnet_test_xdp_veth_runs_here";
+#endif
+    if ( predicate == rocketnet_test_server_pin_allows_portable )
+        return "rocketnet_test_server_pin_allows_portable";
+    if ( predicate == rocketnet_test_server_pin_allows_auto )
+        return "rocketnet_test_server_pin_allows_auto";
+    if ( predicate == rocketnet_test_client_pin_allows_auto )
+        return "rocketnet_test_client_pin_allows_auto";
+    if ( predicate == rocketnet_test_a_transport_pin_is_set )
+        return "rocketnet_test_a_transport_pin_is_set";
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( predicate == rocketnet_test_server_pin_allows_iocp )
+        return "rocketnet_test_server_pin_allows_iocp";
+    if ( predicate == rocketnet_test_server_pin_allows_rio )
+        return "rocketnet_test_server_pin_allows_rio";
+#endif
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    if ( predicate == rocketnet_test_server_pin_allows_msgx )
+        return "rocketnet_test_server_pin_allows_msgx";
+#endif
+    return "runs_here";
+}
+
 static int rocketnet_functional_static_test_count()
 {
     static int count = -1;
     if ( count < 0 )
     {
+        suite_enable_skipped_reporting();
         count = 0;
         for ( int i = 0; i < rocketnet_functional_num_tests; i++ )
+        {
             if ( !rocketnet_functional_tests[i].runs_here || rocketnet_functional_tests[i].runs_here() )
                 rocketnet_functional_here[count++] = i;
+            else
+                suite_note_skipped( rocketnet_functional_tests[i].name, rocketnet_functional_predicate_name( rocketnet_functional_tests[i].runs_here ) );
+        }
     }
     return count;
 }

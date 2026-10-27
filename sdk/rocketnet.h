@@ -2026,6 +2026,10 @@ ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_client_recei
 /// LOSS comes only from unreliable receipt messages. Reliable ones, including
 /// unreliable sends that became reliable, report ACKED only; ending a
 /// connection produces no LOSS for them.
+/// The outcomes recorded for a connection remain readable after that
+/// connection ends, until its next update. A receipt-bearing send, reliable
+/// or UNRELIABLE_WITH_ACK_RECEIPT, that is still in flight when its
+/// connection ends gets no terminal outcome.
 ///
 /// Read receipts after update. They remain until the next update.
 /// Reading does not consume them. Repeated reads copy the same first entries.
@@ -2555,7 +2559,10 @@ ROCKETNET_EXPORT bool rocketnet_server_can_send_message( const struct rocketnet_
 ROCKETNET_EXPORT const struct rocketnet_message_batch_t * rocketnet_server_receive_messages( struct rocketnet_server_t * server );
 
 /// Copies receipts for the client in this slot.
-/// Uses the same rules as rocketnet_client_receipts.
+/// Uses the same rules as rocketnet_client_receipts. For a slot whose
+/// connection has ended, the outcomes recorded for it remain readable
+/// until that slot's next update; a receipt-bearing send still in flight
+/// at the end gets no terminal outcome.
 ///
 /// Callable running or stopped; 0 while stopped. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.
