@@ -20,8 +20,7 @@
 
 enum rn_token_index_state_t
 {
-    RN_TOKEN_INDEX_EMPTY = -1,
-    RN_TOKEN_INDEX_TOMBSTONE = -2
+    RN_TOKEN_INDEX_EMPTY = -1
 };
 
 struct rocketnet_token_table_t
@@ -213,34 +212,52 @@ static int rn_token_table_find_any( const struct rocketnet_token_table_t * table
 static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int slot )
 {
     const int start = rn_token_index_start( table, table->identifier[slot] );
-    int first_tombstone = -1;
     for ( int probe = 0; probe < table->index_capacity; ++probe )
     {
         RN_TOKEN_COUNT( table, probe_steps, 1 );
         const int position = ( start + probe ) % table->index_capacity;
         const int entry = table->index[position];
-        if ( entry == RN_TOKEN_INDEX_TOMBSTONE && first_tombstone == -1 )
-            first_tombstone = position;
         if ( entry == RN_TOKEN_INDEX_EMPTY )
         {
-            const int destination = first_tombstone != -1 ? first_tombstone : position;
-            table->index[destination] = slot;
+            table->index[position] = slot;
             return true;
         }
-    }
-    if ( first_tombstone != -1 )
-    {
-        table->index[first_tombstone] = slot;
-        return true;
     }
     return false;
 }
 
+// Backward-shift deletion (as in rocketnet_client_slots.cpp): clearing the
+// hole and shifting every later entry whose home is not cyclically in
+// (hole, scan] back into the hole keeps every surviving probe cluster
+// searchable and leaves no tombstone. The index holds at most capacity
+// entries in twice that many cells, so an empty cell always stops the scan.
+// The scan does not count as a lookup probe.
 static void rn_token_index_remove( struct rocketnet_token_table_t * table, int slot )
 {
     const int position = rn_token_index_position( table, table->identifier[slot] );
     rocketnet_assert( position >= 0 && table->index[position] == slot );
-    table->index[position] = RN_TOKEN_INDEX_TOMBSTONE;
+    if ( position < 0 )
+        return;
+    table->index[position] = RN_TOKEN_INDEX_EMPTY;
+    int hole = position;
+    int scan = hole;
+    for ( int step = 0; step < table->index_capacity; ++step )
+    {
+        scan = scan + 1 == table->index_capacity ? 0 : scan + 1;
+        const int entry = table->index[scan];
+        if ( entry == RN_TOKEN_INDEX_EMPTY )
+            break;
+        if ( entry < 0 )
+            continue;
+        const int home = rn_token_index_start( table, table->identifier[entry] );
+        const bool stays = hole <= scan ? ( hole < home && home <= scan )
+                                        : ( hole < home || home <= scan );
+        if ( stays )
+            continue;
+        table->index[hole] = entry;
+        table->index[scan] = RN_TOKEN_INDEX_EMPTY;
+        hole = scan;
+    }
 }
 
 static bool rn_token_can_insert( const struct rocketnet_token_table_t * table, int slot )
