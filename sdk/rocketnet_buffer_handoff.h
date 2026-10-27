@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_BUFFER_HANDOFF_H
-#define ROCKETNET_BUFFER_HANDOFF_H
+#ifndef ROCKETNET_SDK_ROCKETNET_BUFFER_HANDOFF_H
+#define ROCKETNET_SDK_ROCKETNET_BUFFER_HANDOFF_H
 
 #include "rocketnet_internal.h"
 
@@ -125,4 +125,4 @@ template<int NumBuffers> inline bool rocketnet_buffer_handoff_owed( rocketnet_bu
     return owed;
 }
 
-#endif // #ifndef ROCKETNET_BUFFER_HANDOFF_H
+#endif // ROCKETNET_SDK_ROCKETNET_BUFFER_HANDOFF_H

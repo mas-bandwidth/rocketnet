@@ -45,8 +45,10 @@
 // pair is created, the harness checks that nothing allocates again until
 // destroy: rocketnet allocates every structure at create.
 
-#ifndef ROCKETNET_FUZZ_PAIR_H
-#define ROCKETNET_FUZZ_PAIR_H
+#pragma once
+
+#ifndef ROCKETNET_FUZZ_ROCKETNET_FUZZ_PAIR_H
+#define ROCKETNET_FUZZ_ROCKETNET_FUZZ_PAIR_H
 
 #include "../sdk/rocketnet_server_transport.cpp"
 #include "../sdk/rocketnet_driver_loopback.cpp"
@@ -1319,4 +1321,4 @@ static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PA
         return 0;                                                                                       \
     }
 
-#endif // #ifndef ROCKETNET_FUZZ_PAIR_H
+#endif // ROCKETNET_FUZZ_ROCKETNET_FUZZ_PAIR_H

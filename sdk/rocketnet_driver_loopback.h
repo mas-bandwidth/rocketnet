@@ -1,6 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H
+#define ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H
+
 // The loopback transport carries datagrams between endpoints of the same
 // process through memory; it uses no socket and no system network call. The
 // transport variable is defined in rocketnet_driver_loopback.cpp. The two
@@ -64,3 +67,5 @@ void rocketnet_loopback_test_send_contention( bool busy );
 // free-running head and tail and its fixed capacity.
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity );
 #endif
+
+#endif // ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H

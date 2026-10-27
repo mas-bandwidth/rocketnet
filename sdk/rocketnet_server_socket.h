@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_SOCKET_H
-#define ROCKETNET_SERVER_SOCKET_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
@@ -143,4 +143,4 @@ void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t *
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
 
-#endif // #ifndef ROCKETNET_SERVER_SOCKET_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H

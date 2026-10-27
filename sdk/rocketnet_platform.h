@@ -5,6 +5,9 @@
 
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_PLATFORM_H
+#define ROCKETNET_SDK_ROCKETNET_PLATFORM_H
+
 #include "rocketnet_internal.h"
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/time.h>
@@ -1609,3 +1612,5 @@ bool rocketnet_platform_read_route_table(
     ssize_t (*receive)( int, struct msghdr *, int ) );
 
 #endif // linux internal C++ route probe
+
+#endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

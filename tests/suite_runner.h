@@ -28,6 +28,9 @@
 
 #pragma once
 
+#ifndef ROCKETNET_TESTS_SUITE_RUNNER_H
+#define ROCKETNET_TESTS_SUITE_RUNNER_H
+
 #include "plan_rss.h"
 #include "portable_crt.h"
 #include "time_scale.h"
@@ -1413,3 +1416,5 @@ inline int suite_main( int argc, char ** argv,
 }
 
 #endif
+
+#endif // ROCKETNET_TESTS_SUITE_RUNNER_H

@@ -13,8 +13,10 @@
     MAC byte, occupied slots, and a replay from a second address).
 */
 
-#ifndef ROCKETNET_DIFFERENTIAL_DECIDE_H
-#define ROCKETNET_DIFFERENTIAL_DECIDE_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_DIFFERENTIAL_DECIDE_H
+#define ROCKETNET_TOOLS_DIFFERENTIAL_DECIDE_H
 
 #include <stdio.h>
 #include <string.h>
@@ -777,4 +779,4 @@ static inline int stricter_class_permitted( const char * reason )
     return 0;
 }
 
-#endif // ROCKETNET_DIFFERENTIAL_DECIDE_H
+#endif // ROCKETNET_TOOLS_DIFFERENTIAL_DECIDE_H

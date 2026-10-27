@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CONNECT_TOKEN_H
-#define ROCKETNET_CONNECT_TOKEN_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H
+#define ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H
 
 #include <stdint.h>
 #include "rocketnet_internal.h"
@@ -349,4 +349,4 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
 }
 #endif
 
-#endif // #ifndef ROCKETNET_CONNECT_TOKEN_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H

@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_WIRE_H
-#define ROCKETNET_WIRE_H
+#ifndef ROCKETNET_SDK_ROCKETNET_WIRE_H
+#define ROCKETNET_SDK_ROCKETNET_WIRE_H
 
 #include <stdint.h>
 
@@ -281,4 +281,4 @@ struct rocketnet_server_xdp_stats_t
     uint64_t counters[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
 };
 
-#endif // #ifndef ROCKETNET_WIRE_H
+#endif // ROCKETNET_SDK_ROCKETNET_WIRE_H

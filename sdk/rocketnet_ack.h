@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ACK_H
-#define ROCKETNET_ACK_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ACK_H
+#define ROCKETNET_SDK_ROCKETNET_ACK_H
 
 #include <stdint.h>
 #include "rocketnet_wire.h"
@@ -479,4 +479,4 @@ void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks );
 
 void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, int client_index );
 
-#endif // #ifndef ROCKETNET_ACK_H
+#endif // ROCKETNET_SDK_ROCKETNET_ACK_H

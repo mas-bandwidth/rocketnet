@@ -10,8 +10,10 @@
 // test budget, not a networking performance requirement. Other individual
 // waits and the unit runner retain their existing build-dependent scaling.
 
-#ifndef ROCKETNET_TEST_TIME_SCALE_H
-#define ROCKETNET_TEST_TIME_SCALE_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_TIME_SCALE_H
+#define ROCKETNET_TESTS_TIME_SCALE_H
 
 #include "portable_crt.h"
 
@@ -66,4 +68,4 @@ static inline int rocketnet_test_case_env_time_scale( double * scale )
     return 1;
 }
 
-#endif // ROCKETNET_TEST_TIME_SCALE_H
+#endif // ROCKETNET_TESTS_TIME_SCALE_H

@@ -34,8 +34,10 @@
 // so the unit cases (tests/test_unit_client_iocp.cpp) run it on any OS with
 // a fake completion port: no socket, no thread, no time.
 
-#ifndef ROCKETNET_CLIENT_IOCP_H
-#define ROCKETNET_CLIENT_IOCP_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_CLIENT_IOCP_H
+#define ROCKETNET_SDK_ROCKETNET_CLIENT_IOCP_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_address.h"
@@ -156,4 +158,4 @@ bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits,
 extern const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operations;
 #endif
 
-#endif // ROCKETNET_CLIENT_IOCP_H
+#endif // ROCKETNET_SDK_ROCKETNET_CLIENT_IOCP_H

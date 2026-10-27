@@ -47,8 +47,10 @@
     drives them.
 */
 
-#ifndef BENCH_COMMON_H
-#define BENCH_COMMON_H
+#pragma once
+
+#ifndef ROCKETNET_BENCH_BENCH_COMMON_H
+#define ROCKETNET_BENCH_BENCH_COMMON_H
 
 #define _GNU_SOURCE
 
@@ -590,4 +592,4 @@ static inline struct sockaddr_in bench_address( const char * ip, int port )
     return address;
 }
 
-#endif /* BENCH_COMMON_H */
+#endif // ROCKETNET_BENCH_BENCH_COMMON_H

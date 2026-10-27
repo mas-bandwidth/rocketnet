@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CLIENT_SLOTS_H
-#define ROCKETNET_CLIENT_SLOTS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CLIENT_SLOTS_H
+#define ROCKETNET_SDK_ROCKETNET_CLIENT_SLOTS_H
 
 #include <stdint.h>
 #include "rocketnet_address.h"
@@ -118,4 +118,4 @@ uint64_t rocketnet_client_slots_test_last_probes( const struct rocketnet_client_
 uint64_t rocketnet_client_slots_test_total_probes( const struct rocketnet_client_slots_t * slots );
 #endif // #if ROCKETNET_DEV
 
-#endif // #ifndef ROCKETNET_CLIENT_SLOTS_H
+#endif // ROCKETNET_SDK_ROCKETNET_CLIENT_SLOTS_H

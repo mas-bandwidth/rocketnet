@@ -1,7 +1,9 @@
 /* RocketNet benchmark-only XDP packet blaster. Not part of the SDK API. */
 
-#ifndef ROCKETNET_XDP_PACKET_BLASTER_H
-#define ROCKETNET_XDP_PACKET_BLASTER_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_XDP_PACKET_BLASTER_H
+#define ROCKETNET_TOOLS_XDP_PACKET_BLASTER_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -152,4 +154,4 @@ static inline int rn_blaster_plan_valid( const struct rn_blaster_plan_t * plan )
            plan->direction == RN_BLASTER_DIRECTION_BIDIRECTIONAL;
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_XDP_PACKET_BLASTER_H

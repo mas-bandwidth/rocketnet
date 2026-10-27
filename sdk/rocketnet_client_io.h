@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CLIENT_IO_H
-#define ROCKETNET_CLIENT_IO_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CLIENT_IO_H
+#define ROCKETNET_SDK_ROCKETNET_CLIENT_IO_H
 
 #include <atomic>
 #include <stdint.h>
@@ -751,4 +751,4 @@ void rocketnet_client_transport_step_legacy_for_test( struct rocketnet_client_tr
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );
 
-#endif // #ifndef ROCKETNET_CLIENT_IO_H
+#endif // ROCKETNET_SDK_ROCKETNET_CLIENT_IO_H

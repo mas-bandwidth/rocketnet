@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ALLOCATOR_H
-#define ROCKETNET_ALLOCATOR_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ALLOCATOR_H
+#define ROCKETNET_SDK_ROCKETNET_ALLOCATOR_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
@@ -656,4 +656,4 @@ rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
 
 uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn_arena_required_bytes for its config
 
-#endif // #ifndef ROCKETNET_ALLOCATOR_H
+#endif // ROCKETNET_SDK_ROCKETNET_ALLOCATOR_H

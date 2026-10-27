@@ -16,8 +16,10 @@
     tla/ClientSession.tla, tla/RNSlots.tla and tla/RNSimFaults.tla.
 */
 
-#ifndef ROCKETNET_DST_CHECKS_H
-#define ROCKETNET_DST_CHECKS_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_DST_CHECKS_H
+#define ROCKETNET_TESTS_DST_CHECKS_H
 
 #include "rocketnet_counters.h"
 
@@ -1189,4 +1191,4 @@ static inline void rocketnet_dst_check_ack_id( struct rocketnet_dst_check_state_
     }
 }
 
-#endif // #ifndef ROCKETNET_DST_CHECKS_H
+#endif // ROCKETNET_TESTS_DST_CHECKS_H

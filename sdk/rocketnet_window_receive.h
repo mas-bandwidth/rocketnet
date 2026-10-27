@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_WINDOW_RECEIVE_H
-#define ROCKETNET_WINDOW_RECEIVE_H
+#ifndef ROCKETNET_SDK_ROCKETNET_WINDOW_RECEIVE_H
+#define ROCKETNET_SDK_ROCKETNET_WINDOW_RECEIVE_H
 
 #include "rocketnet_allocator.h"
 #include "rocketnet_message.h"
@@ -30,4 +30,4 @@ void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region
 int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_message_record_t * record, uint32_t * slot );
 void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number );
 
-#endif
+#endif // ROCKETNET_SDK_ROCKETNET_WINDOW_RECEIVE_H

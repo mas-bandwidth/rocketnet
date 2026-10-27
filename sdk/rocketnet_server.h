@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_H
-#define ROCKETNET_SERVER_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_H
 
 #include <stdint.h>
 #include "rocketnet_address.h"
@@ -83,4 +83,4 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 // after abort, or a modified or wrong-owner context is a different refusal
 // and still asserts in a debug build.
 
-#endif // #ifndef ROCKETNET_SERVER_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_H

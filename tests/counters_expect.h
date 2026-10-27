@@ -31,8 +31,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TEST_COUNTERS_EXPECT_H
-#define ROCKETNET_TEST_COUNTERS_EXPECT_H
+#ifndef ROCKETNET_TESTS_COUNTERS_EXPECT_H
+#define ROCKETNET_TESTS_COUNTERS_EXPECT_H
 
 #ifndef ROCKETNET_COUNTERS_CHECK
 #error "name the suite's check before including counters_expect.h: #define ROCKETNET_COUNTERS_CHECK <check>"
@@ -214,4 +214,4 @@ do                                                                              
     ROCKETNET_COUNTERS_ASSERT_CLEAN( (counters), rocketnet_counters_allowed );                                    \
 } while(0)
 
-#endif // #ifndef ROCKETNET_TEST_COUNTERS_EXPECT_H
+#endif // ROCKETNET_TESTS_COUNTERS_EXPECT_H

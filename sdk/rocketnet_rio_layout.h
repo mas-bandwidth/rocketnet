@@ -13,8 +13,10 @@
 // written and unit tested here, and the transport links the RIO
 // API for the socket and completion queues itself.
 
-#ifndef ROCKETNET_RIO_LAYOUT_H
-#define ROCKETNET_RIO_LAYOUT_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H
+#define ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H
 
 #include <stdint.h>
 #include <stdbool.h>
@@ -171,4 +173,4 @@ static inline int rocketnet_rio_context_index( uint64_t context )
     return (int) ( context & 0xFFFFFFFF );
 }
 
-#endif // ROCKETNET_RIO_LAYOUT_H
+#endif // ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H

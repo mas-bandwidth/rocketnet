@@ -21,8 +21,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_UNIT_TEST_REGISTRY_H
-#define ROCKETNET_UNIT_TEST_REGISTRY_H
+#ifndef ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H
+#define ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -223,4 +223,4 @@ inline int rocketnet_unit_tests_run_named( const char * name )
 #define RN_TEST_BACKEND_SEED_BYTES 32
 #define RN_TEST_SERVER_SECRET_KEY_BYTES 32
 
-#endif // #ifndef ROCKETNET_UNIT_TEST_REGISTRY_H
+#endif // ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H

@@ -1,5 +1,7 @@
-#ifndef ROCKETNET_LOAD_SPLIT_VERIFY_H
-#define ROCKETNET_LOAD_SPLIT_VERIFY_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_LOAD_SPLIT_VERIFY_H
+#define ROCKETNET_TOOLS_LOAD_SPLIT_VERIFY_H
 
 #include "rocketnet.h"
 
@@ -550,4 +552,4 @@ static inline int split_verify_ledger_final( const struct split_verify_ledger_t 
     return result->clean;
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_LOAD_SPLIT_VERIFY_H

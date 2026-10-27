@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_READ_WRITE_H
-#define ROCKETNET_READ_WRITE_H
+#ifndef ROCKETNET_SDK_ROCKETNET_READ_WRITE_H
+#define ROCKETNET_SDK_ROCKETNET_READ_WRITE_H
 
 #include <stdint.h>
 #include <string.h>
@@ -174,4 +174,4 @@ inline int rocketnet_read_bytes_bounded( const uint8_t ** p, const uint8_t * end
     return 1;
 }
 
-#endif // #ifndef ROCKETNET_READ_WRITE_H
+#endif // ROCKETNET_SDK_ROCKETNET_READ_WRITE_H

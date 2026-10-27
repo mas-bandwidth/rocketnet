@@ -1,7 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 
-#ifndef ROCKETNET_XDP_COMPAT_H
-#define ROCKETNET_XDP_COMPAT_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H
+#define ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H
 
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
@@ -113,4 +115,4 @@ static inline void rocketnet_xdp_program_close( rocketnet_xdp_program_t * progra
 #endif
 }
 
-#endif
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H

@@ -1,6 +1,8 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
-#ifndef ROCKETNET_TEST_UNIT_SHUTDOWN_H
-#define ROCKETNET_TEST_UNIT_SHUTDOWN_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_UNIT_SHUTDOWN_H
+#define ROCKETNET_TESTS_UNIT_SHUTDOWN_H
 
 #include "test_unit_registry.h"
 #include "../sdk/rocketnet_internal.h"
@@ -138,4 +140,4 @@ static inline void rn_test_message_server_stop_and_destroy( struct rocketnet_mes
     rocketnet_message_server_destroy( message );
 }
 
-#endif
+#endif // ROCKETNET_TESTS_UNIT_SHUTDOWN_H

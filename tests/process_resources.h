@@ -69,6 +69,8 @@
     them warns about none.
 */
 
+#pragma once
+
 #ifndef ROCKETNET_TESTS_PROCESS_RESOURCES_H
 #define ROCKETNET_TESTS_PROCESS_RESOURCES_H
 
@@ -468,4 +470,4 @@ static inline int process_resources_smaps( int64_t * rss_bytes, int64_t * privat
     return *rss_bytes >= 0 && *private_dirty_bytes >= 0;
 }
 
-#endif // #ifndef ROCKETNET_TESTS_PROCESS_RESOURCES_H
+#endif // ROCKETNET_TESTS_PROCESS_RESOURCES_H

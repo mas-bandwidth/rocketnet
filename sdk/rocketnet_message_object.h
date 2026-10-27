@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_MESSAGE_OBJECT_H
-#define ROCKETNET_MESSAGE_OBJECT_H
+#ifndef ROCKETNET_SDK_ROCKETNET_MESSAGE_OBJECT_H
+#define ROCKETNET_SDK_ROCKETNET_MESSAGE_OBJECT_H
 
 #include <stdint.h>
 
@@ -309,4 +309,4 @@ void rn_message_object_delivery_capture( struct rn_message_object_t * object, in
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport );
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport );
 
-#endif // #ifndef ROCKETNET_MESSAGE_OBJECT_H
+#endif // ROCKETNET_SDK_ROCKETNET_MESSAGE_OBJECT_H

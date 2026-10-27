@@ -9,8 +9,10 @@
 // thread). Games include rocketnet.h alone. The step-driven setting and its
 // environment control do not exist in a production library.
 
-#ifndef ROCKETNET_TESTING_H
-#define ROCKETNET_TESTING_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_TESTING_H
+#define ROCKETNET_SDK_ROCKETNET_TESTING_H
 
 #include "rocketnet.h"
 
@@ -74,4 +76,4 @@ template <typename config_t> static inline struct rocketnet_client_t * rocketnet
 
 #endif // __cplusplus
 
-#endif // ROCKETNET_TESTING_H
+#endif // ROCKETNET_SDK_ROCKETNET_TESTING_H

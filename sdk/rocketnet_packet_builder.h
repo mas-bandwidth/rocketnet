@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_PACKET_BUILDER_H
-#define ROCKETNET_PACKET_BUILDER_H
+#ifndef ROCKETNET_SDK_ROCKETNET_PACKET_BUILDER_H
+#define ROCKETNET_SDK_ROCKETNET_PACKET_BUILDER_H
 
 #include <stdint.h>
 
@@ -222,4 +222,4 @@ bool rn_packet_builder_settle( struct rn_packet_builder_t * builder, int packet_
 
 const uint64_t * rn_packet_builder_numbers( const struct rn_packet_builder_t * builder, int packet_index, uint32_t * out_count );
 
-#endif // #ifndef ROCKETNET_PACKET_BUILDER_H
+#endif // ROCKETNET_SDK_ROCKETNET_PACKET_BUILDER_H

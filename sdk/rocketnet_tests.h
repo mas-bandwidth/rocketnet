@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TESTS_H
-#define ROCKETNET_TESTS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_TESTS_H
+#define ROCKETNET_SDK_ROCKETNET_TESTS_H
 
 #include "rocketnet_internal.h"
 
@@ -20,4 +20,4 @@ void rocketnet_run_tests( void );
 }
 #endif
 
-#endif // #ifndef ROCKETNET_TESTS_H
+#endif // ROCKETNET_SDK_ROCKETNET_TESTS_H

@@ -24,8 +24,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TEST_UNIT_STANDARD_H
-#define ROCKETNET_TEST_UNIT_STANDARD_H
+#ifndef ROCKETNET_TESTS_TEST_UNIT_STANDARD_H
+#define ROCKETNET_TESTS_TEST_UNIT_STANDARD_H
 
 #include "test_unit_registry.h"
 
@@ -121,4 +121,4 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
     return count;
 }
 
-#endif // #ifndef ROCKETNET_TEST_UNIT_STANDARD_H
+#endif // ROCKETNET_TESTS_TEST_UNIT_STANDARD_H

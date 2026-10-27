@@ -9,8 +9,10 @@
 // sources, its tests and its tools include it through rocketnet_internal.h.
 // rocketnet.h is the public API.
 
-#ifndef ROCKETNET_LAYERS_H
-#define ROCKETNET_LAYERS_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_LAYERS_H
+#define ROCKETNET_SDK_ROCKETNET_LAYERS_H
 
 #include "rocketnet.h"
 
@@ -2040,4 +2042,4 @@ void rocketnet_server_transport_accept_payload( struct rocketnet_server_transpor
 }
 #endif
 
-#endif // #ifndef ROCKETNET_LAYERS_H
+#endif // ROCKETNET_SDK_ROCKETNET_LAYERS_H

@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_PROTOCOL_H
-#define ROCKETNET_SERVER_PROTOCOL_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_PROTOCOL_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_PROTOCOL_H
 
 #include <stdint.h>
 #include "rocketnet_address.h"
@@ -348,4 +348,4 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence );
 
-#endif // #ifndef ROCKETNET_SERVER_PROTOCOL_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_PROTOCOL_H

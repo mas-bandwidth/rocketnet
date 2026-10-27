@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CONSTANTS_H
-#define ROCKETNET_CONSTANTS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CONSTANTS_H
+#define ROCKETNET_SDK_ROCKETNET_CONSTANTS_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_history.h"
@@ -269,4 +269,4 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 
 #define ROCKETNET_VALUE_TRACKER_HISTORY                                   1024
 
-#endif // #ifndef ROCKETNET_CONSTANTS_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONSTANTS_H

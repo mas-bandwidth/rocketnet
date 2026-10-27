@@ -1,5 +1,11 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Shared by native transport tests and the socket-free s390x executable.
+
+#pragma once
+
+#ifndef ROCKETNET_TESTS_ROUTE_CHECKS_H
+#define ROCKETNET_TESTS_ROUTE_CHECKS_H
+
 #include "rocketnet_route.h"
 
 static void test_route_prefixes()
@@ -98,3 +104,5 @@ static void test_route_netlink()
     printf("test_route_netlink\n");
 }
 #endif
+
+#endif // ROCKETNET_TESTS_ROUTE_CHECKS_H

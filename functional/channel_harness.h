@@ -27,8 +27,10 @@
     nothing after create.
 */
 
-#ifndef ROCKETNET_CHANNEL_HARNESS_H
-#define ROCKETNET_CHANNEL_HARNESS_H
+#pragma once
+
+#ifndef ROCKETNET_FUNCTIONAL_CHANNEL_HARNESS_H
+#define ROCKETNET_FUNCTIONAL_CHANNEL_HARNESS_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -1174,4 +1176,4 @@ static inline void rocketnet_channel_harness_destroy( rocketnet_channel_harness_
     memset( h, 0, sizeof(*h) );
 }
 
-#endif // ROCKETNET_CHANNEL_HARNESS_H
+#endif // ROCKETNET_FUNCTIONAL_CHANNEL_HARNESS_H

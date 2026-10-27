@@ -5,6 +5,9 @@
 
 #pragma once
 
+#ifndef ROCKETNET_TESTS_RESOURCE_FILE_H
+#define ROCKETNET_TESTS_RESOURCE_FILE_H
+
 #include <algorithm>
 #include <stdio.h>
 #include <string>
@@ -92,3 +95,5 @@ inline FILE * rocketnet_test_fopen( const std::string & path, const char * mode 
     return fopen( path.c_str(), mode );
 #endif
 }
+
+#endif // ROCKETNET_TESTS_RESOURCE_FILE_H

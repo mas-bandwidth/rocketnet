@@ -1,5 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H
+#define ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -33,3 +37,5 @@ template<size_t Capacity> struct rocketnet_pending_frames_t
         return true;
     }
 };
+
+#endif // ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H

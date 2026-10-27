@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SEND_BUDGET_H
-#define ROCKETNET_SEND_BUDGET_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H
+#define ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H
 
 // The per-connection send budget: each connection (the client's one, each
 // server client slot) may send at most so many kilobits per second, counted
@@ -350,4 +350,4 @@ inline bool rocketnet_send_budget_settle( struct rocketnet_send_budget_t * budge
     return true;
 }
 
-#endif // #ifndef ROCKETNET_SEND_BUDGET_H
+#endif // ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H

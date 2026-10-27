@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_XDP_REPLAY_MARKS_H
-#define ROCKETNET_XDP_REPLAY_MARKS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H
+#define ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H
 
 #include <stdint.h>
 #include <string.h>
@@ -249,4 +249,4 @@ static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_
     *count = marks->mark_count;
 }
 
-#endif // #ifndef ROCKETNET_XDP_REPLAY_MARKS_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H

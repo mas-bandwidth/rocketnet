@@ -4,8 +4,9 @@
 */
 
 #pragma once
-#ifndef ROCKETNET_WINDOW_SEND_H
-#define ROCKETNET_WINDOW_SEND_H
+
+#ifndef ROCKETNET_SDK_ROCKETNET_WINDOW_SEND_H
+#define ROCKETNET_SDK_ROCKETNET_WINDOW_SEND_H
 
 #include "rocketnet_allocator.h"
 #include "rocketnet_message.h"
@@ -48,4 +49,4 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
 // acks return zero; a newly marked number returns one.
 int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number );
 
-#endif
+#endif // ROCKETNET_SDK_ROCKETNET_WINDOW_SEND_H

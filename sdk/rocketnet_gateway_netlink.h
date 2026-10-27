@@ -3,8 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#ifndef ROCKETNET_GATEWAY_NETLINK_H
-#define ROCKETNET_GATEWAY_NETLINK_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_GATEWAY_NETLINK_H
+#define ROCKETNET_SDK_ROCKETNET_GATEWAY_NETLINK_H
 
 // The XDP transport's gateway discovery through rtnetlink, the Linux routing
 // API (iproute2's ip(8) is a client of the same socket): no process is
@@ -64,4 +66,4 @@ int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const u
 
 const char * rocketnet_gateway_netlink_result_name( int result );
 
-#endif // #ifndef ROCKETNET_GATEWAY_NETLINK_H
+#endif // ROCKETNET_SDK_ROCKETNET_GATEWAY_NETLINK_H

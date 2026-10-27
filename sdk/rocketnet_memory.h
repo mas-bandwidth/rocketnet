@@ -1,5 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_MEMORY_H
+#define ROCKETNET_SDK_ROCKETNET_MEMORY_H
+
 #include <stdint.h>
 #include <stddef.h>
 #include <initializer_list>
@@ -147,3 +151,5 @@ inline void rocketnet_zero_except( void * storage, size_t bytes, const rocketnet
     if ( at < bytes )
         memset( base + at, 0, bytes - at );
 }
+
+#endif // ROCKETNET_SDK_ROCKETNET_MEMORY_H

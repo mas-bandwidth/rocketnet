@@ -1,5 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_XDP_LIMITS_H
+#define ROCKETNET_SDK_ROCKETNET_XDP_LIMITS_H
+
 // Shared by the native transport and its embedded BPF map definition.
 #include "rocketnet_history.h"
 
@@ -28,3 +32,4 @@
 #error the XDP replay map must hold an entry for every client
 #endif
 
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_LIMITS_H

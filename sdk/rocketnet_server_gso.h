@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_GSO_H
-#define ROCKETNET_SERVER_GSO_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
@@ -179,4 +179,4 @@ bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 bool rocketnet_server_gso_test_worker_handoff();
 #endif
 
-#endif // #ifndef ROCKETNET_SERVER_GSO_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

@@ -29,8 +29,10 @@
     it is appreciated.
 */
 
-#ifndef SERIALIZE_H
-#define SERIALIZE_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_SERIALIZE_H
+#define ROCKETNET_TESTS_SERIALIZE_H
 
 /** @file */
 
@@ -9832,4 +9834,4 @@ inline void serialize_test()
 #endif // #if defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS
 
 
-#endif // #ifndef SERIALIZE_H
+#endif // ROCKETNET_TESTS_SERIALIZE_H

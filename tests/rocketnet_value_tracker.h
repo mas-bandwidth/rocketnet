@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_VALUE_TRACKER_H
-#define ROCKETNET_VALUE_TRACKER_H
+#ifndef ROCKETNET_TESTS_ROCKETNET_VALUE_TRACKER_H
+#define ROCKETNET_TESTS_ROCKETNET_VALUE_TRACKER_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_memory_checks.h"
@@ -116,4 +116,4 @@ inline void rocketnet_value_tracker_calculate( rocketnet_value_tracker_t * track
     rocketnet_value_tracker_reset( tracker );
 }
 
-#endif // #ifndef ROCKETNET_VALUE_TRACKER_H
+#endif // ROCKETNET_TESTS_ROCKETNET_VALUE_TRACKER_H

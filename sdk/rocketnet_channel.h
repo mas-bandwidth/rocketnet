@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CHANNEL_H
-#define ROCKETNET_CHANNEL_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CHANNEL_H
+#define ROCKETNET_SDK_ROCKETNET_CHANNEL_H
 
 #include <stdint.h>
 
@@ -474,4 +474,4 @@ void rn_ordered_end_update( struct rn_ordered_t * ordered );
 
 int rn_ordered_decide( const struct rn_ordered_t * ordered );
 
-#endif // #ifndef ROCKETNET_CHANNEL_H
+#endif // ROCKETNET_SDK_ROCKETNET_CHANNEL_H

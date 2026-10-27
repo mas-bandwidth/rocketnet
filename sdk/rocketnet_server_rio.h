@@ -4,6 +4,9 @@
 */
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
+
 #include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
@@ -138,3 +141,5 @@ bool rocketnet_server_rio_available();
 #else
 inline bool rocketnet_server_rio_available() { return false; }
 #endif
+
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H

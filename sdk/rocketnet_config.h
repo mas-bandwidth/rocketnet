@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CONFIG_H
-#define ROCKETNET_CONFIG_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CONFIG_H
+#define ROCKETNET_SDK_ROCKETNET_CONFIG_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
@@ -256,4 +256,4 @@ const int * rocketnet_server_transport_io_availability( int * num_available );
 
 const int * rocketnet_client_transport_io_availability( int * num_available );
 
-#endif // #ifndef ROCKETNET_CONFIG_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONFIG_H

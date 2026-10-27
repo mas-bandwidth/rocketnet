@@ -1,5 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_STATS_WINDOW_H
+#define ROCKETNET_SDK_ROCKETNET_STATS_WINDOW_H
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -23,3 +27,5 @@ int rocketnet_stats_window_advance(Bucket (&buckets)[N], int index, uint64_t fra
     }
     return index;
 }
+
+#endif // ROCKETNET_SDK_ROCKETNET_STATS_WINDOW_H

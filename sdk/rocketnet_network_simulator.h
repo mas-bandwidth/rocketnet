@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_NETWORK_SIMULATOR_H
-#define ROCKETNET_NETWORK_SIMULATOR_H
+#ifndef ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H
+#define ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -195,4 +195,4 @@ static inline int rocketnet_network_simulator_receive_any( struct rocketnet_netw
 
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#endif // #ifndef ROCKETNET_NETWORK_SIMULATOR_H
+#endif // ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H

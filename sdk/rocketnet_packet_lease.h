@@ -1,6 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H
+#define ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H
+
 #include "rocketnet_internal.h"
 #include <atomic>
 
@@ -131,3 +134,5 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         used.store(0, std::memory_order_relaxed);
     }
 };
+
+#endif // ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H

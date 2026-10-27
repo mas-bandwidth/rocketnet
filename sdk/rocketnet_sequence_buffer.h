@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SEQUENCE_BUFFER_H
-#define ROCKETNET_SEQUENCE_BUFFER_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SEQUENCE_BUFFER_H
+#define ROCKETNET_SDK_ROCKETNET_SEQUENCE_BUFFER_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -244,4 +244,4 @@ public:
     }
 };
 
-#endif // ROCKETNET_SEQUENCE_BUFFER_H
+#endif // ROCKETNET_SDK_ROCKETNET_SEQUENCE_BUFFER_H

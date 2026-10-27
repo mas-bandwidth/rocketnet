@@ -18,8 +18,10 @@
     buffers are std::vector and the timestamps come from the caller.
 */
 
-#ifndef ROCKETNET_TEST_PCAPNG_H
-#define ROCKETNET_TEST_PCAPNG_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_PCAPNG_H
+#define ROCKETNET_TESTS_PCAPNG_H
 
 #include "resource_file.h"
 
@@ -472,4 +474,4 @@ inline void rocketnet_pcapng_list( const std::string & directory, std::vector<st
             names[j].swap( names[j - 1] );
 }
 
-#endif // #ifndef ROCKETNET_TEST_PCAPNG_H
+#endif // ROCKETNET_TESTS_PCAPNG_H

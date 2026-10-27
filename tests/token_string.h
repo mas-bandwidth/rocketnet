@@ -8,8 +8,10 @@
 // sealed to the running server's own ephemeral key (rocketnet_server_public_key),
 // and written as the NUL-terminated base64 string rocketnet_client_connect takes.
 
-#ifndef ROCKETNET_TEST_TOKEN_STRING_H
-#define ROCKETNET_TEST_TOKEN_STRING_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_TOKEN_STRING_H
+#define ROCKETNET_TESTS_TOKEN_STRING_H
 
 #include "rocketnet.h"
 #include "rocketnet_connect_token.h"
@@ -70,4 +72,4 @@ static inline enum rocketnet_status_t rn_test_server_token_string( const uint8_t
                                             timeout_seconds, user_data, token_string );
 }
 
-#endif // #ifndef ROCKETNET_TEST_TOKEN_STRING_H
+#endif // ROCKETNET_TESTS_TOKEN_STRING_H
