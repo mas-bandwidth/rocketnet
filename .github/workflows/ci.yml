@@ -402,6 +402,28 @@ jobs:
           ./bin/functional | tee functional-pinned.log
           grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
 
+      # ./bin/functional_production: the functional cases linked against the
+      # production library (ROCKETNET_DEV=OFF), less the ones that need
+      # development scaffolding (CMakeLists.txt,
+      # ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES; TESTING.md). It is
+      # built on the Release rows, which build the production library; it
+      # runs the same auto ladder and pinned portable rung as ./bin/functional,
+      # on the lean Linux leg (a), which has the room in the timing budget.
+      - name: Run production functional suite (auto ladder)
+        if: matrix.dev == 'OFF' && contains(matrix.leg, 'a')
+        run: ./bin/functional_production
+
+      - name: Run production functional suite (portable rung pinned by env)
+        if: matrix.dev == 'OFF' && contains(matrix.leg, 'a')
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          ./bin/functional_production | tee functional-production-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
+
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
       # server, so a family regression on any one transport fails here.
@@ -1018,6 +1040,25 @@ jobs:
         run: |
           ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      # ./bin/functional_production against the production library this leg
+      # builds (ROCKETNET_DEV=OFF): the same auto ladder and pinned portable
+      # rung as the Linux and macOS Release rows (TESTING.md).
+      - name: Run production functional suite (auto ladder)
+        if: matrix.leg == 'b'
+        shell: bash
+        run: ./bin/Release/functional_production.exe
+
+      - name: Run production functional suite (portable rung pinned by env)
+        if: matrix.leg == 'b'
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional_production.exe | tr -d '\r' | tee functional-production-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
