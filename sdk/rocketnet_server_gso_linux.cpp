@@ -466,19 +466,21 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
-    // the queue that discovers an ephemeral port binds before it joins a
-    // reuseport group: bound with SO_REUSEPORT, an ephemeral bind may be
-    // given a port another reuseport group of the same user already holds,
-    // and the kernel then shares that port's datagrams between the two
-    // servers (measured on Linux x64 gcc: 4 shared ports in 50 x 64 reuseport
-    // ephemeral binds, none when the first socket binds without it). Bound
-    // first, it takes a port no socket holds, and SO_REUSEPORT set after the
-    // bind lets this server's other queues join it.
+    // the first queue binds before it joins a reuseport group, whether its
+    // port is explicit or discovered. bound with SO_REUSEPORT, an explicit
+    // port another reuseport socket of the same user already holds is joined,
+    // not refused, and the kernel then shares that port's datagrams between
+    // the two servers; an ephemeral bind may likewise be given a port another
+    // reuseport group already holds (measured on Linux x64 gcc: 4 shared
+    // ports in 50 x 64 reuseport ephemeral binds, none when the first socket
+    // binds without it). Bound first, it takes a port no socket holds or the
+    // bind fails with EADDRINUSE as the portable transport's does, and
+    // SO_REUSEPORT set after the bind lets this server's other queues join it.
 
-    const bool discovers_port = *bound_port == 0 && bind_address->port == 0;
+    const bool first_queue = queue_index == 0;
 
     int one = 1;
-    if ( !discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( !first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
         rocketnet_error( "gso transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
@@ -558,7 +560,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
         return -1;
     }
 
-    if ( discovers_port && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
+    if ( first_queue && setsockopt( fd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) != 0 )
     {
         rocketnet_error( "gso transport: failed to set SO_REUSEPORT: %s", strerror( errno ) );
         close( fd );
