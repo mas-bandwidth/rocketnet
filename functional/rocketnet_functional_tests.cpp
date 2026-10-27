@@ -10744,6 +10744,11 @@ static void rocketnet_test_hostname_resolve_localhost()
 extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
 extern void rocketnet_test_frame_sync_dropped_stats();
+extern void rocketnet_test_frame_sync_lifecycle();
+extern void rocketnet_test_frame_sync_create_ex_success_status();
+#if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+extern void rocketnet_test_bundled_rng_closes_and_reopens_on_mac();
+#endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_high_resolution_timer_required();
 #endif // #if ROCKETNET_DEV
@@ -10818,6 +10823,13 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
     { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
+    // moved from the unit suite: each creates or reads a real OS resource
+    // (the Windows high-resolution waitable timer; the macOS descriptor table)
+    { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle, NULL },
+    { "test_frame_sync_create_ex_success_status", rocketnet_test_frame_sync_create_ex_success_status, NULL },
+#if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+    { "test_bundled_rng_closes_and_reopens_on_mac", rocketnet_test_bundled_rng_closes_and_reopens_on_mac, NULL },
+#endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #if ROCKETNET_DEV
     { "test_frame_sync_high_resolution_timer_required", rocketnet_test_frame_sync_high_resolution_timer_required, NULL },
 #endif // #if ROCKETNET_DEV

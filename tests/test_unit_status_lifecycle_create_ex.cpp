@@ -17,6 +17,9 @@
 //     refusal without coarse fallback (covered by the status-plumbing unit
 //     check in test_unit_status_codes_reached.cpp and the native resource
 //     functional cases in functional/platform_primitives.cpp);
+//   * rocketnet_frame_sync_create_ex success, which creates the real Windows
+//     high-resolution waitable timer (functional case
+//     test_frame_sync_create_ex_success_status in functional/platform_primitives.cpp);
 //   * the client and server transport create exits (C1-C11, S1-S14), which are
 //     Layer 4 work owned by the transport cards, not this card's surface.
 
@@ -227,13 +230,10 @@ static void test_lifecycle_ex_reports_every_status()
     state.fail_at = 0;
     check( state.live == 0 );
 
-    // frame sync success
-    status = -1;
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( &state, 60.0, &status );
-    check( frame_sync != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    rocketnet_frame_sync_destroy( frame_sync );
-    check( state.live == 0 );
+    // frame sync success creates the real Windows high-resolution waitable
+    // timer, so it is the functional case test_frame_sync_create_ex_success_status
+    // (functional/platform_primitives.cpp), with the same allocator and status
+    // checks
 
     // a clean term is OK and leaves no allocation behind
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
