@@ -113,15 +113,13 @@ ROCKETNET_STATIC_ASSERT( (long long) ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_F
 
 #endif // #if ROCKETNET_XDP
 
-#define ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS        ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
+// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. Every receive batch in one update (socket process batch, per-update receive budget and payload batch) shares this one bound and one storage cap.
+#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
 #if ROCKETNET_XDP
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_XDP_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the XDP send queue" );
 #endif
-
-// One update reads at most ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS packets (16 * 1000 = 16000), bounding its work. This equals the payload-batch capacity; batches share one bound and one storage cap.
-#define ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE   ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
 
 // Portable and msgx buffered batch sizes. The per-update receive budget
 // holds at least twice the send batch. The transport uses max_clients with
@@ -189,22 +187,18 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE >= ROCKETNET_FRAME_WIRE_OFFSET +
                          "a frame slot holds the slack and a full receive-ceiling packet" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a frame slot fits a send frame" );
 
-// the most payloads one server update can deliver: what the receive path can
-// hand over in a single drain, so a burst is never silently discarded after
-// its sequence has already been consumed. internal -- the public surface
-// iterates payloads by index and never sees a capacity.
-
-#define ROCKETNET_MAX_PAYLOADS_PER_UPDATE                  ( ROCKETNET_RECEIVE_PACKETS_PER_CLIENT * ROCKETNET_MAX_CLIENTS )
-
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCKETNET_MAX_PAYLOADS_PER_UPDATE,
-                         "all receive batches in one update share the payload batch capacity" );
+// the most payloads one server update can deliver is the same per-update
+// receive bound above: what the receive path can hand over in a single drain,
+// so a burst is never silently discarded after its sequence has already been
+// consumed. internal -- the public surface iterates payloads by index and
+// never sees a capacity.
 
 // NOTE the relationship between these two. The process_packets arrays are
-// sized by MAX_PROCESS_PACKETS (16 * 1000 = 16000), but the XDP path fills
+// sized by ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE (16 * 1000 = 16000), but the XDP path fills
 // them while draining a queue whose staging buffer holds
 // ROCKETNET_XDP_RECV_QUEUE_SIZE entries (4096 * 4 = 16384). They are
 // independent numbers, and the drain guard MUST bound by
-// MAX_PROCESS_PACKETS — the arrays it protects — never the queue size, or
+// ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE — the arrays it protects — never the queue size, or
 // the tail of a full queue writes past the arrays.
 //
 // The consequence of the correct guard is capacity, not safety: because the
