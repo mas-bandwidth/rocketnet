@@ -5,8 +5,12 @@
 # print the same trace on every OS, or a failing seed found on one OS cannot be
 # replayed on another. Each leg builds Release dst and test, runs the fifteen
 # test_dst_ unit cases by --run, runs `dst --seeds 1-50` and fails unless its
-# PASS line carries DST_REFERENCE_TRACE below, then sweeps a longer seed range
-# sized from a measurement on that OS to about twenty minutes.
+# PASS line carries DST_REFERENCE_TRACE below, then runs one named short step
+# per fault schedule (seeds 1-50; a schedule that fires zero times fails its
+# step), then sweeps a longer seed range sized from a measurement on that OS
+# to about twenty minutes. The reference range 1-50 stays fixed; only the
+# sweep start rolls, derived from the run number, so consecutive nights cover
+# different ranges of the same length, printed in the log with the replay line.
 #
 # A red night prints, per failing seed,
 #   FAIL seed=<n> step=<s> check=<name> what=<detail>
@@ -20,9 +24,10 @@
 # Nightlies are exempt from the two-minute rule. Each sweep is sized to about
 # 1200 s from a Release measurement on that OS, and each range was run once
 # at the commit that set DST_REFERENCE_TRACE:
-#   Linux   51-11000 PASS in 1384 s (0.13 s/seed)
-#   macOS   51-14000 PASS in 1218 s (0.087 s/seed)
-#   Windows 51-6000  PASS in 1348 s (0.23 s/seed); 1273 s (0.21 s/seed) at 809ad504
+#   Linux   10950 seeds PASS in 1384 s (0.13 s/seed)
+#   macOS   13950 seeds PASS in 1218 s (0.087 s/seed)
+#   Windows 5950 seeds  PASS in 1348 s (0.23 s/seed); 1273 s (0.21 s/seed) at 809ad504
+# (run number 1 starts each sweep at seed 51, as measured; later runs roll).
 # timeout-minutes 50 is about twice the sweep plus the build.
 
 name: nightly-dst
@@ -47,7 +52,8 @@ jobs:
     env:
       DST_BIN: ./bin
       DST_EXE: ""
-      DST_SWEEP: 51-11000
+      DST_SWEEP_LENGTH: "10950"
+      DST_RUN_NUMBER: "${{ github.run_number }}"
     steps:
 
       - uses: actions/checkout@v4
@@ -84,13 +90,84 @@ jobs:
             exit 1
           fi
 
+      - name: Schedule clock-back seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule clock-back | tr -d '\r' | tee dst-schedule-clock-back.log
+          if grep -q '^FAIL' dst-schedule-clock-back.log; then echo "dst schedule clock-back printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-clock-back.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=clock-back fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED clock-back fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-gap seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-gap | tr -d '\r' | tee dst-schedule-seq-gap.log
+          if grep -q '^FAIL' dst-schedule-seq-gap.log; then echo "dst schedule seq-gap printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-gap.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-gap fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-gap fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-wrap-31 seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-31 | tr -d '\r' | tee dst-schedule-seq-wrap-31.log
+          if grep -q '^FAIL' dst-schedule-seq-wrap-31.log; then echo "dst schedule seq-wrap-31 printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-wrap-31.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-31 fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-31 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-wrap-32 seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-32 | tr -d '\r' | tee dst-schedule-seq-wrap-32.log
+          if grep -q '^FAIL' dst-schedule-seq-wrap-32.log; then echo "dst schedule seq-wrap-32 printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-wrap-32.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-32 fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-32 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
+
+      - name: Schedule burst seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule burst | tr -d '\r' | tee dst-schedule-burst.log
+          if grep -q '^FAIL' dst-schedule-burst.log; then echo "dst schedule burst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-burst.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=burst fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED burst fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=burst seeds=1-50 fired=$fired"
+
+      - name: Schedule dup-storm seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule dup-storm | tr -d '\r' | tee dst-schedule-dup-storm.log
+          if grep -q '^FAIL' dst-schedule-dup-storm.log; then echo "dst schedule dup-storm printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-dup-storm.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
+
       - name: Sweep the nightly seed range
         shell: bash
         run: |
           set -euo pipefail
+          length=$DST_SWEEP_LENGTH
+          sweep_start=$(( 51 + (DST_RUN_NUMBER - 1) * length ))
+          sweep_end=$(( sweep_start + length - 1 ))
+          sweep="$sweep_start-$sweep_end"
+          echo "DST sweep seeds=$sweep length=$length run_number=$DST_RUN_NUMBER replay: $DST_BIN/dst$DST_EXE --seeds $sweep"
           start=$(date +%s)
-          "$DST_BIN/dst$DST_EXE" --seeds "$DST_SWEEP" | tr -d '\r' | tee dst-sweep.log
-          echo "seeds=$DST_SWEEP took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          "$DST_BIN/dst$DST_EXE" --seeds "$sweep" | tr -d '\r' | tee dst-sweep.log
+          echo "seeds=$sweep took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
           tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
 
@@ -104,7 +181,8 @@ jobs:
     env:
       DST_BIN: ./bin
       DST_EXE: ""
-      DST_SWEEP: 51-14000
+      DST_SWEEP_LENGTH: "13950"
+      DST_RUN_NUMBER: "${{ github.run_number }}"
     steps:
 
       - uses: actions/checkout@v4
@@ -141,13 +219,84 @@ jobs:
             exit 1
           fi
 
+      - name: Schedule clock-back seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule clock-back | tr -d '\r' | tee dst-schedule-clock-back.log
+          if grep -q '^FAIL' dst-schedule-clock-back.log; then echo "dst schedule clock-back printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-clock-back.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=clock-back fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED clock-back fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-gap seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-gap | tr -d '\r' | tee dst-schedule-seq-gap.log
+          if grep -q '^FAIL' dst-schedule-seq-gap.log; then echo "dst schedule seq-gap printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-gap.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-gap fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-gap fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-wrap-31 seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-31 | tr -d '\r' | tee dst-schedule-seq-wrap-31.log
+          if grep -q '^FAIL' dst-schedule-seq-wrap-31.log; then echo "dst schedule seq-wrap-31 printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-wrap-31.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-31 fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-31 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-wrap-32 seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-32 | tr -d '\r' | tee dst-schedule-seq-wrap-32.log
+          if grep -q '^FAIL' dst-schedule-seq-wrap-32.log; then echo "dst schedule seq-wrap-32 printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-wrap-32.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-32 fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-32 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
+
+      - name: Schedule burst seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule burst | tr -d '\r' | tee dst-schedule-burst.log
+          if grep -q '^FAIL' dst-schedule-burst.log; then echo "dst schedule burst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-burst.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=burst fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED burst fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=burst seeds=1-50 fired=$fired"
+
+      - name: Schedule dup-storm seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule dup-storm | tr -d '\r' | tee dst-schedule-dup-storm.log
+          if grep -q '^FAIL' dst-schedule-dup-storm.log; then echo "dst schedule dup-storm printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-dup-storm.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
+
       - name: Sweep the nightly seed range
         shell: bash
         run: |
           set -euo pipefail
+          length=$DST_SWEEP_LENGTH
+          sweep_start=$(( 51 + (DST_RUN_NUMBER - 1) * length ))
+          sweep_end=$(( sweep_start + length - 1 ))
+          sweep="$sweep_start-$sweep_end"
+          echo "DST sweep seeds=$sweep length=$length run_number=$DST_RUN_NUMBER replay: $DST_BIN/dst$DST_EXE --seeds $sweep"
           start=$(date +%s)
-          "$DST_BIN/dst$DST_EXE" --seeds "$DST_SWEEP" | tr -d '\r' | tee dst-sweep.log
-          echo "seeds=$DST_SWEEP took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          "$DST_BIN/dst$DST_EXE" --seeds "$sweep" | tr -d '\r' | tee dst-sweep.log
+          echo "seeds=$sweep took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
           tail -n 1 dst-sweep.log | grep -q '^PASS seeds='
 
@@ -161,7 +310,8 @@ jobs:
     env:
       DST_BIN: ./bin/Release
       DST_EXE: .exe
-      DST_SWEEP: 51-6000
+      DST_SWEEP_LENGTH: "5950"
+      DST_RUN_NUMBER: "${{ github.run_number }}"
     steps:
 
       - uses: actions/checkout@v4
@@ -201,12 +351,83 @@ jobs:
             exit 1
           fi
 
+      - name: Schedule clock-back seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule clock-back | tr -d '\r' | tee dst-schedule-clock-back.log
+          if grep -q '^FAIL' dst-schedule-clock-back.log; then echo "dst schedule clock-back printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-clock-back.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=clock-back fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED clock-back fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=clock-back seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-gap seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-gap | tr -d '\r' | tee dst-schedule-seq-gap.log
+          if grep -q '^FAIL' dst-schedule-seq-gap.log; then echo "dst schedule seq-gap printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-gap.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-gap fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-gap fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-gap seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-wrap-31 seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-31 | tr -d '\r' | tee dst-schedule-seq-wrap-31.log
+          if grep -q '^FAIL' dst-schedule-seq-wrap-31.log; then echo "dst schedule seq-wrap-31 printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-wrap-31.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-31 fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-31 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-wrap-31 seeds=1-50 fired=$fired"
+
+      - name: Schedule seq-wrap-32 seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule seq-wrap-32 | tr -d '\r' | tee dst-schedule-seq-wrap-32.log
+          if grep -q '^FAIL' dst-schedule-seq-wrap-32.log; then echo "dst schedule seq-wrap-32 printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-seq-wrap-32.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=seq-wrap-32 fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED seq-wrap-32 fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=seq-wrap-32 seeds=1-50 fired=$fired"
+
+      - name: Schedule burst seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule burst | tr -d '\r' | tee dst-schedule-burst.log
+          if grep -q '^FAIL' dst-schedule-burst.log; then echo "dst schedule burst printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-burst.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=burst fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED burst fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=burst seeds=1-50 fired=$fired"
+
+      - name: Schedule dup-storm seeds 1-50
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$DST_BIN/dst$DST_EXE" --seeds 1-50 --schedule dup-storm | tr -d '\r' | tee dst-schedule-dup-storm.log
+          if grep -q '^FAIL' dst-schedule-dup-storm.log; then echo "dst schedule dup-storm printed a FAIL line on $RUNNER_OS"; exit 1; fi
+          line=$(tail -n 1 dst-schedule-dup-storm.log)
+          fired=$(printf '%s' "$line" | sed -n 's/.* schedule=dup-storm fired=\([0-9][0-9]*\).*/\1/p')
+          if [ -z "$fired" ] || [ "$fired" -eq 0 ]; then echo "SCHEDULE-NOT-FIRED dup-storm fired=${fired:-missing} on $RUNNER_OS"; exit 1; fi
+          echo "PASS schedule=dup-storm seeds=1-50 fired=$fired"
+
       - name: Sweep the nightly seed range
         shell: bash
         run: |
           set -euo pipefail
+          length=$DST_SWEEP_LENGTH
+          sweep_start=$(( 51 + (DST_RUN_NUMBER - 1) * length ))
+          sweep_end=$(( sweep_start + length - 1 ))
+          sweep="$sweep_start-$sweep_end"
+          echo "DST sweep seeds=$sweep length=$length run_number=$DST_RUN_NUMBER replay: $DST_BIN/dst$DST_EXE --seeds $sweep"
           start=$(date +%s)
-          "$DST_BIN/dst$DST_EXE" --seeds "$DST_SWEEP" | tr -d '\r' | tee dst-sweep.log
-          echo "seeds=$DST_SWEEP took $(( $(date +%s) - start ))s on $RUNNER_OS"
+          "$DST_BIN/dst$DST_EXE" --seeds "$sweep" | tr -d '\r' | tee dst-sweep.log
+          echo "seeds=$sweep took $(( $(date +%s) - start ))s on $RUNNER_OS"
           if grep -q '^FAIL' dst-sweep.log; then echo "dst printed a FAIL line on $RUNNER_OS"; exit 1; fi
           tail -n 1 dst-sweep.log | grep -q '^PASS seeds='

@@ -1806,11 +1806,9 @@ void rocketnet_test_linux_gso_recvmmsg_errors()
 
 void rocketnet_test_linux_uring_receive_cqe_errors()
 {
-    if ( !rocketnet_server_uring_available() )
-    {
-        printf( "  io_uring not offered by this kernel: the case has no cell here\n" );
-        return;
-    }
+    // registered under rocketnet_server_uring_available: reaching here with
+    // no io_uring is a failure, never a pass
+    posix_check( rocketnet_server_uring_available() );
 
     const int errors[3] = { -EFAULT, -ECONNREFUSED, -EINVAL };
     const char * names[3] = { "EFAULT", "ECONNREFUSED", "EINVAL" };
@@ -1864,11 +1862,9 @@ void rocketnet_test_linux_uring_receive_cqe_errors()
 
 void rocketnet_test_linux_uring_send_cqe_errors()
 {
-    if ( !rocketnet_server_uring_available() )
-    {
-        printf( "  io_uring not offered by this kernel: the case has no cell here\n" );
-        return;
-    }
+    // registered under rocketnet_server_uring_available: reaching here with
+    // no io_uring is a failure, never a pass
+    posix_check( rocketnet_server_uring_available() );
 
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
     {

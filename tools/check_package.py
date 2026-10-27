@@ -91,7 +91,8 @@ def prepare_consumer_source(root, shared_enabled, dev_enabled):
     return staged
 
 
-def check_exported_settings(installed, root, command, config, native_build_options, shared_enabled):
+def check_exported_settings(installed, root, command, config, native_build_options, shared_enabled,
+                            expected_dev, expected_max_clients):
     """Fail when the package refuses its own major.minor line or hands the
     library's private build settings to a consumer's compile."""
     version_file = next(installed.rglob("RocketNetConfigVersion.cmake")).read_text()
@@ -117,6 +118,17 @@ def check_exported_settings(installed, root, command, config, native_build_optio
              '    message(FATAL_ERROR "RocketNet::rocketnet_shared exists when ROCKETNET_BUILD_SHARED=OFF")\n'
              'endif()'
     )
+    expected_definitions = {
+        "rocketnet": {
+            f"ROCKETNET_DEV={expected_dev}",
+            f"ROCKETNET_MAX_CLIENTS={expected_max_clients}",
+        },
+        "rocketnet_shared": {
+            "ROCKETNET_SHARED",
+            f"ROCKETNET_DEV={expected_dev}",
+            f"ROCKETNET_MAX_CLIENTS={expected_max_clients}",
+        },
+    }
     for index, request in enumerate((version, line)):
         # Keep the nested CMake try-compile path below Windows/MSBuild's path
         # limit. The ordinary relocated consumer retains spaces in its path and
@@ -151,10 +163,19 @@ def check_exported_settings(installed, root, command, config, native_build_optio
             for option in options.split(";"):
                 if option.startswith(FLOATING_POINT_OPTIONS):
                     failures.append(f"RocketNet::{linkage} hands the consumer {option}")
-            for definition in definitions.split(";"):
-                if definition and not definition.endswith("-NOTFOUND") and \
-                        definition.split("=", 1)[0] not in CONSUMER_DEFINITIONS:
+            actual_definitions = {
+                definition for definition in definitions.split(";")
+                if definition and not definition.endswith("-NOTFOUND")
+            }
+            for definition in sorted(actual_definitions):
+                if definition.split("=", 1)[0] not in CONSUMER_DEFINITIONS:
                     failures.append(f"RocketNet::{linkage} hands the consumer -D{definition}")
+            wanted_definitions = expected_definitions[linkage]
+            if actual_definitions != wanted_definitions:
+                failures.append(
+                    f"RocketNet::{linkage} compile definitions are {sorted(actual_definitions)}, "
+                    f"expected {sorted(wanted_definitions)}"
+                )
         run("cmake", "--build", build, "--config", config, *native_build_options)
         commands = build / "compile_commands.json"
         if commands.exists():
@@ -200,6 +221,8 @@ def main():
     source = Path(cache["rocketnet_SOURCE_DIR"])
     shared_enabled = cmake_bool(cache.get("ROCKETNET_BUILD_SHARED"), True)
     dev_enabled = cmake_bool(cache.get("ROCKETNET_BUILD_DEV_LIBRARIES"), True)
+    expected_dev = "1" if cmake_bool(cache.get("ROCKETNET_DEV"), True) else "0"
+    expected_max_clients = cache.get("ROCKETNET_MAX_CLIENTS", "1000")
     # Reusable MSBuild workers can retain the temporary build directory after
     # a successful build. These consumers have no subsequent build to reuse
     # them for; let the workers exit so TemporaryDirectory can remove the tree.
@@ -256,7 +279,8 @@ def main():
         # Installed DLL plus vcpkg's copied runtime dependency on Windows.
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
         run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", env=env)
-        check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled)
+        check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled,
+                                expected_dev, expected_max_clients)
         if args.embedded:
             embedded = root / "embedded build"
             # Reuse generator/toolchain selection, replacing only producer-specific arguments.

@@ -54,6 +54,10 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - Reliable work is retained until delivery or the reliable timeout. Unreliable
   work may be dropped only at documented bounded resources and is counted.
 - Receipt serials report terminal ACK or loss for receipt-bearing messages.
+  The outcomes recorded for a connection remain readable after that
+  connection ends, until its next update begins. A receipt-bearing send,
+  reliable or unreliable, that is still in flight when its connection ends
+  gets no terminal outcome.
 
 ## Platforms and transports
 
@@ -86,8 +90,16 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   (thread stacks, AF_XDP page-aligned UMEM and kernel rings, `io_uring` mapped
   rings, and kernel socket buffers).
 - The default compile-time `ROCKETNET_MAX_CLIENTS` ceiling (`1000`) and the
-  demonstrated 1,000-player configuration in [`docs/LOAD.md`](docs/LOAD.md)
-  apply only under that workload's exact message profile, tick rate, and
+  recorded 1,000-client results in
+  [`docs/runs/lan-1000-proof.md`](docs/runs/lan-1000-proof.md)
+  ([Linux gso and io_uring](docs/runs/lan-1000-proof-linux.md),
+  [AF_XDP](docs/runs/lan-1000-proof-xdp.md)) (1,000 clients
+  for 600 s, 300 s for AF_XDP, against Linux `gso`, `io_uring`, and AF_XDP
+  copy-mode servers and a macOS `msgx` server; minimum per-client rates of
+  276–283 kbps) and
+  [`docs/QUALIFICATION-v1.0.0-preview-2.md`](docs/QUALIFICATION-v1.0.0-preview-2.md)
+  (60-second non-timing correctness rungs at 1–1,000 clients)
+  apply only under those records' exact message profile, tick rate, and
   deployment assumptions. Above 1,000 players, callers research, stabilize, and
   qualify their own configuration, memory budget, and host/NIC deployment; no
   arbitrary client count or validated-above-1000 guarantee is provided.
