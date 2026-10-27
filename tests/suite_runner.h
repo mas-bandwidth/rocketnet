@@ -546,8 +546,17 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --enforce-rss]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list | --enforce-rss]\n", argv[0] );
     return 2;
+}
+
+inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )( int ) )
+{
+    const int n = count ? count() : 0;
+    for ( int i = 0; i < n; i++ )
+        printf( "%s\n", name_at( i ) );
+    fflush( stdout );
+    return 0;
 }
 
 // Calls emit( line ) for each line of output, without its line ending.
@@ -837,6 +846,8 @@ inline int suite_main( int argc, char ** argv,
     bool bound_io_uring = false,
     bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
         enforce_case_rss = true;
@@ -1153,6 +1164,8 @@ inline int suite_main( int argc, char ** argv,
     bool bound_io_uring = false,
     bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
         enforce_case_rss = true;
