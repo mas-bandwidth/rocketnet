@@ -1164,7 +1164,21 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # test_gso_server_refuses_explicit_port_in_use,
     # test_uring_server_refuses_explicit_port_in_use,
     # test_xdp_transport_linux_receive_weather_ipv4 and
-    # test_xdp_transport_linux_receive_weather_ipv6. Every other functional case runs here through the production
+    # test_xdp_transport_linux_receive_weather_ipv6, the xdp hard-killed
+    # cells test_posix_hard_killed_client_xdp_ipv4_client_portable,
+    # test_posix_hard_killed_client_xdp_ipv6_client_portable,
+    # test_posix_send_to_closed_port_xdp_ipv4_client_portable,
+    # test_posix_send_to_closed_port_xdp_ipv6_client_portable,
+    # test_posix_client_server_gone_xdp_ipv4_client_portable and
+    # test_posix_client_server_gone_xdp_ipv6_client_portable (their body is
+    # functional/posix_hard_killed_client.cpp), and
+    # test_client_destroy_early_threaded_keeps_then_frees and
+    # test_server_destroy_early_threaded_keeps_then_frees (their body is
+    # functional/destroy_early_keep.cpp, which this executable does not
+    # compile). The stall-destroy tail of test_server_uring_probe is omitted
+    # here because it calls rocketnet_server_uring_test_stall_destroy and
+    # rocketnet_server_uring_test_resume_stop; the rest of that case runs.
+    # Every other functional case runs here through the production
     # shim in functional/harness.inc (test-owned production keys minted with
     # rocketnet_write_production_connect_token), so the portable transport
     # and each native transport the OS builds (gso/io_uring on Linux, msgx

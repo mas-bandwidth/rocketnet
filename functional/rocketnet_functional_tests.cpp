@@ -6796,6 +6796,7 @@ void rocketnet_test_server_gso_held_receive_view()
 
 #include "rocketnet_server_uring.h"
 
+#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 #if defined( __GNUC__ ) || defined( __clang__ )
 __attribute__((noinline))
 #endif
@@ -6803,6 +6804,7 @@ static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stal
 {
     return rocketnet_server_uring_create( NULL, address, 2 );
 }
+#endif // production excludes the stall helper that feeds SEND_ERROR hooks
 
 void rocketnet_test_server_uring_probe()
 {
@@ -6848,8 +6850,11 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &over_address, "127.0.0.1" ) );
     rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1 ) == NULL );
 
+#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
     // A stalled completion leaves the caller-owned transport pending. It
     // never turns a deadline into permission to abandon or free its storage.
+    // The stall and resume calls are SEND_ERROR test hooks, absent from the
+    // production library, so this tail is not in functional_production.
     rocketnet_address_t stall_address;
     rocketnet_check( rocketnet_address_parse( &stall_address, "127.0.0.1" ) );
     struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
@@ -6883,6 +6888,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_server_uring_stopped( rebound ) );
     rocketnet_server_uring_destroy( rebound );
     rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before );
+#endif // production excludes the uring stall-destroy tail
 }
 
 // the wire exchange, the gso exchange's shape for this transport: a plain UDP
@@ -9154,6 +9160,9 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
 // the three hard-killed kinds on the xdp server cell. They live in the static
 // table, not the generated hard-killed count, so a host where the veth gate
 // is false omits them and an explicit --run prints the runs_here refusal.
+// The body is in functional/posix_hard_killed_client.cpp, which production
+// does not compile.
+#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 extern void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 );
 
 static void rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, false ); }
@@ -9162,6 +9171,7 @@ static void rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable() 
 static void rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, true ); }
 static void rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, false ); }
 static void rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, true ); }
+#endif // production excludes xdp hard-killed cells that call posix_hk_run_xdp_cell
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
@@ -9613,8 +9623,10 @@ struct rocketnet_functional_test_t
     bool ( *runs_here )(); // NULL: every host; else the case is in the suite only where it returns true
 };
 
+#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 extern void test_client_destroy_early_threaded_keeps_then_frees();
 extern void test_server_destroy_early_threaded_keeps_then_frees();
+#endif // bodies live in destroy_early_keep.cpp, not in the production executable
 extern void rocketnet_test_real_environment_dev_session_sequence_start();
 extern void rocketnet_test_real_environment_log_level_before_init();
 extern void rocketnet_test_real_environment_config_precedence_and_invalid();
@@ -10814,8 +10826,10 @@ extern void rocketnet_test_session_reconnect_isolation_rio();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
+#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
+#endif // production does not compile functional/destroy_early_keep.cpp
 #if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
     { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
@@ -10982,12 +10996,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
+#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_send_to_closed_port_xdp_ipv6_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_client_server_gone_xdp_ipv4_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_client_server_gone_xdp_ipv6_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
+#endif // production excludes xdp hard-killed cells
 #endif
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create, NULL },
 #if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
