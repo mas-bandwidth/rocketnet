@@ -2004,6 +2004,14 @@ jobs:
       - name: Verify the RocketNet standard against the implementation
         run: python3 tools/conformance/check_rn_standard.py
 
+      # The witness ledger: every behavioural rule of the standard names
+      # the section, code function and test that witness it, or is marked
+      # tier none. Its own unit tests run first, then the ledger itself.
+      - name: Verify the witness ledger against the standard and the tests
+        run: |
+          python3 tools/conformance/test_check_witnesses.py
+          python3 tools/conformance/check_witnesses.py
+
   # THE THREAD SANITIZER LEG. Everything else in this file is a single-threaded
   # story or leaves the threads to luck; this is the only leg that watches the
   # transport's concurrency directly. rocketnet spawns real threads -- the
