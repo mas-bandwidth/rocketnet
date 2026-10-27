@@ -98,6 +98,9 @@ struct rn_channels_t
     uint32_t pending_bytes;           // what the pending start reserved
     uint32_t pending_channel;
     uint32_t ready_head, ready_tail;  // the channels with queued sends, oldest turn first (9.1)
+    uint32_t ready_ticket_next;       // next ready-list membership ticket, from 1; 0 is not a member
+    uint32_t queue_holes;             // cancelled descriptors still linked in some channel FIFO
+    uint32_t schedule_work;           // links visited by compact and ticket rebase; one pass, not per record
 };
 
 // Binds the dispatch to one connection's region. Allocates nothing: the
@@ -187,6 +190,14 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes );
 // pending.
 
 bool rn_channels_cancel( struct rn_channels_t * channels );
+
+// Marks one queued descriptor a hole when it still names generation and owner_epoch.
+// The link stays until compact. False changes nothing (tla/RNChannelQueues.tla Cancel).
+bool rn_channels_cancel_queued( struct rn_channels_t * channels, uint32_t channel, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch );
+
+// One pass over the channel FIFOs that still hold holes: rebuild each chain,
+// free holes, and drop a channel whose live count is zero. O(C + queued), once.
+void rn_channels_compact_queues( struct rn_channels_t * channels );
 
 // ---------------------------------------------------------------
 //                     the receive side, 7.1 and 7.2

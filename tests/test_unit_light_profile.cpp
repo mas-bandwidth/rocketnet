@@ -46,17 +46,29 @@
 // the TX banks sized at 16 packets per client (3 banks x 15,000 more packets
 // x 1500 bytes at 1000 clients: 67,500,000), its socket's 320 bytes, and 231
 // bytes of the send handoff's per-path drop counts and allocation rounding.
+// Re-measured 2026-10-27 on macOS arm64 (studio.local), Release, clang 21,
+// ROCKETNET_DEV=ON, after merging origin/main (descriptor 80 bytes with
+// span_next plus schedule ticket/epoch): server was 1591206436, now
+// 1603277086 (grew by 12070650). Generation, owner epoch, enqueue ticket
+// and hole bound 64 stayed.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1591206436 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603277086 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22746605 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
 #endif
 #else
+// Re-measured 2026-10-27 on hetzner2, Release, clang++ 18.1.3,
+// ROCKETNET_DEV=ON, head d00cf56e517dad7477ce41059d48e276c95aa970.
+// Server was 3238578316 (now 3243578316, grew by 5000000).
+// Client was 22890053 (now 22895109, grew by 5056).
+// Generation, owner epoch, enqueue ticket and hole bound 64 stayed.
+// The non-dev figures below were not re-measured: this file is not linked
+// when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3231507666ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22896245 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3243578316ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22895109 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )

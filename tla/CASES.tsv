@@ -416,5 +416,7 @@ MCRNUpdateClockBrokenStall.cfg	MCRNUpdateClock.tla	invariant	ResumeAdvances	chec
 MCReceiveOrderBrokenClaimOutlivesBinding.cfg	MCReceiveOrder.tla	invariant	BoundHasNoClaim	check	receiveorder	required	-
 MCRNMsgxPause.cfg	MCRNMsgxPause.tla	pass	-	check	rnmsgxpause	required	-
 MCRNMsgxPauseBrokenExpiryClearsFresh.cfg	MCRNMsgxPause.tla	invariant	FreshPauseSurvives	check	rnmsgxpause	required	-
+MCRNChannelQueues.cfg	MCRNChannelQueues.tla	pass	-	ignore-terminal	rnchannelqueues	required	-
+MCRNChannelQueuesBrokenStale.cfg	MCRNChannelQueues.tla	invariant	NamedGenerationOnly	ignore-terminal	rnchannelqueues	required	-
 MCRNGsoHandoff.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenPublishWhileHeld.cfg	MCRNGsoHandoff.tla	invariant	NoPublishWhileHeld	check	rngsohandoff	required	-
