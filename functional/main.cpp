@@ -186,9 +186,7 @@ int main( int argc, char ** argv )
 #endif
 #if defined(ROCKETNET_FUNCTIONAL_PRODUCTION) && ROCKETNET_FUNCTIONAL_PRODUCTION
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
-#endif
-
-#if defined(_WIN32)
+#elif defined(_WIN32)
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
