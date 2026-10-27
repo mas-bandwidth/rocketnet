@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 // Separate translation unit, no LTO: the measured caller cannot devirtualize.
-#include "transport_dispatch_fixture.h"
+#include "driver_dispatch_fixture.h"
 #include <string.h>
 uint8_t * dispatch_fixture_start(void * instance, const rocketnet_address_t *, uint64_t * id)
 {

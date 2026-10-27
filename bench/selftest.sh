@@ -53,6 +53,27 @@ fail()
 WORK="$( mktemp -d "${TMPDIR:-/tmp}/bench-selftest.XXXXXX" )"
 trap 'rm -rf "$WORK"' EXIT
 
+# The dispatch-cost pair is documented in transport_fill.md as one compile line
+# and one run. Building and running it here keeps that line from rotting: a
+# missing include or a failing run fails this script.
+
+dispatch_pair()
+{
+    local cxx="${CXX:-c++}"
+    if ! "$cxx" -O3 -DNDEBUG -std=c++11 -ffp-contract=off -Wall -Wextra -Werror -I ../sdk \
+            driver_dispatch.cpp driver_dispatch_fixture.cpp -o "$WORK/dispatch" > "$WORK/dispatch_build.txt" 2>&1; then
+        fail "the driver_dispatch pair did not compile"
+        tail -5 "$WORK/dispatch_build.txt" >&2
+        return
+    fi
+    if ! "$WORK/dispatch" > "$WORK/dispatch_run.txt" 2>&1; then
+        fail "the driver_dispatch pair compiled but its run failed"
+        tail -5 "$WORK/dispatch_run.txt" >&2
+        return
+    fi
+    echo "leg   driver_dispatch pair: built and ran"
+}
+
 # Ports are derived from the pid rather than fixed. Two runs of this script
 # overlapping -- back to back in a suite, or side by side on a busy CI box --
 # otherwise reuse the same numbers, and a sender from the earlier run reaches
@@ -299,6 +320,8 @@ else
     echo "SKIP  bench_portable healthy pair -- not built on this host"
     skipped=$(( skipped + 1 ))
 fi
+
+dispatch_pair
 
 # ---------------------------------------------------------------------------
 
