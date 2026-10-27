@@ -3963,10 +3963,12 @@ void rocketnet_test_public_fragment_delivery()
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static uint64_t rocketnet_test_block_sum( const struct rocketnet_counters_t * a, const struct rocketnet_counters_t * b, int counter )
 {
     return rocketnet_counter_value( a, counter ) + rocketnet_counter_value( b, counter );
 }
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_test_fill_queries_payload( uint8_t payload[16], uint8_t direction_tag, int message_index )
 {
@@ -3979,6 +3981,7 @@ static void rocketnet_test_fill_queries_payload( uint8_t payload[16], uint8_t di
         payload[i] = (uint8_t) ( ( ( message_index + 1 ) * ( i + 3 ) ) ^ direction_tag );
 }
 
+#if ROCKETNET_DEV
 static void rocketnet_test_validate_queries_batch( const struct rocketnet_message_batch_t * batch,
                                                    int expected_client_index,
                                                    uint8_t direction_tag,
@@ -4008,6 +4011,7 @@ static void rocketnet_test_validate_queries_batch( const struct rocketnet_messag
         ( *message_bytes_received ) += (uint64_t) batch->bytes[i];
     }
 }
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 void rocketnet_test_public_client_server_queries()
