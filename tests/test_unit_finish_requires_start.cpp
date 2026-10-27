@@ -6,9 +6,11 @@
 // Every packet and message finish requires a live reservation from the matching
 // start: calling finish before start, after a refused or dropped start, a
 // second time after finish, after abort, on a different slot, with a mismatched
-// reservation mode, or after update, flush, disconnect, reset or stop retired
-// the reservation asserts in a debug build and returns 0 safely in a release
-// build. Out-of-range byte counts on a live reservation still abort the
+// reservation mode asserts in a debug build and returns 0 safely in a release
+// build. A server packet whose lease update, send_packets or stop already
+// reset is caller misuse: finish returns 0 in every build, counts one
+// api_misuse and does not assert. The client transport still asserts for
+// that sequence. Out-of-range byte counts on a live reservation still abort the
 // reservation and return 0 without firing the missing-start assertion, and a
 // subsequent valid start and finish succeeds.
 
@@ -895,7 +897,9 @@ static void test_finish_requires_start_transport_packets()
             check_asserted_once();
         }
 
-        // 3g. Open lease invalidated by send_packets or update: finish_packet asserts and returns 0
+        // 3g. Open lease invalidated by send_packets or update. The client
+        // finish asserts. The server lease was reset: finish returns 0, counts
+        // one api_misuse, and does not assert.
         c_frame = rocketnet_client_transport_start_packet( client_a, 16, &c_ctx );
         check( c_frame != NULL );
         rocketnet_client_transport_send_packets( client_a );
@@ -905,8 +909,12 @@ static void test_finish_requires_start_transport_packets()
         s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
         check( s_frame != NULL );
         rocketnet_server_transport_send_packets( server_a );
-        check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) == 0 );
-        check_asserted_once();
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) == 0 );
+            check_not_asserted();
+            check( rocketnet_api_misuse_count() == misuses + 1 );
+        }
 
         const double c_origin = rocketnet_client_message_client( world_a.clients[0] )->object.clock_origin;
         const double s_origin = rocketnet_server_message_server( world_a.server )->object.clock_origin;
@@ -921,8 +929,12 @@ static void test_finish_requires_start_transport_packets()
         s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
         check( s_frame != NULL );
         rocketnet_server_transport_update( server_a, world_a.time - s_origin );
-        check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) == 0 );
-        check_asserted_once();
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) == 0 );
+            check_not_asserted();
+            check( rocketnet_api_misuse_count() == misuses + 1 );
+        }
 
         // Verify the two valid 16-byte packets from 3c arrived intact at the transport layer,
         // and advance one more transport tick so their payload batch is cleared before message-layer pumping
@@ -939,12 +951,54 @@ static void test_finish_requires_start_transport_packets()
         rocketnet_client_transport_update( client_a, world_a.time - c_origin );
         rocketnet_server_transport_update( server_a, world_a.time - s_origin );
         world_a.time += 0.01;
+
+        // Consumed lease (finished or aborted in state 3) followed by reset
+        // (send_packets or update) must still assert on finish of a saved copy,
+        // not take the retired() misuse path.
+        s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
+        check( s_frame != NULL );
+        memset( s_frame + s_ctx.payload_index, 0x23, 16 );
+        s_copy = s_ctx;
+        check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) > 0 );
+        check_not_asserted();
+        rocketnet_server_transport_send_packets( server_a );
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_a, &s_copy, 16 ) == 0 );
+            check_asserted_once();
+            check( rocketnet_api_misuse_count() == misuses );
+        }
+        world_a.time += 0.01;
+        g_finish_test_now = world_a.time;
+        rocketnet_client_transport_update( client_a, world_a.time - c_origin );
+        rocketnet_server_transport_update( server_a, world_a.time - s_origin );
+        (void) rocketnet_client_transport_payloads( client_a, &rx_data, &rx_bytes );
+        world_a.time += 0.01;
+        g_finish_test_now = world_a.time;
+        rocketnet_client_transport_update( client_a, world_a.time - c_origin );
+        rocketnet_server_transport_update( server_a, world_a.time - s_origin );
+
+        s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
+        check( s_frame != NULL );
+        s_copy = s_ctx;
+        rocketnet_server_transport_abort_packet( server_a, &s_ctx );
+        check_not_asserted();
+        rocketnet_server_transport_send_packets( server_a );
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_a, &s_copy, 16 ) == 0 );
+            check_asserted_once();
+            check( rocketnet_api_misuse_count() == misuses );
+        }
+        world_a.time += 0.01;
     }
 
     // 3h. After all invalid packet finishes, world_a still delivers messages end-to-end
     finish_world_verify_round_trip( &world_a, 0, 0x91, 0x92 );
 
-    // 3i. Open lease invalidated by stop: finish_packet asserts and returns 0
+    // 3i. Open lease invalidated by stop. The client finish asserts. The
+    // server lease was reset: finish returns 0, counts one api_misuse, and
+    // does not assert.
     {
         rocketnet_packet_context_t c_ctx;
         uint8_t * c_frame = rocketnet_client_transport_start_packet( client_b, 16, &c_ctx );
@@ -961,8 +1015,12 @@ static void test_finish_requires_start_transport_packets()
         finish_assert_scope_t scope;
         check( rocketnet_client_transport_finish_packet( client_b, &c_ctx, 16 ) == 0 );
         check_asserted_once();
-        check( rocketnet_server_transport_finish_packet( server_b, &s_ctx, 16 ) == 0 );
-        check_asserted_once();
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_b, &s_ctx, 16 ) == 0 );
+            check_not_asserted();
+            check( rocketnet_api_misuse_count() == misuses + 1 );
+        }
     }
 
     finish_world_destroy( &world_a );
