@@ -43,6 +43,19 @@ purpose. In that build a transport list naming `xdp` refuses it at create with
 server host needs no compiler, no `make`, no kernel headers and no temporary
 directory to start `xdp`.
 
+A Linux client build needs none of the server libraries. liburing, libbpf
+and libxdp are server-only — the io_uring and XDP server transports link
+them, and no client code does — so a machine building only a client needs
+none of their development headers or libraries: configure with both
+`-DROCKETNET_XDP=OFF` and `-DROCKETNET_IO_URING=OFF`, then build
+`rocketnet` and `rocketnet_shared` and install as below. The shared library
+carries no `liburing`, `libbpf` or `libxdp` link (`readelf -d` shows no such
+`NEEDED` entry), and the installed CMake package requires none of the three,
+so `find_package(RocketNet)` succeeds on a machine without them. CI builds
+this configuration on Linux and runs a C client against both installed
+libraries (`tools/check_package.py --client`); BUILDING.md, "Building a
+Linux client without the server libraries", is the full paragraph.
+
 `make` is the front door. It configures `build/` as **Release** with
 `-DROCKETNET_DEV=ON` (`make ROCKETNET_DEV=OFF` builds the production library;
 `BUILDING.md`, "Production builds"), shows the configure status lines for XDP
