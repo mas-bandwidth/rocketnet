@@ -54,6 +54,10 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - Reliable work is retained until delivery or the reliable timeout. Unreliable
   work may be dropped only at documented bounded resources and is counted.
 - Receipt serials report terminal ACK or loss for receipt-bearing messages.
+  The outcomes recorded for a connection remain readable after that
+  connection ends, until its next update begins. A receipt-bearing send,
+  reliable or unreliable, that is still in flight when its connection ends
+  gets no terminal outcome.
 
 ## Platforms and transports
 
