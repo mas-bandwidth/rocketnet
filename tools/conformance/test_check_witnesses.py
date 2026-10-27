@@ -6,10 +6,11 @@
 """Tests for tools/conformance/check_witnesses.py.
 
 Each test builds a small fixture tree in a temporary directory -- a
-STANDARD.md, a tla/ model, a code file and a test file -- and drives the
-checker against it. The checker is a pure function of its root, so the tests
-need no network, no time and no socket, and each stays inside its own
-temporary directory.
+standard/TRANSPORT.md, a standard/MESSAGES.md, a standard/RATIONALE.md, a
+tla/ model, a code file and a test file -- and drives the checker against
+it. The checker is a pure function of its root, so the tests need no
+network, no time and no socket, and each stays inside its own temporary
+directory.
 
 Run:  python3 tools/conformance/test_check_witnesses.py
 """
@@ -24,11 +25,24 @@ sys.path.insert(0, HERE)
 import check_witnesses  # noqa: E402
 
 
-STANDARD = """# fixture standard
+TRANSPORT = """# fixture transport
 
-line one carries no rule.
+<a id="t1"></a>
+## t1. Fixture
+
 a receiver MUST drop a packet below its floor.
 a sender MUST NOT exceed its budget.
+"""
+
+MESSAGES = """# fixture messages
+"""
+
+RATIONALE = """# fixture rationale
+
+<a id="t1"></a>
+## t1. Fixture
+
+a receiver must drop a packet below its floor.
 """
 
 TLA = """---- MODULE Fixture ----
@@ -47,17 +61,22 @@ test_below_floor
 test_budget
 """
 
-HEADER = "standard_line\trule\ttla_invariant\tcode_function\ttest\ttier\n"
+HEADER = "section\trule\ttla_invariant\tcode_function\ttest\ttier\n"
 
 
 class CheckerFixture(unittest.TestCase):
     def build(self, rows):
         root = tempfile.mkdtemp(prefix="witnesses-")
         os.makedirs(os.path.join(root, "docs"))
+        os.makedirs(os.path.join(root, "standard"))
         os.makedirs(os.path.join(root, "tla"))
         os.makedirs(os.path.join(root, "sdk"))
-        with open(os.path.join(root, "STANDARD.md"), "w") as handle:
-            handle.write(STANDARD)
+        with open(os.path.join(root, "standard", "TRANSPORT.md"), "w") as handle:
+            handle.write(TRANSPORT)
+        with open(os.path.join(root, "standard", "MESSAGES.md"), "w") as handle:
+            handle.write(MESSAGES)
+        with open(os.path.join(root, "standard", "RATIONALE.md"), "w") as handle:
+            handle.write(RATIONALE)
         with open(os.path.join(root, "tla", "Fixture.tla"), "w") as handle:
             handle.write(TLA)
         with open(os.path.join(root, "sdk", "code.cpp"), "w") as handle:
@@ -72,10 +91,10 @@ class CheckerFixture(unittest.TestCase):
 
     def test_every_anchor_resolves(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["t1", "a receiver MUST drop a packet below its floor",
              "BelowFloorIsRefused", "sdk/code.cpp:fixture_below_floor_check",
              "sdk/tests.cpp:test_below_floor", "unit"],
-            ["5", "a sender MUST NOT exceed its budget",
+            ["t1", "a sender MUST NOT exceed its budget",
              "SenderWithinBudget", "sdk/code.cpp:fixture_budget_check",
              "sdk/tests.cpp:test_budget", "unit"],
         ])
@@ -85,34 +104,51 @@ class CheckerFixture(unittest.TestCase):
 
     def test_gap_is_counted_not_failed(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["t1", "a receiver MUST drop a packet below its floor",
              "-", "-", "-", "none"],
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 0, report)
         self.assertIn("GAPS (tier none): 1", report)
 
+    def test_renamed_section_anchor_fails(self):
+        root = self.build([
+            ["t9", "a receiver MUST drop a packet below its floor",
+             "-", "-", "-", "none"],
+        ])
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1)
+        self.assertIn("does not resolve", report)
+
     def test_stale_code_anchor_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["t1", "a receiver MUST drop a packet below its floor",
              "-", "sdk/code.cpp:fixture_renamed_away", "-", "unit"],
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 1)
         self.assertIn("does not resolve", report)
 
-    def test_stale_standard_keyword_fails(self):
+    def test_stale_rule_text_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its ceiling",
+            ["t1", "a receiver MUST drop a packet below its ceiling",
              "-", "-", "-", "none"],
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 1)
-        self.assertIn("no longer carries the rule keyword", report)
+        self.assertIn("no longer carries the rule text", report)
+
+    def test_rule_text_kept_in_rationale_passes(self):
+        root = self.build([
+            ["t1", "a receiver must drop a packet below its floor",
+             "-", "-", "-", "none"],
+        ])
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 0, report)
 
     def test_stale_tla_invariant_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["t1", "a receiver MUST drop a packet below its floor",
              "RemovedInvariant", "-", "-", "none"],
         ])
         code, report = check_witnesses.run(root)
@@ -121,7 +157,7 @@ class CheckerFixture(unittest.TestCase):
 
     def test_stale_test_anchor_fails(self):
         root = self.build([
-            ["4", "a receiver MUST drop a packet below its floor",
+            ["t1", "a receiver MUST drop a packet below its floor",
              "-", "-", "sdk/tests.cpp:test_deleted", "unit"],
         ])
         code, report = check_witnesses.run(root)
