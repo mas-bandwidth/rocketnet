@@ -239,11 +239,17 @@ static int soak_arena_self_test( void ) {
     if (!first || !second || soak_malloc(NULL, 1) != NULL ||
         ((uintptr_t)first & 63) != 0 || ((uintptr_t)second & 63) != 0 ||
         g_arena.used != arena_bytes) return 1;
+    // Two same-class blocks freed in order come back last-freed first: a FIFO
+    // free sequence would hand back first here and fail.
     soak_free(NULL, first);
-    void * reused = soak_malloc(NULL, 1);
-    if (reused != first || g_arena.used != arena_bytes) return 1;
     soak_free(NULL, second);
-    soak_free(NULL, reused);
+    if (g_arena.free_count != 2) return 1;
+    void * reused_last = soak_malloc(NULL, 1);
+    void * reused_first = soak_malloc(NULL, 1);
+    if (reused_last != second || reused_first != first || g_arena.free_count != 0 ||
+        g_arena.used != arena_bytes) return 1;
+    soak_free(NULL, reused_last);
+    soak_free(NULL, reused_first);
     const struct soak_alloc_t before_reset = soak_alloc_read();
     if (before_reset.live_allocs != 0 || before_reset.live_bytes != 0 ||
         g_arena.free_count != 2 || !soak_arena_release()) return 1;
