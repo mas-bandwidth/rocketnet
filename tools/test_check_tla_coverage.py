@@ -225,6 +225,28 @@ class CheckTlaCoverageTest(unittest.TestCase):
         self.assertIn("is inside rocketnet_other_init, not "
                       "rocketnet_send_budget_init", out)
 
+    def test_wrapped_citation_outside_named_symbol_fails(self):
+        root = self.plant_basic_repo()
+        (root / "sdk" / "rocketnet_send_budget.h").write_text(
+            "// tla/RNSendBudget.tla\n"
+            "void rocketnet_send_budget_init(void);\n"
+            "void rocketnet_other_init(void)\n{\n}\n")
+        (root / "tla" / "ReplayWindow.tla").write_text(
+            "(* rocketnet_send_budget_init (sdk/rocketnet_send_budget.h:  *)\n"
+            "(* 4) *)\n")
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": GOOD_NOTE,
+        })
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0)
+        self.assertIn("is inside rocketnet_other_init, not "
+                      "rocketnet_send_budget_init", out)
+
     def test_real_coverage_passes(self):
         code, out = run_check(REPO_ROOT, ["--all"])
         self.assertEqual(code, 0, out)

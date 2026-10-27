@@ -19,13 +19,16 @@ _PATH_TOKEN_RE = re.compile(
 DST_CHECK_RE = re.compile(r'rocketnet_dst_check_fail\(\s*\w+,\s*"([a-z0-9_]+)"')
 
 CITATION_RE = re.compile(
-    r"((?:sdk|tests|tla)/[A-Za-z0-9_./-]+\.[a-z]+):(\d+)(?:-(\d+))?")
+    r"((?:sdk|tests|tla)/[A-Za-z0-9_./-]+\.[a-z]+):"
+    r"(?:\s*(?:\*\))?\s*\n\s*(?:\(\*|//|\*)?\s*)?(\d+)(?:-(\d+))?")
 CITATION_SCAN_FILES = (
     "sdk/rocketnet_driver.h",
     "sdk/rocketnet_layers.h",
     "sdk/rocketnet_driver_builtin.cpp",
     "sdk/rocketnet_allocator.h",
     "sdk/rocketnet_server_uring_linux.cpp",
+    "sdk/rocketnet_server_uring.h",
+    "sdk/rocketnet_replay.h",
     "tla/ReplayWindow.tla",
     "tla/MCReplayWindow.tla",
     "tla/ServerSession.tla",

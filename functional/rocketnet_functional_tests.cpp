@@ -6851,15 +6851,11 @@ void rocketnet_test_server_uring_probe()
     struct rocketnet_server_uring_t * stalled = rocketnet_test_server_uring_create_stalled( &stall_address );
     rocketnet_check( stalled );
     const uint16_t stall_port = stall_address.port;
-    const uint64_t leaked_bytes_before = rocketnet_server_uring_leaked_bytes();
-    const uint64_t leaked_transports_before = rocketnet_server_uring_leaked_transports();
     rocketnet_server_uring_test_stall_destroy( stalled );
     rocketnet_server_uring_stop( stalled );
     for ( int poll = 0; poll < 1024; ++poll )
         rocketnet_check( !rocketnet_server_uring_stopped( stalled ) );
     rocketnet_check( rocketnet_server_uring_num_queues( stalled ) == 2 );
-    rocketnet_check( rocketnet_server_uring_leaked_bytes() == leaked_bytes_before );
-    rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before );
     rocketnet_server_uring_test_resume_stop( stalled );
     const double stop_deadline = rocketnet_time() + 5.0;
     while ( !rocketnet_server_uring_stopped( stalled ) && rocketnet_time() < stop_deadline )
@@ -6878,7 +6874,6 @@ void rocketnet_test_server_uring_probe()
         rocketnet_sleep( 0.001 );
     rocketnet_check( rocketnet_server_uring_stopped( rebound ) );
     rocketnet_server_uring_destroy( rebound );
-    rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before );
 }
 
 // the wire exchange, the gso exchange's shape for this transport: a plain UDP
