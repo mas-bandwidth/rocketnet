@@ -11,7 +11,7 @@
 #if !defined( _WIN32 )
 #define _POSIX_C_SOURCE 200809L
 #define _DARWIN_C_SOURCE
-#endif
+#endif // #if !defined( _WIN32 )
 
 #include "load_census.h"
 #include "tests/portable_crt.h"
@@ -38,13 +38,14 @@ static void * test_thread_main( void * arg )
     pthread_mutex_unlock( &test_mutex );
     return NULL;
 }
-#endif
+#endif // #if defined( _WIN32 )
 
 static struct load_census_t test_before, test_after;
 
 static struct load_census_survivors_t test_survivors( void )
 {
     struct load_census_survivors_t survivors;
+
     assert( load_census_take( &test_after ) );
     assert( load_census_survivors( NULL, NULL, 0, &test_before, &test_after, &survivors ) );
     return survivors;
@@ -55,14 +56,15 @@ int main( void )
 #if defined( _WIN32 )
     test_release = CreateEventA( NULL, TRUE, FALSE, NULL );
     assert( test_release );
-#endif
+#endif // #if defined( _WIN32 )
 
-    /* nothing taken: nothing survives */
+    // nothing taken: nothing survives
     assert( load_census_take( &test_before ) );
+
     struct load_census_survivors_t survivors = test_survivors();
     assert( survivors.threads == 0 && survivors.handles == 0 );
 
-    /* a file left open survives; closed, it does not */
+    // a file left open survives; closed, it does not
     FILE * file = rocketnet_test_fopen( "test_load_census.tmp", "w" );
     assert( file );
     survivors = test_survivors();
@@ -77,8 +79,11 @@ int main( void )
     FILE * first = rocketnet_test_fopen( "test_load_census.tmp", "w" );
     assert( first );
     assert( load_census_take( &test_before ) );
+
     const int number = fileno( first );
+
     fclose( first );
+
     FILE * second = rocketnet_test_fopen( "test_load_census_other.tmp", "w" );
     assert( second && fileno( second ) == number );
     survivors = test_survivors();
@@ -86,7 +91,7 @@ int main( void )
     fclose( second );
     remove( "test_load_census_other.tmp" );
     assert( load_census_take( &test_before ) );
-#endif
+#endif // #if !defined( _WIN32 )
 
 #if !defined( _WIN32 )
     /* the random device is init-scope state: a pair that ends before term
@@ -100,7 +105,7 @@ int main( void )
     assert( survivors.handles == 1 );
     fclose( device );
     assert( load_census_take( &test_before ) );
-#endif
+#endif // #if !defined( _WIN32 )
 
     /* a thread left running survives, a joined one does not: this process
        created it, so it is never an operating-system pool worker */
@@ -115,17 +120,19 @@ int main( void )
     CloseHandle( thread );
 #else
     pthread_mutex_lock( &test_mutex );
+
     pthread_t thread;
     assert( pthread_create( &thread, NULL, test_thread_main, NULL ) == 0 );
     survivors = test_survivors();
     assert( survivors.threads == 1 && survivors.os_pool_threads == 0 );
     pthread_mutex_unlock( &test_mutex );
     assert( pthread_join( thread, NULL ) == 0 );
-#endif
+#endif // #if defined( _WIN32 )
     survivors = test_survivors();
     assert( survivors.threads == 0 && survivors.handles == 0 );
 
     remove( "test_load_census.tmp" );
     printf( "test_load_census\n" );
+
     return 0;
 }

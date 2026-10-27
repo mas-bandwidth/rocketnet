@@ -19,7 +19,7 @@
 
 #if !defined( ROCKETNET_DEV )
 #define ROCKETNET_DEV 1
-#endif
+#endif // #if !defined( ROCKETNET_DEV )
 
 #include "../../examples/shutdown.h"
 #include "rocketnet.h"
@@ -44,7 +44,9 @@ int main( int argc, char ** argv )
     char address_buffer[256];
     const char * address = address_buffer;
     if ( !rocketnet_test_getenv( "ROCKETNET_CLIENT_CONNECT_ADDRESS", address_buffer, sizeof( address_buffer ) ) )
+    {
         address = argc > 1 ? argv[1] : "127.0.0.1:40000";
+    }
 
     int skip_mode = -1;
     char broken[256];
@@ -52,7 +54,9 @@ int main( int argc, char ** argv )
     {
         skip_mode = atoi( broken + 17 );
         if ( skip_mode < 0 || skip_mode > 7 )
+        {
             skip_mode = -1;
+        }
     }
 
     uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
@@ -63,6 +67,7 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
     {
         int value = 0;
@@ -74,12 +79,14 @@ int main( int argc, char ** argv )
                                                                                              : -1;
             value = nibble < 0 ? -1 : value * 16 + nibble;
         }
+
         if ( value < 0 )
         {
             printf( "error: bad server public key\n" );
             rocketnet_term();
             return 1;
         }
+
         server_key[i] = (uint8_t) value;
     }
 
@@ -102,6 +109,7 @@ int main( int argc, char ** argv )
         rn_cli_client_stop_and_destroy( client );
         client = NULL;
     }
+
     if ( !client )
     {
         printf( "error: failed to create client: %s\n", rocketnet_status_name( create_status ) );
@@ -124,6 +132,7 @@ int main( int argc, char ** argv )
     while ( !done )
     {
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
+
         if ( rocketnet_time() - wall_start > 20.0 )
         {
             printf( "error: client timed out\n" );
@@ -132,9 +141,11 @@ int main( int argc, char ** argv )
         }
 
         // (1) update pumps the transport and takes in what arrived
+
         rocketnet_client_update( client, now );
 
         // (2) receive and process every received message for this update
+
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
@@ -150,6 +161,7 @@ int main( int argc, char ** argv )
         }
 
         // (3) run the game simulation for the frame: nothing to simulate
+
         if ( state == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             if ( !connected )
@@ -160,6 +172,7 @@ int main( int argc, char ** argv )
             }
 
             // (4) queue this frame's outgoing messages, one mode per frame
+
             if ( next_mode < 8 )
             {
                 if ( next_mode != skip_mode )
@@ -171,6 +184,7 @@ int main( int argc, char ** argv )
                         exit_code = 1;
                         break;
                     }
+
                     payload[0] = (uint8_t) next_mode;
                     memcpy( payload + 1, happy_pattern, (size_t) pattern_bytes );
                     serials[next_mode] = rocketnet_client_finish_message( client, payload_bytes );
@@ -186,9 +200,12 @@ int main( int argc, char ** argv )
                     printf( "skipping mode %d\n", next_mode );
                     fflush( stdout );
                 }
+
                 next_mode++;
                 if ( next_mode == 8 )
+                {
                     all_sent_at = now;
+                }
             }
 
             struct rocketnet_receipt_t receipts[64];
@@ -208,23 +225,33 @@ int main( int argc, char ** argv )
             }
 
             int receipts_complete = 1;
+
             for ( int mode = 5; mode <= 7; mode++ )
                 if ( serials[mode] != 0 && !acked[mode] )
+                {
                     receipts_complete = 0;
+                }
 
             if ( next_mode == 8 && receipts_complete && ( now - all_sent_at ) >= 0.25 )
+            {
                 done = 1;
+            }
             else if ( next_mode == 8 && ( now - all_sent_at ) > 5.0 )
+            {
                 done = 1;
+            }
         }
 
         // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
+
         rocketnet_client_send_packets( client );
 
         if ( !done )
+        {
             rocketnet_sleep( 0.005 );
+        }
     }
 
     if ( exit_code == 0 && connected )

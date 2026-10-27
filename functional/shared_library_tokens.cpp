@@ -21,7 +21,7 @@
 #include <windows.h>
 #else
 #include <dlfcn.h>
-#endif
+#endif // #if defined( _WIN32 )
 
 static void rocketnet_shared_library_token_check_handler( const char * condition, const char * function, const char * file, int line )
 {
@@ -45,7 +45,7 @@ typedef void ( *api_polish_dev_set_log_t )( rocketnet_log_function_t, void * );
 
 #if ROCKETNET_DEV
 static_assert( std::is_same<decltype( &rocketnet_create_dev_connect_token ), api_polish_dev_minter_t>::value, "dev token minter signature" );
-#endif
+#endif // #if ROCKETNET_DEV
 
 static api_polish_dev_set_log_t api_polish_dev_set_log = NULL;
 static int api_polish_dev_error_lines = 0;
@@ -53,7 +53,9 @@ static int api_polish_dev_error_lines = 0;
 static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level, const char *, size_t )
 {
     if ( level == ROCKETNET_LOG_LEVEL_ERROR )
+    {
         api_polish_dev_error_lines++;
+    }
 }
 
 static api_polish_dev_minter_t api_polish_dev_minter()
@@ -69,9 +71,10 @@ static api_polish_dev_minter_t api_polish_dev_minter()
     rocketnet_check( library != NULL );
     minter = (api_polish_dev_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
     api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_log_function" );
-#endif
+#endif // #if defined( _WIN32 )
     rocketnet_check( minter != NULL );
     rocketnet_check( api_polish_dev_set_log != NULL );
+
     return minter;
 }
 
@@ -80,25 +83,30 @@ void test_api_polish_dev_token_string()
     api_polish_dev_minter_t create_dev = api_polish_dev_minter();
     uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     memset( server_key, 0x42, sizeof( server_key ) );
+
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES + 1];
     memset( token, 0x5A, sizeof( token ) );
     api_polish_dev_error_lines = 0;
     api_polish_dev_set_log( api_polish_dev_log_capture, NULL );
 
     // no address at all: refused and named, nothing written
+
     rocketnet_check( create_dev( NULL, NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( api_polish_dev_error_lines == 1 );
     rocketnet_check( token[0] == 0x5A && token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1] == 0x5A );
 
     // an address that does not parse
+
     rocketnet_check( create_dev( "not an address", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
     rocketnet_check( token[0] == 0x5A );
 
     // a dead lifetime is refused
+
     rocketnet_check( create_dev( "127.0.0.1:40000", NULL, server_key, 0, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( token[0] == 0x5A );
 
     // the string fills the public buffer exactly, NUL-terminated, nothing past it
+
     rocketnet_check( create_dev( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_OK );
     rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
     rocketnet_check( token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] == 0x5A );
@@ -124,7 +132,7 @@ static ctv_dev_token_minter_t ctv_dev_token_minter()
     void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     rocketnet_check( library != NULL );
     minter = (ctv_dev_token_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
-#endif
+#endif // #if defined( _WIN32 )
     rocketnet_check( minter != NULL );
     return minter;
 }
@@ -162,6 +170,7 @@ void test_dev_token_minting_absent_in_release()
 #if ROCKETNET_FUNCTIONAL_RELEASE_LIBRARY_IS_DEV
     uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     memcpy( server_key, rocketnet_dev_server_public_key, sizeof( server_key ) );
+
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, token ) == ROCKETNET_STATUS_OK );
     rocketnet_check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
@@ -177,7 +186,8 @@ void test_dev_token_minting_absent_in_release()
         FreeLibrary( library );
     }
 #else
-    // Probe the exact release target built alongside this functional binary.
+    // Probe the exact release target built alongside this functional binary
+
     void * library = dlopen( ROCKETNET_RELEASE_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
     rocketnet_check( library != NULL );
     if ( library != NULL )
@@ -185,6 +195,6 @@ void test_dev_token_minting_absent_in_release()
         rocketnet_check( dlsym( library, "rocketnet_create_dev_connect_token" ) == NULL );
         dlclose( library );
     }
-#endif
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#endif // #if ROCKETNET_FUNCTIONAL_RELEASE_LIBRARY_IS_DEV
 }

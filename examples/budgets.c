@@ -28,12 +28,15 @@ static void send_burst( struct rocketnet_client_t * client, int channel, enum ro
     for ( int i = 0; i < count; i++ )
     {
         // burst policy: skip a message when there is no room; the budget drop counters still show the over-budget burst
+
         if ( !rocketnet_client_can_send_message( client, channel, reliability, MESSAGE_BYTES ) )
             continue;
+
         uint8_t * p = rocketnet_client_start_message( client, channel, reliability, MESSAGE_BYTES );
         if ( p )
         {
             memset( p, 'A' + i % 26, MESSAGE_BYTES );
+
             const uint32_t serial = rocketnet_client_finish_message( client, MESSAGE_BYTES );
             (void) serial;
         }
@@ -48,6 +51,7 @@ int main( void )
         printf( "FAIL: init: %s\n", rocketnet_status_name( init_status ) );
         return 1;
     }
+
     printf( "client send budget default: %d kbps\n", ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
     printf( "server per-client send budget default: %d kbps\n", ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
 
@@ -57,11 +61,16 @@ int main( void )
     if ( server_config_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
@@ -69,14 +78,21 @@ int main( void )
     enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
     if ( server && server_status == ROCKETNET_STATUS_OK )
+    {
         server_status = rocketnet_server_start( server );
+    }
+
     if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -87,20 +103,30 @@ int main( void )
     {
         printf( "FAIL: server ipv4 address\n" );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     rocketnet_server_public_key( server, server_public_key );
+
     const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
     if ( token_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -110,14 +136,20 @@ int main( void )
     {
         printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     client_config.transport = "loopback";
     client_config.send_kbps = CLIENT_SEND_KBPS;
     printf( "client send budget from config at create: %d kbps\n", client_config.send_kbps );
+
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
@@ -125,9 +157,13 @@ int main( void )
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -141,21 +177,27 @@ int main( void )
         rocketnet_client_update( client, now );
 
         // the server's one queue names each message's channel: the reliable burst is on channel 1
+
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
         }
+
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             for ( int i = 0; i < batch->num_messages; i++ )
+            {
                 reliable_received += batch->channel[i] == 1;
+            }
 
         if ( !bursts_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             // the runtime call needs a connected client; the config set the starting rate
+
             const enum rocketnet_status_t status = rocketnet_client_set_send_kbps( client, CLIENT_SEND_KBPS );
             printf( "runtime set-send-kbps returned %s\n", rocketnet_status_name( status ) );
 
             // over budget, unreliable messages are dropped and counted; reliable messages wait
+
             send_burst( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, UNRELIABLE_COUNT );
             send_burst( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, RELIABLE_COUNT );
             bursts_sent = 1;
@@ -170,16 +212,19 @@ int main( void )
     rocketnet_client_stats( client, &stats );
     printf( "unreliable over-budget drops: %llu\n", (unsigned long long) stats.messages_dropped_over_budget );
     printf( "reliable messages arrived: %d/%d\n", reliable_received, RELIABLE_COUNT );
+
     const int result = stats.messages_dropped_over_budget > 0 && reliable_received == RELIABLE_COUNT ? 0 : 1;
 
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
+
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
+
     printf( result == 0 ? "PASS\n" : "FAIL: unreliable messages over budget drop and reliable ones all arrive\n" );
     return result;
 }

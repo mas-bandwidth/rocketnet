@@ -53,30 +53,46 @@ int main( void )
     if ( server_config_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
     server_config.num_channels = NUM_MODES;
 
     // the development network simulator: 20 ms latency, 35 ms jitter, set before start
+
     enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
     if ( server )
+    {
         rocketnet_server_network_simulator( server, 20, 35, 0, 0 );
+    }
+
     if ( server && server_status == ROCKETNET_STATUS_OK )
+    {
         server_status = rocketnet_server_start( server );
+    }
+
     if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -87,20 +103,30 @@ int main( void )
     {
         printf( "FAIL: server ipv4 address\n" );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     rocketnet_server_public_key( server, server_public_key );
+
     const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
     if ( token_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -110,32 +136,48 @@ int main( void )
     {
         printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     client_config.transport = "loopback";
     client_config.num_channels = NUM_MODES;
+
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
     if ( client )
+    {
         rocketnet_client_network_simulator( client, 20, 35, 0, 0 );
+    }
+
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
     struct mode_t stats[NUM_MODES];
     memset( stats, 0, sizeof( stats ) );
     for ( int m = 0; m < NUM_MODES; m++ )
+    {
         stats[m].increasing = stats[m].in_order = 1;
+    }
+
     int sent = 0;
 
     for ( int frame = 0; frame < 400; frame++ )
@@ -145,6 +187,7 @@ int main( void )
         rocketnet_client_update( client, now );
 
         // each message is its mode and its number, 1 to 8
+
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
         {
@@ -157,9 +200,12 @@ int main( void )
                 s->duplicates += s->seen[number];
                 s->seen[number] = 1;
                 if ( s->arrived < NUM_MESSAGES * 2 )
+                {
                     s->order[s->arrived++] = number;
+                }
             }
         }
+
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
         }
@@ -184,13 +230,18 @@ int main( void )
         // one message a frame; the first of each mode goes out at 100% loss.
         // The loss setting holds through send_packets, since an unreliable
         // message can leave at finish and a reliable one at send
+
         rocketnet_server_network_simulator( server, 20, 35, 0, 0 );
         if ( slot >= 0 && rocketnet_server_client_connected( server, slot ) && sent < NUM_MODES * NUM_MESSAGES )
         {
             const int m = sent / NUM_MESSAGES, number = sent % NUM_MESSAGES + 1;
             if ( number == 1 )
+            {
                 rocketnet_server_network_simulator( server, 20, 35, 100, 0 );
+            }
+
             // defer this numbered message to a later frame when there is no room
+
             if ( rocketnet_server_can_send_message( server, slot, m, modes[m], 2 ) )
             {
                 uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slot, m, modes[m], 2 );
@@ -198,6 +249,7 @@ int main( void )
                 {
                     p[0] = (uint8_t) m;
                     p[1] = (uint8_t) number;
+
                     const uint32_t serial = rocketnet_server_finish_message( server, 2 );
                     if ( serial )
                     {
@@ -209,6 +261,7 @@ int main( void )
         }
 
         // the client's packets carry its acks back to the server
+
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 ) )
@@ -217,6 +270,7 @@ int main( void )
                 if ( p )
                 {
                     p[0] = 0;
+
                     const uint32_t serial = rocketnet_client_finish_message( client, 1 );
                     (void) serial;
                 }
@@ -229,6 +283,7 @@ int main( void )
     }
 
     int result = sent == NUM_MODES * NUM_MESSAGES ? 0 : 1;
+
     for ( int m = 0; m < NUM_MODES; m++ )
     {
         const struct mode_t * s = &stats[m];
@@ -236,11 +291,15 @@ int main( void )
         const int sequenced = m == 1 || m == 4;
         char order[64] = "";
         for ( int i = 0, n = 0; i < s->arrived && n < 56; i++ )
+        {
             n += snprintf( order + n, sizeof( order ) - (size_t) n, "%s%d", i ? "," : "", s->order[i] );
+        }
+
         printf( "%-24s sent=%d arrived=%d order=[%s] gaps=%d duplicates=%d receipts=%d/%d\n", names[m], NUM_MESSAGES, s->arrived, order,
                 sequenced ? last - s->arrived : NUM_MESSAGES - s->arrived + s->duplicates, s->duplicates, s->acked, s->lost );
 
         int ok = s->duplicates == 0;
+
         if ( m == 0 || m == 5 )
             ok &= s->arrived == NUM_MESSAGES - 1 && !s->seen[1];      // unreliable: the dropped one is gone
         if ( sequenced )
@@ -262,13 +321,18 @@ int main( void )
 
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
+
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
+
     if ( result == 0 )
+    {
         printf( "PASS\n" );
+    }
+
     return result;
 }

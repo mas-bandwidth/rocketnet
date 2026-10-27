@@ -38,7 +38,7 @@
 
 #ifndef REPLAY_DELTA_BOUND
 #define REPLAY_DELTA_BOUND 4096
-#endif
+#endif // #ifndef REPLAY_DELTA_BOUND
 
 #define static_assert _Static_assert
 #include "rocketnet_replay.cpp"
@@ -49,7 +49,7 @@
 static uint64_t nondet_uint64( void ) { return 0; }
 #else
 uint64_t nondet_uint64( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 #define ROCKETNET_REPLAY_WINDOW_WORDS ( ROCKETNET_REPLAY_WINDOW_BITS / 64 )
 
@@ -76,6 +76,7 @@ static uint64_t mask_intersect( uint64_t a, uint64_t b, int word )
 
     if ( lo > hi )
         return 0;
+
     return bits_from_to( (int) ( lo - w0 ), (int) ( hi - w0 ) );
 }
 
@@ -92,15 +93,21 @@ static uint64_t reference_near_word( uint64_t old_word, uint64_t old_high,
         uint64_t b = ( sequence - 1 ) % ROCKETNET_REPLAY_WINDOW_BITS;
 
         if ( a <= b )
+        {
             vacated = mask_intersect( a, b, word );
+        }
         else
             vacated = mask_intersect( a, ROCKETNET_REPLAY_WINDOW_BITS - 1, word ) |
                       mask_intersect( 0, b, word );
     }
 
     uint64_t result = old_word & ~vacated;
+
     if ( set_at / 64ULL == (uint64_t) word )
+    {
         result |= 1ULL << ( set_at % 64ULL );
+    }
+
     return result;
 }
 
@@ -321,6 +328,7 @@ int harness_replay_near_partition_completeness( void )
 
     uint64_t part_id = nondet_uint64();
     __CPROVER_assume( part_id < REPLAY_NEAR_PARTITION_COUNT );
+
     uint64_t w_high = 0;
     uint64_t w_seq = 0;
     uint64_t w_word = 0;
@@ -332,6 +340,7 @@ int harness_replay_near_partition_completeness( void )
     int w_begin = (int) ( ( w_high + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS );
     int w_end = w_begin + (int) ( w_seq - w_high ) - 1;
     int w_set = (int) ( ( w_seq % ROCKETNET_REPLAY_WINDOW_BITS ) / 64ULL );
+
     __CPROVER_assert(
         replay_near_partition_matches( (int) part_id, w_begin, w_end, w_set, (int) w_word ) == 1,
         "each partition reachability witness satisfies its own partition predicate" );
@@ -374,9 +383,11 @@ static int harness_replay_near_case( int mode )
     sequence = nondet_uint64();
     replay.highest_opened = nondet_uint64();
     chosen_word = nondet_uint64();
-#endif
+#endif // #if defined( REPLAY_REACHABILITY_WITNESS )
     for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
+    {
         replay.window[w] = nondet_uint64();
+    }
 
     __CPROVER_assume( replay.highest_opened < UINT64_MAX );
     __CPROVER_assume( sequence > replay.highest_opened );
@@ -403,6 +414,7 @@ static int harness_replay_near_case( int mode )
     {
         __CPROVER_assume( end <= ROCKETNET_REPLAY_WINDOW_BITS );
     }
+
     old_word = replay.window[chosen_word];
 
     rocketnet_replay_advance( &replay, sequence );
@@ -414,7 +426,7 @@ static int harness_replay_near_case( int mode )
                       "a smaller delta clears exactly the vacated bits in every chosen word" );
 #if defined( REPLAY_REACHABILITY_WITNESS )
     __CPROVER_assert( 0, "replay path reachability negative control" );
-#endif
+#endif // #if defined( REPLAY_REACHABILITY_WITNESS )
     return 0;
 }
 
@@ -456,8 +468,11 @@ int harness_replay_far( void )
 
     sequence = nondet_uint64();
     replay.highest_opened = nondet_uint64();
+
     for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
+    {
         replay.window[w] = nondet_uint64();
+    }
 
     __CPROVER_assume( replay.highest_opened <= UINT64_MAX - ROCKETNET_REPLAY_WINDOW_BITS );
     __CPROVER_assume( sequence > replay.highest_opened );
@@ -468,16 +483,21 @@ int harness_replay_far( void )
     set_at = sequence % ROCKETNET_REPLAY_WINDOW_BITS;
     __CPROVER_assert( replay.highest_opened == sequence,
                       "highest_opened advances on a far delta" );
+
     for ( w = 0; w < ROCKETNET_REPLAY_WINDOW_WORDS; w++ )
     {
         uint64_t word = 0;
+
         if ( set_at / 64ULL == (uint64_t) w )
+        {
             word = 1ULL << ( set_at % 64ULL );
+        }
+
         __CPROVER_assert( replay.window[w] == word,
                           "a delta at least the width clears every word" );
     }
 #if defined( REPLAY_FAR_REACHABILITY )
     __CPROVER_assert( 0, "replay-far reachability control" );
-#endif
+#endif // #if defined( REPLAY_FAR_REACHABILITY )
     return 0;
 }

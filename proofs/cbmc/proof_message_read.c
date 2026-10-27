@@ -33,7 +33,7 @@ static unsigned nondet_uint( void ) { return 0; }
 #else
 int nondet_int( void );
 unsigned nondet_uint( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 #define BOUND 24
 
@@ -74,6 +74,7 @@ static void harness_reader( void )
 
     const uint8_t * end = payload + BOUND - 1;
     int yielded = 0;
+
     while ( rocketnet_message_reader_next( &reader, &record ) )
     {
         __CPROVER_assert( record.data >= payload, "record data starts inside the payload" );
@@ -133,6 +134,6 @@ int main( void )
     harness_short_and_config();
 #if defined( REACHABILITY_CONTROL )
     __CPROVER_assert( 0, "message-read reachability control" );
-#endif
+#endif // #if defined( REACHABILITY_CONTROL )
     return 0;
 }

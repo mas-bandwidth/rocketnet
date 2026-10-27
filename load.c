@@ -63,7 +63,7 @@
 
 #if defined( __linux__ ) && !defined( _GNU_SOURCE )
 #define _GNU_SOURCE     /* setns, for LOAD_CLIENT_NETNS */
-#endif
+#endif // #if defined( __linux__ ) && !defined( _GNU_SOURCE )
 
 #include "examples/shutdown.h"
 #include "rocketnet.h"
@@ -79,17 +79,17 @@
 #include <time.h>
 #if !defined( _WIN32 )
 #include <fcntl.h>
-#endif
+#endif // #if !defined( _WIN32 )
 #if defined( __APPLE__ )
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <libproc.h>
 #include <unistd.h>
-#endif
+#endif // #if defined( __APPLE__ )
 
 #if defined( __linux__ )
 #include <sched.h>
-#endif
+#endif // #if defined( __linux__ )
 
 #if !defined( _WIN32 )
 #include <sys/resource.h>
@@ -97,11 +97,11 @@
 #else
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#endif
+#endif // #ifndef WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
-#endif
+#endif // #if !defined( _WIN32 )
 
 #include "load_census.h"
 
@@ -176,11 +176,13 @@ static uint64_t load_clock_ns( void )
         fprintf( stderr, "load: QueryPerformanceFrequency failed; timing incomplete\n" );
         exit( 2 );
     }
+
     if ( !QueryPerformanceCounter( &counter ) )
     {
         fprintf( stderr, "load: QueryPerformanceCounter failed; timing incomplete\n" );
         exit( 2 );
     }
+
     const uint64_t ticks = (uint64_t) counter.QuadPart;
     const uint64_t hz = (uint64_t) frequency.QuadPart;
     return ticks / hz * 1000000000ULL + ticks % hz * 1000000000ULL / hz;
@@ -191,8 +193,9 @@ static uint64_t load_clock_ns( void )
         fprintf( stderr, "load: clock_gettime failed; timing incomplete\n" );
         exit( 2 );
     }
+
     return (uint64_t) value.tv_sec * 1000000000ULL + (uint64_t) value.tv_nsec;
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 static void load_timing_record_elapsed( struct load_timing_t * timing, enum load_timing_call_t call, uint64_t elapsed_ns )
@@ -202,9 +205,14 @@ static void load_timing_record_elapsed( struct load_timing_t * timing, enum load
     timing->buckets[(size_t) call * (size_t) LOAD_TIMING_BUCKET_COUNT + (size_t) bounded_bucket]++;
     timing->count[call]++;
     if ( elapsed_ns > timing->max_ns[call] )
+    {
         timing->max_ns[call] = elapsed_ns;
+    }
+
     if ( elapsed_ns >= 100000ULL )
+    {
         timing->overbudget_count[call]++;
+    }
 }
 
 static void load_timing_record( struct load_timing_t * timing, enum load_timing_call_t call, uint64_t start_ns )
@@ -216,6 +224,7 @@ static void load_timing_record( struct load_timing_t * timing, enum load_timing_
 static int load_timing_init( struct load_timing_t * timing )
 {
     memset( timing, 0, sizeof( *timing ) );
+
     const size_t bucket_count = (size_t) LOAD_TIMING_BUCKET_COUNT;
     if ( bucket_count > SIZE_MAX / (size_t) LOAD_TIMING_CALL_COUNT / sizeof( uint64_t ) )
         return 0;
@@ -228,9 +237,11 @@ static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timi
     const uint64_t count = timing->count[call];
     if ( count == 0 )
         return 0;
+
     const uint64_t target = count * percentile / 100;
     uint64_t seen = 0;
     const uint64_t offset = (uint64_t) call * LOAD_TIMING_BUCKET_COUNT;
+
     for ( uint64_t bucket = 0; bucket <= LOAD_TIMING_MAX_BUCKET_US; bucket++ )
     {
         seen += timing->buckets[(size_t) ( offset + bucket )];
@@ -241,6 +252,7 @@ static uint64_t load_timing_quantile_upper_us( const struct load_timing_t * timi
             return bucket + 1;
         }
     }
+
     return ( timing->max_ns[call] + 999ULL ) / 1000ULL;
 }
 
@@ -256,6 +268,7 @@ static void load_timing_print( const struct load_timing_t * timing )
                 load_timing_names[call], (double) timing->max_ns[call] / 1000.0,
                 load_timing_names[call], timing->overbudget_count[call] );
     }
+
     printf( " clock_pair_count=%" PRIu64 " clock_pair_p50_upper_us=%" PRIu64
             " clock_pair_p99_upper_us=%" PRIu64 " clock_pair_max_us=%.3f clock_pair_overbudget_count=%" PRIu64,
             timing->count[LOAD_TIMING_CLOCK_PAIR],
@@ -307,6 +320,7 @@ static int load_timing_selftest( void )
     LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, calls++ );
     ok = ok && calls == 2 && timing.count[LOAD_TIMING_CLIENT_UPDATE] == 3;
     free( timing.buckets );
+
     return ok;
 }
 
@@ -415,9 +429,11 @@ static long count_open_fds( void )
     const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( bytes <= 0 )
         return -1;
+
     struct proc_fdinfo * fds = (struct proc_fdinfo *) malloc( (size_t) bytes );
     if ( !fds )
         return -1;
+
     const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, fds, bytes );
     free( fds );
     if ( used < 0 )
@@ -429,15 +445,20 @@ static long count_open_fds( void )
     if ( getrlimit( RLIMIT_NOFILE, &rl ) == 0 && rl.rlim_cur != RLIM_INFINITY &&
          rl.rlim_cur < (rlim_t) cap )
         cap = (long) rl.rlim_cur;
+
     long count = 0;
+
     for ( long fd = 0; fd < cap; fd++ )
     {
         errno = 0;
         if ( fcntl( (int) fd, F_GETFD ) != -1 || errno != EBADF )
+        {
             count++;
+        }
     }
+
     return count;
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 static long count_threads( void )
@@ -447,8 +468,12 @@ static long count_threads( void )
     mach_msg_type_number_t count = 0;
     if ( task_threads( mach_task_self(), &threads, &count ) != KERN_SUCCESS )
         return -1;
+
     for ( mach_msg_type_number_t i = 0; i < count; i++ )
+    {
         (void) mach_port_deallocate( mach_task_self(), threads[i] );
+    }
+
     (void) vm_deallocate( mach_task_self(), (vm_address_t) threads,
                           (vm_size_t) ( count * sizeof( thread_act_t ) ) );
     return (long) count;
@@ -466,31 +491,39 @@ static long count_threads( void )
                 break;
             }
         }
+
         fclose( f );
         return threads;
     }
+
     return -1;
 #elif defined( _WIN32 )
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
         return -1;
+
     THREADENTRY32 entry;
     entry.dwSize = sizeof( entry );
+
     const DWORD self_pid = GetCurrentProcessId();
     long count = 0;
+
     if ( Thread32First( thread_list, &entry ) )
     {
         do
         {
             if ( entry.th32OwnerProcessID == self_pid )
+            {
                 count++;
+            }
         } while ( Thread32Next( thread_list, &entry ) );
     }
+
     CloseHandle( thread_list );
     return count;
 #else
     return -1;
-#endif
+#endif // #if defined( __APPLE__ )
 }
 
 /* The resource phases each harness role samples, by count for the receipt
@@ -516,12 +549,14 @@ static void load_warm_cycle( void )
 {
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return;
+
     static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = LOAD_PROTOCOL_ID;
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, dev_backend_key, sizeof( server_config.backend_public_key ) );
+
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     struct rocketnet_client_t * client = NULL;
@@ -529,8 +564,10 @@ static void load_warm_cycle( void )
     {
         char address[64];
         snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
+
         uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
         rocketnet_server_public_key( server, key );
+
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         struct rocketnet_client_config_t client_config;
         rocketnet_client_default_config( &client_config );
@@ -542,30 +579,42 @@ static void load_warm_cycle( void )
             rocketnet_client_destroy( client );
             client = NULL;
         }
+
         for ( int frame = 0; frame < 50; ++frame )
         {
             rocketnet_server_update( server, rocketnet_time() );
             while ( rocketnet_server_receive_messages( server ) != NULL )
             {
             }
+
             rocketnet_server_send_packets( server );
+
             if ( client )
             {
                 rocketnet_client_update( client, rocketnet_time() );
                 while ( rocketnet_client_receive_messages( client ) != NULL )
                 {
                 }
+
                 rocketnet_client_send_packets( client );
                 if ( frame >= 10 && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
                     break;
             }
+
             rocketnet_sleep( 0.01 );
         }
     }
+
     if ( client )
+    {
         rn_cli_client_stop_and_destroy( client );
+    }
+
     if ( server )
+    {
         rn_cli_server_stop_and_destroy( server );
+    }
+
     rocketnet_term();
 }
 
@@ -600,17 +649,21 @@ static void sample_resources( long * peak_fds, long * peak_threads )
     const long fds = count_open_fds();
 #if !defined( _WIN32 )
     const long threads = count_threads();
-#endif
+#endif // #if !defined( _WIN32 )
     if ( fds > *peak_fds )
+    {
         *peak_fds = fds;
+    }
 #if defined( _WIN32 )
     /* The global Toolhelp thread enumeration is expensive at large populations.
        Windows thread counts are sampled at named phase boundaries instead. */
     (void) peak_threads;
 #else
     if ( threads > *peak_threads )
+    {
         *peak_threads = threads;
-#endif
+    }
+#endif // #if defined( _WIN32 )
 }
 
 #if defined( _WIN32 )
@@ -618,9 +671,11 @@ static void sample_thread_boundary( long * peak_threads )
 {
     const long threads = count_threads();
     if ( threads > *peak_threads )
+    {
         *peak_threads = threads;
+    }
 }
-#endif
+#endif // #if defined( _WIN32 )
 
 #if !defined( _WIN32 )
 struct load_fd_limit_t
@@ -632,9 +687,13 @@ struct load_fd_limit_t
 static void format_rlim( rlim_t value, char * out, size_t out_size )
 {
     if ( value == RLIM_INFINITY )
+    {
         snprintf( out, out_size, "infinity" );
+    }
     else
+    {
         snprintf( out, out_size, "%llu", (unsigned long long) value );
+    }
 }
 
 static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
@@ -649,9 +708,15 @@ static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
 
     rlim_t target = 65536;
     if ( target < required )
+    {
         target = required;
+    }
+
     if ( rl.rlim_max != RLIM_INFINITY && rl.rlim_max < target )
+    {
         target = rl.rlim_max;
+    }
+
     if ( rl.rlim_cur == RLIM_INFINITY || rl.rlim_cur < target )
     {
         rl.rlim_cur = target;
@@ -663,6 +728,7 @@ static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
         fprintf( stderr, "load: getrlimit(RLIMIT_NOFILE) failed after raise: %s\n", strerror( errno ) );
         return 0;
     }
+
     limit->soft = rl.rlim_cur;
     limit->hard = rl.rlim_max;
 
@@ -683,7 +749,7 @@ static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
              "(macOS: sudo launchctl limit maxfiles 65536 65536)\n" );
     return 0;
 }
-#endif
+#endif // #if !defined( _WIN32 )
 
 static uint64_t query_rss_bytes( void )
 {
@@ -696,6 +762,7 @@ static uint64_t query_rss_bytes( void )
         if ( fscanf( f, "%lu %lu", &size_pages, &rss_pages ) == 2 )
         {
             fclose( f );
+
             long page_size = sysconf( _SC_PAGESIZE );
             if ( page_size > 0 )
                 return (uint64_t) rss_pages * (uint64_t) page_size;
@@ -705,7 +772,7 @@ static uint64_t query_rss_bytes( void )
             fclose( f );
         }
     }
-#endif
+#endif // #if defined( __linux__ )
 #if !defined( _WIN32 )
     struct rusage ru;
     if ( getrusage( RUSAGE_SELF, &ru ) == 0 )
@@ -714,15 +781,16 @@ static uint64_t query_rss_bytes( void )
         return (uint64_t) ru.ru_maxrss;
 #else
         return (uint64_t) ru.ru_maxrss * 1024ULL;
-#endif
+#endif // #if defined( __APPLE__ )
     }
+
     return 0;
 #else
     PROCESS_MEMORY_COUNTERS pmc;
     if ( GetProcessMemoryInfo( GetCurrentProcess(), &pmc, sizeof( pmc ) ) )
         return (uint64_t) pmc.WorkingSetSize;
     return 0;
-#endif
+#endif // #if !defined( _WIN32 )
 }
 
 static void write_u32_le( uint8_t * dst, uint32_t v )
@@ -756,8 +824,11 @@ static void build_message( uint8_t * buf, uint32_t magic, uint32_t client_idx, u
     write_u32_le( buf + 4, client_idx );
     write_u32_le( buf + 8, combo_idx );
     write_u32_le( buf + 12, seq );
+
     for ( int i = 16; i < LOAD_PAYLOAD_BYTES; i++ )
+    {
         buf[i] = pattern_byte( magic, client_idx, combo_idx, seq, i );
+    }
 }
 
 static int verify_message( const uint8_t * buf, int bytes, uint32_t expected_magic,
@@ -765,20 +836,25 @@ static int verify_message( const uint8_t * buf, int bytes, uint32_t expected_mag
 {
     if ( !buf || bytes != LOAD_PAYLOAD_BYTES )
         return 0;
+
     const uint32_t magic = read_u32_le( buf + 0 );
     if ( magic != expected_magic )
         return 0;
+
     const uint32_t client_idx = read_u32_le( buf + 4 );
     const uint32_t combo_idx = read_u32_le( buf + 8 );
     const uint32_t seq = read_u32_le( buf + 12 );
+
     for ( int i = 16; i < LOAD_PAYLOAD_BYTES; i++ )
     {
         if ( buf[i] != pattern_byte( magic, client_idx, combo_idx, seq, i ) )
             return 0;
     }
+
     *out_client = client_idx;
     *out_combo = combo_idx;
     *out_seq = seq;
+
     return 1;
 }
 
@@ -815,11 +891,13 @@ static int stream_seen_test_and_set( struct load_stream_state_t * st, uint32_t s
 {
     if ( seq == 0 || seq >= LOAD_MAX_SEQ_TRACKED )
         return -1;
+
     const uint32_t byte_idx = seq >> 3;
     const uint8_t mask = (uint8_t) ( 1u << ( seq & 7u ) );
     if ( st->seen_bitmap[byte_idx] & mask )
         return 1;
     st->seen_bitmap[byte_idx] |= mask;
+
     return 0;
 }
 
@@ -864,7 +942,9 @@ static void server_counter_values( const struct rocketnet_server_t * server, uin
 {
     struct rocketnet_server_stats_t stats;
     rocketnet_server_stats( server, &stats );
+
     int k = 0;
+
     LOAD_SERVER_COUNTER_FIELDS( LOAD_VALUE_ONE )
 }
 
@@ -872,7 +952,9 @@ static void client_counter_values( const struct rocketnet_client_t * client, uin
 {
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( client, &stats );
+
     int k = 0;
+
     LOAD_CLIENT_COUNTER_FIELDS( LOAD_VALUE_ONE )
 }
 
@@ -907,6 +989,7 @@ int main( int argc, char ** argv )
     }
 
     char * end_clients = NULL;
+
     errno = 0;
     long long parsed_clients = strtoll( argv[1], &end_clients, 10 );
     if ( argv[1][0] == 0 || !end_clients || *end_clients != 0 || errno != 0 )
@@ -915,6 +998,7 @@ int main( int argc, char ** argv )
                  argv[1], ROCKETNET_MAX_CLIENTS );
         return 2;
     }
+
     if ( parsed_clients < 1 || parsed_clients > ROCKETNET_MAX_CLIENTS )
     {
         fprintf( stderr, "load: client count %lld out of range 1..%d (ROCKETNET_MAX_CLIENTS = %d)\n",
@@ -925,6 +1009,7 @@ int main( int argc, char ** argv )
     }
 
     char * end_seconds = NULL;
+
     errno = 0;
     long long parsed_seconds = strtoll( argv[2], &end_seconds, 10 );
     if ( argv[2][0] == 0 || !end_seconds || *end_seconds != 0 || errno != 0 || parsed_seconds < 1 )
@@ -934,6 +1019,7 @@ int main( int argc, char ** argv )
     }
 
     int drop_one = 0;
+
     if ( argc == 4 )
     {
         if ( strcmp( argv[3], "drop-one" ) != 0 )
@@ -941,6 +1027,7 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: unknown option %s (expected drop-one)\n", argv[3] );
             return 2;
         }
+
         drop_one = 1;
     }
 
@@ -955,8 +1042,10 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: LOAD_PROFILE=%s is not light or default\n", profile_name );
         return 2;
     }
+
     const int light_profile = strcmp( profile_name, "light" ) == 0;
     char handshake_diagnostics_env[8] = { 0 };
+
     const int handshake_diagnostics =
         rocketnet_test_getenv( "LOAD_HANDSHAKE_DIAGNOSTICS", handshake_diagnostics_env,
                                sizeof( handshake_diagnostics_env ) ) &&
@@ -973,6 +1062,7 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND is too long\n" );
         return 2;
     }
+
     fixed_message_rate = message_rate_length != 0;
 #else
     const char * message_rate_env = getenv( "LOAD_MESSAGES_PER_CLIENT_SECOND" );
@@ -985,14 +1075,17 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND is too long\n" );
             return 2;
         }
+
         memcpy( message_rate_text, message_rate_env, message_rate_length + 1 );
     }
-#endif
+#endif // #if defined( _MSC_VER )
     double messages_per_client_second = 0.0;
     double message_interval = 0.0;
+
     if ( fixed_message_rate )
     {
         char * end = NULL;
+
         errno = 0;
         messages_per_client_second = strtod( message_rate_text, &end );
         if ( errno != 0 || end == message_rate_text || *end != 0 ||
@@ -1001,6 +1094,7 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: LOAD_MESSAGES_PER_CLIENT_SECOND must be a positive finite number\n" );
             return 2;
         }
+
         message_interval = 1.0 / messages_per_client_second;
         if ( !( message_interval > 0.0 && message_interval <= DBL_MAX ) )
         {
@@ -1019,6 +1113,7 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: LOAD_PLAN_ONLY must be 1 when set\n" );
         return 2;
     }
+
     plan_only = plan_length != 0;
 #else
     const char * plan_env = getenv( "LOAD_PLAN_ONLY" );
@@ -1030,9 +1125,10 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: LOAD_PLAN_ONLY must be 1 when set\n" );
             return 2;
         }
+
         strcpy( plan_text, plan_env );
     }
-#endif
+#endif // #if defined( _MSC_VER )
     if ( plan_only && strcmp( plan_text, "1" ) != 0 )
     {
         fprintf( stderr, "load: LOAD_PLAN_ONLY must be 1 when set\n" );
@@ -1042,6 +1138,7 @@ int main( int argc, char ** argv )
 #if !defined( _WIN32 )
     char fd_limit_soft_text[32] = "n/a";
     char fd_limit_hard_text[32] = "n/a";
+
     if ( !plan_only )
     {
         struct load_fd_limit_t fd_limit;
@@ -1053,7 +1150,7 @@ int main( int argc, char ** argv )
 #else
     const char * fd_limit_soft_text = "n/a";
     const char * fd_limit_hard_text = "n/a";
-#endif
+#endif // #if !defined( _WIN32 )
     signal( SIGINT, interrupt_handler );
 
     struct load_timing_t timing;
@@ -1062,12 +1159,14 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: timing histogram allocation failed\n" );
         return 1;
     }
+
     if ( !load_timing_selftest() )
     {
         fprintf( stderr, "load: timing histogram self-test failed\n" );
         free( timing.buckets );
         return 1;
     }
+
     for ( int i = 0; i < 10000; i++ )
     {
         const uint64_t start_ns = load_clock_ns();
@@ -1075,31 +1174,40 @@ int main( int argc, char ** argv )
     }
 
     load_warm_cycle();
+
     const long fds_pre_init = count_open_fds();
     const long threads_pre_init = count_threads();
+
     LOAD_CENSUS( LOAD_PRE_INIT );
+
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
         free( timing.buckets );
         return 1;
     }
+
     const long fds_start = count_open_fds();
     const long threads_start = count_threads();
+
     LOAD_CENSUS( LOAD_POST_INIT );
+
     const long fds_post_init = fds_start;
     const long threads_post_init = threads_start;
     long fds_peak = fds_start;
     long threads_peak = threads_start;
     char log_level[256];
     if ( !rocketnet_test_getenv( "ROCKETNET_LOG_LEVEL", log_level, sizeof( log_level ) ) )
+    {
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
+    }
 
     /* Public server and client configurations. The default profile preserves
        SDK defaults; light is the SDK's public light-client profile, one
        source of truth for the bounded geometry. */
     struct rocketnet_server_config_t server_config;
     struct rocketnet_client_config_t client_config;
+
     if ( light_profile )
     {
         rocketnet_server_light_config( &server_config );
@@ -1115,6 +1223,7 @@ int main( int argc, char ** argv )
        brings its backend's key); the server makes its own keypair at create,
        and every client's token is sealed to rocketnet_server_public_key */
     static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
     server_config.protocol_id = LOAD_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, dev_backend_key, sizeof( server_config.backend_public_key ) );
     server_config.max_clients = num_clients;
@@ -1127,17 +1236,25 @@ int main( int argc, char ** argv )
     {
         size_t total_public_required_bytes = 0;
         const char * plan_reason = "none";
+
         if ( client_public_required_bytes == 0 || server_public_required_bytes == 0 )
+        {
             plan_reason = "invalid_required_memory";
+        }
         else if ( client_public_required_bytes > ( SIZE_MAX - server_public_required_bytes ) / (size_t) num_clients )
+        {
             plan_reason = "public_memory_overflow";
+        }
         else
             total_public_required_bytes = server_public_required_bytes +
                                           (size_t) num_clients * client_public_required_bytes;
 
         const enum rocketnet_status_t plan_term_status = rocketnet_term();
         if ( plan_term_status != ROCKETNET_STATUS_OK && strcmp( plan_reason, "none" ) == 0 )
+        {
             plan_reason = "term_status";
+        }
+
         free( timing.buckets );
         printf( "load_plan: clients=%d profile=%s client_public_required_bytes=%zu "
                 "server_public_required_bytes=%zu total_public_required_bytes=%zu "
@@ -1154,12 +1271,15 @@ int main( int argc, char ** argv )
     char server_bind_env[sizeof( server_bind_buf ) - 2];   // room to append ":0"
     const char * server_bind = server_bind_env;
     if ( !rocketnet_test_getenv( "LOAD_SERVER_ADDRESS", server_bind_env, sizeof( server_bind_env ) ) || server_bind[0] == 0 )
+    {
         server_bind = "127.0.0.1:0";
+    }
     else if ( !strchr( server_bind, ':' ) )
     {
         snprintf( server_bind_buf, sizeof( server_bind_buf ), "%s:0", server_bind );
         server_bind = server_bind_buf;
     }
+
     char server_host[64];
     snprintf( server_host, sizeof( server_host ), "%s", server_bind );
     server_host[strcspn( server_host, ":" )] = 0;
@@ -1172,6 +1292,7 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     if ( rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: failed to start server\n" );
@@ -1188,6 +1309,7 @@ int main( int argc, char ** argv )
 
     struct rocketnet_client_t ** clients =
         (struct rocketnet_client_t **) calloc( (size_t) num_clients, sizeof( *clients ) );
+
     int * client_ever_connected = (int *) calloc( (size_t) num_clients, sizeof( int ) );
     int * client_slot = (int *) calloc( (size_t) num_clients, sizeof( int ) );
     double * client_connect_seconds = (double *) malloc( (size_t) num_clients * sizeof( double ) );
@@ -1195,6 +1317,7 @@ int main( int argc, char ** argv )
     double * client_next_message_due = fixed_message_rate ? (double *) calloc( (size_t) num_clients, sizeof( double ) ) : NULL;
     struct load_wire_sample_t * client_wire_start = fixed_message_rate ? (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
     struct load_wire_sample_t * client_wire_end = fixed_message_rate ? (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
+
     struct load_stream_state_t * c2s_streams = (struct load_stream_state_t *) calloc(
         (size_t) num_clients * LOAD_NUM_COMBOS, sizeof( struct load_stream_state_t ) );
     struct load_stream_state_t * s2c_streams = (struct load_stream_state_t *) calloc(
@@ -1211,8 +1334,11 @@ int main( int argc, char ** argv )
         fprintf( stderr, "load: allocation failed\n" );
         return 1;
     }
+
     for ( int i = 0; i < num_clients; i++ )
+    {
         client_connect_seconds[i] = -1.0;
+    }
 
     const double token_setup_start = rocketnet_time();
     const uint64_t token_now = (uint64_t) time( NULL );
@@ -1231,7 +1357,7 @@ int main( int argc, char ** argv )
             return 1;
         }
     }
-#endif
+#endif // #if defined( __linux__ )
 
     for ( int i = 0; i < num_clients; i++ )
     {
@@ -1242,12 +1368,13 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: setns into %s failed: %s\n", client_netns_path, strerror( errno ) );
             return 1;
         }
-#endif
+#endif // #if defined( __linux__ )
         if ( rocketnet_create_dev_connect_token( server_address, NULL, server_key, 30, 10, (uint64_t) ( i + 1 ), LOAD_PROTOCOL_ID, token_now, NULL, connect_token ) != ROCKETNET_STATUS_OK )
         {
             fprintf( stderr, "load: failed to create dev connect token for client %d\n", i );
             return 1;
         }
+
         create_status = ROCKETNET_STATUS_OK;
         clients[i] = rocketnet_client_create( NULL, &client_config, &create_status );
         if ( !clients[i] )
@@ -1255,6 +1382,7 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: failed to create client %d: %s\n", i, rocketnet_status_name( create_status ) );
             return 1;
         }
+
         if ( rocketnet_client_connect( clients[i], connect_token ) != ROCKETNET_STATUS_OK )
         {
             fprintf( stderr, "load: failed to connect client %d\n", i );
@@ -1266,7 +1394,7 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: setns back to the server namespace failed: %s\n", strerror( errno ) );
             return 1;
         }
-#endif
+#endif // #if defined( __linux__ )
         client_next_combo[i] = (uint32_t) ( i % LOAD_NUM_COMBOS );
     }
 #if defined( __linux__ )
@@ -1275,15 +1403,17 @@ int main( int argc, char ** argv )
         close( client_netns );
         close( self_netns );
     }
-#endif
+#endif // #if defined( __linux__ )
     sample_resources( &fds_peak, &threads_peak );
 #if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* post setup, before connect */
-#endif
+#endif // #if defined( _WIN32 )
     const double token_setup_elapsed = rocketnet_time() - token_setup_start;
+
     if ( handshake_diagnostics )
     {
         const uint64_t setup_end_unix_s = (uint64_t) time( NULL );
+
         fprintf( stderr,
                  "load handshake diagnostic: token_mint_unix_s=%" PRIu64
                  " setup_end_unix_s=%" PRIu64 " setup_elapsed_s=%.3f"
@@ -1305,27 +1435,34 @@ int main( int argc, char ** argv )
     uint64_t s2c_offered_total = 0;
     double next_resource_sample = rocketnet_time();
 
-    /* Step 1: Connect all clients within 10s */
+    // step 1: Connect all clients within 10s
     const double start_time = rocketnet_time();
     uint64_t connect_sweeps = 0;
     double first_connect_sweep_s = 0.0;
     double last_connect_sweep_s = 0.0;
+
     while ( !quit )
     {
         const double sweep_start = rocketnet_time();
         const double now = rocketnet_time();
+
         connected_count = 0;
+
         for ( int i = 0; i < num_clients; i++ )
         {
             LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, rocketnet_client_update( clients[i], now ) );
             LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_SEND_PACKETS, rocketnet_client_send_packets( clients[i] ) );
+
             const enum rocketnet_client_state_t st = timed_client_state( &timing, clients[i] );
             if ( st == ROCKETNET_CLIENT_STATE_CONNECTED )
             {
                 /* the time this client is seen connected, read here rather
                    than the sweep's now, so every client keeps its own time */
                 if ( client_connect_seconds[i] < 0.0 )
+                {
                     client_connect_seconds[i] = rocketnet_time() - start_time;
+                }
+
                 client_ever_connected[i] = 1;
                 client_slot[i] = timed_client_index( &timing, clients[i] );
                 connected_count++;
@@ -1342,15 +1479,21 @@ int main( int argc, char ** argv )
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
         }
+
         if ( handshake_diagnostics )
         {
             last_connect_sweep_s = rocketnet_time() - sweep_start;
+
             if ( connect_sweeps == 0 )
+            {
                 first_connect_sweep_s = last_connect_sweep_s;
+            }
+
             connect_sweeps++;
             if ( connect_sweeps <= 4 )
             {
                 const uint64_t sweep_end_unix_s = (uint64_t) time( NULL );
+
                 fprintf( stderr,
                          "load handshake diagnostic: sweep=%" PRIu64
                          " end_unix_s=%" PRIu64 " token_age_s=%" PRIu64
@@ -1365,9 +1508,11 @@ int main( int argc, char ** argv )
         {
             all_connected = 1;
             connect_elapsed = rocketnet_time() - start_time;
+
             if ( handshake_diagnostics )
             {
                 const uint64_t diagnostic_now = (uint64_t) time( NULL );
+
                 fprintf( stderr,
                          "load handshake diagnostic: result=connected now_unix_s=%" PRIu64
                          " token_age_s=%" PRIu64 " setup_elapsed_s=%.3f"
@@ -1377,15 +1522,18 @@ int main( int argc, char ** argv )
                          connect_elapsed, connect_sweeps, first_connect_sweep_s,
                          last_connect_sweep_s );
             }
+
             break;
         }
 
         if ( rocketnet_time() - start_time > LOAD_CONNECT_DEADLINE_S )
         {
             connect_elapsed = rocketnet_time() - start_time;
+
             if ( handshake_diagnostics )
             {
                 const uint64_t diagnostic_now = (uint64_t) time( NULL );
+
                 fprintf( stderr,
                          "load handshake diagnostic: result=deadline now_unix_s=%" PRIu64
                          " token_age_s=%" PRIu64 " setup_elapsed_s=%.3f"
@@ -1395,6 +1543,7 @@ int main( int argc, char ** argv )
                          connect_elapsed, connect_sweeps, first_connect_sweep_s,
                          last_connect_sweep_s, connected_count );
             }
+
             int named = 0;
             for ( int i = 0; i < num_clients && named < 8; i++ )
             {
@@ -1408,14 +1557,19 @@ int main( int argc, char ** argv )
                     fprintf( stderr, "load: client %d transport=%s packets_sent=%llu packets_received=%llu\n", i,
                              rocketnet_client_transport_name( clients[i] ),
                              (unsigned long long) values[0], (unsigned long long) values[1] );
+
                     for ( int k = 0; k < LOAD_CLIENT_COUNTERS; k++ )
                     {
                         if ( values[k] )
+                        {
                             fprintf( stderr, "load: client %d counter %s=%llu\n", i, client_counter_names[k], (unsigned long long) values[k] );
+                        }
                     }
+
                     named++;
                 }
             }
+
             fprintf( stderr, "load: server reports %d of %d clients connected at the deadline\n",
                      timed_server_num_connected_clients( &timing, server ), num_clients );
             uint64_t server_values[LOAD_SERVER_COUNTERS];
@@ -1423,43 +1577,56 @@ int main( int argc, char ** argv )
             for ( int k = 0; k < LOAD_SERVER_COUNTERS; k++ )
             {
                 if ( server_values[k] )
+                {
                     fprintf( stderr, "load: server counter %s=%llu\n", server_counter_names[k], (unsigned long long) server_values[k] );
+                }
             }
+
             break;
         }
+
         const double sample_now = rocketnet_time();
         if ( sample_now >= next_resource_sample )
         {
             sample_resources( &fds_peak, &threads_peak );
             next_resource_sample = sample_now + 0.25;
         }
+
         rocketnet_sleep( 0.001 );
     }
 
 #if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* post connect, before traffic */
-#endif
-    /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
+#endif // #if defined( _WIN32 )
+    // step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery
     struct load_wire_sample_t server_wire_start = { 0, 0 };
     struct load_wire_sample_t server_wire_end = { 0, 0 };
     double dropped_client_wire_start_time = 0.0;
+
     if ( fixed_message_rate )
     {
         for ( int i = 0; i < num_clients; i++ )
         {
             if ( i == 0 )
+            {
                 dropped_client_wire_start_time = rocketnet_time();
+            }
+
             load_client_wire_sample( clients[i], &client_wire_start[i] );
         }
+
         load_server_wire_sample( server, &server_wire_start );
     }
+
     const double traffic_start = rocketnet_time();
     double wire_window_seconds = 0.0;
     int wire_window_recorded = 0;
     uint64_t destroyed_client_wire_bytes_sent = 0;
     uint64_t destroyed_client_wire_bytes_received = 0;
     double dropped_client_wire_observed_seconds = 0.0;
+
     timing.enabled = 1;
+
     const double drain_seconds = 3.0;
     const double drop_at = duration_seconds * 0.25 < 1.0 ? duration_seconds * 0.25 : 1.0;
     int drop_injected = 0;
@@ -1484,17 +1651,23 @@ int main( int argc, char ** argv )
         if ( !in_traffic_window && !draining )
         {
             draining = 1;
+
             if ( fixed_message_rate )
             {
                 wire_window_seconds = now - traffic_start;
                 for ( int i = 0; i < num_clients; i++ )
                     if ( clients[i] )
+                    {
                         load_client_wire_sample( clients[i], &client_wire_end[i] );
+                    }
+
                 load_server_wire_sample( server, &server_wire_end );
                 wire_window_recorded = 1;
             }
+
             // Revisit the most recent send cohort first. It has had the least
             // time to make progress; then visit every client in cyclic order.
+
             const int traffic_slice = num_clients < 100 ? num_clients : 100;
             client_update_cursor = ( client_update_cursor + num_clients - traffic_slice ) % num_clients;
         }
@@ -1505,11 +1678,13 @@ int main( int argc, char ** argv )
             load_client_wire_sample( clients[0], &dropped_wire );
             destroyed_client_wire_bytes_sent = dropped_wire.sent;
             destroyed_client_wire_bytes_received = dropped_wire.received;
+
             if ( fixed_message_rate )
             {
                 client_wire_end[0] = dropped_wire;
                 dropped_client_wire_observed_seconds = rocketnet_time() - dropped_client_wire_start_time;
             }
+
             rn_cli_client_stop_and_destroy( clients[0] );
             clients[0] = NULL;
             drop_injected = 1;
@@ -1522,7 +1697,9 @@ int main( int argc, char ** argv )
         {
             if ( !in_traffic_window && rocketnet_time() >= drain_deadline )
                 break;
+
             const int i = client_update_cursor;
+
             client_update_cursor = ( client_update_cursor + 1 ) % num_clients;
             if ( !( drop_injected && i == 0 ) )
             {
@@ -1531,9 +1708,13 @@ int main( int argc, char ** argv )
                     drain_visited[i] = 1;
                     drain_clients_visited++;
                 }
+
                 const double update_time = rocketnet_time();
                 if ( client_last_update[i] > 0.0 && update_time - client_last_update[i] > client_max_update_gap[i] )
+                {
                     client_max_update_gap[i] = update_time - client_last_update[i];
+                }
+
                 client_last_update[i] = update_time;
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_CLIENT_UPDATE, rocketnet_client_update( clients[i], update_time ) );
 
@@ -1543,6 +1724,7 @@ int main( int argc, char ** argv )
                     for ( int j = 0; j < batch->num_messages; j++ )
                     {
                         uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
+
                         if ( batch->client_index[j] != 0 ||
                              !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_SV_TO_CLIENT, &msg_client, &msg_combo, &msg_seq ) ||
                              msg_client != (uint32_t) i || msg_combo != ROCKETNET_RELIABILITY_RELIABLE_ORDERED ||
@@ -1554,7 +1736,10 @@ int main( int argc, char ** argv )
                         {
                             struct load_stream_state_t * sv_st = &s2c_streams[i];
                             if ( msg_seq != sv_st->recv_count + 1 || stream_seen_test_and_set( sv_st, msg_seq ) != 0 )
+                            {
                                 reliable_errors++;
+                            }
+
                             sv_st->recv_count++;
                             sv_st->max_seq_seen = msg_seq;
                         }
@@ -1572,9 +1757,14 @@ int main( int argc, char ** argv )
                      ( !fixed_message_rate || update_time >= client_next_message_due[i] ) )
                 {
                     if ( fixed_message_rate )
+                    {
                         client_next_message_due[i] = update_time + message_interval;
+                    }
+
                     const uint32_t combo = client_next_combo[i] % LOAD_NUM_COMBOS;
+
                     client_next_combo[i]++;
+
                     struct load_stream_state_t * cst = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
                     uint8_t payload[LOAD_PAYLOAD_BYTES];
                     if ( cst->sent_count + 1 < LOAD_MAX_SEQ_TRACKED )
@@ -1582,6 +1772,7 @@ int main( int argc, char ** argv )
                         const uint32_t next_seq = cst->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_CLIENT_TO_SV, (uint32_t) i, combo, next_seq );
                         c2s_offered_total++;
+
                         uint8_t * out = timed_client_start_message( &timing, clients[i], (int) combo, (enum rocketnet_reliability_t) combo, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
@@ -1602,6 +1793,7 @@ int main( int argc, char ** argv )
                         const uint32_t next_seq = sv_st->sent_count + 1;
                         build_message( payload, LOAD_MAGIC_SV_TO_CLIENT, (uint32_t) i, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, next_seq );
                         s2c_offered_total++;
+
                         uint8_t * out = timed_server_start_message( &timing, server, (uint64_t) sv_slot, (int) ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, LOAD_PAYLOAD_BYTES );
                         if ( out )
                         {
@@ -1621,6 +1813,7 @@ int main( int argc, char ** argv )
                 {
                     const int sv_slot = client_slot[i];
                     const enum rocketnet_disconnect_reason_t sv_reason = timed_server_disconnect_reason( &timing, server, sv_slot );
+
                     if ( unexpected_disconnects < 8 )
                     {
                         fprintf( stderr, "load: client %d (slot %d) left CONNECTED at t=%.3f: state=%d %s server_reason=%s\n",
@@ -1629,6 +1822,7 @@ int main( int argc, char ** argv )
                         fprintf( stderr, "load: client %d last updated %.3f s ago, longest update gap %.3f s; longest server update %.3f s at t=%.3f\n",
                                  i, rocketnet_time() - client_last_update[i], client_max_update_gap[i], max_server_update_s, max_server_update_at );
                     }
+
                     unexpected_disconnects++;
                     client_ever_connected[i] = 0;
                 }
@@ -1639,6 +1833,7 @@ int main( int argc, char ** argv )
             {
                 const double t0 = rocketnet_time();
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_UPDATE, rocketnet_server_update( server, t0 ) );
+
                 const double t1 = rocketnet_time();
                 if ( t1 - t0 > max_server_update_s )
                 {
@@ -1652,6 +1847,7 @@ int main( int argc, char ** argv )
                     for ( int j = 0; j < batch->num_messages; j++ )
                     {
                         c2s_received_total++;
+
                         uint32_t msg_client = 0, msg_combo = 0, msg_seq = 0;
                         if ( !verify_message( batch->data[j], batch->bytes[j], LOAD_MAGIC_CLIENT_TO_SV, &msg_client, &msg_combo, &msg_seq ) ||
                              msg_client >= (uint32_t) num_clients || msg_combo >= LOAD_NUM_COMBOS ||
@@ -1668,47 +1864,76 @@ int main( int argc, char ** argv )
                                                          msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
                                                            ? 0
                                                            : (int) msg_combo;
+
                             struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
                             const int dup = stream_seen_test_and_set( cst, msg_seq );
 
                             if ( batch->channel[j] != expected_rx_ch )
                             {
                                 if ( combo_is_unreliable_family( msg_combo ) )
+                                {
                                     unreliable_errors++;
+                                }
                                 else
+                                {
                                     reliable_errors++;
+                                }
                             }
                             else if ( combo_is_unreliable_family( msg_combo ) )
                             {
                                 if ( dup != 0 )
+                                {
                                     unreliable_errors++;
+                                }
+
                                 if ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED && msg_seq <= cst->max_seq_seen )
+                                {
                                     unreliable_errors++;
+                                }
+
                                 if ( msg_seq > cst->max_seq_seen )
+                                {
                                     cst->max_seq_seen = msg_seq;
+                                }
+
                                 cst->recv_count++;
                             }
                             else if ( msg_combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
                             {
                                 if ( dup != 0 || msg_seq <= cst->max_seq_seen )
+                                {
                                     reliable_errors++;
+                                }
                                 else
+                                {
                                     cst->max_seq_seen = msg_seq;
+                                }
+
                                 cst->recv_count++;
                             }
                             else if ( combo_is_reliable_every( msg_combo ) )
                             {
                                 if ( dup != 0 )
+                                {
                                     reliable_errors++;
+                                }
+
                                 if ( combo_is_ordered( msg_combo ) && msg_seq != cst->recv_count + 1 )
+                                {
                                     reliable_errors++;
+                                }
+
                                 if ( msg_seq > cst->max_seq_seen )
+                                {
                                     cst->max_seq_seen = msg_seq;
+                                }
+
                                 cst->recv_count++;
                             }
                         }
                     }
                 }
+
                 LOAD_TIMED_VOID( &timing, LOAD_TIMING_SERVER_SEND_PACKETS, rocketnet_server_send_packets( server ) );
             }
         }
@@ -1720,9 +1945,12 @@ int main( int argc, char ** argv )
         }
 
         next_slice_time += 0.010;
+
         const double left = next_slice_time - rocketnet_time();
         if ( left > 0.0 )
+        {
             rocketnet_sleep( left );
+        }
     }
 
     if ( fixed_message_rate && !wire_window_recorded )
@@ -1730,30 +1958,39 @@ int main( int argc, char ** argv )
         wire_window_seconds = rocketnet_time() - traffic_start;
         for ( int i = 0; i < num_clients; i++ )
             if ( clients[i] )
+            {
                 load_client_wire_sample( clients[i], &client_wire_end[i] );
+            }
+
         load_server_wire_sample( server, &server_wire_end );
     }
 
     timing.enabled = 0;
 #if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* after traffic and bounded drain */
-#endif
+#endif // #if defined( _WIN32 )
 
-    /* Final verification of all 5 criteria */
+    // Final verification of all 5 criteria
     if ( rocketnet_server_num_connected_clients( server ) != num_clients )
+    {
         unexpected_disconnects++;
+    }
 
     for ( int i = 0; i < num_clients; i++ )
     {
         for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
         {
             const struct load_stream_state_t * st = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
+
             if ( combo_is_reliable_every( combo ) )
             {
                 if ( st->recv_count != st->sent_count || st->max_seq_seen != st->sent_count )
+                {
                     reliable_errors++;
+                }
             }
         }
+
         const struct load_stream_state_t * sv_st = &s2c_streams[i];
         if ( sv_st->recv_count != sv_st->sent_count || sv_st->max_seq_seen != sv_st->sent_count )
         {
@@ -1764,6 +2001,7 @@ int main( int argc, char ** argv )
     uint64_t client_counted_drops = 0;
     uint64_t client_wire_bytes_sent = destroyed_client_wire_bytes_sent;
     uint64_t client_wire_bytes_received = destroyed_client_wire_bytes_received;
+
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( clients[i] )
@@ -1780,6 +2018,7 @@ int main( int argc, char ** argv )
     uint64_t server_counted_drops = 0;
     uint64_t server_wire_bytes_sent = 0;
     uint64_t server_wire_bytes_received = 0;
+
     {
         struct rocketnet_server_stats_t stats;
         rocketnet_server_stats( server, &stats );
@@ -1790,9 +2029,14 @@ int main( int argc, char ** argv )
     }
 
     uint64_t s2c_sent_total = 0;
+
     for ( int i = 0; i < num_clients; i++ )
+    {
         s2c_sent_total += s2c_streams[i].sent_count;
+    }
+
     const double application_rate_window_seconds = fixed_message_rate && wire_window_seconds > 0.0 ? wire_window_seconds : duration_seconds;
+
     const double actual_c2s_messages_per_client_second =
         (double) c2s_sent_total / ( (double) num_clients * application_rate_window_seconds );
     const double actual_s2c_messages_per_client_second =
@@ -1801,20 +2045,24 @@ int main( int argc, char ** argv )
         (double) c2s_offered_total / ( (double) num_clients * application_rate_window_seconds );
     const double offered_s2c_messages_per_client_second =
         (double) s2c_offered_total / ( (double) num_clients * application_rate_window_seconds );
+
     uint64_t traffic_client_wire_bytes_sent = 0;
     uint64_t traffic_client_wire_bytes_received = 0;
     uint64_t traffic_server_wire_bytes_sent = 0;
     uint64_t traffic_server_wire_bytes_received = 0;
     double max_client_wire_up_kbps = 0.0;
     double max_client_wire_down_kbps = 0.0;
+
     int wire_metrics_valid = !fixed_message_rate || ( wire_window_seconds > 0.0 &&
                                                       server_wire_end.sent >= server_wire_start.sent &&
                                                       server_wire_end.received >= server_wire_start.received );
+
     if ( fixed_message_rate && wire_metrics_valid )
     {
         traffic_server_wire_bytes_sent = server_wire_end.sent - server_wire_start.sent;
         traffic_server_wire_bytes_received = server_wire_end.received - server_wire_start.received;
     }
+
     for ( int i = 0; fixed_message_rate && i < num_clients; i++ )
     {
         if ( client_wire_end[i].sent < client_wire_start[i].sent ||
@@ -1823,27 +2071,38 @@ int main( int argc, char ** argv )
             wire_metrics_valid = 0;
             continue;
         }
+
         const uint64_t up_bytes = client_wire_end[i].sent - client_wire_start[i].sent;
         const uint64_t down_bytes = client_wire_end[i].received - client_wire_start[i].received;
         traffic_client_wire_bytes_sent += up_bytes;
         traffic_client_wire_bytes_received += down_bytes;
+
         const double observed_seconds = drop_injected && i == 0 ? dropped_client_wire_observed_seconds : wire_window_seconds;
         if ( observed_seconds <= 0.0 )
+        {
             wire_metrics_valid = 0;
+        }
         else
         {
             const double up_kbps = (double) up_bytes * 8.0 / ( observed_seconds * 1000.0 );
             const double down_kbps = (double) down_bytes * 8.0 / ( observed_seconds * 1000.0 );
             if ( up_kbps > max_client_wire_up_kbps )
+            {
                 max_client_wire_up_kbps = up_kbps;
+            }
+
             if ( down_kbps > max_client_wire_down_kbps )
+            {
                 max_client_wire_down_kbps = down_kbps;
+            }
         }
     }
+
     const double aggregate_client_wire_up_kbps = wire_window_seconds > 0.0 ? (double) traffic_client_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
     const double aggregate_client_wire_down_kbps = wire_window_seconds > 0.0 ? (double) traffic_client_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
     const double aggregate_server_wire_up_kbps = wire_window_seconds > 0.0 ? (double) traffic_server_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
     const double aggregate_server_wire_down_kbps = wire_window_seconds > 0.0 ? (double) traffic_server_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+
     const int client_wire_under_100kbps = !fixed_message_rate ||
                                           ( wire_metrics_valid && max_client_wire_up_kbps < 100.0 && max_client_wire_down_kbps < 100.0 );
     const int application_offers_accepted = !fixed_message_rate ||
@@ -1860,17 +2119,24 @@ int main( int argc, char ** argv )
     {
         uint64_t unresolved_c2s = 0;
         uint64_t unresolved_s2c = 0;
+
         for ( int i = 0; i < num_clients; i++ )
         {
             for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
             {
                 const struct load_stream_state_t * st = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
                 if ( st->sent_count > st->recv_count )
+                {
                     unresolved_c2s += st->sent_count - st->recv_count;
+                }
             }
+
             if ( s2c_streams[i].sent_count > s2c_streams[i].recv_count )
+            {
                 unresolved_s2c += s2c_streams[i].sent_count - s2c_streams[i].recv_count;
+            }
         }
+
         fprintf( stderr, "load: drain clients_visited=%d/%d unresolved_c2s=%" PRIu64 " unresolved_s2c=%" PRIu64 " elapsed_s=%.3f deadline_s=%.3f\n",
                  drain_clients_visited, num_clients, unresolved_c2s, unresolved_s2c,
                  rocketnet_time() - traffic_start, duration_seconds + drain_seconds );
@@ -1880,6 +2146,7 @@ int main( int argc, char ** argv )
     {
         static uint64_t client_counter_sum[LOAD_CLIENT_COUNTERS];
         memset( client_counter_sum, 0, sizeof( client_counter_sum ) );
+
         for ( int i = 0; i < num_clients; i++ )
         {
             if ( clients[i] )
@@ -1887,48 +2154,67 @@ int main( int argc, char ** argv )
                 uint64_t values[LOAD_CLIENT_COUNTERS];
                 client_counter_values( clients[i], values );
                 for ( int k = 0; k < LOAD_CLIENT_COUNTERS; k++ )
+                {
                     client_counter_sum[k] += values[k];
+                }
             }
         }
+
         uint64_t server_values[LOAD_SERVER_COUNTERS];
         server_counter_values( server, server_values );
         for ( int k = 0; k < LOAD_SERVER_COUNTERS; k++ )
         {
             if ( server_values[k] )
+            {
                 fprintf( stderr, "load: counters_agree server %s=%llu\n", server_counter_names[k], (unsigned long long) server_values[k] );
+            }
         }
+
         for ( int k = 0; k < LOAD_CLIENT_COUNTERS; k++ )
         {
             if ( client_counter_sum[k] )
+            {
                 fprintf( stderr, "load: counters_agree client sum %s=%llu\n", client_counter_names[k], (unsigned long long) client_counter_sum[k] );
+            }
         }
+
         for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
         {
             uint64_t combo_sent = 0;
             uint64_t combo_received = 0;
+
             for ( int i = 0; i < num_clients; i++ )
             {
                 combo_sent += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].sent_count;
                 combo_received += c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo].recv_count;
             }
+
             if ( combo_sent || combo_received )
+            {
                 fprintf( stderr, "load: counters_agree combo=%u sent=%llu received=%llu\n", combo, (unsigned long long) combo_sent, (unsigned long long) combo_received );
+            }
         }
     }
 
     const uint64_t p50_us = load_timing_quantile_upper_us( &timing, LOAD_TIMING_SERVER_UPDATE, 50 );
     const uint64_t p99_us = load_timing_quantile_upper_us( &timing, LOAD_TIMING_SERVER_UPDATE, 99 );
     int connected_samples = 0;
+
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( client_connect_seconds[i] >= 0.0 )
+        {
             connected_samples++;
+        }
     }
+
     double connect_p50_s = 0.0;
     double connect_max_s = 0.0;
+
     if ( connected_samples > 0 )
     {
         qsort( client_connect_seconds, (size_t) num_clients, sizeof( double ), cmp_double );
+
         const int first = num_clients - connected_samples;
         const int median = ( connected_samples * 50 ) / 100;
         connect_p50_s = client_connect_seconds[first + ( median < connected_samples ? median : connected_samples - 1 )];
@@ -1939,22 +2225,39 @@ int main( int argc, char ** argv )
     const double rss_mb = (double) rss_bytes / ( 1024.0 * 1024.0 );
 
     const char * failed_criterion = "none";
+
     if ( !crit1_connect_within_10s )
+    {
         failed_criterion = "connect_within_10s";
+    }
     else if ( !crit3_reliable_delivery )
+    {
         failed_criterion = "reliable_delivery";
+    }
     else if ( !crit2_no_unexpected_disconnect )
+    {
         failed_criterion = "no_unexpected_disconnect";
+    }
     else if ( !crit4_unreliable_integrity )
+    {
         failed_criterion = "unreliable_integrity";
+    }
     else if ( !crit5_counters_agree )
+    {
         failed_criterion = "counters_agree";
+    }
     else if ( !wire_metrics_valid )
+    {
         failed_criterion = "wire_metrics";
+    }
     else if ( !client_wire_under_100kbps )
+    {
         failed_criterion = "client_wire_bandwidth";
+    }
     else if ( !application_offers_accepted )
+    {
         failed_criterion = "application_offers_accepted";
+    }
 
     int pass = crit1_connect_within_10s &&
                crit2_no_unexpected_disconnect &&
@@ -1968,6 +2271,7 @@ int main( int argc, char ** argv )
 
     char server_transport_io[32];
     char client_transport_io[32];
+
     {
         const char * sd = rocketnet_server_transport_name( server );
         const char * cd = clients[0] ? rocketnet_client_transport_name( clients[0] ) : NULL;
@@ -1978,8 +2282,11 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
     {
         if ( clients[i] )
+        {
             rn_cli_client_stop_and_destroy( clients[i] );
+        }
     }
+
     rn_cli_server_stop_and_destroy( server );
     free( clients );
     free( client_ever_connected );
@@ -1993,37 +2300,52 @@ int main( int argc, char ** argv )
     free( s2c_streams );
     free( client_last_update );
     free( client_max_update_gap );
+
     const long fds_pre_term = count_open_fds();
     const long threads_pre_term = count_threads();
+
     LOAD_CENSUS( LOAD_PRE_TERM );
 #if defined( _WIN32 )
     if ( threads_pre_term > threads_peak )
+    {
         threads_peak = threads_pre_term;
-#endif
+    }
+#endif // #if defined( _WIN32 )
     const enum rocketnet_status_t term_status = rocketnet_term();
 
     const long fds_end = count_open_fds();
     const long threads_end = count_threads();
+
     LOAD_CENSUS( LOAD_POST_TERM );
+
     const long fds_post_term = fds_end;
     const long threads_post_term = threads_end;
     struct load_census_survivors_t survivors_operational, survivors_total;
     int census = 0;
+
     const int resource_baseline = load_resource_verdict( "load",
                                                          fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
                                                          threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
                                                          &survivors_operational, &survivors_total, &census );
     const char * resource_schema = census ? "census_v1" : "phase_counts_v1";
+
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         if ( strcmp( failed_criterion, "none" ) == 0 )
+        {
             failed_criterion = "term_status";
+        }
+
         pass = 0;
     }
+
     if ( !resource_baseline )
     {
         if ( strcmp( failed_criterion, "none" ) == 0 )
+        {
             failed_criterion = "resource_baseline";
+        }
+
         pass = 0;
     }
 #if defined( _WIN32 )
@@ -2032,7 +2354,7 @@ int main( int argc, char ** argv )
 #else
     const char * timing_baseline = fixed_message_rate ? "fixed_rate_v1" : "fair_drain_v1";
     const char * thread_peak_scope = "periodic_250ms_plus_setup";
-#endif
+#endif // #if defined( _WIN32 )
 
     if ( pass )
     {
@@ -2156,5 +2478,6 @@ int main( int argc, char ** argv )
     putchar( '\n' );
 
     free( timing.buckets );
+
     return pass ? 0 : 1;
 }

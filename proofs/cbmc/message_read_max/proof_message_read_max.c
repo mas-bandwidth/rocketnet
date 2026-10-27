@@ -28,7 +28,7 @@
 
 #if defined( ROCKETNET_ESBMC ) || defined( __ESBMC__ )
 #include "../esbmc_shim.h"
-#endif
+#endif // #if defined( ROCKETNET_ESBMC ) || defined( __ESBMC__ )
 
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +39,7 @@ static inline void * proof_memset_record( struct rocketnet_message_record_t * r,
 {
     (void) v;
     (void) n;
+
     struct rocketnet_message_record_t zero = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL, 0 };
     *r = zero;
     return r;
@@ -55,15 +56,15 @@ static unsigned int nondet_uint( void ) { return 0; }
 #elif !defined( ROCKETNET_ESBMC ) && !defined( __ESBMC__ )
 int nondet_int( void );
 unsigned int nondet_uint( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 #ifndef PAYLOAD_BOUND
 #define PAYLOAD_BOUND 24
-#endif
+#endif // #ifndef PAYLOAD_BOUND
 
 #ifndef CONFIG_BOUND
 #define CONFIG_BOUND ROCKETNET_RECEIVE_PAYLOAD_BYTES
-#endif
+#endif // #ifndef CONFIG_BOUND
 
 static int round16( int bytes )
 {
@@ -110,6 +111,7 @@ void harness_message_reader( void )
 
     const uint8_t * end = payload + bytes - 1;
     int yielded = 0;
+
     while ( rocketnet_message_reader_next( &reader, &record ) )
     {
         __CPROVER_assert( record.data >= payload, "record data starts inside the payload" );
@@ -150,7 +152,9 @@ void harness_message_reader_single_max( void )
     uint8_t buf[CONFIG_BOUND];
     const uint8_t * payload = nondet_int() ? ( buf + ( CONFIG_BOUND - bytes ) ) : NULL;
     if ( payload != NULL && bytes >= 2 )
+    {
         __CPROVER_assume( payload[bytes - 1] != ROCKETNET_MESSAGE_FORM_RECORDS );
+    }
 
     struct rocketnet_message_reader_t reader;
     int violation = rocketnet_message_reader_begin( &reader, payload, bytes, &limits );

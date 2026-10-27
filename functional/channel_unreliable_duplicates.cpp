@@ -54,8 +54,11 @@ static void dup_make( uint8_t * bytes, int direction, int kind, uint32_t id )
     bytes[1] = (uint8_t) id;
     bytes[2] = (uint8_t) ( id >> 8 );
     bytes[3] = (uint8_t) ( id >> 16 );
+
     for ( int i = 4; i < DUP_PAYLOAD_BYTES; i++ )
+    {
         bytes[i] = dup_pattern( direction, kind, id, i );
+    }
 }
 
 typedef struct dup_seen_t
@@ -67,14 +70,23 @@ typedef struct dup_seen_t
 static void dup_receive( dup_seen_t * s, int direction, const rocketnet_channel_delivery_t * d )
 {
     dup_check( d->bytes == DUP_PAYLOAD_BYTES, "payload length" );
+
     const int kind = d->data[0];
     dup_check( kind >= 0 && kind < DUP_KINDS, "payload kind" );
+
     const uint32_t id = (uint32_t) d->data[1] | ( (uint32_t) d->data[2] << 8 ) | ( (uint32_t) d->data[3] << 16 );
     dup_check( id < DUP_MESSAGES, "payload id" );
+
     for ( int i = 4; i < DUP_PAYLOAD_BYTES; i++ )
+    {
         dup_check( d->data[i] == dup_pattern( direction, kind, id, i ), "payload intact" );
+    }
+
     if ( s->seen[direction][kind][id] )
+    {
         dup_fail_twice( direction, kind, id );
+    }
+
     s->seen[direction][kind][id] = 1;
     s->delivered[direction][kind]++;
 }
@@ -90,6 +102,7 @@ static void dup_leg( float loss_percent, const char * label )
     memset( &s, 0, sizeof( s ) );
 
     uint32_t next_id[DUP_KINDS] = { 0, 0, 0 };
+
     for ( int tick = 0; tick < DUP_SEND_TICKS + DUP_SETTLE_TICKS; tick++ )
     {
         if ( tick < DUP_SEND_TICKS )
@@ -103,7 +116,9 @@ static void dup_leg( float loss_percent, const char * label )
                 dup_make( bytes, 1, 0, id );
                 dup_check( rocketnet_channel_harness_server_send( &h, 0, dup_codes[0], bytes, DUP_PAYLOAD_BYTES ) != 0, "server send code 0" );
             }
+
             // controls: one code 1 and one reliable message per update each way
+
             for ( int kind = 1; kind < DUP_KINDS; kind++ )
             {
                 uint8_t bytes[DUP_PAYLOAD_BYTES];
@@ -114,12 +129,19 @@ static void dup_leg( float loss_percent, const char * label )
                 dup_check( rocketnet_channel_harness_server_send( &h, 0, dup_codes[kind], bytes, DUP_PAYLOAD_BYTES ) != 0, "server send control" );
             }
         }
+
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
+        {
             dup_receive( &s, 0, &d );
+        }
+
         while ( rocketnet_channel_harness_client_collect( &h, 0, &d ) )
+        {
             dup_receive( &s, 1, &d );
+        }
     }
 
     rocketnet_channel_harness_read_counters( &h );
@@ -128,19 +150,24 @@ static void dup_leg( float loss_percent, const char * label )
 
     // the hazard was present: duplicated payload packets reached each receiver
     // and the replay window refused them
+
     const uint64_t dup_to_server = h.server_counters.values[ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED];
     const uint64_t dup_to_client = h.client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED];
     dup_check( dup_to_server > 0, "no duplicate reached the server" );
     dup_check( dup_to_client > 0, "no duplicate reached the client" );
 
     // the property needs messages to have flowed
+
     for ( int direction = 0; direction < 2; direction++ )
     {
         dup_check( s.delivered[direction][0] >= ( loss_percent > 0.0f ? DUP_MESSAGES / 2u : (uint32_t) DUP_MESSAGES ), "code 0 deliveries" );
         dup_check( s.delivered[direction][1] > 0, "code 1 deliveries" );
         dup_check( s.delivered[direction][2] > 0, "reliable deliveries" );
+
         if ( loss_percent == 0.0f )
+        {
             dup_check( s.delivered[direction][2] == (uint32_t) DUP_SEND_TICKS, "reliable control all delivered on the lossless leg" );
+        }
     }
 
     printf( "test_unreliable_at_most_once_over_duplicating_link %s: dup_to_server=%llu dup_to_client=%llu"

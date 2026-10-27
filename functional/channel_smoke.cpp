@@ -56,6 +56,7 @@ void harness_one_message_each_way_lossless()
     for ( int i = 0; i < 60 * 10 && ( server_got == 0 || client_got == 0 ); i++ )
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         if ( server_got == 0 && rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
@@ -65,6 +66,7 @@ void harness_one_message_each_way_lossless()
             rocketnet_check( d.hash == rocketnet_channel_hash( to_server, 4 ) );
             server_got++;
         }
+
         if ( client_got == 0 && rocketnet_channel_harness_client_collect( &h, 0, &d ) )
         {
             rocketnet_check( d.channel == 0 );
@@ -74,6 +76,7 @@ void harness_one_message_each_way_lossless()
             client_got++;
         }
     }
+
     rocketnet_check( server_got == 1 );
     rocketnet_check( client_got == 1 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
@@ -100,9 +103,11 @@ void harness_one_message_each_way_lossy()
         rocketnet_check( 0 );
         return;
     }
+
     rocketnet_channel_harness_set_link( &h, 0.0, 0.050, 10.0f, 5.0f );
 
     const double t0 = h.now;
+
     if ( !rocketnet_channel_harness_connect( &h, 60 * 10 ) )
     {
         rocketnet_check( 0 );
@@ -123,16 +128,20 @@ void harness_one_message_each_way_lossy()
     {
         const bool both_arrived = server_got > 0 && client_got > 0;
         if ( both_arrived )
+        {
             drain++;
+        }
         else if ( i < max_updates )
         {
             // payload: 'l', 'o', the message index (two bytes)
+
             if ( server_got == 0 )
             {
                 const uint8_t m[4] = { 'l', 'o', (uint8_t) ( client_sent >> 8 ), (uint8_t) client_sent };
                 rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, m, 4 ) != 0 );
                 client_sent++;
             }
+
             if ( client_got == 0 )
             {
                 const uint8_t m[4] = { 'l', 'o', (uint8_t) ( server_sent >> 8 ), (uint8_t) server_sent };
@@ -144,34 +153,49 @@ void harness_one_message_each_way_lossy()
             break;
 
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rocketnet_check( d.channel == 0 );
             rocketnet_check( d.bytes == 4 );
             rocketnet_check( d.data[0] == 'l' && d.data[1] == 'o' );
+
             const int index = ( d.data[2] << 8 ) | d.data[3];
             if ( index >= client_sent || index >= 600 )
+            {
                 unsent_deliveries++;
+            }
             else if ( seen_by_server[index]++ )
+            {
                 duplicate_deliveries++;
+            }
+
             server_got++;
         }
+
         while ( rocketnet_channel_harness_client_collect( &h, 0, &d ) )
         {
             rocketnet_check( d.channel == 0 );
             rocketnet_check( d.bytes == 4 );
             rocketnet_check( d.data[0] == 'l' && d.data[1] == 'o' );
+
             const int index = ( d.data[2] << 8 ) | d.data[3];
             if ( index >= server_sent || index >= 600 )
+            {
                 unsent_deliveries++;
+            }
             else if ( seen_by_client[index]++ )
+            {
                 duplicate_deliveries++;
+            }
+
             client_got++;
         }
     }
 
     const double completion = h.now - t0;
+
     if ( server_got == 0 || client_got == 0 || duplicate_deliveries != 0 || unsent_deliveries != 0 )
     {
         rocketnet_channel_harness_read_counters( &h );
@@ -180,6 +204,7 @@ void harness_one_message_each_way_lossy()
                 client_sent, server_sent, completion * 1000.0, (unsigned long long) h.resends,
                 (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     }
+
     rocketnet_check( server_got >= 1 );
     rocketnet_check( client_got >= 1 );
     rocketnet_check( duplicate_deliveries == 0 );
@@ -201,6 +226,7 @@ void harness_lossy_100_percent_negative_control()
         rocketnet_check( 0 );
         return;
     }
+
     if ( !rocketnet_channel_harness_connect( &h, 60 * 10 ) )
     {
         rocketnet_check( 0 );
@@ -217,17 +243,25 @@ void harness_lossy_100_percent_negative_control()
 
     const double t0 = h.now;
     int server_got = 0, client_got = 0;
+
     for ( int i = 0; i < 60 * 30; i++ )
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         if ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
+        {
             server_got++;
+        }
+
         if ( rocketnet_channel_harness_client_collect( &h, 0, &d ) )
+        {
             client_got++;
+        }
     }
 
     const double completion = h.now - t0;
+
     if ( server_got != 0 || client_got != 0 )
     {
         rocketnet_channel_harness_read_counters( &h );
@@ -235,6 +269,7 @@ void harness_lossy_100_percent_negative_control()
                 server_got, client_got, completion * 1000.0, (unsigned long long) h.resends,
                 (long long) h.wire_bytes_to_server, (long long) h.wire_bytes_to_client );
     }
+
     rocketnet_check( server_got == 0 );
     rocketnet_check( client_got == 0 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
@@ -262,14 +297,19 @@ void harness_no_allocation_after_create()
 
     const uint8_t payload[4] = { 1, 2, 3, 4 };
     rocketnet_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, payload, 4 ) != 0 );
+
     int got = 0;
     for ( int i = 0; i < 60 * 10 && got == 0; i++ )
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         if ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
+        {
             got++;
+        }
     }
+
     rocketnet_check( got == 1 );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );
@@ -277,6 +317,7 @@ void harness_no_allocation_after_create()
     // The counting allocator records every SDK allocation. The
     // allocations_after_create assertion proves the exchange touched only
     // storage carved at create.
+
     rocketnet_channel_harness_destroy( &h );
 }
 
@@ -289,19 +330,25 @@ void harness_collect_preserves_other_channels()
         rocketnet_check( 0 );
         return;
     }
+
     const uint8_t channel_zero[] = { 'c', 'h', '0' };
     const uint8_t channel_one[] = { 'c', 'h', '1' };
     uint8_t large_payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
     for ( int i = 0; i < (int) sizeof( large_payload ); i++ )
+    {
         large_payload[i] = (uint8_t) i;
+    }
+
     // Unreliable message objects route to channel 0 on receive. Populate the
     // collector's bounded queue directly to prove filtering channel 0 cannot
     // discard an unrelated channel's already-delivered view. The third view
     // is larger than one wire payload, ensuring collection does not truncate a
     // reassembled reliable message to the packet size.
+
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 1, channel_one, sizeof( channel_one ) ) );
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 0, channel_zero, sizeof( channel_zero ) ) );
     rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 2, large_payload, sizeof( large_payload ) ) );
+
     rocketnet_channel_delivery_t d;
     rocketnet_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) );
     rocketnet_check( d.bytes == (int) sizeof( channel_zero ) );
@@ -313,8 +360,12 @@ void harness_collect_preserves_other_channels()
     rocketnet_check( d.bytes == (int) sizeof( large_payload ) );
     rocketnet_check( d.hash == rocketnet_channel_hash( large_payload, sizeof( large_payload ) ) );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 0 );
+
     for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
+    {
         rocketnet_check( rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof( channel_zero ) ) );
+    }
+
     rocketnet_check( !rocketnet_channel_delivery_ring_push( &h, &h.to_server, 3, channel_zero, sizeof( channel_zero ) ) );
     rocketnet_check( rocketnet_channel_harness_overflows( &h ) == 1 );
     rocketnet_check( rocketnet_channel_allocator_calls == h.allocations_after_create );

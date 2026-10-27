@@ -185,7 +185,9 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
 
         if ( header + 2 > data_end )
             return 0;
+
         const __u32 bytes = ( (__u32) header[1] + 1 ) * 8;
+
         *next_header = header[0];
         *cursor = header + bytes;
         return 1;
@@ -198,7 +200,9 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
 
         if ( header + 2 > data_end )
             return 0;
+
         const __u32 bytes = ( (__u32) header[1] + 2 ) * 4;
+
         *next_header = header[0];
         *cursor = header + bytes;
         return 1;
@@ -210,6 +214,7 @@ static __always_inline int server_xdp_ipv6_extension_step( __u8 ** cursor, __u8 
 
         if ( header + sizeof( struct server_xdp_ipv6_fragment_header_t ) > data_end )
             return 0;
+
         struct server_xdp_ipv6_fragment_header_t fragment;
         __builtin_memcpy( &fragment, header, sizeof( fragment ) );
         if ( ( fragment.offset_flags & __constant_htons( 0xfff8 ) ) != 0 )
@@ -234,6 +239,7 @@ static __always_inline struct rocketnet_server_xdp_config_t * server_xdp_config(
         debug_printf( "server_xdp is not configured" );
         return NULL;
     }
+
     return config;
 }
 
@@ -285,9 +291,7 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
                                            __u8 family, const void * source_address )
 {
     if ( udp->dest != config->public_port || !address_match )
-    {
         return XDP_PASS;
-    }
 
     __u8 * packet_data = (__u8 *) udp + sizeof( struct udphdr );
 
@@ -310,6 +314,7 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
         return XDP_DROP;
     }
+
     if ( udp_len > ip_udp_bytes || udp_len > frame_udp_bytes )
     {
         debug_printf( "packet udp length exceeds the IP datagram or the frame" );
@@ -385,10 +390,15 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         __builtin_memset( &key, 0, sizeof( key ) );
         key.family = family;
         key.port = udp->source;
+
         if ( family == 4 )
+        {
             __builtin_memcpy( key.address, source_address, 4 );
+        }
         else
+        {
             __builtin_memcpy( key.address, source_address, 16 );
+        }
 
         const struct rocketnet_server_xdp_replay_value_t * entry = (const struct rocketnet_server_xdp_replay_value_t *) bpf_map_lookup_elem( &server_xdp_replay_map, &key );
         if ( entry )
@@ -424,8 +434,10 @@ static __always_inline int server_xdp_udp( struct xdp_md * ctx, struct udphdr * 
         server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
         return XDP_REDIRECT;
     }
+
     debug_printf( "no socket in the map for this queue" );
     server_xdp_count( ROCKETNET_SERVER_XDP_COUNTER_DROPPED_NO_SOCKET );
+
     return XDP_DROP;
 }
 
@@ -496,7 +508,9 @@ int server_xdp_filter( struct xdp_md * ctx )
                     const __u32 ip_tot_len = __builtin_bswap16( ip->tot_len );
                     __u32 ip_udp_bytes = 0;
                     if ( ip_tot_len >= sizeof( struct iphdr ) + sizeof( struct udphdr ) && ip_tot_len - sizeof( struct iphdr ) <= frame_udp_bytes )
+                    {
                         ip_udp_bytes = (__u32) ( ip_tot_len - sizeof( struct iphdr ) );
+                    }
 
                     return server_xdp_udp( ctx, udp, ip_udp_bytes, data_end, config, server_xdp_ipv4_address_match( config, ip ), 4, &ip->saddr );
                 }
@@ -547,7 +561,9 @@ int server_xdp_filter( struct xdp_md * ctx )
                     const __u32 ip6_payload_len = __builtin_bswap16( ip6->payload_len );
                     __u32 ip_udp_bytes = 0;
                     if ( ip6_payload_len >= sizeof( struct udphdr ) && ip6_payload_len <= frame_udp_bytes )
+                    {
                         ip_udp_bytes = ip6_payload_len;
+                    }
 
                     return server_xdp_udp( ctx, udp, ip_udp_bytes, data_end, config, server_xdp_ipv6_address_match( config, ip6 ), 6, &ip6->saddr );
                 }
@@ -578,14 +594,20 @@ int server_xdp_filter( struct xdp_md * ctx )
                         __u8 * cursor = fragment + sizeof( struct server_xdp_ipv6_fragment_header_t );
                         __u8 next_header = header.next_header;
                         int walking = 1;
+
                         for ( int i = 0; i < SERVER_XDP_IPV6_EXTENSION_WALK; i++ )
                         {
                             // A second fragment header is malformed and is
                             // not part of the post-fragment policy walk.
+
                             if ( walking && next_header != IPPROTO_FRAGMENT )
+                            {
                                 walking = server_xdp_ipv6_extension_step( &cursor, &next_header, data_end );
+                            }
                             else
+                            {
                                 walking = 0;
+                            }
                         }
 
                         if ( next_header == IPPROTO_UDP )
@@ -616,10 +638,13 @@ int server_xdp_filter( struct xdp_md * ctx )
                 __u8 * cursor = (__u8 *) ip6 + sizeof( struct ipv6hdr );
                 __u8 next_header = ip6->nexthdr;
                 int walking = 1;
+
                 for ( int i = 0; i < SERVER_XDP_IPV6_EXTENSION_WALK; i++ )
                 {
                     if ( walking )
+                    {
                         walking = server_xdp_ipv6_extension_step( &cursor, &next_header, data_end );
+                    }
                 }
 
                 if ( next_header == IPPROTO_UDP )

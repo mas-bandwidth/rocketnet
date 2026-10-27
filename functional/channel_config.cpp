@@ -94,6 +94,7 @@ void config_mismatch_over_loopback()
     // Hold the payload packets both ways while the transport connects, so the
     // first CONFIG each way is handed over together and both ends compare
     // before either one's disconnect can take the other's CONFIG out of reach.
+
     rocketnet_channel_harness_set_link( &h, 0.020, 0.010, rocketnet_config_loss_percent( 0.0f ), 0.0f );
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS );
 
@@ -106,23 +107,33 @@ void config_mismatch_over_loopback()
         updates++;
         held_to_server = 0;
         held_to_client = 0;
+
         for ( int i = 0; i < h.held_count; i++ )
         {
             if ( h.held_to_server[i] )
+            {
                 held_to_server++;
+            }
             else
+            {
                 held_to_client++;
+            }
         }
     }
 
     if ( held_to_server > 0 && held_to_client > 0 )
     {
         int indices[ROCKETNET_CHANNEL_HARNESS_MAX_HELD];
+
         for ( int i = 0; i < h.held_count; i++ )
+        {
             indices[i] = i;
+        }
+
         rocketnet_channel_harness_deliver_held( &h, indices, h.held_count );
         rocketnet_channel_harness_clear_held( &h );
     }
+
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
 
     while ( ( client_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ||
@@ -136,6 +147,7 @@ void config_mismatch_over_loopback()
     }
 
     const double elapsed = h.now - start;
+
     if ( client_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH ||
          server_reason != ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH )
         rocketnet_config_print_failure( "test_loopback_transport_config_mismatch", &h, elapsed,
@@ -181,13 +193,19 @@ void config_equal_over_lossy_loopback()
     }
 
     // the first CONFIG packet each way was sent while payloads were held
+
     for ( int i = 0; i < h.held_count; i++ )
     {
         if ( h.held_to_server[i] )
+        {
             held_to_server++;
+        }
         else
+        {
             held_to_client++;
+        }
     }
+
     rocketnet_channel_harness_clear_held( &h );
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
 
@@ -219,6 +237,7 @@ void config_equal_over_lossy_loopback()
                 break;
             sent_to_server++;
         }
+
         while ( sent_to_client < rocketnet_config_message_count )
         {
             rocketnet_config_fill( payload, sent_to_client );
@@ -237,18 +256,25 @@ void config_equal_over_lossy_loopback()
             {
                 rocketnet_config_fill( expected, delivered_server );
                 if ( delivery.bytes != rocketnet_config_payload_bytes || memcmp( delivery.data, expected, rocketnet_config_payload_bytes ) != 0 )
+                {
                     order_error = 1;
+                }
             }
+
             delivered_server++;
         }
+
         while ( rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
         {
             if ( delivered_client < rocketnet_config_message_count )
             {
                 rocketnet_config_fill( expected, delivered_client );
                 if ( delivery.bytes != rocketnet_config_payload_bytes || memcmp( delivery.data, expected, rocketnet_config_payload_bytes ) != 0 )
+                {
                     order_error = 1;
+                }
             }
+
             delivered_client++;
         }
     }
@@ -256,6 +282,7 @@ void config_equal_over_lossy_loopback()
     const double elapsed = h.now - start;
     const int client_reason = rocketnet_message_client_disconnect_reason( h.message_client );
     const int server_reason = rocketnet_message_server_disconnect_reason( h.message_server, h.client_slot );
+
     const int ok = h.connected && held_to_server > 0 && held_to_client > 0 &&
                    client_verified && server_verified &&
                    client_reason == ROCKETNET_DISCONNECT_REASON_NONE && server_reason == ROCKETNET_DISCONNECT_REASON_NONE &&

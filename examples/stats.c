@@ -26,17 +26,20 @@ static void frame( struct rocketnet_server_t * server, struct rocketnet_client_t
     while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
     {
     }
+
     while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     {
         for ( int i = 0; i < batch->num_messages; i++ )
         {
             // echo: skip this message when there is no room; the caller keeps draining later frames
+
             if ( rocketnet_server_can_send_message( server, batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] ) )
             {
                 uint8_t * p = rocketnet_server_start_message( server, (uint64_t) batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
                 if ( p )
                 {
                     memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
+
                     const uint32_t serial = rocketnet_server_finish_message( server, batch->bytes[i] );
                     (void) serial;
                 }
@@ -52,6 +55,7 @@ static void frame( struct rocketnet_server_t * server, struct rocketnet_client_t
             if ( p )
             {
                 memset( p, 0, 32 );
+
                 const uint32_t serial = rocketnet_client_finish_message( client, 32 );
                 (void) serial;
             }
@@ -78,11 +82,16 @@ int main( void )
     if ( server_config_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
@@ -90,14 +99,21 @@ int main( void )
     enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
     if ( server && server_status == ROCKETNET_STATUS_OK )
+    {
         server_status = rocketnet_server_start( server );
+    }
+
     if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -108,20 +124,30 @@ int main( void )
     {
         printf( "FAIL: server ipv4 address\n" );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     rocketnet_server_public_key( server, server_public_key );
+
     const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
     if ( token_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
@@ -131,12 +157,18 @@ int main( void )
     {
         printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     client_config.transport = "loopback";
+
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
@@ -144,35 +176,49 @@ int main( void )
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
     // connect, then a second and a half of traffic
+
     const double start = rocketnet_time();
     double connected_at = 0.0;
     while ( rocketnet_time() - start < 5.0 && ( connected_at == 0.0 || rocketnet_time() - connected_at < 1.5 ) )
     {
         frame( server, client, 1000.0 + rocketnet_time() - start, 1 );
         if ( connected_at == 0.0 && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
             connected_at = rocketnet_time();
+        }
     }
+
     const int client_index = rocketnet_client_index( client );      // the client's server slot; -1 until CONNECTED
     if ( client_index < 0 )
     {
         printf( "FAIL: the client did not connect\n" );
         rn_cli_client_stop_and_destroy( client );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     printf( "client state %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
 
     // one call copies every stat into a struct; read the fields, not a call per field
+
     struct rocketnet_client_stats_t client_stats;
     rocketnet_client_stats( client, &client_stats );
     printf( "client rtt %.2f ms, jitter %.2f ms, loss %.2f%%, bandwidth %.1f kbps sent %.1f kbps received\n",
@@ -182,6 +228,7 @@ int main( void )
             (unsigned long long) client_stats.messages_resent, (unsigned long long) client_stats.api_misuses );
 
     // the server's view of one connection, and its totals, are the same idiom
+
     struct rocketnet_server_client_stats_t slot_stats;
     rocketnet_server_client_stats( server, client_index, &slot_stats );
     printf( "server client %d rtt %.2f ms, jitter %.2f ms, loss %.2f%%, bandwidth %.1f kbps sent %.1f kbps received\n",
@@ -196,10 +243,15 @@ int main( void )
 
     // disconnect, then read how the connection ended: the client's state, and
     // the server's disconnect reason for the slot
+
     rocketnet_client_disconnect( client );
+
     const double disconnect_start = rocketnet_time();
     while ( rocketnet_server_client_connected( server, client_index ) && rocketnet_time() - disconnect_start < 2.0 )
+    {
         frame( server, client, 1000.0 + rocketnet_time() - start, 0 );
+    }
+
     printf( "client after disconnect state %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     printf( "server client %d disconnect reason %s\n", client_index, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, client_index ) ) );
 
@@ -210,12 +262,14 @@ int main( void )
                            : 1;
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
+
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
+
     printf( result == 0 ? "PASS\n" : "FAIL: traffic counted on both ends and a clean disconnect\n" );
     return result;
 }

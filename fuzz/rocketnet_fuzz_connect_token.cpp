@@ -102,18 +102,23 @@ static void rocketnet_fuzz_build_base_token()
     signed_fields.expire_timestamp = ROCKETNET_TEST_CREATE_TS + 300;
     signed_fields.timeout_seconds = 10;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address_bytes[6] = { 203, 0, 113, 10, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, server_address_bytes, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
 
     private_fields.client_id = 1;
+
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
     {
         private_fields.client_to_server_key[i] = (uint8_t) ( 0x10 + i );
         private_fields.server_to_client_key[i] = (uint8_t) ( 0x50 + i );
     }
+
     for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
+    {
         private_fields.user_data[i] = (uint8_t) i;
+    }
 
     if ( !rocketnet_write_connect_token( &signed_fields, &private_fields,
                                          rocketnet_dev_backend_secret_key,
@@ -135,19 +140,30 @@ static void rocketnet_fuzz_token_ladder( const uint8_t * token_data, int touched
                                                                rocketnet_dev_backend_public_key );
 
     if ( verified )
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_SIGNATURE_VERIFIED;
+    }
     else
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_SIGNATURE_REJECTED;
+    }
 
     if ( is_mutant )
     {
         // a mutant whose covered bytes changed and which still verifies is a
         // forgery; a mutant whose covered bytes did NOT change must verify,
         // because the signature covers nothing outside them
+
         if ( touched_covered && verified )
+        {
             abort();
+        }
+
         if ( !touched_covered && !verified )
+        {
             abort();
+        }
+
         (void) touched_any;
     }
 
@@ -160,34 +176,47 @@ static void rocketnet_fuzz_token_ladder( const uint8_t * token_data, int touched
                                                                  rocketnet_dev_server_secret_key );
 
         if ( opened )
+        {
             rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_PRIVATE_OPENED;
+        }
 
         // verification passing means the signed data -- sealed block included
         // -- is byte-identical to what the backend signed, so the open and the
         // inner consistency must both hold
+
         if ( is_mutant && !touched_covered )
         {
             if ( !opened )
+            {
                 abort();
+            }
+
             if ( !rocketnet_connect_token_private_consistent( &private_fields, token.signed_connect_data ) )
+            {
                 abort();
+            }
         }
         else if ( opened )
         {
             if ( !rocketnet_connect_token_private_consistent( &private_fields, token.signed_connect_data ) )
+            {
                 abort();
+            }
         }
     }
 
     // the identifier is content-determined over the signed data and must be
     // computable for any buffer
+
     uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     rocketnet_connect_token_identifier( identifier, token.signed_connect_data );
 
     // the layout readers on their own: pure offset arithmetic over fixed
     // buffers, obliged to survive anything
+
     struct rocketnet_signed_connect_data_t signed_out;
     rocketnet_read_signed_connect_data( &signed_out, token.signed_connect_data );
+
     struct rocketnet_connect_token_private_t private_out;
     rocketnet_read_connect_token_private( &private_out, token_data );
 }
@@ -203,27 +232,40 @@ static void rocketnet_fuzz_client_connect( const uint8_t * token_data, uint64_t 
 
     static struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( client.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the fields the client's pre-send checks branch on, read the same way the
     // protocol reads them, so the type bits track the branches the parser takes
+
     struct rocketnet_signed_connect_data_t signed_fields;
     rocketnet_read_signed_connect_data( &signed_fields, token_data );
+
     const uint8_t flags = signed_fields.address_flags;
     if ( flags == 0 || ( flags & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 )
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_CLIENT_FLAGS;
+    }
+
     if ( signed_fields.create_timestamp > signed_fields.expire_timestamp )
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_CLIENT_WINDOW;
+    }
+
     if ( signed_fields.version != ROCKETNET_WIRE_VERSION )
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_CLIENT_VERSION;
+    }
 
     const int connected = rocketnet_client_protocol_connect( &client, token_data, 100.0, current_timestamp );
 
     if ( !connected )
     {
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED )
+        {
             rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_CLIENT_EXPIRED;
+        }
     }
     else if ( flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
     {
@@ -237,11 +279,14 @@ static void rocketnet_fuzz_client_connect( const uint8_t * token_data, uint64_t 
     if ( connected )
     {
         // one update builds the cookie request from the parsed fields
+
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         int packet_bytes = 0;
         rocketnet_client_protocol_update( &client, 100.1, packet, &packet_bytes );
         if ( packet_bytes < 0 || packet_bytes > ROCKETNET_SEND_BUDGET )
+        {
             abort();
+        }
     }
 }
 
@@ -251,7 +296,9 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     (void) argv;
 
     if ( sodium_init() < 0 )
+    {
         abort();
+    }
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
@@ -259,11 +306,13 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 
     // the harness's own premise, checked where it is created: the baseline
     // must walk the whole ladder clean before anything is mutated
+
     rocketnet_fuzz_token_ladder( rocketnet_fuzz_base_token, 0, 0, 0 );
 
     // the seed generator, driven by the environment: writes one named seed per
     // type into the directory, replaying each before it is written, and fails
     // the run (exit 1, INCOMPLETE) if any type stays uncovered
+
     char seed_dir[1024];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
     {
@@ -285,6 +334,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // byte 0 selects the half; byte 1 selects the client's clock against the
     // token's fixed validity window, covering not-yet-valid, valid and
     // expired without a wall clock anywhere
+
     const int raw = data[0] & 1;
     const uint64_t current_timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( (int64_t) (int8_t) data[1] * 60 );
 
@@ -299,8 +349,12 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
         // arbitrary bytes as a token, zero-padded to the fixed size the way
         // the transport's fixed-length receive path presents it
+
         if ( body_size > ROCKETNET_CONNECT_TOKEN_BYTES )
+        {
             body_size = ROCKETNET_CONNECT_TOKEN_BYTES;
+        }
+
         memset( token_data, 0, sizeof( token_data ) );
         memcpy( token_data, body, body_size );
 
@@ -312,6 +366,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // the structured half: fuzz-chosen xor flips over the valid baseline,
     // as (offset u16 LE, xor byte) records. An xor of zero changes nothing,
     // and the oracle switches track only EFFECTIVE flips.
+
     rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_STRUCTURED;
 
     memcpy( token_data, rocketnet_fuzz_base_token, sizeof( token_data ) );
@@ -328,6 +383,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // from the flip records: two flips on one byte cancel, and an oracle fed
     // the records instead of the bytes would call the resulting identical
     // token a forgery
+
     const int touched_covered = memcmp( token_data, rocketnet_fuzz_base_token, FUZZ_TOKEN_COVERED_BYTES ) != 0;
     const int touched_any = touched_covered ||
                             memcmp( token_data + FUZZ_TOKEN_COVERED_BYTES,
@@ -335,9 +391,13 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                                     ROCKETNET_CONNECT_TOKEN_BYTES - FUZZ_TOKEN_COVERED_BYTES ) != 0;
 
     if ( touched_covered )
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_COVERED_MUTATION;
+    }
     else
+    {
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_CLEAR_MUTATION;
+    }
 
     rocketnet_fuzz_token_ladder( token_data, touched_covered, touched_any, 1 );
     rocketnet_fuzz_client_connect( token_data, current_timestamp );
@@ -399,7 +459,9 @@ static void rocketnet_fuzz_connect_write_u32( uint8_t * output, uint32_t value )
 static void rocketnet_fuzz_connect_write_u64( uint8_t * output, uint64_t value )
 {
     for ( int i = 0; i < 8; i++ )
+    {
         output[i] = (uint8_t) ( value >> ( i * 8 ) );
+    }
 }
 
 static void rocketnet_fuzz_connect_fill_header( uint8_t * token, uint32_t version, uint8_t flags, uint64_t create, uint64_t expire, uint32_t timeout )
@@ -424,6 +486,7 @@ static void rocketnet_fuzz_connect_mint_token( uint8_t address_flags, int ipv6, 
     sf.expire_timestamp = ROCKETNET_TEST_CREATE_TS + 300;
     sf.timeout_seconds = 10;
     sf.address_flags = address_flags;
+
     if ( ipv6 )
     {
         static const uint8_t v6[18] = { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0xff, 0xff };
@@ -434,18 +497,26 @@ static void rocketnet_fuzz_connect_mint_token( uint8_t address_flags, int ipv6, 
         static const uint8_t v4[6] = { 203, 0, 113, 10, 0x40, 0x9c };
         memcpy( sf.ipv4_address, v4, 6 );
     }
+
     memcpy( sf.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
     pf.client_id = 1;
+
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
     {
         pf.client_to_server_key[i] = (uint8_t) ( 0x10 + i );
         pf.server_to_client_key[i] = (uint8_t) ( 0x50 + i );
     }
+
     for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
+    {
         pf.user_data[i] = (uint8_t) i;
+    }
+
     static const uint8_t ephemeral_secret[ROCKETNET_KEY_BYTES] = { 0x21 };
     if ( !rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_dev_backend_secret_key, ephemeral_secret, out ) )
+    {
         abort();
+    }
 }
 
 static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, size_t capacity )
@@ -458,7 +529,9 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
             return 0;
         output[0] = 0;
         output[1] = 0;
+
         size_t size = 2;
+
         if ( kind == ROCKETNET_FUZZ_CONNECT_SEED_COVERED )
         {
             output[size++] = 0x00;
@@ -471,6 +544,7 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
             output[size++] = 0x02;
             output[size++] = 0x01;
         }
+
         return size;
     }
 
@@ -486,7 +560,10 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
     {
         case ROCKETNET_FUZZ_CONNECT_SEED_ARBITRARY:
             for ( int i = 0; i < 64; i++ )
+            {
                 token[i] = 0xAA;
+            }
+
             break;
         case ROCKETNET_FUZZ_CONNECT_SEED_FLAGS:
             rocketnet_fuzz_connect_fill_header( token, ROCKETNET_WIRE_VERSION, 0x04,
@@ -516,6 +593,7 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
     }
 
     memcpy( output + 2, token, sizeof( token ) );
+
     return 2 + ROCKETNET_CONNECT_TOKEN_BYTES;
 }
 
@@ -566,9 +644,11 @@ static int rocketnet_fuzz_connect_generate_seed_dir( const char * directory )
 
         char path[1024];
         snprintf( path, sizeof( path ), "%s/%s", directory, spec->name );
+
         FILE * f = rocketnet_test_fopen( path, "wb" );
         if ( !f )
             return 0;
+
         const size_t written = fwrite( data, 1, size, f );
         if ( fclose( f ) != 0 || written != size )
             return 0;

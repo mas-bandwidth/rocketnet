@@ -41,9 +41,10 @@ int main( void )
     CHECK( signed_output.expire_timestamp == 1030 );
     CHECK( memcmp( signed_output.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES ) == 0 );
 
-    /* The tools' binary writer rejects an invalid address before crypto work. */
+    // the tools' binary writer rejects an invalid address before crypto work.
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     CHECK( rocketnet_write_test_connect_token( "invalid", 42, 1000, token, sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ADDRESS );
     puts( "internal C linkage passed" );
+
     return 0;
 }
