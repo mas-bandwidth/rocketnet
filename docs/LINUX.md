@@ -367,6 +367,9 @@ server_config.transport = "xdp";
 ```
 
 RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2.
+Each XDP worker spins on its dedicated, isolated queue CPU and never sleeps or
+yields between passes. NAPI for the queue runs in softirq on the queue CPUs, and
+the isolated-CPU preflight guards that nothing else shares the core.
 The game pins each of its workers from within that thread with
 `pthread_setaffinity_np`, using `NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`,
 and may request `SCHED_FIFO` priority. With a pool of 13 threads,

@@ -3432,10 +3432,11 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
         }
 
-        // IMPORTANT: Sleep so the transport gets all the time it wants. Otherwise, it can hitch us
+        // The worker never sleeps or yields between passes: it spins on its dedicated, isolated queue CPU.
+        // NAPI for this queue runs in softirq on the queue CPUs, so the isolated-CPU preflight is the guard
+        // that keeps other work off the core this loop occupies.
 
         if ( stopping ) break;
-        rocketnet_platform_sleep( 0.0 );
     }
     // Last access to queue storage, acquired by stopped before destruction.
     socket->stopped.store( true, std::memory_order_release );
