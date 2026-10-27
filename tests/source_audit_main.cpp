@@ -19,6 +19,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static const char * const source_audit_cases[] =
 {
@@ -26,6 +27,7 @@ static const char * const source_audit_cases[] =
     "test_config_env_every_name_read_is_documented",
     "test_counters_every_counter_is_named_by_a_test",
     "test_counters_every_outcome_in_at_most_one_family",
+    "test_tools_never_cast_public_client_to_internal",
     "test_xdp_transport_host_every_counter_has_a_case"
 };
 
@@ -52,11 +54,41 @@ static int source_audit_clear_environment()
     return cleared || cleared_server || cleared_client || cleared_ipv4 || cleared_ipv6;
 }
 
-int main( void )
+// --run <case> runs one named case of the list above and nothing else.
+static int source_audit_case_named( const char * name )
+{
+    const size_t count = sizeof( source_audit_cases ) / sizeof( source_audit_cases[0] );
+    for ( size_t i = 0; i < count; i++ )
+        if ( strcmp( source_audit_cases[i], name ) == 0 )
+            return 1;
+    return 0;
+}
+
+int main( int argc, char ** argv )
 {
     if ( source_audit_clear_environment() )
     {
         printf( "check failed: could not clear the audit environment\n" );
+        fflush( stdout );
+        return 1;
+    }
+
+    if ( argc == 3 && strcmp( argv[1], "--run" ) == 0 )
+    {
+        if ( !source_audit_case_named( argv[2] ) )
+        {
+            printf( "source audit: no case named %s\n", argv[2] );
+            fflush( stdout );
+            return 1;
+        }
+        const int rc = rocketnet_unit_tests_run_named( argv[2] );
+        printf( "source audit case %s %s (rc=%d)\n", argv[2], rc == 0 ? "passed" : "failed", rc );
+        fflush( stdout );
+        return rc == 0 ? 0 : 1;
+    }
+    if ( argc != 1 )
+    {
+        printf( "usage: source_audit [--run <case>]\n" );
         fflush( stdout );
         return 1;
     }
