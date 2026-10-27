@@ -13,7 +13,9 @@
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
 //   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect under a
-//     fault-injecting allocator fails when allocating the worker thread;
+//     fault-injecting allocator fails when allocating the worker thread's
+//     record, before the OS thread create; the sweep stops at that first
+//     refusal, so no attempt reaches the OS create and no thread starts;
 //   * ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT and
 //     ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT: a step-driven
 //     loopback client on a test clock starting at 1000.0 reaches handshake

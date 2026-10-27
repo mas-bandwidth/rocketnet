@@ -7,85 +7,19 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#if defined(__APPLE__)
-#include <libproc.h>
-#include <unistd.h>
-#endif
-
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
 #include <sodium.h>
 #endif
 
-#define check rocketnet_unit_check
-
-#if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
-static long rng_lifecycle_fd_count()
-{
-    const int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, NULL, 0);
-    if (bytes <= 0) return -1;
-    void * entries = malloc((size_t)bytes);
-    if (!entries) return -1;
-    const int used = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, entries, bytes);
-    free(entries);
-    return used < 0 ? -1 : (long)(used / (int)PROC_PIDLISTFD_SIZE);
-}
-
-static void test_bundled_rng_closes_and_reopens_on_mac()
-{
-    // The unit worker begins initialized. Establish the uninitialized baseline
-    // after the first completed term, then exercise several distinct cycles.
-    check(rocketnet_term() == ROCKETNET_STATUS_OK);
-    const long baseline = rng_lifecycle_fd_count();
-    check(baseline >= 0);
-
-    // sodium_init is one-time. Subsequent empty cycles must neither reopen
-    // the RNG descriptor nor retain any other descriptor at termination.
-    for (int cycle = 0; cycle < 3; ++cycle)
-    {
-        check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
-        check(rng_lifecycle_fd_count() == baseline);
-        check(rocketnet_term() == ROCKETNET_STATUS_OK);
-        check(rng_lifecycle_fd_count() == baseline);
-    }
-
-    for (int cycle = 0; cycle < 3; ++cycle)
-    {
-        check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
-        uint8_t random_data[32];
-        rocketnet_random_bytes(random_data, sizeof(random_data));
-        uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-        uint8_t secret_key[sizeof(rocketnet_dev_server_secret_key)];
-        check(rocketnet_generate_server_keypair(public_key, secret_key) == ROCKETNET_STATUS_OK);
-        // The old bug kept /dev/urandom open across term. If the first term
-        // failed to close it, baseline already includes that descriptor and
-        // this active-cycle assertion fails rather than masking the leak.
-        check(rng_lifecycle_fd_count() == baseline + 1);
-
-        if (cycle == 1)
-        {
-            rocketnet_client_config_t config;
-            check(rocketnet_client_default_config(&config) == ROCKETNET_STATUS_OK);
-            config.max_fragmented_messages = 1;
-            rocketnet_status_t status = ROCKETNET_STATUS_OK;
-            rocketnet_client_t * client = rocketnet_client_create(NULL, &config, &status);
-            check(client != NULL && status == ROCKETNET_STATUS_OK);
-            const long with_client = rng_lifecycle_fd_count();
-            check(with_client >= 0);
-            check(rocketnet_term() == ROCKETNET_STATUS_LIVE_ALLOCATIONS);
-            check(rng_lifecycle_fd_count() == with_client);
-            rocketnet_client_destroy(client);
-        }
-
-        check(rocketnet_term() == ROCKETNET_STATUS_OK);
-        check(rng_lifecycle_fd_count() == baseline);
-    }
-    // Restore the worker's initialized state for its ordinary final term.
-    check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
-}
-REGISTER_UNIT_TEST(test_bundled_rng_closes_and_reopens_on_mac);
-#endif
+// The bundled-RNG descriptor lifecycle case reads the live process's open
+// descriptors through proc_pidinfo, which is OS state, so it is a functional
+// case: test_bundled_rng_closes_and_reopens_on_mac in
+// functional/platform_primitives.cpp. The system-sodium case below replaces
+// the RNG with a fake and reads nothing from the OS, so it stays a unit case.
 
 #if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#define check rocketnet_unit_check
+
 static int rng_lifecycle_system_close_calls = 0;
 static const char * rng_lifecycle_name() { return "rocketnet-test-rng"; }
 static uint32_t rng_lifecycle_random() { return 42; }
