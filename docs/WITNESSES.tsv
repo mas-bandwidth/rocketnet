@@ -1,58 +1,58 @@
-standard_line	rule	tla_invariant	code_function	test	tier
-1071	implementation MUST check it and abandon the handshake on failure	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_connection_request	sdk/rocketnet_tests.cpp:test_client_server_connect	unit
-1095	Ephemeral secrets MUST be erased	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	sdk/rocketnet_tests.cpp:test_connection_keys	unit
-1096	Both sides MUST zero the	EphemeralErasedOutsideHandshake	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	sdk/rocketnet_tests.cpp:test_connection_keys	unit
-1097	shared secret as soon as the four keys are derived	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	sdk/rocketnet_tests.cpp:test_connection_keys	unit
-1102	A server that does so MUST bound the window	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
-1170	A receiver MUST check both the size and	-	sdk/rocketnet_protocol.cpp:rocketnet_open_sealed_packet	sdk/rocketnet_tests.cpp:test_sealed_packet_refusals	unit
-1267	it MUST NOT send a request	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_update	sdk/rocketnet_tests.cpp:test_challenge_resend_checks_salt	unit
-1274	A client MUST discard a cookie packet whose connection salt does not match	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	sdk/rocketnet_tests.cpp:test_challenge_resend_checks_salt	unit
-1330	MUST ignore the carried nonce and use the keys it holds	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_open_session_packet	-	none
-1334	MUST be zero, and MUST be checked	-	sdk/rocketnet_protocol.cpp:rocketnet_open_sealed_packet	sdk/rocketnet_tests.cpp:test_packet_associated_data	unit
-1409	reserved and MUST be ignored by a conforming receiver	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	sdk/rocketnet_tests.cpp:test_unsealed_packets	unit
-1426	The comparison MUST be constant time when the epoch is nonzero	-	sdk/rocketnet_protocol.cpp:rocketnet_prefilter_check	-	none
-1550	A server and a client MUST each count the sealed packets that fail to open	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_integrity_failure	sdk/rocketnet_tests.cpp:test_sealed_packet_refusals	unit
-1551	MUST disconnect it on	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_integrity_failure	sdk/rocketnet_tests.cpp:test_sealed_packet_refusals	unit
-1574	A replay window MUST hold	ReceiverNeverOutsideWindow	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	sdk/rocketnet_tests.cpp:test_replay_protection	unit
-1575	at least 4096 sequences	-	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	sdk/rocketnet_tests.cpp:test_replay_protection	unit
-1577	an implementation MUST NOT throttle	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_process_packet	-	none
-1587	Implementations MUST make that resource limit explicit and	-	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	-	none
-1589	MUST work for a full retained window arriving in one batch	ReceiverNeverOutsideWindow	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	sdk/rocketnet_tests.cpp:test_replay_protection	unit
-1598	Every lookup a server performs per packet or per connection MUST be constant	-	sdk/rocketnet_encryption_map.cpp:rocketnet_encryption_map_find	sdk/rocketnet_tests.cpp:test_encryption_map	unit
-1617	the hash MUST be keyed	-	sdk/rocketnet_encryption_map.cpp:rocketnet_encryption_map_bucket	sdk/rocketnet_tests.cpp:test_encryption_map	unit
-1695	A transport that rejects early MUST reject exactly	-	sdk/rocketnet_protocol.cpp:rocketnet_open_sealed_packet	sdk/rocketnet_tests.cpp:test_sealed_packet_refusals	unit
-1698	the userspace path MUST NOT assume an earlier stage	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	-	none
-1750	MUST be zero, and MUST NOT be zero otherwise	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_write	sdk/rocketnet_tests.cpp:test_ack_block_validity	unit
-1754	A block MUST NOT name a sequence its sender has not opened	AckReportsOnlyReceived	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	sdk/rocketnet_tests.cpp:test_ack_block_build	unit
-1756	enumerates MUST consist of sequences it actually opened	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	sdk/rocketnet_tests.cpp:test_ack_block_build	unit
-1759	It is stated as a MUST because rules elsewhere depend	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	-	none
-1785	MUST NOT exceed	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_read	sdk/rocketnet_tests.cpp:test_ack_block_validity	unit
-1788	Implementations MUST	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_read	sdk/rocketnet_tests.cpp:test_ack_block_encoding	unit
-1857	processing MUST cost no more than one	-	sdk/rocketnet_ack.cpp:rocketnet_ack_endpoint_process_block	sdk/rocketnet_tests.cpp:test_ack_endpoint_processing	unit
-1865	MUST NOT treat them as an error that affects the connection	AckReportsOnlyProcessed	sdk/rocketnet_ack.cpp:rocketnet_ack_apply_run	sdk/rocketnet_tests.cpp:test_ack_bad_block_refusals	unit
-1902	fits one packet MUST be sent as type 5	-	sdk/rocketnet_fragment.cpp:rocketnet_fragment_plan	sdk/rocketnet_tests.cpp:test_fragment_plan	unit
-2230	MUST NOT send a packet per application update	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_update	sdk/rocketnet_tests.cpp:test_client_keep_alive_suppression	unit
-2241	MUST keep it	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_update	sdk/rocketnet_tests.cpp:test_keep_alive_pacing_survives_early_ack	unit
-2285	The state MUST be readable from outside at any time	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_transport_state_name	sdk/rocketnet_tests.cpp:test_client_connect_validations	unit
-2325	it MUST abandon the attempt once the token's lifetime	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_check_deadlines	sdk/rocketnet_tests.cpp:test_client_timeout_paths	unit
-2343	client's packet sequence number MUST NOT be reset within an attempt	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_connect	sdk/rocketnet_tests.cpp:test_client_server_connect	unit
-2388	MUST.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_connect	-	none
-2487	protocol MUST preserve this by construction	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	-	none
-2553	Address validation always comes before asymmetric work	-	sdk/rocketnet_server_protocol.cpp:rocketnet_signature_verify_budget_allow	sdk/rocketnet_tests.cpp:test_request_path_cookie_gate	unit
-2647	implementations MUST use the 16-byte output	-	sdk/rocketnet_protocol.cpp:rocketnet_generate_cookie_mac	sdk/rocketnet_tests.cpp:test_cookie_bounds_signature_verifies	unit
-2653	Comparisons MUST be constant time	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_opened_request	-	none
-2749	The handshake deadline MUST NOT be the token's	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_check_deadlines	sdk/rocketnet_tests.cpp:test_client_timeout_paths	unit
-2779	implementation MUST document the ratio it chose	-	sdk/rocketnet_server_protocol.cpp:rocketnet_signature_verify_budget_decay	-	none
-2884	an implementation MUST document its capacity and	-	sdk/rocketnet_token_tables.cpp:rocketnet_used_token_history_create	-	none
-2904	connection has closed MAY connect again until it expires	OneTokenOneLiveConnection	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_connection_response	tests/test_unit_token_churn.cpp:server_admits_a_token_again_after_its_connection_closes	unit
-2908	deployment SHOULD mint tokens that expire 30	-	sdk/rocketnet_connect_token.cpp:rocketnet_create_dev_connect_token	tests/test_unit_token_churn.cpp:server_rejects_an_expired_token_before_any_crypto	unit
-2924	MUST NOT treat that as sufficient	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_opened_request	-	none
-2952	its token MUST stay usable for the	-	sdk/rocketnet_token_tables.cpp:rocketnet_used_token_history_check	-	none
-2918	traffic MUST NOT suppress it	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_write_keep_alive_if_due	sdk/rocketnet_tests.cpp:test_server_keep_alive_pacing	unit
-2958	the block-building MUST in _Acks_ forbids	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	sdk/rocketnet_tests.cpp:test_ack_block_build	unit
-3015	The converse does not hold, and MUST NOT be assumed	-	sdk/rocketnet_ack.cpp:rocketnet_ack_endpoint_process_block	sdk/rocketnet_tests.cpp:test_ack_bad_block_refusals	unit
-3077	MUST preserve it	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	-	none
-3079	confirmation test MUST then be re-derived	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	-	none
-3163	An implementation MUST zero the key material	EphemeralErasedOutsideHandshake	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	sdk/rocketnet_tests.cpp:test_client_token_keys_wiped_on_disconnect	unit
--	a server config that names both families serves both, and a client on each family reaches connected	BothFamiliesConnect	sdk/rocketnet_server_protocol.cpp:rocketnet_server_token_address_is_advertised	tla/MCServerConnectionServesBothFamilies.cfg	model
--	a server that names both families but serves only the first leaves the other family's client unconnected	BothFamiliesConnect	sdk/rocketnet_server_protocol.cpp:rocketnet_server_token_address_is_advertised	tla/MCServerConnectionBrokenOneFamilyServed.cfg	model
+section	rule	tla_invariant	code_function	test	tier
+t7	When the scalar multiplication reports a small-order public key, the endpoint MUST abandon the attempt, MUST NOT derive a session key, and MUST NOT create a mapping.	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	sdk/rocketnet_tests.cpp:test_connection_keys	unit
+t2.2	An endpoint MUST erase an ephemeral secret key, and every derived key, when the attempt or connection that owns it ends	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
+t7	Both endpoints MUST erase the shared secret as soon as the four keys are derived	EphemeralErasedOutsideHandshake	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
+t7	MUST erase an ephemeral secret key when no handshake that needs it remains	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
+t7	the server MUST generate one for every mapping or take the current keypair of a bounded rotation window	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
+t10	A connection response that opens and whose padding is not all zero is `CONNECTION_RESPONSE_PADDING_NOT_ZERO`	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	sdk/rocketnet_tests.cpp:test_integrity_limit	unit
+t11.1	A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored, and MUST send nothing in response.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	-	none
+t11.1	MUST ignore one whose echoed connection salt is not the attempt's salt	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	sdk/rocketnet_tests.cpp:test_client_cookie_injection	unit
+t11.2	a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_open_session_packet	-	none
+t8.4	The connection response is sealed and carries 24 zero bytes of padding.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	sdk/rocketnet_tests.cpp:test_integrity_limit	unit
+t10	A receiver MUST reject a packet type at or above the first reserved packet type as `RESERVED_TYPE`.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	sdk/rocketnet_tests.cpp:test_server_receive_refusals	unit
+t5.1	It MUST compare the computed value with the packet's filter value in constant time.	-	sdk/rocketnet_protocol.cpp:rocketnet_prefilter_check	-	none
+t9	A sender and a receiver MUST each count, per connection and across all of that connection's keys, every sealed packet whose AEAD open fails.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_integrity_failure	sdk/rocketnet_tests.cpp:test_integrity_limit	unit
+t9	On reaching the AEAD integrity limit below, the endpoint MUST end the connection	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_integrity_failure	sdk/rocketnet_tests.cpp:test_integrity_limit	unit
+t14	Refuse the packet without opening it when the sequence is at or below the high-water mark and its received bit is set.	ReceiverNeverOutsideWindow	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	sdk/rocketnet_tests.cpp:test_replay_protection	unit
+t14	The window depth is at least the `replay window depth minimum` and at most the `replay window depth maximum`	-	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	-	none
+t14	an implementation must not throttle application sends to preserve an assumed time span of history	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_process_packet	-	none
+t14	Implementations must document their retained depth.	-	sdk/rocketnet_replay.cpp:rocketnet_replay_advance	-	none
+t15.3	A receiver MUST bound this processing by its retained history, not by the number of sequence values asserted by the block.	-	sdk/rocketnet_ack.cpp:rocketnet_ack_endpoint_process_block	sdk/rocketnet_tests.cpp:test_ack_endpoint_processing	unit
+t12	Every lookup a server performs per packet or per connection must be constant time in the number of client slots.	-	sdk/rocketnet_encryption_map.cpp:rocketnet_encryption_map_find	-	none
+t12	The address and client-id lookups are hash tables, and the hash must be keyed with a secret generated at server start.	-	sdk/rocketnet_encryption_map.cpp:rocketnet_encryption_map_hash	-	none
+t10	Each check MUST reject exactly the packets named for it	-	sdk/rocketnet_protocol.cpp:rocketnet_open_sealed_packet	-	none
+tc	Pushing work down reduces the volume that reaches userspace rather than removing the check from it	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	-	none
+t15.1	A block that names a sequence always has a first range length of at least one	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_read	sdk/rocketnet_tests.cpp:test_ack_block_validity	unit
+t15.1	A sender MUST NOT name a sequence that it did not open.	AckReportsOnlyReceived	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	sdk/rocketnet_tests.cpp:test_ack_block_build	unit
+t15.1	A sender MUST construct ranges from the acknowledgement-eligible session-sequence state it maintains for the remote endpoint.	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	sdk/rocketnet_tests.cpp:test_ack_block_build	unit
+t15.1	It is stated as a must because rules elsewhere depend on it	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	-	none
+t15.1	The sum of first range length and every gap and range length exceeds reconstructed largest received, so the lowest described sequence would be below sequence one.	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_read	sdk/rocketnet_tests.cpp:test_ack_block_validity	unit
+t15.1	The receiver MUST evaluate every remaining validity rule on that reconstructed value.	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_read	sdk/rocketnet_tests.cpp:test_ack_block_validity	unit
+t15.3	It MUST silently ignore sequences below its retained sent-history window.	-	sdk/rocketnet_ack.cpp:rocketnet_ack_endpoint_process_block	sdk/rocketnet_tests.cpp:test_ack_endpoint_processing	unit
+t15.1	When a block is malformed, a receiver MUST NOT apply its acknowledgements, examine the packet type data, refresh connection activity or add acknowledgement debt.	AckReportsOnlyProcessed	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	sdk/rocketnet_tests.cpp:test_ack_bad_block_refusals	unit
+t16.1	A sender MUST send a payload whose size is at most the payload capacity row of [t3 Constants and registries](#t3) as a type 5 packet	-	sdk/rocketnet_fragment.cpp:rocketnet_fragment_plan	sdk/rocketnet_tests.cpp:test_fragment_plan	unit
+t17	The schedule is driven by elapsed time, not by the number of application updates.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_update	sdk/rocketnet_tests.cpp:test_client_keep_alive_suppression	unit
+t17	A sender MUST keep the send rate constant for the duration of one attempt.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_update	-	none
+t18	An endpoint MUST expose the state of each connection and the reason a connection ended.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_transport_state_name	-	none
+t11	it MUST abandon the attempt for connect token expired (-7) once the token's lifetime, the difference between its expire timestamp and its create timestamp, has elapsed since the attempt began	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_check_deadlines	sdk/rocketnet_tests.cpp:test_client_timeout_paths	unit
+t11	The handshake and session sending sequences MUST start at one and MUST NOT be reset within the attempt.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_connect	-	none
+t11.1	A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_protocol_connect	-	none
+t13.1	Ordinary traffic MUST NOT suppress this keep-alive.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	-	none
+t12	A server MUST require a valid return cookie before any asymmetric work	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_connection_request	sdk/rocketnet_tests.cpp:test_request_path_cookie_gate	unit
+t6	The token identifier MUST be the BLAKE2b hash, of the `token identifier` size of [t3 Constants and registries](#t3) and with no key, of the signed connect data.	-	sdk/rocketnet_connect_token.cpp:rocketnet_connect_token_identifier	sdk/rocketnet_tests.cpp:test_connect_token_frozen	unit
+t12	Comparisons must be constant time.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_opened_request	-	none
+t12	A mapping without a connected slot MUST be removed at its handshake deadline, which is fixed at creation and is never refreshed	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_update	sdk/rocketnet_tests.cpp:test_server_update_sweep	unit
+t12	An implementation must document the ratio it chose.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_signature_verify_budget_decay	-	none
+t12	an implementation must document its capacity and eviction policy	-	sdk/rocketnet_token_tables.cpp:rocketnet_used_token_history_create	-	none
+t12	A server MUST bind the token identifier to the source address at that point	OneTokenOneLiveConnection	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_connection_response	tests/test_unit_token_churn.cpp:test_server_refuses_a_token_connected_now	unit
+t12	A server MUST then refuse a token whose expire timestamp is not later than the server's current time	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_connection_request	tests/test_unit_token_churn.cpp:test_server_rejects_an_expired_token_before_any_crypto	unit
+t13.1	A server MUST take the claim at face value and MUST NOT wait for any other evidence before entering the regime of rule 2.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_opened_request	-	none
+t12	Entries expire with the tokens they name.	-	sdk/rocketnet_token_tables.cpp:rocketnet_used_token_history_check	-	none
+t13.1	A server MUST send a keep-alive whenever the send rate interval has elapsed since it last sent that client a keep-alive, until a keep-alive it sent to that client has been acknowledged.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_write_keep_alive_if_due	sdk/rocketnet_tests.cpp:test_server_keep_alive_pacing	unit
+t15.1	A sender MUST NOT name a sequence that it did not open.	-	sdk/rocketnet_ack.cpp:rocketnet_ack_block_build	sdk/rocketnet_tests.cpp:test_ack_block_build	unit
+t13	The converse does not hold, and must not be assumed.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_write_keep_alive_if_due	-	none
+t13	Any change to the ack block's encoding or validity rules, to the keep-alive's type data or size, or to the order in which the replay window is marked relative to those checks, must preserve it.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	-	none
+t13	confirmation test must then be re-derived rather than assumed to still hold	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	-	none
+t13.4	It MUST zero all key material rather than merely mark the slot free.	-	sdk/rocketnet_connection_reset.cpp:rocketnet_client_connection_reset	sdk/rocketnet_tests.cpp:test_client_token_keys_wiped_on_disconnect	unit
+t11	a server config that names both families serves both, and a client on each family reaches connected	BothFamiliesConnect	sdk/rocketnet_server_protocol.cpp:rocketnet_server_token_address_is_advertised	tla/MCServerConnectionServesBothFamilies.cfg	model
+t11	a server that names both families but serves only the first leaves the other family's client unconnected	BothFamiliesConnect	sdk/rocketnet_server_protocol.cpp:rocketnet_server_token_address_is_advertised	tla/MCServerConnectionBrokenOneFamilyServed.cfg	model

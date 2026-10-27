@@ -3,18 +3,26 @@
 #   RocketNet. Copyright 2026 Más Bandwidth LLC.
 #   Licensed under the GNU Affero General Public License v3.0
 
-"""Witness coverage for the behavioural MUSTs of STANDARD.md.
+"""Witness coverage for the behavioural MUSTs of the RocketNet standard.
 
-docs/WITNESSES.tsv names, for each behavioural MUST, the anchor that would
-move if the rule moved: the STANDARD.md line, the TLA+ invariant (if one
-exists), the C++ function, and the test. This checker holds those anchors to
-the tree. It fails when an anchor is stale -- the named line no longer
-carries the rule's keyword, or the function, test or invariant is gone.
-That is a coverage audit, not a behaviour test: it never runs the tests.
+docs/WITNESSES.tsv names, for each behavioural rule, the anchor that would
+move if the rule moved: the section id in standard/TRANSPORT.md (RN-1) or
+standard/MESSAGES.md (RN-2), the TLA+ invariant (if one exists), the C++
+function, and the test. This checker holds those anchors to the tree. It
+fails when an anchor is stale -- the section id no longer resolves through
+check_rn_standard.py's resolver, the named section (or, where the standard
+keeps the rule's text only in standard/RATIONALE.md under the same section
+id, that rationale section) no longer carries the rule text, or the
+function, test or invariant is gone. That is a coverage audit, not a
+behaviour test: it never runs the tests.
 
 A row whose tier is `none` names a rule with no unit or functional witness.
 The gate does NOT fail on a gap; it counts and lists the gaps, because a gap
 is honest and a silent one is not. The gate fails only on a stale anchor.
+A row whose tier is `model` is witnessed by a TLA+ model check: its rule
+column states the modelled property, so the rule-text check does not apply
+to it; its invariant, model-check configuration and code anchors must all
+resolve.
 
 Run from anywhere:  python3 tools/conformance/check_witnesses.py
 """
@@ -25,11 +33,15 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
-STANDARD = os.path.join(ROOT, "STANDARD.md")
-TLA_DIR = os.path.join(ROOT, "tla")
-TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
+sys.path.insert(0, HERE)
 
-COLUMNS = ["standard_line", "rule", "tla_invariant", "code_function", "test", "tier"]
+import check_rn_standard as rn_standard  # noqa: E402
+
+TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
+TLA_DIR = os.path.join(ROOT, "tla")
+
+COLUMNS = ["section", "rule", "tla_invariant", "code_function", "test", "tier"]
+TIERS = ("unit", "none", "model")
 
 
 def read_tsv(path):
@@ -53,24 +65,61 @@ def read_tsv(path):
     return rows
 
 
-def anchor_invariant_exists(name):
+def normalize(text):
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def section_text(doc, ident):
+    """The normalized text of one section, subsections included."""
+    section = doc.anchors.get(ident)
+    if section is None:
+        return None
+    end = len(doc.lines)
+    for number in range(section.line + 1, len(doc.lines) + 1):
+        match = rn_standard.HEADING_RE.match(doc.lines[number - 1])
+        if match and len(match.group(1)) <= section.level:
+            end = number - 1
+            break
+    return normalize("\n".join(doc.lines[section.line - 1:end]))
+
+
+def rule_carried(docs, rationale, ident, rule):
+    """True when the anchored section, or the rationale section of the same
+    id where the standard keeps the text there, carries the rule text."""
+    needle = normalize(rule)
+    for doc in docs:
+        text = section_text(doc, ident)
+        if text is not None and needle in text:
+            return True
+    if rationale is not None:
+        for candidate in (ident, ident.split(".")[0]):
+            text = section_text(rationale, candidate)
+            if text is not None and needle in text:
+                return True
+    return False
+
+
+def anchor_invariant_exists(root, name):
+    tla_dir = os.path.join(root, "tla")
     pattern = re.compile(r"(?m)^\s*" + re.escape(name) + r"\s*==")
-    for entry in sorted(os.listdir(TLA_DIR)):
+    for entry in sorted(os.listdir(tla_dir)):
         if not entry.endswith(".tla"):
             continue
-        with open(os.path.join(TLA_DIR, entry), "r", encoding="utf-8", errors="replace") as handle:
+        with open(os.path.join(tla_dir, entry), "r", encoding="utf-8", errors="replace") as handle:
             if pattern.search(handle.read()):
                 return entry
     return None
 
 
-def anchor_code_exists(anchor):
+def anchor_name_exists(root, anchor):
     path, _, function = anchor.partition(":")
-    if not path or not function:
+    if not path:
         return None
-    full = os.path.join(ROOT, path)
+    full = os.path.join(root, path)
     if not os.path.isfile(full):
         return None
+    if not function:
+        return path
     with open(full, "r", encoding="utf-8", errors="replace") as handle:
         text = handle.read()
     if re.search(r"\b" + re.escape(function) + r"\b", text):
@@ -78,34 +127,29 @@ def anchor_code_exists(anchor):
     return None
 
 
-def anchor_test_exists(anchor):
-    path, _, name = anchor.partition(":")
-    if not path or not name:
-        return None
-    full = os.path.join(ROOT, path)
-    if not os.path.isfile(full):
-        return None
-    with open(full, "r", encoding="utf-8", errors="replace") as handle:
-        text = handle.read()
-    if re.search(r"\b" + re.escape(name) + r"\b", text):
-        return path
-    return None
+def load_documents(root):
+    standard = os.path.join(root, "standard")
+    docs = [
+        rn_standard.Document("RN-1", os.path.join(standard, "TRANSPORT.md")),
+        rn_standard.Document("RN-2", os.path.join(standard, "MESSAGES.md")),
+    ]
+    rationale = rn_standard.Document("RN-R", os.path.join(standard, "RATIONALE.md"))
+    return docs, rationale
 
 
 def run(root=None):
     """Verify every anchor. Return (exit_code, report_text)."""
-    global ROOT, STANDARD, TLA_DIR, TSV
-    if root is not None:
-        ROOT = root
-        STANDARD = os.path.join(ROOT, "STANDARD.md")
-        TLA_DIR = os.path.join(ROOT, "tla")
-        TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
-
-    with open(STANDARD, "r", encoding="utf-8") as handle:
-        standard_lines = handle.read().split("\n")
+    if root is None:
+        root = ROOT
+    tsv = os.path.join(root, "docs", "WITNESSES.tsv")
 
     try:
-        rows = read_tsv(TSV)
+        docs, rationale = load_documents(root)
+    except OSError as error:
+        return 1, "the standard could not be read: %s" % error
+
+    try:
+        rows = read_tsv(tsv)
     except (OSError, ValueError) as error:
         return 1, "WITNESSES.tsv could not be read: %s" % error
 
@@ -114,39 +158,43 @@ def run(root=None):
     checked = 0
 
     for index, cells in enumerate(rows, start=2):
-        standard_line, rule, invariant, code, test, tier = cells
-        where = "WITNESSES.tsv line %d (STANDARD.md line %s)" % (index, standard_line)
+        section_id, rule, invariant, code, test, tier = cells
+        where = "WITNESSES.tsv line %d (section %s)" % (index, section_id)
 
-        try:
-            line_number = int(standard_line)
-        except ValueError:
-            failures.append("%s: standard_line %r is not a number" % (where, standard_line))
+        if tier not in TIERS:
+            failures.append("%s: tier %r is not one of %s" % (where, tier, ", ".join(TIERS)))
             continue
-        if line_number < 1 or line_number > len(standard_lines):
-            failures.append("%s: STANDARD.md has no line %d" % (where, line_number))
+
+        resolved = any(section_id in doc.anchors for doc in docs)
+        if not resolved:
+            failures.append("%s: section id %r does not resolve in "
+                            "standard/TRANSPORT.md or standard/MESSAGES.md" % (where, section_id))
             continue
 
         checked += 1
-        line_text = standard_lines[line_number - 1]
-        if rule not in line_text:
-            failures.append("%s: the line no longer carries the rule keyword %r -- "
+
+        if tier != "model" and not rule_carried(docs, rationale, section_id, rule):
+            failures.append("%s: the section no longer carries the rule text %r -- "
                             "the rule moved or the anchor is stale" % (where, rule))
 
         if invariant != "-":
-            if anchor_invariant_exists(invariant) is None:
+            if anchor_invariant_exists(root, invariant) is None:
                 failures.append("%s: TLA+ invariant %r is in no tla/*.tla"
                                 % (where, invariant))
 
         if code != "-":
-            if anchor_code_exists(code) is None:
+            if anchor_name_exists(root, code) is None:
                 failures.append("%s: code anchor %r does not resolve" % (where, code))
 
-        if test != "-":
-            if anchor_test_exists(test) is None:
-                failures.append("%s: test anchor %r does not resolve" % (where, test))
-
         if tier == "none":
-            gaps.append((line_number, rule))
+            if test != "-":
+                failures.append("%s: a tier none row names no test, but names %r" % (where, test))
+            gaps.append((section_id, rule))
+        else:
+            if test == "-":
+                failures.append("%s: a tier %s row names no test" % (where, tier))
+            elif anchor_name_exists(root, test) is None:
+                failures.append("%s: test anchor %r does not resolve" % (where, test))
 
     lines = []
     if failures:
@@ -161,8 +209,8 @@ def run(root=None):
 
     lines.append("WITNESSES conformance: %d rules, every named anchor resolves." % checked)
     lines.append("GAPS (tier none): %d" % len(gaps))
-    for line_number, rule in gaps:
-        lines.append("  - STANDARD.md:%d %s" % (line_number, rule))
+    for section_id, rule in gaps:
+        lines.append("  - %s %s" % (section_id, rule))
     return 0, "\n".join(lines)
 
 
