@@ -73,6 +73,110 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
     return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : (uint64_t) ::time( NULL );
 }
 
+// The key set a functional case connects with. A development build
+// (ROCKETNET_DEV=1, ./bin/functional) uses the published development keys,
+// the test packet filter and the layer tests' token, unchanged. A production
+// build (ROCKETNET_DEV=0, ./bin/functional_production) refuses all three at
+// create, so it uses a key set of its own, made the way a game's backend
+// makes one: a backend keypair from a fixed seed, a server keypair generated
+// once per process, a packet filter of its own on both ends, and tokens
+// minted by the production token writer with the development token's expiry
+// and timeout. The cases themselves are the same source in both builds.
+
+#if ROCKETNET_DEV
+
+void rocketnet_functional_server_config( struct rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_dev_config( config );
+}
+
+void rocketnet_functional_client_default_config( struct rocketnet_client_transport_config_t * config )
+{
+    rocketnet_client_transport_default_config( config );
+}
+
+const struct rocketnet_client_transport_config_t * rocketnet_functional_client_config()
+{
+    return NULL;
+}
+
+enum rocketnet_status_t rocketnet_functional_write_token( const char * server_address, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
+{
+    return rocketnet_write_test_connect_token( server_address, client_id, current_timestamp, connect_token, connect_token_bytes );
+}
+
+#else // #if ROCKETNET_DEV
+
+static const uint64_t rocketnet_functional_protocol_id = 0x46554E4350524F44ULL;
+static const uint8_t rocketnet_functional_packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0x46, 0x55, 0x4E, 0x43 };
+
+struct rocketnet_functional_keys_t
+{
+    bool ready;
+    uint8_t backend_public[32];
+    uint8_t backend_secret[64];
+    uint8_t server_public[32];
+    uint8_t server_secret[32];
+};
+
+static struct rocketnet_functional_keys_t rocketnet_functional_keys;
+
+static const struct rocketnet_functional_keys_t * rocketnet_functional_key_set()
+{
+    if ( !rocketnet_functional_keys.ready )
+    {
+        uint8_t seed[32];
+        for ( int i = 0; i < 32; ++i )
+            seed[i] = (uint8_t) ( 0x5A ^ i );
+        if ( rocketnet_generate_backend_keypair_from_seed( seed, rocketnet_functional_keys.backend_public, rocketnet_functional_keys.backend_secret ) != ROCKETNET_STATUS_OK ||
+             rocketnet_generate_server_keypair( rocketnet_functional_keys.server_public, rocketnet_functional_keys.server_secret ) != ROCKETNET_STATUS_OK )
+        {
+            printf( "error: the functional key set could not be generated\n" );
+            fflush( stdout );
+            exit( 1 );
+        }
+        rocketnet_functional_keys.ready = true;
+    }
+    return &rocketnet_functional_keys;
+}
+
+void rocketnet_functional_server_config( struct rocketnet_server_transport_config_t * config )
+{
+    const struct rocketnet_functional_keys_t * keys = rocketnet_functional_key_set();
+    rocketnet_server_transport_default_config( config );
+    config->protocol_id = rocketnet_functional_protocol_id;
+    memcpy( config->packet_filter, rocketnet_functional_packet_filter, sizeof( config->packet_filter ) );
+    memcpy( config->backend_public_key, keys->backend_public, 32 );
+    memcpy( config->server_public_key, keys->server_public, 32 );
+    memcpy( config->server_secret_key, keys->server_secret, 32 );
+}
+
+void rocketnet_functional_client_default_config( struct rocketnet_client_transport_config_t * config )
+{
+    rocketnet_client_transport_default_config( config );
+    memcpy( config->packet_filter, rocketnet_functional_packet_filter, sizeof( config->packet_filter ) );
+}
+
+const struct rocketnet_client_transport_config_t * rocketnet_functional_client_config()
+{
+    static struct rocketnet_client_transport_config_t config;
+    rocketnet_functional_client_default_config( &config );
+    return &config;
+}
+
+enum rocketnet_status_t rocketnet_functional_write_token( const char * server_address, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
+{
+    const struct rocketnet_functional_keys_t * keys = rocketnet_functional_key_set();
+    const char * addresses[] = { server_address };
+    return rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public, rocketnet_functional_protocol_id,
+                                                     addresses, 1, client_id, current_timestamp,
+                                                     current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS,
+                                                     ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, NULL,
+                                                     connect_token, connect_token_bytes );
+}
+
+#endif // #if ROCKETNET_DEV
+
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES 1024
 // a slot holds "<time>: <level>: " in front of a whole captured line: the
@@ -229,7 +333,7 @@ void rocketnet_test_config_out_of_range_refuses_create()
     rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
     setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "0", 1 );
     struct rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_dev_config( &server_config );
+    rocketnet_functional_server_config( &server_config );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
     rocketnet_test_env_restore( &guard );
 }

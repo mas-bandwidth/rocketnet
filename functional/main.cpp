@@ -74,6 +74,8 @@ static int rocketnet_functional_worker( const char * name )
     return result;
 }
 
+#if ROCKETNET_DEV
+
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_client_test_group( const char * name );
 suite_exec rocketnet_unit_case_memory_exec();
@@ -159,6 +161,37 @@ static long rocketnet_transport_control_rss_bound_mb()
 
 SUITE_CASE_RSS_BOUND( test_transport_control, rocketnet_transport_control_rss_bound_mb );
 
+#else // #if ROCKETNET_DEV
+
+// ./bin/functional_production: the same cases, linked against the production
+// library (ROCKETNET_DEV=0), less the ones that need development scaffolding
+// (the list in CMakeLists.txt, ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES).
+// It runs no sibling binary: those link the development library and are
+// ./bin/functional's. The live message matrix is apart, as it is there.
+static int rocketnet_functional_production_test_group( const char * name )
+{
+#if defined(__APPLE__)
+    if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
+        return 3;
+#endif
+    if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
+        return 2;
+    return 0;
+}
+
+int main( int argc, char ** argv )
+{
+#if defined(__linux__)
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_production_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
+#else
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_production_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+#endif
+}
+
+#endif // #if ROCKETNET_DEV
+
+#if ROCKETNET_DEV
+
 int main( int argc, char ** argv )
 {
     // the child client of the hard-killed client cases
@@ -205,3 +238,5 @@ int main( int argc, char ** argv )
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #endif
 }
+
+#endif // #if ROCKETNET_DEV

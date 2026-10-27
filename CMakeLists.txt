@@ -1125,6 +1125,51 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     else()
         add_dependencies(functional test_serialize test_transport_control)
     endif()
+    # ./bin/functional_production (TESTING.md, "The production functional
+    # suite"): the functional cases linked against the production library
+    # (ROCKETNET_DEV=OFF), so the shipped library's transports run on real
+    # sockets and not only the development library's. ./bin/functional links
+    # rocketnet_dev in every build. The cases connect with a key set of their
+    # own (functional/harness.inc), never the published development keys.
+    if(NOT ROCKETNET_DEV)
+        # Sources whose cases all need development scaffolding, so they are
+        # not built against the production library: the channel cases drive
+        # the development link simulator (functional/channel_harness.h); the
+        # others mint the layer tests' development token or call a
+        # development seam: posix_hard_killed_client.cpp,
+        # posix_lifecycle_stress.cpp, lifecycle_driver.cpp, live_matrix.cpp,
+        # environment_wiring.cpp, server_receive_backlog.cpp,
+        # server_receive_low_tick.cpp, process_thread_counts.cpp;
+        # shared_library_tokens.cpp loads the development shared library;
+        # windows_lifecycle_stress.cpp reads the development-only lifecycle
+        # ledger (ROCKETNET_WINDOWS_LIFECYCLE_TRACK); unit_case_memory.cpp
+        # runs ./bin/test, which is not a functional case.
+        set(ROCKETNET_FUNCTIONAL_PRODUCTION_SOURCES
+            functional/main.cpp
+            functional/rocketnet_functional_tests.cpp
+            functional/platform_primitives.cpp
+            functional/cpp_transports.cpp
+            functional/corpus_consistency.cpp
+            functional/posix_socket_errors.cpp
+            functional/windows_socket_errors.cpp
+            functional/windows_connreset.cpp
+            functional/session_reconnect_isolation.cpp)
+        # The cases built in functional_production's table that need
+        # development scaffolding, each with the reason. The list is exact:
+        # the executable refuses to run if a case built without its function
+        # is missing here, or if a name here is not a case
+        # (functional/rocketnet_functional_tests.cpp,
+        # rocketnet_functional_production_exclusions_hold).
+        set(ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES
+            )
+        list(JOIN ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES " " ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED)
+        add_executable(functional_production ${ROCKETNET_FUNCTIONAL_PRODUCTION_SOURCES})
+        target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
+        target_compile_definitions(functional_production PRIVATE
+            "ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED=\"${ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED}\"")
+        target_compile_features(functional_production PRIVATE cxx_std_11)
+        rocketnet_warning_floor(functional_production)
+    endif()
 endif()
 if(ROCKETNET_BUILD_TOOLS)
     add_executable(soak soak.c)
