@@ -12,8 +12,10 @@
 // UDP checksum computed in software over the RFC 8200 section 8.1
 // pseudo-header (RFC 768, RFC 1071); a computed 0x0000 is sent as 0xFFFF.
 
-#ifndef ROCKETNET_XDP_FRAME_H
-#define ROCKETNET_XDP_FRAME_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H
+#define ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H
 
 #include "rocketnet_address.h"
 #include "rocketnet_wire.h"
@@ -937,4 +939,4 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     return NULL;
 }
 
-#endif // ROCKETNET_XDP_FRAME_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H

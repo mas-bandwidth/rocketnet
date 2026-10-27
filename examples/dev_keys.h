@@ -11,6 +11,8 @@
     ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code.
 */
 
+#pragma once
+
 #ifndef ROCKETNET_EXAMPLES_DEV_KEYS_H
 #define ROCKETNET_EXAMPLES_DEV_KEYS_H
 
@@ -22,4 +24,4 @@
 // development filter. It must match at both endpoints in either build mode.
 #define EXAMPLE_BACKEND_PACKET_FILTER { 0x52, 0x4e, 0x42, 0x45 }
 
-#endif // #ifndef ROCKETNET_EXAMPLES_DEV_KEYS_H
+#endif // ROCKETNET_EXAMPLES_DEV_KEYS_H

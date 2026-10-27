@@ -12,8 +12,10 @@
 // including. The pair setup itself counts no threads; the functional thread
 // case passes a thread-count callback and the unit side leaves it NULL.
 
-#ifndef ROCKETNET_PUBLIC_STEP_PAIR_H
-#define ROCKETNET_PUBLIC_STEP_PAIR_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_PUBLIC_STEP_PAIR_H
+#define ROCKETNET_TESTS_PUBLIC_STEP_PAIR_H
 
 #include "unit_shutdown.h"
 #include "../sdk/rocketnet_connect_token.h"
@@ -154,4 +156,4 @@ static void public_step_connect( public_step_pair_t * pair )
     check( rocketnet_server_client_connected( pair->server, 0 ) != 0 );
 }
 
-#endif
+#endif // ROCKETNET_TESTS_PUBLIC_STEP_PAIR_H

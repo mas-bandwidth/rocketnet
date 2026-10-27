@@ -20,8 +20,10 @@
     transport's max_payload_bytes.
 */
 
-#ifndef ROCKETNET_LIVE_VERIFY_H
-#define ROCKETNET_LIVE_VERIFY_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_LIVE_VERIFY_H
+#define ROCKETNET_TESTS_LIVE_VERIFY_H
 
 #include <stdint.h>
 
@@ -403,4 +405,4 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
     return ROCKETNET_LIVE_OK;
 }
 
-#endif // #ifndef ROCKETNET_LIVE_VERIFY_H
+#endif // ROCKETNET_TESTS_LIVE_VERIFY_H

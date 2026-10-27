@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ENCRYPTION_MAP_H
-#define ROCKETNET_ENCRYPTION_MAP_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H
+#define ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H
 
 #include <stdint.h>
 #include "rocketnet_history.h"
@@ -183,4 +183,4 @@ bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_ma
                                                   const struct rn_sequence_buffer_handle_t * handle );
 #endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
-#endif // #ifndef ROCKETNET_ENCRYPTION_MAP_H
+#endif // ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H

@@ -1,5 +1,7 @@
-#ifndef ROCKETNET_LOAD_SPLIT_CAPTURE_H
-#define ROCKETNET_LOAD_SPLIT_CAPTURE_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_LOAD_SPLIT_CAPTURE_H
+#define ROCKETNET_TOOLS_LOAD_SPLIT_CAPTURE_H
 
 /* The load_split delivery capture: per connection and per counter evidence
  * for a failed start or a kick, printed in the split_* line format the
@@ -326,4 +328,4 @@ static inline void split_capture_end( struct split_capture_t * capture, double n
     split_capture_counters( capture, 1 );
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_LOAD_SPLIT_CAPTURE_H

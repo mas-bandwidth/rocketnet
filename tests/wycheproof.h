@@ -18,6 +18,9 @@
 
 #pragma once
 
+#ifndef ROCKETNET_TESTS_WYCHEPROOF_H
+#define ROCKETNET_TESTS_WYCHEPROOF_H
+
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -463,3 +466,5 @@ inline bool wycheproof_load( const char * file_name,
         *number_of_tests = (int) tests.size();
     return true;
 }
+
+#endif // ROCKETNET_TESTS_WYCHEPROOF_H

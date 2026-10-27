@@ -36,8 +36,10 @@
 // so the unit cases (tests/test_unit_client_gso.cpp) drive the batching, the
 // run split and the fallback with a fake socket: no socket, no thread, no time.
 
-#ifndef ROCKETNET_CLIENT_GSO_H
-#define ROCKETNET_CLIENT_GSO_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H
+#define ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H
 
 #include "rocketnet_internal.h"
 
@@ -187,4 +189,4 @@ extern std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches;
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-#endif // ROCKETNET_CLIENT_GSO_H
+#endif // ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H

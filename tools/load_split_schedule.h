@@ -1,5 +1,7 @@
-#ifndef ROCKETNET_LOAD_SPLIT_SCHEDULE_H
-#define ROCKETNET_LOAD_SPLIT_SCHEDULE_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_LOAD_SPLIT_SCHEDULE_H
+#define ROCKETNET_TOOLS_LOAD_SPLIT_SCHEDULE_H
 
 #include <stdint.h>
 
@@ -16,4 +18,4 @@ static inline int split_offer_due( double offer_now, double traffic_end, double 
     return 1;
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_LOAD_SPLIT_SCHEDULE_H

@@ -27,8 +27,10 @@
     survivor is a leak.
 */
 
-#ifndef LOAD_CENSUS_H
-#define LOAD_CENSUS_H
+#pragma once
+
+#ifndef ROCKETNET_LOAD_CENSUS_H
+#define ROCKETNET_LOAD_CENSUS_H
 
 #include <stdint.h>
 #include <stdio.h>
@@ -456,4 +458,4 @@ static int load_census_survivors( const char * prefix, const char * label, int i
     return 1;
 }
 
-#endif // #ifndef LOAD_CENSUS_H
+#endif // ROCKETNET_LOAD_CENSUS_H

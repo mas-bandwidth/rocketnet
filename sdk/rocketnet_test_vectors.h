@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TEST_VECTORS_H
-#define ROCKETNET_TEST_VECTORS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_TEST_VECTORS_H
+#define ROCKETNET_SDK_ROCKETNET_TEST_VECTORS_H
 
 #include <stdint.h>
 
@@ -498,4 +498,4 @@ static const uint8_t rocketnet_test_token_vector_ephemeral_secret[4][32] =
     }
 };
 
-#endif // #ifndef ROCKETNET_TEST_VECTORS_H
+#endif // ROCKETNET_SDK_ROCKETNET_TEST_VECTORS_H

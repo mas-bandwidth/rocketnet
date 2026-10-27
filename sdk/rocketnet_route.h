@@ -1,6 +1,8 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
-#ifndef ROCKETNET_ROUTE_H
-#define ROCKETNET_ROUTE_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_ROUTE_H
+#define ROCKETNET_SDK_ROCKETNET_ROUTE_H
 #include <stdint.h>
 #include <string.h>
 
@@ -148,4 +150,4 @@ static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketne
     return true;
 }
 #endif
-#endif
+#endif // ROCKETNET_SDK_ROCKETNET_ROUTE_H

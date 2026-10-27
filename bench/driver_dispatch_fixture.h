@@ -1,5 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
+
+#ifndef ROCKETNET_BENCH_DRIVER_DISPATCH_FIXTURE_H
+#define ROCKETNET_BENCH_DRIVER_DISPATCH_FIXTURE_H
+
 #include "rocketnet_driver.h"
 struct dispatch_fixture
 {
@@ -10,3 +14,5 @@ struct dispatch_fixture
 void dispatch_fixture_init(dispatch_fixture *);
 uint8_t * dispatch_fixture_start(void *, const rocketnet_address_t *, uint64_t *);
 void dispatch_fixture_finish(void *, uint64_t, uint8_t *, int);
+
+#endif // ROCKETNET_BENCH_DRIVER_DISPATCH_FIXTURE_H

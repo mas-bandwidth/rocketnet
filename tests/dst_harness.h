@@ -10,8 +10,10 @@
     starts a thread.
 */
 
-#ifndef ROCKETNET_DST_HARNESS_H
-#define ROCKETNET_DST_HARNESS_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_DST_HARNESS_H
+#define ROCKETNET_TESTS_DST_HARNESS_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_allocator.h"
@@ -1945,4 +1947,4 @@ static inline void rocketnet_dst_format_failure( const struct rocketnet_dst_resu
               result->check, result->detail, replay );
 }
 
-#endif // #ifndef ROCKETNET_DST_HARNESS_H
+#endif // ROCKETNET_TESTS_DST_HARNESS_H

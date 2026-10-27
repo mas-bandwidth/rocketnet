@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ADDRESS_H
-#define ROCKETNET_ADDRESS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ADDRESS_H
+#define ROCKETNET_SDK_ROCKETNET_ADDRESS_H
 
 #include "rocketnet_internal.h"
 
@@ -122,4 +122,4 @@ static inline bool rocketnet_address_accept_received_source( struct rocketnet_ad
     return true;
 }
 
-#endif // #ifndef ROCKETNET_ADDRESS_H
+#endif // ROCKETNET_SDK_ROCKETNET_ADDRESS_H

@@ -13,8 +13,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_FAKE_CLIENT_TRANSPORT_H
-#define ROCKETNET_FAKE_CLIENT_TRANSPORT_H
+#ifndef ROCKETNET_TESTS_FAKE_CLIENT_DRIVER_H
+#define ROCKETNET_TESTS_FAKE_CLIENT_DRIVER_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
@@ -210,4 +210,4 @@ inline void rocketnet_fake_client_push( rocketnet_fake_client_transport_io_t * f
     fake->inbound_count++;
 }
 
-#endif // #ifndef ROCKETNET_FAKE_CLIENT_TRANSPORT_H
+#endif // ROCKETNET_TESTS_FAKE_CLIENT_DRIVER_H

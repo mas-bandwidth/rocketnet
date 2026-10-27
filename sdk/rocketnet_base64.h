@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_BASE64_H
-#define ROCKETNET_BASE64_H
+#ifndef ROCKETNET_SDK_ROCKETNET_BASE64_H
+#define ROCKETNET_SDK_ROCKETNET_BASE64_H
 
 #include "rocketnet_internal.h"
 
@@ -18,4 +18,4 @@ int rocketnet_base64_encode_string( const char * input, char * output, size_t ou
 
 int rocketnet_base64_decode_string( const char * input, char * output, size_t output_size );
 
-#endif // #if ROCKETNET_BASE64_H
+#endif // ROCKETNET_SDK_ROCKETNET_BASE64_H

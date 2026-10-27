@@ -1,5 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_SEND_HANDOFF_H
+#define ROCKETNET_SDK_ROCKETNET_SEND_HANDOFF_H
+
 #include "rocketnet_internal.h"
 #include <atomic>
 
@@ -89,3 +93,5 @@ inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, 
     }
     return index;
 }
+
+#endif // ROCKETNET_SDK_ROCKETNET_SEND_HANDOFF_H

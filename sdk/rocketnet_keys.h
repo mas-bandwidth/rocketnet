@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_KEYS_H
-#define ROCKETNET_KEYS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_KEYS_H
+#define ROCKETNET_SDK_ROCKETNET_KEYS_H
 
 #include <stdint.h>
 
@@ -48,4 +48,4 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
                                       const uint8_t * client_ephemeral_public_key,
                                       const uint8_t * server_ephemeral_public_key );
 
-#endif // #ifndef ROCKETNET_KEYS_H
+#endif // ROCKETNET_SDK_ROCKETNET_KEYS_H

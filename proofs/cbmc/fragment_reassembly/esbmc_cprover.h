@@ -5,9 +5,11 @@
     Forwards to the shared ESBMC compatibility shim (proofs/cbmc/esbmc_shim.h).
 */
 
-#ifndef ROCKETNET_PROOF_ESBMC_CPROVER_H
-#define ROCKETNET_PROOF_ESBMC_CPROVER_H
+#pragma once
+
+#ifndef ROCKETNET_PROOFS_CBMC_FRAGMENT_REASSEMBLY_ESBMC_CPROVER_H
+#define ROCKETNET_PROOFS_CBMC_FRAGMENT_REASSEMBLY_ESBMC_CPROVER_H
 
 #include "../esbmc_shim.h"
 
-#endif // #ifndef ROCKETNET_PROOF_ESBMC_CPROVER_H
+#endif // ROCKETNET_PROOFS_CBMC_FRAGMENT_REASSEMBLY_ESBMC_CPROVER_H

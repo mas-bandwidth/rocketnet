@@ -12,8 +12,10 @@
 // source address conversion, the segmented send's msghdr) are written and
 // unit tested here, and the transport links liburing for the ring itself.
 
-#ifndef ROCKETNET_URING_CODEC_H
-#define ROCKETNET_URING_CODEC_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_URING_CODEC_H
+#define ROCKETNET_SDK_ROCKETNET_URING_CODEC_H
 
 #include <stdint.h>
 #include <string.h>
@@ -267,4 +269,4 @@ static inline int rocketnet_uring_gso_message(
 
 #endif // IORING_RECV_MULTISHOT
 #endif // __linux__
-#endif // ROCKETNET_URING_CODEC_H
+#endif // ROCKETNET_SDK_ROCKETNET_URING_CODEC_H

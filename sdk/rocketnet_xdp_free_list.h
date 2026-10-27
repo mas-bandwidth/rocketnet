@@ -5,6 +5,9 @@
 
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_XDP_FREE_LIST_H
+#define ROCKETNET_SDK_ROCKETNET_XDP_FREE_LIST_H
+
 #include <stdint.h>
 #include "rocketnet_constants.h"
 
@@ -21,3 +24,5 @@ static inline bool rocketnet_xdp_free_list_push( uint64_t * frames, int * count,
     frames[(*count)++] = frame;
     return true;
 }
+
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_FREE_LIST_H

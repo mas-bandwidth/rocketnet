@@ -33,8 +33,10 @@
     create and plan_rss_uncount_outside_allocator after the destroy.
 */
 
-#ifndef ROCKETNET_TEST_PLAN_RSS_H
-#define ROCKETNET_TEST_PLAN_RSS_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_PLAN_RSS_H
+#define ROCKETNET_TESTS_PLAN_RSS_H
 
 #include <atomic>
 #include <cstddef>
@@ -213,4 +215,4 @@ inline void plan_rss_report()
     fflush( stdout );
 }
 
-#endif // #ifndef ROCKETNET_TEST_PLAN_RSS_H
+#endif // ROCKETNET_TESTS_PLAN_RSS_H

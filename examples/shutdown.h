@@ -1,6 +1,8 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. AGPL-3.0. */
-#ifndef ROCKETNET_EXAMPLE_SHUTDOWN_H
-#define ROCKETNET_EXAMPLE_SHUTDOWN_H
+#pragma once
+
+#ifndef ROCKETNET_EXAMPLES_SHUTDOWN_H
+#define ROCKETNET_EXAMPLES_SHUTDOWN_H
 
 #include "rocketnet.h"
 #include <stdio.h>
@@ -83,4 +85,4 @@ static inline void rn_cli_server_stop_and_destroy( struct rocketnet_server_t * s
     rn_cli_server_wait_stopped( server );
     rocketnet_server_destroy( server );
 }
-#endif
+#endif // ROCKETNET_EXAMPLES_SHUTDOWN_H

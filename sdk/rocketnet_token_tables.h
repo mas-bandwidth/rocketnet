@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TOKEN_TABLES_H
-#define ROCKETNET_TOKEN_TABLES_H
+#ifndef ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H
+#define ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H
 
 #include <stdint.h>
 #include "rocketnet_address.h"
@@ -103,4 +103,4 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
 
 int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history );
 
-#endif // #ifndef ROCKETNET_TOKEN_TABLES_H
+#endif // ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H

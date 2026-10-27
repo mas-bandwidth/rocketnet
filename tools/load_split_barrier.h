@@ -1,5 +1,7 @@
-#ifndef ROCKETNET_LOAD_SPLIT_BARRIER_H
-#define ROCKETNET_LOAD_SPLIT_BARRIER_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_LOAD_SPLIT_BARRIER_H
+#define ROCKETNET_TOOLS_LOAD_SPLIT_BARRIER_H
 
 #include "load_split_startup.h"
 
@@ -104,4 +106,4 @@ static inline enum split_start_verdict_t split_server_start_update( double now, 
     return SPLIT_START_WAITING;
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_LOAD_SPLIT_BARRIER_H

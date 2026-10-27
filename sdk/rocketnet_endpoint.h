@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ENDPOINT_H
-#define ROCKETNET_ENDPOINT_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ENDPOINT_H
+#define ROCKETNET_SDK_ROCKETNET_ENDPOINT_H
 
 #include <stdint.h>
 
@@ -276,4 +276,4 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint );
 // RN_ENDPOINT_NO_DEADLINE when there is none.
 double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint );
 
-#endif // #ifndef ROCKETNET_ENDPOINT_H
+#endif // ROCKETNET_SDK_ROCKETNET_ENDPOINT_H

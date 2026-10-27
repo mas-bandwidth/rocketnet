@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_REPLAY_H
-#define ROCKETNET_REPLAY_H
+#ifndef ROCKETNET_SDK_ROCKETNET_REPLAY_H
+#define ROCKETNET_SDK_ROCKETNET_REPLAY_H
 
 #include <stdint.h>
 #include "rocketnet_encryption_map.h"
@@ -40,4 +40,4 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
 
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence );
 
-#endif // #ifndef ROCKETNET_REPLAY_H
+#endif // ROCKETNET_SDK_ROCKETNET_REPLAY_H

@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_FRAME_SYNC_H
-#define ROCKETNET_FRAME_SYNC_H
+#ifndef ROCKETNET_SDK_ROCKETNET_FRAME_SYNC_H
+#define ROCKETNET_SDK_ROCKETNET_FRAME_SYNC_H
 
 #include <stdint.h>
 #include "rocketnet_internal.h"
@@ -103,4 +103,4 @@ uint64_t rocketnet_frame_sync_now_ns();
 int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns );
 #endif // #if ROCKETNET_DEV
 
-#endif // #ifndef ROCKETNET_FRAME_SYNC_H
+#endif // ROCKETNET_SDK_ROCKETNET_FRAME_SYNC_H

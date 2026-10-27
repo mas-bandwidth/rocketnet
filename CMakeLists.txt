@@ -598,6 +598,14 @@ if(ROCKETNET_BUILD_TESTS)
             -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/oss-fuzz/build.sh
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_oss_fuzz_fp_contract.cmake
         VERBATIM)
+    find_package(Python3 COMPONENTS Interpreter)
+    if(Python3_Interpreter_FOUND)
+        add_custom_target(check_header_guards
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_header_guards.py" --self-test
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/check_header_guards.py"
+            WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+            VERBATIM)
+    endif()
     # A real C translation unit must link the internal token helpers used by
     # client.c and soak.c against their C++ implementation.
     add_executable(test_internal_c tools/internal_c/main.c)

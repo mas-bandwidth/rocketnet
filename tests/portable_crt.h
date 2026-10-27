@@ -9,8 +9,10 @@
 // use those there and the ISO functions everywhere else, so no target turns
 // the deprecation off. C and C++.
 
-#ifndef ROCKETNET_PORTABLE_CRT_H
-#define ROCKETNET_PORTABLE_CRT_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_PORTABLE_CRT_H
+#define ROCKETNET_TESTS_PORTABLE_CRT_H
 
 #include <stddef.h>
 #include <stdio.h>
@@ -56,4 +58,4 @@ static inline FILE * rocketnet_test_fopen( const char * path, const char * mode 
 #endif // #if defined( _MSC_VER )
 }
 
-#endif // #ifndef ROCKETNET_PORTABLE_CRT_H
+#endif // ROCKETNET_TESTS_PORTABLE_CRT_H

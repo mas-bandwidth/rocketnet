@@ -22,8 +22,10 @@
     unsigned wrap/overflow.
 */
 
-#ifndef ROCKETNET_PROOF_ESBMC_SHIM_H
-#define ROCKETNET_PROOF_ESBMC_SHIM_H
+#pragma once
+
+#ifndef ROCKETNET_PROOFS_CBMC_ESBMC_SHIM_H
+#define ROCKETNET_PROOFS_CBMC_ESBMC_SHIM_H
 
 
 #include <stdbool.h>
@@ -100,4 +102,4 @@ static inline void rocketnet_esbmc_havoc_slice( void * p, size_t n )
 #define __CPROVER_havoc_slice( p, n ) rocketnet_esbmc_havoc_slice( ( p ), (size_t) ( n ) )
 
 
-#endif // #ifndef ROCKETNET_PROOF_ESBMC_SHIM_H
+#endif // ROCKETNET_PROOFS_CBMC_ESBMC_SHIM_H

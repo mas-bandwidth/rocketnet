@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_URING_H
-#define ROCKETNET_SERVER_URING_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_URING_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_URING_H
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
@@ -260,4 +260,4 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_process_packets( struct rocketnet_server_uring_t * uring );
 
-#endif // #ifndef ROCKETNET_SERVER_URING_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_URING_H

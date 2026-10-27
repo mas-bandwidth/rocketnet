@@ -5,6 +5,9 @@
 
 #pragma once
 
+#ifndef ROCKETNET_TESTS_TEST_ENV_SOURCE_H
+#define ROCKETNET_TESTS_TEST_ENV_SOURCE_H
+
 #include <stddef.h>
 #include <stdlib.h>
 #include "../sdk/rocketnet.h"
@@ -112,3 +115,5 @@ static inline void rocketnet_test_env_restore()
 }
 
 #endif // #if ROCKETNET_DEV
+
+#endif // ROCKETNET_TESTS_TEST_ENV_SOURCE_H

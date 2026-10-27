@@ -4,6 +4,9 @@
 */
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H
+
 #include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
@@ -157,3 +160,5 @@ enum rocketnet_server_iocp_test_fault_t
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
 #endif
+
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H

@@ -1,5 +1,7 @@
-#ifndef ROCKETNET_LOAD_SPLIT_STARTUP_H
-#define ROCKETNET_LOAD_SPLIT_STARTUP_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_LOAD_SPLIT_STARTUP_H
+#define ROCKETNET_TOOLS_LOAD_SPLIT_STARTUP_H
 
 /* A split client's side of the start barrier: ARM, GO and RUN arrive from the
  * server; ARM is answered with an ACK and GO with a GO ACK. */
@@ -39,4 +41,4 @@ static inline void split_startup_sent( struct split_startup_t * startup, int sen
     else if ( send == SPLIT_STARTUP_SEND_GO_ACK ) startup->go = 1;
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_LOAD_SPLIT_STARTUP_H

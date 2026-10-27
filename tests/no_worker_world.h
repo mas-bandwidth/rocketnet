@@ -10,8 +10,10 @@
 // starting at 1000.0; no socket, no sleep and no real time. The includer
 // defines `check` before including.
 
-#ifndef ROCKETNET_NO_WORKER_WORLD_H
-#define ROCKETNET_NO_WORKER_WORLD_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_NO_WORKER_WORLD_H
+#define ROCKETNET_TESTS_NO_WORKER_WORLD_H
 
 #include "unit_shutdown.h"
 #include "../sdk/rocketnet_connect_token.h"
@@ -205,4 +207,4 @@ static int no_worker_connected_slots( no_worker_world_t * world )
     return connected;
 }
 
-#endif
+#endif // ROCKETNET_TESTS_NO_WORKER_WORLD_H

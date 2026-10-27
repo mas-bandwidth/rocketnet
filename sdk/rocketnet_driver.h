@@ -1,6 +1,9 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_DRIVER_H
+#define ROCKETNET_SDK_ROCKETNET_DRIVER_H
+
 #include "rocketnet_internal.h"
 #include "rocketnet_packet_batch.h"
 
@@ -238,3 +241,5 @@ inline bool rocketnet_server_transport_io_has( const rocketnet_server_transport_
 {
     return ( transport.operations->flags & flag ) != 0;
 }
+
+#endif // ROCKETNET_SDK_ROCKETNET_DRIVER_H

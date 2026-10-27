@@ -11,8 +11,10 @@
 // unit seams -- compiles only where ROCKETNET_DEV is 1, so a production
 // rocketnet and rocketnet_shared carry none of it.
 
-#ifndef ROCKETNET_TEST_SEAMS_H
-#define ROCKETNET_TEST_SEAMS_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
+#define ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
 
 #include "rocketnet.h"
 
@@ -138,4 +140,4 @@ uint64_t rocketnet_dev_session_sequence_start( void );
 
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#endif // #ifndef ROCKETNET_TEST_SEAMS_H
+#endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
