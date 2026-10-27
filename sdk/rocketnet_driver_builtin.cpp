@@ -1201,7 +1201,7 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_se
 #endif // #if ROCKETNET_XDP
 
 // the native transports' drop counts behind send_failures and receive_drops,
-// defined at sdk/rocketnet_server_gso_linux.cpp:869 and sdk/rocketnet_server_socket_linux.cpp:2598
+// defined as rocketnet_server_gso_receive_drops (sdk/rocketnet_server_gso_linux.cpp) and rocketnet_server_socket_send_failures (sdk/rocketnet_server_socket_linux.cpp)
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large );
 #if ROCKETNET_XDP
 uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t * server_socket );
@@ -1241,7 +1241,7 @@ static const rocketnet_server_transport_io_operations_t gso_operations =
 extern const rocketnet_transport_backend_t rocketnet_gso_transport = { &gso_operations, &rocketnet_client_gso_operations };
 
 #include "rocketnet_server_uring.h"
-void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // sdk/rocketnet_server_uring_linux.cpp:1223
+void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large ); // rocketnet_server_uring_receive_drops in sdk/rocketnet_server_uring_linux.cpp
 static void * io_uring_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     if ( config->transport->num_xdp_queues > ROCKETNET_URING_MAX_QUEUES )
