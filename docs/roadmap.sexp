@@ -284,7 +284,7 @@
     (:feature "The MSan known-findings list matches every toolchain the runners use (later)" :cells (n - -) :note "planned after v1.0.0-preview-1")))
   (:id "platforms"
    :title "Platforms"
-   :text "Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux, macOS and Windows; the nightly jobs run on Linux, and their macOS and Windows jobs are not yet enabled."
+   :text "Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux and macOS; on Windows every push runs the unit suite, the lifecycle binary, the native driver contract and the transport family matrix, and the whole functional suite runs in the nightly tier (about 223 s, over the per-commit bound). The nightly jobs run on Linux, macOS and Windows."
    :columns platforms
    :rows
    ((:feature "Per-commit CI, Debug and Release" :cells (y n n) :evidence "Linux: ci.yml ubuntu-24.04 Debug and Release legs, green in runs 39271096164 and 39286548764; those legs run the unit suite, the functional suite on the auto ladder and with the portable rung pinned, and the lifecycle binary" :note "macOS: the macos-15 / Debug leg's Run functional suite (portable rung pinned by env) step is red in run 39286548764, so the cell is n until it is green. Windows runs Release per push (build-and-test-windows), and its Functional suite with IOCP selected step is red in runs 39271096164 and 39286548764; its Debug row is in nightly.yml and disabled")
