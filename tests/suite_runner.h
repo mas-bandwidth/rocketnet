@@ -546,8 +546,17 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case> | --enforce-rss]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list | --enforce-rss]\n", argv[0] );
     return 2;
+}
+
+inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )( int ) )
+{
+    const int n = count ? count() : 0;
+    for ( int i = 0; i < n; i++ )
+        printf( "%s\n", name_at( i ) );
+    fflush( stdout );
+    return 0;
 }
 
 // Calls emit( line ) for each line of output, without its line ending.
@@ -744,9 +753,58 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     return true;
 }
 
+// Rows a suite omitted because their runs_here predicate is false on this
+// host. A suite that filters its table by predicate (the functional suite)
+// notes each omitted row here; suite_finish then prints one SKIPPED line
+// per row and the skipped count, so an omitted row is never silent. Suites
+// that never note a row print nothing extra.
+struct suite_skipped_row
+{
+    std::string name;
+    std::string predicate;
+};
+
+inline std::vector<suite_skipped_row> & suite_skipped_rows()
+{
+    static std::vector<suite_skipped_row> rows;
+    return rows;
+}
+
+inline bool & suite_skipped_reporting()
+{
+    static bool enabled = false;
+    return enabled;
+}
+
+inline void suite_enable_skipped_reporting()
+{
+    suite_skipped_reporting() = true;
+}
+
+inline void suite_note_skipped( const char * name, const char * predicate )
+{
+    suite_enable_skipped_reporting();
+    suite_skipped_row row;
+    row.name = name;
+    row.predicate = predicate;
+    suite_skipped_rows().push_back( row );
+}
+
+inline void suite_print_skipped()
+{
+    if ( !suite_skipped_reporting() )
+        return;
+    const std::vector<suite_skipped_row> & rows = suite_skipped_rows();
+    for ( size_t i = 0; i < rows.size(); i++ )
+        printf( "SKIPPED %s: %s\n", rows[i].name.c_str(), rows[i].predicate.c_str() );
+    printf( "skipped: %d\n", (int) rows.size() );
+    fflush( stdout );
+}
+
 inline int suite_finish( const std::vector<suite_result> & results, bool passed )
 {
     suite_print_report( results );
+    suite_print_skipped();
     if ( !passed )
         return 1;
     printf( "\n*** ALL TESTS PASSED ***\n\n" );
@@ -837,6 +895,8 @@ inline int suite_main( int argc, char ** argv,
     bool bound_io_uring = false,
     bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
         enforce_case_rss = true;
@@ -1153,6 +1213,8 @@ inline int suite_main( int argc, char ** argv,
     bool bound_io_uring = false,
     bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
     if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
     {
         enforce_case_rss = true;

@@ -132,5 +132,8 @@ int main( void )
 {
     harness_reader();
     harness_short_and_config();
+#if defined(REACHABILITY_CONTROL)
+    __CPROVER_assert( 0, "message-read reachability control" );
+#endif
     return 0;
 }

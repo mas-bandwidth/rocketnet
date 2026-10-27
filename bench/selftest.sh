@@ -301,6 +301,27 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# driver_dispatch.cpp + driver_dispatch_fixture.cpp (transport_fill.md):
+# compile and run the pair in $WORK (never the checkout root) and fail if
+# either step fails.
+
+CXX_BIN="${CXX:-c++}"
+if ! "$CXX_BIN" -O3 -DNDEBUG -std=c++11 -ffp-contract=off -Wall -Wextra -Wpedantic -Werror -I ../sdk \
+    ./driver_dispatch.cpp ./driver_dispatch_fixture.cpp -o "$WORK/dispatch" > "$WORK/dispatch_build.txt" 2>&1; then
+    fail "driver_dispatch compile failed"
+    cat "$WORK/dispatch_build.txt" >&2
+elif ! "$WORK/dispatch" > "$WORK/dispatch_run.txt" 2>&1; then
+    fail "driver_dispatch run failed"
+    tail -5 "$WORK/dispatch_run.txt" >&2
+elif ! grep -q '^sample=0 direct_ns=' "$WORK/dispatch_run.txt"; then
+    fail "driver_dispatch produced no sample=0 direct_ns= output"
+    tail -5 "$WORK/dispatch_run.txt" >&2
+else
+    echo "leg   driver_dispatch: green"
+    head -1 "$WORK/dispatch_run.txt" | sed 's/^/        /'
+fi
+
+# ---------------------------------------------------------------------------
 
 # coverage: a built harness with no leg at all is the failure this script
 # exists to make impossible, so it is checked rather than left to the reader

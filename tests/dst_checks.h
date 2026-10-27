@@ -172,6 +172,12 @@ struct rocketnet_dst_check_state_t
     // safety side).
     int client_state[ROCKETNET_DST_MAX_CLIENTS];
 
+    // unexplained_refusal, clock-back row: set when an endpoint's clock is
+    // seen behind the shared step clock. Only the clock-back schedule moves
+    // an endpoint's offset, and it only moves it back, so a negative offset
+    // observed here is that schedule having fired on this run.
+    int clock_back_seen;
+
     // fresh_generation (RNSimFaults::RestartIsFresh).
     uint64_t generation_high[ROCKETNET_DST_MAX_CLIENTS];
 
@@ -934,6 +940,8 @@ static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t
                                               double clock, double true_clock, double bound )
 {
     const double delta = clock - true_clock;
+    if ( delta < 0 )
+        st->clock_back_seen = 1;
     if ( delta > bound || delta < -bound )
     {
         char what[160];
@@ -1116,6 +1124,20 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
             // duplicate fault moves it (seeds 1-200, one fault at a time),
             // as soak_sim's table explains the same row.
             ( duplicates_enabled && i == ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED ) ||
+            // Measured mechanism (seeds 1-1000 under clock-back at base:
+            // 11 seeds, first seed 13): clock-back rewinds one endpoint's
+            // protocol clock by a drawn 10 ms .. 5 s, past the server's
+            // three-second cookie lifetime (cookie_lifetime_seconds = 3 in
+            // the harness; the server judges expiry on the shared unix
+            // timestamp, cookie_expire <= current_timestamp). The rewound
+            // client therefore answers a cookie challenge after the shared
+            // clock has passed its expiry, so the server counts
+            // CONNECTION_REQUEST_COOKIE_EXPIRED for a request the schedule
+            // itself made late. Explained only when a rewound clock was
+            // actually observed on this run (clock_back_seen, set by
+            // rocketnet_dst_check_clock above); on any other run the same
+            // counter stays unexplained.
+            ( st->clock_back_seen && i == ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED ) ||
             i == ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED ||
             i == ROCKETNET_COUNTER_CLIENT_PAYLOAD_ALREADY_RECEIVED ||

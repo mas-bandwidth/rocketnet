@@ -190,6 +190,7 @@ static void test_dst_clock_back_reaches_endpoints()
     options.schedule = ROCKETNET_DST_SCHEDULE_CLOCK_BACK;
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 5, &options, &result ) );
+    rocketnet_unit_check( result.passed );
     rocketnet_unit_check( result.schedule_fired == 1 );
     rocketnet_unit_check( result.clock_back_seen == 1 );
 
@@ -208,6 +209,7 @@ static void test_dst_seq_gap_exceeds_history()
     options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
+    rocketnet_unit_check( result.passed );
     rocketnet_unit_check( result.schedule_fired == 1 );
     rocketnet_unit_check( result.max_sequence_jump > 1024 );
 

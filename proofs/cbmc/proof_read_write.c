@@ -280,5 +280,8 @@ int main( void )
     harness_round_trip();
     harness_bounded();
     harness_copy_string();
+#if defined(REACHABILITY_CONTROL)
+    __CPROVER_assert( 0, "read-write reachability control" );
+#endif
     return 0;
 }

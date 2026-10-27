@@ -292,6 +292,7 @@ static void audit_blob( audit_t & audit, const std::string & file, const std::ve
 
     // lifecycle and token outcomes must not be bare discarded statements
     static const char * const lifecycle[] = {
+        "rocketnet_init(", "rocketnet_server_default_config(", "rocketnet_client_default_config(", "rocketnet_term(",
         "rocketnet_client_connect(", "rocketnet_server_start(", "rocketnet_create_dev_connect_token(",
         "rocketnet_client_create(", "rocketnet_server_create("
     };

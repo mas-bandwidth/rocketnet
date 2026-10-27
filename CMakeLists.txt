@@ -620,11 +620,12 @@ if(ROCKETNET_BUILD_TESTS)
         set(ROCKETNET_DEV0_TEST_SUPPORT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_dev0_test_support.cpp")
         file(GENERATE OUTPUT "${ROCKETNET_DEV0_TEST_SUPPORT_SOURCE}" CONTENT
 "#include <stddef.h>
+#include <stdio.h>
 #include \"rocketnet.h\"
 int rocketnet_unit_test_count() { return 0; }
 const char * rocketnet_unit_test_name( int index ) { (void)index; return 0; }
 void rocketnet_unit_prepare() {}
-int rocketnet_unit_run_named( const char * name ) { (void)name; return 2; }
+int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
 const char * rocketnet_channels_test_resolve( const char * name ) { return name; }
@@ -659,7 +660,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_send_room_query.cpp
             tests/test_unit_server_mass_disconnect.cpp
             tests/test_unit_server_receive_work.cpp
-            tests/test_unit_transport_pins_ignored.cpp)
+            tests/test_unit_transport_pins_ignored.cpp
+            tests/test_unit_unreliable_send_memory_exhausted.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
         set(ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES
@@ -762,6 +764,14 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
         target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_DEV AND TARGET rocketnet_test_hooks)
+        # The GSO worker-handoff seam (test_unit_gso_handoff.cpp) compiles into
+        # the test hook library only, through the same send-error hooks the
+        # development libraries carry, so neither the installed static library
+        # nor the shared libraries carry it.
+        target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+        target_compile_definitions(test PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+    endif()
     # The counter audit (test_unit_counter_classes.cpp) reads source files: the
     # tests that must name every counter, and the sdk files that count them.
     # Both lists reach it as compile definitions, relative to the source
@@ -790,6 +800,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # tools/check_client_server_words.py.
     add_executable(source_audit
         tests/source_audit_main.cpp
+        tests/source_audit_client_counter_access.cpp
         tests/source_audit_client_server_say_messages.cpp
         tests/source_audit_config_env_names.cpp
         tests/source_audit_counter_classes.cpp
@@ -805,6 +816,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     set_property( SOURCE tests/source_audit_example_send_safety.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
         "ROCKETNET_EXAMPLE_MANIFEST=\"${ROCKETNET_EXAMPLE_MANIFEST_LIST}\"" )
+    set_property( SOURCE tests/source_audit_client_counter_access.cpp APPEND PROPERTY COMPILE_DEFINITIONS
+        "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_client_server_say_messages.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\"" )
     set_property( SOURCE tests/source_audit_config_env_names.cpp APPEND PROPERTY COMPILE_DEFINITIONS
@@ -1102,6 +1115,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         functional/shared_library_tokens.cpp
         functional/process_thread_counts.cpp
         functional/session_reconnect_isolation.cpp
+        functional/destroy_early_keep.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
