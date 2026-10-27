@@ -1937,8 +1937,9 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// NULL start. Dropped messages are not queued for a later connection.
 ///
 /// Needs CONNECTED. A message already open or a bad argument is refused with
-/// NULL. A reliable message that finds no message memory ends the connection
-/// with MESSAGE_MEMORY_EXHAUSTED and returns NULL. Thread: not thread-safe;
+/// NULL. Any send (reliable, or unreliable that finds no room in the send
+/// region) that finds no message memory ends the connection with
+/// MESSAGE_MEMORY_EXHAUSTED and returns NULL. Thread: not thread-safe;
 /// the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and returns NULL.
@@ -2480,8 +2481,9 @@ ROCKETNET_EXPORT const char * rocketnet_disconnect_reason_name( enum rocketnet_d
 /// including while stopped.
 ///
 /// Needs a running server and a connected client in the slot. A message
-/// already open or a bad argument is refused with NULL. A reliable message
-/// that finds no message memory disconnects that client with
+/// already open or a bad argument is refused with NULL. Any send (reliable,
+/// or unreliable that finds no room in the send region) that finds no
+/// message memory disconnects that client with
 /// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED and returns NULL.
 /// Thread: not thread-safe; the caller owns the
 /// server one thread at a time.

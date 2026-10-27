@@ -660,7 +660,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_send_room_query.cpp
             tests/test_unit_server_mass_disconnect.cpp
             tests/test_unit_server_receive_work.cpp
-            tests/test_unit_transport_pins_ignored.cpp)
+            tests/test_unit_transport_pins_ignored.cpp
+            tests/test_unit_unreliable_send_memory_exhausted.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
         set(ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES
