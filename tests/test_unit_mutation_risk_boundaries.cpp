@@ -308,22 +308,14 @@ REGISTER_UNIT_TEST( test_window_ack_pipelined_reliable_timeout );
 // Finding 5: out-of-order fragment chain (rocketnet_window_ack.cpp)
 // ----------------------------------------------------------------
 
-// The chain a descriptor still holds, in allocation order. The meta
-// layout is sdk/rocketnet_allocator.cpp's: next index in the low 20
-// bits, 0xFFFFF as the end mark.
+// The block a descriptor still holds, in allocation order, walked through
+// the store's own chunk_next (sdk/rocketnet_allocator.cpp's contiguous run).
 static int risk_chain( rn_region_t * region, uint32_t d, uint32_t * out, int capacity )
 {
     const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    if ( descriptor->chunk == RN_CHUNK_NONE )
-        return 0;
-    const rn_store_class_t * cls = &region->store.classes[RN_STORE_LARGE];
     int count = 0;
-    uint32_t cur = descriptor->chunk & 0x3FFFFFFFu;
-    while ( cur != 0xFFFFFu && count < capacity )
-    {
-        out[count++] = cur;
-        cur = cls->meta[cur] & 0xFFFFFu;
-    }
+    for ( uint32_t chunk = descriptor->chunk; chunk != RN_CHUNK_NONE && count < capacity; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
+        out[count++] = chunk & 0x3FFFFFFFu;
     return count;
 }
 
