@@ -134,8 +134,10 @@ static void test_unreliable_send_without_message_memory_ends_connection()
     // the unreliable start finds no room: NULL, and the connection ends
     check( !rocketnet_client_can_send_message( client, 0, UNREL, bytes ) );
     check( rocketnet_client_start_message( client, 0, UNREL, bytes ) == NULL );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );     // ended by the start itself
     check( !rocketnet_server_can_send_message( server, slot, 0, UNREL, bytes ) );
     check( rocketnet_server_start_message( server, (uint64_t) slot, 0, UNREL, bytes ) == NULL );
+    check( rocketnet_server_disconnect_reason( server, slot ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
     rocketnet_client_update( client, g_unreliable_full_now );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
