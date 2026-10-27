@@ -81,10 +81,7 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
 
         int at = 0;
         for ( int i = 0; i < count; i++ )
-        {
             standard_put_u64le( out, at, defaults[i] );
-        }
-
         return at;
     }
 

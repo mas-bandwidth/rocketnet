@@ -307,9 +307,7 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     rocketnet_unit_check( uring );
 
     for ( int i = 0; i < 2 * ROCKETNET_URING_SEND_BUDGET; i++ )
-    {
         uring_fake_push_receive( fake, 0 );
-    }
 
 #define URING_TEST_SENDS 1000
 
@@ -331,11 +329,8 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
 
     uint8_t * next_frame = NULL;
     uring_stage_sends( uring, 1, &next_frame );
-
     for ( int i = 0; i < URING_TEST_SENDS; i++ )
-    {
         check( next_frame != frames[i] );
-    }
 
     int updates = 0;
     while ( updates < 8 && uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) < URING_TEST_SENDS + 1 )

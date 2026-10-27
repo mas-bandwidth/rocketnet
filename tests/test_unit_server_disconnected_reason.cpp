@@ -594,10 +594,7 @@ static void server_disconnect_now_case( bool all )
     }
 
     for ( int i = 0; i < 4; i++ )
-    {
         server_disconnected_pump( server, client, &time );
-    }
-
     check( !rocketnet_server_client_connected( server, index ) );
     check( !rocketnet_server_client_connected( server, other_index ) );
     check( rocketnet_server_num_connected_clients( server ) == 0 );
@@ -605,10 +602,7 @@ static void server_disconnect_now_case( bool all )
     check( rocketnet_server_disconnect_reason( server, other_index ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     if ( other )
-    {
         rn_test_client_stop_and_destroy( other );
-    }
-
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
 }

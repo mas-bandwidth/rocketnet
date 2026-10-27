@@ -161,12 +161,8 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
 
         rocketnet_send_budget_begin_update( &budget, 1000.0 );
         out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_NEW_RELIABLE, 1452 );
-
         for ( int i = 0; i < 7; i++ )
-        {
             out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_UNRELIABLE, 1452 );
-        }
-
         out[n++] = (uint8_t) rocketnet_send_budget_admit( &budget, ROCKETNET_SEND_CLASS_UNRELIABLE, 1452 );
 
         // no time passes: the reliable item does not fit and waits, and the
@@ -217,10 +213,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
             check( p != NULL );
             if ( p )
-            {
                 memset( p, 0x5a, (size_t) bytes );
-            }
-
             check( rn_endpoint_finish( &endpoint, bytes, 0 ) != 0 );
 
             rn_endpoint_begin_update( &endpoint );
@@ -230,10 +223,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             static uint8_t frame[16384];
             const int written = request > 0 ? rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), 1, 1000.0 ) : 0;
             if ( written > 0 )
-            {
                 rn_endpoint_packet_sent( &endpoint, 1, written + 26, 1000.0 );
-            }
-
             out[n++] = (uint8_t) ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
             out[n++] = (uint8_t) ( endpoint.unreliable_count == 0 );
             out[n++] = (uint8_t) ( endpoint.budget.bytes_spent == 0 );

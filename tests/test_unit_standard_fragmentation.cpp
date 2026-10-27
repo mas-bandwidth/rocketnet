@@ -88,14 +88,10 @@ static int standard_fragmentation_generate( const char * id, uint8_t * out, int 
 
     const int n = (int) ( sizeof( trace ) / sizeof( trace[0] ) );
     for ( int i = 0; i < n; i++ )
-    {
         rn_t16_feed( set, counters, &table, &trace[i] );
-    }
 
     for ( int i = 0; i < 12; i++ )
-    {
         out[i] = (uint8_t) counters[i];
-    }
 
     rocketnet_reassembly_set_destroy( set );
 

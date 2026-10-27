@@ -368,9 +368,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     check( first_update == (uint64_t) allowance );
     check( rocketnet_server_num_connected_clients( population.server ) == MASS_DISCONNECT_CLIENTS - kicked );
     for ( int i = 0; i < kicked; i++ )
-    {
         check( !rocketnet_server_client_connected( population.server, i ) );
-    }
 
     int remaining = -1;
     uint8_t key[ROCKETNET_KEY_BYTES];
@@ -436,9 +434,7 @@ static void test_server_disconnect_all_1000_real_time()
     // drain what the connect handshakes left queued before the pass
 
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
-    {
         mass_disconnect_client_step( population.clients[i], population.time );
-    }
 
     const uint64_t seals_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
     rocketnet_server_disconnect_all_clients( server );
@@ -478,21 +474,15 @@ static void test_server_disconnect_all_1000_real_time()
 
         sealed += step;
         updates++;
-
         for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
-        {
             mass_disconnect_client_step( population.clients[i], population.time );
-        }
     }
 
     check( sealed == total );
     check( rocketnet_server_num_connected_clients( server ) == 0 );
 
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
-    {
         check( rocketnet_client_state( population.clients[i] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
-    }
-
     check( counters[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out_before );
 
     mass_disconnect_destroy_all( &population );
@@ -520,14 +510,9 @@ static void test_clients_disconnect_together_server_count_exact()
     const uint64_t accepted_before = counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED];
 
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
-    {
         rocketnet_client_disconnect( population.clients[i] );
-    }
-
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
-    {
         rn_test_client_wait_disconnected( population.clients[i] );
-    }
 
     int updates = 0;
     while ( rocketnet_server_num_connected_clients( server ) != 0 )

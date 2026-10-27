@@ -462,10 +462,7 @@ static void test_unreliable_promotion_every_mode()
                     if ( sizes[b] == sizes[a] )
                     {
                         for ( int k = b; k + 1 < size_count; ++k )
-                        {
                             sizes[k] = sizes[k + 1];
-                        }
-
                         --size_count;
                         --b;
                     }
@@ -499,9 +496,7 @@ static void test_unreliable_promotion_every_mode()
                     check( serial != 0 );
                     check( rocketnet_counter_value( cc, promotion_counters[m] ) == before + ( promote ? 1u : 0u ) );
                     if ( promote )
-                    {
                         expected_promotions++;
-                    }
 
                     // drain the promoted message before a same-channel sequenced follow, preserving order
 

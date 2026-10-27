@@ -251,10 +251,7 @@ static void test_xdp_transport_replay_marks_refusals_reach_the_socket()
     static const bool no_failures[ROCKETNET_XDP_REPLAY_MAX_ENTRIES] = {};
     static bool marks_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     for ( uint32_t i = 0; i < ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
-    {
         marks_applied[i] = true;
-    }
-
     rocketnet_unit_check( rocketnet_xdp_replay_marks_reset_keeping( &marks, no_failures, marks_applied ) == 2 );
     rocketnet_unit_check( marks.refused == 0 );
     rocketnet_unit_check( marks.mark_count == 0 );
@@ -341,17 +338,10 @@ static void replay_fake_commit( struct rocketnet_xdp_replay_marks_t * marks, str
 {
     static bool forget_failed[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
     static bool mark_applied[ROCKETNET_XDP_REPLAY_MAX_ENTRIES];
-
     for ( uint32_t i = 0; i < marks->forget_count; i++ )
-    {
         forget_failed[i] = !replay_fake_map_delete( map, &marks->forgets[i] );
-    }
-
     for ( uint32_t i = 0; i < marks->mark_count; i++ )
-    {
         mark_applied[i] = replay_fake_map_update( map, &marks->mark_keys[i], marks->mark_values[i].high_water );
-    }
-
     rocketnet_xdp_replay_marks_reset_keeping( marks, forget_failed, mark_applied );
 }
 

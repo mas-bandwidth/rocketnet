@@ -176,10 +176,7 @@ static int standard_receiver_check_run( const char * id, const uint8_t * payload
     standard_receiver_check_limits( &limits, 0x1F );
 
     if ( strcmp( id, "m4.check-6-type-not-enabled" ) == 0 )
-    {
         limits.enabled_codes = 1u << ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
-    }
-
     if ( strcmp( id, "m4.check-9-over-maximum" ) == 0 )
         limits.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;          // the configurable floor, 1415
 

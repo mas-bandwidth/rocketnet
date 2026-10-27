@@ -47,18 +47,13 @@ static void test_server_stats_current_every_update()
     no_worker_clients_create( world, NO_WORKER_CLIENTS );
     no_worker_connect_all( world );
     for ( int step = 0; step < 400 && no_worker_connected_slots( world ) < NO_WORKER_CLIENTS; step++ )
-    {
         no_worker_step( world, false, 0.1 );
-    }
-
     check( no_worker_connected_slots( world ) == NO_WORKER_CLIENTS );
 
     // steady traffic at 100 ms steps until every slot has samples
 
     for ( int step = 0; step < 10; step++ )
-    {
         no_worker_step( world, true, 0.1 );
-    }
 
     static struct rocketnet_server_client_stats_t before[NO_WORKER_CLIENTS];
     for ( int slot = 0; slot < NO_WORKER_CLIENTS; slot++ )
@@ -84,9 +79,7 @@ static void test_server_stats_current_every_update()
         check( stats.bandwidth_received_kbps > 0.0 );
         check( stats.bandwidth_acked_kbps > 0.0 );
         if ( stats.rtt_ms > 9.0 && stats.rtt_ms < 11.0 )
-        {
             current++;
-        }
     }
 
     check( current == NO_WORKER_CLIENTS );

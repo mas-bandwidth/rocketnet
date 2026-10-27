@@ -193,9 +193,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
             int packet_bytes = 0;
             rocketnet_client_protocol_update( &clients[i], time, packet, &packet_bytes );
             if ( packet_bytes > 0 )
-            {
                 rocketnet_network_simulator_send( wire, &addresses[i], &server_address, packet, packet_bytes, time );
-            }
         }
 
         if ( num_connected == SRB_NUM_CLIENTS )
@@ -209,9 +207,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
             rocketnet_server_protocol_process_packet( &server, &from, packet, got, ROCKETNET_TEST_CREATE_TS, time,
                                                       response, &response_bytes, payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
-            {
                 rocketnet_network_simulator_send( wire, &server_address, &from, response, response_bytes, time );
-            }
         }
 
         for ( int i = 0; i < SRB_NUM_CLIENTS; i++ )
@@ -228,10 +224,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     }
 
     for ( int i = 0; i < SRB_NUM_CLIENTS; i++ )
-    {
         check( clients[i].state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
-    }
-
     check( rocketnet_client_slots_num_connected( server.client_slots ) == SRB_NUM_CLIENTS );
 
     // the burst: every client sends nine two-fragment payloads, and the

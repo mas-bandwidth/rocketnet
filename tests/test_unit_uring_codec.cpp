@@ -328,9 +328,7 @@ static void test_uring_gso_message_stride_and_tail()
     static uint8_t frames[8][1500];
     uint8_t * wire[8];
     for ( int i = 0; i < 8; i++ )
-    {
         wire[i] = frames[i];
-    }
 
     struct rocketnet_address_t a;
     struct rocketnet_address_t b;
@@ -339,9 +337,7 @@ static void test_uring_gso_message_stride_and_tail()
 
     struct rocketnet_address_t to[8];
     for ( int i = 0; i < 8; i++ )
-    {
         to[i] = a;
-    }
 
     struct sockaddr_storage name;
     memset( &name, 0, sizeof( name ) );

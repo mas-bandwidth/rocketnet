@@ -209,10 +209,7 @@ static void test_standard_blocks_vectors()
     {
         const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         for ( int i = 0; i < bytes; i++ )
-        {
             rocketnet_unit_check( fragments[at + i] == (uint8_t) ( i & 0xFF ) );
-        }
-
         at += bytes;
     }
 

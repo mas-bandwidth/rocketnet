@@ -532,9 +532,7 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
 
     bool ok = (int) options.retval == want_verdict;
     if ( !ok )
-    {
         printf( "  FAIL %s: verdict %s, wanted %s\n", label, verdict_name( (int) options.retval ), verdict_name( want_verdict ) );
-    }
 
     for ( int i = 0; i < NUM_COUNTER_SLOTS; i++ )
     {
@@ -1760,15 +1758,9 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         strncpy( ifr.ifr_name, ONLINK_FAR, sizeof( ifr.ifr_name ) - 1 );
         const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
         if ( have_mac )
-        {
             memcpy( client_mac, ifr.ifr_hwaddr.sa_data, 6 );
-        }
-
         if ( probe >= 0 )
-        {
             close( probe );
-        }
-
         client_ifindex = (int) if_nametoindex( ONLINK_FAR );
         environment.capture_fd = socket( AF_PACKET, SOCK_RAW, htons( ETH_P_IP ) );
         if ( environment.capture_fd >= 0 )

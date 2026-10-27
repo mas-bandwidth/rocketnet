@@ -111,18 +111,12 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
     {
         const int expected_bytes = rn_standard_hex_decode( table[i].hex, expected, RN_STANDARD_VECTOR_MAX_BYTES );
         if ( expected_bytes < 0 )
-        {
             printf( "vector %s: its twin's hex does not decode\n", table[i].id );
-        }
-
         rocketnet_unit_check( expected_bytes >= 0 );
 
         const int actual_bytes = generator( table[i].id, actual, RN_STANDARD_VECTOR_MAX_BYTES );
         if ( actual_bytes < 0 )
-        {
             printf( "vector %s: no generator for this id\n", table[i].id );
-        }
-
         rocketnet_unit_check( actual_bytes >= 0 );
 
         const int first = rn_standard_first_difference( expected, expected_bytes, actual, actual_bytes );
