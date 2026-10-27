@@ -52,13 +52,16 @@ template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_b
 {
     static_assert( NumBuffers >= 3, "a producer buffer, a consumer buffer and one in between" );
     rocketnet_assert( producer >= 0 && producer < NumBuffers );
+
     handoff->free_head = 0;
     handoff->free_count = 0;
+
     for ( int i = 0; i < NumBuffers; i++ )
     {
         if ( i != producer )
             handoff->free_index[handoff->free_count++] = i;
     }
+
     handoff->ready_head = 0;
     handoff->ready_count = 0;
     handoff->owed = false;
@@ -75,18 +78,24 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet
 {
     rocketnet_assert( producer >= 0 && producer < NumBuffers );
     rocketnet_assert( max_ready >= 1 && max_ready < NumBuffers );
+
     if ( handoff->free_count == 0 || handoff->ready_count >= max_ready )
     {
         handoff->owed = true;
         return -1;
     }
+
     rocketnet_assert( handoff->ready_count < NumBuffers );
+
     handoff->ready_index[( handoff->ready_head + handoff->ready_count ) % NumBuffers] = producer;
     handoff->ready_count++;
+
     const int next = handoff->free_index[handoff->free_head];
+
     handoff->free_head = ( handoff->free_head + 1 ) % NumBuffers;
     handoff->free_count--;
     handoff->owed = false;
+
     return next;
 }
 
@@ -97,9 +106,12 @@ template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_bu
 {
     if ( handoff->ready_count == 0 )
         return -1;
+
     const int index = handoff->ready_index[handoff->ready_head];
+
     handoff->ready_head = ( handoff->ready_head + 1 ) % NumBuffers;
     handoff->ready_count--;
+
     return index;
 }
 
