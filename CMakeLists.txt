@@ -1187,6 +1187,9 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             test_public_step_driven_client_connects_without_a_thread
             # the IPv6 availability seam and the development backend secret
             test_client_ipv4_without_ipv6_stack
+            # drives the client protocol directly, whose packet filter is the
+            # published test filter the production server refuses
+            test_server_handshake_deadline_from_config
             # the development link simulator (functional/channel_harness.h,
             # functional/live_matrix.cpp)
             test_harness_one_message_each_way_lossless
