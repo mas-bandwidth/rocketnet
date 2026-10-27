@@ -1465,6 +1465,7 @@ void rocketnet_test_transport_udp_loopback()
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 }
 
+#if ROCKETNET_DEV
 void rocketnet_test_client_ipv4_without_ipv6_stack()
 {
     // a host with no IPv6 stack must still reach an IPv4 server. the seam
@@ -1611,6 +1612,7 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
 }
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_test_transport_stats()
 {
@@ -3776,6 +3778,7 @@ void rocketnet_test_server_handshake_deadline_from_config()
 // names -- each counter and stat compared with the transport stats field or
 // the counter-block slot it maps to, after real traffic both ways.
 
+#if ROCKETNET_DEV
 void rocketnet_test_public_fragment_delivery()
 {
     constexpr int payload_bytes = 3000;
@@ -3958,6 +3961,7 @@ void rocketnet_test_public_fragment_delivery()
     printf( "test_control_fragment_packets_each_end: public delivery bytes=3000/3000 checksums=%08x/%08x\n",
             client_to_server_checksum, server_to_client_checksum );
 }
+#endif // #if ROCKETNET_DEV
 
 static uint64_t rocketnet_test_block_sum( const struct rocketnet_counters_t * a, const struct rocketnet_counters_t * b, int counter )
 {
@@ -4005,6 +4009,7 @@ static void rocketnet_test_validate_queries_batch( const struct rocketnet_messag
     }
 }
 
+#if ROCKETNET_DEV
 void rocketnet_test_public_client_server_queries()
 {
     struct rocketnet_test_env_guard_t max_clients_guard;
@@ -4287,6 +4292,7 @@ void rocketnet_test_public_client_server_queries()
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
 }
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_test_config_precedence()
 {
@@ -6438,6 +6444,7 @@ void rocketnet_test_server_gso_wire_dual_stack()
 
 #include "rocketnet_client_gso.h"
 
+#if ROCKETNET_DEV
 static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
 {
     struct rocketnet_test_env_guard_t server_guard, client_guard;
@@ -6599,30 +6606,39 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     rocketnet_test_env_restore( &client_guard );
     rocketnet_test_env_restore( &server_guard );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 void rocketnet_test_gso_client_wire_ipv4()
 {
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 void rocketnet_test_gso_client_wire_ipv6()
 {
     rocketnet_test_gso_client_wire_exchange( "[::1]", "[::1]", true );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 void rocketnet_test_gso_client_wire_plain()
 {
     // the plain tier over the same wire: no UDP_SEGMENT, one datagram per
     // sendmmsg message. the fallback tier is never the untested tier.
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", false );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 void rocketnet_test_gso_client_wire_gro()
 {
     // the gso server sends each frame's equal-sized packets to the one client
     // as UDP_SEGMENT runs: the client receives them coalesced and splits them
     rocketnet_test_gso_client_wire_exchange( "127.0.0.1", "127.0.0.1", true, "gso" );
 }
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_test_server_gso_send_overflow()
 {
@@ -6699,6 +6715,7 @@ void rocketnet_test_server_gso_send_overflow()
 }
 
 
+#if ROCKETNET_DEV
 void rocketnet_test_server_gso_shutdown_send_interruptions()
 {
     rocketnet_address_t bind, to;
@@ -6724,7 +6741,9 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     rocketnet_check( rocketnet_server_gso_stopped( gso ) );
     rocketnet_server_gso_destroy( gso );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 void rocketnet_test_server_gso_held_receive_view()
 {
     rocketnet_address_t bind, client_address;
@@ -6784,6 +6803,7 @@ void rocketnet_test_server_gso_held_receive_view()
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop,
         rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
+#endif // #if ROCKETNET_DEV
 
 // The io_uring transport's own tests, linux only, in the gso section's shape:
 // over the wire on loopback through real sockets and a real io_uring, the
@@ -9897,6 +9917,7 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 // ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED once its update accepts the
 // server's disconnect packet, not CONNECTION_TIMED_OUT.
 
+#if ROCKETNET_DEV
 static void rocketnet_test_public_client_reads_server_disconnected()
 {
     struct rocketnet_server_config_t server_config;
@@ -9966,6 +9987,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
 }
+#endif // #if ROCKETNET_DEV
 
 // A development connect token naming both families, 127.0.0.1 and [::1] at
 // the server's port, against a portable server bound to 127.0.0.1 (port 0),
@@ -9974,6 +9996,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
 // selects the IPv4 address and binds IPv4, the server matches the token's
 // IPv4 address although its IPv6 flag is set, and the client connects.
 
+#if ROCKETNET_DEV
 static void rocketnet_test_two_address_token_connects_over_ipv4()
 {
     struct rocketnet_server_config_t server_config;
@@ -10039,6 +10062,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
 }
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 
@@ -10902,7 +10926,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_wire_totals_concurrent_send_exact", rocketnet_test_transport_wire_totals_concurrent_send_exact, NULL },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape, NULL },
     { "test_loopback_transport_udp", rocketnet_test_transport_udp_loopback, NULL },
-    { "test_client_ipv4_without_ipv6_stack", rocketnet_test_client_ipv4_without_ipv6_stack, NULL },
+    { "test_client_ipv4_without_ipv6_stack", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_client_ipv4_without_ipv6_stack ), NULL },
     { "test_loopback_transport_cpp_transports_connect", rocketnet_test_cpp_transports_connect_over_loopback, NULL },
     { "test_client_receive_keeps_payloads_on_bad_capacity", rocketnet_test_client_receive_keeps_payloads_on_bad_capacity, NULL },
     { "test_transport_stats", rocketnet_test_transport_stats, NULL },
@@ -10943,13 +10967,13 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },
 #endif
 #if defined(__linux__)
-    { "test_gso_transport_linux_sendmmsg_errors", rocketnet_test_linux_gso_sendmmsg_errors, NULL },
-    { "test_gso_transport_linux_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors, NULL },
-    { "test_io_uring_transport_linux_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors, NULL },
-    { "test_io_uring_transport_linux_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors, NULL },
+    { "test_gso_transport_linux_sendmmsg_errors", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_gso_sendmmsg_errors ), NULL },
+    { "test_gso_transport_linux_recvmmsg_errors", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_gso_recvmmsg_errors ), NULL },
+    { "test_io_uring_transport_linux_receive_cqe_errors", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_uring_receive_cqe_errors ), NULL },
+    { "test_io_uring_transport_linux_send_cqe_errors", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_uring_send_cqe_errors ), NULL },
 #if ROCKETNET_XDP
-    { "test_xdp_transport_linux_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4, rocketnet_test_linux_xdp_weather_runs_here },
-    { "test_xdp_transport_linux_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6, rocketnet_test_linux_xdp_weather_runs_here },
+    { "test_xdp_transport_linux_receive_weather_ipv4", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_xdp_receive_weather_ipv4 ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_xdp_weather_runs_here ) },
+    { "test_xdp_transport_linux_receive_weather_ipv6", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_xdp_receive_weather_ipv6 ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_linux_xdp_weather_runs_here ) },
 #endif
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
@@ -10981,9 +11005,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create, NULL },
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config, NULL },
     { "test_config_precedence", rocketnet_test_config_precedence, NULL },
-    { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
-    { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
-    { "test_two_address_token_connects_over_ipv4", rocketnet_test_two_address_token_connects_over_ipv4, NULL },
+    { "test_public_client_server_queries", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_public_client_server_queries ), NULL },
+    { "test_public_client_reads_server_disconnected", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_public_client_reads_server_disconnected ), NULL },
+    { "test_two_address_token_connects_over_ipv4", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_two_address_token_connects_over_ipv4 ), NULL },
     { "test_portable_transport_server_io_pin", rocketnet_test_server_transport_io_pin_portable, rocketnet_test_server_pin_allows_portable },
     { "test_loopback_transport_server_io_pin", rocketnet_test_server_transport_io_pin_loopback, NULL },
     { "test_loopback_transport_env_pins", rocketnet_test_transport_env_pins_loopback, NULL },
@@ -11010,13 +11034,13 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_server_wire_plain", rocketnet_test_server_gso_wire_plain, NULL },
     { "test_gso_transport_server_wire_ipv6", rocketnet_test_server_gso_wire_ipv6, NULL },
     { "test_gso_transport_server_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack, NULL },
-    { "test_gso_client_transport_wire_ipv4", rocketnet_test_gso_client_wire_ipv4, NULL },
-    { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
-    { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
-    { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
+    { "test_gso_client_transport_wire_ipv4", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_gso_client_wire_ipv4 ), NULL },
+    { "test_gso_client_transport_wire_ipv6", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_gso_client_wire_ipv6 ), NULL },
+    { "test_gso_client_transport_wire_plain", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_gso_client_wire_plain ), NULL },
+    { "test_gso_client_transport_wire_gro", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_gso_client_wire_gro ), NULL },
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
-    { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
-    { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
+    { "test_gso_shutdown_send_interruptions", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_gso_shutdown_send_interruptions ), NULL },
+    { "test_gso_transport_held_receive_view", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_gso_held_receive_view ), NULL },
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
