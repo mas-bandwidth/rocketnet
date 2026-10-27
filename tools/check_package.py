@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from check_xdp_archive import embedded_bytes
 
@@ -36,6 +37,75 @@ foreach(linkage {linkages})
 endforeach()
 """
 PROBE_SOURCE = "#include \"rocketnet.h\"\nint main( void ) { return &rocketnet_time == 0; }\n"
+# The client configuration (--client): a C program that only creates and
+# destroys a client, built against both installed libraries. It uses no
+# server, no server transport and none of liburing, libbpf or libxdp.
+CLIENT_CONSUMER_CMAKE = """cmake_minimum_required(VERSION 3.20)
+# CXX is enabled for the static library's C++ runtime, as in package_consumer.
+project(rocketnet_client_consumer LANGUAGES C CXX)
+find_package(RocketNet 1.0 CONFIG REQUIRED)
+foreach(server_library RocketNet::Bpf RocketNet::Xdp RocketNet::Uring)
+    if(TARGET ${server_library})
+        message(FATAL_ERROR "client package created ${server_library}")
+    endif()
+endforeach()
+enable_testing()
+foreach(linkage rocketnet rocketnet_shared)
+    add_executable(client_${linkage} client.c)
+    target_link_libraries(client_${linkage} PRIVATE RocketNet::${linkage})
+    if(linkage STREQUAL "rocketnet_shared")
+        target_compile_definitions(client_${linkage} PRIVATE EXPECT_SHARED=1)
+    endif()
+    add_test(NAME client_${linkage} COMMAND client_${linkage})
+endforeach()
+"""
+CLIENT_CONSUMER_SOURCE = """#include "rocketnet.h"
+#if defined(EXPECT_SHARED) && !defined(ROCKETNET_SHARED)
+#error Shared client consumer did not inherit the shared-library contract
+#endif
+#include <stdlib.h>
+#include <string.h>
+static void * client_malloc( void * context, size_t bytes ) { (void) context; return malloc( bytes ); }
+static void client_free( void * context, void * p ) { (void) context; free( p ); }
+int main( void )
+{
+    struct rocketnet_client_config_t config;
+    if ( rocketnet_init( NULL, client_malloc, client_free ) != ROCKETNET_STATUS_OK )
+        return 1;
+    if ( rocketnet_client_default_config( &config ) != ROCKETNET_STATUS_OK )
+        return 1;
+    config.transport = "portable";
+#if !ROCKETNET_DEV
+    {
+        static const unsigned char packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
+        memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
+    }
+#endif
+    if ( rocketnet_client_required_memory( &config ) == 0 )
+        return 1;
+    {
+        enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
+        if ( client == NULL || status != ROCKETNET_STATUS_OK )
+            return 1;
+        if ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_DISCONNECTED )
+        {
+            rocketnet_client_destroy( client );
+            return 1;
+        }
+        rocketnet_client_disconnect( client );
+        if ( !rocketnet_client_disconnected( client ) )
+        {
+            rocketnet_client_destroy( client );
+            return 1;
+        }
+        rocketnet_client_destroy( client );
+    }
+    if ( rocketnet_time() < 0.0 )
+        return 1;
+    return rocketnet_term() != ROCKETNET_STATUS_OK ? 1 : 0;
+}
+"""
 # Only what compiling rocketnet.h needs: ROCKETNET_SHARED selects the shared
 # library's import declaration, and ROCKETNET_DEV and ROCKETNET_MAX_CLIENTS are
 # the values the library was built with, so the header the consumer compiles
@@ -185,11 +255,62 @@ def check_exported_settings(installed, root, command, config, native_build_optio
     print(f"Package {version}: find_package(RocketNet {line}) accepts it; consumers inherit no private settings")
 
 
+def check_client_package(installed, root, command, config, native_build_options):
+    """Fail when a client-configuration package requires a server library,
+    then build and run a C client against both installed libraries."""
+    config_file = next(installed.rglob("RocketNetConfig.cmake")).read_text()
+    failures = []
+    for name in ("ROCKETNET_XDP", "ROCKETNET_XDP_REQUIRED",
+                 "ROCKETNET_IO_URING", "ROCKETNET_IO_URING_REQUIRED"):
+        match = re.search(rf"set\({name} ([^)]*)\)", config_file)
+        if match is None:
+            failures.append(f"RocketNetConfig.cmake does not set {name}")
+        elif cmake_bool(match.group(1).strip('"'), False):
+            failures.append(f"RocketNetConfig.cmake sets {name}={match.group(1)} for a client build")
+    targets_file = next(installed.rglob("RocketNetTargets.cmake")).read_text()
+    for forbidden in ("liburing", "libbpf", "libxdp",
+                      "RocketNet::Uring", "RocketNet::Bpf", "RocketNet::Xdp"):
+        if forbidden in targets_file:
+            failures.append(f"RocketNetTargets.cmake references {forbidden} for a client build")
+    for failure in failures:
+        print("FAIL  " + failure)
+    if failures:
+        raise RuntimeError(f"{len(failures)} client package failures")
+    source = root / "client consumer"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text(CLIENT_CONSUMER_CMAKE)
+    (source / "client.c").write_text(CLIENT_CONSUMER_SOURCE)
+    build = root / "client build"
+    client_command = list(command)
+    client_command[client_command.index("-S") + 1] = source
+    client_command[client_command.index("-B") + 1] = build
+    if sys.platform.startswith("linux"):
+        # The server libraries' headers and archives are not available to
+        # this configure: find_package(RocketNet) must still succeed because
+        # the client package requires none of them.
+        hidden = [path for path in ("/usr/include", "/usr/lib/x86_64-linux-gnu",
+                                    "/usr/lib/aarch64-linux-gnu", "/usr/lib")
+                  if Path(path).exists()]
+        if hidden:
+            client_command.append("-DCMAKE_IGNORE_PATH=" + ";".join(hidden))
+    run(*client_command)
+    run("cmake", "--build", build, "--config", config, "--parallel", "4", *native_build_options)
+    env = os.environ.copy()
+    env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
+    run("ctest", "--test-dir", build, "-C", config, "--output-on-failure", env=env)
+    print("Client package: RocketNetConfig requires no liburing, libbpf or libxdp; "
+          "C client consumers passed against the static and shared libraries")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", type=Path)
     parser.add_argument("--config", default="Release")
     parser.add_argument("--embedded", action="store_true")
+    parser.add_argument("--client", action="store_true",
+                        help="the build was configured with ROCKETNET_XDP=OFF and "
+                             "ROCKETNET_IO_URING=OFF: require no server library and "
+                             "run only the C client consumers (no embedded build)")
     args = parser.parse_args()
     build = args.build.resolve()
     cache = {}
@@ -200,6 +321,13 @@ def main():
     source = Path(cache["rocketnet_SOURCE_DIR"])
     shared_enabled = cmake_bool(cache.get("ROCKETNET_BUILD_SHARED"), True)
     dev_enabled = cmake_bool(cache.get("ROCKETNET_BUILD_DEV_LIBRARIES"), True)
+    if args.client:
+        if cmake_bool(cache.get("ROCKETNET_XDP"), True):
+            raise RuntimeError("--client requires a build configured with ROCKETNET_XDP=OFF")
+        if cmake_bool(cache.get("ROCKETNET_IO_URING"), True):
+            raise RuntimeError("--client requires a build configured with ROCKETNET_IO_URING=OFF")
+        if not shared_enabled:
+            raise RuntimeError("--client requires ROCKETNET_BUILD_SHARED=ON (static and shared consumers)")
     # Reusable MSBuild workers can retain the temporary build directory after
     # a successful build. These consumers have no subsequent build to reuse
     # them for; let the workers exit so TemporaryDirectory can remove the tree.
@@ -237,6 +365,11 @@ def main():
                     "CMAKE_GENERATOR_PLATFORM", "CMAKE_GENERATOR_TOOLSET"):
             if cache.get(key):
                 command.append(f"-D{key}={cache[key]}")
+        if args.client:
+            check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled)
+            check_client_package(installed, root, command, args.config, native_build_options)
+            print("Relocated SDK: C static/shared client consumers passed (client configuration)")
+            return
         run(*command)
         run("cmake", "--build", consumer, "--config", args.config, "--parallel", "4", *native_build_options)
         # A universal producer build has universal consumers: every consumer executable

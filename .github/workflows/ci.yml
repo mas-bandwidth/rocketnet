@@ -647,6 +647,32 @@ jobs:
             ./build-no-xdp/bin/test --run "$case"
           done
 
+      # The client build: liburing, libbpf and libxdp are server-only, so a
+      # Linux build with ROCKETNET_XDP=OFF and ROCKETNET_IO_URING=OFF needs
+      # none of their headers or libraries. CMAKE_IGNORE_PATH points the
+      # find_path/find_library searches away from the system copies the fleet
+      # host has installed, so the configure below (and the package consumer
+      # check_package.py --client configures) runs as it would on a machine
+      # without them. The shared library must carry no NEEDED entry for any
+      # of the three, and the installed package must require none of them:
+      # check_package.py --client asserts the installed RocketNetConfig and
+      # then builds and runs a C client against both installed libraries.
+      - name: Build Linux client without server libraries; package requires none of them
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        run: |
+          cmake -S . -B build-no-server-libs -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_IO_URING=OFF \
+            -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_TESTS=OFF \
+            "-DCMAKE_IGNORE_PATH=/usr/include;/usr/lib/x86_64-linux-gnu;/usr/lib/aarch64-linux-gnu;/usr/lib" \
+            -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-server-libs/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-server-libs/bin"
+          cmake --build build-no-server-libs --target rocketnet rocketnet_shared --parallel
+          python3 tools/check_xdp_compiled_out.py --absent build-no-server-libs/bin/librocketnet.so build-no-server-libs/librocketnet.a
+          if readelf -d build-no-server-libs/bin/librocketnet.so | grep -E 'NEEDED.*lib(uring|bpf|xdp)'; then
+            echo "client library links a server library (liburing, libbpf or libxdp)"
+            exit 1
+          fi
+          readelf -d build-no-server-libs/bin/librocketnet.so | grep NEEDED
+          python3 tools/check_package.py build-no-server-libs --config Release --client
+
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
         if: contains(matrix.leg, 'a')
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
