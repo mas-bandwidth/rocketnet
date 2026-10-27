@@ -417,7 +417,43 @@ static void test_client_ranking_pin_is_honoured()
     printf( "test_client_ranking_pin_is_honoured\n" );
 }
 
+static void test_client_ladder_parse_iocp_on_linux_takes_auto()
+{
+    ranking_env_t env;
+    ranking_env_set_aside( &env );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    // "iocp" is a known Windows client: on a Linux client it is skipped, the
+    // list names no candidate, and the endpoint falls back to auto (gso,portable).
+    {
+        int num_available = 0;
+        const int * available = rocketnet_client_transport_io_availability( &num_available );
+        struct rocketnet_transport_ladder_t ladder;
+        check( rocketnet_transport_ladder_parse( "iocp", available, num_available, &ladder, false ) );
+        check( ladder.num_skipped == 1 );
+        check( ladder.skipped[0] == ROCKETNET_TRANSPORT_IOCP );
+        check( ladder.num_candidates == 2 );
+        check( ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
+        check( ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
+    }
+    {
+        const ranking_result_t result = ranking_create_client( "iocp", NULL, NULL );
+        check( result.created );
+        check( result.status == ROCKETNET_STATUS_OK );
+        check( strcmp( result.name, "gso" ) == 0 );
+        check( ranking_record.num_creates == 1 );
+        check( strcmp( ranking_record.creates[0], "gso" ) == 0 );
+        check( ranking_log_count( "names no transport for this endpoint on this platform. using auto" ) == 1 );
+        check( result.destroy_calls == 1 );
+    }
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+    ranking_env_put_back( &env );
+    printf( "test_client_ladder_parse_iocp_on_linux_takes_auto\n" );
+}
+
 REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );
 REGISTER_UNIT_TEST( test_client_ranking_falls_back_to_portable );
 REGISTER_UNIT_TEST( test_client_ranking_pin_is_honoured );
+REGISTER_UNIT_TEST( test_client_ladder_parse_iocp_on_linux_takes_auto );
 #endif // #if ROCKETNET_DEV

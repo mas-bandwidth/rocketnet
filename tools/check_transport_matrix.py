@@ -14,6 +14,11 @@ and test_transport_env_pin_is_honoured, and every expected-fail mark must name a
 case it runs and a card. An xdp cell needs root, a namespace and a veth
 pair, so its step must run the xdp family cases inside a virtme-ng guest
 (vng). Exits 0 with one OK line, or 1 naming each gap.
+
+Also renders the auto order per platform and endpoint from
+sdk/rocketnet_drivers.inc (server development, server production and client;
+lower nonzero rank first, pin-only excluded) and fails if sdk/rocketnet.h,
+USAGE.md or TRANSPORTS.md state a different order.
 Standard library only.
 """
 
@@ -47,6 +52,111 @@ XDP_CASES = (
 )
 
 ROW = re.compile(r'^ROCKETNET_TRANSPORT\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*\)', re.M)
+
+ROW_FULL = re.compile(r'^ROCKETNET_TRANSPORT\(\s*(\w+)\s*,\s*"([^"]+)"\s*,\s*\w+\s*,\s*\w+\s*,\s*(\w+)\s*,\s*(\([^)]*\)|\w+)\s*,\s*(\w+)\s*\)', re.M)
+
+OS_LABELS = {"LINUX": "Linux", "MACOS": "macOS", "WINDOWS": "Windows"}
+ENDPOINTS = ("server-development", "server-production", "client")
+
+
+def rank_value(expr, development):
+    if expr == "ROCKETNET_TRANSPORT_PIN_ONLY":
+        return None
+    if expr.startswith("("):
+        numbers = re.findall(r"\d+", expr)
+        if len(numbers) != 2:
+            return None
+        return int(numbers[0] if development else numbers[1])
+    return int(expr)
+
+
+def auto_orders(text):
+    """Return {(OS, endpoint): [names]} rendered from the registry rows."""
+    parsed = []
+    for _symbol, name, platforms, server, client in ROW_FULL.findall(text):
+        parsed.append((name, platforms, server, client))
+    orders = {}
+    for os_name in OSES:
+        label = OS_LABELS[os_name]
+        for endpoint in ENDPOINTS:
+            development = endpoint != "server-production"
+            ranked = []
+            for index, (name, platforms, server, client) in enumerate(parsed):
+                if platforms not in PLATFORMS or os_name not in PLATFORMS[platforms]:
+                    continue
+                expr = client if endpoint == "client" else server
+                rank = rank_value(expr, development)
+                if rank is None or rank == 0:
+                    continue
+                ranked.append((rank, index, name))
+            ranked.sort(key=lambda item: (item[0], item[1]))
+            orders[(label, endpoint)] = [name for _rank, _index, name in ranked]
+    return orders
+
+
+def norm_order(text):
+    return ",".join(part.strip().strip("`") for part in text.strip().strip("`").split(","))
+
+
+def norm_doc(text):
+    return re.sub(r"\s+", " ", text.replace("`", ""))
+
+
+def check_doc_orders(orders, problems):
+    expected = {(label, ep): ",".join(names) for (label, ep), names in orders.items()}
+
+    def compare(doc, label, endpoint, got):
+        want = expected[(label, endpoint)]
+        if got is None:
+            problems.append(f"{doc}: no documented auto order for {label} {endpoint} (registry: {want})")
+        elif got != want:
+            problems.append(f"{doc}: {label} {endpoint} auto order is '{got}', registry renders '{want}'")
+
+    # sdk/rocketnet.h: Development/Production servers try ...; Linux/macOS/Windows clients try ...
+    header = norm_doc(read("sdk/rocketnet.h").replace("///", ""))
+    for kind, endpoint in (("Development", "server-development"), ("Production", "server-production")):
+        m = re.search(kind + r" servers try (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows", header)
+        groups = m.groups() if m else (None, None, None)
+        for label, got in zip(("Linux", "macOS", "Windows"), groups):
+            compare("sdk/rocketnet.h", label, endpoint, norm_order(got) if got else None)
+    m = re.search(r"Linux clients try (.+?); macOS clients try (.+?); and Windows clients try (.+?)\.", header)
+    groups = m.groups() if m else (None, None, None)
+    for label, got in zip(("Linux", "macOS", "Windows"), groups):
+        compare("sdk/rocketnet.h", label, "client", norm_order(got) if got else None)
+
+    # USAGE.md: server prod sentence with dev in parentheses (dev differs only on Windows), then client sentence.
+    usage = norm_doc(read("USAGE.md"))
+    m = re.search(r"The server's auto order is (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows in production builds \((.+?) in development builds\)", usage)
+    if not m:
+        for label in ("Linux", "macOS", "Windows"):
+            compare("USAGE.md", label, "server-production", None)
+            compare("USAGE.md", label, "server-development", None)
+    else:
+        prod_linux, prod_macos, prod_windows, dev_windows = (norm_order(g) for g in m.groups())
+        compare("USAGE.md", "Linux", "server-production", prod_linux)
+        compare("USAGE.md", "macOS", "server-production", prod_macos)
+        compare("USAGE.md", "Windows", "server-production", prod_windows)
+        compare("USAGE.md", "Linux", "server-development", prod_linux)
+        compare("USAGE.md", "macOS", "server-development", prod_macos)
+        compare("USAGE.md", "Windows", "server-development", dev_windows)
+    m = re.search(r"The client's auto order is [^.]*?: (.+?) on Linux; (.+?) on macOS; (.+?) on Windows\.", usage)
+    groups = m.groups() if m else (None, None, None)
+    for label, got in zip(("Linux", "macOS", "Windows"), groups):
+        compare("USAGE.md", label, "client", norm_order(got) if got else None)
+
+    # TRANSPORTS.md: the `auto` resolves table, one row per platform.
+    found = {}
+    for label, dev, prod, client in re.findall(r"^\| (Linux|macOS|Windows) \| (.+?) \| (.+?) \| (.+?) \|", read("TRANSPORTS.md"), re.M):
+        found[label] = (norm_order(dev), norm_order(prod), norm_order(client))
+    for label in ("Linux", "macOS", "Windows"):
+        if label not in found:
+            for endpoint in ENDPOINTS:
+                compare("TRANSPORTS.md", label, endpoint, None)
+        else:
+            dev, prod, client = found[label]
+            compare("TRANSPORTS.md", label, "server-development", dev)
+            compare("TRANSPORTS.md", label, "server-production", prod)
+            compare("TRANSPORTS.md", label, "client", client)
 
 
 def read(path):
@@ -129,6 +239,12 @@ def main():
                 problems.append(f"transport {name}: no TRANSPORT_MATRIX_{os_name} cell with server transport {name}")
             if connects and not any(cell[1] == name for cell in cells):
                 problems.append(f"transport {name}: no TRANSPORT_MATRIX_{os_name} cell with client transport {name}")
+
+    orders = auto_orders(read("sdk/rocketnet_drivers.inc"))
+    for label in ("Linux", "macOS", "Windows"):
+        for endpoint in ENDPOINTS:
+            print(f"AUTO-ORDER {label} {endpoint}: {','.join(orders[(label, endpoint)])}")
+    check_doc_orders(orders, problems)
 
     for line in problems:
         print(f"TRANSPORT-MATRIX-MISSING {line}")
