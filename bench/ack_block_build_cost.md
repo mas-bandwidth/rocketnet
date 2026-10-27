@@ -40,3 +40,30 @@ One bounded bench run per code state under `benchslot` with no parallel load. "B
 | largest_below_4096 | 837.512 | 1040.806 | 821.092 | 752.148 | 1027 |
 
 The word scan is fastest where runs are long (`full_window` is 20.5x faster on Linux and 5.5x faster on macOS; `sparse_loss` is 4.2x faster on Linux and 3.6x faster on macOS) and slower on the pathological `alternating` window where every run and gap is one bit and per-range emission (`max_ranges` = 255) dominates.
+
+## Planted off-by-one witness in the word mask
+
+To verify that `test_ack_block_build_word_scan_matches_bit_walk` catches a mask boundary error, an off-by-one was planted in the upper partial-word mask at `sdk/rocketnet_ack.cpp:124` (`( 1ull << offset ) - 1` instead of `( 1ull << ( offset + 1 ) ) - 1`):
+
+```diff
+--- a/sdk/rocketnet_ack.cpp
++++ b/sdk/rocketnet_ack.cpp
+@@ -121,4 +121,4 @@
+                 if ( chunk > remaining )
+                     chunk = remaining;
+                 const uint64_t low_bit = (uint64_t) offset - chunk + 1;
+-                const uint64_t mask = ( ~0ull << low_bit ) & ( offset == 63 ? ~0ull : ( ( 1ull << ( offset + 1 ) ) - 1 ) );
++                const uint64_t mask = ( ~0ull << low_bit ) & ( offset == 63 ? ~0ull : ( ( 1ull << offset ) - 1 ) );
+                 shifted = ( replay->window[bit_index / 64] & mask ) << ( 63 - offset );
+```
+
+Running `./bin/test --run test_ack_block_build_word_scan_matches_bit_walk` against the planted off-by-one fails immediately (red, `exit 1`):
+
+```text
+test_ack_block_build_word_scan_matches_bit_walk
+ack block equivalence: mismatch highest=20000 capacity=7 expected=7 actual=7
+check failed: ( memcmp( expected, actual, (size_t) expected_bytes ) == 0 ), function equiv_compare, file /home/nova/work/rn-perf-ack-block-build.w3~1.g5/tests/test_unit_ack_block_build_equivalence.cpp, line 130
+WITNESS_EXIT=1
+```
+
+Restoring `sdk/rocketnet_ack.cpp:124` (verified byte-identical via `cmp -s`) and rerunning `./bin/test --run test_ack_block_build_word_scan_matches_bit_walk` passes (`exit 0`).
