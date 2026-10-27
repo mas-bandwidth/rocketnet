@@ -55,7 +55,7 @@ void rocketnet_server_socket_set_preflight_test_result( int result );   // 0 una
 
 void rocketnet_server_socket_clear_preflight_test_result();             // natural
 
-#endif
+#endif // #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV && defined( ROCKETNET_XDP ) && ROCKETNET_XDP
 
 // the R4 interrupt-line matcher, pure string logic exported for the
 // fixture test: does this /proc/interrupts line belong to this interface?
@@ -143,4 +143,4 @@ void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t *
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
 
-#endif // ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H

@@ -31,6 +31,7 @@ static int rocketnet_server_test_take_writer_fault( struct rocketnet_server_prot
     if ( fault != writer )
         return 0;
     server->test_fail_fixed_writer = ROCKETNET_SERVER_TEST_FAIL_WRITER_NONE;
+
     return 1;
 }
 #endif // #if ROCKETNET_DEV
@@ -78,10 +79,12 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
                                              uint64_t current_timestamp )
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+
     struct rocketnet_address_t host = *source;
     host.port = 0;
 
     // the global budget is not spent: everyone verifies.
+
     if ( budget->failure_count < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET )
         return 1;
 
@@ -92,6 +95,7 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
     // (tla/RNSecurityTables.tla HonestConnectsUnderFlood). the verifies such
     // sources cost are bounded by the per-update handshake work budget, which
     // runs before this gate, and each needs a valid cookie for its own address.
+
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count > 0 &&
@@ -107,6 +111,7 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
                                                        uint64_t current_timestamp )
 {
     rocketnet_signature_verify_budget_decay( budget, current_timestamp );
+
     struct rocketnet_address_t host = *source;
     host.port = 0;
 
@@ -127,6 +132,7 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
     // failure is counted in the global total above but the source is not
     // tracked, so that source is verified again on its next request; those
     // verifies are bounded by the per-update handshake work budget.
+
     for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS; i++ )
     {
         if ( budget->sources[i].fail_count == 0 )
@@ -195,6 +201,7 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
 
     // on a dual-stack server the loopback is an IPv4 address the socket
     // serves too
+
     if ( dual_stack && addr->data.ipv4[0] == 127 && addr->data.ipv4[1] == 0 &&
          addr->data.ipv4[2] == 0 && addr->data.ipv4[3] == 1 &&
          addr->port == server->advertised_ipv4.port )
@@ -211,6 +218,7 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
 static void rocketnet_server_read_token_address( struct rocketnet_address_t * addr, int ipv6, const uint8_t * signed_connect_data )
 {
     memset( addr, 0, sizeof( *addr ) );
+
     if ( ipv6 )
     {
         const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV6;
@@ -220,6 +228,7 @@ static void rocketnet_server_read_token_address( struct rocketnet_address_t * ad
         addr->port = rocketnet_read_uint16( &p );
         return;
     }
+
     const uint8_t * p = signed_connect_data + ROCKETNET_SIGNED_OFFSET_IPV4;
     addr->type = ROCKETNET_ADDRESS_IPV4;
     for ( int i = 0; i < 4; i++ )
@@ -245,15 +254,18 @@ static int rocketnet_server_token_address_is_advertised( const struct rocketnet_
             rocketnet_server_read_token_address( &addr, 0, signed_connect_data );
             return rocketnet_server_address_is_advertised( server, &addr );
         }
+
         if ( address_flags & ROCKETNET_ADDRESS_FLAG_IPV6 )
         {
             rocketnet_server_read_token_address( &addr, 1, signed_connect_data );
+
             if ( addr.type == ROCKETNET_ADDRESS_IPV6 && rocketnet_address_is_ipv4_in_ipv6( &addr ) )
             {
                 rocketnet_address_convert_ipv6_to_ipv4( &addr );
                 return rocketnet_server_address_is_advertised( server, &addr );
             }
         }
+
         return 0;
     }
 
@@ -343,8 +355,10 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_ALREADY_CONNECTED]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
+
             // standard/TRANSPORT.md t12 rule 3: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
             // t12 rule 3 and t17 rule 4: only a request whose salt matches the mapping's refreshes the half-open idle deadline.
+
             if ( sodium_memcmp( connection_salt, mapping->connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 )
                 mapping->control->last_receive_time = current_time;
             memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
@@ -405,6 +419,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         // a token created more than the 30-second skew allowance after the
         // server's clock is refused, always: there is no maximum lifetime.
         // Subtract only after ordering so the allowance cannot wrap at UINT64_MAX.
+
         if ( token_create_timestamp > current_timestamp &&
              token_create_timestamp - current_timestamp > ROCKETNET_TOKEN_CREATION_SKEW_SECONDS )
         {
@@ -424,6 +439,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
+
         if ( timeout_seconds > 0 && server->max_timeout_seconds > 0 && timeout_seconds > server->max_timeout_seconds )
             timeout_seconds = server->max_timeout_seconds;
     }
@@ -456,6 +472,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // Receives precede the transport sweep. Rotate before verifying or
     // issuing cookies so a delayed update cannot immediately discard a
     // cookie that this receive just issued.
+
     rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
 
     // the cookie gate: address validation before any asymmetric work. a
@@ -529,6 +546,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
+
             rocketnet_write_connection_cookie_packet( response_packet, server->packet_filter, connection_salt, fresh_expire, fresh_mac );
             *response_bytes = ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES;
             return ROCKETNET_SERVER_PROCESS_SEND_COOKIE;
@@ -540,12 +558,14 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // budget are dropped before any asymmetric work runs and counted, so a
     // flood of staged attempts cannot spend the whole update on signature
     // verification.
+
     if ( server->counters->handshakes_processed_this_update >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
     {
         rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
         return ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED;
     }
+
     server->counters->handshakes_processed_this_update++;
 
     // everything below the cookie is expensive; nothing below runs for an
@@ -654,6 +674,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     // Only a live mapping retains the request claim. Every refusal, including
     // a sealed denial, releases it immediately instead of waiting for expiry.
+
     if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
         rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
 
@@ -732,6 +753,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                               server->protocol_id, connection_salt, NULL,
                                                               keys.handshake_server_to_client );
             sodium_memzero( &keys, sizeof( keys ) );
+
             if ( denied_bytes != ROCKETNET_CONNECTION_DENIED_WIRE_BYTES )
             {
                 rocketnet_assert( 0 );      // fixed arguments; a wrong size is a bug, not a condition
@@ -739,6 +761,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                 counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
+
             *response_bytes = denied_bytes;
             rocketnet_debug( "server denied connection request. no client slots available" );
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS]++;
@@ -815,6 +838,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
             counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
+
         mapping->send_sequence_handshake++;
 
         memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
@@ -859,6 +883,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
                                              rocketnet_encryption_map_address( server->encryption_map, mapping_index ),
                                              mapping->token_expire_timestamp, current_timestamp );
     }
+
     rocketnet_used_token_history_claim_release( server->used_token_history, mapping->token_identifier,
                                                 rocketnet_encryption_map_address( server->encryption_map, mapping_index ) );
 
@@ -903,6 +928,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
             counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
+
         mapping->send_sequence_handshake++;
         *response_bytes = denied_bytes;
         rocketnet_debug( "server denied connection response. no client slots available" );
@@ -913,6 +939,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     // tla/RNXdpReplay.tla Connect: a new session takes a slot and its opened high water stays at zero.
     // tla/ReplayWindow.tla Connect: the mapping takes a slot and its replay window is left unchanged.
     // tla/RNSlots.tla Connect: the slot's connection owner becomes the new connection id.
+
     const uint64_t mapping_generation =
         rocketnet_encryption_map_owner_generation( server->encryption_map, mapping_index );
     int client_index = rocketnet_client_slots_assign( server->client_slots, mapping->client_id, mapping_index,
@@ -939,6 +966,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         counters[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR]++;
         return ROCKETNET_SERVER_PROCESS_ACCEPTED;
     }
+
     *response_bytes = keep_alive_bytes;
 
     return ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE;
@@ -990,6 +1018,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
 
     int client_index = mapping->control->client_index;
     rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
+
     if ( client_index != -1 )
     {
         rocketnet_server_connection_reset( server, client_index );
@@ -1002,6 +1031,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
         rocketnet_server_release_mapping_claim( server, mapping_index );
         rocketnet_encryption_map_remove_current( server->encryption_map, mapping_index );
     }
+
     counters[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED]++;
 }
 
@@ -1078,6 +1108,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
           ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED, ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK,
           ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE },
     };
+
     const int table_index = packet_type == ROCKETNET_CONNECTION_ACK_PACKET ? 4 : packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET ? 5
                                                                                                                                      : packet_type - ROCKETNET_CONNECTION_RESPONSE_PACKET;
     const struct rocketnet_sealed_type_counters_t * type_counters = &table[table_index];
@@ -1090,6 +1121,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // open, as before.
 
     int min_wire_bytes = 0;
+
     switch ( packet_type )
     {
         case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET: min_wire_bytes = ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES; break;
@@ -1205,6 +1237,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
             rocketnet_server_integrity_failure( server, mapping_index, mapping );
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
+
         for ( int i = 0; i < ROCKETNET_RESPONSE_PADDING_BYTES; i++ )
         {
             if ( opened[i] != 0 )
@@ -1223,6 +1256,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
 
         // A response retransmission is not fresh session activity. Only a
         // half-open mapping may refresh its idle clock from a response.
+
         if ( mapping->control->client_index == -1 )
             mapping->control->last_receive_time = current_time;
 
@@ -1302,7 +1336,9 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                               &counters[ROCKETNET_COUNTER_ACKED_BATCH_FULL] );
         // P9b: each acked id is tagged with the connection it was received
         // for, beside its client index, as it is appended
+
         const uint64_t connection_id = rocketnet_server_protocol_connection_id( server, client_index );
+
         for ( int i = before; i < server->acks->num_acked; i++ )
         {
             server->acks->acked_client_index[i] = client_index;
@@ -1333,12 +1369,14 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     if ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
     {
         rocketnet_spam( "server received payload from client %d (%d bytes)", client_index, type_data_bytes );
+
         if ( type_data_bytes > out_payload_capacity )
         {
             rocketnet_spam( "server refused payload. %d bytes into a %d-byte buffer", type_data_bytes, out_payload_capacity );
             counters[ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL]++;
             return ROCKETNET_SERVER_PROCESS_IGNORED;
         }
+
         *out_payload = type_data;
         *out_payload_bytes = type_data_bytes;
         counters[ROCKETNET_COUNTER_PAYLOAD_DELIVERED]++;
@@ -1532,6 +1570,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
                                                        int * out_payload_client_index )
 {
     rocketnet_assert( out_payload );
+
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     const uint8_t * payload = NULL;
     const int outcome = rocketnet_server_protocol_process_received( server, from, ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP,
@@ -1546,6 +1585,7 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
         server->test_payload_writes++;
 #endif // #if ROCKETNET_TEST_SEAMS
     }
+
     return outcome;
 }
 
@@ -1615,6 +1655,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
     rocketnet_server_protocol_rotate_cookie_key_if_due( server, current_time );
 
     // reset this server's per-update handshake budget for the next update
+
     server->counters->handshakes_processed_this_update = 0;
 
     uint64_t * counters = server->counters->values;
@@ -1642,6 +1683,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
                 rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT]++;
             }
+
             continue;
         }
 
@@ -1649,6 +1691,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
         {
             int client_index = control->client_index;
             rocketnet_debug( "client %d timed out", client_index );
+
             if ( client_index != -1 )
             {
                 rocketnet_server_connection_reset( server, client_index );
@@ -1763,6 +1806,7 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     }
 
     mapping->last_send_time = current_time;
+
     return bytes;
 }
 
@@ -1924,6 +1968,7 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // pacing is affected.
 
     // Without ack bookkeeping the helper uses the unsuppressed clock.
+
     if ( !rocketnet_server_keep_alive_due( server, mapping, client_index, current_time ) )
         return 0;
 
@@ -1934,12 +1979,15 @@ int rocketnet_server_protocol_maintenance_due( const struct rocketnet_server_pro
                                                int client_index, double current_time )
 {
     rocketnet_assert( server );
+
     if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
         return 0;
 
     const int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+
     // Let the transport record a connected slot missing its mapping.
     // The preflight itself must not change counters or connection state.
+
     if ( mapping_index < 0 )
         return 1;
 
@@ -2018,7 +2066,6 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     if ( wire_bytes == 0 )
         return 0;
 
-
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
@@ -2029,6 +2076,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     }
 
     rocketnet_platform_atomic_store_double( &mapping->last_send_time, current_time );
+
     return wire_bytes;
 }
 
@@ -2082,6 +2130,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     rocketnet_spam( "server sent payload to client %d (%d bytes)", client_index, payload_bytes );
 
     mapping->last_send_time = current_time;
+
     return bytes;
 }
 
@@ -2191,7 +2240,6 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
 
     rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
 
-
     if ( server->acks )
     {
         struct rocketnet_ack_endpoint_t * endpoint = &server->acks->endpoints[client_index];
@@ -2202,6 +2250,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
     }
 
     rocketnet_platform_atomic_store_double( &mapping->last_send_time, current_time );
+
     return bytes;
 }
 
@@ -2315,7 +2364,9 @@ void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_
          rocketnet_server_protocol_connection_id( server, client_index ) != connection_id )
         return;
     const int index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
+
     // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping)
+
     if ( index < 0 )
         return;
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, index );

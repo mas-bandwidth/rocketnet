@@ -13,11 +13,11 @@
 #include <sys/time.h>
 #else
 #include <winsock2.h>
-#endif
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #if defined( _MSC_VER )
 #include <intrin.h>
-#endif
+#endif // #if defined( _MSC_VER )
 
 // Portable 64-bit leading/trailing zero counts. The argument must be
 // nonzero; callers guard the zero case. MSVC has no __builtin_clzll, so it
@@ -30,7 +30,7 @@ static inline int rocketnet_platform_clz64( uint64_t value )
     return 63 - (int) index;
 #else
     return __builtin_clzll( value );
-#endif
+#endif // #if defined( _MSC_VER )
 }
 
 static inline int rocketnet_platform_ctz64( uint64_t value )
@@ -41,7 +41,7 @@ static inline int rocketnet_platform_ctz64( uint64_t value )
     return (int) index;
 #else
     return __builtin_ctzll( value );
-#endif
+#endif // #if defined( _MSC_VER )
 }
 
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( __cplusplus )
@@ -119,7 +119,7 @@ typedef void ( *rocketnet_platform_thread_func_t )( void * );
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 /**
  * @brief Initializes the platform layer before other platform calls.
@@ -371,14 +371,14 @@ int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_av
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 // ----------------------------------------------------------------
 
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 /**
  * @brief Creates and binds a UDP socket.
@@ -774,7 +774,7 @@ struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 // ----------------------------------------------------------------
 
@@ -810,7 +810,7 @@ void rocketnet_platform_socket_send_packets_mmsg( struct rocketnet_platform_sock
  * @return Number of datagrams received, or zero when none are available.
  */
 int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_socket_t * socket, struct rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets );
-#endif
+#endif // #if defined( __linux__ )
 
 // The client I/O wake (the design's The wake section): a level-triggered wake
 // beside a socket. wait blocks until the wake is set, the socket is readable
@@ -831,7 +831,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 #endif
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 #define ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE 1
-#endif
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 /**
  * @brief Opaque reusable level-triggered wake object, optionally associated with a socket.
  *
@@ -889,7 +889,7 @@ void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 /**
  * @brief Starts a platform thread running func(arg).
@@ -1118,7 +1118,7 @@ void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 #ifdef __cplusplus
 
@@ -1169,6 +1169,7 @@ inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( roc
 inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 {
     rocketnet_assert( mutex );
+
     rocketnet_platform_mutex_release( mutex );
 #if ROCKETNET_SPIKE_TRACKING
     double finish_time = rocketnet_platform_time();
@@ -1181,7 +1182,7 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     mutex = NULL;
 }
 
-#endif // __cplusplus
+#endif // #ifdef __cplusplus
 
 // ----------------------------------------------------------------
 
@@ -1305,7 +1306,7 @@ struct rocketnet_platform_mutex_t
 typedef uint64_t rocketnet_platform_socket_handle_t;
 #else
 typedef _W64 unsigned int rocketnet_platform_socket_handle_t;
-#endif
+#endif // #if _WIN64
 
 struct rocketnet_platform_socket_t
 {
@@ -1317,7 +1318,7 @@ struct rocketnet_platform_socket_t
     uint64_t send_replay_failures; // refused sends of a sendmsg_x replay; zero here; atomic, monotonic
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
     uint64_t lifecycle_generation;
-#endif
+#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
 };
 
 struct rocketnet_platform_thread_t
@@ -1326,7 +1327,7 @@ struct rocketnet_platform_thread_t
     HANDLE handle;
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
     uint64_t lifecycle_generation;
-#endif
+#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
 };
 
 struct rocketnet_platform_mutex_t
@@ -1348,7 +1349,7 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
     return handle != (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
 #else
     return handle >= 0;
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 
 // ----------------------------------------------------------------
@@ -1395,7 +1396,7 @@ inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
     return (uint64_t) observed;
 #else
     return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
-#endif
+#endif // #if defined( _M_IX86 )
 }
 
     /**
@@ -1543,7 +1544,7 @@ inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
     uint64_t expected = 0;
     while ( !__atomic_compare_exchange_n( value, &expected, 1, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED ) )
         expected = 0;
-#endif
+#endif // #if defined( _MSC_VER )
 }
 
 /**
@@ -1558,7 +1559,7 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
     _InterlockedCompareExchange64( (volatile long long *) value, 0, 1 );
 #else
     __atomic_store_n( value, 0, __ATOMIC_RELEASE );
-#endif
+#endif // #if defined( _MSC_VER )
 }
 
 // ----------------------------------------------------------------
@@ -1616,6 +1617,6 @@ bool rocketnet_platform_read_route_table(
     rocketnet_vector_t<rocketnet_ifforward4_t> * route_table,
     ssize_t ( *receive )( int, struct msghdr *, int ) );
 
-#endif // linux internal C++ route probe
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __cplusplus )
 
-#endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PLATFORM_H

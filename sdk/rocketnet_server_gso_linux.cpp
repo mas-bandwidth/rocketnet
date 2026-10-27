@@ -57,11 +57,11 @@
 
 #ifndef UDP_SEGMENT
 #define UDP_SEGMENT 103
-#endif
+#endif // #ifndef UDP_SEGMENT
 
 #ifndef UDP_GRO
 #define UDP_GRO 104
-#endif
+#endif // #ifndef UDP_GRO
 
 // IMPORTANT: The 4096 byte padding walls in these structs are load-bearing,
 // exactly as in the xdp transport: each field between walls is touched by a
@@ -231,7 +231,7 @@ struct rocketnet_server_gso_t
     std::atomic<int> test_fail_receive_error{ 0 };
     std::atomic<int> test_fail_sends{ 0 };
     std::atomic<int> test_fail_send_error{ 0 };
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 };
 
 #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
@@ -268,13 +268,16 @@ void rocketnet_server_gso_test_fail_sends( struct rocketnet_server_gso_t * gso, 
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
+
     if ( gso->send_producer < 0 )
         return true;
     if ( gso->send_banks[gso->send_producer].num_packets.load( std::memory_order_relaxed ) != 0 )
         return false;
     rocketnet_platform_mutex_acquire( &gso->send_mutex );
+
     const bool idle = gso->send_ready_count == 0 && gso->send_free_count == ROCKETNET_GSO_TX_BANKS - 1;
     rocketnet_platform_mutex_release( &gso->send_mutex );
+
     return idle;
 }
 
@@ -282,11 +285,13 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 {
     rocketnet_assert( gso );
     rocketnet_assert( queue_index >= 0 && queue_index < gso->num_queues );
+
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
     if ( !rocketnet_platform_mutex_try_acquire( &queue->receive_mutex ) )
         return false;
     const bool ready = queue->ready_buffer && queue->ready_buffer->num_packets > 0;
     rocketnet_platform_mutex_release( &queue->receive_mutex );
+
     return ready;
 }
 
@@ -313,6 +318,7 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
         rocketnet_platform_mutex_release( &gso->send_mutex );
         return false;
     }
+
     const int old = gso->send_producer;
     gso->send_producer = gso->send_free[gso->send_free_head];
     gso->send_free_head = ( gso->send_free_head + 1 ) % ROCKETNET_GSO_TX_BANKS;
@@ -320,7 +326,9 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
     gso->send_ready[( gso->send_ready_head + gso->send_ready_count ) % ROCKETNET_GSO_TX_BANKS] = old;
     ++gso->send_ready_count;
     rocketnet_platform_mutex_release( &gso->send_mutex );
+
     // Returned banks were reset by their previous owner before publication.
+
     rocketnet_assert( gso->send_banks[gso->send_producer].num_packets.load( std::memory_order_relaxed ) == 0 );
     if ( gso->send_wake )
         rocketnet_platform_wake_set( gso->send_wake );
@@ -335,8 +343,10 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
 static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * final )
 {
     *final = false;
+
     int index = -1;
     rocketnet_platform_mutex_acquire( &gso->send_mutex );
+
     if ( gso->send_ready_count > 0 )
     {
         index = gso->send_ready[gso->send_ready_head];
@@ -349,7 +359,9 @@ static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * 
         gso->send_producer = -1;
         *final = true;
     }
+
     rocketnet_platform_mutex_release( &gso->send_mutex );
+
     return index;
 }
 
@@ -372,6 +384,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
 static void rocketnet_server_gso_send_worker( void * context )
 {
     rocketnet_server_gso_t * gso = (rocketnet_server_gso_t *) context;
+
     for ( ;; )
     {
         bool final = false;
@@ -383,6 +396,7 @@ static void rocketnet_server_gso_send_worker( void * context )
             rocketnet_platform_wake_wait( gso->send_wake, false, 0.1 );
             continue;
         }
+
         rocketnet_server_gso_send_buffer_t * bank = &gso->send_banks[index];
         int count = bank->num_packets.load( std::memory_order_relaxed );
         if ( count > ROCKETNET_GSO_SEND_QUEUE_SIZE )
@@ -395,12 +409,15 @@ static void rocketnet_server_gso_send_worker( void * context )
             if ( disable_gso )
                 gso->features.fetch_and( ~ROCKETNET_SERVER_GSO_FEATURE_SEGMENT, std::memory_order_relaxed );
         }
+
         if ( final )
             break;
         rocketnet_server_gso_return_send( gso, index );
     }
+
     // tla/RNGsoHandoff.tla TxWorkerExitIdle and the final-bank exit of
     // TxSend: the worker reports stopped only after its drain.
+
     gso->send_stopped.store( true, std::memory_order_release );
 }
 
@@ -425,10 +442,12 @@ static socklen_t rocketnet_server_gso_address_to_sockaddr( const rocketnet_addre
         struct sockaddr_in6 * addr = (struct sockaddr_in6 *) out;
         memset( addr, 0, sizeof( struct sockaddr_in6 ) );
         addr->sin6_family = AF_INET6;
+
         for ( int i = 0; i < 8; i++ )
         {
             ( (uint16_t *) &addr->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
         }
+
         addr->sin6_port = rocketnet_platform_htons( to.port );
         return sizeof( struct sockaddr_in6 );
     }
@@ -448,10 +467,12 @@ static bool rocketnet_server_gso_sockaddr_to_address( const struct sockaddr_stor
     {
         const struct sockaddr_in6 * addr = (const struct sockaddr_in6 *) input;
         out->type = ROCKETNET_ADDRESS_IPV6;
+
         for ( int i = 0; i < 8; i++ )
         {
             out->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t *) &addr->sin6_addr )[i] );
         }
+
         out->port = rocketnet_platform_ntohs( addr->sin6_port );
 
         // an ipv6 gso socket is always dual stack (IPV6_V6ONLY is cleared at
@@ -599,6 +620,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
             close( fd );
             return -1;
         }
+
         rocketnet_address_t bound_address;
         if ( !rocketnet_server_gso_sockaddr_to_address( &bound, ipv6, &bound_address ) )
         {
@@ -606,6 +628,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
             close( fd );
             return -1;
         }
+
         *bound_port = bound_address.port;
     }
 
@@ -656,6 +679,7 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
             *faults += 1;
         return message_bytes;
     }
+
     for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg != NULL; cmsg = CMSG_NXTHDR( header, cmsg ) )
     {
         if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
@@ -664,6 +688,7 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
                 *faults += 1;
             return message_bytes;
         }
+
         if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
         {
             if ( cmsg->cmsg_len < CMSG_LEN( sizeof( int ) ) )
@@ -672,10 +697,12 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
                     *faults += 1;
                 return message_bytes;
             }
+
             memcpy( &segment_bytes, CMSG_DATA( cmsg ), sizeof( segment_bytes ) );
             break;
         }
     }
+
     return segment_bytes;
 }
 
@@ -688,6 +715,7 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
 {
     struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
     rocketnet_platform_mutex_acquire( &queue->receive_mutex );
+
     const bool published = !queue->ready_buffer && queue->free_buffer;
     if ( published )
     {
@@ -695,7 +723,9 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
         queue->worker_buffer = queue->free_buffer;
         queue->free_buffer = NULL;
     }
+
     rocketnet_platform_mutex_release( &queue->receive_mutex );
+
     return published;
 }
 
@@ -864,8 +894,10 @@ static void rocketnet_server_gso_worker( void * data )
 
         rocketnet_server_gso_publish_receive( queue );
     }
+
     // tla/RNGsoHandoff.tla RxWorkerExit: last access to queue-owned
     // storage; destroy acquires this before join.
+
     queue->stopped.store( true, std::memory_order_release );
 }
 
@@ -904,7 +936,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     char test_plain[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_GSO_PLAIN", test_plain, sizeof( test_plain ) ) > 0 && strcmp( test_plain, "1" ) == 0 )
         flags |= ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO;
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
@@ -941,7 +973,6 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         rocketnet_free( context, gso );
         return NULL;
     }
-
 
     for ( int i = 0; i < num_queues; i++ )
     {
@@ -992,12 +1023,14 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         // disabled value every socket already holds.
 
         int segment_sockets = 0;
+
         for ( int i = 0; i < num_queues; i++ )
         {
             int zero = 0;
             if ( setsockopt( gso->queues[i].fd, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof( zero ) ) == 0 )
                 segment_sockets++;
         }
+
         if ( segment_sockets == num_queues )
         {
             gso->features |= ROCKETNET_SERVER_GSO_FEATURE_SEGMENT;
@@ -1007,12 +1040,14 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     if ( ( flags & ROCKETNET_SERVER_GSO_DISABLE_GRO ) == 0 )
     {
         int gro_sockets = 0;
+
         for ( int i = 0; i < num_queues; i++ )
         {
             int one = 1;
             if ( setsockopt( gso->queues[i].fd, IPPROTO_UDP, UDP_GRO, &one, sizeof( one ) ) == 0 )
                 gro_sockets++;
         }
+
         if ( gro_sockets == num_queues )
         {
             gso->features |= ROCKETNET_SERVER_GSO_FEATURE_GRO;
@@ -1066,12 +1101,14 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         rocketnet_server_gso_abort_create( gso );
         return NULL;
     }
+
     gso->send_wake = rocketnet_platform_wake_create( context, NULL );
     if ( !gso->send_wake )
     {
         rocketnet_server_gso_abort_create( gso );
         return NULL;
     }
+
     gso->send_stopped.store( false, std::memory_order_relaxed );
     gso->send_thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_send_worker, gso );
     if ( !gso->send_thread )
@@ -1080,7 +1117,9 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         rocketnet_server_gso_abort_create( gso );
         return NULL;
     }
+
     rocketnet_platform_server_thread_priority( gso->send_thread );
+
     return gso;
 }
 
@@ -1089,11 +1128,14 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
+
     if ( gso->stopping )
         return;
     gso->stopping = true;
+
     // Release the final producer after all main-thread writes. The worker
     // drains it after earlier published banks; main never waits or scans it.
+
     gso->send_quit.store( true, std::memory_order_release );
     if ( gso->send_wake )
         rocketnet_platform_wake_set( gso->send_wake );
@@ -1119,17 +1161,20 @@ bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
 void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
+
     const bool stopped = rocketnet_server_gso_stopped( gso );
     rocketnet_assert( stopped );
     if ( !stopped )
         return;
 
     // The TX worker may use every queue socket. Join before closing any fd.
+
     if ( gso->send_thread )
     {
         rocketnet_platform_thread_join( gso->send_thread );
         rocketnet_platform_thread_destroy( gso->send_thread );
     }
+
     if ( gso->send_wake )
         rocketnet_platform_wake_destroy( gso->send_wake );
     if ( gso->send_mutex.ok )
@@ -1137,7 +1182,6 @@ void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
 
     if ( gso->queues )
     {
-
         for ( int i = 0; i < gso->num_queues; i++ )
         {
             struct rocketnet_server_gso_queue_t * queue = &gso->queues[i];
@@ -1414,6 +1458,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 gso->send_iovecs[num_iovecs + i].iov_base = bank->data[iovec_slot] + ROCKETNET_FRAME_WIRE_OFFSET;
                 gso->send_iovecs[num_iovecs + i].iov_len = (size_t) bank->info[iovec_slot].packet_bytes;
             }
+
             num_iovecs += run_count;
 
             if ( run_count > 1 )
@@ -1421,10 +1466,12 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 memset( gso->send_controls[num_messages], 0, sizeof( gso->send_controls[num_messages] ) );
                 hdr->msg_control = gso->send_controls[num_messages];
                 hdr->msg_controllen = CMSG_SPACE( sizeof( uint16_t ) );
+
                 struct cmsghdr * cmsg = CMSG_FIRSTHDR( hdr );
                 cmsg->cmsg_level = IPPROTO_UDP;
                 cmsg->cmsg_type = UDP_SEGMENT;
                 cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
+
                 uint16_t stride = (uint16_t) segment_bytes;
                 memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
             }
@@ -1467,12 +1514,14 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
             if ( result > 0 )
             {
                 gso->counter_send_syscalls++;
+
                 for ( int i = sent; i < sent + result; i++ )
                 {
                     gso->counter_packets_sent += (uint64_t) message_num_packets[i];
                     if ( message_is_gso[i] )
                         gso->counter_gso_sends++;
                 }
+
                 sent += result;
                 continue;
             }
@@ -1481,6 +1530,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
             // Even EINTR is a best-effort send refusal. Retrying without a
             // bound can stall a shutdown burst under a stream of signals.
+
             if ( message_is_gso[sent] && ( errno == EINVAL || errno == EIO || errno == EOPNOTSUPP ) )
             {
                 // the kernel accepted the UDP_SEGMENT probe but refused a
@@ -1541,6 +1591,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
             rocketnet_platform_mutex_release( &queue->receive_mutex );
             return;
         }
+
         rocketnet_server_gso_recv_buffer_t * buffer = queue->ready_buffer;
         queue->ready_buffer = NULL;
         queue->free_buffer = queue->main_buffer;
@@ -1563,6 +1614,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
         buffer->gro_batches = 0;
         buffer->gro_cmsg_faults = 0;
     }
+
     rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
     while ( queue->main_cursor < buffer->num_packets && budget-- > 0 &&
             gso->process_packets.num_packets < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
@@ -1578,6 +1630,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
 void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
+
     rocketnet_server_gso_publish_send( gso ); // retry deferred TX even on idle updates
     gso->process_packets.num_packets = 0;
     for ( int queue_index = 0; queue_index < gso->num_queues; ++queue_index )
@@ -1606,6 +1659,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
 static void rocketnet_server_gso_test_fill( struct rocketnet_server_gso_recv_buffer_t * buffer, uint8_t marker, uint32_t packets )
 {
     buffer->num_packets = packets;
+
     for ( uint32_t i = 0; i < packets; i++ )
     {
         buffer->packet_bytes[i] = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
@@ -1621,11 +1675,13 @@ static bool rocketnet_server_gso_test_stage( struct rocketnet_server_gso_t * gso
     to.data.ipv4[0] = 127;
     to.data.ipv4[3] = 1;
     to.port = 40000;
+
     uint64_t packet_id = 0;
     uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
     if ( !packet )
         return false;
     rocketnet_server_gso_finish_packet( gso, packet_id, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+
     return true;
 }
 
@@ -1644,6 +1700,7 @@ bool rocketnet_server_gso_test_worker_handoff()
         rocketnet_free( NULL, storage );
         return false;
     }
+
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
     new ( queue ) rocketnet_server_gso_queue_t();
     queue->queue_index = 0;
@@ -1652,6 +1709,7 @@ bool rocketnet_server_gso_test_worker_handoff()
     queue->worker_buffer = &queue->buffers[0];
     queue->main_buffer = &queue->buffers[1];
     queue->free_buffer = &queue->buffers[2];
+
     bool valid = rocketnet_platform_mutex_create( &queue->receive_mutex ) &&
                  rocketnet_platform_mutex_create( &gso->send_mutex );
     if ( !valid )
@@ -1668,17 +1726,20 @@ bool rocketnet_server_gso_test_worker_handoff()
     }
 
     // Receive: the worker publishes a filled buffer and takes the free one.
+
     rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'a', 2 );
     valid = valid && rocketnet_server_gso_publish_receive( queue );
     valid = valid && queue->ready_buffer == &queue->buffers[0] && queue->worker_buffer == &queue->buffers[2] &&
             queue->free_buffer == NULL;
 
     // While a ready buffer waits, the worker retains its next filled buffer.
+
     rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'b', 1 );
     valid = valid && !rocketnet_server_gso_publish_receive( queue );
     valid = valid && queue->ready_buffer == &queue->buffers[0] && queue->worker_buffer == &queue->buffers[2];
 
     // Main claims the ready buffer; its previous buffer becomes free.
+
     rocketnet_server_gso_receive_packets( gso );
     valid = valid && gso->process_packets.num_packets == 2 &&
             gso->process_packets.packet_data[0] == queue->buffers[0].packet_data[0] &&
@@ -1687,6 +1748,7 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     // A retained tail stays in main's buffer: with one packet consumed, the
     // next receive delivers the tail and claims nothing new.
+
     queue->main_cursor = 1;
     gso->process_packets.num_packets = 0;
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
@@ -1696,6 +1758,7 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     // Publishing while main holds that buffer lands in the ready slot only:
     // the held buffer's packets and bytes are untouched.
+
     valid = valid && rocketnet_server_gso_publish_receive( queue );
     rocketnet_server_gso_test_fill( queue->worker_buffer, (uint8_t) 'c', 1 );
     valid = valid && !rocketnet_server_gso_publish_receive( queue );
@@ -1703,6 +1766,7 @@ bool rocketnet_server_gso_test_worker_handoff()
             queue->buffers[0].packet_data[0][0] == (uint8_t) 'a';
 
     // Once the held buffer is exhausted, main claims the waiting buffer.
+
     gso->process_packets.num_packets = 0;
     rocketnet_server_gso_receive_from_queue( gso, queue, 8 );
     valid = valid && gso->process_packets.num_packets == 1 && queue->main_buffer == &queue->buffers[2] &&
@@ -1710,6 +1774,7 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     // Transmit: two publishes empty the free FIFO; the third retains the
     // producer bank instead of waiting or overwriting a bank in flight.
+
     valid = valid && rocketnet_server_gso_test_stage( gso );
     rocketnet_server_gso_send_packets( gso );
     valid = valid && rocketnet_server_gso_test_stage( gso );
@@ -1721,6 +1786,7 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     // The worker takes the published banks oldest first and returns each
     // only after its (here already finished) sends.
+
     bool final = false;
     int taken = rocketnet_server_gso_take_send( gso, &final );
     valid = valid && taken == 0 && !final;
@@ -1732,6 +1798,7 @@ bool rocketnet_server_gso_test_worker_handoff()
     // Stop hands the worker the final producer after the ready FIFO; until
     // both workers have exited the transport does not report stopped, so
     // destroy would free nothing.
+
     rocketnet_server_gso_stop( gso );
     valid = valid && !rocketnet_server_gso_stopped( gso );
     taken = rocketnet_server_gso_take_send( gso, &final );
@@ -1743,8 +1810,10 @@ bool rocketnet_server_gso_test_worker_handoff()
 
     // The fixture started no threads, so destroy has no handle to join; it
     // releases the receive mutex itself, then destroy frees the storage.
+
     rocketnet_platform_mutex_destroy( &queue->receive_mutex );
     rocketnet_server_gso_destroy( gso );
+
     return valid;
 }
 

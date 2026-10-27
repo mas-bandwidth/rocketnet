@@ -63,10 +63,10 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIV
 
 #if ROCKETNET_XDP
 #include <linux/if_xdp.h>
-#endif
+#endif // #if ROCKETNET_XDP
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
-#endif
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // The transport is selected at RUNTIME (#106): one build carries
 // every transport its platform has, and create walks the config's ordered
@@ -347,6 +347,7 @@ static void rocketnet_server_transport_construct( rocketnet_server_transport_t *
     typedef rocketnet_server_payload_ring_t R;
     typedef rocketnet_server_send_buffer_t B;
     typedef rocketnet_server_payloads_t P;
+
     const size_t ring = offsetof( T, payload_ring );
     const size_t send = offsetof( T, send_buffer );
     const size_t payloads = offsetof( T, payloads );
@@ -393,9 +394,12 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
                                                      char * failure, size_t failure_bytes )
 {
     rocketnet_assert( server && failure && failure_bytes > 0 );
+
     failure[0] = '\0';
+
     struct rocketnet_server_protocol_t * protocol = &server->protocol;
     rocketnet_assert( client_index >= 0 && client_index < rocketnet_client_slots_max_clients( protocol->client_slots ) );
+
     const char * member = NULL;
     if ( rocketnet_client_slots_connected( protocol->client_slots, client_index ) )
         member = "rocketnet_client_slots_t.connected";
@@ -406,6 +410,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
     if ( !member && protocol->connection_ids[client_index] != 0 )
         member = "rocketnet_server_protocol_t.connection_ids";
     bool allocation_failed = false;
+
     if ( !member )
     {
         struct rocketnet_ack_endpoint_t * fresh = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( server->context, sizeof( struct rocketnet_ack_endpoint_t ) );
@@ -423,6 +428,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
             rocketnet_free( server->context, fresh );
         }
     }
+
     if ( !member && protocol->reassembly->newest_completed[client_index] != 0 )
         member = "rocketnet_reassembly_set_t.newest_completed";
     const uint8_t * slice = (const uint8_t *) ( protocol->reassembly->slots + client_index * protocol->reassembly->num_slots );
@@ -436,6 +442,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
         else
             snprintf( failure, failure_bytes, "%s[%d]: not reset when the connection ended", member, client_index );
     }
+
     return member == NULL;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -468,6 +475,7 @@ static void rocketnet_server_wire_totals_add_sent_atomic( struct rocketnet_serve
     const uint64_t wire_bytes = (uint64_t) ( packet_bytes + rocketnet_wire_header_bytes( address_type ) );
     rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.packets_sent, 1 );
     rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &server_transport->server_stats.bytes_sent, wire_bytes );
+
     if ( client_index >= 0 && client_index < server_transport->client_wire_totals_capacity )
     {
         struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
@@ -596,6 +604,7 @@ int rocketnet_server_transport_send_capacity_available( const rocketnet_server_t
 static uint8_t * rocketnet_server_transport_io_start_packet( rocketnet_server_transport_t * transport, const rocketnet_address_t * to, uint64_t * id )
 {
     *id = 0;
+
     uint8_t * frame = transport->io.operations->start_packet( transport->io.instance, to, id );
     if ( !frame && *id == ROCKETNET_TRANSPORT_PACKET_UNREACHABLE )
         rocketnet_platform_atomic_add_u64( &transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_NO_LINK_ADDRESS], 1 );
@@ -648,7 +657,7 @@ static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, i
     (void) reverse_window;
     return 0;
 }
-#endif
+#endif // #if ROCKETNET_TEST_SEAMS
 
 // The link simulator is active when the setting in force changes the packets:
 // any loss, latency, jitter or duplicate, or either pattern.  With all of
@@ -703,9 +712,11 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
         return false;
     }
+
     rocketnet_network_simulator_send( transport->link_simulator, &transport->link_simulator_from,
                                       to, packet_data, packet_bytes, transport->time );
     rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
+
     return true;
 }
 
@@ -718,12 +729,14 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     rocketnet_assert( server_transport );
+
     if ( !server_transport->link_simulator )
         return false;
     // The new setting is handed over as a config record under the
     // simulator's own tiny mutex; the thread that owns the simulator takes
     // it before its next send, so the change takes effect at once and the
     // server's threads do not move.
+
     rocketnet_network_simulator_reconfigure( server_transport->link_simulator, &server_transport->link_simulator_mutex,
                                              latency_ms / 1000.0, jitter_ms / 1000.0,
                                              (float) packet_loss_percent, (float) duplicate_percent );
@@ -757,13 +770,16 @@ static int rocketnet_server_link_send_batch( rocketnet_server_transport_t * tran
             accepted[i] = true;
         return num_sends;
     }
+
     int num_accepted = 0;
+
     for ( int i = 0; i < num_sends; i++ )
     {
         accepted[i] = rocketnet_server_link_send( transport, sends[i].to, sends[i].packet_data, sends[i].packet_bytes );
         if ( accepted[i] )
             num_accepted++;
     }
+
     return num_accepted;
 }
 
@@ -792,8 +808,10 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
     for ( ;; )
     {
         rocketnet_address_t from, to;
+
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         rocketnet_platform_mutex_acquire( &transport->link_simulator_mutex );
+
         const int packet_bytes = rocketnet_network_simulator_receive_any( transport->link_simulator,
                                                                           transport->time, &from, &to, packet );
         rocketnet_platform_mutex_release( &transport->link_simulator_mutex );
@@ -820,6 +838,7 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
             transport->io.operations->send_batch( transport->io.instance, &send, 1 );
         }
     }
+
     if ( rocketnet_server_transport_staged( transport ) )
         rocketnet_server_transport_io_send_packets( transport );
 }
@@ -842,9 +861,11 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
 {
     rocketnet_assert( !rocketnet_server_transport_staged( server_transport ) );
     rocketnet_assert( server_transport->io.operations && server_transport->io.operations->send_batch );
+
     struct rocketnet_platform_send_t sends[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     bool accepted[ROCKETNET_SERVER_MAX_SEND_PACKETS];
     int num_sends = 0;
+
     for ( int i = 0; i < server_transport->send_buffer.num_packets; i++ )
     {
         if ( server_transport->send_buffer.packet_bytes[i] > 0 )
@@ -855,8 +876,10 @@ static void rocketnet_server_flush_control_buffer( rocketnet_server_transport_t 
             num_sends++;
         }
     }
+
     // a portable control frame is charged at its commit (the disconnect
     // burst's count is read before the flush), so the results are not read
+
     if ( num_sends > 0 )
         rocketnet_server_link_send_batch( server_transport, sends, num_sends, accepted, shutdown );
     server_transport->send_buffer.num_packets = 0;
@@ -885,6 +908,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
 {
     frame->to = *to;
     frame->client_index = -1;
+
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         frame->data = rocketnet_server_transport_io_start_packet( server_transport, to, &frame->packet_id );
@@ -892,6 +916,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
         {
             rocketnet_spam( "server transport send staging full. packet dropped" );
         }
+
         return frame->data;
     }
 
@@ -918,6 +943,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     rocketnet_assert( frame && frame->data );
     rocketnet_assert( packet_bytes > 0 );
     rocketnet_assert( packet_bytes <= ROCKETNET_RECEIVE_CEILING );
+
     if ( !server_transport || !frame || !frame->data || packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
         return;
 
@@ -928,6 +954,7 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         bool sent = true;
+
         if ( rocketnet_server_link_active( server_transport ) )
         {
             sent = rocketnet_server_link_send( server_transport, &frame->to,
@@ -937,13 +964,16 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
         else
             rocketnet_server_transport_io_finish_packet( server_transport, frame->packet_id, frame->data, packet_bytes );
         // a datagram is counted sent only once the link took it
+
         if ( sent )
             rocketnet_server_charge_send_frame( server_transport, frame->client_index, &frame->to, packet_bytes );
         return;
     }
 
     // the portable frame is charged here, at its commit, as before
+
     rocketnet_server_charge_send_frame( server_transport, frame->client_index, &frame->to, packet_bytes );
+
     struct rocketnet_server_send_buffer_t * send_buffer = &server_transport->send_buffer;
     send_buffer->packet_bytes[send_buffer->num_packets] = packet_bytes;
     send_buffer->num_packets++;
@@ -1008,7 +1038,7 @@ uint64_t rocketnet_thread_stack_bytes()
         bytes = 0;
     pthread_attr_destroy( &attributes );
     return (uint64_t) bytes;
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 
 // The link simulator's capacity: the packets a server holds while the setting
@@ -1023,11 +1053,13 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     if ( !transport )
         return false;
     rocketnet_server_transport_config_t defaults;
+
     if ( !config )
     {
         rocketnet_server_transport_default_config( &defaults );
         config = &defaults;
     }
+
     const int clients = config->max_clients;
     const int payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int slots = config->max_fragmented_messages ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
@@ -1047,6 +1079,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
         if ( !bytes || !rocketnet_memory_add( plan.protocol_bytes, 1, bytes ) )
             return false;
     }
+
     plan.reassembly_bytes = rocketnet_reassembly_memory_required_delivered( clients, slots, payload,
                                                                             rocketnet_server_reassembly_delivered_capacity( clients, slots ),
                                                                             rocketnet_server_reassembly_delivered_bytes( clients, slots, payload ) );
@@ -1069,8 +1102,10 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
         if ( !simulator_bytes || !rocketnet_memory_add( plan.allocator_bytes, 1, simulator_bytes ) )
             return false;
     }
+
     // the RIO registered region comes from the allocator; UMEM is page-aligned
     // memory the AF_XDP socket registers with the kernel, outside it
+
     plan.total_bytes = plan.allocator_bytes;
     if ( !rocketnet_memory_add( plan.total_bytes, 1, plan.umem_bytes ) )
         return false;
@@ -1080,6 +1115,7 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
         if ( !stack || !rocketnet_memory_add( plan.thread_stack_bytes, (uint64_t) plan.worker_threads, stack ) )
             return false;
     }
+
     for ( uint64_t bytes : { plan.umem_bytes, plan.thread_stack_bytes, plan.mapped_ring_bytes } )
         if ( !rocketnet_memory_add( plan.os_bytes, 1, bytes ) )
             return false;
@@ -1089,23 +1125,27 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
 uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_server_transport_config_t * config )
 {
     rocketnet_server_transport_config_t defaults;
+
     if ( !config )
     {
         rocketnet_server_transport_default_config( &defaults );
         config = &defaults;
     }
+
     int num_available = 0;
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
     if ( !rocketnet_transport_ladder_parse( config->transport, available, num_available, &ladder ) )
         return 0;
     uint64_t most = 0;
+
     for ( int i = 0; i < ladder.num_candidates; ++i )
     {
         rocketnet_server_memory_plan_t plan;
         if ( rocketnet_server_transport_memory_plan( config, rocketnet_transport_name( ladder.candidates[i] ), plan ) && plan.allocator_bytes > most )
             most = plan.allocator_bytes;
     }
+
     return most;
 }
 
@@ -1154,7 +1194,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
             return false;
 #else
         return false;
-#endif
+#endif // #if ROCKETNET_XDP
     }
     else
     {
@@ -1179,9 +1219,12 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
     }
 
     // what the library cannot know, named rather than guessed
+
     const char * excluded[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
     int count = 0;
+
     // refuse an overflow before the write: at the cap, drop and log once
+
     auto append = [&]( const char * line )
     {
         if ( count >= ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS )
@@ -1190,14 +1233,17 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
                              ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS, line );
             return;
         }
+
         excluded[count++] = line;
     };
     append( "kernel socket accounting beyond the buffer requests (linux doubles each SO_SNDBUF/SO_RCVBUF request) and grants smaller than the requests" );
+
     if ( xdp )
     {
         append( "AF_XDP fill and completion rings (the umem config leaves their sizes to libxdp), ring headers and page rounding" );
         append( "libbpf/libxdp allocations, the XDP program and its maps" );
     }
+
     if ( strcmp( transport, "io_uring" ) == 0 )
         append( "io_uring submission and completion rings and the provided buffer rings (kernel and liburing mappings outside the SDK allocator)" );
     if ( plan.worker_threads > 0 )
@@ -1211,6 +1257,7 @@ bool rocketnet_server_transport_host_memory_estimate( const struct rocketnet_ser
     e.num_exclusions = count;
 
     *estimate = e;
+
     return true;
 }
 
@@ -1236,6 +1283,7 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
     struct rocketnet_server_transport_config_t current;
     rocketnet_server_transport_default_config_current( &current );
     memcpy( &current, config, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1 );
+
     return rocketnet_server_transport_create_internal( context, public_address_string, &current, time, status );
 }
 
@@ -1278,6 +1326,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     // the lifecycle state is read once here, before any allocation or socket;
     // a create before rocketnet_init is refused, logged and counted
+
     if ( !rocketnet_library_initialized() )
     {
         if ( status )
@@ -1339,6 +1388,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     // Refuse large cross-field allocations before sockets, transports or arenas
     // are acquired. Independent field maxima do not define a usable budget.
+
     const int requested_payload = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
     const int requested_slots = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
     const int requested_clients = config->max_clients > 0 ? config->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
@@ -1351,7 +1401,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "server config refused: the reassembly cross-field allocation exceeds the operator memory budget" );
         return NULL;
     }
-
 
     // the config's public_address, when set, displaces the create call's
     // address parameter here, before anything reads it. The address the
@@ -1383,6 +1432,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     }
 
     // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
+
     if ( config->protocol_id == 0 )
     {
         if ( status )
@@ -1420,9 +1470,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the other family on the same port (both 0, or equal). A second address
     // of the first's family, on another port, or that does not parse is one
     // log line and INVALID_ADDRESS.
+
     rocketnet_address_t second_address;
     memset( &second_address, 0, sizeof( second_address ) );
+
     int serves_both = 0;
+
     if ( config->second_public_address[0] != '\0' )
     {
         if ( !rocketnet_address_parse( &second_address, config->second_public_address ) )
@@ -1432,6 +1485,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             rocketnet_error( "server second_public_address does not parse" );
             return NULL;
         }
+
         if ( second_address.type == public_address.type )
         {
             if ( status )
@@ -1439,6 +1493,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             rocketnet_error( "server second_public_address is the same family as the public address" );
             return NULL;
         }
+
         if ( second_address.port != public_address.port )
         {
             if ( status )
@@ -1446,10 +1501,12 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             rocketnet_error( "server second_public_address is on a different port from the public address" );
             return NULL;
         }
+
         serves_both = 1;
     }
 
     rocketnet_address_t bind_address;
+
     if ( serves_both )
     {
         // Both families share the IPv6 wildcard on the one port, with
@@ -1473,6 +1530,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // the plan and the budget, and skipped so the ladder falls to the next
     // candidate. a budget that no candidate fits refuses the create before the
     // first allocation.
+
     uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
     if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
     {
@@ -1480,8 +1538,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
         return NULL;
     }
+
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
     memset( budget_refused, 0, sizeof( budget_refused ) );
+
     int budget_refused_total = 0;
     int budget_allowed = 0;
 
@@ -1526,6 +1586,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "server transport create: could not allocate server transport" );
         return NULL;
     }
+
     rocketnet_server_transport_construct( server_transport );
 
     server_transport->context = context;
@@ -1539,6 +1600,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // refused anything out of range, loudly, never clamped
 
     server_transport->max_payload_bytes = ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES;
+
     const int default_send_capacity = config->max_clients > ROCKETNET_SERVER_MIN_SEND_PACKETS ? config->max_clients : ROCKETNET_SERVER_MIN_SEND_PACKETS;
     server_transport->send_capacity = rocketnet_server_test_create_send_capacity > 0 ? rocketnet_server_test_create_send_capacity : default_send_capacity;
     server_transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
@@ -1566,7 +1628,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         rocketnet_error( "development keys in a production build (ROCKETNET_DEV=0); refusing to start" );
         rocketnet_free( context, server_transport );
         return NULL;
-#endif // ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
     }
 
     // THE LADDER (#106): candidates tried left to right, first grant wins.
@@ -1599,6 +1661,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
     // TRANSPORT_NOT_BUILT are the start status when every open refused for
     // that reason.
+
     int open_refusals = 0;
     int families_unsupported_refusals = 0;
     int not_built_refusals = 0;
@@ -1610,14 +1673,17 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         // a candidate whose memory plan the operator budget refused was logged
         // and refused in the plan loop above; record it for the exhausted
         // summary and fall to the next candidate, never opening it
+
         if ( budget_refused[candidate] )
         {
             if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
             {
                 refused_seen[candidate] = true;
+
                 const size_t used = strlen( refused_names );
                 snprintf( refused_names + used, sizeof( refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
             }
+
             continue;
         }
 
@@ -1689,6 +1755,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                 rocketnet_server_transport_abort_create( server_transport );
                 return NULL;
             }
+
             if ( granted_transport < 0 )
             {
                 open_refusals++;
@@ -1724,6 +1791,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     {
         char skipped_names[128];
         skipped_names[0] = '\0';
+
         for ( int i = 0; i < ladder.num_skipped; i++ )
         {
             const size_t used = strlen( skipped_names );
@@ -1762,6 +1830,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             else
                 *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         }
+
         rocketnet_server_transport_abort_create( server_transport );
         return NULL;
     }
@@ -1801,6 +1870,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // latency nor copies. A production library creates none and carries none
     // of its memory (rocketnet_network_simulator_create is a stub returning
     // NULL there, and the config walk already refuses nonzero simulated values).
+
     if ( rocketnet_public_link_simulator_development() )
     {
         server_transport->link_simulator = rocketnet_network_simulator_create( context, ROCKETNET_SERVER_LINK_SIMULATOR_SLOTS, UINT64_C( 0x5345525645525349 ) );
@@ -1811,6 +1881,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             rocketnet_server_transport_abort_create( server_transport );
             return NULL;
         }
+
         if ( !rocketnet_platform_mutex_create( &server_transport->link_simulator_mutex ) )
         {
             if ( status )
@@ -1820,6 +1891,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             rocketnet_server_transport_abort_create( server_transport );
             return NULL;
         }
+
         rocketnet_network_simulator_config( server_transport->link_simulator,
                                             config->simulated_latency_ms / 1000.0,
                                             config->simulated_jitter_ms / 1000.0,
@@ -1869,9 +1941,11 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     else
     {
         protocol->advertised_ipv6 = public_address;
+
         // a server created at the IPv6 wildcard is dual-stack: it serves
         // IPv4 as well, so it also advertises its IPv4 wildcard and IPv4
         // tokens for the loopback are accepted
+
         int wildcard = 1;
         for ( int i = 0; i < 8 && wildcard; i++ )
             if ( public_address.data.ipv6[i] != 0 )
@@ -1901,6 +1975,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 
     // the connection ids (docs/CHANNELS.md P9a, P9b): one per slot, 0 while
     // free, and one per acked batch entry, sized as the acked batch is
+
     protocol->connection_ids = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( uint64_t ) );
     protocol->acked_connection_ids = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) );
     server_transport->client_wire_totals = (struct rocketnet_server_wire_totals_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( struct rocketnet_server_wire_totals_t ) );
@@ -1963,12 +2038,14 @@ int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t *
         { protocol + offsetof( rocketnet_server_protocol_t, previous_cookie_key ), ROCKETNET_COOKIE_KEY_BYTES },
         { offsetof( rocketnet_server_transport_t, disconnect_burst_keys ), sizeof( ( (rocketnet_server_transport_t *) 0 )->disconnect_burst_keys ) },
     };
+
     int count = 0;
     for ( ; count < 4 && count < max; count++ )
     {
         offsets[count] = spans[count][0];
         bytes[count] = spans[count][1];
     }
+
     return count;
 }
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -1986,6 +2063,7 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
     // the server's keys: its secret key and both cookie keys. The session
     // keys are wiped with the encryption map below; nothing else here is a
     // secret, and the OS zero-fills every page before another process gets it
+
     sodium_memzero( server_transport->protocol.server_secret_key, sizeof( server_transport->protocol.server_secret_key ) );
     sodium_memzero( server_transport->protocol.cookie_key, sizeof( server_transport->protocol.cookie_key ) );
     sodium_memzero( server_transport->protocol.previous_cookie_key, sizeof( server_transport->protocol.previous_cookie_key ) );
@@ -2032,8 +2110,10 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
     if ( !rocketnet_api_null_guard( server_transport ) || server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
+
     // tla/RNDriverSendStaging.tla ResetLeases: stop bumps the lease epoch.
     // A finish of a packet started before this reset is caller misuse.
+
     server_transport->packet_leases.reset();
     rocketnet_server_transport_io_stop( &server_transport->io );
 }
@@ -2078,6 +2158,7 @@ bool rocketnet_server_transport_advertised_address( struct rocketnet_server_tran
     if ( !advertised || advertised->type != family )
         return false;
     *address = *advertised;
+
     return true;
 }
 
@@ -2216,6 +2297,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     // tla/RNDriverSendStaging.tla ResetLeases: update bumps the lease epoch
     // before it reads. A fill still open here was not joined.
+
     server_transport->packet_leases.reset();
 
     server_transport->time = time;
@@ -2246,7 +2328,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-
         struct rocketnet_server_socket_process_packets_t * received = server_transport->io.operations->receive( server_transport->io.instance );
 
         const int stats_index = server_transport->current_stats_index;
@@ -2272,6 +2353,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
             struct rocketnet_server_frame_t frame;
             frame.data = NULL;
+
             uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, &received->from[i], &frame ) : NULL;
             uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
             int response_bytes = 0;
@@ -2346,7 +2428,6 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     }
     else
     {
-
     // Drain the receive queue up to this update's packet budget. Each read
     // takes whatever the endpoint has queued, up to the remaining budget, and
     // is processed before the next read; what is left past the budget stays
@@ -2427,6 +2508,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
                 struct rocketnet_server_frame_t frame;
                 frame.data = NULL;
+
                 uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, &from, &frame ) : NULL;
                 uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
                 int response_bytes = 0;
@@ -2491,6 +2573,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                     }
                 }
             }
+
             packets_processed += num_received;
         } while ( num_received == batch_capacity && packets_processed < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE );
     }
@@ -2511,6 +2594,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
     const int first_client = server_transport->maintenance_next_client;
+
     for ( int offset = 0; offset < max_clients; offset++ )
     {
         const int i = ( first_client + offset ) % max_clients;
@@ -2522,6 +2606,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->maintenance_next_client = ( i + 1 ) % max_clients;
             continue;
         }
+
         int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, i );
         if ( mapping_index < 0 )
         {
@@ -2530,12 +2615,14 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->maintenance_next_client = ( i + 1 ) % max_clients;
             continue;
         }
+
         const rocketnet_address_t * client_address = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         struct rocketnet_server_frame_t frame;
         uint8_t * frame_data = rocketnet_server_reserve_send_frame( server_transport, client_address, &frame );
         if ( !frame_data )
             break;
         frame.client_index = i;
+
         int send_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
         if ( send_bytes == 0 )
             send_bytes = rocketnet_server_protocol_write_ack_if_due( &server_transport->protocol, i, current_time, frame_data + ROCKETNET_FRAME_WIRE_OFFSET );
@@ -2550,6 +2637,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // update opens the allowance before its pre-link kicks. A direct
     // transport update opens it here instead. Either way those disconnects
     // and this drain share exactly one allowance.
+
     if ( !server_transport->disconnect_update_prepared )
         server_transport->disconnect_seals_left = server_transport->disconnect_packets_per_update;
     server_transport->disconnect_update_prepared = 0;
@@ -2565,6 +2653,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // The kernel replay walk and commit: after the maintenance sweep, the
     // transport tells the granted transport which client addresses to forget and
     // mark, then commits them. tla/RNXdpReplay.tla Walk and Commit.
+
     if ( server_transport->io.operations->replay_mark )
     {
         struct rocketnet_server_replay_sink_t replay_sink;
@@ -2670,6 +2759,7 @@ uint8_t * rocketnet_server_transport_payload( struct rocketnet_server_transport_
 
     *client_index = payloads->client_index[payload_index];
     *payload_bytes = payloads->payload_bytes[payload_index];
+
     return payloads->payload_data[payload_index];
 }
 
@@ -2741,12 +2831,14 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
         // tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
         // until finish, abort, or a reset.
+
         if ( !server_transport->packet_leases.insert( *context ) )
         {
             rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
             rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
             return NULL;
         }
+
         return frame;
     }
 
@@ -2760,6 +2852,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
                 rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return NULL;
         }
+
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         context->packet_id = packet_id;
     }
@@ -2798,12 +2891,14 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
 
     // tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
     // until finish, abort, or a reset.
+
     if ( !server_transport->packet_leases.insert( *context ) )
     {
         rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_LEASE_FULL], 1 );
         rocketnet_server_transport_abort_packet_unchecked( server_transport, context, context->packet_id );
         return NULL;
     }
+
     return frame;
 }
 
@@ -2852,6 +2947,7 @@ uint8_t * rocketnet_server_transport_packet_payload( rocketnet_server_transport_
     if ( !transport->packet_leases.resolve( *context, trusted, backend_id, false ) )
         return NULL;
     *capacity = trusted.payload_capacity;
+
     return trusted.frame + trusted.payload_index;
 }
 
@@ -2902,6 +2998,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
                 rocketnet_platform_atomic_add_u64( &server_transport->protocol.counters->values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
             return 0;
         }
+
         rocketnet_platform_atomic_add_u64( &server_transport->send_staged, 1 );
         return 1;
     }
@@ -2921,6 +3018,7 @@ static int rocketnet_server_reserve_fill_frame( struct rocketnet_server_transpor
     ring->info[frame->slot].client_index = client_index;
     ring->info[frame->slot].wire_bytes = 0;
     frame->data = ring->data + frame->slot * ROCKETNET_FRAME_STRIDE;
+
     return 1;
 }
 
@@ -2944,6 +3042,7 @@ static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
                                                 struct rocketnet_server_fill_frame_t * frame, int wire_bytes )
 {
     rocketnet_assert( server_transport && frame && frame->data && wire_bytes > 0 && wire_bytes <= ROCKETNET_RECEIVE_CEILING );
+
     if ( !server_transport || !frame || !frame->data || wire_bytes <= 0 || wire_bytes > ROCKETNET_RECEIVE_CEILING )
         return false;
     if ( rocketnet_server_transport_staged( server_transport ) )
@@ -2956,10 +3055,13 @@ static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
             frame->data = NULL;
             return sent;
         }
+
         rocketnet_server_transport_io_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
         return true;
     }
+
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
+
     return false;
 }
 
@@ -2974,6 +3076,7 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
         frame->data = NULL;
         return;
     }
+
     server_transport->payload_ring.info[frame->slot].wire_bytes = 0;
     frame->data = NULL;
 }
@@ -3033,6 +3136,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
         }
 
         // a datagram is counted sent only once the link took it
+
         if ( rocketnet_server_commit_fill_frame( server_transport, &frame, wire_bytes ) )
             rocketnet_server_charge_staged_frame( server_transport, frame.client_index, frame.to.type, wire_bytes );
         context->frame = NULL;
@@ -3040,6 +3144,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     }
 
     int fragment_count, fragment_stride;
+
     if ( !rocketnet_fragment_plan( payload_bytes, &fragment_count, &fragment_stride ) )
     {
         context->frame = NULL;
@@ -3047,6 +3152,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     }
 
     struct rocketnet_server_fill_frame_t frames[ROCKETNET_MAX_FRAGMENTS];
+
     for ( int i = 0; i < fragment_count; i++ )
     {
         if ( !rocketnet_server_reserve_fill_frame( server_transport, &to, context->client_index, &frames[i] ) )
@@ -3083,6 +3189,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     int total_wire_bytes = 0;
     int fragment_wire_bytes[ROCKETNET_MAX_FRAGMENTS];
     bool fragment_sent[ROCKETNET_MAX_FRAGMENTS];
+
     for ( int i = 0; i < fragment_count; i++ )
     {
         const uint64_t sequence = base_sequence + (uint64_t) i;
@@ -3112,11 +3219,13 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
                 if ( fragment_sent[j] && ( j < first_withdrawn || !frames[j].data ) )
                     rocketnet_server_charge_staged_frame( server_transport, frames[j].client_index, frames[j].to.type, fragment_wire_bytes[j] );
             }
+
             for ( int j = first_withdrawn; j < fragment_count; j++ )
                 rocketnet_server_abort_fill_frame( server_transport, &frames[j] );
             context->frame = NULL;
             return 0;
         }
+
         fragment_sent[i] = rocketnet_server_commit_fill_frame( server_transport, &frames[i], wire_bytes );
         fragment_wire_bytes[i] = wire_bytes;
         total_wire_bytes += wire_bytes;
@@ -3125,6 +3234,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     // a datagram is counted sent only once the link took it: the fragments
     // are charged after the whole split is committed, so a withdrawal never
     // leaves a charge behind
+
     for ( int i = 0; i < fragment_count; i++ )
     {
         if ( fragment_sent[i] )
@@ -3132,6 +3242,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     }
 
     context->frame = NULL;
+
     return total_wire_bytes;
 }
 
@@ -3140,6 +3251,7 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( context );
+
     if ( !server_transport || !context )
         return 0;
 
@@ -3178,14 +3290,18 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( server_transport->protocol.client_slots, context->client_index );
+
         // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping)
+
         if ( mapping_index < 0 )
         {
             rocketnet_server_transport_abort_packet_unchecked( server_transport, context, backend_id );
             return 0;
         }
+
         const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
         bool sent = true;
+
         if ( rocketnet_server_link_active( server_transport ) )
         {
             sent = rocketnet_server_link_send( server_transport, mapped_to,
@@ -3195,6 +3311,7 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         else
             rocketnet_server_transport_io_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         // a datagram is counted sent only once the link took it
+
         if ( sent )
             rocketnet_server_charge_staged_frame( server_transport, context->client_index,
                                                   mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
@@ -3235,13 +3352,16 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
             context->frame = NULL;
             return 0;
         }
+
         rocketnet_assert( false );
         context->frame = NULL;
         return 0;
     }
+
     const int result = rocketnet_server_transport_finish_packet_unchecked( server_transport, &trusted, payload_bytes, backend_id );
     context->frame = NULL;
     context->sequence = trusted.sequence;
+
     return result;
 }
 
@@ -3262,6 +3382,7 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         return;
     // tla/RNDriverSendStaging.tla ResetLeases: send_packets bumps the lease
     // epoch before it flushes. Same bump as update and stop.
+
     server_transport->packet_leases.reset();
 
     const int stats_index = server_transport->current_stats_index;
@@ -3339,6 +3460,7 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
 
     // The disconnect_client header promise: buffered control frames leave on
     // the next flush even when this fill phase sent no payload-ring packet.
+
     rocketnet_server_flush_control_buffer( server_transport, shutdown );
 
     rocketnet_server_link_flush( server_transport );
@@ -3411,6 +3533,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
                                                                int mapping_index, const rocketnet_address_t * client_address )
 {
     rocketnet_assert( server_transport->disconnect_burst_count < ROCKETNET_MAX_CLIENTS );
+
     struct rocketnet_server_protocol_t * protocol = &server_transport->protocol;
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( protocol->encryption_map, mapping_index );
     const int index = ( server_transport->disconnect_burst_head + server_transport->disconnect_burst_count ) % ROCKETNET_MAX_CLIENTS;
@@ -3455,18 +3578,22 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         // slot may already name another connection, so the datagram belongs
         // only to the server-lifetime wire totals. The immediate path still
         // charges its slot because it commits before releasing that slot.
+
         frame.client_index = -1;
+
         const int bytes = rocketnet_write_sealed_packet( frame_data + ROCKETNET_FRAME_WIRE_OFFSET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
                                                          protocol->packet_filter, burst->first_sequence + (uint64_t) burst->sealed,
                                                          NULL, burst->plaintext, burst->plaintext_bytes,
                                                          protocol->protocol_id, burst->connection_salt,
                                                          NULL, server_transport->disconnect_burst_keys[index] );
         rocketnet_assert( bytes >= ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES );
+
         if ( bytes <= 0 )
         {
             rocketnet_server_abort_send_frame( server_transport, &frame );
             break;
         }
+
         rocketnet_server_commit_send_frame( server_transport, &frame, bytes );
         committed++;
         server_transport->disconnect_seals++;
@@ -3475,6 +3602,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
 
         // sealed counts fall from the head to the tail, so the head's burst
         // is the first to complete
+
         while ( server_transport->disconnect_burst_count > 0 &&
                 server_transport->disconnect_bursts[server_transport->disconnect_burst_head].sealed == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS )
         {
@@ -3485,6 +3613,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
                 server_transport->disconnect_burst_cursor--;
         }
     }
+
     if ( committed && rocketnet_server_transport_staged( server_transport ) )
         server_transport->send_staged++;
 }
@@ -3503,6 +3632,7 @@ int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_s
 {
     rocketnet_assert( server_transport );
     rocketnet_assert( out );
+
     if ( index < 0 || index >= ROCKETNET_MAX_CLIENTS || out_bytes < ROCKETNET_KEY_BYTES )
         return 0;
     memcpy( out, server_transport->disconnect_burst_keys[index], ROCKETNET_KEY_BYTES );
@@ -3531,6 +3661,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
 
     // a connected slot may hold mapping index -1 (see rocketnet_server_connected_mapping):
     // the slot still ends, but no burst is staged, since there is no address to send it to
+
     if ( mapping_index < 0 )
     {
         rocketnet_server_transport_close_client_locally( server_transport, client_index, true );
@@ -3543,6 +3674,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     // ends now; its burst is sealed now only while this update's allowance
     // holds the whole burst and no earlier burst waits, else it waits in the
     // ring for the following updates. The stop path seals at once.
+
     if ( !shutdown && ( server_transport->disconnect_burst_count > 0 ||
                         server_transport->disconnect_seals_left < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ) )
     {
@@ -3556,6 +3688,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
             // counting a packet, and the local connection still ends now.
             rocketnet_server_transport_close_client_locally( server_transport, client_index, false );
         }
+
         return;
     }
 
@@ -3567,6 +3700,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
     server_transport->disconnect_seals_left -= burst_count < server_transport->disconnect_seals_left ? burst_count : server_transport->disconnect_seals_left;
 
     int committed = 0;
+
     for ( int i = 0; i < burst_count; i++ )
     {
         struct rocketnet_server_frame_t frame;
@@ -3581,6 +3715,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
 
     // The disconnect_client header promise: committed staged frames leave on
     // the next send_packets flush even when there is no following update.
+
     if ( committed && rocketnet_server_transport_staged( server_transport ) )
         server_transport->send_staged++;
 }
@@ -3637,25 +3772,29 @@ void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_t
     rocketnet_assert( server_transport );
     return server_transport->io.instance;
 }
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
         return NULL;
     rocketnet_assert( server_transport );
+
     if ( server_transport->io.operations && server_transport->io.operations->prefilter_counters )
     {
         uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS];
         server_transport->io.operations->prefilter_counters( server_transport->io.instance, prefilter );
         rocketnet_counters_apply_prefilter( &server_transport->counters, prefilter );
     }
+
     // SEND_FAILED is the transport's own cumulative count, assigned on read
+
     if ( server_transport->io.operations && server_transport->io.operations->send_failures )
         server_transport->counters.values[ROCKETNET_COUNTER_SEND_FAILED] = server_transport->io.operations->send_failures( server_transport->io.instance );
     // a transport's own size pass drops before the prefilter sees a datagram:
     // its growth lands on the prefilter size counters, so one oversize
     // datagram reads PREFILTER_TOO_LARGE on every transport
+
     uint64_t too_short = 0;
     uint64_t too_large = 0;
     if ( rocketnet_server_transport_io_receive_drops( server_transport->io.operations, server_transport->io.instance, &too_short, &too_large ) )
@@ -3665,6 +3804,7 @@ const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct 
         server_transport->transport_receive_too_short = too_short;
         server_transport->transport_receive_too_large = too_large;
     }
+
     return &server_transport->counters;
 }
 
@@ -3766,6 +3906,7 @@ void rocketnet_server_transport_client_stats( struct rocketnet_server_transport_
     stats->bandwidth_sent_kbps = endpoint->bandwidth_sent_kbps;
     stats->bandwidth_received_kbps = endpoint->bandwidth_received_kbps;
     stats->bandwidth_acked_kbps = endpoint->bandwidth_acked_kbps;
+
     if ( client_index < server_transport->client_wire_totals_capacity )
     {
         struct rocketnet_server_wire_totals_t * totals = &server_transport->client_wire_totals[client_index];
@@ -3820,7 +3961,7 @@ void rocketnet_server_transport_accept_payload( struct rocketnet_server_transpor
         rocketnet_server_protocol_accept_payload( &transport->protocol, batch->client_index[k], batch->connection_id[k], batch->sequence[k] );
 }
 
-#endif // ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
+#endif // #ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
 #if defined( ROCKETNET_XDP_STAGING_TEST_HOOKS ) && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
 // Unit-only fixture for the public flush path; no transport create, socket,
@@ -3843,6 +3984,7 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
         rocketnet_free( NULL, storage );
         return -1;
     }
+
     int flushes = 0;
     rocketnet_server_transport_io_operations_t operations = {};
     operations.flags = ROCKETNET_TRANSPORT_STAGED;
@@ -3856,6 +3998,7 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
     rocketnet_send_arena_destroy( transport->send_arena );
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
+
     return flushes;
 }
 
@@ -3874,9 +4017,11 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     auto * transport = new ( storage ) rocketnet_server_transport_t();
     transport->send_arena = rocketnet_send_arena_create( NULL, 1, 1 );
     transport->link_simulator = rocketnet_network_simulator_create( NULL, 4, 1 );
+
     const bool mutex_created = transport->link_simulator &&
                                rocketnet_platform_mutex_create( &transport->link_simulator_mutex );
     int result = -1;
+
     if ( transport->send_arena && transport->link_simulator && mutex_created &&
          rocketnet_network_simulator_patterns( transport->link_simulator, 0, 2 ) )
     {
@@ -3888,21 +4033,25 @@ int rocketnet_server_transport_test_staged_simulator_flush()
         transport->io.instance = &flushes;
         transport->transport = ROCKETNET_TRANSPORT_XDP;
         transport->time = 1000.0;
+
         rocketnet_address_t to;
         if ( rocketnet_address_parse( &to, "127.0.0.1:40000" ) )
         {
             const uint8_t packet = 0x5A;
             (void) rocketnet_server_link_send( transport, &to, &packet, 1 );
             rocketnet_address_t from, received_to;
+
             uint8_t received[ROCKETNET_RECEIVE_CEILING];
             const int before = rocketnet_network_simulator_receive_any( transport->link_simulator,
                                                                         1000.0, &from, &received_to, received );
             rocketnet_server_transport_send_packets( transport );
+
             const int after = rocketnet_network_simulator_receive_any( transport->link_simulator,
                                                                        1000.0, &from, &received_to, received );
             result = before == 0 && after == 1 && received[0] == packet && flushes == 1 ? 1 : 0;
         }
     }
+
     if ( mutex_created )
         rocketnet_platform_mutex_destroy( &transport->link_simulator_mutex );
     if ( transport->link_simulator )
@@ -3911,6 +4060,7 @@ int rocketnet_server_transport_test_staged_simulator_flush()
         rocketnet_send_arena_destroy( transport->send_arena );
     transport->~rocketnet_server_transport_t();
     rocketnet_free( NULL, storage );
+
     return result;
 }
-#endif
+#endif // #if defined( ROCKETNET_XDP_STAGING_TEST_HOOKS ) && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )

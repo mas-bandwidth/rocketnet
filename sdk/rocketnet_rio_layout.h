@@ -70,18 +70,22 @@ static inline bool rocketnet_rio_layout_plan(
     uint64_t receives_count = (uint64_t) receives;
 
     // the send-frames sub-region starts at offset 0.
+
     uint64_t send_frames_bytes;
     if ( send_frames_count > UINT64_MAX / frame_stride )
         return false;
     send_frames_bytes = send_frames_count * frame_stride;
+
     uint64_t send_addresses_bytes;
     if ( send_frames_count > UINT64_MAX / addr_stride )
         return false;
     send_addresses_bytes = send_frames_count * addr_stride;
+
     uint64_t receive_slices_bytes;
     if ( receives_count > UINT64_MAX / slice_stride )
         return false;
     receive_slices_bytes = receives_count * slice_stride;
+
     uint64_t receive_addresses_bytes;
     if ( receives_count > UINT64_MAX / addr_stride )
         return false;
@@ -92,10 +96,12 @@ static inline bool rocketnet_rio_layout_plan(
     if ( send_addresses_offset > UINT64_MAX - send_addresses_bytes )
         return false;
     receive_slices_offset = send_addresses_offset + send_addresses_bytes;
+
     uint64_t receive_addresses_offset;
     if ( receive_slices_offset > UINT64_MAX - receive_slices_bytes )
         return false;
     receive_addresses_offset = receive_slices_offset + receive_slices_bytes;
+
     uint64_t end;
     if ( receive_addresses_offset > UINT64_MAX - receive_addresses_bytes )
         return false;
@@ -115,6 +121,7 @@ static inline bool rocketnet_rio_layout_plan(
     out->frame_bytes = frame_bytes;
     out->receive_slice_bytes = receive_slice_bytes;
     out->address_bytes = address_bytes;
+
     return true;
 }
 
@@ -178,4 +185,4 @@ static inline int rocketnet_rio_context_index( uint64_t context )
     return (int) ( context & 0xFFFFFFFF );
 }
 
-#endif // ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H

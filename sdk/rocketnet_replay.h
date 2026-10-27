@@ -40,4 +40,4 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
 
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence );
 
-#endif // ROCKETNET_SDK_ROCKETNET_REPLAY_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_REPLAY_H

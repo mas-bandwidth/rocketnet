@@ -83,6 +83,7 @@ int rocketnet_prefilter_counter( int refusal_code )
     // which is the failure the observability rules name directly.
 
     rocketnet_assert( 0 );
+
     return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
 }
 
@@ -147,12 +148,14 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
         return ROCKETNET_AD_BYTES;
 
     rocketnet_write_bytes( &p, client_ephemeral_public_key, ROCKETNET_KEY_BYTES );
+
     return ROCKETNET_AD_WITH_EPHEMERAL_BYTES;
 }
 
 static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )
 {
     memset( nonce, 0, 4 );
+
     uint8_t * p = nonce + 4;
     rocketnet_write_uint64( &p, sequence );
 }
@@ -317,6 +320,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
         return -1;
 
     // Refuse if the output buffer is too small for the plaintext
+
     int plaintext_bytes = packet_bytes - header_bytes - ROCKETNET_PACKET_TAG_BYTES;
     if ( out_capacity < plaintext_bytes )
         return -1;
