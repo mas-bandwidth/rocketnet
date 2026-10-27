@@ -49,11 +49,19 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 // meaningful for sequences in (highest_opened - window, highest_opened], and
 // the block is silent below that floor -- silence, not a loss claim
 
-static int rocketnet_ack_replay_bit( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
-{
-    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
-    return ( replay->window[bit / 64] >> ( bit % 64 ) ) & 1;
-}
+// Word-level descending scan of the replay window. The cursor names the
+// next sequence to examine (descending from largest); remaining counts the
+// sequences in [floor, cursor]. The scan caches one 64-bit word at a time:
+// it is masked to the bits in [cursor-chunk+1, cursor] -- masking at the
+// largest word above and at the floor word below -- shifted so the top bit
+// is bit 63, and leading ones (a run) or leading zeros (a gap) are counted
+// with clz as the word is shifted left. Sequence modulo the 4096-bit
+// window gives the circular wrap for free. ctz is available as
+// rocketnet_platform_ctz64 beside clz for upward scans.
+// The builder below is one descending pass over the window words: a
+// three-phase scan (first run, then repeating gap and run) whose counts
+// accumulate across word boundaries and whose ranges are emitted when a
+// run ends, at the floor, exactly as the bit-by-bit walk emitted them.
 
 // the empty block (largest 0, first range length 0, no ranges) is written
 // exactly while nothing is opened, and every other block has a first range
@@ -91,56 +99,92 @@ int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rock
         // block restates. a trailing gap with no run below it is dropped:
         // every entry states received sequences.
 
-        uint64_t s = block.largest;
-
+        // One descending word pass. Counts never reach the 0xFFFF caps:
+        // the window holds at most ROCKETNET_REPLAY_WINDOW_BITS sequences.
+        uint64_t cursor = block.largest;
+        uint64_t remaining = block.largest - floor_sequence + 1;
+        uint64_t shifted = 0;
+        int word_bits = 0;
         uint32_t first_run = 0;
-        while ( s >= floor_sequence && rocketnet_ack_replay_bit( replay, s ) && first_run < 0xFFFF )
+        uint32_t cur_gap = 0;
+        uint32_t cur_run = 0;
+        int phase = 0; // 0 = first run (ones), 1 = gap (zeros), 2 = run (ones)
+        bool done = false;
+
+        while ( remaining > 0 && !done )
         {
-            first_run++;
-            if ( s == 1 )
-                break;
-            s--;
+            if ( word_bits == 0 )
+            {
+                const uint64_t bit_index = cursor % ROCKETNET_REPLAY_WINDOW_BITS;
+                const int offset = (int) ( bit_index % 64 );
+                uint64_t chunk = (uint64_t) offset + 1;
+                if ( chunk > remaining )
+                    chunk = remaining;
+                const uint64_t low_bit = (uint64_t) offset - chunk + 1;
+                const uint64_t mask = ( ~0ull << low_bit ) & ( offset == 63 ? ~0ull : ( ( 1ull << ( offset + 1 ) ) - 1 ) );
+                shifted = ( replay->window[bit_index / 64] & mask ) << ( 63 - offset );
+                word_bits = (int) chunk;
+            }
+
+            const int word_before = word_bits;
+            if ( phase == 1 )
+            {
+                const int zeros = shifted == 0 ? 64 : rocketnet_platform_clz64( shifted );
+                const int take = zeros < word_bits ? zeros : word_bits;
+                cur_gap += (uint32_t) take;
+                shifted = take >= 64 ? 0 : ( shifted << take );
+                word_bits -= take;
+                cursor -= (uint64_t) take;
+                remaining -= (uint64_t) take;
+                if ( zeros < word_before )
+                    phase = 2; // a received bit follows within this word
+            }
+            else
+            {
+                const int ones = shifted == ~0ull ? 64 : rocketnet_platform_clz64( ~shifted );
+                const int take = ones < word_bits ? ones : word_bits;
+                if ( phase == 0 )
+                    first_run += (uint32_t) take;
+                else
+                    cur_run += (uint32_t) take;
+                shifted = take >= 64 ? 0 : ( shifted << take );
+                word_bits -= take;
+                cursor -= (uint64_t) take;
+                remaining -= (uint64_t) take;
+                if ( ones < word_before )
+                {
+                    // a missing bit follows within this word: the run ends
+                    if ( phase == 0 )
+                    {
+                        phase = 1;
+                        if ( max_ranges == 0 )
+                            done = true;
+                    }
+                    else
+                    {
+                        block.range_gap[block.num_ranges] = (uint16_t) cur_gap;
+                        block.range_length[block.num_ranges] = (uint16_t) cur_run;
+                        block.num_ranges++;
+                        cur_gap = 0;
+                        cur_run = 0;
+                        phase = 1;
+                        if ( block.num_ranges >= max_ranges )
+                            done = true;
+                    }
+                }
+            }
         }
+
         rocketnet_assert( first_run >= 1 );     // largest itself is always marked received
         block.first_range_length = first_run;
 
-        uint64_t next_high = block.largest - first_run;     // first sequence below the run, 0 when the run reached 1
-
-        while ( next_high >= floor_sequence && block.num_ranges < max_ranges )
+        // a run that ended at the floor is still stated; a trailing gap
+        // (phase 1 at the floor) is dropped, as before
+        if ( phase == 2 && cur_run > 0 && block.num_ranges < max_ranges )
         {
-            uint32_t gap = 0;
-            while ( next_high >= floor_sequence && !rocketnet_ack_replay_bit( replay, next_high ) && gap < 0xFFFF )
-            {
-                gap++;
-                if ( next_high == 1 )
-                    break;
-                next_high--;
-            }
-
-            if ( next_high < floor_sequence || rocketnet_ack_replay_bit( replay, next_high ) == 0 )
-                break;                                      // the gap ran to the floor: unspoken, not lost
-
-            uint32_t run = 0;
-            while ( next_high >= floor_sequence && rocketnet_ack_replay_bit( replay, next_high ) && run < 0xFFFF )
-            {
-                run++;
-                if ( next_high == 1 )
-                {
-                    next_high = 0;
-                    break;
-                }
-                next_high--;
-            }
-
-            if ( run == 0 )
-                break;
-
-            block.range_gap[block.num_ranges] = (uint16_t) gap;
-            block.range_length[block.num_ranges] = (uint16_t) run;
+            block.range_gap[block.num_ranges] = (uint16_t) cur_gap;
+            block.range_length[block.num_ranges] = (uint16_t) cur_run;
             block.num_ranges++;
-
-            if ( next_high == 0 )
-                break;
         }
     }
 

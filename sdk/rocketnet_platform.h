@@ -12,6 +12,35 @@
 #include <winsock2.h>
 #endif
 
+#if defined(_MSC_VER)
+#include <intrin.h>
+#endif
+
+// Portable 64-bit leading/trailing zero counts. The argument must be
+// nonzero; callers guard the zero case. MSVC has no __builtin_clzll, so it
+// uses the bit-scan intrinsics.
+static inline int rocketnet_platform_clz64( uint64_t value )
+{
+#if defined(_MSC_VER)
+    unsigned long index;
+    _BitScanReverse64( &index, value );
+    return 63 - (int) index;
+#else
+    return __builtin_clzll( value );
+#endif
+}
+
+static inline int rocketnet_platform_ctz64( uint64_t value )
+{
+#if defined(_MSC_VER)
+    unsigned long index;
+    _BitScanForward64( &index, value );
+    return (int) index;
+#else
+    return __builtin_ctzll( value );
+#endif
+}
+
 #if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined(__cplusplus)
 // Private static-development-library fixture interface. Never compiled into a
 // production or shared library. RIO IDs are resources, not Windows HANDLEs.

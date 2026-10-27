@@ -1244,6 +1244,7 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(transport_memory bench/transport_memory.cpp)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
+    add_executable(ack_block_build_cost bench/ack_block_build_cost.cpp)
     # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
     # installed, and reaches no shipped SDK/API surface. The required .c path
     # is compiled as C++ so it can compose the private protocol and AF_XDP
@@ -1282,7 +1283,7 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost)
+    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev)
