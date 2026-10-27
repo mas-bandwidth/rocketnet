@@ -11,7 +11,7 @@ for workers. Their completion queries let a game keep its frame loop running;
 after completion synchronous destroy joins and frees. An early destroy logs and
 counts the misuse, then performs the shutdown and join itself with a bounded
 number of updates and no sleep; a worker that has not exited by then is logged
-and its object is kept, not freed. Soak, load and
+and its object is kept, not freed. An early destroy on a threaded transport normally keeps the object, and a second destroy after completion frees it. Soak, load and
 profiling work is planned hardening. This preview makes no claim from it.
 
 The authority for every name, field, default and environment variable is
