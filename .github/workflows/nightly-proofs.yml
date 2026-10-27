@@ -1,10 +1,12 @@
-# Nightly CBMC proofs. This is not a per-commit job: the nightly proofs
-# take minutes to hours, and a failed property is a finding to read, not a
-# gate on a merge. The per-commit proofs remain in cbmc.yml.
+# Nightly CBMC proofs. The nightly proofs take minutes to hours. A failing
+# proof records a failed job: this workflow is a gate on the night, and a
+# red result must show as a failed run, never as a passing "not a gate"
+# note. The per-commit proofs remain in cbmc.yml.
 #
 # The reader directories under proofs/cbmc each contribute a proof.mk to
-# NIGHTLY; the nightly target runs every entry. The schedule is before
-# fuzz-nightly.yml, so a red night is on the estate when the morning starts.
+# NIGHTLY; the nightly target runs every entry, plus replay-near-4096.
+# The schedule is before fuzz-nightly.yml, so a red night is on the estate
+# when the morning starts.
 
 name: Nightly proofs
 
@@ -24,15 +26,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the pinned CBMC is present
+      - name: Check the pinned tools are present
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v cbmc >/dev/null 2>&1; then
-            echo "TOOL-MISSING cbmc (any) (missing) on $RUNNER_NAME"
-            exit 1
-          fi
-          cbmc --version
+          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
+          check() {
+            local tool="$1" want="$2" got
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
+            fi
+            got="$("$tool" --version 2>&1 | head -1)"
+            echo "$tool: $got (pinned $want)"
+            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
+          }
+          check cbmc "$(pin CBMC)"
+          check cadical "$(pin CADICAL)"
+          check esbmc "$(pin ESBMC)"
 
       - name: Run the nightly proofs
         run: |
