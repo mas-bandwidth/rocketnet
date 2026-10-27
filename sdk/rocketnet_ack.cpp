@@ -70,41 +70,63 @@ static inline int rn_clz64( uint64_t v )
 #endif
 }
 
-// the length of the run of sequences from `from` downward whose window bit
-// is received (invert 0) or not received (invert all ones), stopping at the
-// floor and at limit. Each step takes the word holding the current sequence,
-// shifts it left so the current bit is the top bit -- the shift masks off the
-// word's bits above it, which belong to newer sequences or, at largest, to
-// sequences outside the window -- and counts the leading run with clz. A run
-// that fills the rest of the word continues in the word below, wrapping from
-// word 0 to the last word, since the window is circular. The floor is applied
-// as a count, so bits below it are never read into the result.
+// a downward scan of the window, a 64-bit word at a time. word holds the
+// window's word for the current sequence shifted left so the current
+// sequence's bit is the top bit; available is how many of its bits, from the
+// top, are still unread (the shift masks off the word's bits above the
+// current sequence, which belong to newer sequences or, at largest, to
+// sequences outside the window). left counts the sequences from the current
+// one down to the floor, so bits below the floor are never read into a run.
+// The window is circular: below word 0 the scan continues in the last word.
 
-static uint32_t rocketnet_ack_replay_run( const struct rocketnet_replay_protection_t * replay, uint64_t from, uint64_t floor_sequence, uint64_t invert, uint32_t limit )
+struct rocketnet_ack_window_scan_t
 {
-    rocketnet_assert( from >= floor_sequence );
+    const uint64_t * window;
+    uint64_t word;
+    uint64_t sequence;
+    uint64_t left;
+    uint64_t available;
+};
 
-    uint64_t remaining = from - floor_sequence + 1;
-    if ( remaining > limit )
-        remaining = limit;
+static inline void rocketnet_ack_window_scan_load( struct rocketnet_ack_window_scan_t * scan )
+{
+    const uint32_t bit = (uint32_t) ( scan->sequence % ROCKETNET_REPLAY_WINDOW_BITS );
+    const uint32_t offset = bit & 63;
+    scan->word = scan->window[bit >> 6] << ( 63 - offset );
+    scan->available = offset + 1;
+}
 
+// the length of the run of received (received 1) or missing (received 0)
+// sequences from the current sequence downward, at most limit and never past
+// the floor; the scan is left on the first sequence below the run. The
+// leading run of the shifted word is counted with clz, capped at the word's
+// unread bits; a run that empties the word continues in the word below.
+
+static inline uint32_t rocketnet_ack_window_scan_run( struct rocketnet_ack_window_scan_t * scan, int received, uint32_t limit )
+{
+    const uint64_t remaining = scan->left < limit ? scan->left : limit;
     uint64_t count = 0;
-    uint64_t sequence = from;
     while ( count < remaining )
     {
-        const uint32_t bit = (uint32_t) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
-        const uint32_t offset = bit & 63;
-        const uint64_t word = ( replay->window[bit >> 6] ^ invert ) << ( 63 - offset );
-        const uint64_t available = offset + 1;
-        const uint64_t leading = ( ~word != 0 ) ? (uint64_t) rn_clz64( ~word ) : 64;       // never above available: the shift fills below with zeros
-        count += leading;
-        if ( leading < available || count >= remaining )
+        if ( scan->available == 0 )
+            rocketnet_ack_window_scan_load( scan );
+        const uint64_t bits = received ? ~scan->word : scan->word;      // the run is this word's leading zeros
+        uint64_t take = bits != 0 ? (uint64_t) rn_clz64( bits ) : 64;
+        if ( take > scan->available )
+            take = scan->available;
+        if ( take > remaining - count )
+            take = remaining - count;
+        count += take;
+        scan->sequence -= take;
+        scan->left -= take;
+        scan->available -= take;
+        if ( scan->available != 0 )
+        {
+            // stopped inside the word: on a bit of the other kind, or at the limit
+            scan->word <<= take;
             break;
-        sequence -= available;
+        }
     }
-
-    if ( count > remaining )
-        count = remaining;
     return (uint32_t) count;
 }
 
@@ -144,7 +166,14 @@ int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rock
         // block restates. a trailing gap with no run below it is dropped:
         // every entry states received sequences.
 
-        uint32_t first_run = rocketnet_ack_replay_run( replay, block.largest, floor_sequence, 0, 0xFFFF );
+        struct rocketnet_ack_window_scan_t scan;
+        scan.window = replay->window;
+        scan.word = 0;
+        scan.sequence = block.largest;
+        scan.left = block.largest - floor_sequence + 1;
+        scan.available = 0;
+
+        uint32_t first_run = rocketnet_ack_window_scan_run( &scan, 1, 0xFFFF );
         rocketnet_assert( first_run >= 1 );     // largest itself is always marked received
         block.first_range_length = first_run;
 
@@ -152,13 +181,17 @@ int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rock
 
         while ( next_high >= floor_sequence && block.num_ranges < max_ranges )
         {
-            const uint32_t gap = rocketnet_ack_replay_run( replay, next_high, floor_sequence, ~0ULL, 0xFFFF );
+            const uint32_t gap = rocketnet_ack_window_scan_run( &scan, 0, 0xFFFF );
             next_high -= gap;
 
-            if ( next_high < floor_sequence || rocketnet_ack_replay_bit( replay, next_high ) == 0 )
-                break;                                      // the gap ran to the floor: unspoken, not lost
+            // the gap ran to the floor: unspoken, not lost. A gap that stopped
+            // above the floor short of the cap stopped on a received sequence,
+            // so the bit is read only for a gap that reached the cap
 
-            const uint32_t run = rocketnet_ack_replay_run( replay, next_high, floor_sequence, 0, 0xFFFF );
+            if ( next_high < floor_sequence || ( gap == 0xFFFF && rocketnet_ack_replay_bit( replay, next_high ) == 0 ) )
+                break;
+
+            const uint32_t run = rocketnet_ack_window_scan_run( &scan, 1, 0xFFFF );
             next_high -= run;                               // 0 when the run reached 1
 
             if ( run == 0 )
