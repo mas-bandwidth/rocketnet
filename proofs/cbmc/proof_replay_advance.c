@@ -476,5 +476,8 @@ int harness_replay_far( void )
         __CPROVER_assert( replay.window[w] == word,
                           "a delta at least the width clears every word" );
     }
+#if defined(REPLAY_FAR_REACHABILITY)
+    __CPROVER_assert( 0, "replay-far reachability control" );
+#endif
     return 0;
 }

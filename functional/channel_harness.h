@@ -283,17 +283,29 @@ typedef struct rocketnet_channel_delivery_t
     uint64_t hash;
 } rocketnet_channel_delivery_t;
 
-// A bounded delivery ring, filled at receive and drained by collect. The
-// buffers are the harness's, carved at create; nothing here allocates.
+typedef struct rocketnet_channel_delivery_index_t
+{
+    int slot;
+    uint64_t generation;
+} rocketnet_channel_delivery_index_t;
+
+// A bounded delivery sequence, filled at receive and drained by collect. The
+// order and free-slot stacks are fixed arrays; order entries carry the slot's
+// exact uint64 generation so a stale index can never remove a reused slot.
+// The buffers are the harness's, carved at create, and nothing here allocates.
+// At 32 deliveries the sequence metadata is 32 (slot,generation) pairs, 32
+// free ints, 32 uint64 generations, 32 occupied bytes, and the per-slot
+// channel, length and data pointer arrays.
 typedef struct rocketnet_channel_delivery_ring_t
 {
-    int head;
-    int tail;
     int count;
-    int free_head;
+    int free_count;
+    rocketnet_channel_delivery_index_t order[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    int free_slots[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    uint64_t generation[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
+    uint8_t occupied[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
     int channel[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
     int len[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
-    int next[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
     uint8_t * slot_data[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES];
     uint8_t * storage;
     int max_payload;
@@ -381,16 +393,14 @@ static inline uint64_t rocketnet_channel_hash( const uint8_t * data, int bytes )
 static inline int rocketnet_channel_delivery_ring_init( rocketnet_channel_delivery_ring_t * ring, int max_payload )
 {
     memset( ring, 0, sizeof(*ring) );
-    ring->head = -1;
-    ring->tail = -1;
-    ring->free_head = 0;
+    ring->free_count = ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES;
     ring->max_payload = max_payload;
     for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
     {
-        ring->next[i] = i + 1;
+        // Pop from the array's end and preserve the old 0,1,... initial use.
+        ring->free_slots[i] = ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES - 1 - i;
         ring->slot_data[i] = NULL;
     }
-    ring->next[ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES - 1] = -1;
     const size_t storage_bytes = (size_t) ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES * (size_t) max_payload;
     ring->storage = (uint8_t *) rocketnet_channel_counting_malloc( NULL, storage_bytes );
     if ( !ring->storage )
@@ -409,56 +419,113 @@ static inline void rocketnet_channel_delivery_ring_destroy( rocketnet_channel_de
 
 static inline int rocketnet_channel_delivery_ring_push( rocketnet_channel_harness_t * h, rocketnet_channel_delivery_ring_t * ring, int channel, const uint8_t * data, int bytes )
 {
-    if ( bytes < 0 || bytes > ring->max_payload || ring->free_head < 0 )
+    if ( bytes < 0 || bytes > ring->max_payload || ring->free_count == 0 )
     {
         h->overflow_count++;
         return 0;
     }
-    const int slot = ring->free_head;
-    ring->free_head = ring->next[slot];
+    const int slot = ring->free_slots[ring->free_count - 1];
+    if ( ring->generation[slot] == UINT64_MAX )
+    {
+        h->overflow_count++;
+        return 0;
+    }
+    ring->free_count--;
+    ring->generation[slot]++;
+    ring->occupied[slot] = 1;
     ring->channel[slot] = channel;
     ring->len[slot] = bytes;
     if ( bytes > 0 )
         memcpy( ring->slot_data[slot], data, (size_t) bytes );
-    ring->next[slot] = -1;
-    if ( ring->tail >= 0 )
-        ring->next[ring->tail] = slot;
-    else
-        ring->head = slot;
-    ring->tail = slot;
+    ring->order[ring->count].slot = slot;
+    ring->order[ring->count].generation = ring->generation[slot];
     ring->count++;
+    return 1;
+}
+
+static inline int rocketnet_channel_delivery_ring_remove_index( rocketnet_channel_delivery_ring_t * ring,
+                                                                 rocketnet_channel_delivery_index_t index,
+                                                                 int offset,
+                                                                 rocketnet_channel_delivery_t * out )
+{
+    if ( offset < 0 || offset >= ring->count || index.slot < 0 ||
+         index.slot >= ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES ||
+         !ring->occupied[index.slot] || ring->generation[index.slot] != index.generation ||
+         ring->order[offset].slot != index.slot || ring->order[offset].generation != index.generation )
+        return 0;
+    const int slot = index.slot;
+    out->channel = ring->channel[slot];
+    out->data = ring->slot_data[slot];
+    out->bytes = ring->len[slot];
+    out->hash = rocketnet_channel_hash( ring->slot_data[slot], ring->len[slot] );
+    if ( offset + 1 < ring->count )
+        memmove( &ring->order[offset], &ring->order[offset + 1],
+                 (size_t) ( ring->count - offset - 1 ) * sizeof( ring->order[0] ) );
+    ring->count--;
+    ring->occupied[slot] = 0;
+    ring->free_slots[ring->free_count++] = slot;
     return 1;
 }
 
 static inline int rocketnet_channel_delivery_ring_pop_channel( rocketnet_channel_harness_t * h, rocketnet_channel_delivery_ring_t * ring, int channel, rocketnet_channel_delivery_t * out )
 {
-    int previous = -1;
-    int slot = ring->head;
-    while ( slot >= 0 && ring->channel[slot] != channel )
-    {
-        previous = slot;
-        slot = ring->next[slot];
-    }
-    if ( slot < 0 )
+    int offset = 0;
+    while ( offset < ring->count && ring->channel[ring->order[offset].slot] != channel )
+        offset++;
+    if ( offset == ring->count )
         return 0;
-    const int after = ring->next[slot];
-    if ( previous >= 0 )
-        ring->next[previous] = after;
-    else
-        ring->head = after;
-    if ( ring->tail == slot )
-        ring->tail = previous;
-    out->channel = ring->channel[slot];
-    out->data = ring->slot_data[slot];
-    out->bytes = ring->len[slot];
-    out->hash = rocketnet_channel_hash( ring->slot_data[slot], ring->len[slot] );
-    ring->next[slot] = ring->free_head;
-    ring->free_head = slot;
-    ring->count--;
-    if ( ring->count == 0 )
-        ring->head = ring->tail = -1;
     (void) h;
-    return 1;
+    return rocketnet_channel_delivery_ring_remove_index( ring, ring->order[offset], offset, out );
+}
+
+// The functional binary runs this test-only oracle before its cases. It fills
+// the sequence, checks explicit refusal, drains in FIFO order, reuses the freed
+// slot, and proves that the old exact-generation index cannot remove the new
+// occupant.
+static inline int rocketnet_channel_delivery_ring_self_test()
+{
+    rocketnet_channel_harness_t harness = {};
+    rocketnet_channel_delivery_ring_t ring;
+    rocketnet_channel_delivery_t delivery;
+    rocketnet_channel_delivery_index_t stale = {};
+    rocketnet_channel_delivery_index_t current = {};
+    const uint8_t refused = 255;
+    int ok = 0;
+    if ( !rocketnet_channel_delivery_ring_init( &ring, 1 ) )
+        return 0;
+    for ( int i = 0; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
+    {
+        const uint8_t value = (uint8_t) i;
+        if ( !rocketnet_channel_delivery_ring_push( &harness, &ring, 7, &value, 1 ) )
+            goto cleanup;
+    }
+    if ( rocketnet_channel_delivery_ring_push( &harness, &ring, 7, &refused, 1 ) ||
+         harness.overflow_count != 1 || ring.count != ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES )
+        goto cleanup;
+    stale = ring.order[0];
+    if ( !rocketnet_channel_delivery_ring_pop_channel( &harness, &ring, 7, &delivery ) ||
+         delivery.bytes != 1 || delivery.data[0] != 0 ||
+         !rocketnet_channel_delivery_ring_push( &harness, &ring, 7, &refused, 1 ) )
+        goto cleanup;
+    current = ring.order[ring.count - 1];
+    if ( current.slot != stale.slot || current.generation != stale.generation + 1 ||
+         rocketnet_channel_delivery_ring_remove_index( &ring, stale, ring.count - 1, &delivery ) ||
+         ring.count != ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES )
+        goto cleanup;
+    for ( int i = 1; i < ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES; i++ )
+    {
+        if ( !rocketnet_channel_delivery_ring_pop_channel( &harness, &ring, 7, &delivery ) ||
+             delivery.bytes != 1 || delivery.data[0] != (uint8_t) i )
+            goto cleanup;
+    }
+    if ( !rocketnet_channel_delivery_ring_pop_channel( &harness, &ring, 7, &delivery ) ||
+         delivery.bytes != 1 || delivery.data[0] != refused || ring.count != 0 ||
+         ring.free_count != ROCKETNET_CHANNEL_HARNESS_MAX_DELIVERIES )
+        goto cleanup;
+    ok = 1;
+cleanup:
+    rocketnet_channel_delivery_ring_destroy( &ring );
+    return ok;
 }
 
 static inline int rocketnet_channel_harness_connected( const rocketnet_channel_harness_t * h )

@@ -8,6 +8,7 @@
     Usage: ./bin/example_soak [--clients 1000] [--seconds 3] [--seed 1]
                               [--transport loopback] [--out soak-results.tsv]
                               [--pause] [--self-test-corrupt] [--arena-mib N]
+           development only: [--allocator-self-test]
 */
 
 #include "shutdown.h"
@@ -90,29 +91,42 @@ static void soak_alloc_set_steady( bool steady ) {
     soak_alloc_unlock();
 }
 
-static struct soak_alloc_t soak_alloc_snapshot( void ) {
-    struct soak_alloc_t snapshot;
+static struct soak_alloc_t soak_alloc_read( void ) {
+    struct soak_alloc_t copy;
     soak_alloc_lock();
-    snapshot = g_alloc;
+    copy = g_alloc;
     soak_alloc_unlock();
-    return snapshot;
+    return copy;
 }
 
 // The harness owns backing storage until every SDK object and worker is gone.
 // Rounded-capacity classes reuse returned blocks across reconnects. No SDK callback
-// calls the system allocator, including partial-create failure cleanup.
+// calls the system allocator, including partial-create failure cleanup. Class and
+// free-sequence metadata occupy the beginning of the requested arena and are
+// included in its high-water accounting. Sixty-four retained blocks per maximum
+// client is a fixed 64,000-entry bound in the ordinary 1,000-client build;
+// overflowing it is an allocator invariant failure, never a silently lost block.
 #define SOAK_ARENA_CLASSES 1024
-struct soak_arena_block_t { size_t bytes; struct soak_arena_block_t * next; unsigned bucket, live; };
-struct soak_arena_class_t { size_t stride; struct soak_arena_block_t * free; };
+#define SOAK_ARENA_FREE_CAPACITY ((size_t)MAX_SOAK_CLIENTS * 64)
+struct soak_arena_block_t { size_t bytes; unsigned bucket, live; };
+struct soak_arena_class_t { size_t stride; };
+struct soak_arena_free_entry_t { size_t offset; unsigned bucket; };
 static struct {
     void * allocation;
     uint8_t * base;
     size_t bytes, used;
-    struct soak_arena_class_t classes[SOAK_ARENA_CLASSES];
+    size_t metadata_bytes, free_count;
+    struct soak_arena_class_t * classes;
+    struct soak_arena_free_entry_t * free_entries;
 } g_arena;
 
 static bool soak_arena_create( size_t bytes ) {
-    if ( bytes > SIZE_MAX - 63 || sizeof(struct soak_arena_block_t) > 64 ) return false;
+    const size_t class_bytes = sizeof(struct soak_arena_class_t) * SOAK_ARENA_CLASSES;
+    const size_t free_bytes = sizeof(struct soak_arena_free_entry_t) * SOAK_ARENA_FREE_CAPACITY;
+    if ( bytes > SIZE_MAX - 63 || class_bytes > SIZE_MAX - free_bytes ||
+         class_bytes + free_bytes > SIZE_MAX - 63 || sizeof(struct soak_arena_block_t) > 64 ) return false;
+    const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t)63;
+    if ( metadata_bytes > bytes ) return false;
 #if defined(__linux__)
     // Reserve the bounded virtual arena without eagerly committing every page.
     // Used SDK records fault in pages naturally; capacity is not a RAM claim.
@@ -125,6 +139,11 @@ static bool soak_arena_create( size_t bytes ) {
 #endif
     g_arena.base = (uint8_t *) (((uintptr_t)g_arena.allocation + 63) & ~(uintptr_t)63);
     g_arena.bytes = bytes;
+    g_arena.metadata_bytes = metadata_bytes;
+    g_arena.used = metadata_bytes;
+    g_arena.classes = (struct soak_arena_class_t *)g_arena.base;
+    g_arena.free_entries = (struct soak_arena_free_entry_t *)(g_arena.base + class_bytes);
+    memset(g_arena.base, 0, metadata_bytes);
     return true;
 }
 
@@ -139,9 +158,18 @@ static void * soak_malloc( void * ctx, size_t bytes ) {
         bucket = (bucket + 1) & (SOAK_ARENA_CLASSES - 1);
     if (probes == SOAK_ARENA_CLASSES) { soak_alloc_unlock(); return NULL; }
     struct soak_arena_class_t * cls = &g_arena.classes[bucket];
-    struct soak_arena_block_t * block = cls->free;
-    if (block) cls->free = block->next;
-    else {
+    size_t free_index = SIZE_MAX;
+    for (size_t i = g_arena.free_count; i > 0; i--) {
+        if (g_arena.free_entries[i - 1].bucket == bucket) { free_index = i - 1; break; }
+    }
+    struct soak_arena_block_t * block = NULL;
+    if (free_index != SIZE_MAX) {
+        block = (struct soak_arena_block_t *)(g_arena.base + g_arena.free_entries[free_index].offset);
+        if (free_index + 1 < g_arena.free_count)
+            memmove(&g_arena.free_entries[free_index], &g_arena.free_entries[free_index + 1],
+                    (g_arena.free_count - free_index - 1) * sizeof(g_arena.free_entries[0]));
+        g_arena.free_count--;
+    } else {
         if (stride > g_arena.bytes - g_arena.used) { soak_alloc_unlock(); return NULL; }
         block = (struct soak_arena_block_t *)(g_arena.base + g_arena.used);
         g_arena.used += stride;
@@ -150,7 +178,6 @@ static void * soak_malloc( void * ctx, size_t bytes ) {
     block->bytes = bytes;
     block->bucket = bucket;
     block->live = 1;
-    block->next = NULL;
     g_alloc.live_allocs++;
     g_alloc.live_bytes += (uint64_t)bytes;
     if (g_alloc.live_bytes > g_alloc.peak_bytes) g_alloc.peak_bytes = g_alloc.live_bytes;
@@ -171,11 +198,74 @@ static void soak_free( void * ctx, void * p ) {
     g_alloc.live_allocs--;
     g_alloc.live_bytes -= block->bytes;
     block->live = 0;
-    struct soak_arena_class_t * cls = &g_arena.classes[block->bucket];
-    block->next = cls->free;
-    cls->free = block;
+    if (g_arena.free_count == SOAK_ARENA_FREE_CAPACITY) {
+        fprintf(stderr, "FAIL: soak arena free sequence capacity %zu exceeded\n", SOAK_ARENA_FREE_CAPACITY);
+        fflush(stderr);
+        abort();
+    }
+    g_arena.free_entries[g_arena.free_count].offset = (size_t)((uint8_t *)block - g_arena.base);
+    g_arena.free_entries[g_arena.free_count].bucket = block->bucket;
+    g_arena.free_count++;
     soak_alloc_unlock();
 }
+
+static int soak_arena_release( void ) {
+    int ok = 1;
+    if (g_arena.allocation) {
+#if defined(__linux__)
+        if (munmap(g_arena.allocation, g_arena.bytes + 63) != 0) ok = 0;
+#else
+        free(g_arena.allocation);
+#endif
+    }
+    memset(&g_arena, 0, sizeof(g_arena));
+    return ok;
+}
+
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+// The development-only allocator oracle makes exhaustion cheap and
+// deterministic: metadata plus two 64-byte blocks. It proves aligned admission,
+// explicit exhaustion, LIFO class reuse, accounting, and reset without adding a
+// production API or changing the real soak path.
+static int soak_arena_self_test( void ) {
+    const size_t class_bytes = sizeof(struct soak_arena_class_t) * SOAK_ARENA_CLASSES;
+    const size_t free_bytes = sizeof(struct soak_arena_free_entry_t) * SOAK_ARENA_FREE_CAPACITY;
+    const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t)63;
+    const size_t arena_bytes = metadata_bytes + 256;
+    memset(&g_alloc, 0, sizeof(g_alloc));
+    if (!soak_arena_create(arena_bytes)) return 1;
+    void * first = soak_malloc(NULL, 1);
+    void * second = soak_malloc(NULL, 1);
+    if (!first || !second || soak_malloc(NULL, 1) != NULL ||
+        ((uintptr_t)first & 63) != 0 || ((uintptr_t)second & 63) != 0 ||
+        g_arena.used != arena_bytes) return 1;
+    // Two same-class blocks freed in order come back last-freed first: a FIFO
+    // free sequence would hand back first here and fail.
+    soak_free(NULL, first);
+    soak_free(NULL, second);
+    if (g_arena.free_count != 2) return 1;
+    void * reused_last = soak_malloc(NULL, 1);
+    void * reused_first = soak_malloc(NULL, 1);
+    if (reused_last != second || reused_first != first || g_arena.free_count != 0 ||
+        g_arena.used != arena_bytes) return 1;
+    soak_free(NULL, reused_last);
+    soak_free(NULL, reused_first);
+    const struct soak_alloc_t before_reset = soak_alloc_read();
+    if (before_reset.live_allocs != 0 || before_reset.live_bytes != 0 ||
+        g_arena.free_count != 2 || !soak_arena_release()) return 1;
+
+    memset(&g_alloc, 0, sizeof(g_alloc));
+    if (!soak_arena_create(arena_bytes) || g_arena.used != metadata_bytes) return 1;
+    first = soak_malloc(NULL, 1);
+    if (!first || (size_t)((uint8_t *)first - g_arena.base) != metadata_bytes + 64 ||
+        g_arena.used != metadata_bytes + 128) return 1;
+    soak_free(NULL, first);
+    if (!soak_arena_release()) return 1;
+    memset(&g_alloc, 0, sizeof(g_alloc));
+    printf("allocator self-test: aligned exhaustion reuse accounting reset\nPASS\n");
+    return 0;
+}
+#endif
 
 struct soak_stream_t {
     uint32_t tx_seq[2], rx_ordered_seq, rx_sequenced_max, acked_events;
@@ -298,6 +388,9 @@ int main( int argc, char ** argv ) {
     const char * transport_name = "loopback";
     const char * out_path = "soak-results.tsv";
     bool pause_start = false, self_test_corrupt = false, inited = false;
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+    bool allocator_self_test = false;
+#endif
     for ( int i = 1; i < argc; i++ ) {
         if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc ) num_clients = atoi( argv[++i] );
         else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc ) seconds = atoi( argv[++i] );
@@ -307,8 +400,14 @@ int main( int argc, char ** argv ) {
         else if ( strcmp( argv[i], "--out" ) == 0 && i + 1 < argc ) out_path = argv[++i];
         else if ( strcmp( argv[i], "--pause" ) == 0 ) pause_start = true;
         else if ( strcmp( argv[i], "--self-test-corrupt" ) == 0 ) self_test_corrupt = true;
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+        else if ( strcmp( argv[i], "--allocator-self-test" ) == 0 ) allocator_self_test = true;
+#endif
         else { printf( "FAIL: unknown argument %s\n", argv[i] ); return 1; }
     }
+#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+    if ( allocator_self_test ) return soak_arena_self_test();
+#endif
     if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds * 60 > MAX_TICKS ) return 1;
     if ( pause_start ) {
         int pid = 0, ch = 0;
@@ -330,14 +429,15 @@ int main( int argc, char ** argv ) {
     if (!arena_mib) arena_mib = 2048 + (uint64_t)num_clients * 128;
     CHECK(arena_mib <= SIZE_MAX / (1024 * 1024));
     CHECK(soak_arena_create((size_t)arena_mib * 1024 * 1024));
-    printf("allocator: preallocated arena bytes=%" PRIu64 " (capacity, not resident bytes)\n", (uint64_t)g_arena.bytes);
+    printf("allocator: preallocated arena bytes=%" PRIu64 " metadata_bytes=%" PRIu64 " free_entries=%" PRIu64 " (capacity, not resident bytes)\n",
+           (uint64_t)g_arena.bytes, (uint64_t)g_arena.metadata_bytes, (uint64_t)SOAK_ARENA_FREE_CAPACITY);
     CHECK( rocketnet_init( NULL, soak_malloc, soak_free ) == ROCKETNET_STATUS_OK );
     inited = true;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
     struct rocketnet_server_config_t s_cfg;
     struct rocketnet_client_config_t c_cfg;
     // the published development backend key (rocketnet.h) and the examples protocol id (dev_keys.h); the server makes its own keypair at create. A real server brings its own backend key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
-    rocketnet_server_default_config( &s_cfg );
+    CHECK( rocketnet_server_default_config( &s_cfg ) == ROCKETNET_STATUS_OK );
     s_cfg.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( s_cfg.backend_public_key, dev_backend_public_key, sizeof( s_cfg.backend_public_key ) );
     CHECK( rocketnet_client_default_config( &c_cfg ) == ROCKETNET_STATUS_OK );
@@ -594,10 +694,11 @@ int main( int argc, char ** argv ) {
     CHECK( disconnected );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
     soak_shutdown( clients, num_clients, server ); server = NULL;
-    rocketnet_term(); inited = false;
+    const enum rocketnet_status_t term_status = rocketnet_term(); inited = false;
+    CHECK( term_status == ROCKETNET_STATUS_OK );
     // destroy never needs more memory than the run did (Linux: VmHWM)
     CHECK( g_life.shutdown_peak_rss <= g_life.running_peak_rss );
-    const struct soak_alloc_t allocation_stats = soak_alloc_snapshot();
+    const struct soak_alloc_t allocation_stats = soak_alloc_read();
     CHECK( allocation_stats.live_allocs == 0 && allocation_stats.live_bytes == 0 );
     qsort( srv_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
     qsort( cli_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
@@ -627,20 +728,16 @@ int main( int argc, char ** argv ) {
 
 cleanup:
     if ( !g_life.shut_down ) soak_shutdown( clients, num_clients, server );
-    if ( inited ) rocketnet_term();
-    const struct soak_alloc_t final_allocations = soak_alloc_snapshot();
+    if ( inited && rocketnet_term() != ROCKETNET_STATUS_OK ) exit_code = 1;
+    const struct soak_alloc_t final_allocations = soak_alloc_read();
     if (final_allocations.live_allocs || final_allocations.live_bytes) {
         printf("FAIL: arena still has live SDK allocations\n");
         exit_code = 1;
     } else if (g_arena.allocation) {
         const double release_started = rocketnet_time();
-#if defined(__linux__)
-        if (munmap(g_arena.allocation, g_arena.bytes + 63) != 0) exit_code = 1;
-#else
-        free(g_arena.allocation);
-#endif
-        printf("allocator: backing_release_ms=%.3f high_water_bytes=%" PRIu64 "\n", (rocketnet_time() - release_started) * 1000.0, (uint64_t)g_arena.used);
-        g_arena.allocation = NULL;
+        const uint64_t high_water_bytes = (uint64_t)g_arena.used;
+        if (!soak_arena_release()) exit_code = 1;
+        printf("allocator: backing_release_ms=%.3f high_water_bytes=%" PRIu64 "\n", (rocketnet_time() - release_started) * 1000.0, high_water_bytes);
     }
     free( index_client ); free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
     // PASS after the cleanup, so it stays the last line
