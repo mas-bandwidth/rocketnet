@@ -842,7 +842,11 @@ a larger buffer before the next update. Each entry carries the serial and
 a status. A zero-filled receipt reads `ROCKETNET_RECEIPT_STATUS_NONE`. The library
 writes `ROCKETNET_RECEIPT_STATUS_ACKED` or `ROCKETNET_RECEIPT_STATUS_LOSS`. Repeated calls see the
 same list until the next update. A full receipt ring drops its oldest entry;
-the `max_message_receipts` config field sets its size.
+the `max_message_receipts` config field sets its size. The outcomes recorded
+for a connection remain readable after that connection ends, until its next
+update. A receipt-bearing send, reliable or
+`ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT`, that is still in flight
+when its connection ends gets no terminal outcome.
 
 ## Counters and stats
 
