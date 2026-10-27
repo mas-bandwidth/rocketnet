@@ -32,12 +32,18 @@
 // at 1000 clients: 67,500,000) and 231 bytes of the send handoff's per-path
 // drop counts and allocation rounding. Its sockets keep no per-errno send
 // counts, so the client figures are unchanged.
+// Re-measured 2026-10-27 on captain, Windows x64, MSVC 19.51.36260, Release.
+// DEV ON server was 1591206044, now 1603276694. DEV ON client was 22968879,
+// now 22967743. DEV OFF server was 1584809680, now 1596895498. DEV OFF client
+// was 22183075, now 22182883. A production build refuses the published test
+// filter and required_memory then returns 0, so the DEV OFF peaks were read
+// with a non-test filter on the light config. The filter is not sized.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1591206044 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22968879 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603276694 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22967743 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584809680 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22183075 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
 #endif
 #elif defined(__APPLE__)
 // macOS adds, over the figures before them: per socket, the send failure
