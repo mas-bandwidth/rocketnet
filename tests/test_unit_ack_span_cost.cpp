@@ -134,6 +134,66 @@ static void ack_span_cost_size( uint32_t count )
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
+// Edge frees must not scan the descriptor pool: fill the pool once so
+// descriptors_fresh is at its high-water mark, drain it, then freeing N
+// spans oldest-first (and, again, newest-first) may examine only a small
+// constant number of descriptors per free, never N * descriptors_fresh.
+static void test_ack_span_edge_free_visits_bounded()
+{
+    rocketnet_term();
+    rocketnet_unit_check( rocketnet_init( NULL, ack_cost_malloc, ack_cost_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 64;
+    rocketnet_unit_check( rocketnet_message_validate_config( &config ) );
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
+    rocketnet_unit_check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    rn_region_carve( region );
+
+    uint32_t taken[64];
+    uint32_t filled = 0;
+    while ( region->descriptors_free > 0 )
+    {
+        const uint32_t d = rn_region_send_alloc( region, 10 );
+        rocketnet_unit_check( d != RN_DESCRIPTOR_NONE );
+        rocketnet_unit_check( filled < 64 );
+        taken[filled++] = d;
+    }
+    rocketnet_unit_check( filled > 16 );
+    const uint32_t fresh = region->descriptors_fresh;
+    rocketnet_unit_check( fresh == filled );
+    for ( uint32_t i = 0; i < filled; i++ )
+        rn_region_send_free( region, taken[i] );
+    rocketnet_unit_check( region->descriptors_fresh == fresh );
+
+    const uint32_t N = 16;
+    for ( int newest_first = 0; newest_first < 2; newest_first++ )
+    {
+        uint32_t spans[16];
+        for ( uint32_t i = 0; i < N; i++ )
+        {
+            spans[i] = rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES );
+            rocketnet_unit_check( spans[i] != RN_DESCRIPTOR_NONE );
+        }
+        rn_span_cost_reset();
+        for ( uint32_t step = 0; step < N; step++ )
+            rn_region_send_free( region, newest_first ? spans[N - 1 - step] : spans[step] );
+        const rn_span_cost_t cost = rn_span_cost_read();
+        printf( "span edge free: newest_first=%d spans=%u descriptors_fresh=%u edge_visits=%llu\n",
+                newest_first, N, fresh, (unsigned long long) cost.edge_visits );
+        fflush( stdout );
+        rocketnet_unit_check( cost.edge_visits <= 4ull * N );
+        rocketnet_unit_check( region->span_first == RN_DESCRIPTOR_NONE && region->span_last == RN_DESCRIPTOR_NONE );
+        rocketnet_unit_check( region->span_head == 0 && region->span_tail == 0 );
+    }
+    rn_arena_destroy( arena );
+    rocketnet_term();
+    rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_ack_span_edge_free_visits_bounded );
+
 static void test_ack_span_cost_64() { ack_span_cost_size( 64 ); }
 static void test_ack_span_cost_128() { ack_span_cost_size( 128 ); }
 static void test_ack_span_cost_256() { ack_span_cost_size( 256 ); }

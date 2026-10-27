@@ -829,9 +829,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # more) on channel 300, past the default build's cap, so this binary
     # compiles the SDK once more with ROCKETNET_MAX_CHANNELS=512 for every file
     # (the promotion rule: oversize unreliable sends promote to their reliable twin).
-    add_executable(test_wide
+    # EXCLUDE_FROM_ALL: not part of the default build; built by name (`cmake --build build --target test_wide`).
+    add_executable(test_wide EXCLUDE_FROM_ALL
         tests/test.cpp tests/test_channels.cpp tests/test_unit_unreliable_promotion.cpp tests/test_unit_channel_violation_counters.cpp
         sdk/rocketnet_tests.cpp tests/c_caller.c ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+    set_target_properties(test_wide PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
     add_dependencies(test_wide rocketnet_xdp_header)
     target_compile_definitions(test_wide PRIVATE ROCKETNET_MAX_CHANNELS=512
         ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1
@@ -860,15 +862,17 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # The message layer stressed at 1024 and at 10000 channels
     # (tests/test_channels_stress.cpp): one source, two binaries, each compiling
     # the SDK once more with its ROCKETNET_MAX_CHANNELS, as test_wide does at 512.
-    # Neither is part of ./bin/test or the per-push tier; the nightly
-    # .github/workflows/nightly-channels-stress.yml runs both on Linux, macOS
-    # and Windows.
+    # Neither is part of ./bin/test or the per-push tier, and both are
+    # EXCLUDE_FROM_ALL (built by name); the nightly
+    # .github/workflows/nightly-channels-stress.yml builds and runs both on
+    # Linux, macOS and Windows.
     foreach(rocketnet_stress IN ITEMS "1024;1024" "10k;10000")
         list(GET rocketnet_stress 0 rocketnet_stress_name)
         list(GET rocketnet_stress 1 rocketnet_stress_channels)
         set(rocketnet_stress_target test_channels_${rocketnet_stress_name})
-        add_executable(${rocketnet_stress_target}
+        add_executable(${rocketnet_stress_target} EXCLUDE_FROM_ALL
             tests/test_channels_stress.cpp ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
+        set_target_properties(${rocketnet_stress_target} PROPERTIES EXPORT_COMPILE_COMMANDS OFF)
         add_dependencies(${rocketnet_stress_target} rocketnet_xdp_header)
         # the test seams (the step-driven client and the link simulator in a
         # production build), the link simulator's development switch, and the

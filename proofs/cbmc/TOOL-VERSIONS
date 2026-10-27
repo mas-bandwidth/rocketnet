@@ -1,0 +1,8 @@
+# Pinned checker versions for the CBMC/ESBMC proof gates.
+# These are the versions INVENTORY.md attributes the recorded results to.
+# Both .github/workflows/cbmc.yml and .github/workflows/nightly-proofs.yml
+# compare `cbmc --version`, `cadical --version`, and `esbmc --version`
+# against this file and fail with TOOL-MISSING on any mismatch or absence.
+CBMC 6.6.0
+CADICAL 2.1.3
+ESBMC 8.5.0

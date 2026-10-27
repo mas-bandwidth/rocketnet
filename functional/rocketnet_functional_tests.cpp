@@ -10242,6 +10242,8 @@ void rocketnet_test_linux_gso_sendmmsg_errors();
 void rocketnet_test_linux_gso_recvmmsg_errors();
 void rocketnet_test_linux_uring_receive_cqe_errors();
 void rocketnet_test_linux_uring_send_cqe_errors();
+void rocketnet_test_linux_gso_refuses_explicit_port_in_use();
+void rocketnet_test_linux_uring_refuses_explicit_port_in_use();
 void rocketnet_test_linux_xdp_receive_weather_ipv4();
 void rocketnet_test_linux_xdp_receive_weather_ipv6();
 bool rocketnet_test_linux_xdp_weather_runs_here();
@@ -10936,6 +10938,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_linux_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors, NULL },
     { "test_io_uring_transport_linux_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors, NULL },
     { "test_io_uring_transport_linux_send_cqe_errors", rocketnet_test_linux_uring_send_cqe_errors, NULL },
+    { "test_gso_server_refuses_explicit_port_in_use", rocketnet_test_linux_gso_refuses_explicit_port_in_use, NULL },
+    { "test_uring_server_refuses_explicit_port_in_use", rocketnet_test_linux_uring_refuses_explicit_port_in_use, NULL },
 #if ROCKETNET_XDP
     { "test_xdp_transport_linux_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4, rocketnet_test_linux_xdp_weather_runs_here },
     { "test_xdp_transport_linux_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6, rocketnet_test_linux_xdp_weather_runs_here },

@@ -283,6 +283,18 @@ tentative bind address cannot constrain the next candidate. A discovering
 factory reports its actual port on success. Existing XDP preflight and the
 commit barrier remain in its adapter/backend.
 
+An explicit port that another socket already holds is refused on every
+transport. The `gso` and `io_uring` server transports bind their first socket
+before they set `SO_REUSEPORT` on it, whether the port is explicit or
+discovered, so a port held by another socket (another server, or any socket
+with `SO_REUSEPORT` set) fails that bind with `EADDRINUSE`, as the `portable`
+bind does: the create logs `failed to bind socket` and returns NULL, a refusal
+the ladder treats like any other. The server's own later sockets set
+`SO_REUSEPORT` before they bind and join its group on the same port. The
+functional cases `test_gso_server_refuses_explicit_port_in_use` and
+`test_uring_server_refuses_explicit_port_in_use`
+(`functional/posix_socket_errors.cpp`) hold this.
+
 A factory reports why it failed through `config->status`
 (`rocketnet_server_transport_io_config_t.status` and
 `rocketnet_client_transport_io_config_t.status`, `sdk/rocketnet_driver.h`),

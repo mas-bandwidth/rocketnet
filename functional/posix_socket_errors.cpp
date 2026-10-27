@@ -1898,6 +1898,237 @@ void rocketnet_test_linux_uring_send_cqe_errors()
     }
 }
 
+// ---------------------------------------------------
+// an explicit port another socket already holds. The portable transport's
+// bind refuses it with EADDRINUSE; the gso and io_uring transports bind their
+// first queue before it sets SO_REUSEPORT (rocketnet_server_gso_open_socket,
+// rocketnet_server_uring_open_socket), so they refuse it the same way rather
+// than joining the holder's reuseport group and sharing its datagrams. The
+// server's own later queues still join: a create of two queues on an
+// explicit free port binds both, and every datagram sent to it arrives.
+// Two holders: a second server instance of the same transport, and a plain
+// socket with SO_REUSEPORT set, the most permissive holder a bind can meet.
+
+#define POSIX_PORT_SENDERS      64
+#define POSIX_PORT_ROUNDS        4
+#define POSIX_PORT_DATAGRAMS    ( POSIX_PORT_SENDERS * POSIX_PORT_ROUNDS )
+#define POSIX_PORT_BYTES       100
+
+static std::atomic<int> posix_port_bind_refusals( 0 );
+
+static void posix_port_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) length;
+    if ( strstr( message, "failed to bind socket" ) != NULL && strstr( message, strerror( EADDRINUSE ) ) != NULL )
+        posix_port_bind_refusals++;
+}
+
+static uint16_t posix_port_free()
+{
+    int s = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( s >= 0 );
+    struct sockaddr_storage address;
+    const socklen_t bytes = posix_sockaddr( 0, 0, &address );
+    posix_check( bind( s, (struct sockaddr*) &address, bytes ) == 0 );
+    struct sockaddr_in bound;
+    socklen_t bound_bytes = sizeof(bound);
+    posix_check( getsockname( s, (struct sockaddr*) &bound, &bound_bytes ) == 0 );
+    close( s );
+    return ntohs( bound.sin_port );
+}
+
+static void * posix_port_server_create( int kind, uint16_t port )
+{
+    rocketnet_address_t address;
+    char text[64];
+    snprintf( text, sizeof(text), "127.0.0.1:%d", (int) port );
+    posix_check( rocketnet_address_parse( &address, text ) );
+    if ( kind == POSIX_NATIVE_GSO )
+    {
+        struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &address, 2, 0 );
+        if ( gso )
+            posix_check( rocketnet_server_gso_num_queues( gso ) == 2 );
+        return gso;
+    }
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_create( NULL, &address, 2 );
+    if ( uring )
+        posix_check( rocketnet_server_uring_num_queues( uring ) == 2 );
+    return uring;
+}
+
+static void posix_port_server_destroy( int kind, void * server )
+{
+    if ( kind == POSIX_NATIVE_GSO )
+        rn_native_backend_stop_and_destroy( (struct rocketnet_server_gso_t*) server, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
+    else
+        rn_native_backend_stop_and_destroy( (struct rocketnet_server_uring_t*) server, rocketnet_server_uring_stop, rocketnet_server_uring_stopped, rocketnet_server_uring_destroy );
+}
+
+static int posix_port_server_drain( int kind, void * server )
+{
+    struct rocketnet_server_socket_process_packets_t * packets;
+    if ( kind == POSIX_NATIVE_GSO )
+    {
+        rocketnet_server_gso_receive_packets( (struct rocketnet_server_gso_t*) server );
+        packets = rocketnet_server_gso_process_packets( (struct rocketnet_server_gso_t*) server );
+    }
+    else
+    {
+        rocketnet_server_uring_receive_packets( (struct rocketnet_server_uring_t*) server );
+        packets = rocketnet_server_uring_process_packets( (struct rocketnet_server_uring_t*) server );
+    }
+    for ( int i = 0; i < packets->num_packets; i++ )
+        posix_check( packets->packet_bytes[i] == POSIX_PORT_BYTES );
+    return packets->num_packets;
+}
+
+static int posix_port_socket_drain( int s )
+{
+    if ( s < 0 )
+        return 0;
+    int received = 0;
+    uint8_t data[2048];
+    while ( recv( s, data, sizeof(data), MSG_DONTWAIT ) == POSIX_PORT_BYTES )
+        received++;
+    return received;
+}
+
+// sends POSIX_PORT_DATAGRAMS datagrams to the port from POSIX_PORT_SENDERS
+// source ports, so a reuseport group's hash spreads them, and counts where
+// they arrive: the server, a second server (or NULL), a holding socket (or -1)
+
+static void posix_port_send_and_count( int kind, uint16_t port, void * server, void * other_server, int other_socket,
+                                       int * at_server, int * at_other_server, int * at_other_socket )
+{
+    int senders[POSIX_PORT_SENDERS];
+    for ( int i = 0; i < POSIX_PORT_SENDERS; i++ )
+        senders[i] = posix_open_raw_sender( 0 );
+
+    struct sockaddr_storage to;
+    const socklen_t to_bytes = posix_sockaddr( 0, port, &to );
+    uint8_t payload[POSIX_PORT_BYTES];
+    memset( payload, 0x5A, sizeof(payload) );
+
+    *at_server = 0;
+    *at_other_server = 0;
+    *at_other_socket = 0;
+
+    for ( int round = 0; round < POSIX_PORT_ROUNDS; round++ )
+    {
+        for ( int i = 0; i < POSIX_PORT_SENDERS; i++ )
+            posix_check( sendto( senders[i], payload, sizeof(payload), 0, (struct sockaddr*) &to, to_bytes ) == (ssize_t) sizeof(payload) );
+
+        // drain between rounds so no receive queue fills on loopback
+
+        *at_server += posix_port_server_drain( kind, server );
+        if ( other_server )
+            *at_other_server += posix_port_server_drain( kind, other_server );
+        *at_other_socket += posix_port_socket_drain( other_socket );
+    }
+
+    const double deadline = rocketnet_platform_time() + 5.0;
+    while ( *at_server + *at_other_server + *at_other_socket < POSIX_PORT_DATAGRAMS && rocketnet_platform_time() < deadline )
+    {
+        *at_server += posix_port_server_drain( kind, server );
+        if ( other_server )
+            *at_other_server += posix_port_server_drain( kind, other_server );
+        *at_other_socket += posix_port_socket_drain( other_socket );
+        rocketnet_platform_sleep( 0.001 );
+    }
+
+    for ( int i = 0; i < POSIX_PORT_SENDERS; i++ )
+        close( senders[i] );
+}
+
+static void posix_port_refused( int kind )
+{
+    const char * name = kind == POSIX_NATIVE_GSO ? "gso" : "io_uring";
+
+    rocketnet_log_function( posix_port_log, NULL );
+
+    // the server's own queues: two queues bind an explicit free port, and
+    // every datagram sent to it arrives at that server
+
+    const uint16_t port = posix_port_free();
+    void * server = posix_port_server_create( kind, port );
+    posix_check( server != NULL );
+    int at_server = 0, at_other_server = 0, at_other_socket = 0;
+    posix_port_send_and_count( kind, port, server, NULL, -1, &at_server, &at_other_server, &at_other_socket );
+    printf( "  %s: 2 queues bound explicit port %d, %d/%d datagrams arrived\n", name, (int) port, at_server, POSIX_PORT_DATAGRAMS );
+    fflush( stdout );
+    posix_check( at_server == POSIX_PORT_DATAGRAMS );
+
+    // a second server instance on the same port
+
+    const int refusals_before = posix_port_bind_refusals.load();
+    void * second = posix_port_server_create( kind, port );
+    if ( second != NULL )
+    {
+        posix_port_send_and_count( kind, port, server, second, -1, &at_server, &at_other_server, &at_other_socket );
+        printf( "  %s: a second server instance on port %d was created: of %d datagrams the first server read %d, the second %d\n",
+                name, (int) port, POSIX_PORT_DATAGRAMS, at_server, at_other_server );
+        fflush( stdout );
+        posix_port_server_destroy( kind, second );
+    }
+    posix_check( second == NULL );
+    posix_check( posix_port_bind_refusals.load() == refusals_before + 1 );
+
+    // the first server keeps every datagram
+
+    posix_port_send_and_count( kind, port, server, NULL, -1, &at_server, &at_other_server, &at_other_socket );
+    posix_check( at_server == POSIX_PORT_DATAGRAMS );
+    printf( "  %s: a second server instance on port %d refused (EADDRINUSE logged), the first still read %d/%d\n",
+            name, (int) port, at_server, POSIX_PORT_DATAGRAMS );
+    fflush( stdout );
+    posix_port_server_destroy( kind, server );
+
+    // a plain socket with SO_REUSEPORT holds the port
+
+    const uint16_t held_port = posix_port_free();
+    int holder = socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
+    posix_check( holder >= 0 );
+    int one = 1;
+    posix_check( setsockopt( holder, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one) ) == 0 );
+    struct sockaddr_storage held;
+    const socklen_t held_bytes = posix_sockaddr( 0, held_port, &held );
+    posix_check( bind( holder, (struct sockaddr*) &held, held_bytes ) == 0 );
+
+    const int refusals_before_holder = posix_port_bind_refusals.load();
+    void * joined = posix_port_server_create( kind, held_port );
+    if ( joined != NULL )
+    {
+        posix_port_send_and_count( kind, held_port, joined, NULL, holder, &at_server, &at_other_server, &at_other_socket );
+        printf( "  %s: a server on port %d held by an SO_REUSEPORT socket was created: of %d datagrams the server read %d, the holding socket %d\n",
+                name, (int) held_port, POSIX_PORT_DATAGRAMS, at_server, at_other_socket );
+        fflush( stdout );
+        posix_port_server_destroy( kind, joined );
+    }
+    posix_check( joined == NULL );
+    posix_check( posix_port_bind_refusals.load() == refusals_before_holder + 1 );
+    printf( "  %s: a server on port %d held by an SO_REUSEPORT socket refused (EADDRINUSE logged)\n", name, (int) held_port );
+    fflush( stdout );
+    close( holder );
+
+    rocketnet_log_function( NULL, NULL );
+}
+
+void rocketnet_test_linux_gso_refuses_explicit_port_in_use()
+{
+    posix_port_refused( POSIX_NATIVE_GSO );
+}
+
+void rocketnet_test_linux_uring_refuses_explicit_port_in_use()
+{
+    if ( !rocketnet_server_uring_available() )
+    {
+        printf( "  io_uring not offered by this kernel (built without liburing or refused by the kernel): the case has no cell here\n" );
+        return;
+    }
+    posix_port_refused( POSIX_NATIVE_URING );
+}
+
 
 // ---------------------------------------------------
 // the xdp server cell. A veth pair at MTU 1500: the near end in this network

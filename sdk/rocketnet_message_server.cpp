@@ -1740,7 +1740,11 @@ int rocketnet_message_server_receipts( struct rocketnet_message_server_t * serve
          ( capacity > 0 && !rocketnet_api_null_guard( out ) ) )
         return 0;
     rn_message_connection_t * connection = rn_message_object_connection( &server->object, client_index );
-    if ( !connection || connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED )
+    // RNReceipts TakeReceipt after Disconnect: a kicked slot's recorded
+    // outcomes stay readable until its next begin_update expires them;
+    // a free slot's ring is never read, and a reused slot's ring is its
+    // new connection's, carved fresh at Observe.
+    if ( !connection || ( connection->hot->state != RN_MESSAGE_CONNECTION_CONNECTED && connection->hot->state != RN_MESSAGE_CONNECTION_KICKED ) )
         return 0;
     return rn_endpoint_take_receipts( connection, out, capacity );
 }
