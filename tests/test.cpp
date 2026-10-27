@@ -4,6 +4,8 @@
 */
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
+#include "rocketnet_allocator.h"
 #include "portable_crt.h"
 #include "suite_runner.h"
 #include "test_env_source.h"
@@ -17,6 +19,9 @@
 #endif
 #include <stdlib.h>
 #include <string.h>
+#include <algorithm>
+#include <string>
+#include <vector>
 
 int rocketnet_unit_test_count();
 const char * rocketnet_unit_test_name( int index );
@@ -77,13 +82,14 @@ static const char * rocketnet_suite_test_name( int index )
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
-// the unit suite opens no socket: the platform's network lookups read these
+// the DEV unit suite opens no socket: the platform's network lookups read these
 // instead of getifaddrs, the netlink route dump and the IPv6 probe socket
 // (rocketnet_platform_set_network_lookups_for_testing, rocketnet_internal.h;
 // read at sdk/rocketnet_platform.cpp:391 and :4352). UNKNOWN is what
 // get_connection_type returns when a lookup fails (sdk/rocketnet_platform.cpp:1777),
 // and true is the probe's answer on a host with an IPv6 stack (:4361).
 
+#if ROCKETNET_DEV
 static int rocketnet_unit_fake_connection_type()
 {
     return ROCKETNET_CONNECTION_TYPE_UNKNOWN;
@@ -99,6 +105,79 @@ static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lo
     rocketnet_unit_fake_connection_type,
     rocketnet_unit_fake_ipv6_available,
 };
+
+#endif // #if ROCKETNET_DEV
+
+// Derive only SDK configuration names from the same descriptor tables that
+// the SDK reads. Test-runner and diagnostic variables remain untouched.
+static bool rocketnet_unit_append_config_names( std::vector<std::string> & names, const char * prefix,
+                                                const rocketnet_config_field_t * fields, int count )
+{
+    for ( int i = 0; i < count; ++i )
+    {
+        if ( ( fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
+            continue;
+        char name[128];
+        if ( !rocketnet_config_env_var_name_for( prefix, fields[i].name, name, sizeof(name) ) )
+            return false;
+        names.push_back( name );
+    }
+    return true;
+}
+
+static int rocketnet_unit_clear_environment()
+{
+    std::vector<std::string> names;
+    int count = 0;
+    const rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &count );
+    if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) )
+        return 1;
+    fields = rocketnet_server_transport_config_fields( &count );
+    if ( !rocketnet_unit_append_config_names( names, "server", fields, count ) )
+        return 1;
+    fields = rocketnet_message_config_fields( &count );
+    if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) ||
+         !rocketnet_unit_append_config_names( names, "server", fields, count ) )
+        return 1;
+    fields = rocketnet_client_budget_config_fields( &count );
+    if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) )
+        return 1;
+    fields = rocketnet_server_budget_config_fields( &count );
+    if ( !rocketnet_unit_append_config_names( names, "server", fields, count ) )
+        return 1;
+
+    // These reads are outside the descriptor engine: startup logging, served
+    // addresses, operator memory budgets and the native XDP gateway address.
+    const char * const explicit_names[] = {
+        "ROCKETNET_LOG_LEVEL", "ROCKETNET_SERVER_IPV4_ADDRESS", "ROCKETNET_SERVER_IPV6_ADDRESS",
+        "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES",
+        "ROCKETNET_GATEWAY_ETHERNET_ADDRESS",
+#if ROCKETNET_TEST_SEAMS
+        "ROCKETNET_DEV_SESSION_SEQUENCE_START",
+#endif // #if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
+        "ROCKETNET_DEV_CLIENT_LATENCY_MS", "ROCKETNET_DEV_CLIENT_JITTER_MS",
+        "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT", "ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT",
+        "ROCKETNET_DEV_SERVER_LATENCY_MS", "ROCKETNET_DEV_SERVER_JITTER_MS",
+        "ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT", "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT",
+#endif // #if ROCKETNET_DEV
+    };
+    for ( size_t i = 0; i < sizeof(explicit_names) / sizeof(explicit_names[0]); ++i )
+        names.push_back( explicit_names[i] );
+    std::sort( names.begin(), names.end() );
+    names.erase( std::unique( names.begin(), names.end() ), names.end() );
+    // Names only: no configuration value is read, copied or logged.
+    for ( size_t i = 0; i < names.size(); ++i )
+    {
+#if defined(_WIN32)
+        if ( _putenv_s( names[i].c_str(), "" ) != 0 )
+#else
+        if ( unsetenv( names[i].c_str() ) != 0 )
+#endif
+            return 1;
+    }
+    return 0;
+}
 
 static int rocketnet_unit_worker( const char * name )
 {
@@ -119,24 +198,9 @@ static int rocketnet_unit_worker( const char * name )
     setvbuf( stderr, NULL, _IOLBF, 0 );
 #endif
 
-    // init reads this before the suite installs its config isolation. The
-    // unit suite must never run against a pin-selected real-socket transport, so
-    // both transport pins are cleared for every case, like LOG_LEVEL above.
-    // The served address overrides are cleared too.
-#if defined(_WIN32)
-    const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
-    const int cleared_server = _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
-    const int cleared_client = _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
-    const int cleared_ipv4 = _putenv_s( "ROCKETNET_SERVER_IPV4_ADDRESS", "" );
-    const int cleared_ipv6 = _putenv_s( "ROCKETNET_SERVER_IPV6_ADDRESS", "" );
-#else
-    const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
-    const int cleared_server = unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-    const int cleared_client = unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-    const int cleared_ipv4 = unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" );
-    const int cleared_ipv6 = unsetenv( "ROCKETNET_SERVER_IPV6_ADDRESS" );
-#endif
-    if ( cleared != 0 || cleared_server != 0 || cleared_client != 0 || cleared_ipv4 != 0 || cleared_ipv6 != 0 )
+    // DEV0 runs ordinary production startup discovery here. That lifecycle
+    // setup is functional evidence, rather than OS-free unit evidence.
+    if ( rocketnet_unit_clear_environment() != 0 )
         return 1;
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
@@ -146,7 +210,9 @@ static int rocketnet_unit_worker( const char * name )
     void (*free_function)( void * context, void * p ) = NULL;
     rocketnet_channels_prepare( name, &malloc_function, &free_function );
 
+#if ROCKETNET_DEV
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
+#endif // #if ROCKETNET_DEV
 
     if ( rocketnet_init( NULL, malloc_function, free_function ) != ROCKETNET_STATUS_OK )
     {

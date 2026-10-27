@@ -138,7 +138,7 @@ A RocketNet integration follows a strict lifecycle and per-frame call order:
    - **Step 2 — Receive:** Drain the one receive queue with `rocketnet_client_receive_messages` / `rocketnet_server_receive_messages`. Each call returns one `rocketnet_message_batch_t`; keep calling until it returns `NULL`. Process each entry's client index, channel, reliability, byte count and data pointer before the next receive or update on that endpoint. Draining is required: a message still in the queue at the next update is API misuse, which asserts in a debug build, counts `MESSAGE_NOT_RECEIVED`, and ends that connection (`ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED` for the server's slot, `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED` for the client). Calling receive once per frame is not enough: one update can deliver more than one batch. Read ACK/loss receipts with `rocketnet_client_receipts` / `rocketnet_server_receipts`.
    - **Step 3 — Simulate:** Run the game simulation for the frame.
    - **Step 4 — Queue outgoing messages:** Reserve space in place with `rocketnet_client_start_message` / `rocketnet_server_start_message`, check that the returned pointer is non-`NULL`, write the message bytes directly into the returned pointer inside that branch, and commit with `rocketnet_client_finish_message` / `rocketnet_server_finish_message` (or cancel with `rocketnet_client_abort_message` / `rocketnet_server_abort_message`) inside the same non-`NULL` branch:
-     ```c uint8_t * out = rocketnet_client_start_message( client, channel, reliability, max_bytes ); if ( out ) { /* write 1 .. max_bytes into out */ uint32_t serial = rocketnet_client_finish_message( client, bytes_written ); (void) serial; } ```
+     ```c if ( rocketnet_client_can_send_message( client, channel, reliability, max_bytes ) ) { uint8_t * out = rocketnet_client_start_message( client, channel, reliability, max_bytes ); if ( out ) { /* write 1 .. max_bytes into out */ uint32_t serial = rocketnet_client_finish_message( client, bytes_written ); (void) serial; } } /* else skip or defer by application policy */ ```
      Calling `finish_message` without a successful outstanding `start_message` is an error and returns `0`. Optional preflight with `rocketnet_client_can_send_message` / `rocketnet_server_can_send_message` answers whether `start_message` would be granted room now without ending the connection on `MESSAGE_MEMORY_EXHAUSTED`, while `start_message` remains the authoritative reservation result (always keep the `if ( out )` check). What the application does when `can_send_message` returns `false`—skipping, deferring, dropping, or coalescing a send—is application policy, not library behavior. To send one message to every connected client, loop over the slots with `rocketnet_server_client_connected` and run a guarded `start_message` / `finish_message` for each.
    - **Step 5 — Send packets last:** Call `rocketnet_client_send_packets(client)` and `rocketnet_server_send_packets(server)` **last** so every message queued during the frame goes out on the wire in the same frame instead of waiting until the next tick.
 4. **Request shutdown, check completion, then destroy:** Call `rocketnet_client_disconnect` and `rocketnet_server_stop`. Keep your event loop running and poll `rocketnet_client_disconnected` (stepping `rocketnet_client_update` on step-driven clients) and `rocketnet_server_stopped`. After the corresponding query returns true, `rocketnet_client_destroy` or `rocketnet_server_destroy` synchronously joins and frees the object (and before reconnecting a client, wait until `rocketnet_client_disconnected` is true so the new connection starts with fresh session keys, replay window, sequence numbers, and message queues). Destroy asserts this precondition; called early, it logs one error naming the skipped completion function, records the misuse, then requests shutdown, updates a bounded number of times without sleeping, and performs the join and free itself once complete; if the worker has not exited it logs a second error and keeps the object rather than free memory the worker owns. Keep allocator and callback contexts alive through destroy, then call `rocketnet_term()` after every object has been freed. Stop/disconnect and their queries do not wait for workers; a stuck worker leaves completion false. A newly created object that has never run is already complete.
@@ -225,6 +225,8 @@ int main( void )
         /* Simulate the game here, then queue outgoing messages. */
         if ( reply_index >= 0 )
         {
+            if ( !rocketnet_server_can_send_message( server, reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) )
+                goto cleanup;
             uint8_t * out = rocketnet_server_start_message( server, (uint64_t) reply_index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( out )
             {
@@ -240,6 +242,8 @@ int main( void )
         }
         if ( !client_sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
+            if ( !rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) )
+                goto cleanup;
             uint8_t * out = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
             if ( out )
             {
@@ -458,6 +462,16 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 - **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
 - **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, call `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`, or set the environment variables `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` / `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` (`0 .. 100`), `ROCKETNET_DEV_CLIENT_LATENCY_MS` / `ROCKETNET_DEV_SERVER_LATENCY_MS`, `ROCKETNET_DEV_CLIENT_JITTER_MS` / `ROCKETNET_DEV_SERVER_JITTER_MS` and `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` / `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` (`0 .. 100`), to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
 
+### Reviewing implementation changes
+
+- Treat [sdk/rocketnet.h](sdk/rocketnet.h), [standard/TRANSPORT.md](standard/TRANSPORT.md), [docs/SESSION.md](docs/SESSION.md), [SECURITY.md](SECURITY.md), and [docs/ABI-EVOLUTION.md](docs/ABI-EVOLUTION.md) as the authorities for their respective contracts; link to them instead of copying API or wire details. Inspect the real field widths and container ownership. Bounded registries and queues must not own linked or index-linked lists ([docs/SEQUENCE-BUFFERS.md](docs/SEQUENCE-BUFFERS.md)).
+- For sequence, window, ring, or allocator changes ([docs/SEQUENCE-BUFFERS.md](docs/SEQUENCE-BUFFERS.md)), check widths at each boundary: internal sequence-buffer identities and validation tags are `uint64_t`; packet sequences are 32-bit on the wire and reconstructed to 64-bit identities; message numbers are 24-bit on the wire and reconstructed to 64-bit identities; channel sequencing and ordering state uses `uint32_t` fields masked to the 24-bit wire range; and fragment `payload_id` values are 32-bit in the wire header and reassembly state. Exercise wraparound, sparse occupancy, late and duplicate arrivals, and live-slot aliasing. Keep sequence identity separate from physical storage identity; metadata rings do not by themselves preserve arbitrary payload capacity, stable pointers, or payload lifetime, and a fixed metadata ring does not justify lost capacity or a copy fallback.
+- For lifecycle or slot reuse ([docs/CONNECTION-RESET.md](docs/CONNECTION-RESET.md)), prove that prior packets, messages, callbacks, statistics, and secrets cannot affect a reconnect or reused server slot. Observe asynchronous shutdown before reuse or destroy; distinguish metadata reset (without clearing whole payload capacities) from required secret erasure (`sodium_memzero`).
+- Bound caller-thread work for mass disconnects and other per-update cleanup; cover dropped frames, bursts, and send/receive overlap without imposing real-time arrival assumptions in functional correctness. Measure caller time separately from worker time, verify intended overlap of expensive worker work with the application frame, and do not infer a latency guarantee from functional tests.
+- Keep host-shim and loopback unit evidence distinct from real Linux XDP transport evidence ([docs/LIVE-XDP.md](docs/LIVE-XDP.md)). The approved review policy exempts the portable server from the 1000-client performance qualification; this is a policy boundary, not a measured performance result or a portable capacity claim. Preserve the existing 4096-byte XDP frame/ring configuration and the demonstrated 1000-client server limit under its stated workload and topology, and keep the separate 1000-client and 10-Gbit/s real-server qualification gates distinct ([docs/LOAD.md](docs/LOAD.md), [docs/LOAD_SPLIT.md](docs/LOAD_SPLIT.md), [docs/LAN-PROOF.md](docs/LAN-PROOF.md), [docs/XDP-PACKET-BLASTER.md](docs/XDP-PACKET-BLASTER.md)); no above-1000-player performance promise follows.
+- Keep internal test controls behind literal `#if ROCKETNET_DEV` guards and out of `sdk/rocketnet.h`, and exclude only dependent cases in `ROCKETNET_DEV=0` while retaining genuine production-linked test coverage. Review crypto nonce uniqueness, key separation by role, fresh key/token handling, random-source failure paths, and secret erasure against the security and session contracts.
+- Keep public headers self-contained with minimal includes. Preserve exported C ABI and layout checks; where wire portability applies, verify byte order with independent vectors or implementations.
+
 ---
 
 ## Common mistakes
@@ -539,6 +553,8 @@ static int write_f32(uint8_t * p, float value)
 }
 
 const int max_bytes = 1 + 4 + 2 * 4;
+if (!rocketnet_client_can_send_message(client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, max_bytes))
+    return 0; // skip this replaceable update
 uint8_t * out = rocketnet_client_start_message(client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, max_bytes);
 if (out)
 {

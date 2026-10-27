@@ -12,6 +12,7 @@
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_connection_reset.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_counters.h"
 #include "rocketnet_test_seams.h"
 
 #include <sodium.h>

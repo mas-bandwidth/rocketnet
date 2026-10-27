@@ -286,13 +286,18 @@ The generic counter introspection functions (`rocketnet_num_counters`,
 `rocketnet_counter_value` and `rocketnet_counter_name`) are internal to the
 SDK (`sdk/rocketnet_layers.h`).
 
-Client counts are lifetime totals across connections; server aggregate counts
-are lifetime totals across starts and stops. Both begin at zero at object
-creation. Process-wide `api_misuses` and `thread_priority_refusals` do not reset
-with an object. Client measurements cover the current connection, and client
-and server rates cover the trailing second; these read as zero without an
-active connection or while the server is stopped. Per-slot statistics
-describe the current connection and reset when a slot is reused.
+Client packet, byte, payload, resend, duplicate, receipt and budget counts
+describe only the connection the client currently holds. They start at zero
+for each connection and read as zero without one, including after disconnect
+while the ended connection is still retiring. Rates, RTT, jitter and loss have
+the same session boundary. `messages_dropped_not_connected` is the exception:
+it is a client-handle diagnostic and remains monotonic across connections.
+Server aggregate counts are lifetime totals across starts and stops and begin
+at zero at object creation. Process-wide `api_misuses` and
+`thread_priority_refusals` do not reset with an object. Client and server rates
+cover the trailing second and read as zero without an active connection or
+while the server is stopped. Per-slot statistics describe the current
+connection and reset when a slot is reused.
 
 `rocketnet_client_receipts` and `rocketnet_server_receipts` copy outcomes from
 the most recent update. Re-reading does not consume them; the copied entries
@@ -330,7 +335,7 @@ status code and the accompanying `ERROR` log line:
 | `INVALID_ADDRESS` | `rocketnet_server_create` | `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). | Pass a valid address string with port for at least one family. |
 | `TRANSPORT_PORT_ZERO_UNSUPPORTED` | `rocketnet_server_start` | The address specifies port `0` on a server transport that cannot discover the kernel-assigned port (such as `xdp`). | Bind an explicit UDP port (`1 .. 65535`) or include a transport that discovers its assigned port. |
 | `CONNECT_TOKEN_PORT_ZERO` | `rocketnet_client_connect` | The token advertises a server address with port `0`. | Fix the token issuer so each advertised address carries the server's bound non-zero port. |
-| `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED` | `create`, `connect`, `start` | The caller allocator returned `NULL` or the OS refused a mutex, thread, or timer. | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor limits (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
+| `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED` | `create`, `connect`, `start` | The caller allocator returned `NULL` or the OS refused a mutex, thread, or high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`, required by Windows frame sync without coarse fallback). | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor/timer support (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
 
 ### 5.2 Token, Filter, Transport Mismatch, and Handshake Failures
 
@@ -473,9 +478,12 @@ disconnects under load:
      `start_message`.
    - Always check the `uint8_t *` pointer returned by `start_message`. If it is
      `NULL`, do **not** write payload bytes and do **not** call
-     `finish_message` (an unmatched `finish_message` returns `0`; a
+     `finish_message`: calling `finish_message` without a live reservation
+     (including after `start_message` returned `NULL` or after a disconnect or
+     slot reset cancelled the reservation) asserts in a debug build and returns
+     `0` safely in a release build. When a reservation is open, a
      `finish_message` with `bytes_written < 1` or `bytes_written > max_bytes`
-     aborts the open start, logs an `ERROR`, and returns `0`).
+     aborts the open start, logs an `ERROR`, and returns `0`.
    - If `can_send_message` returns `false` or `start_message` returns `NULL`,
      **never retry in a tight same-frame loop**: queue space and send budgets
      only replenish when a subsequent frame runs `update` (advancing monotonic
@@ -555,12 +563,22 @@ disconnects under load:
         `rocketnet_client_connect(client, fresh_token)`. Never spin in a
         blocking same-frame retry loop on `CLIENT_NOT_DISCONNECTED`.
 3. **Generational isolation and lazy server slot reset**:
-   - **Client side**: when `rocketnet_client_disconnected(client)` becomes
-     `true` and the next `rocketnet_client_connect` runs, the retired
-     connection's counters are folded into the client's lifetime totals, the
-     old message/transport objects are destroyed, and the new session is
-     constructed fresh inside `client->block` with new keys, sequence numbers,
-     and reliability windows.
+   - **Client side**: when `rocketnet_client_disconnect(client)` runs and moves
+     the old connection to retirement, `rocketnet_client_stats` immediately
+     reads `0` for session counters
+     (`packets_sent`, `packets_received`, `bytes_sent`, `bytes_received`,
+     `payloads_received`, `messages_resent`, `messages_duplicated`,
+     `receipts_acked`, `receipts_lost`, `receipts_dropped`, and
+     `messages_dropped_over_budget`) as well as RTT, jitter, packet loss, and
+     trailing rates, while `messages_dropped_not_connected` remains visible.
+     When `rocketnet_client_disconnected(client)` becomes `true` and the next
+     `rocketnet_client_connect` runs (`rn_client_end_connection`), only
+     `messages_dropped_not_connected` is carried forward onto the client handle
+     (`client->lifetime[RN_CLIENT_NOT_CONNECTED_DROPS]`); the retired
+     connection's session counters are not folded into handle totals, the old
+     message/transport objects are destroyed, and the new session is constructed
+     fresh inside `client->block` with zeroed session counters and new keys,
+     sequence numbers, and reliability windows.
    - **Server side**: when a client disconnects or is kicked via
      `rocketnet_server_disconnect_client(server, client_index)`,
      `rocketnet_server_client_connected(server, client_index)` immediately

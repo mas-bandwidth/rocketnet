@@ -116,9 +116,11 @@ struct rocketnet_received_packet_record_t
     uint64_t sequence;
     double receive_time;
     uint32_t wire_bytes;
-    uint16_t stats_prev;                    // the running stats' receive-time list, by ring slot;
-    uint16_t stats_next;                    // read only while the record is counted
+    uint32_t stats_word;                   // one word of the fixed block-aggregate storage
 };
+
+static_assert( sizeof(rocketnet_received_packet_record_t) == 24,
+               "received block metadata reuses the former link storage" );
 
 // The sent ring's shadow bitmaps: one bit per slot, held (written) and
 // unacknowledged. The walk reads them instead of visiting every sequence in
@@ -129,6 +131,8 @@ struct rocketnet_received_packet_record_t
 #define ROCKETNET_AGGREGATES_WRITTEN_WORDS ( ( ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE + 63 ) / 64 )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
+
+#if ROCKETNET_DEV
 
 // The fields the statistics definition reads, as a standalone history for the
 // reference recompute (rocketnet_ack_stats_history_compute). The live ACK
@@ -194,6 +198,8 @@ struct rocketnet_ack_stats_validity_t
     void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
 };
 
+#endif // #if ROCKETNET_DEV
+
 
 struct rocketnet_ack_endpoint_t
 {
@@ -248,8 +254,10 @@ struct rocketnet_ack_endpoint_t
     // that goes backwards), so the sent spans are read at the lowest and
     // highest counted sequences. Receive times do not follow sequence
     // (reordering, late and duplicate arrivals), so the counted received
-    // records are linked in receive-time order through their ring slots,
-    // the links held in the records themselves.
+    // records are summarized by fixed 32-slot physical blocks. Their compact
+    // summaries occupy the stats_word padding reclaimed from these records,
+    // so the endpoint memory budget does not grow. Exact sequence tags reject
+    // stale aliases before a summary or edge record is counted.
     // All zero is the empty state.
 
     uint64_t stats_sent_bytes;                  // counted sent records' wire bytes
@@ -267,11 +275,14 @@ struct rocketnet_ack_endpoint_t
     uint32_t stats_eligible_count;              // counted records in the loss-eligible part
     uint32_t stats_eligible_unacked;            // of those, unacknowledged
     uint64_t stats_received_bytes;
-    double stats_received_low_time;             // receive times at the list's head and tail
+    double stats_received_low_time;             // receive-time extrema reduced from the blocks
     double stats_received_high_time;
     uint32_t stats_received_count;
-    uint16_t stats_received_head;               // slot received earliest; valid while the count is nonzero
-    uint16_t stats_received_tail;               // slot received latest
+#if ROCKETNET_DEV
+    uint32_t stats_received_operations;         // records/blocks visited by the latest receive; test-only
+#else
+    uint32_t stats_received_pad;
+#endif
     double stats_rtt_sum;                       // sum and count of the positive rtt samples
     uint32_t stats_rtt_count;
     uint32_t stats_pad;
@@ -300,12 +311,13 @@ struct rocketnet_ack_endpoint_t
     // the history entry it names (an empty or non-positive entry reads as
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
+
 };
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
                "the rtt min tree needs a power-of-two history" );
-static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE <= 65536,
-               "the received list links are 16-bit slots" );
+static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE % 32 == 0,
+               "the received block aggregate needs 32-slot blocks" );
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 
@@ -421,6 +433,8 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
 int rocketnet_ack_popcount64( uint64_t value );
 int rocketnet_ack_popcount64_portable( uint64_t value );
 
+#if ROCKETNET_DEV
+
 // The six-field result of the reference recompute over a standalone history.
 // The function never mutates the history.
 struct rocketnet_ack_stats_result_t
@@ -433,6 +447,8 @@ void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * 
                                         const uint64_t * sent_written = NULL,
                                         const uint64_t * received_written = NULL,
                                         const rocketnet_ack_stats_validity_t * validity = NULL );
+
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                    the server's acks

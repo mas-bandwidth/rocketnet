@@ -52,7 +52,26 @@ int main( void )
 ```
 <!-- check_readme:example:end -->
 
-The complete integration path is in [AGENTS.md](AGENTS.md), [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md), and [USAGE.md](USAGE.md): initialize once, configure (`rocketnet_client_default_config` / `rocketnet_server_default_config`), create and connect with a backend-issued token (`docs/SESSION.md`), run the five-step frame loop (update with the caller's monotonic time, drain the one `rocketnet_message_batch_t` receive queue until `NULL`, simulate, write outgoing messages through a guarded non-`NULL` `start_message` branch with `finish_message` inside that branch, and send packets last), and shut down asynchronously by polling `rocketnet_client_disconnected` / `rocketnet_server_stopped` before `destroy`.
+## Connect your game
+
+Start with [Getting started](docs/GETTING-STARTED.md) to build a dedicated
+server and a client that exchange messages. Then follow the references as you
+integrate:
+
+1. [Build and link](BUILDING.md) the library into your game.
+2. [Drive the frame loop](USAGE.md): update, receive, simulate, queue messages,
+   and send packets. The same guide explains buffer ownership, backpressure,
+   and asynchronous shutdown.
+3. [Connect through your backend](examples/backend/README.md), using the Go or
+   C# token examples. [Sessions](docs/SESSION.md) explains connection identity
+   and reconnects; [Keys](KEYS.md) explains which component holds each key.
+4. [Choose a transport](TRANSPORTS.md) and follow its platform guide before
+   deployment. [Errors and logging](docs/ERRORS-AND-LOGGING.md) helps diagnose
+   refusals and runtime failures.
+
+Point your coding AI at [AGENTS.md](AGENTS.md) for the integration guide.
+The [public header](sdk/rocketnet.h) defines the C API; the
+[standards](STANDARD.md) define the wire and message protocols.
 
 RocketNet's demonstrated server configuration supports up to `max_clients = 1000` (with the existing 4096-byte XDP frame/ring configuration) under its stated workload, topology, and deployment conditions. Above 1000 clients, users must research, stabilize, and qualify their own configuration.
 
@@ -77,6 +96,14 @@ historical results. The API remains provisional. Large-server frame time,
 memory use and transport qualification still need attention; see the
 [roadmap](ROADMAP.md).
 
+## What the tests establish
+
+Portable host-shim unit tests exercise XDP filter and replay logic on the host.
+They do **not** exercise the Linux kernel XDP path, AF_XDP sockets, a NIC, or
+zero-copy operation. See [live XDP validation](docs/LIVE-XDP.md) for the real
+transport checks, and [TESTING.md](TESTING.md) for qualification evidence.
+A passing unit suite is not a throughput or player-count measurement.
+
 ## Documentation
 
 - [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — start here: from a fresh checkout to a dedicated server and a client exchanging messages, and the order to read the rest.
@@ -99,14 +126,17 @@ memory use and transport qualification still need attention; see the
   reset, limits and verifying a Windows host.
 - [docs/PLATFORMS.md](docs/PLATFORMS.md) — supported, nightly, and unsupported platform rows and the CI workflows that prove them.
 - [TRANSPORTS.md](TRANSPORTS.md) — choosing a transport (every transport by platform, its `auto` rank and how to pin it), then the native transport registry, capabilities, and extension interface.
-- [sdk/rocketnet.h](sdk/rocketnet.h) — the public header, and the authority
-  wherever a contract is written down.
+- [sdk/rocketnet.h](sdk/rocketnet.h) — the public C API: names, types, and
+  calling contracts. [STANDARD.md](STANDARD.md) identifies the normative wire
+  and message specifications.
 - [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.
 - [standard/TRANSPORT.md](standard/TRANSPORT.md) — the transport standard: the wire format.
 - [standard/MESSAGES.md](standard/MESSAGES.md) — the message standard.
 - [standard/RATIONALE.md](standard/RATIONALE.md) — the rationale for both.
 - [ROADMAP.md](ROADMAP.md) — the releases and the work planned.
 - [TESTING.md](TESTING.md) — test scope and recorded release qualification.
+- [HARDENING.md](HARDENING.md) — red teaming, verification methods, load testing and evidence limits.
+- [CREDITS.md](CREDITS.md) — the people and models helping build rocketnet.
 - [CLAUDE.md](CLAUDE.md) — contributor guide.
 
 Private repository. License: [AGPL-3.0](LICENSE).

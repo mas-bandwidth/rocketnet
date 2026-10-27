@@ -10,7 +10,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -39,8 +41,12 @@
 
 #define BOTH_FAMILIES_PROTOCOL 0xB071FA11A11E5001ULL
 
+#if ROCKETNET_DEV
 static int both_families_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
 static int both_families_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
 struct both_families_identity_t
 {
@@ -51,7 +57,9 @@ struct both_families_identity_t
 };
 
 static double both_families_now = 1000.0;
+#if ROCKETNET_DEV
 static double both_families_clock( void * ) { return both_families_now; }
+#endif
 
 static void both_families_identity( both_families_identity_t * identity )
 {
@@ -71,6 +79,7 @@ static void both_families_fill( rocketnet_server_config_t * config, const both_f
     config->transport = "loopback";
 }
 
+#if ROCKETNET_DEV
 static void both_families_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
@@ -88,6 +97,7 @@ static void both_families_token( const both_families_identity_t * identity, uint
         token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
+#endif
 
 // creates with the IPv4 and IPv6 addresses, then starts; a refused create
 // returns its status with *out NULL
@@ -153,6 +163,7 @@ static void test_server_refuses_an_unparseable_second_address()
 }
 REGISTER_UNIT_TEST( test_server_refuses_an_unparseable_second_address );
 
+#if ROCKETNET_DEV
 // creates a stopped server with the IPv4 and IPv6 addresses. Nothing binds.
 static struct rocketnet_server_t * both_families_create( const both_families_identity_t * identity, const char * ipv4, const char * ipv6 )
 {
@@ -164,7 +175,9 @@ static struct rocketnet_server_t * both_families_create( const both_families_ide
     check( create_status == ROCKETNET_STATUS_OK );
     return server;
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void both_families_check_served( const struct rocketnet_server_t * server, const char * ipv4, const char * ipv6 )
 {
     char address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
@@ -175,7 +188,9 @@ static void both_families_check_served( const struct rocketnet_server_t * server
     if ( ipv6 )
         check( strcmp( address, ipv6 ) == 0 );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void test_server_address_environment_applies_to_every_server()
 {
     both_families_identity_t identity;
@@ -203,6 +218,7 @@ static void test_server_address_environment_applies_to_every_server()
     rn_test_server_stop_and_destroy( third );
 }
 REGISTER_UNIT_TEST( test_server_address_environment_applies_to_every_server );
+#endif // #if ROCKETNET_DEV
 
 static void test_server_create_refuses_no_address()
 {
@@ -219,6 +235,7 @@ static void test_server_create_refuses_no_address()
 }
 REGISTER_UNIT_TEST( test_server_create_refuses_no_address );
 
+#if ROCKETNET_DEV
 static void both_families_pump( struct rocketnet_server_t * server, struct rocketnet_client_t * ipv4, struct rocketnet_client_t * ipv6, double * time )
 {
     both_families_now = *time;
@@ -378,6 +395,7 @@ static void test_one_family_server_is_unchanged()
     both_families_stop( server );
 }
 REGISTER_UNIT_TEST( test_one_family_server_is_unchanged );
+#endif
 
 struct both_families_protocol_t
 {

@@ -47,7 +47,14 @@ int main( int argc, char ** argv )
     config.transport = "portable";
     memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
     config.state_change_callback = state_changed;
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
+    if ( !client || create_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client create: %s\n", rocketnet_status_name( create_status ) );
+        rocketnet_term();
+        return 1;
+    }
 
     // connect checks the token first: a string that does not parse, or one
     // already expired, is refused here
@@ -55,6 +62,8 @@ int main( int argc, char ** argv )
     if ( status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect refused: %s\n", rocketnet_status_name( status ) );
+        rn_cli_client_stop_and_destroy( client );
+        rocketnet_term();
         return 1;
     }
     printf( "backend_client: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_client_transport_name( client ) );
@@ -77,9 +86,16 @@ int main( int argc, char ** argv )
         if ( !sent && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             const char message[] = "hello from the backend's client";
-            uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
-            memcpy( p, message, strlen( message ) );
-            sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+            // reliable: defer to a later frame when there is no room
+            if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) ) )
+            {
+                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (int) strlen( message ) );
+                if ( p )
+                {
+                    memcpy( p, message, strlen( message ) );
+                    sent = rocketnet_client_finish_message( client, (int) strlen( message ) ) != 0;
+                }
+            }
         }
 
         rocketnet_client_send_packets( client );

@@ -14,7 +14,7 @@ the oracle:
 
 Python 3 standard library only. Example:
 
-  python3 tools/mutation/run_mutants.py --files sdk/rocketnet_packet_loss_tracker.h \
+  python3 tools/mutation/run_mutants.py --files sdk/rocketnet_ack.cpp \
       --max-mutants 40 --workers 4
 """
 
@@ -41,8 +41,6 @@ DEFAULT_FILES = [
     "sdk/rocketnet_window_ack.cpp",
     "sdk/rocketnet_window_receive.cpp",
     "sdk/rocketnet_window_send.cpp",
-    "sdk/rocketnet_packet_loss_tracker.h",
-    "sdk/rocketnet_jitter_tracker.h",
 ]
 
 RELATIONAL = {"<": ["<=", ">"], "<=": ["<", ">="], ">": [">=", "<"], ">=": [">", "<="], "==": ["!="], "!=": ["=="]}

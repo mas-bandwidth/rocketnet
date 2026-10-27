@@ -123,6 +123,11 @@ refusal of a name no build knows.
 - **Every transport:** the process's own memory budget, if one is set with
   `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES`; a transport whose memory plan does
   not fit is refused before anything is allocated.
+- **Frame pacing (`rocketnet_frame_sync_create` / `rocketnet_frame_sync_create_ex`):**
+  a high-resolution waitable timer (`CreateWaitableTimerExW` with
+  `CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`). When unavailable, creation refuses
+  with `ROCKETNET_STATUS_TIMER_CREATE_FAILED` rather than falling back to a
+  coarse standard waitable timer.
 
 No transport needs an elevated process. The library changes no system
 setting. `rocketnet_init` asks Windows for a 1 ms timer period until

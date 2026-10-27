@@ -1283,7 +1283,7 @@ static void * xdp_create( void * context, const rocketnet_server_transport_io_co
     // The backend retains its existing verify-and-bind preflight and commit
     // barrier. Registration never bypasses either or provisions the machine.
     const char * second = NULL;
-    if ( config->transport && config->transport->second_public_address[0] != '\0' )
+    if ( config->transport->second_public_address[0] != '\0' )
         second = config->transport->second_public_address;
     return rocketnet_server_socket_create( context, config->public_address, config->transport->packet_filter, queues, cpus, second, config->status );
 }
@@ -1403,7 +1403,7 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
-{ return rocketnet_server_rio_create( context, bind, 0 ); }
+{ return rocketnet_server_rio_create( context, bind ); }
 static void rio_destroy( void * transport ) { rocketnet_server_rio_destroy( (rocketnet_server_rio_t*) transport ); }
 static void rio_stop( void * transport )
 {

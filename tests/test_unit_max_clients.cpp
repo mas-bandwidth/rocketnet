@@ -184,7 +184,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     const uint64_t probes_before = rocketnet_client_slots_test_total_probes( slots );
     for ( int i = 0; i < collision_count; ++i )
     {
-        check( rocketnet_client_slots_assign( slots, ids[i], i, user_data ) == i );
+        check( rocketnet_client_slots_assign( slots, ids[i], i, ids[i], user_data ) == i );
         check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
         check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
         check( rocketnet_client_slots_handle( slots, i, &handles[i] ) );
@@ -210,7 +210,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
 
     const uint64_t replacement = UINT64_C( 0xF0000010A5A5A5A5 );
     check( rocketnet_client_slots_test_hash_index( slots, replacement ) == wanted );
-    check( rocketnet_client_slots_assign( slots, replacement, 99, user_data ) == middle );
+    check( rocketnet_client_slots_assign( slots, replacement, 99, replacement, user_data ) == middle );
     check( rocketnet_client_slots_handle( slots, middle, &handles[middle] ) );
     check( handles[middle].client_id == replacement );
     check( handles[middle].generation != stale.generation );
@@ -253,11 +253,11 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
     for ( int i = 0; i < capacity; ++i )
     {
         const uint64_t id = ( (uint64_t) (uint32_t) ( i + 1 ) << 32 ) | UINT64_C( 0xA5A5A5A5 );
-        check( rocketnet_client_slots_assign( slots, id, i, user_data ) == i );
+        check( rocketnet_client_slots_assign( slots, id, i, id, user_data ) == i );
     }
     check( rocketnet_client_slots_num_connected( slots ) == capacity );
     check( rocketnet_client_slots_num_free( slots ) == 0 );
-    check( rocketnet_client_slots_assign( slots, UINT64_MAX, -1, user_data ) == -1 );
+    check( rocketnet_client_slots_assign( slots, UINT64_MAX, -1, UINT64_MAX, user_data ) == -1 );
 
     for ( int i = 0; i < capacity; ++i )
     {
@@ -278,7 +278,7 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
     {
         const int expected = released[released_count - 1 - i];
         const uint64_t id = UINT64_C( 0xF000000000000000 ) | (uint64_t) (uint32_t) i;
-        check( rocketnet_client_slots_assign( slots, id, 10000 + i, user_data ) == expected );
+        check( rocketnet_client_slots_assign( slots, id, 10000 + i, id, user_data ) == expected );
         check( rocketnet_client_slots_find( slots, id ) == expected );
     }
     check( rocketnet_client_slots_num_connected( slots ) == capacity );

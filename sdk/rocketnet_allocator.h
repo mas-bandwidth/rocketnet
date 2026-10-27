@@ -119,20 +119,22 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
     uint32_t chunk;                     // the first store chunk, chained for a block
     uint32_t bytes;
     uint32_t serial;                    // the receipt serial (7.4)
-    uint32_t next;                      // the channel FIFO link while queued; the free list's while free
+    uint32_t next;                      // the channel FIFO link while queued (layer 6 only; never the free pool's)
     uint32_t ordering;
     uint32_t sequencing;
     uint64_t first_number;              // the first message number, once numbered (6.2)
     uint16_t channel;
     uint8_t reliability;
     uint8_t priority;
-    uint8_t in_use;
+    uint8_t in_use;                     // the slot's live bit: 1 while the descriptor is held
     uint8_t flags;                      // RN_SEND_FLAG_*
     uint16_t fragments;
     uint16_t fragments_acked;
-    uint8_t reserved[10];               // unused, inside the pinned 64
+    uint8_t reserved[6];                // unused, inside the pinned 64
+    uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
-    uint32_t span_prev, span_next;      // RN_SEND_FLAG_SPAN: the live spans, oldest first (RN_DESCRIPTOR_NONE ends)
+    uint32_t span_ticket;               // RN_SEND_FLAG_SPAN: the span's allocation ticket (order among live spans)
+    uint32_t free_handle;               // the descriptor free stack's slot: stack entry `i` lives here in descriptor `i`
 };
 
 // a send descriptor's flags
@@ -264,11 +266,14 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 // ----------------------------------------------------------------
 
 // S bytes in three classes of fixed chunks, each class a 64-aligned third of
-// S by bytes (4). A class's third holds its chunks, then one u32 link per
-// chunk: a free chunk's link is the next free chunk, an allocated chunk's is
-// RN_CHUNK_IN_USE plus the next chunk of its block. So a block's chain costs
-// no extra bytes outside S, and the in-use flag makes a double free a
-// refusal, never a corrupted list (CHANNELS section 4).
+// S by bytes (4). A class's third holds its chunks, then one u32 of
+// generation-tagged metadata per chunk (the class's meta array): a live bit,
+// a chain-head bit, the slot's generation tag and an index reference -- the
+// next chunk of its block while allocated (allocation order), the next free
+// chunk while free. So a block's references cost no extra bytes outside S,
+// and the live and head bits make a double free a refusal, never a corrupted
+// list (CHANNELS section 4). Freeing a block is O(its fragment count): it
+// follows only the block's own references, never a numeric gap.
 //
 // A message up to 1152 bytes takes one chunk of the smallest class that
 // fits, and only that class; a larger one is a block and takes
@@ -286,10 +291,10 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 struct rn_store_class_t
 {
     uint8_t * data;
-    uint32_t * link;
+    uint32_t * meta;                    // one generation-tagged u32 per chunk, after the class's chunks
     uint32_t chunk_bytes;
     uint32_t num_chunks;
-    uint32_t free_head;
+    uint32_t free_head;                 // the free chain's head chunk in meta, RN_CHUNK_NONE-style end below
     uint32_t free_count;
     uint32_t fresh;
 };
@@ -326,6 +331,10 @@ inline int rn_send_store_chunk_class( uint32_t handle ) { return (int) ( handle 
 uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_index );
 
 uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_index );
+
+// the chunk slot's current generation tag, or 0 for a handle the store did
+// not issue (a stale handle's tag never matches a live slot's next take)
+uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle );
 
 // ----------------------------------------------------------------
 //                              the region
@@ -365,9 +374,10 @@ struct rn_region_t
     rn_send_store_t store;
     uint8_t * send_spans;               // the contiguous spans of messages above one store chunk (4)
     uint32_t span_bytes;                // SR, the spans' size
-    uint32_t span_head;                 // the byte offset of the oldest live span's start
+    uint32_t span_head;                 // the byte offset of the oldest live span's start (the reclaim floor)
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
+    uint32_t span_ticket_next;          // the next span allocation ticket; live spans order by ticket, not by a linked list
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -381,7 +391,7 @@ struct rn_region_t
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
 
-    uint32_t descriptors_free_head;     // the free list of descriptors taken before, RN_DESCRIPTOR_NONE when empty
+    uint32_t descriptors_free_top;      // the descriptor free stack's depth: entries [0, top) hold taken-then-freed handles
     uint32_t descriptors_free;          // queue less the descriptors in use
     uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (tla/RNLazyPool.tla)
 

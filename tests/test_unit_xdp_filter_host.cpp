@@ -34,7 +34,7 @@
 #include "../sdk/rocketnet_wire.h"
 #include "../sdk/rocketnet_xdp_limits.h"
 
-#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 #include "xdp_host/server_xdp_host.h"
 #include "../sdk/rocketnet.h"
@@ -1855,7 +1855,7 @@ static void test_xdp_transport_host_udp_length_drops()
 
 }
 
-#endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 // The xdp transport's default queue rule: create and the memory plan take the
 // same count when num_xdp_queues is zero or negative. The xdp branch of
@@ -1887,7 +1887,7 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
 
 #endif // #if ROCKETNET_XDP
 
-#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( test_xdp_transport_host_both_destinations_redirect_and_a_third_passes );
@@ -1942,7 +1942,7 @@ static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
 }
 
 REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
-#endif // #if ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
 #if defined(ROCKETNET_XDP) && ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_queue_default_matches_memory_plan );

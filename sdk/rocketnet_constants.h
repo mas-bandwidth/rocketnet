@@ -139,7 +139,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 // for the following updates, so ending every client at once costs each call
 // a bounded number of seals, never the population's 10 per client.
 
-#define ROCKETNET_SERVER_DISCONNECT_SEALS_PER_UPDATE                        64
+#define ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE              64
 
 // The send staging of a transport whose one staging serves every client of
 // the server (loopback, IOCP, RIO): two packets for each client the build
@@ -256,9 +256,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE == ROCK
 #define ROCKETNET_MESSAGE_RESEND_DELAY_GRANULARITY_MS                          30
 // Retained for historical benchmark comparisons; it does not cap live resends.
 #define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
-
-#define ROCKETNET_PACKET_LOSS_TRACKER_HISTORY                             1024
-#define ROCKETNET_PACKET_LOSS_TRACKER_SAFETY                                30
 
 // ROCKETNET_IPV4_HEADER_BYTES and ROCKETNET_UDP_HEADER_BYTES live in
 // rocketnet_wire.h, beside the MTU they derive the packet size from

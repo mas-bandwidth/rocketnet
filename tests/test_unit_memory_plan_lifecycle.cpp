@@ -67,7 +67,9 @@ static void memory_plan_free( void * context, void * p )
 }
 
 static double memory_plan_now = 1000.0;
+#if ROCKETNET_DEV
 static double memory_plan_clock( void * ) { return memory_plan_now; }
+#endif // #if ROCKETNET_DEV
 
 // the live bytes now, from which the next peak is measured
 static uint64_t memory_plan_mark()
@@ -128,6 +130,9 @@ static void test_memory_plan_covers_lifecycle()
     check( server_first_peak <= server_required );
     check( server_second_peak == server_first_peak );
 
+    // The client half relies on the development-only caller-stepped fixture;
+    // the production unit retains the independent server lifecycle oracle.
+#if ROCKETNET_DEV
     // the client: create, connect, disconnect, disconnected, connect,
     // disconnect, disconnected, destroy. The running server is the token's
     // target and is not updated, so it allocates nothing while the client
@@ -177,6 +182,10 @@ static void test_memory_plan_covers_lifecycle()
     rn_test_server_wait_stopped( server );
     rocketnet_server_destroy( server );
     check( memory_plan_live == server_base );
+#else
+    rocketnet_server_destroy( server );
+    check( memory_plan_live == server_base );
+#endif // #if ROCKETNET_DEV
 
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );

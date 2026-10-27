@@ -614,9 +614,14 @@ enum rocketnet_client_state_t
 
 
 /// rocketnet_client_stats fills this struct.
-/// Per-client counts start at 0 on create and accumulate across connections.
-/// Byte counts include the IP and UDP headers of the connection's address
-/// family. Rates cover the trailing second.
+/// Packet, byte, payload, resend, duplicate, receipt and budget counts are
+/// the connection that is held. They start at 0 when that connection starts,
+/// including a reconnect to the same or a different server, and they read 0
+/// when no connection is held. Disconnect clears the held connection, so
+/// they read 0 while the old connection is still finishing.
+/// messages_dropped_not_connected stays on the
+/// client handle. Byte counts include the IP and UDP headers of the
+/// connection's address family. Rates cover the trailing second.
 /// Connection measurements are 0 without a connection.
 
 struct rocketnet_client_stats_t
@@ -1447,6 +1452,16 @@ struct rocketnet_server_config_t
     /// Range is 1000 .. 600000. Default is 10000.
 
     int reliable_message_timeout_ms;
+
+    /// ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE sets the whole-server
+    /// allowance for sealing redundant disconnect-notification datagrams in
+    /// one update. Range is 1 .. 1024. Default is 64. A disconnect still
+    /// closes its local slot immediately; a value below the 10-copy burst
+    /// spreads that burst across updates. If every deferred-burst slot is
+    /// occupied, the server keeps the older work and drops the new redundant
+    /// notification copies rather than exceeding this allowance.
+
+    int disconnect_packets_per_update;
 };
 
 /// Messages
@@ -1918,8 +1933,8 @@ ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rock
 /// finish or abort. max_bytes must not exceed the config's max_message_bytes.
 ///
 /// Sends outside CONNECTED are dropped. Start returns NULL without logging
-/// and increments messages_dropped_not_connected. Finish then returns 0.
-/// Dropped messages are not queued for a later connection.
+/// and increments messages_dropped_not_connected. Do not call finish after a
+/// NULL start. Dropped messages are not queued for a later connection.
 ///
 /// Needs CONNECTED. A message already open or a bad argument is refused with
 /// NULL. A reliable message that finds no message memory ends the connection
@@ -1940,11 +1955,12 @@ ROCKETNET_EXPORT uint8_t * rocketnet_client_start_message( struct rocketnet_clie
 /// Queues bytes_written from the open message and returns its nonzero serial.
 /// bytes_written must be between 1 and the reserved size.
 /// An invalid size logs an error, aborts the message and returns 0.
-/// Returns 0 if no message is open.
+/// Calling finish without an open message asserts in a debug build and
+/// returns 0 in a release build.
 ///
 /// Needs a message opened by rocketnet_client_start_message; in every other
-/// state it returns 0. Thread: not thread-safe; the caller owns the client
-/// one thread at a time.
+/// state it asserts in a debug build and returns 0 in a release build.
+/// Thread: not thread-safe; the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.
@@ -2048,10 +2064,13 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_set_send_kbps( struct 
 
 /// Fills stats with the client's current stats.
 ///
-/// Callable in every client state. Counts cover the client's whole life,
-/// across connections. Rates, round trip time, jitter and loss are zero
-/// before the first connect and after disconnect. Thread: not thread-safe; the caller owns the client one thread at
-/// a time.
+/// Callable in every client state. Packet, byte, payload, resend, duplicate,
+/// receipt and budget counts cover only the connection that is held and read
+/// zero without one, including while an ended connection is retiring.
+/// messages_dropped_not_connected remains on the client handle across
+/// connections. Rates, round trip time, jitter and loss have the same session
+/// boundary and read zero without a held connection. Thread: not thread-safe;
+/// the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and fills only
 /// api_misuses and thread_priority_refusals.
@@ -2481,8 +2500,9 @@ ROCKETNET_EXPORT uint8_t * rocketnet_server_start_message( struct rocketnet_serv
 /// rocketnet_client_finish_message.
 ///
 /// Needs a message opened by rocketnet_server_start_message on a running
-/// server; otherwise it returns 0. Thread: not thread-safe; the caller owns the
-/// server one thread at a time.
+/// server; otherwise it asserts in a debug build and returns 0 in a release
+/// build. Thread: not thread-safe; the caller owns the server one thread at
+/// a time.
 ///
 /// @param server The server. NULL counts as API misuse and returns 0.
 /// @param bytes_written The bytes written into the open message.

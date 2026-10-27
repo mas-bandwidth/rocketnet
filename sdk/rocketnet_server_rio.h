@@ -55,12 +55,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCK
 struct rocketnet_server_rio_t;
 
 // bind_address is updated with the actual port. IPv6 binds are dual stack
-// and normalize mapped IPv4 sources to IPv4. fail_stage is a constructor test
-// control: 1 after the socket, 2 after the RIO function table, 3 after the
-// region is registered, 4 after the completion queues, 5 after the request
-// queue, 6 after the first posted receive. Production passes zero.
+// and normalize mapped IPv4 sources to IPv4.
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
-    rocketnet_address_t * bind_address, int fail_stage = 0 );
+    rocketnet_address_t * bind_address
+#if ROCKETNET_DEV
+    // Development constructor control: fail after the socket, RIO table,
+    // region, completion queues, request queue or first posted receive.
+    , int fail_stage = 0
+#endif
+    );
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio );
@@ -98,7 +101,7 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
 
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined(ROCKETNET_RIO_TESTS)
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or

@@ -61,7 +61,10 @@ static void rocketnet_session_server_setup_clients( struct rocketnet_session_ser
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof(user_data) );
-    rocketnet_unit_check( rocketnet_client_slots_assign( server->client_slots, 0x1234, test->mapping_index, user_data ) == 0 );
+    const uint64_t owner_generation =
+        rocketnet_encryption_map_owner_generation( server->encryption_map, test->mapping_index );
+    rocketnet_unit_check( rocketnet_client_slots_assign( server->client_slots, 0x1234, test->mapping_index,
+                                                         owner_generation, user_data ) == 0 );
 }
 
 static void rocketnet_session_server_setup( struct rocketnet_session_server_t * test )
@@ -149,7 +152,8 @@ static void test_standard_session_accept_payload_without_mapping_touches_nothing
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof(user_data) );
-    const int client_index = rocketnet_client_slots_assign( test.server.client_slots, 0x5678, -1, user_data );
+    const int client_index = rocketnet_client_slots_assign( test.server.client_slots, 0x5678, -1,
+                                                            0x5678, user_data );
     rocketnet_unit_check( client_index == 1 );
     rocketnet_unit_check( rocketnet_client_slots_connected( test.server.client_slots, client_index ) );
     rocketnet_unit_check( rocketnet_client_slots_mapping_index( test.server.client_slots, client_index ) == -1 );

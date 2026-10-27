@@ -69,8 +69,9 @@ static void test_sized_config_accepts_every_known_size()
     sized_config_check_table( server_known_bytes, COUNT( server_known_bytes ), sizeof( struct rocketnet_server_transport_config_t ) );
     sized_config_check_table( message_known_bytes, COUNT( message_known_bytes ), sizeof( struct rocketnet_message_config_t ) );
 
-    // a caller compiled against the current size: the sized defaults are the
-    // unsized defaults, byte for byte, for every known size's prefix
+    // Sized defaults match the legacy unsized defaults through their legacy
+    // prefix. The current server revision uses the current internal defaults,
+    // including the nonzero appended disconnect allowance.
 
     for ( int i = 0; i < COUNT( client_known_bytes ); i++ )
     {
@@ -87,7 +88,10 @@ static void test_sized_config_accepts_every_known_size()
         struct rocketnet_server_transport_config_t unsized, sized;
         memset( &unsized, 0xAB, sizeof( unsized ) );
         memset( &sized, 0xAB, sizeof( sized ) );
-        rocketnet_server_transport_default_config( &unsized );
+        if ( server_known_bytes[i] == ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 )
+            rocketnet_server_transport_default_config_current( &unsized );
+        else
+            rocketnet_server_transport_default_config( &unsized );
         check( rocketnet_server_transport_default_config_sized( &sized, server_known_bytes[i] ) == 1 );
         check( memcmp( &unsized, &sized, server_known_bytes[i] ) == 0 );
     }
@@ -450,6 +454,10 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.transport = "portable", true );
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3600, true );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 60, true );
+    SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 1, true );
+    SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 9, true );
+    SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 64, true );
+    SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 1024, true );
 
     // transport fields out of range: refused
     SIZED_CONFIG_SERVER_CREATE( c.max_clients = 0, false );
@@ -464,6 +472,8 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.max_timeout_seconds = 3601, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 0, false );
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 61, false );
+    SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 0, false );
+    SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 1025, false );
 
     // a transport list that does not parse: refused
     SIZED_CONFIG_SERVER_CREATE( c.transport = "bogus", false );
@@ -653,6 +663,52 @@ static void test_public_light_config_honours_caller_size()
     const uint8_t * server_raw = (const uint8_t *) &server_config;
     for ( size_t i = server_bytes; i < sizeof( server_config ); i++ )
         check( server_raw[i] == 0xCD );
+
+    struct rocketnet_server_config_t full_server;
+    check( rocketnet_server_light_config( &full_server ) == ROCKETNET_STATUS_OK );
+    check( full_server.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
+}
+
+// The appended public field is revision 2. A revision-1 caller's last bytes
+// are never read, so its server uses the new default; a current caller's value
+// is copied exactly once into the resolved transport config.
+static void test_public_server_disconnect_allowance_revision_and_copy()
+{
+    struct rocketnet_server_config_t defaults;
+    check( rocketnet_server_default_config( &defaults ) == ROCKETNET_STATUS_OK );
+    check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( defaults ) );
+
+    struct rocketnet_server_config_t old_caller;
+    memset( &old_caller, 0xCD, sizeof( old_caller ) );
+    old_caller.config_bytes = ROCKETNET_SERVER_CONFIG_BYTES_1;
+    check( rocketnet_server_default_config_internal( &old_caller ) == ROCKETNET_STATUS_OK );
+    check( old_caller.config_bytes == ROCKETNET_SERVER_CONFIG_BYTES_1 );
+    const uint8_t * old_bytes = (const uint8_t *) &old_caller;
+    for ( size_t i = ROCKETNET_SERVER_CONFIG_BYTES_1; i < sizeof( old_caller ); i++ )
+        check( old_bytes[i] == 0xCD );
+    old_caller.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( old_caller.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    old_caller.max_clients = 4;
+    old_caller.transport = "loopback";
+    enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_server_t * old_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &old_caller, &status );
+    check( old_server != NULL && status == ROCKETNET_STATUS_OK );
+    rn_test_server_stop_and_destroy( old_server );
+
+    const int values[] = { 1, 9, 64, 1024 };
+    for ( int i = 0; i < COUNT( values ); i++ )
+    {
+        struct rocketnet_server_config_t config;
+        check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+        config.disconnect_packets_per_update = values[i];
+        struct rocketnet_server_transport_config_t transport;
+        struct rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+        check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+        check( transport.disconnect_packets_per_update == values[i] );
+    }
 }
 
 static void test_public_config_bytes_newer_larger_ignores_the_tail()
@@ -710,11 +766,14 @@ static void test_public_config_bytes_newer_larger_ignores_the_tail()
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
 }
 
-// The public client and server configs have one revision, the whole struct
-// (docs/ABI-EVOLUTION.md section 4): the plain default fills every field, and
-// the plain create reads every field. The network simulator is a call, not a
-// field. Every case runs in memory: the loopback transport, step driven, time
-// from 1000.0, no socket and no clock.
+// The public client config has one revision and the server config has two
+// after its appended disconnect allowance (docs/ABI-EVOLUTION.md section 4):
+// the plain default fills every current field, and the plain create reads
+// every field in the caller's declared revision. The network simulator is a
+// call, not a field. Every case runs in memory: the loopback transport, step
+// driven, time from 1000.0, no socket and no clock.
+
+#if ROCKETNET_DEV
 
 #define PUBLIC_CONFIG_PROTOCOL 0x0C0F16A11FEDULL
 
@@ -848,6 +907,8 @@ static void test_network_simulator_applies_to_outgoing_packets()
     rocketnet_quiet( 0 );
 }
 
+#endif // #if ROCKETNET_DEV
+
 static void test_public_config_default_fills_every_field()
 {
     // the inline default and its library half at sizeof write the same whole
@@ -895,7 +956,9 @@ static void test_public_config_default_fills_every_field()
 }
 
 
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_network_simulator_applies_to_outgoing_packets );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_config_default_fills_every_field );
 REGISTER_UNIT_TEST( test_sized_config_accepts_every_known_size );
 REGISTER_UNIT_TEST( test_sized_config_message_revision_1_reads_budget_defaults );
@@ -909,3 +972,4 @@ REGISTER_UNIT_TEST( test_public_config_bytes_older_smaller_reads_the_prefix );
 REGISTER_UNIT_TEST( test_public_config_bytes_newer_larger_ignores_the_tail );
 REGISTER_UNIT_TEST( test_public_config_bytes_inside_a_field_is_refused );
 REGISTER_UNIT_TEST( test_public_light_config_honours_caller_size );
+REGISTER_UNIT_TEST( test_public_server_disconnect_allowance_revision_and_copy );

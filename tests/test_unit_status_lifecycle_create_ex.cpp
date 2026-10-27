@@ -13,7 +13,10 @@
 //   * rocketnet_init_ex PLATFORM_INIT_FAILED and CRYPTO_INIT_FAILED, which need
 //     the platform or sodium start to fail (no fault hook exists);
 //   * rocketnet_frame_sync_create_ex F3 TIMER_CREATE_FAILED, which is the
-//     Windows CreateWaitableTimerExW refusal and does not exist on Linux;
+//     Windows CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)
+//     refusal without coarse fallback (covered by the status-plumbing unit
+//     check in test_unit_status_codes_reached.cpp and the native resource
+//     functional cases in functional/platform_primitives.cpp);
 //   * the client and server transport create exits (C1-C11, S1-S14), which are
 //     Layer 4 work owned by the transport cards, not this card's surface.
 

@@ -7,7 +7,7 @@ Sending with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` gives each upda
 ## What it shows
 
 1. Create a server and a client over the `loopback` transport, with 30 percent loss on outgoing client packets from `rocketnet_client_network_simulator`, so some packets arrive and some are lost.
-2. Queue 20 state updates with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
+2. Queue 20 state updates with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_can_send_message`, `rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
 3. Read `rocketnet_client_receipts` each frame after `rocketnet_client_update` and match each `rocketnet_receipt_t` serial back to the update that sent it.
 4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
 
@@ -44,7 +44,7 @@ Each `update <n> (serial <s>): ACKED|LOSS` line reports the single outcome for t
   `rocketnet_server_update`, `rocketnet_server_send_packets`,
   `rocketnet_server_ipv4_address`,
   `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
-  `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
+  `rocketnet_server_can_send_message`, `rocketnet_server_start_message`, `rocketnet_server_finish_message`,
   `rocketnet_server_receive_messages`
 - `rocketnet_client_default_config`, `rocketnet_client_create`,
   `rocketnet_client_connect`, `rocketnet_client_destroy`,

@@ -47,11 +47,16 @@ int main( int argc, char ** argv )
     config.max_clients = 1;
     config.transport = "portable";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &server_status );
+    if ( server && server_status == ROCKETNET_STATUS_OK )
+        server_status = rocketnet_server_start( server );
+    if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
         // the example runner reads this line as a port already taken, and retries on another
         printf( "FAIL: server != NULL\n" );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
         return 1;
     }
 
@@ -62,6 +67,13 @@ int main( int argc, char ** argv )
     rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) );
     rocketnet_server_public_key( server, server_public_key );
     FILE * keys = fopen( KEY_FILE, "w" );
+    if ( !keys )
+    {
+        printf( "FAIL: could not write %s\n", KEY_FILE );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
     fprintf( keys, "server_public " );
     for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
         fprintf( keys, "%02x", server_public_key[i] );
@@ -85,11 +97,15 @@ int main( int argc, char ** argv )
             for ( int i = 0; i < batch->num_messages; i++ )
             {
                 printf( "server received: %.*s\n", batch->bytes[i], (const char *) batch->data[i] );
-                uint8_t * p = rocketnet_server_start_message( server, (uint64_t) batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
-                if ( !p )
-                    continue;
-                memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
-                echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+                if ( rocketnet_server_can_send_message( server, batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] ) )
+                {
+                    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) batch->client_index[i], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, batch->bytes[i] );
+                    if ( p )
+                    {
+                        memcpy( p, batch->data[i], (size_t) batch->bytes[i] );
+                        echoed |= rocketnet_server_finish_message( server, batch->bytes[i] ) != 0;
+                    }
+                }
             }
         }
 

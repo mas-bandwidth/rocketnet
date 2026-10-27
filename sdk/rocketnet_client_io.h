@@ -724,6 +724,7 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // rocketnet_client_transport_client_io in place of the thread. After stop,
 // explicit steps or transport_update advance completion; stopped only polls,
 // and destroy requires completion. Returns NULL on any create refusal.
+#if ROCKETNET_DEV
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
     const struct rocketnet_client_transport_config_t * config, double time,
     const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
@@ -745,6 +746,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
 // created by the no-thread fixture, stamping receives with synthetic time.
 // Never use concurrently with a real worker.
 void rocketnet_client_transport_step_legacy_for_test( struct rocketnet_client_transport_t * client_transport, double time );
+#endif // #if ROCKETNET_DEV
 
 // The transport's I/O core, or NULL on the BASE path.
 rocketnet_client_io_t * rocketnet_client_transport_client_io( struct rocketnet_client_transport_t * client_transport );

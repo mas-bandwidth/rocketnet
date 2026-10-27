@@ -111,7 +111,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     // the pools are lazy (tla/RNLazyPool.tla): their state is the free list,
     // the free count and the watermark; the bytes of a descriptor or chunk
     // link at or past the watermark are not state and are not compared
-    if ( a->descriptors_free_head != b->descriptors_free_head || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
+    if ( a->descriptors_free_top != b->descriptors_free_top || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
         return false;
     if ( memcmp( a->channel_send, b->channel_send, sizeof(rn_channel_send_t) * a->num_channels ) != 0 ) return false;
     if ( memcmp( a->channel_receive, b->channel_receive, sizeof(rn_channel_receive_t) * a->num_channels ) != 0 ) return false;
@@ -139,7 +139,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         const rn_store_class_t * y = &b->store.classes[c];
         if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
             return false;
-        if ( memcmp( x->link, y->link, sizeof(uint32_t) * x->fresh ) != 0 )
+        if ( memcmp( x->meta, y->meta, sizeof(uint32_t) * x->fresh ) != 0 )
             return false;
         // the class's place in its region, the same offset in both
         if ( x->data - a->store_memory != y->data - b->store_memory )
@@ -706,6 +706,173 @@ static void test_span_granted_after_reset()
     rn_arena_destroy( arena );
 }
 
+// Generation-tagged slots: a descriptor's generation bumps on every take and
+// survives its free, the free stack is exact LIFO, and a chunk slot's
+// generation bumps on every take of that chunk.
+static void test_generation_tagged_slots_and_lifo_stack()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t a = rn_region_send_alloc( region, 10 );
+    const uint32_t b = rn_region_send_alloc( region, 10 );
+    const uint32_t c = rn_region_send_alloc( region, 10 );
+    check( a != RN_DESCRIPTOR_NONE && b != RN_DESCRIPTOR_NONE && c != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[a].generation == 1 );
+    const uint32_t chunk_a = region->send_descriptors[a].chunk;
+    check( rn_send_store_chunk_generation( &region->store, chunk_a ) == 1 );
+
+    // exact LIFO: free b then a; the next takes are a then b
+    rn_region_send_free( region, b );
+    rn_region_send_free( region, a );
+    check( region->descriptors_free_top == 2 );
+    check( rn_region_send_alloc( region, 10 ) == a );
+    check( region->send_descriptors[a].generation == 2 );
+    check( rn_send_store_chunk_generation( &region->store, region->send_descriptors[a].chunk ) >= 1 );
+    check( rn_region_send_alloc( region, 10 ) == b );
+    check( region->send_descriptors[b].generation == 2 );
+
+    // a stale chunk handle's generation never matches the slot's live take:
+    // freeing the live chain, then freeing it again, is refused whole
+    const uint32_t live_chunk = region->send_descriptors[a].chunk;
+    const uint32_t gen_before = rn_send_store_chunk_generation( &region->store, live_chunk );
+    rn_region_send_free( region, a );
+    check( rn_send_store_chunk_generation( &region->store, live_chunk ) == gen_before );
+    check( !rn_send_store_free_checked( &region->store, live_chunk ) );
+    const uint32_t a2 = rn_region_send_alloc( region, 10 );
+    check( a2 == a );
+    check( rn_send_store_chunk_generation( &region->store, region->send_descriptors[a2].chunk ) != gen_before ||
+           region->send_descriptors[a2].chunk != live_chunk );
+
+    rn_arena_destroy( arena );
+}
+
+// Live spans order by allocation ticket: the oldest live span pins the
+// reclaim floor while interior spans churn, holes are never overwritten, and
+// the floor advances only when the oldest span is freed.
+static void test_span_tickets_pin_oldest_live()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region->span_bytes >= 4 * 4096 );
+
+    const int span_bytes = 2048;
+    const uint32_t s0 = rn_region_send_alloc_span( region, span_bytes );
+    const uint32_t s1 = rn_region_send_alloc_span( region, span_bytes );
+    const uint32_t s2 = rn_region_send_alloc_span( region, span_bytes );
+    check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE && s2 != RN_DESCRIPTOR_NONE );
+    check( region->span_first == s0 && region->span_last == s2 );
+    check( region->send_descriptors[s0].span_ticket < region->send_descriptors[s1].span_ticket );
+    check( region->send_descriptors[s1].span_ticket < region->send_descriptors[s2].span_ticket );
+    const uint32_t floor = region->span_head;
+    check( floor == region->send_descriptors[s0].span_start );
+
+    // interior churn: free and retake the middle span; the floor stays pinned
+    rn_region_send_free( region, s1 );
+    check( region->span_first == s0 && region->span_head == floor );
+    const uint32_t s1b = rn_region_send_alloc_span( region, span_bytes );
+    check( s1b != RN_DESCRIPTOR_NONE );
+    check( region->span_first == s0 && region->span_head == floor );
+    check( region->send_descriptors[s1b].span_ticket > region->send_descriptors[s2].span_ticket );
+    check( region->span_last == s1b );
+
+    // freeing the oldest advances the floor to the next-oldest live span
+    rn_region_send_free( region, s0 );
+    check( region->span_first == s2 );
+    check( region->span_head == region->send_descriptors[s2].span_start );
+
+    rn_region_send_free( region, s2 );
+    rn_region_send_free( region, s1b );
+    check( region->span_first == RN_DESCRIPTOR_NONE && region->span_head == 0 && region->span_tail == 0 );
+
+    rn_arena_destroy( arena );
+}
+
+// Near ticket exhaustion: tickets renumber in order instead of wrapping onto
+// a live span's ticket, so oldest-live order survives the wrap.
+static void test_span_ticket_wraparound_renumbers()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t s0 = rn_region_send_alloc_span( region, 2048 );
+    const uint32_t s1 = rn_region_send_alloc_span( region, 2048 );
+    check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE );
+    region->span_ticket_next = 0xFFFFFFFFu;
+    const uint32_t s2 = rn_region_send_alloc_span( region, 2048 );
+    check( s2 != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[s2].span_ticket == 0xFFFFFFFFu );
+    const uint32_t s3 = rn_region_send_alloc_span( region, 2048 );
+    check( s3 != RN_DESCRIPTOR_NONE );
+    // renumbered 1..3 in allocation order, the new span last
+    check( region->send_descriptors[s0].span_ticket == 1 );
+    check( region->send_descriptors[s1].span_ticket == 2 );
+    check( region->send_descriptors[s2].span_ticket == 3 );
+    check( region->send_descriptors[s3].span_ticket == 4 );
+    check( region->span_first == s0 && region->span_last == s3 );
+
+    rn_arena_destroy( arena );
+}
+
+// Freeing a fragment follows only the block's own references: an index past
+// the chain's end frees nothing and returns at the chain's end, never after a
+// numeric-gap-proportional walk.
+static void test_fragment_free_bounded_by_chain()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof(counters) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t large_free = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );
+    const uint32_t d = rn_region_send_alloc( region, 3000 );
+    check( d != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[d].fragments == 3 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free - 3 );
+
+    rn_region_send_free_fragment( region, d, 1000000 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free - 3 );
+
+    rn_region_send_free( region, d );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( test_memory_isolation_between_slots );
 REGISTER_UNIT_TEST( test_reassembly_geometry_refuses_bad_arguments_and_budget );
 REGISTER_UNIT_TEST( test_exhaustion_is_a_kick_with_its_reason );
@@ -716,3 +883,7 @@ REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
+REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
+REGISTER_UNIT_TEST( test_span_tickets_pin_oldest_live );
+REGISTER_UNIT_TEST( test_span_ticket_wraparound_renumbers );
+REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );

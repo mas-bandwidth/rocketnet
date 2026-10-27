@@ -9,12 +9,15 @@
 #define ROCKETNET_CONNECTION_RESET_H
 
 #include <stddef.h>
+#include "rocketnet_test_seams.h"
 
 struct rocketnet_client_protocol_t;
 struct rocketnet_server_protocol_t;
 struct rocketnet_client_transport_t;
 struct rocketnet_server_transport_t;
 struct rn_message_object_t;
+
+#if ROCKETNET_DEV
 
 /*
     The inventory is deliberately beside the reset declarations. A change to
@@ -63,8 +66,7 @@ struct rn_message_object_t;
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
     X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
     X( KEEP, counters ) X( RESET, protocol ) \
-    X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
-    X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
+    X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
     X( KEEP, control ) X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
@@ -96,8 +98,10 @@ struct rn_message_object_t;
     X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
-    X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
+    X( RESET, connection_id ) X( KEEP, views ) X( RESET, receive_cursor ) \
     X( RESET, held ) X( RESET, state )
+
+#endif // #if ROCKETNET_DEV
 
 /*
     Reset order is part of the contract:
@@ -128,6 +132,8 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 
 void rocketnet_client_connection_reset( struct rn_message_object_t * client );
 void rocketnet_server_connection_reset( struct rn_message_object_t * server, int client_index );
+
+#if ROCKETNET_DEV
 
 /*
     The field walk. members is a struct's declaration manifest (its
@@ -172,5 +178,7 @@ void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_tr
 bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server );
 bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_transport_t * server, int client_index,
                                                      char * failure, size_t failure_bytes );
+
+#endif // #if ROCKETNET_DEV
 
 #endif // #ifndef ROCKETNET_CONNECTION_RESET_H

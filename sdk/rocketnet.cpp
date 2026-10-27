@@ -10,8 +10,6 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_config.h"
 #include "rocketnet_hash.h"
-#include "rocketnet_packet_loss_tracker.h"
-#include "rocketnet_jitter_tracker.h"
 
 #include <sodium.h>
 

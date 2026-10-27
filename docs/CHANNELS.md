@@ -25,12 +25,17 @@ There is no release call and no per-channel receive call.
 
 ## Sending
 
-`start_message` reserves up to the declared byte count. The caller writes into
-the returned storage and calls `finish_message` with the number written, or
-`abort_message`. Only one reservation may be open on an endpoint object.
-Finishing returns a nonzero receipt serial. A refused start returns NULL; a
-refused finish (a byte count outside 1 to the bytes started) returns zero and
-aborts the pending reservation, so the next start is never blocked.
+`start_message` reserves up to the declared byte count. The caller checks that
+the returned pointer is non-NULL, writes into the returned storage, and calls
+`finish_message` with the number written, or `abort_message`. Only one
+reservation may be open on an endpoint object. Finishing returns a nonzero
+receipt serial. A refused start returns NULL; calling `finish_message` without
+a live reservation (including after `start_message` returned NULL or after a
+disconnect or slot reset cancelled the reservation) is an application error
+that asserts in a debug build and returns zero in a release build. A refused
+finish with a live reservation (a byte count outside 1 to the bytes started)
+returns zero and aborts the pending reservation, so the next start is never
+blocked.
 
 The server start call takes a `uint64_t` destination id; the server finish and
 abort calls take none, acting on the one pending start. Values below

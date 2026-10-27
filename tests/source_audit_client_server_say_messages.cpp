@@ -37,6 +37,11 @@
 #include <string>
 #include <vector>
 
+// The example send-safety audit lives in its own translation unit; it runs
+// as part of this case so the registered source-audit binary executes it
+// without a second manifest of case names.
+void rocketnet_example_send_safety_audit_run();
+
 static std::string ascii_lower( const std::string & text )
 {
     std::string out = text;
@@ -131,11 +136,20 @@ static const allowlist_row_t allowlist[] =
     { F_H, "packets_received", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "packet_loss", "TRANSPORT COUNTERS AND STATS" },
     { F_H, "of sent packets", "TRANSPORT COUNTERS AND STATS" },
+    // These fields describe the held transport connection's packet and byte
+    // counters; "packet" here names a UDP datagram, not an application message.
+    { F_H, "Packet, byte, payload, resend, duplicate, receipt and budget counts are", "TRANSPORT COUNTERS AND STATS" },
+    { F_H, "Callable in every client state. Packet, byte, payload, resend, duplicate,", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "PACKETS_SENT", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "PACKETS_RECEIVED", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "packets_sent", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "packets_received", "TRANSPORT COUNTERS AND STATS" },
     { F_API, "packet_loss", "TRANSPORT COUNTERS AND STATS" },
+    // These implementation comments describe per-connection transport totals
+    // and their publication lifetime; they do not call application messages packets.
+    { F_API, "The counts each public stats struct carries. A client connection's packet", "TRANSPORT COUNTERS AND STATS" },
+    { F_API, "The retiring connection is destroyed. Its packet, byte and message totals", "TRANSPORT COUNTERS AND STATS" },
+    { F_API, "packets, bytes and messages are not published. Not-connected drops", "TRANSPORT COUNTERS AND STATS" },
 
     // PACKET FILTER AND ACK TRACKING: per-datagram transport state.
     { F_H, "packets_in_flight", "PACKET FILTER AND ACK TRACKING" },
@@ -261,6 +275,7 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
 
 static void test_client_server_say_messages_not_packets()
 {
+    rocketnet_example_send_safety_audit_run();
     std::vector<std::string> failures;
     std::vector<size_t> used_rows( allowlist_count, 0 );
     std::vector<int> per_reason_hits( allowlist_count, 0 );

@@ -30,10 +30,15 @@ int main( void )
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
 
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
-    if ( !server || rocketnet_server_start( server ) != ROCKETNET_STATUS_OK )
+    enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &server_status );
+    if ( server && server_status == ROCKETNET_STATUS_OK )
+        server_status = rocketnet_server_start( server );
+    if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
-        printf( "FAIL: server start\n" );
+        printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
         return 1;
     }
 
@@ -42,14 +47,30 @@ int main( void )
     char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) );
     rocketnet_server_public_key( server, server_public_key );
-    rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( server_address, NULL, server_public_key, 30, 10, 1, EXAMPLE_PROTOCOL_ID, (uint64_t) time( NULL ), NULL, connect_token );
+    if ( token_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
 
     struct rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
-    rocketnet_client_network_simulator( client, 0, 0, 30, 0 );
-    rocketnet_client_connect( client, connect_token );
+    enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &client_status );
+    if ( client )
+        rocketnet_client_network_simulator( client, 0, 0, 30, 0 );
+    if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
+        rn_cli_client_stop_and_destroy( client );
+        rn_cli_server_stop_and_destroy( server );
+        rocketnet_term();
+        return 1;
+    }
 
     uint32_t serials[NUM_UPDATES];
     int sent = 0, acked = 0, lost = 0;
@@ -84,18 +105,34 @@ int main( void )
         {
             if ( sent < NUM_UPDATES )
             {
-                uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 1 );
-                p[0] = (uint8_t) sent;
-                serials[sent++] = rocketnet_client_finish_message( client, 1 );
+                // replaceable state: skip this frame when there is no room
+                if ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 1 ) )
+                {
+                    uint8_t * p = rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 1 );
+                    if ( p )
+                    {
+                        p[0] = (uint8_t) sent;
+                        const uint32_t serial = rocketnet_client_finish_message( client, 1 );
+                        if ( serial )
+                            serials[sent++] = serial;
+                    }
+                }
             }
 
             // the server's packets carry the acks back to the client
             const int slot = rocketnet_client_index( client );
             if ( rocketnet_server_client_connected( server, slot ) )
             {
-                uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 );
-                p[0] = 0;
-                rocketnet_server_finish_message( server, 1 );
+                if ( rocketnet_server_can_send_message( server, slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 ) )
+                {
+                    uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1 );
+                    if ( p )
+                    {
+                        p[0] = 0;
+                        const uint32_t serial = rocketnet_server_finish_message( server, 1 );
+                        (void) serial;
+                    }
+                }
             }
         }
 

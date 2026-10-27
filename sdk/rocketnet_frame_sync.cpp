@@ -4,7 +4,6 @@
 */
 
 #include "rocketnet_frame_sync.h"
-#include "rocketnet_test_seams.h"
 
 #include <string.h>
 #include <errno.h>
@@ -25,6 +24,10 @@
 #endif
 
 #define ROCKETNET_NANOS_PER_SECOND 1000000000ULL
+
+#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
+#endif
 
 // -------------------------------------------------------------------
 // the platform clock and the absolute sleep it pairs with
@@ -82,13 +85,13 @@ static const mach_timebase_info_data_t & rocketnet_frame_sync_timebase()
 
 // This metadata-only probe verifies the scale is available before frame-sync
 // creation, without reading the live clock.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_frame_sync_timebase_ready_for_testing()
 {
     const mach_timebase_info_data_t & timebase = rocketnet_frame_sync_timebase();
     return timebase.numer != 0 && timebase.denom != 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_frame_sync_platform_init()
 {
@@ -110,9 +113,14 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
-#ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
-#define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
-#endif
+static HANDLE rocketnet_frame_sync_create_waitable_timer( unsigned flags )
+{
+#if ROCKETNET_DEV
+    return (HANDLE) rocketnet_platform_priority_calls_current()->create_waitable_timer( flags );
+#else
+    return CreateWaitableTimerExW( NULL, NULL, flags, TIMER_ALL_ACCESS );
+#endif // #if ROCKETNET_DEV
+}
 
 // the counter frequency is read once, on first use by any caller (a
 // function-local static, initialized once even under concurrent first
@@ -281,11 +289,11 @@ static void rocketnet_frame_sync_restore_priority( struct rocketnet_frame_sync_t
 
 #endif
 
-// For unit tests only (test_unit_thread_priority.cpp declares it): the
+// For development unit tests only: the
 // priority step rocketnet_frame_sync_wait takes on its first wait, run on a
 // frame sync that is never created (no timer, no thread), then given back
 // through rocketnet_frame_sync_restore_priority. Returns priority_held.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns )
 {
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
@@ -298,7 +306,7 @@ int rocketnet_frame_sync_elevate_priority_for_testing( uint64_t period_ns )
     rocketnet_frame_sync_restore_priority( &frame_sync );
     return frame_sync.priority_held;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // -------------------------------------------------------------------
 // the pure parts
@@ -424,17 +432,15 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
     }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    frame_sync->waitable_timer = rocketnet_platform_priority_calls_current()->create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION );
-    if ( !frame_sync->waitable_timer )
-    {
-        rocketnet_info( "frame sync: high resolution waitable timer unavailable, using standard" );
-        frame_sync->waitable_timer = rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 );
-    }
+    // Windows frame pacing requires a high-resolution waitable timer
+    // (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION); it never retries or falls back
+    // to a coarse standard waitable timer (flags == 0).
+    frame_sync->waitable_timer = rocketnet_frame_sync_create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION );
     if ( !frame_sync->waitable_timer )
     {
         if ( status )
             *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
-        rocketnet_error( "frame sync: could not create waitable timer (%lu)", (unsigned long) GetLastError() );
+        rocketnet_error( "frame sync: could not create high resolution waitable timer (%lu)", (unsigned long) GetLastError() );
         rocketnet_free( context, frame_sync );
         return NULL;
     }
@@ -442,12 +448,12 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
     frame_sync->lifecycle_timer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER,
         (uintptr_t) frame_sync->waitable_timer, "frame sync waitable timer" );
 #endif
-#else
-    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( 0 ) )
+#elif ROCKETNET_DEV
+    if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_TIMER_CREATE_FAILED;
-        rocketnet_error( "frame sync: could not create timer" );
+        rocketnet_error( "frame sync: could not create high resolution waitable timer" );
         rocketnet_free( context, frame_sync );
         return NULL;
     }

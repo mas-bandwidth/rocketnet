@@ -198,6 +198,7 @@ static void test_sequence_burn_receiver_block_skips_unopened()
 }
 REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 
+#if ROCKETNET_DEV
 // ---- real refused starts over the loopback transports --------------------
 //
 // A transport pair on the in-memory loopback transport, stepped from 1000.0 by
@@ -301,7 +302,7 @@ struct sequence_burn_measures_t
     uint64_t receiver_delivered;    // PAYLOAD_DELIVERED or CLIENT_PAYLOAD_DELIVERED on the receiver
     float client_rtt;               // client stat rtt, ms
     float server_rtt;               // server per-client stat rtt, ms
-    float client_loss;              // client stat packet loss (receive-side gaps in the server's sequence), %
+    float client_loss;              // client stat packet loss from outbound ACK history, %
     float server_loss;              // server per-client stat packet loss (sent and never acked), %
     int per_round[BURN_ROUNDS];     // real packets sent in each round
 };
@@ -526,12 +527,10 @@ static void sequence_burn_compare( int side, int kind, const char * name )
     rocketnet_unit_check( burned.server_rtt == control.server_rtt );
     rocketnet_unit_check( burned.server_loss == control.server_loss );
 
-    // the client's loss stat is receive-side, from gaps in the server's
-    // session sequence (ROCKETNET_CLIENT_STAT_PACKET_LOSS, sdk/rocketnet.h;
-    // sdk/rocketnet_client_transport.cpp:1170 feeds the tracker). A start the
-    // server's ring or arena refuses takes no sequence, so it leaves no gap and
-    // the stat is the control's. A client burn leaves the server's stat, which
-    // is ack-based, untouched.
+    // Both public loss stats use their own outbound ACK history. A start that
+    // the server's ring or arena refuses is not entered in that history, so
+    // the refused attempt cannot affect the server's estimate. Client-side
+    // sequence burns do not alter packets sent by the server or their ACKs.
     rocketnet_unit_check( control.client_loss == 0.0f );
     rocketnet_unit_check( burned.client_loss == control.client_loss );
 }
@@ -981,3 +980,4 @@ static void test_sequence_burn_server_reliable_and_resend_delay_unchanged() { se
 REGISTER_UNIT_TEST( test_sequence_burn_server_reliable_and_resend_delay_unchanged );
 static void test_sequence_burn_client_reliable_and_resend_delay_unchanged() { sequence_burn_message_compare( BURN_SIDE_CLIENT, "client.message" ); }
 REGISTER_UNIT_TEST( test_sequence_burn_client_reliable_and_resend_delay_unchanged );
+#endif // #if ROCKETNET_DEV

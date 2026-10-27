@@ -41,14 +41,15 @@ ASSUME GuardFresh \in BOOLEAN /\ ResetFresh \in BOOLEAN
 Ids == 1..N
 NONE == 0
 
-VARIABLES free,     \* the lazy free list, head first
+VARIABLES free,     \* the lazy free stack, head first (entry i of the stack lives in slot i)
           fresh,    \* the lazy watermark
           eager,    \* the reference: the eager free list, head first
           held,     \* held[o]: the entry o holds, NONE when none
           mem,      \* mem[i]: entry i's in-use mark as its bytes hold it ("garbage" before any write)
+          gen,      \* gen[i]: entry i's generation tag (1 once a take has tagged it)
           touched   \* the entries written since the last reset
 
-vars == <<free, fresh, eager, held, mem, touched>>
+vars == <<free, fresh, eager, held, mem, gen, touched>>
 
 Range(seq) == { seq[k] : k \in DOMAIN seq }
 Held == { held[o] : o \in Owners } \ {NONE}
@@ -60,6 +61,7 @@ Init ==
     /\ eager = [ k \in 1..N |-> k ]
     /\ held = [ o \in Owners |-> NONE ]
     /\ mem = [ i \in Ids |-> "garbage" ]
+    /\ gen = [ i \in Ids |-> 0 ]
     /\ touched = {}
 
 \* rn_region_descriptor_take / rn_send_store_alloc: the free list's head, or
@@ -72,6 +74,7 @@ Take(o) ==
           /\ fresh' = IF Len(free) > 0 THEN fresh ELSE fresh + 1
           /\ held' = [ held EXCEPT ![o] = i ]
           /\ mem' = [ mem EXCEPT ![i] = "held" ]
+          /\ gen' = [ gen EXCEPT ![i] = 1 ]  \* the take tags the slot (the code's counter, bounded for the model)
           /\ touched' = touched \cup {i}
           \* the eager pool takes its head on the same step
           /\ eager' = Tail(eager)
@@ -86,7 +89,7 @@ Release(o) ==
           /\ held' = [ held EXCEPT ![o] = NONE ]
           /\ mem' = [ mem EXCEPT ![i] = "free" ]
           /\ touched' = touched \cup {i}
-          /\ UNCHANGED fresh
+          /\ UNCHANGED <<fresh, gen>>
 
 \* rn_region_carve / rn_send_store_init_counts: every holder lets go (the
 \* region's connection ended), the lazy list empties and the watermark goes
@@ -97,7 +100,7 @@ Reset ==
     /\ eager' = [ k \in 1..N |-> k ]
     /\ held' = [ o \in Owners |-> NONE ]
     /\ touched' = {}
-    /\ UNCHANGED mem
+    /\ UNCHANGED <<mem, gen>>
 
 Next == \/ \E o \in Owners : Take(o) \/ Release(o)
         \/ Reset
@@ -114,6 +117,7 @@ TypeOK ==
     /\ Range(free) \subseteq Ids /\ Range(eager) \subseteq Ids
     /\ held \in [ Owners -> Ids \cup {NONE} ]
     /\ mem \in [ Ids -> {"garbage", "free", "held"} ]
+    /\ gen \in [ Ids -> 0..1 ]
     /\ touched \subseteq Ids
 
 \* the lazy pool takes the same entry as the eager one at every step
@@ -132,4 +136,8 @@ UntouchedAboveFresh == touched \subseteq 1..fresh
 
 \* a take is refused only when every entry is held
 TakeOnlyRefusedWhenFull == ( Len(free) = 0 /\ fresh = N ) => Cardinality(Held) = N
+
+\* a held entry carries a generation its last take bumped: never zero
+HeldGenerationPositive == \A i \in Held : gen[i] > 0
+
 =============================================================================

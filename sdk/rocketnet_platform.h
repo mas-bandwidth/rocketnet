@@ -183,7 +183,7 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
 
 #define ROCKETNET_PLATFORM_GETENV_MAX_BYTES 4096
 
-#if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 /** Installs the unit suite's empty in-memory environment. */
 void rocketnet_platform_test_environment_install( void );
 
@@ -195,7 +195,7 @@ void rocketnet_platform_test_environment_unset( const char * name );
 
 /** Removes every variable while keeping the in-memory environment installed. */
 void rocketnet_platform_test_environment_reset( void );
-#endif // #if defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
 
 /**
  * @brief Converts a 16-bit value from network byte order to host byte order.
@@ -310,6 +310,7 @@ bool rocketnet_platform_client_dual_stack( void );
  */
 bool rocketnet_platform_client_ipv6_available( void );
 
+#if ROCKETNET_DEV
 /**
  * @brief Overrides the IPv6 availability probe for tests.
  *
@@ -320,6 +321,8 @@ bool rocketnet_platform_client_ipv6_available( void );
  * @return None.
  */
 void rocketnet_platform_set_ipv6_socket_available_for_testing( bool available );
+
+#endif // #if ROCKETNET_DEV
 
 /**
  * @brief Chooses the client bind family from the server family and platform.
@@ -938,6 +941,7 @@ void rocketnet_platform_server_thread_priority( struct rocketnet_platform_thread
  */
 struct rocketnet_platform_mutex_t;
 
+#if ROCKETNET_DEV
 struct rocketnet_platform_priority_calls_t
 {
     /** @brief POSIX: pthread_setschedparam on the thread with the policy and priority; 0 or an errno. */
@@ -954,7 +958,7 @@ struct rocketnet_platform_priority_calls_t
     int ( *mutex_init )( struct rocketnet_platform_mutex_t * mutex );
     /** @brief Platform startup (Windows WSAStartup); 0 on success, nonzero on failure. */
     int ( *platform_start )( void );
-    /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Off Windows the handle is unused and the entry returns a non-NULL placeholder, so NULL stays the failure answer on every platform. */
+    /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Frame sync requests CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (0x00000002) and refuses creation without falling back to a coarse timer when unavailable. Off Windows the handle is unused and the entry returns a non-NULL placeholder only for the high-resolution flag, so NULL stays the failure answer on every platform. */
     void* ( *create_waitable_timer )( unsigned flags );
 };
 
@@ -982,6 +986,8 @@ const struct rocketnet_platform_priority_calls_t * rocketnet_platform_priority_c
  * @return None.
  */
 void rocketnet_platform_thread_priority_reset_logged_for_testing( void );
+
+#endif // #if ROCKETNET_DEV
 
 /** @brief The call kinds a refusal is counted and logged under, one line each. */
 enum

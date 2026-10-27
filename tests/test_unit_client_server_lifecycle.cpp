@@ -11,12 +11,18 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet.h"
+#include "../sdk/rocketnet_constants.h"
+#include "../sdk/rocketnet_server_protocol.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_message_object.h"
 #include "rocketnet_packet_builder.h"
 #include "token_string.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +30,11 @@
 #define check rocketnet_unit_check
 #define LIFECYCLE_PROTOCOL 0x7A11C1C1E5EED001ULL
 #define LIFECYCLE_MAX_CLIENTS 4
+
+#if ROCKETNET_DEV
+uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
+int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
+    int index, uint8_t * out, int out_bytes, int * head, int * count );
 
 struct lifecycle_identity_t
 {
@@ -46,6 +57,7 @@ static void lifecycle_identity( lifecycle_identity_t * identity )
 // defaults hold: the window, the send queue and the send buffer then fit
 // that many messages, on the server and every client the world creates
 static int lifecycle_queue_messages = 0;
+static int lifecycle_disconnect_packets_per_update = 0;
 
 static void lifecycle_queue_config( int * reliable_messages_in_flight, int * packets_in_flight, int * send_queue_messages, int * send_message_buffer_bytes )
 {
@@ -65,6 +77,8 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    if ( lifecycle_disconnect_packets_per_update > 0 )
+        config->disconnect_packets_per_update = lifecycle_disconnect_packets_per_update;
     lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
@@ -161,6 +175,58 @@ static void lifecycle_connect( lifecycle_world_t * world, int client, uint64_t c
     check( rocketnet_server_client_connected( world->server, index ) != 0 );
     check( rocketnet_server_client_id( world->server, index ) == client_id );
 }
+
+static int lifecycle_key_nonzero( const uint8_t * key )
+{
+    int count = 0;
+    for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+        count += key[i] != 0 ? 1 : 0;
+    return count;
+}
+
+static void test_server_disconnect_allowance_one_spreads_one_burst()
+{
+    lifecycle_disconnect_packets_per_update = 1;
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    lifecycle_disconnect_packets_per_update = 0;
+    lifecycle_connect( &world, 0, 0x1000 );
+    const int slot = rocketnet_client_index( world.clients[0] );
+    rocketnet_server_transport_t * transport = rocketnet_message_server_transport( rocketnet_server_message_server( world.server ) );
+    const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+
+    rocketnet_server_disconnect_client( world.server, slot );
+    check( !rocketnet_server_client_connected( world.server, slot ) );
+    check( rocketnet_server_transport_disconnect_seals_for_test( transport ) == before );
+
+    uint8_t key[ROCKETNET_KEY_BYTES];
+    int head = -1;
+    int count = -1;
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
+        (int) sizeof( key ), &head, &count ) == 1 );
+    check( count == 1 );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, head, key,
+        (int) sizeof( key ), NULL, NULL ) == 1 );
+    check( lifecycle_key_nonzero( key ) > 0 );
+
+    uint64_t sealed = 0;
+    for ( int update = 0; count > 0; update++ )
+    {
+        check( update < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+        const uint64_t step_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
+        lifecycle_pump( &world );
+        const uint64_t step = rocketnet_server_transport_disconnect_seals_for_test( transport ) - step_before;
+        check( step <= 1 );
+        sealed += step;
+        check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, head, key,
+            (int) sizeof( key ), NULL, &count ) == 1 );
+    }
+    check( sealed == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( lifecycle_key_nonzero( key ) == 0 );
+    lifecycle_world_destroy( &world );
+}
+
+REGISTER_UNIT_TEST( test_server_disconnect_allowance_one_spreads_one_burst );
 
 static void lifecycle_client_send( rocketnet_client_t * client, uint8_t tag, uint8_t value )
 {
@@ -330,7 +396,9 @@ static void test_client_reconnects_with_a_second_token()
     lifecycle_connect( &world, 0, 0x1001 );
     lifecycle_exchange( &world, 0, 0xA1, 3 );
     const uint64_t sent_first = rn_client_stats_of( client ).packets_sent;
+    const uint64_t payloads_first = rn_client_stats_of( client ).payloads_received;
     check( sent_first > 0 );
+    check( payloads_first > 0 );
     lifecycle_disconnect( &world, 0 );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_index( client ) == -1 );
@@ -338,14 +406,58 @@ static void test_client_reconnects_with_a_second_token()
 
     // a second token with another client id: sequences and channels start
     // fresh, so the second exchange's values count from 0 again in order, and
-    // nothing tagged by the first connection arrives
+    // nothing tagged by the first connection arrives. The new connection's
+    // receive totals do not keep the ended connection's.
     lifecycle_connect( &world, 0, 0x2002 );
+    const uint64_t sent_second = rn_client_stats_of( client ).packets_sent;
+    const uint64_t payloads_second = rn_client_stats_of( client ).payloads_received;
+    check( sent_second > 0 );
+    check( payloads_second < payloads_first );
     lifecycle_exchange( &world, 0, 0xB2, 3 );
-    check( rn_client_stats_of( client ).packets_sent > sent_first );
+    check( rn_client_stats_of( client ).packets_sent > sent_second );
+    check( rn_client_stats_of( client ).payloads_received > payloads_second );
     check( rn_server_stats_of( world.server ).connections_accepted == 2 );
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_client_reconnects_with_a_second_token );
+
+// Disconnect clears the held connection before the old object is destroyed.
+// The client can already be disconnected in that window. Session counters
+// read 0 then. Not-connected drops stay.
+static void test_client_stats_are_zero_once_disconnected()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 1 );
+    rocketnet_client_t * client = world.clients[0];
+    lifecycle_connect( &world, 0, 0x3101 );
+    lifecycle_exchange( &world, 0, 0xC3, 2 );
+    struct rocketnet_client_stats_t before;
+    rocketnet_client_stats( client, &before );
+    check( before.packets_sent > 0 );
+    check( before.payloads_received > 0 );
+    const uint64_t drops = before.messages_dropped_not_connected;
+    rocketnet_client_disconnect( client );
+    for ( int step = 0; step < 32 && !rocketnet_client_disconnected( client ); step++ )
+        lifecycle_pump( &world );
+    check( rocketnet_client_disconnected( client ) );
+    struct rocketnet_client_stats_t after;
+    rocketnet_client_stats( client, &after );
+    check( after.packets_sent == 0 );
+    check( after.packets_received == 0 );
+    check( after.bytes_sent == 0 );
+    check( after.bytes_received == 0 );
+    check( after.payloads_received == 0 );
+    check( after.messages_resent == 0 );
+    check( after.messages_duplicated == 0 );
+    check( after.receipts_acked == 0 );
+    check( after.receipts_lost == 0 );
+    check( after.receipts_dropped == 0 );
+    check( after.messages_dropped_over_budget == 0 );
+    check( after.rtt_ms == 0.0 );
+    check( after.messages_dropped_not_connected >= drops );
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_stats_are_zero_once_disconnected );
 
 // A connected step-driven client retains its sealed disconnect burst until
 // the caller explicitly steps its worker. Polling and a duplicate request
@@ -573,12 +685,45 @@ static void test_client_disconnect_clears_denied_state()
 }
 REGISTER_UNIT_TEST( test_client_disconnect_clears_denied_state );
 
+static int lifecycle_finish_assertions = 0;
+
+static void lifecycle_finish_assert_hook( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    lifecycle_finish_assertions++;
+}
+
+static uint32_t lifecycle_client_finish_without_start( rocketnet_client_t * client, int bytes_written )
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_finish_assertions = 0;
+    rocketnet_assert_function( lifecycle_finish_assert_hook );
+    const uint32_t serial = rocketnet_client_finish_message( client, bytes_written );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_finish_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    return serial;
+}
+
+static uint32_t lifecycle_server_finish_without_start( rocketnet_server_t * server, int bytes_written )
+{
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_finish_assertions = 0;
+    rocketnet_assert_function( lifecycle_finish_assert_hook );
+    const uint32_t serial = rocketnet_server_finish_message( server, bytes_written );
+    rocketnet_assert_function( saved_assert );
+    check( lifecycle_finish_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    return serial;
+}
+
 // A send on a connection that is not CONNECTED is dropped and counted, on the
 // client and on the server alike (standard/MESSAGES.md m1.5;
 // tla/ClientSession.tla DropSend, tla/ServerSession.tla ServerDropSend):
-// start message returns NULL and finish message 0, the NOT_CONNECTED_DROPS
-// counter moves by exactly 1 per start, the misuse count does not move, and
-// nothing of it is ever sent.
+// start message returns NULL, finish message asserts in Debug and returns 0 in
+// Release, the NOT_CONNECTED_DROPS counter moves by exactly 1 per start, the
+// misuse count does not move, and nothing of it is ever sent.
 static void lifecycle_check_client_send_dropped( rocketnet_client_t * client )
 {
     const uint64_t misuse = rocketnet_api_misuse_count();
@@ -589,7 +734,7 @@ static void lifecycle_check_client_send_dropped( rocketnet_client_t * client )
     {
         out[0] = 0xEE; out[1] = 0xEE;
     }
-    check( rocketnet_client_finish_message( client, 2 ) == 0 );
+    check( lifecycle_client_finish_without_start( client, 2 ) == 0 );
     check( rn_client_stats_of( client ).messages_dropped_not_connected == drops + 1 );
     check( rocketnet_api_misuse_count() == misuse );
 }
@@ -604,7 +749,7 @@ static void lifecycle_check_server_send_dropped( rocketnet_server_t * server, in
     {
         out[0] = 0xEE; out[1] = 0xEE;
     }
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
     check( rocketnet_api_misuse_count() == misuse );
 }
@@ -672,7 +817,7 @@ static void test_client_send_dropped_while_connecting()
     lifecycle_check_client_send_dropped( client );
     const uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 ) == NULL );
-    check( rocketnet_client_finish_message( client, 2 ) == 0 );
+    check( lifecycle_client_finish_without_start( client, 2 ) == 0 );
     check( rocketnet_api_misuse_count() == misuse );
     check( rn_client_stats_of( client ).messages_dropped_not_connected == 2 );
 
@@ -756,7 +901,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     // an index at or past max_clients stays a counted misuse, and is no drop
     uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rocketnet_server_start_message( server, 1000, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 2 );     // the finish with no start pending is not misuse
     check( rn_server_stats_of( server ).messages_dropped_not_connected == 1 );
@@ -776,7 +921,7 @@ static void test_server_send_dropped_to_slot_not_connected()
     lifecycle_check_server_send_dropped( server, 2 );
     misuse = rocketnet_api_misuse_count();
     check( rocketnet_server_start_message( server, 3, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 ) == NULL );
-    check( rocketnet_server_finish_message( server, 2 ) == 0 );
+    check( lifecycle_server_finish_without_start( server, 2 ) == 0 );
     check( rocketnet_api_misuse_count() == misuse + 1 );
     check( rn_server_stats_of( server ).messages_dropped_not_connected == 4 );
 
@@ -1066,9 +1211,10 @@ static void test_server_destination_flow_id_refused()
     check( rocketnet_server_start_message( world.server, flow, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) == NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 && lifecycle_flow_logs == 1 );
     // finish and abort act on the pending start: the refused one left none,
-    // so each returns its empty value, uncounted, with no flow log
+    // so finish asserts in Debug and returns 0 in Release, and abort is a
+    // no-op, both uncounted and with no flow log
     misuse = rocketnet_api_misuse_count();
-    check( rocketnet_server_finish_message( world.server, 4 ) == 0 );
+    check( lifecycle_server_finish_without_start( world.server, 4 ) == 0 );
     rocketnet_server_abort_message( world.server );
     check( rocketnet_api_misuse_count() == misuse && lifecycle_flow_logs == 1 );
     // an index merely out of range is counted misuse without the flow log
@@ -1123,8 +1269,12 @@ REGISTER_UNIT_TEST( test_server_client_index_round_trips_as_int );
 
 // packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
+#if ROCKETNET_DEV
 static int lifecycle_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
 static int lifecycle_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
 static void test_config_packets_per_update_range()
 {
@@ -1174,6 +1324,7 @@ static void test_config_packets_per_update_range()
     check( server == NULL );
     check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
 
+#if ROCKETNET_DEV
     // the environment
     rocketnet_client_default_config( &client_config );
     lifecycle_server_config( &server_config, &identity, 1 );
@@ -1238,12 +1389,15 @@ static void test_config_packets_per_update_range()
     check( lifecycle_setenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1025" ) == 0 );
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
     check( lifecycle_unsetenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE" ) == 0 );
+#endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_config_packets_per_update_range );
 
-// A connection the server ends leaves the client DISCONNECTED with its
-// connection object still held; connect straight after (no disconnect call)
-// ends it first, and the lifetime counters only grow.
+// A connection the server ends leaves the client SERVER_DISCONNECTED with its
+// connection object still held. Connect straight after (no disconnect call)
+// ends that connection first. The new connection's packet, byte and payload
+// counts do not include the ended connection. Not-connected drops stay on
+// the handle.
 static void test_client_reconnects_after_server_stop_without_disconnect()
 {
     lifecycle_world_t world;
@@ -1259,23 +1413,23 @@ static void test_client_reconnects_after_server_stop_without_disconnect()
     struct rocketnet_client_stats_t before;
     rocketnet_client_stats( client, &before );
     check( before.packets_sent > 0 );
+    check( before.payloads_received > 0 );
     check( rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
     lifecycle_connect( &world, 0, 0x1C02 );      // connect, no disconnect first
     struct rocketnet_client_stats_t after;
     rocketnet_client_stats( client, &after );
-    check( after.packets_sent >= before.packets_sent );
-    check( after.packets_received >= before.packets_received );
-    check( after.bytes_sent >= before.bytes_sent );
-    check( after.bytes_received >= before.bytes_received );
-    check( after.payloads_received >= before.payloads_received );
-    check( after.messages_resent >= before.messages_resent );
-    check( after.messages_duplicated >= before.messages_duplicated );
-    check( after.receipts_acked >= before.receipts_acked );
-    check( after.receipts_lost >= before.receipts_lost );
-    check( after.messages_dropped_over_budget >= before.messages_dropped_over_budget );
+    // The new handshake has its own packets. The ended session also carried
+    // messages, so its receive totals stay strictly above this handshake.
+    check( after.packets_sent > 0 );
+    check( before.packets_received > after.packets_received );
+    check( before.bytes_received > after.bytes_received );
+    check( before.payloads_received > after.payloads_received );
     check( after.messages_dropped_not_connected >= before.messages_dropped_not_connected );
     lifecycle_exchange( &world, 0, 0x82, 3 );
-    check( rn_client_stats_of( client ).packets_sent > before.packets_sent );
+    struct rocketnet_client_stats_t exchanged;
+    rocketnet_client_stats( client, &exchanged );
+    check( exchanged.packets_sent > after.packets_sent );
+    check( exchanged.payloads_received > after.payloads_received );
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_client_reconnects_after_server_stop_without_disconnect );
@@ -1744,3 +1898,1742 @@ static void test_receive_returns_the_objects_one_batch()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_receive_returns_the_objects_one_batch );
+
+static int lifecycle_send_kbps_assertions = 0;
+
+static void lifecycle_send_kbps_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+    lifecycle_send_kbps_assertions++;
+}
+
+static rn_message_connection_t * lifecycle_client_connection( rocketnet_client_t * client )
+{
+    rocketnet_message_client_t * mc = rocketnet_client_message_client( client );
+    check( mc != NULL );
+    return mc ? &mc->object.connections[0] : NULL;
+}
+
+static rn_message_connection_t * lifecycle_server_connection( rocketnet_server_t * server, int slot )
+{
+    rocketnet_message_server_t * ms = rocketnet_server_message_server( server );
+    check( ms != NULL && slot >= 0 && slot < ms->object.num_connections );
+    return ( ms && slot >= 0 && slot < ms->object.num_connections ) ? &ms->object.connections[slot] : NULL;
+}
+
+static void lifecycle_queue_client_message( rocketnet_client_t * client, enum rocketnet_reliability_t reliability, int bytes, uint8_t tag, uint8_t seq )
+{
+    uint8_t * out = rocketnet_client_start_message( client, 0, reliability, bytes );
+    check( out != NULL );
+    if ( !out )
+        return;
+    memset( out, (uint8_t) ( tag ^ seq ), (size_t) bytes );
+    out[0] = tag;
+    if ( bytes > 1 )
+        out[1] = seq;
+    check( rocketnet_client_finish_message( client, bytes ) != 0 );
+}
+
+static void lifecycle_queue_server_message( rocketnet_server_t * server, int slot, enum rocketnet_reliability_t reliability, int bytes, uint8_t tag, uint8_t seq )
+{
+    uint8_t * out = rocketnet_server_start_message( server, (uint64_t) slot, 0, reliability, bytes );
+    check( out != NULL );
+    if ( !out )
+        return;
+    memset( out, (uint8_t) ( tag ^ seq ), (size_t) bytes );
+    out[0] = tag;
+    if ( bytes > 1 )
+        out[1] = seq;
+    check( rocketnet_server_finish_message( server, bytes ) != 0 );
+}
+
+static void lifecycle_drain_server_counts( rocketnet_server_t * server, int slot_a, uint8_t tag_a, int * rel_a, int * unrel_a,
+                                           int slot_b, uint8_t tag_b, int * rel_b, int * unrel_b )
+{
+    if ( rel_a ) *rel_a = 0;
+    if ( unrel_a ) *unrel_a = 0;
+    if ( rel_b ) *rel_b = 0;
+    if ( unrel_b ) *unrel_b = 0;
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+    {
+        for ( int i = 0; i < batch->num_messages; i++ )
+        {
+            const int sender = batch->client_index[i];
+            const int bytes = batch->bytes[i];
+            const uint8_t tag = batch->data[i][0];
+            if ( sender == slot_a && tag == tag_a )
+            {
+                if ( bytes == 1000 && rel_a ) ( *rel_a )++;
+                else if ( bytes == 900 && unrel_a ) ( *unrel_a )++;
+                else check( false );
+            }
+            else if ( sender == slot_b && tag == tag_b )
+            {
+                if ( bytes == 1000 && rel_b ) ( *rel_b )++;
+                else if ( bytes == 900 && unrel_b ) ( *unrel_b )++;
+                else check( false );
+            }
+            else
+            {
+                check( false );
+            }
+        }
+    }
+}
+
+static void lifecycle_server_pump( lifecycle_world_t * world, double dt = 0.01 )
+{
+    lifecycle_now = world->time;
+    if ( rocketnet_server_running( world->server ) )
+    {
+        rocketnet_server_update( world->server, world->time );
+        rocketnet_server_send_packets( world->server );
+    }
+    for ( int i = 0; i < world->num_clients; i++ )
+    {
+        if ( !world->clients[i] )
+            continue;
+        rocketnet_client_update( world->clients[i], world->time );
+        rocketnet_client_send_packets( world->clients[i] );
+    }
+    world->time += dt;
+}
+
+static void lifecycle_drain_client_counts( rocketnet_client_t * client, uint8_t expected_tag, int * rel_1000, int * unrel_900 )
+{
+    if ( rel_1000 ) *rel_1000 = 0;
+    if ( unrel_900 ) *unrel_900 = 0;
+    const struct rocketnet_message_batch_t * batch = NULL;
+    while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+    {
+        for ( int i = 0; i < batch->num_messages; i++ )
+        {
+            check( batch->client_index[i] == 0 );
+            check( batch->data[i][0] == expected_tag );
+            if ( batch->bytes[i] == 1000 && rel_1000 ) ( *rel_1000 )++;
+            else if ( batch->bytes[i] == 900 && unrel_900 ) ( *unrel_900 )++;
+            else check( false );
+        }
+    }
+}
+
+struct lifecycle_expected_budget_t
+{
+    uint32_t kbps;
+    double bytes_per_second;
+    double depth;
+    double tokens;
+    double last_time;
+    int reliable_waiting;
+    uint64_t bytes_spent;
+    uint64_t unreliable_dropped;
+    uint64_t unreliable_dropped_bytes;
+};
+
+static lifecycle_expected_budget_t lifecycle_expected_budget_capture( const rn_message_connection_t * conn )
+{
+    lifecycle_expected_budget_t exp;
+    memset( &exp, 0, sizeof( exp ) );
+    check( conn != NULL );
+    if ( !conn )
+        return exp;
+    exp.kbps = conn->budget.kbps;
+    exp.bytes_per_second = conn->budget.bytes_per_second;
+    exp.depth = conn->budget.depth;
+    exp.tokens = conn->budget.tokens;
+    exp.last_time = conn->budget.last_time;
+    exp.reliable_waiting = conn->budget.reliable_waiting;
+    exp.bytes_spent = conn->budget.bytes_spent;
+    exp.unreliable_dropped = conn->budget.unreliable_dropped;
+    exp.unreliable_dropped_bytes = conn->budget.unreliable_dropped_bytes;
+    return exp;
+}
+
+static void lifecycle_expected_budget_apply_rate( lifecycle_expected_budget_t * exp, uint32_t kbps )
+{
+    exp->kbps = kbps;
+    exp->bytes_per_second = (double) kbps * ( 1000.0 / 8.0 );
+    const double window_bytes = exp->bytes_per_second * 0.1;
+    exp->depth = window_bytes < (double) ROCKETNET_SEND_BUDGET ? (double) ROCKETNET_SEND_BUDGET : window_bytes;
+}
+
+static void lifecycle_expected_budget_init( lifecycle_expected_budget_t * exp, uint32_t kbps, double now )
+{
+    memset( exp, 0, sizeof( *exp ) );
+    lifecycle_expected_budget_apply_rate( exp, kbps );
+    exp->tokens = exp->depth;
+    exp->last_time = now;
+}
+
+static void lifecycle_expected_budget_refill( lifecycle_expected_budget_t * exp, double now )
+{
+    if ( now > exp->last_time )
+    {
+        exp->tokens += exp->bytes_per_second * ( now - exp->last_time );
+        if ( exp->tokens > exp->depth )
+            exp->tokens = exp->depth;
+        exp->last_time = now;
+    }
+}
+
+static void lifecycle_expected_budget_set_kbps( lifecycle_expected_budget_t * exp, uint32_t kbps, double now )
+{
+    lifecycle_expected_budget_refill( exp, now );
+    lifecycle_expected_budget_apply_rate( exp, kbps );
+    if ( exp->tokens > exp->depth )
+        exp->tokens = exp->depth;
+}
+
+static void lifecycle_expected_budget_begin_update( lifecycle_expected_budget_t * exp, double now )
+{
+    lifecycle_expected_budget_refill( exp, now );
+    exp->reliable_waiting = 0;
+}
+
+static int lifecycle_expected_budget_max_wire_bytes( int payload_bytes )
+{
+    const int head_and_payload = ROCKETNET_PACKET_OVERHEAD_BYTES + payload_bytes;
+    const int room = ROCKETNET_SEND_BUDGET - head_and_payload;
+    const int ack_bytes = room < ROCKETNET_ACK_BLOCK_MAX_BYTES ? ( room > 0 ? room : 0 ) : ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    return head_and_payload + ack_bytes;
+}
+
+static void lifecycle_expected_budget_reliable_send( lifecycle_expected_budget_t * exp, int admitted_wire_bytes, int actual_wire_bytes )
+{
+    check( exp->reliable_waiting == 0 );
+    check( (double) admitted_wire_bytes <= exp->tokens );
+    exp->tokens -= (double) admitted_wire_bytes;
+    exp->bytes_spent += (uint64_t) admitted_wire_bytes;
+    const int refund = admitted_wire_bytes - actual_wire_bytes;
+    check( refund >= 0 );
+    exp->tokens += (double) refund;
+    if ( exp->tokens > exp->depth )
+        exp->tokens = exp->depth;
+    exp->bytes_spent -= (uint64_t) refund;
+}
+
+static void lifecycle_expected_budget_reliable_wait( lifecycle_expected_budget_t * exp, int admitted_wire_bytes )
+{
+    check( exp->reliable_waiting != 0 || (double) admitted_wire_bytes > exp->tokens );
+    exp->reliable_waiting = 1;
+}
+
+static void lifecycle_expected_budget_unreliable_drop( lifecycle_expected_budget_t * exp, int admitted_wire_bytes )
+{
+    check( exp->reliable_waiting != 0 || (double) admitted_wire_bytes > exp->tokens );
+    exp->unreliable_dropped += 1;
+    exp->unreliable_dropped_bytes += (uint64_t) admitted_wire_bytes;
+}
+
+static void lifecycle_check_budget_matches_oracle( const rn_message_connection_t * conn, const lifecycle_expected_budget_t * oracle )
+{
+    check( conn != NULL && oracle != NULL );
+    if ( !conn || !oracle )
+        return;
+    check( conn->send_budget_enabled == 1 );
+    check( conn->ordered.budget == &conn->budget );
+    check( conn->ordered.builder.budget == &conn->budget );
+    check( conn->unreliable_builder.budget == &conn->budget );
+    check( conn->budget.kbps == oracle->kbps );
+    check( conn->budget.bytes_per_second == oracle->bytes_per_second );
+    check( conn->budget.depth == oracle->depth );
+    check( conn->budget.tokens == oracle->tokens );
+    check( conn->budget.last_time == oracle->last_time );
+    check( conn->budget.reliable_waiting == oracle->reliable_waiting );
+    check( conn->budget.bytes_spent == oracle->bytes_spent );
+    check( conn->budget.unreliable_dropped == oracle->unreliable_dropped );
+    check( conn->budget.unreliable_dropped_bytes == oracle->unreliable_dropped_bytes );
+}
+
+static void lifecycle_check_budget_unlimited( const rn_message_connection_t * conn )
+{
+    check( conn != NULL );
+    if ( !conn )
+        return;
+    check( conn->send_budget_enabled == 0 );
+    check( conn->ordered.budget == NULL );
+    check( conn->ordered.builder.budget == NULL );
+    check( conn->unreliable_builder.budget == NULL );
+    check( conn->budget.kbps == 0 );
+    check( conn->budget.tokens == 0.0 );
+    check( conn->budget.reliable_waiting == 0 );
+}
+
+static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 2, 1 );
+    rocketnet_client_t * client = world.clients[0];
+
+    // NULL client and negative kbps validation before connect
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_send_kbps_assertions = 0;
+    rocketnet_assert_function( lifecycle_send_kbps_assert );
+    uint64_t misuse = rocketnet_api_misuse_count();
+    check( rocketnet_client_set_send_kbps( NULL, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( lifecycle_send_kbps_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    rocketnet_assert_function( saved_assert );
+
+    misuse = rocketnet_api_misuse_count();
+    check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_client_set_send_kbps( client, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    // Disconnected and handshake calls with UNLIMITED, finite, and 0 are no-ops
+    // that do not alter the configured starting rate (default 1000 kbps).
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( world.server, rocketnet_server_port( world.server ), &world.identity, 0x1F10, 300, token );
+    check( rn_test_client_connect_after_completion( client, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
+        check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        check( rocketnet_client_set_send_kbps( client, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+        check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
+        check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+        lifecycle_pump( &world );
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    const int slot = rocketnet_client_index( client );
+    for ( int i = 0; i < 400 && !rocketnet_server_client_connected( world.server, slot ); i++ )
+        lifecycle_pump( &world );
+    check( rocketnet_server_client_connected( world.server, slot ) != 0 );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    rn_message_connection_t * conn = lifecycle_client_connection( client );
+    check( conn != NULL );
+    check( conn->default_kbps == ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( conn->send_budget_enabled == 1 );
+    check( conn->budget.kbps == (uint32_t) ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( conn->budget.depth == 12500.0 );
+
+    // Settle initial CONFIG exchange so no control packet is pending.
+    for ( int i = 0; i < 10; i++ )
+        lifecycle_pump( &world );
+
+    // Negative values while connected return INVALID_ARGUMENT without changing budget state.
+    const lifecycle_expected_budget_t saved_budget = lifecycle_expected_budget_capture( conn );
+    check( rocketnet_client_set_send_kbps( client, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_client_set_send_kbps( client, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse );
+    lifecycle_check_budget_matches_oracle( conn, &saved_budget );
+
+    // Connected -> ROCKETNET_SEND_KBPS_UNLIMITED detaches the budget and admits a multi-packet burst in one update.
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    lifecycle_check_budget_unlimited( conn );
+    for ( int i = 0; i < 4; i++ )
+        lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x30, (uint8_t) i );
+    for ( int i = 0; i < 2; i++ )
+        lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x30, (uint8_t) i );
+    struct rocketnet_client_stats_t stats_before = rn_client_stats_of( client );
+    lifecycle_pump( &world, 0.01 );
+    struct rocketnet_client_stats_t stats_after = rn_client_stats_of( client );
+    int rel_got = 0, unrel_got = 0;
+    lifecycle_drain_server_counts( world.server, slot, 0x30, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    check( stats_after.packets_sent - stats_before.packets_sent == 6 );
+    check( stats_after.messages_dropped_over_budget == stats_before.messages_dropped_over_budget );
+    check( rel_got == 4 && unrel_got == 2 );
+
+    // Connected UNLIMITED -> finite 1 kbps (minimum finite limit) and 90 kbps (11250 B/s, depth ROCKETNET_SEND_BUDGET):
+    // matches independent arithmetic oracle and admits 1 reliable packet per update while deferring remaining reliable work.
+    rocketnet_message_client_t * mc = rocketnet_client_message_client( client );
+    check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
+    lifecycle_expected_budget_t oracle;
+    lifecycle_expected_budget_init( &oracle, 1, mc->object.time );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( rocketnet_client_set_send_kbps( client, 90 ) == ROCKETNET_STATUS_OK );
+    lifecycle_expected_budget_set_kbps( &oracle, 90, mc->object.time );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+
+    for ( int i = 0; i < 3; i++ )
+        lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x31, (uint8_t) i );
+    for ( int i = 0; i < 2; i++ )
+        lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x31, (uint8_t) i );
+
+    stats_before = rn_client_stats_of( client );
+    const double update_1_time = world.time;
+    lifecycle_pump( &world, 0.01 ); // runs update at update_1_time, advances world.time by 0.01s (+112.5 B at 90 kbps)
+    stats_after = rn_client_stats_of( client );
+    lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+
+    const int rel_admitted = lifecycle_expected_budget_max_wire_bytes( (int) conn->ordered.builder.packet[0].payload_bytes );
+    const int wire_1 = (int) ( stats_after.bytes_sent - stats_before.bytes_sent ) - 28;
+    check( wire_1 > 1000 && wire_1 <= rel_admitted );
+    lifecycle_expected_budget_begin_update( &oracle, update_1_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_1 );
+    lifecycle_expected_budget_begin_update( &oracle, update_1_time );
+    lifecycle_expected_budget_reliable_wait( &oracle, rel_admitted );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( conn->written == 1 );
+    check( stats_after.packets_sent - stats_before.packets_sent == 1 );
+    check( stats_after.messages_dropped_over_budget - stats_before.messages_dropped_over_budget == 2 );
+    check( rel_got == 1 && unrel_got == 0 );
+
+    // After 0.01s at 90 kbps (+112.5 B), tokens < rel_admitted so the 2 remaining reliable messages stay deferred.
+    stats_before = rn_client_stats_of( client );
+    const double update_2_time = world.time;
+    lifecycle_pump( &world, 0.085 ); // runs update at update_2_time (t + 0.01s), advances world.time by 0.085s (+956.25 B at 90 kbps)
+    stats_after = rn_client_stats_of( client );
+    lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    lifecycle_expected_budget_begin_update( &oracle, update_2_time );
+    lifecycle_expected_budget_reliable_wait( &oracle, rel_admitted );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( conn->written == 0 );
+    check( rel_got == 0 && unrel_got == 0 );
+
+    // After 0.085s at 90 kbps (+956.25 B, clamped to depth), the 2nd reliable message is admitted while the 3rd stays deferred.
+    stats_before = rn_client_stats_of( client );
+    const double update_3_time = world.time;
+    lifecycle_pump( &world, 0.02 ); // runs update at update_3_time, advances world.time by 0.02s
+    stats_after = rn_client_stats_of( client );
+    lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    const int wire_2 = (int) ( stats_after.bytes_sent - stats_before.bytes_sent ) - 28;
+    check( wire_2 > 1000 && wire_2 <= rel_admitted );
+    lifecycle_expected_budget_begin_update( &oracle, update_3_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_2 );
+    lifecycle_expected_budget_begin_update( &oracle, update_3_time );
+    lifecycle_expected_budget_reliable_wait( &oracle, rel_admitted );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( conn->written == 1 );
+    check( stats_after.packets_sent - stats_before.packets_sent == 1 );
+    check( rel_got == 1 && unrel_got == 0 );
+
+    // Setting kbps to 0 while connected restores the directional default (1000 kbps = 125000 B/s, depth 12500 B).
+    check( rocketnet_client_set_send_kbps( client, 0 ) == ROCKETNET_STATUS_OK );
+    lifecycle_expected_budget_set_kbps( &oracle, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, mc->object.time );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( conn->budget.kbps == (uint32_t) ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS );
+    check( conn->budget.depth == 12500.0 );
+
+    // At 1000 kbps, 0.02s refills +2500 B, so the 3rd deferred reliable message is admitted on the next update.
+    stats_before = rn_client_stats_of( client );
+    const double update_4_time = world.time;
+    lifecycle_pump( &world, 0.01 );
+    stats_after = rn_client_stats_of( client );
+    lifecycle_drain_server_counts( world.server, slot, 0x31, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    const int wire_3 = (int) ( stats_after.bytes_sent - stats_before.bytes_sent ) - 28;
+    lifecycle_expected_budget_begin_update( &oracle, update_4_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_3 );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( conn->budget.reliable_waiting == 0 );
+    check( rel_got == 1 && unrel_got == 0 );
+
+    // Also test when reliable work finishes without deferral, an over-budget unreliable packet is dropped by the builder.
+    check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
+    lifecycle_expected_budget_set_kbps( &oracle, 1, mc->object.time );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x32, 0 );
+    lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x32, 0 );
+    stats_before = rn_client_stats_of( client );
+    const double update_5_time = world.time;
+    lifecycle_pump( &world, 0.01 );
+    stats_after = rn_client_stats_of( client );
+    lifecycle_drain_server_counts( world.server, slot, 0x32, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    const int unrel_admitted = lifecycle_expected_budget_max_wire_bytes( 900 + ROCKETNET_MESSAGE_RECORD_FIXED_BYTES + 1 );
+    lifecycle_expected_budget_begin_update( &oracle, update_5_time );
+    lifecycle_expected_budget_reliable_send( &oracle, rel_admitted, wire_1 );
+    lifecycle_expected_budget_unreliable_drop( &oracle, unrel_admitted );
+    lifecycle_check_budget_matches_oracle( conn, &oracle );
+    check( conn->written == 1 );
+    check( conn->budget.reliable_waiting == 0 );
+    check( conn->budget.unreliable_dropped == 1 );
+    check( stats_after.messages_dropped_over_budget - stats_before.messages_dropped_over_budget == 1 );
+    check( rel_got == 1 && unrel_got == 0 );
+
+    // Finite maximum ROCKETNET_SEND_KBPS_UNLIMITED - 1 is accepted as a finite rate.
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) == ROCKETNET_STATUS_OK );
+    check( conn->send_budget_enabled == 1 );
+    check( conn->budget.kbps == (uint32_t) ( ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) );
+
+    // Reconnect rule (1): a client configured with finite send_kbps = 1 that overrides to UNLIMITED at runtime
+    // starts its next connection back at the configured 1 kbps.
+    rn_test_client_stop_and_destroy( world.clients[0] );
+    rocketnet_client_test_config_t client_config;
+    lifecycle_client_config( &client_config );
+    client_config.send_kbps = 1;
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
+    client = world.clients[0];
+    check( client != NULL );
+    lifecycle_connect( &world, 0, 0x1F11 );
+    for ( int i = 0; i < 10; i++ )
+        lifecycle_pump( &world );
+    conn = lifecycle_client_connection( client );
+    check( conn->send_budget_enabled == 1 && conn->budget.kbps == 1 );
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    lifecycle_check_budget_unlimited( conn );
+    lifecycle_disconnect( &world, 0 );
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    lifecycle_connect( &world, 0, 0x1F12 );
+    for ( int i = 0; i < 12; i++ )
+        lifecycle_pump( &world, 1.0 ); // refill 1 kbps bucket after CONFIG exchange
+    conn = lifecycle_client_connection( client );
+    check( conn->send_budget_enabled == 1 && conn->budget.kbps == 1 && conn->budget.tokens == (double) ROCKETNET_SEND_BUDGET );
+    for ( int i = 0; i < 3; i++ )
+        lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x33, (uint8_t) i );
+    lifecycle_pump( &world, 0.01 );
+    lifecycle_drain_server_counts( world.server, rocketnet_client_index( client ), 0x33, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    check( rel_got == 1 && conn->budget.reliable_waiting == 1 );
+
+    // Reconnect rule (2): a client configured with ROCKETNET_SEND_KBPS_UNLIMITED that overrides to 1 kbps at runtime
+    // starts its next connection back at UNLIMITED.
+    rn_test_client_stop_and_destroy( world.clients[0] );
+    lifecycle_client_config( &client_config );
+    client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
+    client = world.clients[0];
+    check( client != NULL );
+    lifecycle_connect( &world, 0, 0x1F13 );
+    for ( int i = 0; i < 10; i++ )
+        lifecycle_pump( &world );
+    conn = lifecycle_client_connection( client );
+    lifecycle_check_budget_unlimited( conn );
+    check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
+    check( conn->send_budget_enabled == 1 && conn->budget.kbps == 1 );
+    lifecycle_disconnect( &world, 0 );
+    check( rocketnet_client_set_send_kbps( client, 1 ) == ROCKETNET_STATUS_OK );
+    lifecycle_connect( &world, 0, 0x1F14 );
+    for ( int i = 0; i < 10; i++ )
+        lifecycle_pump( &world );
+    conn = lifecycle_client_connection( client );
+    lifecycle_check_budget_unlimited( conn );
+    for ( int i = 0; i < 3; i++ )
+        lifecycle_queue_client_message( client, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x34, (uint8_t) i );
+    lifecycle_pump( &world, 0.01 );
+    lifecycle_drain_server_counts( world.server, rocketnet_client_index( client ), 0x34, &rel_got, &unrel_got, -1, 0, NULL, NULL );
+    check( rel_got == 3 && conn->budget.reliable_waiting == 0 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_client_set_send_kbps_limit_budget_and_reconnect_rules );
+
+static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rules()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 2, 2 );
+    rocketnet_server_t * server = world.server;
+
+    // NULL server, negative kbps, and out-of-range client_index before any client connects.
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    lifecycle_send_kbps_assertions = 0;
+    rocketnet_assert_function( lifecycle_send_kbps_assert );
+    uint64_t misuse = rocketnet_api_misuse_count();
+    check( rocketnet_server_set_send_kbps( NULL, 0, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( lifecycle_send_kbps_assertions == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
+    rocketnet_assert_function( saved_assert );
+
+    misuse = rocketnet_api_misuse_count();
+    check( rocketnet_server_set_send_kbps( server, 0, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, 0, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, -1, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, 2, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    check( rocketnet_server_set_send_kbps( server, -1, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, 2, 1000 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, INT_MIN, 0 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, INT_MAX, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse + 4 );
+    misuse = rocketnet_api_misuse_count();
+
+    // Disconnected valid slots accept 0, finite, and UNLIMITED as no-ops without altering config defaults.
+    check( rocketnet_server_set_send_kbps( server, 0, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_set_send_kbps( server, 0, 1 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_set_send_kbps( server, 1, 1 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_set_send_kbps( server, 1, 0 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    lifecycle_connect( &world, 0, 0x1F20 );
+    lifecycle_connect( &world, 1, 0x1F21 );
+    const int slot_a = rocketnet_client_index( world.clients[0] );
+    const int slot_b = rocketnet_client_index( world.clients[1] );
+    check( slot_a >= 0 && slot_a < 2 && slot_b >= 0 && slot_b < 2 && slot_a != slot_b );
+    for ( int i = 0; i < 10; i++ )
+        lifecycle_pump( &world );
+
+    rn_message_connection_t * conn_a = lifecycle_server_connection( server, slot_a );
+    rn_message_connection_t * conn_b = lifecycle_server_connection( server, slot_b );
+    check( conn_a != NULL && conn_b != NULL );
+    check( conn_a->default_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
+    check( conn_b->default_kbps == ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS );
+    check( conn_a->send_budget_enabled == 1 && conn_a->budget.kbps == (uint32_t) ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && conn_a->budget.depth == 125000.0 );
+    check( conn_b->send_budget_enabled == 1 && conn_b->budget.kbps == (uint32_t) ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS && conn_b->budget.depth == 125000.0 );
+
+    // Invalid calls while both slots are connected do not alter either slot.
+    const lifecycle_expected_budget_t saved_a = lifecycle_expected_budget_capture( conn_a );
+    const lifecycle_expected_budget_t saved_b = lifecycle_expected_budget_capture( conn_b );
+    check( rocketnet_server_set_send_kbps( server, slot_a, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, slot_b, INT_MIN ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse );
+    check( rocketnet_server_set_send_kbps( server, -1, 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, 2, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
+    misuse = rocketnet_api_misuse_count();
+    lifecycle_check_budget_matches_oracle( conn_a, &saved_a );
+    lifecycle_check_budget_matches_oracle( conn_b, &saved_b );
+
+    // Cap slot_a at 1 kbps while slot_b stays at 10000 kbps: only slot_a defers/drops in the next update.
+    rocketnet_message_server_t * ms = rocketnet_server_message_server( server );
+    check( rocketnet_server_set_send_kbps( server, slot_a, 1 ) == ROCKETNET_STATUS_OK );
+    lifecycle_expected_budget_t oracle_a = saved_a;
+    lifecycle_expected_budget_t oracle_b = saved_b;
+    lifecycle_expected_budget_set_kbps( &oracle_a, 1, ms->object.time );
+    lifecycle_check_budget_matches_oracle( conn_a, &oracle_a );
+    lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        lifecycle_queue_server_message( server, slot_a, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x41, (uint8_t) i );
+        lifecycle_queue_server_message( server, slot_b, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x42, (uint8_t) i );
+    }
+    for ( int i = 0; i < 2; i++ )
+    {
+        lifecycle_queue_server_message( server, slot_a, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x41, (uint8_t) i );
+        lifecycle_queue_server_message( server, slot_b, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x42, (uint8_t) i );
+    }
+
+    struct rocketnet_server_client_stats_t stats_a_before = rn_server_client_stats_of( server, slot_a );
+    struct rocketnet_server_client_stats_t stats_b_before = rn_server_client_stats_of( server, slot_b );
+    struct rocketnet_server_stats_t srv_before = rn_server_stats_of( server );
+    const double update_1_time = world.time;
+    lifecycle_server_pump( &world, 0.01 );
+    struct rocketnet_server_client_stats_t stats_a_after = rn_server_client_stats_of( server, slot_a );
+    struct rocketnet_server_client_stats_t stats_b_after = rn_server_client_stats_of( server, slot_b );
+    struct rocketnet_server_stats_t srv_after = rn_server_stats_of( server );
+
+    int rel_a = 0, unrel_a = 0, rel_b = 0, unrel_b = 0;
+    lifecycle_drain_client_counts( world.clients[0], 0x41, &rel_a, &unrel_a );
+    lifecycle_drain_client_counts( world.clients[1], 0x42, &rel_b, &unrel_b );
+
+    const int rel_admitted_a = lifecycle_expected_budget_max_wire_bytes( (int) conn_a->ordered.builder.packet[0].payload_bytes );
+    const int wire_a_1 = (int) ( stats_a_after.bytes_sent - stats_a_before.bytes_sent ) - 28;
+    lifecycle_expected_budget_begin_update( &oracle_a, update_1_time );
+    lifecycle_expected_budget_reliable_send( &oracle_a, rel_admitted_a, wire_a_1 );
+    lifecycle_expected_budget_begin_update( &oracle_a, update_1_time );
+    lifecycle_expected_budget_reliable_wait( &oracle_a, rel_admitted_a );
+    lifecycle_check_budget_matches_oracle( conn_a, &oracle_a );
+
+    check( conn_a->written == 1 );
+    check( stats_a_after.packets_sent - stats_a_before.packets_sent == 1 );
+    check( srv_after.messages_dropped_over_budget - srv_before.messages_dropped_over_budget == 2 );
+    check( rel_a == 1 && unrel_a == 0 );
+
+    check( conn_b->written == 3 );
+    check( stats_b_after.packets_sent - stats_b_before.packets_sent == 5 );
+    check( conn_b->budget.reliable_waiting == 0 );
+    check( conn_b->budget.unreliable_dropped == 0 );
+    check( rel_b == 3 && unrel_b == 2 );
+
+    // Switch slot_a to ROCKETNET_SEND_KBPS_UNLIMITED and slot_b to 1 kbps: roles reverse immediately on the next update.
+    check( rocketnet_server_set_send_kbps( server, slot_a, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_set_send_kbps( server, slot_b, 1 ) == ROCKETNET_STATUS_OK );
+    lifecycle_check_budget_unlimited( conn_a );
+    check( conn_b->send_budget_enabled == 1 && conn_b->budget.kbps == 1 &&
+           conn_b->budget.depth == (double) ROCKETNET_SEND_BUDGET &&
+           conn_b->budget.tokens == (double) ROCKETNET_SEND_BUDGET );
+    oracle_b = lifecycle_expected_budget_capture( conn_b );
+
+    for ( int i = 0; i < 2; i++ )
+    {
+        lifecycle_queue_server_message( server, slot_a, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x41, (uint8_t) ( 3 + i ) );
+        lifecycle_queue_server_message( server, slot_a, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x41, (uint8_t) ( 2 + i ) );
+    }
+    for ( int i = 0; i < 3; i++ )
+        lifecycle_queue_server_message( server, slot_b, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x43, (uint8_t) i );
+    for ( int i = 0; i < 2; i++ )
+        lifecycle_queue_server_message( server, slot_b, ROCKETNET_RELIABILITY_UNRELIABLE, 900, 0x43, (uint8_t) i );
+
+    stats_a_before = rn_server_client_stats_of( server, slot_a );
+    stats_b_before = rn_server_client_stats_of( server, slot_b );
+    srv_before = rn_server_stats_of( server );
+    const double update_2_time = world.time;
+    lifecycle_server_pump( &world, 0.02 );
+    stats_a_after = rn_server_client_stats_of( server, slot_a );
+    stats_b_after = rn_server_client_stats_of( server, slot_b );
+    srv_after = rn_server_stats_of( server );
+
+    lifecycle_drain_client_counts( world.clients[0], 0x41, &rel_a, &unrel_a );
+    lifecycle_drain_client_counts( world.clients[1], 0x43, &rel_b, &unrel_b );
+
+    // slot_a (UNLIMITED) flushed its 2 deferred + 2 new reliable messages and 2 new unreliable messages in 1 update.
+    check( rel_a == 4 && unrel_a == 2 );
+
+    // slot_b (1 kbps) admitted 1 reliable packet, deferred 2, and dropped 2 unreliable messages.
+    const int rel_admitted_b = lifecycle_expected_budget_max_wire_bytes( (int) conn_b->ordered.builder.packet[0].payload_bytes );
+    const int wire_b_1 = wire_a_1;
+    lifecycle_expected_budget_begin_update( &oracle_b, update_2_time );
+    lifecycle_expected_budget_reliable_send( &oracle_b, rel_admitted_b, wire_b_1 );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_2_time );
+    lifecycle_expected_budget_reliable_wait( &oracle_b, rel_admitted_b );
+    lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
+    check( conn_b->written == 1 );
+    check( srv_after.messages_dropped_over_budget - srv_before.messages_dropped_over_budget == 2 );
+    check( rel_b == 1 && unrel_b == 0 );
+
+    // Setting slot_b to 0 restores the server directional default (10000 kbps = 1250000 B/s, depth 125000 B) without changing slot_a.
+    check( rocketnet_server_set_send_kbps( server, slot_b, 0 ) == ROCKETNET_STATUS_OK );
+    lifecycle_expected_budget_set_kbps( &oracle_b, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, update_2_time );
+    lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
+    lifecycle_check_budget_unlimited( conn_a );
+
+    // Advance 0.02s (+25000 B at 10000 kbps): slot_b's 2 deferred reliable messages flush on the next update.
+    const double update_3_time = world.time;
+    stats_b_before = rn_server_client_stats_of( server, slot_b );
+    lifecycle_server_pump( &world, 0.01 );
+    stats_b_after = rn_server_client_stats_of( server, slot_b );
+    lifecycle_drain_client_counts( world.clients[1], 0x43, &rel_b, &unrel_b );
+    check( stats_b_after.packets_sent - stats_b_before.packets_sent == 2 );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_3_time );
+    lifecycle_expected_budget_reliable_send( &oracle_b, rel_admitted_b, wire_b_1 );
+    lifecycle_expected_budget_begin_update( &oracle_b, update_3_time );
+    lifecycle_expected_budget_reliable_send( &oracle_b, rel_admitted_b, wire_b_1 );
+    lifecycle_check_budget_matches_oracle( conn_b, &oracle_b );
+    check( conn_b->budget.reliable_waiting == 0 );
+    check( rel_b == 2 && unrel_b == 0 );
+
+    // Finite maximum ROCKETNET_SEND_KBPS_UNLIMITED - 1 on slot_a is accepted as a finite rate without changing slot_b.
+    const lifecycle_expected_budget_t saved_b_after = lifecycle_expected_budget_capture( conn_b );
+    check( rocketnet_server_set_send_kbps( server, slot_a, ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) == ROCKETNET_STATUS_OK );
+    check( conn_a->send_budget_enabled == 1 );
+    check( conn_a->budget.kbps == (uint32_t) ( ROCKETNET_SEND_KBPS_UNLIMITED - 1 ) );
+    lifecycle_check_budget_matches_oracle( conn_b, &saved_b_after );
+
+    // Slot reset rule (1): server configured with finite per_client_send_kbps = 1 resets a reconnected slot back to 1 kbps after a runtime UNLIMITED override.
+    lifecycle_world_destroy( &world );
+    memset( &world, 0, sizeof( world ) );
+    rocketnet_quiet( 1 );
+    world.time = 2000.0;
+    lifecycle_now = world.time;
+    lifecycle_identity( &world.identity );
+    rocketnet_server_config_t server_config;
+    lifecycle_server_config( &server_config, &world.identity, 2 );
+    server_config.per_client_send_kbps = 1;
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    server = world.server;
+    check( server != NULL && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    rocketnet_client_test_config_t client_config;
+    lifecycle_client_config( &client_config );
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
+    world.num_clients = 1;
+    check( world.clients[0] != NULL );
+
+    lifecycle_connect( &world, 0, 0x1F22 );
+    int slot = rocketnet_client_index( world.clients[0] );
+    conn_a = lifecycle_server_connection( server, slot );
+    check( conn_a->send_budget_enabled == 1 && conn_a->budget.kbps == 1 );
+    check( rocketnet_server_set_send_kbps( server, slot, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    lifecycle_check_budget_unlimited( conn_a );
+    lifecycle_disconnect( &world, 0 );
+    check( rocketnet_server_set_send_kbps( server, slot, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    lifecycle_connect( &world, 0, 0x1F23 );
+    slot = rocketnet_client_index( world.clients[0] );
+    for ( int i = 0; i < 12; i++ )
+        lifecycle_pump( &world, 1.0 );
+    conn_a = lifecycle_server_connection( server, slot );
+    check( conn_a->send_budget_enabled == 1 && conn_a->budget.kbps == 1 && conn_a->budget.tokens == (double) ROCKETNET_SEND_BUDGET );
+    for ( int i = 0; i < 3; i++ )
+        lifecycle_queue_server_message( server, slot, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x44, (uint8_t) i );
+    lifecycle_server_pump( &world, 0.01 );
+    lifecycle_drain_client_counts( world.clients[0], 0x44, &rel_a, &unrel_a );
+    check( rel_a == 1 && conn_a->budget.reliable_waiting == 1 );
+
+    // Slot reset rule (2): server configured with ROCKETNET_SEND_KBPS_UNLIMITED resets slots back to UNLIMITED across stop/start and reconnect after a runtime 1 kbps override.
+    lifecycle_world_destroy( &world );
+    memset( &world, 0, sizeof( world ) );
+    rocketnet_quiet( 1 );
+    world.time = 3000.0;
+    lifecycle_now = world.time;
+    lifecycle_identity( &world.identity );
+    lifecycle_server_config( &server_config, &world.identity, 2 );
+    server_config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    server = world.server;
+    check( server != NULL && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
+    world.num_clients = 1;
+    check( world.clients[0] != NULL );
+
+    lifecycle_connect( &world, 0, 0x1F24 );
+    slot = rocketnet_client_index( world.clients[0] );
+    conn_a = lifecycle_server_connection( server, slot );
+    lifecycle_check_budget_unlimited( conn_a );
+    check( rocketnet_server_set_send_kbps( server, slot, 1 ) == ROCKETNET_STATUS_OK );
+    check( conn_a->send_budget_enabled == 1 && conn_a->budget.kbps == 1 );
+
+    rocketnet_server_stop( server );
+    rn_test_server_wait_stopped( server );
+    check( rocketnet_server_set_send_kbps( server, slot, 1 ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_set_send_kbps( server, -1, 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, 2, 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    check( rocketnet_server_set_send_kbps( server, slot, -1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+    rocketnet_client_disconnect( world.clients[0] );
+    rn_test_client_wait_disconnected( world.clients[0] );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    lifecycle_connect( &world, 0, 0x1F25 );
+    slot = rocketnet_client_index( world.clients[0] );
+    for ( int i = 0; i < 10; i++ )
+        lifecycle_pump( &world );
+    conn_a = lifecycle_server_connection( server, slot );
+    lifecycle_check_budget_unlimited( conn_a );
+    for ( int i = 0; i < 3; i++ )
+        lifecycle_queue_server_message( server, slot, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1000, 0x45, (uint8_t) i );
+    lifecycle_server_pump( &world, 0.01 );
+    lifecycle_drain_client_counts( world.clients[0], 0x45, &rel_a, &unrel_a );
+    check( rel_a == 3 && conn_a->budget.reliable_waiting == 0 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rules );
+
+static uint32_t lifecycle_send_tagged_message( rocketnet_client_t * client, int channel, enum rocketnet_reliability_t reliability, uint8_t tag, uint8_t index_byte, int bytes )
+{
+    uint8_t * out = rocketnet_client_start_message( client, channel, reliability, bytes );
+    check( out != NULL );
+    if ( !out )
+        return 0;
+    memset( out, (int) tag, (size_t) bytes );
+    out[0] = tag;
+    if ( bytes > 1 )
+        out[1] = index_byte;
+    const uint32_t serial = rocketnet_client_finish_message( client, bytes );
+    check( serial != 0 );
+    return serial;
+}
+
+static uint32_t lifecycle_server_send_tagged_message( rocketnet_server_t * server, uint64_t dest, int channel, enum rocketnet_reliability_t reliability, uint8_t tag, uint8_t index_byte, int bytes )
+{
+    uint8_t * out = rocketnet_server_start_message( server, dest, channel, reliability, bytes );
+    check( out != NULL );
+    if ( !out )
+        return 0;
+    memset( out, (int) tag, (size_t) bytes );
+    out[0] = tag;
+    if ( bytes > 1 )
+        out[1] = index_byte;
+    const uint32_t serial = rocketnet_server_finish_message( server, bytes );
+    check( serial != 0 );
+    return serial;
+}
+
+static void lifecycle_assert_session_metrics_reset( const rocketnet_client_stats_t * stats )
+{
+    check( stats->rtt_ms == 0.0 );
+    check( stats->jitter_ms == 0.0 );
+    check( stats->packet_loss_percent == 0.0 );
+    check( stats->packets_sent_per_second == 0.0 );
+    check( stats->packets_received_per_second == 0.0 );
+    check( stats->bandwidth_sent_kbps == 0.0 );
+    check( stats->bandwidth_received_kbps == 0.0 );
+}
+
+// Reconnects one rocketnet_client_t across three connection generations:
+//   1. server_a (slot 0, tag 0xA1, queued unreliable + reliable ordered with
+//      ACK receipt + multi-fragment reliable ordered traffic at disconnect)
+//   2. server_a again on slot 0 (tag 0xB1)
+//   3. a second server_b on slot 0 (tag 0xC1)
+// Proves that session-scoped client metrics and per-slot server stats reset at
+// each boundary, while zero stale messages or ACK receipts from an earlier
+// generation ever surface in a later generation.
+static void test_client_reconnect_same_and_other_server_isolates_generations()
+{
+    rocketnet_quiet( 1 );
+    double now = 2000.0;
+    lifecycle_now = now;
+
+    lifecycle_identity_t identity_a;
+    lifecycle_identity_t identity_b;
+    lifecycle_identity( &identity_a );
+    uint8_t seed_b[32];
+    for ( int i = 0; i < 32; ++i )
+        seed_b[i] = (uint8_t) ( 0x7A ^ i );
+    check( rocketnet_generate_backend_keypair_from_seed( seed_b, identity_b.backend_public, identity_b.backend_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_config_t server_config_a;
+    rocketnet_server_config_t server_config_b;
+    lifecycle_server_config( &server_config_a, &identity_a, 1 );
+    lifecycle_server_config( &server_config_b, &identity_b, 1 );
+    rocketnet_server_t * server_a = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config_a, NULL );
+    rocketnet_server_t * server_b = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config_b, NULL );
+    check( server_a != NULL && server_b != NULL );
+    check( rocketnet_server_start( server_a ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_start( server_b ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_client_test_config_t client_config;
+    lifecycle_client_config( &client_config );
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
+    check( client != NULL );
+
+    // --- Generation 1 on server_a (tag 0xA1) ---
+    char token_a1[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server_a, rocketnet_server_port( server_a ), &identity_a, 0x3101, 300, token_a1 );
+    check( rn_test_client_connect_after_completion( client, token_a1 ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server_a, 0 ) ); ++i )
+    {
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+        now += 0.01;
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server_a, 0 ) == 1 );
+
+    // Exchange initial Gen-1 traffic so RTT and counters warm up.
+    (void) lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xA1, 0, 16 );
+    (void) lifecycle_server_send_tagged_message( server_a, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xA1, 0, 16 );
+    for ( int i = 0; i < 60; ++i )
+    {
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+        while ( rocketnet_client_receive_messages( client ) != NULL ) {}
+        while ( rocketnet_server_receive_messages( server_a ) != NULL ) {}
+        struct rocketnet_receipt_t drain_rcpt[8];
+        (void) rocketnet_client_receipts( client, drain_rcpt, 8 );
+        (void) rocketnet_server_receipts( server_a, 0, drain_rcpt, 8 );
+        now += 0.02;
+    }
+
+    // Queue fresh Gen-1 traffic in both directions (unreliable, reliable ordered
+    // with ACK receipt, and multi-fragment reliable ordered) immediately before
+    // disconnecting, plus send one step so packets are in-flight on loopback.
+    const uint32_t stale_c_serial_a1 = lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xA1, 1, 32 );
+    (void) lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 0xA1, 2, 24 );
+    (void) lifecycle_send_tagged_message( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xA1, 3, 2600 );
+    const uint32_t stale_s_serial_a1 = lifecycle_server_send_tagged_message( server_a, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xA1, 4, 32 );
+    (void) lifecycle_server_send_tagged_message( server_a, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 0xA1, 5, 24 );
+    (void) lifecycle_server_send_tagged_message( server_a, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xA1, 6, 2600 );
+    check( stale_c_serial_a1 != 0 && stale_s_serial_a1 != 0 );
+
+    lifecycle_now = now;
+    rocketnet_client_send_packets( client );
+    rocketnet_server_send_packets( server_a );
+
+    // Queue another wave that stays in the send queues at disconnect time.
+    (void) lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xA1, 7, 32 );
+    (void) lifecycle_server_send_tagged_message( server_a, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xA1, 8, 32 );
+
+    char token_a2[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server_a, rocketnet_server_port( server_a ), &identity_a, 0x3102, 300, token_a2 );
+
+    rocketnet_client_disconnect( client );
+    check( !rocketnet_client_disconnected( client ) );
+    check( rocketnet_client_connect( client, token_a2 ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    rocketnet_client_update( client, now );
+    check( rocketnet_client_disconnected( client ) );
+
+    const rocketnet_client_stats_t after_disconnect_1 = rn_client_stats_of( client );
+    lifecycle_assert_session_metrics_reset( &after_disconnect_1 );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    // Pump server_a so it processes the disconnect and clears slot 0.
+    for ( int i = 0; i < 40 && rocketnet_server_client_connected( server_a, 0 ); ++i )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+    }
+    check( rocketnet_server_client_connected( server_a, 0 ) == 0 );
+    while ( rocketnet_server_receive_messages( server_a ) != NULL ) {}
+    check( rocketnet_server_receipts( server_a, 0, NULL, 0 ) == 0 );
+    const rocketnet_server_client_stats_t empty_slot_a = rn_server_client_stats_of( server_a, 0 );
+    check( empty_slot_a.packets_sent == 0 && empty_slot_a.packets_received == 0 );
+    check( empty_slot_a.bytes_sent == 0 && empty_slot_a.bytes_received == 0 );
+    check( empty_slot_a.rtt_ms == 0.0 && empty_slot_a.jitter_ms == 0.0 && empty_slot_a.packet_loss_percent == 0.0 );
+
+    // --- Generation 2 on the same server_a, reusing slot 0 (tag 0xB1) ---
+    check( rocketnet_client_connect( client, token_a2 ) == ROCKETNET_STATUS_OK );
+    const rocketnet_client_stats_t after_connect_2 = rn_client_stats_of( client );
+    lifecycle_assert_session_metrics_reset( &after_connect_2 );
+    const uint64_t cumulative_client_payloads_recv_base_2 = after_connect_2.payloads_received;
+    const uint64_t cumulative_client_receipts_acked_base_2 = after_connect_2.receipts_acked;
+
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server_a, 0 ) ); ++i )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server_a, 0 ) == 1 );
+    check( rocketnet_server_client_id( server_a, 0 ) == 0x3102 );
+
+    // Before sending any Gen-2 messages, no Gen-1 messages or receipts leak on either side.
+    const rocketnet_server_client_stats_t slot_a_fresh = rn_server_client_stats_of( server_a, 0 );
+    check( slot_a_fresh.packets_sent > 0 && slot_a_fresh.packets_received > 0 );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_server_receive_messages( server_a ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+    check( rocketnet_server_receipts( server_a, 0, NULL, 0 ) == 0 );
+    const rocketnet_server_stats_t server_a_base_2 = rn_server_stats_of( server_a );
+
+    const uint32_t gen2_c_serial = lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xB1, 1, 24 );
+    (void) lifecycle_send_tagged_message( client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xB1, 2, 2600 );
+    const uint32_t gen2_s_serial = lifecycle_server_send_tagged_message( server_a, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xB1, 1, 24 );
+    (void) lifecycle_server_send_tagged_message( server_a, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xB1, 2, 2600 );
+
+    int gen2_client_msgs = 0;
+    int gen2_server_msgs = 0;
+    int gen2_client_rcpts = 0;
+    int gen2_server_rcpts = 0;
+    for ( int step = 0; step < 200 && ( gen2_client_msgs < 2 || gen2_server_msgs < 2 || gen2_client_rcpts < 1 || gen2_server_rcpts < 1 ); ++step )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; ++i )
+            {
+                check( batch->bytes[i] >= 2 );
+                check( batch->data[i][0] == 0xB1 );
+                gen2_client_msgs++;
+            }
+        }
+        while ( ( batch = rocketnet_server_receive_messages( server_a ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; ++i )
+            {
+                check( batch->client_index[i] == 0 );
+                check( batch->bytes[i] >= 2 );
+                check( batch->data[i][0] == 0xB1 );
+                gen2_server_msgs++;
+            }
+        }
+        struct rocketnet_receipt_t rcpts[8];
+        const int cr = rocketnet_client_receipts( client, rcpts, 8 );
+        for ( int i = 0; i < cr; ++i )
+        {
+            check( rcpts[i].serial == gen2_c_serial );
+            check( rcpts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            gen2_client_rcpts++;
+        }
+        const int sr = rocketnet_server_receipts( server_a, 0, rcpts, 8 );
+        for ( int i = 0; i < sr; ++i )
+        {
+            check( rcpts[i].serial == gen2_s_serial );
+            check( rcpts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            gen2_server_rcpts++;
+        }
+    }
+    check( gen2_client_msgs == 2 && gen2_server_msgs == 2 );
+    check( gen2_client_rcpts == 1 && gen2_server_rcpts == 1 );
+
+    const rocketnet_server_client_stats_t slot_a_gen2 = rn_server_client_stats_of( server_a, 0 );
+    check( slot_a_gen2.packets_sent > slot_a_fresh.packets_sent );
+    check( slot_a_gen2.packets_received > slot_a_fresh.packets_received );
+    const rocketnet_server_stats_t server_a_gen2 = rn_server_stats_of( server_a );
+    check( server_a_gen2.receipts_acked - server_a_base_2.receipts_acked == 1 );
+    const rocketnet_client_stats_t client_gen2 = rn_client_stats_of( client );
+    check( client_gen2.payloads_received > cumulative_client_payloads_recv_base_2 );
+    check( client_gen2.receipts_acked - cumulative_client_receipts_acked_base_2 == 1 );
+
+    // Queue late Gen-2 traffic on both ends before disconnecting and moving to server_b.
+    (void) lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xB1, 9, 32 );
+    (void) lifecycle_server_send_tagged_message( server_a, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xB1, 10, 32 );
+    lifecycle_now = now;
+    rocketnet_client_send_packets( client );
+    rocketnet_server_send_packets( server_a );
+
+    rocketnet_client_disconnect( client );
+    rocketnet_client_update( client, now );
+    check( rocketnet_client_disconnected( client ) );
+
+    // --- Generation 3 on a different server_b (tag 0xC1) ---
+    char token_b1[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server_b, rocketnet_server_port( server_b ), &identity_b, 0x4101, 300, token_b1 );
+    check( rocketnet_client_connect( client, token_b1 ) == ROCKETNET_STATUS_OK );
+    const rocketnet_client_stats_t after_connect_3 = rn_client_stats_of( client );
+    lifecycle_assert_session_metrics_reset( &after_connect_3 );
+    const uint64_t cumulative_client_payloads_recv_base_3 = after_connect_3.payloads_received;
+    const uint64_t cumulative_client_receipts_acked_base_3 = after_connect_3.receipts_acked;
+
+    // Step both server_a (draining its old teardown) and server_b + client.
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server_b, 0 ) ); ++i )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+        rocketnet_server_update( server_b, now );
+        rocketnet_server_send_packets( server_b );
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_server_client_connected( server_b, 0 ) == 1 );
+    check( rocketnet_server_client_id( server_b, 0 ) == 0x4101 );
+    check( rocketnet_server_client_connected( server_a, 0 ) == 0 );
+
+    const rocketnet_server_client_stats_t slot_b_fresh = rn_server_client_stats_of( server_b, 0 );
+    const rocketnet_server_stats_t server_b_base_3 = rn_server_stats_of( server_b );
+
+    const uint32_t gen3_c_serial = lifecycle_send_tagged_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xC1, 1, 24 );
+    const uint32_t gen3_s_serial = lifecycle_server_send_tagged_message( server_b, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xC1, 1, 24 );
+
+    int gen3_client_msgs = 0;
+    int gen3_server_msgs = 0;
+    int gen3_client_rcpts = 0;
+    int gen3_server_rcpts = 0;
+    for ( int step = 0; step < 200 && ( gen3_client_msgs < 1 || gen3_server_msgs < 1 || gen3_client_rcpts < 1 || gen3_server_rcpts < 1 ); ++step )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+        rocketnet_server_update( server_b, now );
+        rocketnet_server_send_packets( server_b );
+
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; ++i )
+            {
+                check( batch->bytes[i] >= 2 );
+                check( batch->data[i][0] == 0xC1 );
+                gen3_client_msgs++;
+            }
+        }
+        while ( ( batch = rocketnet_server_receive_messages( server_b ) ) != NULL )
+        {
+            for ( int i = 0; i < batch->num_messages; ++i )
+            {
+                check( batch->client_index[i] == 0 );
+                check( batch->bytes[i] >= 2 );
+                check( batch->data[i][0] == 0xC1 );
+                gen3_server_msgs++;
+            }
+        }
+        struct rocketnet_receipt_t rcpts[8];
+        const int cr = rocketnet_client_receipts( client, rcpts, 8 );
+        for ( int i = 0; i < cr; ++i )
+        {
+            check( rcpts[i].serial == gen3_c_serial );
+            check( rcpts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            gen3_client_rcpts++;
+        }
+        const int sr = rocketnet_server_receipts( server_b, 0, rcpts, 8 );
+        for ( int i = 0; i < sr; ++i )
+        {
+            check( rcpts[i].serial == gen3_s_serial );
+            check( rcpts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            gen3_server_rcpts++;
+        }
+    }
+    check( gen3_client_msgs == 1 && gen3_server_msgs == 1 );
+    check( gen3_client_rcpts == 1 && gen3_server_rcpts == 1 );
+
+    const rocketnet_server_client_stats_t slot_b_gen3 = rn_server_client_stats_of( server_b, 0 );
+    check( slot_b_gen3.packets_sent > slot_b_fresh.packets_sent );
+    check( slot_b_gen3.packets_received > slot_b_fresh.packets_received );
+    const rocketnet_server_stats_t server_b_gen3 = rn_server_stats_of( server_b );
+    check( server_b_gen3.receipts_acked - server_b_base_3.receipts_acked == 1 );
+    const rocketnet_client_stats_t client_gen3 = rn_client_stats_of( client );
+    check( client_gen3.payloads_received > cumulative_client_payloads_recv_base_3 );
+    check( client_gen3.receipts_acked - cumulative_client_receipts_acked_base_3 == 1 );
+
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server_a );
+    rn_test_server_stop_and_destroy( server_b );
+}
+REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
+
+struct lifecycle_pressure_allocator_t
+{
+    int fail_countdown;
+    int refused_count;
+    int active_allocations;
+};
+
+static void * lifecycle_pressure_malloc( void * context, size_t size )
+{
+    lifecycle_pressure_allocator_t * state = (lifecycle_pressure_allocator_t *) context;
+    if ( state->fail_countdown > 0 )
+    {
+        state->fail_countdown--;
+        if ( state->fail_countdown == 0 )
+        {
+            state->refused_count++;
+            return NULL;
+        }
+    }
+    void * ptr = malloc( size > 0 ? size : 1 );
+    if ( ptr )
+        state->active_allocations++;
+    return ptr;
+}
+
+static void lifecycle_pressure_free( void * context, void * ptr )
+{
+    if ( !ptr )
+        return;
+    lifecycle_pressure_allocator_t * state = (lifecycle_pressure_allocator_t *) context;
+    state->active_allocations--;
+    free( ptr );
+}
+
+struct lifecycle_delayed_ack_drop_link_t
+{
+    rn_message_link_t base;
+    bool hold_acks;
+    int held_count;
+    int held_clients[8];
+    uint64_t held_packets[8];
+    uint64_t held_connections[8];
+    bool release_held_acks;
+    bool drop_next_packet;
+    int dropped_packets;
+};
+
+static lifecycle_delayed_ack_drop_link_t * g_lifecycle_delayed_link = NULL;
+
+static int lifecycle_delayed_link_acked( void * transport, const int ** client_index, const uint64_t ** packet_ids )
+{
+    lifecycle_delayed_ack_drop_link_t * ctx = g_lifecycle_delayed_link;
+    const int * base_clients = NULL;
+    const uint64_t * base_packets = NULL;
+    const int n = ctx->base.acked( transport, &base_clients, &base_packets );
+    if ( ctx->hold_acks )
+    {
+        for ( int k = 0; k < n && ctx->held_count < 8; ++k )
+        {
+            ctx->held_clients[ctx->held_count] = base_clients[k];
+            ctx->held_packets[ctx->held_count] = base_packets[k];
+            ctx->held_connections[ctx->held_count] = ctx->base.acked_connection
+                ? ctx->base.acked_connection( transport, k )
+                : 0;
+            ctx->held_count++;
+        }
+        *client_index = NULL;
+        *packet_ids = NULL;
+        return 0;
+    }
+    if ( ctx->release_held_acks && ctx->held_count > 0 )
+    {
+        *client_index = ctx->held_clients;
+        *packet_ids = ctx->held_packets;
+        return ctx->held_count;
+    }
+    *client_index = base_clients;
+    *packet_ids = base_packets;
+    return n;
+}
+
+static uint64_t lifecycle_delayed_link_acked_connection( void * transport, int index )
+{
+    lifecycle_delayed_ack_drop_link_t * ctx = g_lifecycle_delayed_link;
+    if ( ctx->release_held_acks && ctx->held_count > 0 )
+    {
+        const uint64_t conn = ( index >= 0 && index < ctx->held_count ) ? ctx->held_connections[index] : 0;
+        if ( index + 1 >= ctx->held_count )
+        {
+            ctx->release_held_acks = false;
+            ctx->held_count = 0;
+        }
+        return conn;
+    }
+    return ctx->base.acked_connection ? ctx->base.acked_connection( transport, index ) : 0;
+}
+
+static int lifecycle_delayed_link_finish_packet( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes )
+{
+    lifecycle_delayed_ack_drop_link_t * ctx = g_lifecycle_delayed_link;
+    if ( ctx->drop_next_packet )
+    {
+        ctx->drop_next_packet = false;
+        ctx->dropped_packets++;
+        ctx->base.abort_packet( transport, context );
+        return 1;
+    }
+    return ctx->base.finish_packet( transport, context, payload_bytes );
+}
+
+// Single bounded lifecycle story integrating:
+//   1. Slot 0 reuse across generations while a Generation-1 reliable ACK is
+//      deliberately delayed on the server link and delivered after Generation 2
+//      occupies slot 0, proving the late ACK increments
+//      ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY and cannot alter
+//      Generation 2's window, counters, receipts, or delivery.
+//   2. Allocator-backed memory pressure during transition (custom allocator
+//      refusal returning ROCKETNET_STATUS_OUT_OF_MEMORY on reconnect and
+//      whole-message send-region refusal returning NULL / false via
+//      rocketnet_client_can_send_message and rocketnet_server_can_send_message
+//      with zero partial bytes or stale receipts, plus bounded recovery after
+//      ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED).
+//   3. Disconnect notification draining across bounded fake-clock updates with
+//      disconnect_packets_per_update = 2, proving each update seals at most 2
+//      packets while the reused session connects and remains usable.
+//   4. One fragmented reliable payload (2600 bytes, 3 fragments, ACK receipt)
+//      and a follow-up ordered message in the new generation with one fragment
+//      frame deliberately dropped; after bounded fake-clock retransmission and
+//      reassembly, asserts byte-exact payload, message order, ACK receipt
+//      identity, and ownership by the new session generation.
+//
+// Oracle sensitivity verified against single-concern production mutations across:
+//   - Generation-isolation guard (rocketnet_server_connection_id_assigned in
+//     sdk/rocketnet_server_protocol.cpp and rn_endpoint_reset in sdk/rocketnet_endpoint.cpp),
+//   - Delayed-ACK generation tagging and lookup (server->acked_connection_ids in
+//     sdk/rocketnet_server_protocol.cpp and rocketnet_server_transport_acked_connection_ids
+//     in sdk/rocketnet_server_transport.cpp),
+//   - Allocator/send-region refusal and exhaustion transitions (rn_region_send_refuse
+//     in sdk/rocketnet_allocator.cpp and rn_endpoint_send_room in sdk/rocketnet_endpoint.cpp),
+//   - Per-update disconnect allowance (disconnect_packets_per_update drain cap in
+//     rocketnet_server_transport_update in sdk/rocketnet_server_transport.cpp),
+//   - Fragmented chunk retransmission, ACK receipt emission, and payload byte/order
+//     integrity (rn_endpoint_ordered_due, rn_endpoint_on_acked, and rn_endpoint_finish
+//     in sdk/rocketnet_endpoint.cpp).
+static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack()
+{
+    rocketnet_quiet( 1 );
+    double now = 3000.0;
+    lifecycle_now = now;
+
+    lifecycle_pressure_allocator_t alloc_state;
+    memset( &alloc_state, 0, sizeof( alloc_state ) );
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( &alloc_state, lifecycle_pressure_malloc, lifecycle_pressure_free ) == ROCKETNET_STATUS_OK );
+
+    lifecycle_identity_t identity;
+    lifecycle_identity( &identity );
+
+    rocketnet_server_config_t server_config;
+    lifecycle_server_config( &server_config, &identity, 1 );
+    server_config.disconnect_packets_per_update = 2;
+    server_config.message_resend_delay_initial_ms = 20;
+    server_config.message_resend_delay_max_ms = 20;
+    server_config.per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
+    server_config.send_queue_messages = 16;
+
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_server_t * server = rocketnet_server_create( &alloc_state, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL && create_status == ROCKETNET_STATUS_OK );
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_client_test_config_t client_config;
+    lifecycle_client_config( &client_config );
+    client_config.message_resend_delay_initial_ms = 20;
+    client_config.message_resend_delay_max_ms = 20;
+    client_config.send_kbps = 1;
+    client_config.send_queue_messages = 16;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_client_t * client = rocketnet_client_create( &alloc_state, &client_config, &create_status );
+    check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+
+    rn_message_object_t * server_msg_obj = &rocketnet_server_message_server( server )->object;
+    struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( rocketnet_server_message_server( server ) );
+    check( server_msg_obj != NULL && server_transport != NULL );
+
+    lifecycle_delayed_ack_drop_link_t delayed_link;
+    memset( &delayed_link, 0, sizeof( delayed_link ) );
+    delayed_link.base = server_msg_obj->link;
+    g_lifecycle_delayed_link = &delayed_link;
+    server_msg_obj->link.acked = lifecycle_delayed_link_acked;
+    server_msg_obj->link.acked_connection = lifecycle_delayed_link_acked_connection;
+    server_msg_obj->link.finish_packet = lifecycle_delayed_link_finish_packet;
+
+    // --- Generation 1 on slot 0 (client_id 0x5101, tag 0xD1) ---
+    char token_gen1[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server, rocketnet_server_port( server ), &identity, 0x5101, 300, token_gen1 );
+    check( rn_test_client_connect_after_completion( client, token_gen1 ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server, 0 ) ); ++i )
+    {
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        now += 0.01;
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server, 0 ) == 1 );
+    const uint64_t gen1_connection_id = server_msg_obj->hot_connections[0].connection_id;
+    check( gen1_connection_id != 0 );
+
+    // Hold transport ACKs on the server message link while Generation 1 sends a
+    // reliable message from server -> client and client ACKs it on the wire.
+    // Send two dummy unreceipted messages first so gen1_server_serial (3) is
+    // distinct from Generation 2's fresh serials (1 and 2).
+    (void) lifecycle_server_send_tagged_message(
+        server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xD0, 1, 16 );
+    (void) lifecycle_server_send_tagged_message(
+        server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 0xD0, 2, 16 );
+    delayed_link.hold_acks = true;
+    const uint32_t gen1_server_serial = lifecycle_server_send_tagged_message(
+        server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xD1, 1, 64 );
+    check( gen1_server_serial == 3 );
+
+    int gen1_client_received = 0;
+    for ( int i = 0; i < 40 && ( gen1_client_received < 3 || delayed_link.held_count < 1 ); ++i )
+    {
+        now += 0.005;
+        lifecycle_now = now;
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; ++m )
+            {
+                if ( gen1_client_received == 2 )
+                    check( batch->bytes[m] == 64 && batch->data[m][0] == 0xD1 && batch->data[m][1] == 1 );
+                gen1_client_received++;
+            }
+        }
+    }
+    check( gen1_client_received == 3 );
+    check( delayed_link.held_count >= 1 );
+    check( delayed_link.held_connections[0] == gen1_connection_id );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+    delayed_link.hold_acks = false;
+
+    // Exercise whole-message send-region pressure on Generation 1 before disconnect:
+    // filling all 17 send descriptors (send_queue_messages=16 + 1 reserve) causes
+    // rocketnet_client_can_send_message to report false before start_message, and
+    // start_message under pressure refuses the whole message (NULL) without partial
+    // bytes or stale receipts while transitioning the client to MESSAGE_MEMORY_EXHAUSTED.
+    int pre_exhaust_queued = 0;
+    while ( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) )
+    {
+        const uint32_t s = lifecycle_send_tagged_message(
+            client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xD2, (uint8_t) pre_exhaust_queued, 900 );
+        check( s != 0 );
+        pre_exhaust_queued++;
+        check( pre_exhaust_queued <= 17 );
+    }
+    check( pre_exhaust_queued == 17 );
+    check( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == 0 );
+    check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 900 ) == NULL );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    // Advance the client one tick so its region resets while retaining the
+    // MESSAGE_MEMORY_EXHAUSTED terminal state, and kick slot 0 on the server so
+    // the server queues its 10-packet disconnect burst regulated by
+    // disconnect_packets_per_update = 2.
+    now += 0.01;
+    lifecycle_now = now;
+    rocketnet_client_update( client, now );
+    rocketnet_client_send_packets( client );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
+
+    const uint64_t seals_before_disconnect = rocketnet_server_transport_disconnect_seals_for_test( server_transport );
+    rocketnet_server_disconnect_client( server, 0 );
+
+    // First server update after disconnect_client drains at most disconnect_packets_per_update (2)
+    // disconnect packets while freeing slot 0 for reuse.
+    now += 0.005;
+    lifecycle_now = now;
+    rocketnet_server_update( server, now );
+    rocketnet_server_send_packets( server );
+    uint64_t prev_seals = rocketnet_server_transport_disconnect_seals_for_test( server_transport );
+    check( prev_seals - seals_before_disconnect == 2 );
+    check( rocketnet_server_client_connected( server, 0 ) == 0 );
+    check( rocketnet_server_receive_messages( server ) == NULL );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+
+    // --- Allocator-backed memory pressure and terminal-state recovery during transition ---
+    // From the terminal MESSAGE_MEMORY_EXHAUSTED state, the first connect requests
+    // transport retirement (returning ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED while
+    // retaining MESSAGE_MEMORY_EXHAUSTED); after bounded update completion,
+    // rocketnet_client_disconnected( client ) becomes true. Then force the custom
+    // allocator to refuse the reconnect allocation in rocketnet_client_connect,
+    // proving it returns ROCKETNET_STATUS_OUT_OF_MEMORY, leaves the client cleanly
+    // disconnected with zero partial state, and recovers when allocator pressure lifts.
+    char token_gen2[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server, rocketnet_server_port( server ), &identity, 0x5102, 300, token_gen2 );
+
+    check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED );
+    now += 0.005;
+    lifecycle_now = now;
+    rocketnet_client_update( client, now );
+    check( rocketnet_client_disconnected( client ) );
+
+    alloc_state.fail_countdown = 1;
+    const int refused_before = alloc_state.refused_count;
+    check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( alloc_state.refused_count == refused_before + 1 );
+    check( rocketnet_client_disconnected( client ) );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+
+    // Lift allocator pressure and reconnect into slot 0 while the server's
+    // disconnect notification burst from Generation 1 is still draining across
+    // bounded fake-clock updates (at most 2 disconnect packets per update).
+    check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_OK );
+    int burst_active_updates_during_gen2 = 0;
+    for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server, 0 ) || prev_seals - seals_before_disconnect < (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS ); ++i )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        const uint64_t cur_seals = rocketnet_server_transport_disconnect_seals_for_test( server_transport );
+        const uint64_t step_seals = cur_seals - prev_seals;
+        check( step_seals <= (uint64_t) server_config.disconnect_packets_per_update );
+        if ( step_seals > 0 )
+            burst_active_updates_during_gen2++;
+        prev_seals = cur_seals;
+    }
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_client_index( client ) == 0 );
+    check( rocketnet_server_client_connected( server, 0 ) == 1 );
+    check( rocketnet_server_client_id( server, 0 ) == 0x5102 );
+    check( prev_seals - seals_before_disconnect == (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( burst_active_updates_during_gen2 >= 4 );
+
+    uint8_t wiped_burst_key[ROCKETNET_KEY_BYTES];
+    uint8_t zero_burst_key[ROCKETNET_KEY_BYTES];
+    int burst_head = -1;
+    int burst_count = -1;
+    memset( wiped_burst_key, 0xFF, sizeof( wiped_burst_key ) );
+    memset( zero_burst_key, 0, sizeof( zero_burst_key ) );
+    check( rocketnet_server_transport_disconnect_burst_key_for_test(
+               server_transport, 0, wiped_burst_key, (int) sizeof( wiped_burst_key ), &burst_head, &burst_count ) != 0 );
+    check( burst_count == 0 );
+    check( memcmp( wiped_burst_key, zero_burst_key, sizeof( zero_burst_key ) ) == 0 );
+
+    const uint64_t gen2_connection_id = server_msg_obj->hot_connections[0].connection_id;
+    check( gen2_connection_id != 0 && gen2_connection_id != gen1_connection_id );
+    check( rocketnet_client_receive_messages( client ) == NULL );
+    check( rocketnet_server_receive_messages( server ) == NULL );
+    check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+
+    // --- Deliver the delayed Generation-1 ACK after slot 0 reuse ---
+    // Release the held Generation-1 ACK while Generation 2 occupies slot 0 and
+    // prove it increments ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY without
+    // touching Generation 2's window, receipts, counters, or delivery.
+    const uint64_t stale_conn_before = server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY];
+    const uint64_t acked_receipts_before = server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED];
+    const rocketnet_server_stats_t server_stats_before_late_ack = rn_server_stats_of( server );
+    struct rocketnet_delivery_capture_t server_capture_before;
+    memset( &server_capture_before, 0, sizeof( server_capture_before ) );
+    rocketnet_message_server_delivery_capture( rocketnet_server_message_server( server ), 0, &server_capture_before );
+
+    delayed_link.release_held_acks = true;
+    now += 0.005;
+    lifecycle_now = now;
+    rocketnet_server_update( server, now );
+    check( !delayed_link.release_held_acks && delayed_link.held_count == 0 );
+    check( server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_STALE_CONNECTION_ENTRY] == stale_conn_before + 1 );
+    check( server_msg_obj->counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_ACKED] == acked_receipts_before );
+
+    const rocketnet_server_stats_t server_stats_after_late_ack = rn_server_stats_of( server );
+    check( server_stats_after_late_ack.receipts_acked == server_stats_before_late_ack.receipts_acked );
+    check( server_stats_after_late_ack.payloads_received == server_stats_before_late_ack.payloads_received );
+    check( rocketnet_server_receipts( server, 0, NULL, 0 ) == 0 );
+    check( rocketnet_server_receive_messages( server ) == NULL );
+
+    struct rocketnet_delivery_capture_t server_capture_after;
+    memset( &server_capture_after, 0, sizeof( server_capture_after ) );
+    rocketnet_message_server_delivery_capture( rocketnet_server_message_server( server ), 0, &server_capture_after );
+    check( memcmp( &server_capture_before, &server_capture_after, sizeof( server_capture_before ) ) == 0 );
+
+    // --- Fragmented reliable payload + 1 deliberately dropped frame in Generation 2 ---
+    // Send a 2600-byte reliable ordered message (3 fragments: 1152 + 1152 + 296 bytes)
+    // with ACK receipt on channel 1, followed by a 48-byte ordered message on channel 1,
+    // and drop the first outbound packet frame on the server link so fragment 0 must
+    // be retransmitted after message_resend_delay_initial_ms.
+    const int frag_bytes = 2600;
+    const int tail_bytes = 48;
+    check( rocketnet_server_can_send_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, frag_bytes ) == 1 );
+    uint8_t * frag_out = rocketnet_server_start_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, frag_bytes );
+    check( frag_out != NULL );
+    for ( int i = 0; i < frag_bytes; ++i )
+        frag_out[i] = (uint8_t) ( 0xE1u ^ ( ( (unsigned int) i * 31u ) & 0xFFu ) );
+    frag_out[0] = 0xE1;
+    const uint32_t gen2_frag_serial = rocketnet_server_finish_message( server, frag_bytes );
+    check( gen2_frag_serial != 0 );
+
+    check( rocketnet_server_can_send_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, tail_bytes ) == 1 );
+    uint8_t * tail_out = rocketnet_server_start_message( server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, tail_bytes );
+    check( tail_out != NULL );
+    for ( int i = 0; i < tail_bytes; ++i )
+        tail_out[i] = (uint8_t) ( 0xE2u ^ (uint8_t) i );
+    tail_out[0] = 0xE2;
+    const uint32_t gen2_tail_serial = rocketnet_server_finish_message( server, tail_bytes );
+    check( gen2_tail_serial != 0 && gen2_tail_serial != gen2_frag_serial );
+
+    // Also send a Generation-2 client->server reliable message with ACK receipt to confirm
+    // bidirectional ownership in the new generation.
+    check( rocketnet_client_set_send_kbps( client, ROCKETNET_SEND_KBPS_UNLIMITED ) == ROCKETNET_STATUS_OK );
+    const uint32_t gen2_client_serial = lifecycle_send_tagged_message(
+        client, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 0xE3, 7, 40 );
+    check( gen2_client_serial != 0 );
+
+    delayed_link.drop_next_packet = true;
+    const uint64_t resends_before = rn_server_stats_of( server ).messages_resent;
+
+    int client_rx_order = 0;
+    int server_rx_count = 0;
+    bool got_frag_receipt = false;
+    bool got_tail_receipt = false;
+    bool got_client_receipt = false;
+
+    for ( int step = 0; step < 200 && ( client_rx_order < 2 || server_rx_count < 1 || !got_frag_receipt || !got_tail_receipt || !got_client_receipt ); ++step )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_server_update( server, now );
+        rocketnet_server_send_packets( server );
+        rocketnet_client_update( client, now );
+        rocketnet_client_send_packets( client );
+
+        const struct rocketnet_message_batch_t * batch = NULL;
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; ++m )
+            {
+                check( batch->channel[m] == 1 );
+                if ( client_rx_order == 0 )
+                {
+                    check( batch->bytes[m] == frag_bytes );
+                    check( batch->data[m][0] == 0xE1 );
+                    for ( int b = 1; b < frag_bytes; ++b )
+                        check( batch->data[m][b] == (uint8_t) ( 0xE1u ^ ( ( (unsigned int) b * 31u ) & 0xFFu ) ) );
+                }
+                else if ( client_rx_order == 1 )
+                {
+                    check( batch->bytes[m] == tail_bytes );
+                    check( batch->data[m][0] == 0xE2 );
+                    for ( int b = 1; b < tail_bytes; ++b )
+                        check( batch->data[m][b] == (uint8_t) ( 0xE2u ^ (uint8_t) b ) );
+                }
+                client_rx_order++;
+            }
+        }
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+            for ( int m = 0; m < batch->num_messages; ++m )
+            {
+                check( batch->client_index[m] == 0 );
+                check( batch->channel[m] == 1 );
+                check( batch->bytes[m] == 40 );
+                check( batch->data[m][0] == 0xE3 && batch->data[m][1] == 7 );
+                server_rx_count++;
+            }
+        }
+        struct rocketnet_receipt_t rcpts[8];
+        const int sr = rocketnet_server_receipts( server, 0, rcpts, 8 );
+        for ( int r = 0; r < sr; ++r )
+        {
+            check( rcpts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            check( rcpts[r].serial != gen1_server_serial );
+            if ( rcpts[r].serial == gen2_frag_serial )
+                got_frag_receipt = true;
+            else if ( rcpts[r].serial == gen2_tail_serial )
+                got_tail_receipt = true;
+            else
+                check( false );
+        }
+        const int cr = rocketnet_client_receipts( client, rcpts, 8 );
+        for ( int r = 0; r < cr; ++r )
+        {
+            check( rcpts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED );
+            check( rcpts[r].serial == gen2_client_serial );
+            got_client_receipt = true;
+        }
+    }
+
+    check( delayed_link.dropped_packets == 1 );
+    check( client_rx_order == 2 );
+    check( server_rx_count == 1 );
+    check( got_frag_receipt && got_tail_receipt && got_client_receipt );
+    check( rn_server_stats_of( server ).messages_resent > resends_before );
+    check( server_msg_obj->hot_connections[0].connection_id == gen2_connection_id );
+
+    g_lifecycle_delayed_link = NULL;
+    rn_test_client_stop_and_destroy( client );
+    rn_test_server_stop_and_destroy( server );
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( alloc_state.active_allocations == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack );
+#endif // #if ROCKETNET_DEV
+
+#if !ROCKETNET_DEV
+// Production keeps the public default and range oracle without compiling the
+// caller-stepped lifecycle fixture or its environment hooks.
+static void test_config_packets_per_update_range()
+{
+    static const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = { 0x31, 0x43, 0x59, 0x71 };
+    rocketnet_quiet( 1 );
+
+    rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    memcpy( client_config.packet_filter, packet_filter, sizeof( client_config.packet_filter ) );
+    check( client_config.packets_per_update == 256 );
+
+    rocketnet_server_config_t server_config;
+    check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+    server_config.protocol_id = LIFECYCLE_PROTOCOL;
+    server_config.max_clients = 1;
+    memset( server_config.backend_public_key, 0x52, sizeof( server_config.backend_public_key ) );
+    memcpy( server_config.packet_filter, packet_filter, sizeof( server_config.packet_filter ) );
+    check( server_config.packets_per_update == 256 );
+
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client_config.packets_per_update = 1024;
+    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
+    client_config.packets_per_update = 1025;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+    client_config.packets_per_update = 0;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    client = rocketnet_client_create( NULL, &client_config, &create_status );
+    check( client == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+
+    server_config.packets_per_update = 1024;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server != NULL && create_status == ROCKETNET_STATUS_OK );
+    rn_test_server_stop_and_destroy( server );
+    server_config.packets_per_update = 1025;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+    server_config.packets_per_update = 0;
+    create_status = ROCKETNET_TEST_STATUS_UNSET;
+    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    check( server == NULL && create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
+}
+REGISTER_UNIT_TEST( test_config_packets_per_update_range );
+#endif // #if !ROCKETNET_DEV
