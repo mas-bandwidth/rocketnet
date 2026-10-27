@@ -311,7 +311,7 @@ struct rn_block_cost_t
 };
 void rn_channels_block_cost_reset();
 rn_block_cost_t rn_channels_block_cost_read();
-#endif
+#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
 
 // Codes 1 and 4's case (sdk/rocketnet_channel_sequenced.cpp).
 

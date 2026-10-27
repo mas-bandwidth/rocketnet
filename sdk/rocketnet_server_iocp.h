@@ -54,7 +54,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 // on a host that has the feature. Production does not carry these controls.
 #define ROCKETNET_IOCP_DISABLE_USO 1
 #define ROCKETNET_IOCP_DISABLE_URO 2
-#endif
+#endif // #if ROCKETNET_DEV
 
 // rocketnet_server_iocp_features bits
 #define ROCKETNET_IOCP_FEATURE_USO 1
@@ -71,7 +71,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
     // or first receive, and optionally force the per-datagram fallback paths.
                                                         ,
                                                         int fail_stage = 0, int flags = 0
-#endif
+#endif // #if ROCKETNET_DEV
 );
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp );
@@ -114,7 +114,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 // ROCKETNET_IOCP_DISABLE_* bits), so a functional case can run the whole server
 // transport on the per-datagram path. Zero, the default, changes nothing.
 void rocketnet_server_iocp_test_force_flags( int flags );
-#endif
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV && defined( ROCKETNET_IOCP_TESTS )
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
@@ -160,6 +160,6 @@ enum rocketnet_server_iocp_test_fault_t
 };
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
-#endif
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_IOCP_TESTS )
 
-#endif // ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H

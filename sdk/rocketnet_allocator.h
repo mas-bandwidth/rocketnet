@@ -431,15 +431,19 @@ struct rn_region_t
 };
 
 // The next enqueue ticket on this connection. 0 and RN_ENQUEUE_HOLE are never issued.
+
 static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
     uint32_t ticket = region->schedule_ticket_next;
     if ( ticket == 0 || ticket == RN_ENQUEUE_HOLE )
         ticket = 1;
+
     uint32_t next = ticket + 1;
     if ( next == 0 || next == RN_ENQUEUE_HOLE )
         next = 1;
+
     region->schedule_ticket_next = next;
+
     return ticket;
 }
 
@@ -470,7 +474,7 @@ struct rn_span_cost_t
 };
 void rn_span_cost_reset();
 rn_span_cost_t rn_span_cost_read();
-#endif
+#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 
 // at connect: every table back to its empty state, every free list
 // emptied (the descriptor pool and the store's classes are lazy,
@@ -608,6 +612,7 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
 // it. rn_region_send_take allocates it (rn_region_send_alloc or
 // rn_region_send_alloc_span) and rn_region_send_fit decides it, by the same
 // size rule.
+
 inline bool rn_region_send_is_span( int bytes )
 {
     return bytes >= (int) RN_SPAN_MIN_BYTES;

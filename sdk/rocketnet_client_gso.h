@@ -185,7 +185,7 @@ extern std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent;
 // batches (messages of more than one datagram) every gso client received, summed
 extern std::atomic<bool> rocketnet_client_gso_test_disable_gro;
 extern std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches;
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 

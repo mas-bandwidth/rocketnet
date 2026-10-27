@@ -85,6 +85,7 @@ inline uint32_t rocketnet_read_uint32( const uint8_t ** p )
     value |= (uint32_t) ( ( *p )[2] ) << 16;
     value |= (uint32_t) ( ( *p )[3] ) << 24;
     *p += 4;
+
     return value;
 }
 
@@ -99,6 +100,7 @@ inline uint64_t rocketnet_read_uint64( const uint8_t ** p )
     value |= (uint64_t) ( ( *p )[6] ) << 48;
     value |= (uint64_t) ( ( *p )[7] ) << 56;
     *p += 8;
+
     return value;
 }
 
@@ -120,6 +122,7 @@ inline int rocketnet_read_uint8_bounded( const uint8_t ** p, const uint8_t * end
         return 0;
     *value = **p;
     *p += 1;
+
     return 1;
 }
 
@@ -129,6 +132,7 @@ inline int rocketnet_read_uint16_bounded( const uint8_t ** p, const uint8_t * en
         return 0;
     *value = (uint16_t) ( ( *p )[0] | ( ( *p )[1] << 8 ) );
     *p += 2;
+
     return 1;
 }
 
@@ -141,6 +145,7 @@ inline int rocketnet_read_uint32_bounded( const uint8_t ** p, const uint8_t * en
     *value |= (uint32_t) ( ( *p )[2] ) << 16;
     *value |= (uint32_t) ( ( *p )[3] ) << 24;
     *p += 4;
+
     return 1;
 }
 
@@ -157,6 +162,7 @@ inline int rocketnet_read_uint64_bounded( const uint8_t ** p, const uint8_t * en
     *value |= (uint64_t) ( ( *p )[6] ) << 48;
     *value |= (uint64_t) ( ( *p )[7] ) << 56;
     *p += 8;
+
     return 1;
 }
 
@@ -171,7 +177,8 @@ inline int rocketnet_read_bytes_bounded( const uint8_t ** p, const uint8_t * end
         return 0;
     memcpy( data, *p, (size_t) bytes );
     *p += bytes;
+
     return 1;
 }
 
-#endif // ROCKETNET_SDK_ROCKETNET_READ_WRITE_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_READ_WRITE_H

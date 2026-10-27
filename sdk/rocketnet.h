@@ -24,8 +24,7 @@
 
 #if defined( _MSC_VER )
 #pragma warning( disable : 4514 )
-#endif
-
+#endif // #if defined( _MSC_VER )
 
 /// ROCKETNET_DEV is 1 by default: a development build. Development builds
 /// provide rocketnet_create_dev_connect_token and
@@ -77,7 +76,6 @@
 
 #define ROCKETNET_VERSION   ( ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH )
 
-
 /// Define ROCKETNET_SHARED when linking the shared library DLL. Static links
 /// define nothing. ROCKETNET_BUILDING_DLL is for library builds.
 
@@ -91,8 +89,7 @@
     /// Marks each library function for export or import. Empty in a static
     /// build.
 #define ROCKETNET_EXPORT
-#endif
-
+#endif // #if defined( _WIN32 ) && defined( ROCKETNET_BUILDING_DLL )
 
 #ifndef ROCKETNET_MAX_CLIENTS
 /// Maximum clients per server: 1000 unless the build defines another value
@@ -101,7 +98,7 @@
 /// (BUILDING.md, "Maximum clients"). Build the library and every file that
 /// includes this header with the same value.
 #define ROCKETNET_MAX_CLIENTS                                       1000
-#endif
+#endif // #ifndef ROCKETNET_MAX_CLIENTS
 
 // The bounds are the transports' fixed geometry: below 512 a server's
 // per-update receive budget is smaller than its largest send ring allows,
@@ -109,7 +106,7 @@
 
 #if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
 #error ROCKETNET_MAX_CLIENTS must be between 512 and 32768
-#endif
+#endif // #if ROCKETNET_MAX_CLIENTS < 512 || ROCKETNET_MAX_CLIENTS > 32768
 
 /// A destination ID is a uint64_t client index. This bit is reserved;
 /// rocketnet_server_start_message refuses an ID with it set.
@@ -177,7 +174,7 @@
 /// 1 .. 65536 before it includes this header. Build the library and every
 /// file that includes this header with the same value.
 #define ROCKETNET_MAX_CHANNELS                             32
-#endif
+#endif // #ifndef ROCKETNET_MAX_CHANNELS
 
 /// The default client to server send budget, in kbps.
 
@@ -194,7 +191,7 @@
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 /// Status-returning calls use these values. OK is zero and the only success;
 /// every failure is negative. Test status < 0 for failure.
@@ -382,7 +379,6 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO = -31
 };
 
-
 /// The process-wide log levels, least to most verbose.
 
 enum rocketnet_log_level_t
@@ -413,7 +409,6 @@ enum rocketnet_log_level_t
     ROCKETNET_LOG_LEVEL_SPAM = 5
 };
 
-
 /// The address family of an endpoint.
 
 enum rocketnet_address_type_t
@@ -430,7 +425,6 @@ enum rocketnet_address_type_t
 
     ROCKETNET_ADDRESS_IPV6 = 2
 };
-
 
 /// A send's delivery, ordering, and acknowledgement behavior.
 /// Ordered and sequenced types require the send's channel below num_channels.
@@ -533,7 +527,6 @@ enum rocketnet_disconnect_reason_t
     ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED = -6
 };
 
-
 /// rocketnet_client_state returns one of these values.
 /// A connect attempt moves from DISCONNECTED through the handshake states to
 /// CONNECTED. Negative values describe how an attempt or connection ended.
@@ -615,7 +608,6 @@ enum rocketnet_client_state_t
     ROCKETNET_CLIENT_STATE_CONNECTED = 4
 };
 
-
 /// rocketnet_client_stats fills this struct.
 /// Packet, byte, payload, resend, duplicate, receipt and budget counts are
 /// the connection that is held. They start at 0 when that connection starts,
@@ -672,7 +664,6 @@ struct rocketnet_client_stats_t
     /// Unreliable messages dropped because the send budget was spent.
 
     uint64_t messages_dropped_over_budget;
-
 
     /// Sends dropped because the connection was not CONNECTED.
 
@@ -871,29 +862,28 @@ struct rocketnet_server_client_stats_t
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunknown-warning-option"
 #pragma clang diagnostic ignored "-Wc++98-compat"
-#endif
+#endif // #if defined( __clang__ )
 static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enum rocketnet_log_level_t ) == sizeof( int ) &&
                    sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
                    sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
                "RocketNet's public enums are the size of int: build without -fshort-enums" );
 #if defined( __clang__ )
 #pragma clang diagnostic pop
-#endif
+#endif // #if defined( __clang__ )
 #elif defined( __STDC_VERSION__ ) && __STDC_VERSION__ >= 201112L
 #if defined( __clang__ )
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunknown-warning-option"
 #pragma clang diagnostic ignored "-Wpre-c11-compat"
-#endif
+#endif // #if defined( __clang__ )
 _Static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enum rocketnet_log_level_t ) == sizeof( int ) &&
                     sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
                     sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
                 "RocketNet's public enums are the size of int: build without -fshort-enums" );
 #if defined( __clang__ )
 #pragma clang diagnostic pop
-#endif
-#endif
-
+#endif // #if defined( __clang__ )
+#endif // #if defined( __cplusplus ) && __cplusplus >= 201103L
 
 /// An opaque client. rocketnet_client_create makes one and
 /// rocketnet_client_destroy frees it. Use each client from one thread at a
@@ -1570,6 +1560,7 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 {
     if ( config )
         config->config_bytes = sizeof( *config );
+
     return rocketnet_client_default_config_internal( config );
 }
 
@@ -1595,6 +1586,7 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
 {
     if ( config )
         config->config_bytes = sizeof( *config );
+
     return rocketnet_client_light_config_internal( config );
 }
 
@@ -1731,7 +1723,6 @@ ROCKETNET_EXPORT void rocketnet_client_network_simulator( struct rocketnet_clien
 /// @param duplicate_percent Percentage delivered twice, 0 .. 100.
 
 ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
-
 
 #endif // ROCKETNET_DEV
 
@@ -2123,6 +2114,7 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 {
     if ( config )
         config->config_bytes = sizeof( *config );
+
     return rocketnet_server_default_config_internal( config );
 }
 
@@ -2149,6 +2141,7 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
 {
     if ( config )
         config->config_bytes = sizeof( *config );
+
     return rocketnet_server_light_config_internal( config );
 }
 
@@ -2687,6 +2680,6 @@ struct rocketnet_message_batch_t
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 #endif // ROCKETNET_H

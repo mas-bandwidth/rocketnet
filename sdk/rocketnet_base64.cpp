@@ -39,6 +39,7 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
     end = input + input_length;
     in = input;
     pos = output;
+
     while ( end - in >= 3 )
     {
         *pos++ = base64_table_encode[in[0] >> 2];
@@ -51,6 +52,7 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
     if ( end - in )
     {
         *pos++ = base64_table_encode[in[0] >> 2];
+
         if ( end - in == 1 )
         {
             *pos++ = base64_table_encode[( in[0] & 0x03 ) << 4];
@@ -61,6 +63,7 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
             *pos++ = base64_table_encode[( ( in[0] & 0x03 ) << 4 ) | ( in[1] >> 4 )];
             *pos++ = base64_table_encode[( in[1] & 0x0f ) << 2];
         }
+
         *pos++ = '=';
     }
 
@@ -94,6 +97,7 @@ static int rocketnet_base64_char_value( char c )
         return 62;
     if ( c == '/' )
         return 63;
+
     return -1;
 }
 
@@ -116,6 +120,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
 
     size_t data_length = input_length;
     int pad_chars = 0;
+
     while ( data_length > 0 && input[data_length - 1] == '=' )
     {
         data_length--;
@@ -126,6 +131,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
         return 0;
 
     size_t output_length = ( data_length / 4 ) * 3;
+
     if ( ( data_length % 4 ) == 2 )
         output_length += 1;
     else if ( ( data_length % 4 ) == 3 )
@@ -146,6 +152,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
         const int value = rocketnet_base64_char_value( input[i] );
         if ( value < 0 )
             return 0;
+
         accumulator = ( accumulator << 6 ) | (uint32_t) value;
         bits += 6;
         if ( bits >= 8 )

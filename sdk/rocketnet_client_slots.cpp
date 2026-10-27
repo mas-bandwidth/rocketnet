@@ -98,10 +98,12 @@ uint64_t rocketnet_client_slots_allocation_bytes( int clients )
 {
     if ( clients < 1 )
         return 0;
+
     const uint64_t n = (uint64_t) clients;
     uint64_t index_bytes = (uint64_t) rocketnet_client_slot_index_header_bytes();
     if ( !rocketnet_memory_add( index_bytes, 2 * n, sizeof( int ) ) )
         return 0;
+
     return rocketnet_memory_allocations( { sizeof( rocketnet_client_slots_t ), index_bytes,
                                            n * sizeof( uint64_t ), n * sizeof( uint64_t ), n * sizeof( uint8_t ), n * sizeof( int ), n * sizeof( uint8_t ), n * sizeof( int ),
                                            n * ROCKETNET_USER_DATA_BYTES } );
@@ -115,12 +117,14 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     // INT_MAX / 2 wraps the bucket count and the bucket array is sized from
     // the wrapped value while the other arrays use the capacity. refuse it
     // before any allocation.
+
     if ( max_clients < 1 || max_clients > INT_MAX / 2 )
         return NULL;
 
     struct rocketnet_client_slots_t * slots = (struct rocketnet_client_slots_t *) rocketnet_malloc( context, sizeof( struct rocketnet_client_slots_t ) );
     if ( !slots )
         return NULL;
+
     memset( slots, 0, sizeof( struct rocketnet_client_slots_t ) );
 
     slots->context = context;
@@ -151,10 +155,12 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
 #endif // #if ROCKETNET_DEV
     for ( int i = 0; i < slots->num_buckets; ++i )
         rocketnet_client_slot_index_entries( slots )[i] = -1;
+
     memset( slots->slot_generation, 0, sizeof( uint64_t ) * (size_t) max_clients );
     memset( slots->client_id, 0, sizeof( uint64_t ) * (size_t) max_clients );
     memset( slots->connected, 0, sizeof( uint8_t ) * (size_t) max_clients );
     memset( slots->confirmed, 0, sizeof( uint8_t ) * (size_t) max_clients );
+
     // Assignment writes the entire user-data record before the slot is read.
     // Unassigned records have no secret and do not need their pages touched.
 
@@ -164,8 +170,10 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
     // the free list is filled so the first max_clients assigns pop 0, 1, 2
     // and so on in order: the stack holds the indices highest-first, and
     // the pop at the top of the stack is index 0
+
     for ( int i = 0; i < max_clients; i++ )
         slots->free_stack[i] = max_clients - 1 - i;
+
     slots->free_stack_count = max_clients;
 
     return slots;
@@ -174,13 +182,16 @@ struct rocketnet_client_slots_t * rocketnet_client_slots_create( void * context,
 void rocketnet_client_slots_destroy( struct rocketnet_client_slots_t * slots )
 {
     rocketnet_assert( slots );
+
     // A released slot was wiped at release. Only connected slots can still
     // hold token secrets; never write unused records. num_connected is zero
     // during partial-create cleanup, before connected[] has been initialized.
+
     if ( slots->num_connected && slots->user_data && slots->connected )
         for ( int i = 0; i < slots->max_clients; ++i )
             if ( slots->connected[i] )
                 sodium_memzero( slots->user_data + (size_t) i * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
+
     rocketnet_free( slots->context, slots->index_table );
     rocketnet_free( slots->context, slots->slot_generation );
     rocketnet_free( slots->context, slots->client_id );
@@ -218,8 +229,10 @@ static int rocketnet_client_slots_bucket( const struct rocketnet_client_slots_t 
 #endif // #if ROCKETNET_DEV
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, (const uint8_t *) &client_id, 8, slots->hash_key );
+
     uint64_t value;
     memcpy( &value, hash, 8 );
+
     return (int) ( value % (uint64_t) slots->num_buckets );
 }
 
@@ -231,34 +244,43 @@ static int rocketnet_client_slots_next_index( const struct rocketnet_client_slot
 // Returns the occupied full-id entry or the first empty insertion position.
 // There are at most max_clients occupied entries in a 2*max_clients table, so
 // an empty position always exists unless private state is corrupt.
+
 static int rocketnet_client_slots_locate( const struct rocketnet_client_slots_t * slots,
                                           uint64_t client_id,
                                           bool * found )
 {
     const int * entries = rocketnet_client_slot_index_entries( slots );
     int position = rocketnet_client_slots_bucket( slots, client_id );
+
     for ( int probe = 0; probe < slots->num_buckets; ++probe )
     {
         rocketnet_client_slots_probe_one( slots );
+
         const int index = entries[position];
         if ( index == -1 )
         {
             *found = false;
             return position;
         }
+
         const bool valid = index >= 0 && index < slots->max_clients &&
                            slots->connected[index] && slots->slot_generation[index] != 0;
         rocketnet_assert( valid );
+
         if ( !valid )
             return -1;
+
         if ( slots->client_id[index] == client_id )
         {
             *found = true;
             return position;
         }
+
         position = rocketnet_client_slots_next_index( slots, position );
     }
+
     rocketnet_assert( false );
+
     return -1;
 }
 
@@ -266,12 +288,14 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
 {
     rocketnet_assert( slots );
     rocketnet_client_slots_probe_begin( slots );
+
     bool found = false;
     const int position = rocketnet_client_slots_locate( slots, client_id, &found );
     return position >= 0 && found ? rocketnet_client_slot_index_entries( slots )[position] : -1;
 }
 
 // tla/RNDestroyWipe.tla Add: copies the mapping's user data into the slot as the slot becomes live.
+
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
@@ -281,12 +305,16 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
     rocketnet_assert( slots );
     rocketnet_assert( user_data );
     rocketnet_assert( owner_generation != 0 );
+
     if ( owner_generation == 0 )
         return -1;
+
     rocketnet_client_slots_probe_begin( slots );
+
     bool duplicate = false;
     const int index_position = rocketnet_client_slots_locate( slots, client_id, &duplicate );
     rocketnet_assert( !duplicate );
+
     if ( duplicate || index_position < 0 )
         return -1;
 
@@ -299,13 +327,16 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
 
     if ( slots->free_stack_count == 0 )
         return -1;
+
     const int client_index = slots->free_stack[slots->free_stack_count - 1];
 
     // The generation belongs to the owner, not to the numeric client slot.
     // UINT64_MAX is a valid final map generation. A duplicate generation is
     // stale ownership and is refused before any state changes.
+
     if ( slots->slot_generation[client_index] == owner_generation )
         return -1;
+
     --slots->free_stack_count;
 
     slots->connected[client_index] = 1;
@@ -330,11 +361,13 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    int mapping_index,
                                    const uint8_t * user_data )
 {
-    // A null table is a refused test call. Returning here keeps that null from
-    // reaching the real assign, whose probe and index helpers dereference it.
+    // A null table is a refused test call. Returning here keeps that null from reaching the real assign, whose probe and index helpers dereference it.
+
     if ( !slots )
         return -1;
+
     uint64_t owner_generation = 1;
+
     if ( slots->free_stack_count > 0 )
     {
         const int client_index = slots->free_stack[slots->free_stack_count - 1];
@@ -344,6 +377,7 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
             owner_generation = 2;
         }
     }
+
     return rocketnet_client_slots_assign( slots, client_id, mapping_index, owner_generation, user_data );
 }
 #endif // #if ROCKETNET_TEST_SEAMS
@@ -351,18 +385,22 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
 int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );
+
     if ( client_index < 0 || client_index >= slots->max_clients )
         return 0;
+
     return slots->connected[client_index];
 }
 
 uint64_t rocketnet_client_slots_client_id( const struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );
+
     if ( client_index < 0 || client_index >= slots->max_clients )
         return 0;
     if ( !slots->connected[client_index] )
         return 0;
+
     return slots->client_id[client_index];
 }
 
@@ -404,30 +442,38 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
     rocketnet_assert( client_index >= 0 && client_index < slots->max_clients );
     rocketnet_assert( slots->connected[client_index] );
     rocketnet_debug( "server confirmed client slot %d", client_index );
+
     slots->confirmed[client_index] = 1;
 }
 
 // Backward-shift deletion keeps every surviving probe cluster searchable and
 // leaves no tombstones for repeated churn to accumulate. num_buckets need not
 // be a power of two, so wrap is explicit rather than a bit mask.
+
 static void rocketnet_client_slots_erase_index( struct rocketnet_client_slots_t * slots, int hole )
 {
     int * entries = rocketnet_client_slot_index_entries( slots );
     int scan = hole;
+
     for ( ;; )
     {
         scan = rocketnet_client_slots_next_index( slots, scan );
+
         rocketnet_client_slots_probe_one( slots );
+
         if ( entries[scan] == -1 )
             break;
+
         const int home = rocketnet_client_slots_bucket( slots, slots->client_id[entries[scan]] );
         const bool stays = hole <= scan ? ( hole < home && home <= scan )
                                         : ( hole < home || home <= scan );
         if ( stays )
             continue;
+
         entries[hole] = entries[scan];
         hole = scan;
     }
+
     entries[hole] = -1;
 }
 
@@ -449,17 +495,20 @@ static bool rocketnet_client_slots_release_exact( struct rocketnet_client_slots_
         return false;
 
     rocketnet_client_slots_erase_index( slots, position );
+
     slots->connected[client_index] = 0;
     slots->confirmed[client_index] = 0;
     slots->client_id[client_index] = 0;
     slots->mapping_index[client_index] = -1;
     sodium_memzero( slots->user_data + (size_t) client_index * ROCKETNET_USER_DATA_BYTES, ROCKETNET_USER_DATA_BYTES );
 
-    // This remains a dense free stack, not linked ownership state. A release
-    // pushes exactly one numeric slot and the next assign pops it immediately.
+    // this remains a dense free stack, not linked ownership state. A release pushes exactly one numeric slot and the next assign pops it immediately.
+
     slots->free_stack[slots->free_stack_count++] = client_index;
     slots->num_connected--;
+
     rocketnet_debug( "server released client slot %d", client_index );
+
     return true;
 }
 
@@ -469,11 +518,14 @@ bool rocketnet_client_slots_handle( const struct rocketnet_client_slots_t * slot
                                     struct rocketnet_client_slot_handle_t * handle )
 {
     rocketnet_assert( slots );
+
     if ( !handle || client_index < 0 || client_index >= slots->max_clients || !slots->connected[client_index] )
         return false;
+
     handle->client_id = slots->client_id[client_index];
     handle->client_index = client_index;
     handle->generation = slots->slot_generation[client_index];
+
     return true;
 }
 
@@ -497,9 +549,12 @@ bool rocketnet_client_slots_test_force_hash_index( struct rocketnet_client_slots
                                                    int index )
 {
     rocketnet_assert( slots );
+
     if ( index < -1 || index >= slots->num_buckets )
         return false;
+
     slots->index_table->forced_hash_index = index;
+
     return true;
 }
 
@@ -517,6 +572,7 @@ uint64_t rocketnet_client_slots_test_total_probes( const struct rocketnet_client
 #endif // #if ROCKETNET_DEV
 
 // tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
+
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index )
 {
     rocketnet_assert( slots );
@@ -524,6 +580,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     rocketnet_assert( slots->connected[client_index] );
 
     // tla/RNDestroyWipe.tla Remove requires m \in live: a free slot is refused before anything is touched
+
     if ( client_index < 0 || client_index >= slots->max_clients || !slots->connected[client_index] )
     {
         rocketnet_error( "server refused to release client slot %d: not connected", client_index );
@@ -532,9 +589,12 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
 
     const uint64_t client_id = slots->client_id[client_index];
     const uint64_t generation = slots->slot_generation[client_index];
+
     rocketnet_client_slots_probe_begin( slots );
+
     const bool released = rocketnet_client_slots_release_exact( slots, client_id, client_index, generation );
     rocketnet_assert( released );
+
     if ( !released )
         rocketnet_error( "server refused to release client slot %d: stale or missing full-id index entry", client_index );
 }
@@ -561,18 +621,23 @@ bool rocketnet_client_slots_reset_witness_for_test()
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
     if ( !slots )
         return false;
+
     uint8_t key[sizeof( slots->hash_key )];
     memcpy( key, slots->hash_key, sizeof( key ) );
+
     uint8_t user[ROCKETNET_USER_DATA_BYTES];
     memset( user, 0xA5, sizeof( user ) );
+
     const int index = rocketnet_client_slots_assign( slots, UINT64_MAX, 77, 1, user );
     if ( index != 0 )
     {
         rocketnet_client_slots_destroy( slots );
         return false;
     }
+
     rocketnet_client_slots_confirm( slots, index );
     rocketnet_client_slots_release( slots, index );
+
     const int * entries = rocketnet_client_slot_index_entries( slots );
     bool clean = slots->num_connected == 0 && slots->free_stack_count == 1 && slots->free_stack[0] == 0 &&
                  entries[0] == -1 && entries[1] == -1 && slots->slot_generation[0] == 1 &&
@@ -584,6 +649,7 @@ bool rocketnet_client_slots_reset_witness_for_test()
     // UINT64_MAX is a valid owner generation. A reused slot may next take a
     // different generation belonging to an older half-open mapping; generation
     // exhaustion is owned and enforced by the encryption map, not this slot.
+
     if ( clean )
         clean = rocketnet_client_slots_assign( slots, 1, 88, UINT64_MAX, user ) == 0 && slots->slot_generation[0] == UINT64_MAX;
     if ( clean )
@@ -597,7 +663,9 @@ bool rocketnet_client_slots_reset_witness_for_test()
         rocketnet_client_slots_release( slots, 0 );
     for ( int i = 0; clean && i < ROCKETNET_USER_DATA_BYTES; i++ )
         clean = slots->user_data[i] == 0;
+
     rocketnet_client_slots_destroy( slots );
+
     return clean;
 }
 #endif // #if ROCKETNET_TEST_SEAMS

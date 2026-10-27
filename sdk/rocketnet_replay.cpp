@@ -33,11 +33,13 @@ static void rocketnet_replay_clear_range( struct rocketnet_replay_protection_t *
         replay->window[begin / 64] &= ~( ( ( 1ULL << count ) - 1 ) << offset );
         begin += count;
     }
+
     while ( end - begin >= 64 )
     {
         replay->window[begin / 64] = 0;
         begin += 64;
     }
+
     if ( begin < end )
         replay->window[begin / 64] &= ~( ( 1ULL << ( end - begin ) ) - 1 );
 }
@@ -91,6 +93,7 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
                 rocketnet_replay_clear_range( replay, 0, end - ROCKETNET_REPLAY_WINDOW_BITS );
             }
         }
+
         replay->highest_opened = sequence;
     }
 

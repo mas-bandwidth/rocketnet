@@ -66,7 +66,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
     // region, completion queues, request queue or first posted receive.
                                                       ,
                                                       int fail_stage = 0
-#endif
+#endif // #if ROCKETNET_DEV
 );
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
@@ -135,12 +135,12 @@ int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio );
 // worker and no posted phase has a send outstanding (takes the transport
 // mutex: the main test thread only)
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
-#endif
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
 
 #if defined( _WIN32 )
 bool rocketnet_server_rio_available();
 #else
 inline bool rocketnet_server_rio_available() { return false; }
-#endif
+#endif // #if defined( _WIN32 )
 
-#endif // ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H

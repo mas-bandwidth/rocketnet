@@ -156,6 +156,6 @@ bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits,
 // The iocp client transport operations, the client column of the iocp row.
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 extern const rocketnet_client_transport_io_operations_t rocketnet_client_iocp_operations;
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #endif // ROCKETNET_SDK_ROCKETNET_CLIENT_IOCP_H
