@@ -151,20 +151,25 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnrioworker` | 8 | The RIO transport's I/O worker (README-RNRioWorker.md): a safety control for both directions, receive and send liveness controls, a two-bank backpressure control, and four reversed witnesses: a phase reopened before it is idle (`FillPhaseOwnedByMain`), an unbounded dequeue (`ExactDelivery`), exit before the drain (`FreedOnlyWhenDrained`) and no wake on a returned bank (`EveryDatagramConsumed`) |
 | `ackblockwrap` | 2 | The ack block reader across the wire sequence wrap (README-AckBlockWrap.md): the control, the empty block recognised on its wire fields at any highest sent (every invariant), and the reversed witness that makes the empty test on the reconstructed largest (`EmptyRecognised`) |
 
-The 50-case plan covers every root configuration. Other experiments described
-in the model READMEs remain historical; this migration does not claim fresh
-measurements for uncommitted variants or change their model semantics.
+The case plan in `CASES.tsv` covers every root configuration: 409 cases
+in 56 groups, 390 required and 19 bench cases whose `debt` column names
+an explicit over-budget reason. Other experiments described in the model
+READMEs remain historical; this plan does not claim fresh measurements
+for uncommitted variants or change their model semantics.
 
-## Initial migration measurements
+## Migration measurements
 
-All 50 cases were measured on Linux with the pinned runner and JAR above,
-using two workers for controls, one for witnesses, and 110 seconds per case.
-Forty-one matched their declared outcomes; nine exhausted the budget.
-The three historically unfinished cases remain debt. Six formerly required
-cases also timed out and are now explicit debt under the same budget rule.
-Their original historical PASS rows remain unchanged in `RUNS-HISTORY.tsv`;
-a timeout here does not refute those older completed runs or complete a new
-proof. Model constants and checked properties were not reduced.
+The initial migration measured its then-current cases on Linux with the
+pinned runner and JAR above, using two workers for controls, one for
+witnesses, and 110 seconds per case. The cases that exhausted the budget
+in that measurement are explicit bench debt in `CASES.tsv` under the
+same budget rule; they are not required cases and not completed proofs.
+Their original historical PASS rows remain unchanged in
+`RUNS-HISTORY.tsv`; a timeout in that measurement does not refute those
+older completed runs or complete a new proof. Model constants and
+checked properties were not reduced. The present inventory is
+`CASES.tsv` itself: `docs/testing.sexp` names each group with the
+required and bench counts `CASES.tsv` gives it.
 
 | Case | Historical outcome | Initial current outcome | Disposition |
 |---|---|---|---|

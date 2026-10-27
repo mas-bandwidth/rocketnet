@@ -251,11 +251,20 @@ identity. The harness drains the endpoint-wide receive queue and checks:
 - a refused `start_message` or `finish_message` is counted and fails the
   corresponding offered-load criterion.
 
-Short 10- and 100-client cases may be used as integration gates. The
-1,000-client case, throughput measurements, profiler samples and long soak
-remain hardening work and require an allocated bench plus a complete raw
-receipt. The harness emits call timings, but they are not a performance claim
-until the required Release runs are reviewed.
+Short 10- and 100-client cases serve as integration gates. The
+1,000-client LAN case is recorded in
+[runs/lan-1000-proof.md](runs/lan-1000-proof.md) for the native server
+transports (Linux gso and io_uring for 600 seconds at
+`1ca477339e150220f90e96bbe7c61be5b175eb51`, Linux xdp copy mode for 300
+seconds at `534cce2e10159b52074ea9b10f7a2f0b074f7298`, and macOS msgx for
+600 seconds at `813b4adbe3dec2eee496577e3da2c0d7d66b8063`), with the
+portable LAN cells void under the native-only ruling and the Windows
+iocp and rio cells not made. The thirty-minute soaks are recorded in
+[runs/linux-soak-30min-per-transport.md](runs/linux-soak-30min-per-transport.md),
+[runs/macos-soak-per-transport.md](runs/macos-soak-per-transport.md) and
+the Windows soak records. Those records are connection-and-delivery
+evidence: each LAN record's `timing_verdict` is FAIL, so the harness's
+call timings are not a performance or throughput claim.
 
 ## Choosing configuration for concrete game workloads
 

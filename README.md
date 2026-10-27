@@ -91,8 +91,13 @@ available; production server auto selection prefers native transports. Follow [B
 
 The [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) describe changes
 from preview-1 and the required migration steps. Preview-2 release testing is
-pending; [TESTING.md](TESTING.md) records qualification separately from
-historical results. The API remains provisional. Large-server frame time,
+recorded at the tagged commit
+`83d04c4d9df1b7f54fd6886455372b237f85740b` (v1.0.0-preview-2); the
+preview-2 functional gate is not green, with the macOS Debug socket
+receive-short condition and the s390x big-endian full-system run as known
+issues deferred to preview-3. [TESTING.md](TESTING.md) and
+[docs/QUALIFICATION-v1.0.0-preview-2.md](docs/QUALIFICATION-v1.0.0-preview-2.md)
+record the same status, separately from historical results. The API remains provisional. Large-server frame time,
 memory use and transport qualification still need attention; see the
 [roadmap](ROADMAP.md).
 
