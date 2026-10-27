@@ -271,7 +271,7 @@ struct rocketnet_server_socket_t
     // view, read by start_packet; fill threads only read it, and they are
     // joined before each receive
     struct rocketnet_xdp_reply_macs_t reply_macs;
-    uint8_t process_eth[ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS][ETH_ALEN];
+    uint8_t process_eth[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE][ETH_ALEN];
 
     int interface_index;
     struct bpf_object * program_object;  // opened from the embedded server_xdp.o; libxdp does not own it, so destroy closes it after the program
@@ -2845,7 +2845,7 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     // Bound by the ARRAY, not by the queue depth. These are different numbers:
     // ROCKETNET_XDP_RECV_QUEUE_SIZE is 4096*4 = 16384 (how deep one queue's staging
     // buffer is), while process_packets.from/packet_bytes/packet_data are sized
-    // ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS = ROCKETNET_RECEIVE_PACKETS_PER_CLIENT *
+    // ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE = ROCKETNET_RECEIVE_PACKETS_PER_CLIENT *
     // ROCKETNET_MAX_CLIENTS = 16 * 1000 = 16000. Guarding on the larger one let 384
     // entries write past the end of all three arrays — and since packet_data is
     // the last member of rocketnet_server_socket_t, the tail of that overrun put
@@ -2853,7 +2853,7 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     // dereferences. num_packets accumulates across every queue and both
     // off-buffers before it is reset in receive_packets, so one flooded queue
     // reaches it. The portable path was always bounded correctly.
-    if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+    if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
         return;
 
     const int index = server_socket->process_packets.num_packets++;
@@ -3038,7 +3038,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
         rocketnet_server_socket_receive_buffer_t * receive_buffer = &socket->receive_buffer[socket->receive_held_index];
         for ( uint32_t i = socket->receive_read_index; i < receive_buffer->num_packets; i++ )
         {
-            if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+            if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
             {
                 filled_queue = queue;
                 break;

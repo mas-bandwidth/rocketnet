@@ -73,7 +73,7 @@
 // one receive bank holds a whole process batch, so the swap never drops
 // below the process arrays
 
-#define ROCKETNET_URING_BANK_SIZE              ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+#define ROCKETNET_URING_BANK_SIZE              ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );

@@ -148,6 +148,7 @@ static struct rn_message_object_t * env_names_object_create( int is_server, int3
 static std::vector<std::string> env_names_documented( const char * relative_path )
 {
     std::vector<std::string> names;
+    const bool environment_doc = strcmp( relative_path, "docs/ENVIRONMENT.md" ) == 0;
     const std::string path = std::string( ROCKETNET_SOURCE_DIR ) + "/" + relative_path;
     FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     check( file != NULL );
@@ -170,6 +171,10 @@ static std::vector<std::string> env_names_documented( const char * relative_path
         size_t end = begin;
         while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
             end++;
+        // docs/ENVIRONMENT.md names ROCKETNET_TEST_* seams. They are not public
+        // config variables, so this harvest does not treat them as pass names.
+        if ( environment_doc && end > begin && text.compare( begin, strlen( "ROCKETNET_TEST_" ), "ROCKETNET_TEST_" ) == 0 )
+            continue;
         // Namespace prefixes are prose, not complete environment variable names.
         if ( end > begin && text[end - 1] != '_' &&
 #if !ROCKETNET_DEV

@@ -174,7 +174,7 @@ Two I/O shapes preserve the existing implementations:
 The staged callbacks are start, finish, abort, flush and receive. Start returns
 a `ROCKETNET_FRAME_STRIDE` root; the wire starts at `ROCKETNET_FRAME_WIRE_OFFSET`.
 The caller-visible payload alignment must remain valid. Receive returns at most
-`ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS` datagrams, each within the receive
+`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE` datagrams, each within the receive
 ceiling, with normalized source addresses. Its data remains valid until the
 next receive or destruction, including while workers accept further packets.
 
@@ -206,12 +206,12 @@ Every transport receives at least twice what it sends in one update:
 `ROCKETNET_STATIC_ASSERT` beside each transport’s constants. The send budget
 is what one update stages or submits; the receive capacity is the bank,
 ring, staging or completion budget the send path can fill while it waits.
-The server process batch `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`
+The server process batch `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`
 (`sdk/rocketnet_constants.h`, 16000) bounds every transport drain.
 
 | Transport | Send budget | Receive capacity |
 | --- | --- | --- |
-| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`) |
+| portable | 256–1000, max `ROCKETNET_SERVER_MAX_SEND_PACKETS` (1000, `sdk/rocketnet_constants.h`) | 16000 per update (`ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`) |
 | msgx | portable batch, 256–1000 | 16000 per update |
 | loopback | portable batch, 256–1000 | 2048 per endpoint (`ROCKETNET_LOOPBACK_QUEUE_PACKETS`, `sdk/rocketnet_driver_loopback.h`) |
 | gso | 4096 (`ROCKETNET_GSO_SEND_QUEUE_SIZE`) | 8192 per queue (`ROCKETNET_GSO_RECV_QUEUE_SIZE`) |

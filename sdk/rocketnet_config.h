@@ -178,14 +178,9 @@ void rocketnet_public_link_simulator_test_development( int enabled );
 // a development token at connect with
 // ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. True when this library
 // refuses them: a production library always, a development library never,
-// and the unit suite's production-posture hook library only once the suite
-// has enabled it, so its other cases keep the default test filter.
+// always in a production library.
 
 bool rocketnet_development_values_refused( void );
-
-#if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
-void rocketnet_development_values_refused_test_enable( int enabled );
-#endif
 
 // True (and one error line naming side) when the library refuses the
 // development values and filter is the published test filter.
