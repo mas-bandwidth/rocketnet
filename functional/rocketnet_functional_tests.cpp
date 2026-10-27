@@ -11333,7 +11333,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
-#endif
+#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 
 #if ROCKETNET_DEV
 
