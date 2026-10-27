@@ -3970,6 +3970,7 @@ static uint64_t rocketnet_test_block_sum( const struct rocketnet_counters_t * a,
 }
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static void rocketnet_test_fill_queries_payload( uint8_t payload[16], uint8_t direction_tag, int message_index )
 {
     payload[0] = 1;
@@ -3980,6 +3981,7 @@ static void rocketnet_test_fill_queries_payload( uint8_t payload[16], uint8_t di
     for ( int i = 5; i < 16; i++ )
         payload[i] = (uint8_t) ( ( ( message_index + 1 ) * ( i + 3 ) ) ^ direction_tag );
 }
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 static void rocketnet_test_validate_queries_batch( const struct rocketnet_message_batch_t * batch,
