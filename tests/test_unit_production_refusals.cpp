@@ -8,11 +8,8 @@
 // with ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, and the client
 // refuses a connect token sealed
 // to the published development server key with
-// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. The unit suite's
-// production-posture hook library
-// switches the refusal on for these cases only
-// (rocketnet_development_values_refused_test_enable), so its other cases keep
-// the default test filter; a production library refuses always. A
+// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. A production library
+// refuses always. A
 // development build accepts all of it, so these cases are production only.
 //
 // Every refusal happens before a worker or socket exists. Successful public
@@ -81,7 +78,6 @@ static int production_client_connect( const uint8_t * server_key )
 static void test_production_server_refuses_test_packet_filter()
 {
     rocketnet_quiet( true );
-    rocketnet_development_values_refused_test_enable( 1 );
 
     // the public create
     {
@@ -125,7 +121,6 @@ static void test_production_server_refuses_test_packet_filter()
             rn_test_server_transport_stop_and_destroy( server );
     }
 
-    rocketnet_development_values_refused_test_enable( 0 );
     rocketnet_quiet( false );
 }
 
@@ -134,7 +129,6 @@ REGISTER_UNIT_TEST( test_production_server_refuses_test_packet_filter );
 static void test_production_client_refuses_test_packet_filter()
 {
     rocketnet_quiet( true );
-    rocketnet_development_values_refused_test_enable( 1 );
 
     // the public create
     {
@@ -153,7 +147,6 @@ static void test_production_client_refuses_test_packet_filter()
             rn_test_client_stop_and_destroy( client );
     }
 
-    rocketnet_development_values_refused_test_enable( 0 );
     rocketnet_quiet( false );
 }
 
@@ -162,13 +155,11 @@ REGISTER_UNIT_TEST( test_production_client_refuses_test_packet_filter );
 static void test_production_client_refuses_dev_connect_token()
 {
     rocketnet_quiet( true );
-    rocketnet_development_values_refused_test_enable( 1 );
 
     uint8_t dev_key[ROCKETNET_KEY_BYTES];
     memcpy( dev_key, rocketnet_dev_server_public_key, sizeof( dev_key ) );
     check( production_client_connect( dev_key ) == ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION );
 
-    rocketnet_development_values_refused_test_enable( 0 );
     rocketnet_quiet( false );
 }
 

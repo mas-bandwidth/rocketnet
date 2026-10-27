@@ -20,6 +20,11 @@
 
 #include <sodium.h>
 
+// test_xdp (ROCKETNET_XDP_TESTS) and test_iocp (ROCKETNET_IOCP_TESTS) compile
+// this file for rocketnet_config_parse_int_value only. They do not link the
+// driver registry, so the rest of this translation unit stays out of those builds.
+#if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
+
 // ----------------------------------------------------------------
 //              the tables, expanded into everything derived
 // ----------------------------------------------------------------
@@ -381,6 +386,8 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
     return true;
 }
 
+#endif // #if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
+
 // strict full-string numeric parses: the whole value or a loud failure,
 // never a prefix silently accepted. the charset is checked BEFORE the
 // strto* call, because strtoll/strtoull quietly skip leading whitespace
@@ -421,6 +428,8 @@ bool rocketnet_config_parse_int_value( const char * value, int * out )
 {
     return rocketnet_config_parse_int( value, out );
 }
+
+#if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
 
 static bool rocketnet_config_parse_uint64( const char * value, uint64_t * out )
 {
@@ -785,20 +794,10 @@ bool rocketnet_public_link_simulator_development( void )
 #endif
 }
 
-#if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
-static bool rocketnet_development_values_refused_test_hook = false;
-void rocketnet_development_values_refused_test_enable( int enabled )
-{
-    rocketnet_development_values_refused_test_hook = enabled != 0;
-}
-#endif // #if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
-
 bool rocketnet_development_values_refused( void )
 {
 #if ROCKETNET_DEV
     return false;
-#elif ROCKETNET_TEST_SEAMS
-    return rocketnet_development_values_refused_test_hook;
 #else
     return true;
 #endif
@@ -1035,3 +1034,5 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
 
     return true;
 }
+
+#endif // #if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )

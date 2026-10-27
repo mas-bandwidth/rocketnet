@@ -13,7 +13,7 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
-// The GSO transport transport (#97): the best non-root path Linux has, per the
+// The GSO transport (#97): the best non-root path Linux has, per the
 // #81 measurements -- an SO_REUSEPORT socket group with one worker thread
 // per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
 // with zero shared state between queues, recvmmsg/sendmmsg batching on both
@@ -58,7 +58,7 @@ struct rocketnet_server_gso_t;
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: GSO receive queue holds at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the GSO send queue" );
 
 // the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:

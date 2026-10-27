@@ -493,7 +493,7 @@ void harness_process_fragment( void )
    transports can pass: up to PROOF_SIZING_MAX_CONNECTIONS connections
    (ROCKETNET_MAX_CLIENTS by default; the client passes one), up to
    PROOF_SIZING_MAX_CAPACITY completions (by default the server's drain,
-   ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS: both delivered-capacity
+   ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE: both delivered-capacity
    functions return at most their drain, and the client's drain is
    smaller), a delivered byte bound up to that capacity at the aligned
    largest payload (the most rocketnet_server_reassembly_delivered_bytes
@@ -504,7 +504,7 @@ void harness_process_fragment( void )
 #endif
 
 #ifndef PROOF_SIZING_MAX_CAPACITY
-#define PROOF_SIZING_MAX_CAPACITY ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+#define PROOF_SIZING_MAX_CAPACITY ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
 #endif
 
 void harness_memory_sizing( void )

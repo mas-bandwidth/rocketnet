@@ -90,40 +90,9 @@ void rocketnet_log_level( enum rocketnet_log_level_t level )
     log_level.store( value, std::memory_order_relaxed );
 }
 
-// test_xdp and test_iocp compile this file without rocketnet_config.cpp, so
-// they cannot link rocketnet_config_parse_int_value. the definition here is
-// that function's whole-string integer parse: a leading minus is allowed, and
-// a prefix, a plus and whitespace are refused. the library itself keeps the
-// one definition in rocketnet_config.cpp.
-
-#if defined( ROCKETNET_XDP_TESTS ) || defined( ROCKETNET_IOCP_TESTS )
-
-bool rocketnet_config_parse_int_value( const char * value, int * out )
-{
-    const char * cursor = value;
-    if ( cursor == NULL )
-        return false;
-    if ( *cursor == '-' )
-        cursor++;
-    if ( *cursor == '\0' )
-        return false;
-    for ( ; *cursor != '\0'; cursor++ )
-    {
-        if ( *cursor < '0' || *cursor > '9' )
-            return false;
-    }
-    char * end = NULL;
-    errno = 0;
-    long long parsed = strtoll( value, &end, 10 );
-    if ( end == value || *end != '\0' || errno == ERANGE )
-        return false;
-    if ( parsed < INT32_MIN || parsed > INT32_MAX )
-        return false;
-    *out = (int) parsed;
-    return true;
-}
-
-#endif // #if defined( ROCKETNET_XDP_TESTS ) || defined( ROCKETNET_IOCP_TESTS )
+// rocketnet_log_level_override_apply calls rocketnet_config_parse_int_value.
+// The one definition is in sdk/rocketnet_config.cpp. test_xdp and test_iocp
+// compile that file beside this one.
 
 // the ROCKETNET_LOG_LEVEL override's parse-and-apply step, factored out of
 // rocketnet_init so the suite can drive it with a string directly. it is
@@ -655,10 +624,6 @@ size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size
 }
 
 // -------------------------------------------------------------
-
-int rocketnet_signed_packets[256];
-
-int rocketnet_encrypted_packets[256];
 
 const char * rocketnet_platform_name( int platform_id )
 {

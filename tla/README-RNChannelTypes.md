@@ -145,7 +145,7 @@ from its delivered sequenced trace; it detects stale watermark leakage.
 | Payload | Opaque stable byte-record identity | Allocation, byte lengths, copy counts and view lifetime need implementation tests |
 | Channels | Two channels in the bounded transport | Runtime range checks and up-to-65536 scaling are outside this bound |
 
-The fair-transport transport permits one original plus one retransmission for each
+The fair transport permits one original plus one retransmission for each
 reliable message, arbitrary arrival order, original loss, and delayed ACKs.
 Retransmissions are not lost; weak fairness drains the finite actions. Thus
 liveness is conditional on this explicitly bounded fair environment, not a
