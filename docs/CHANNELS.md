@@ -94,6 +94,26 @@ reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
 dropped at its documented bounded queues; reliable work is retained until it
 is delivered or the connection reaches its timeout.
 
+## Queue scheduling
+
+Reliable resend, the per-channel descriptor FIFO, ready-channel membership, and
+the unreliable endpoint FIFO name an entry by descriptor generation and the
+connection's schedule epoch (`tla/RNChannelQueues.tla`). ACK, cancel, and
+expiry remove only that generation. A resend slot is in at most one FIFO;
+capacity is W, unlink is O(1), and an acked resend hole stays linked so a walk
+still counts it. A channel or unreliable cancel of an interior entry marks a
+hole in O(1). Holes compact in one pass when more than 64 are outstanding, or
+once at the start of a write, never once per emitted record. That pass is
+O(C + queued), not O(C times Q). Channel enqueue tickets are distinct because
+reliable numbers are assigned later. CONFIG is spliced at the front of channel
+0 and that one channel's tickets are rebased so CONFIG holds the smallest
+ticket. Ready membership is one ticket per channel.
+
+`docs/LOAD.md` still prints the previous 8W resend term and the 32C / 56C
+channel terms. The sized terms are 16W, 40C, and 64C (40 bytes of channel send
+state plus 24 bytes of channel receive state), and a send descriptor is 72
+bytes.
+
 ## Verification
 
 The executable message invariants are split by concern:

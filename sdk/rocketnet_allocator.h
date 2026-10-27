@@ -50,13 +50,15 @@
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
-struct rn_channel_send_t                // 32 bytes (7.1)
+struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
     uint32_t queue_head, queue_tail;    // FIFO of queued send descriptors (layer 6), RN_DESCRIPTOR_NONE when empty
-    uint16_t queued[4];                 // queued count per priority (layer 6)
-    uint32_t ready_prev, ready_next;    // this channel's link in its level's ready list (layer 6)
+    uint16_t queued[4];                 // live queued count per priority (holes are not counted)
+    uint32_t ready_prev, ready_next;    // this channel's link in the ready list (layer 6)
+    uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
+    uint32_t ready_generation;          // generation of the live queue head when this channel joined the ready list
 };
 
 struct rn_channel_receive_t             // 24 bytes (7.1)
@@ -114,12 +116,12 @@ struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W 
     uint32_t used;
 };
 
-struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight send (Q of them)
+struct rn_send_descriptor_t             // 72 bytes: one queued or in-flight send (Q of them)
 {
     uint32_t chunk;                     // the first store chunk, chained for a block
     uint32_t bytes;
     uint32_t serial;                    // the receipt serial (7.4)
-    uint32_t next;                      // the channel FIFO link while queued (layer 6 only; never the free pool's)
+    uint32_t next;                      // the channel or unreliable FIFO link while queued (layer 6 only; never the free pool's)
     uint32_t ordering;
     uint32_t sequencing;
     uint64_t first_number;              // the first message number, once numbered (6.2)
@@ -130,7 +132,9 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
     uint8_t flags;                      // RN_SEND_FLAG_*
     uint16_t fragments;
     uint16_t fragments_acked;
-    uint8_t reserved[6];                // unused, inside the pinned 64
+    uint16_t schedule_flags;            // RN_SCHEDULE_QUEUED while this descriptor is a live queue entry
+    uint32_t enqueue_ticket;            // 0 not queued; RN_ENQUEUE_HOLE a cancelled hole; else the enqueue ticket (from 1)
+    uint32_t queue_epoch;               // region->schedule_epoch at enqueue; a carve makes a stale entry miss
     uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
     uint32_t span_ticket;               // RN_SEND_FLAG_SPAN: the span's allocation ticket (order among live spans)
@@ -143,6 +147,10 @@ struct rn_send_descriptor_t             // 64 bytes: one queued or in-flight sen
 #define RN_SEND_FLAG_RECEIPT_PROMOTED 0x02 // a large public type 5 uses reliable wire code 2 and receives one ACKED outcome
 #define RN_SEND_FLAG_RECEIPT_RELIABLE 0x04 // public type 6 or 7 uses reliable wire code 2 or 3 and receives one ACKED outcome
 #define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, docs/CHANNELS.md 10.3): code 2 with CONTROL set, never an application message
+
+#define RN_SCHEDULE_QUEUED      0x0001u
+#define RN_ENQUEUE_HOLE         0xFFFFFFFFu
+#define RN_SCHEDULE_HOLE_BOUND  64u
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {
@@ -201,11 +209,21 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
-struct rn_resend_link_t                 // 8 bytes: the sender's resend FIFO links, indexed number % W (6.4)
+struct rn_resend_link_t                 // 16 bytes: resend FIFO links, indexed number % W (6.4)
 {
     uint32_t prev;
-    uint32_t next;
+    uint32_t next;                      // successor slot, or RN_RESEND_NONE; external walkers follow next
+    uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
+    uint32_t owner_epoch;               // region->schedule_epoch when the slot was linked
 };
+
+// Queue scheduling (tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
+// unique on the connection until the counter wraps. A hole keeps its link so
+// an interior cancel is O(1); compact rebuilds one chain in one O(length)
+// pass once holes pass the bound, or once per write pass, never per emitted
+// record. Resend capacity stays W: one slot is in at most one FIFO, unlink is
+// O(1), and an acked hole stays linked until a named unlink so a resend walk
+// still counts it.
 
 // ----------------------------------------------------------------
 //                        the region's layout
@@ -213,15 +231,15 @@ struct rn_resend_link_t                 // 8 bytes: the sender's resend FIFO lin
 
 enum
 {
-    RN_PART_CHANNEL_SEND = 0,           // 32 C
-    RN_PART_CHANNEL_RECEIVE,            // 16 C
+    RN_PART_CHANNEL_SEND = 0,           // 40 C
+    RN_PART_CHANNEL_RECEIVE,            // 24 C (the printed part tag stays 16C; the byte total uses sizeof)
     RN_PART_SEND_NUMBERS,               // 32 W
     RN_PART_SEND_FIRST_SENDS,           // 8 W
     RN_PART_RECEIVE_DESCRIPTORS,        // 32 W
     RN_PART_RECEIVED_BITS,              // W / 8
     RN_PART_HELD_INDEX,                 // 16 * 2W
     RN_PART_RECEIVE_RING,               // B
-    RN_PART_SEND_DESCRIPTORS,           // 64 Q
+    RN_PART_SEND_DESCRIPTORS,           // 72 Q
     RN_PART_SEND_STORE,                 // S
     RN_PART_SENT_PACKETS,               // 32 P
     RN_PART_SENT_INDEX,                 // 16 * 2P
@@ -229,7 +247,7 @@ enum
     RN_PART_DELIVERIES,                 // 24 (W + Du)
     RN_PART_SEQUENCED_HOLDS,            // 1440 Ru (16 hot + 1416 payload + 4 free-stack + 4 delivered list per hold)
     RN_PART_RECEIPTS,                   // 16 Rq
-    RN_PART_RESEND_FIFO,                // 8 W
+    RN_PART_RESEND_FIFO,                // 16 W
     RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS
 };
@@ -378,6 +396,8 @@ struct rn_region_t
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t span_ticket_next;          // the next span allocation ticket; live spans order by ticket, not by a linked list
+    uint32_t schedule_epoch;            // bumped on every carve, never 0; names the connection that owns queue entries
+    uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 and RN_ENQUEUE_HOLE are never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -400,6 +420,37 @@ struct rn_region_t
 
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
 };
+
+// The next enqueue ticket on this connection. 0 and RN_ENQUEUE_HOLE are never issued.
+static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
+{
+    uint32_t ticket = region->schedule_ticket_next;
+    if ( ticket == 0 || ticket == RN_ENQUEUE_HOLE )
+        ticket = 1;
+    uint32_t next = ticket + 1;
+    if ( next == 0 || next == RN_ENQUEUE_HOLE )
+        next = 1;
+    region->schedule_ticket_next = next;
+    return ticket;
+}
+
+static inline void rn_descriptor_enqueue_stamp( rn_region_t * region, rn_send_descriptor_t * descriptor )
+{
+    descriptor->enqueue_ticket = rn_region_schedule_ticket( region );
+    descriptor->queue_epoch = region->schedule_epoch;
+    descriptor->schedule_flags = (uint16_t) RN_SCHEDULE_QUEUED;
+}
+
+static inline bool rn_descriptor_schedule_hole( const rn_send_descriptor_t * descriptor )
+{
+    return descriptor->enqueue_ticket == RN_ENQUEUE_HOLE;
+}
+
+static inline bool rn_descriptor_schedule_live( const rn_send_descriptor_t * descriptor )
+{
+    return descriptor->in_use && ( descriptor->schedule_flags & RN_SCHEDULE_QUEUED ) != 0 &&
+           descriptor->enqueue_ticket != 0 && descriptor->enqueue_ticket != RN_ENQUEUE_HOLE;
+}
 
 // at connect: every table back to its empty state, every free list
 // emptied (the descriptor pool and the store's classes are lazy,

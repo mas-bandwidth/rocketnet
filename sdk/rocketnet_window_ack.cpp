@@ -22,7 +22,9 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
-// tla/RNWindow.tla).
+// tla/RNWindow.tla). Resend links name {message number, descriptor generation,
+// schedule epoch} (tla/RNChannelQueues.tla). A compact of acked holes is not
+// done on the walk: capacity stays W and walk_visits still counts them.
 
 // tla/RNWindow.tla WritePacket
 static void rn_window_ack_count( const rn_region_t * region, int counter )
@@ -82,8 +84,55 @@ static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 
     fifo[slot].prev = RN_RESEND_NONE;
     fifo[slot].next = RN_RESEND_NONE;
+    fifo[slot].generation = 0;
+    fifo[slot].owner_epoch = 0;
     rocketnet_assert( ack->resend_count > 0 );
     ack->resend_count--;
+}
+
+// Names the link with the live descriptor's generation and this connection's
+// schedule epoch. Generation 0 is never a live name.
+static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
+{
+    rn_region_t * region = ack->region;
+    rn_resend_link_t * link = &region->resend_fifo[slot];
+    link->owner_epoch = region->schedule_epoch;
+    link->generation = 0;
+    const rn_send_number_t * number = &region->send_numbers[slot];
+    if ( number->descriptor == RN_DESCRIPTOR_NONE || number->descriptor >= region->queue )
+        return;
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[number->descriptor];
+    if ( descriptor->in_use && descriptor->generation != 0 )
+        link->generation = descriptor->generation;
+}
+
+// Unlinks only the named generation of this number in the current epoch.
+// A stale generation or a previous connection's epoch leaves the FIFO as it is.
+static bool rn_resend_fifo_unlink_named( rn_window_ack_t * ack, uint32_t slot, uint64_t number, uint32_t generation )
+{
+    if ( generation == 0 || !rn_resend_fifo_is_linked( ack, slot ) )
+        return false;
+    rn_region_t * region = ack->region;
+    const rn_send_number_t * slot_number = &region->send_numbers[slot];
+    const rn_resend_link_t * link = &region->resend_fifo[slot];
+    if ( slot_number->number != number || link->generation != generation || link->owner_epoch != region->schedule_epoch )
+        return false;
+    if ( slot_number->descriptor != RN_DESCRIPTOR_NONE && slot_number->descriptor < region->queue )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[slot_number->descriptor];
+        if ( descriptor->in_use && descriptor->generation != generation )
+            return false;
+    }
+    rn_resend_fifo_unlink( ack, slot );
+    return true;
+}
+
+bool rn_window_ack_cancel_resend( rn_window_ack_t * ack, uint64_t number, uint32_t generation )
+{
+    if ( !ack || !ack->region || ack->region->window == 0 )
+        return false;
+    const uint32_t slot = (uint32_t) ( number & ( ack->region->window - 1 ) );
+    return rn_resend_fifo_unlink_named( ack, slot, number, generation );
 }
 
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
@@ -106,6 +155,7 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 
     *tail = slot;
     ack->resend_count++;
+    rn_resend_fifo_stamp( ack, slot );
 }
 
 static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
@@ -128,6 +178,7 @@ static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
 
     *head = slot;
     ack->resend_count++;
+    rn_resend_fifo_stamp( ack, slot );
 }
 
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index )
@@ -155,6 +206,7 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
     else
         *tail = slot_index;
     ack->resend_count++;
+    rn_resend_fifo_stamp( ack, slot_index );
 }
 
 // ----------------------------------------------------------------
@@ -614,10 +666,16 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
         if ( slot->acked || slot->number < send->U || slot->number >= send->next || (uint32_t) slot->number != ref_u32 )
             continue;
 
+        if ( rn_resend_fifo_is_linked( ack, slot_index ) )
+        {
+            const uint32_t generation = region->resend_fifo[slot_index].generation;
+            if ( !rn_resend_fifo_unlink_named( ack, slot_index, slot->number, generation ) )
+                continue;
+        }
+
 #if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
         rn_ack_cost.completed_numbers++;
 #endif
-        rn_resend_fifo_unlink( ack, slot_index );
 
         if ( slot->descriptor != RN_DESCRIPTOR_NONE && slot->descriptor < region->queue )
         {

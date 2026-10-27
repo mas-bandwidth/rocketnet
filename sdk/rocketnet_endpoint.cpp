@@ -69,6 +69,7 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
     endpoint->packet_written = 0;
+    endpoint->unreliable_holes = 0;
 }
 
 void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
@@ -114,6 +115,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->unreliable_head = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_tail = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_count = 0;
+    endpoint->unreliable_holes = 0;
 
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->written = 0;
@@ -387,6 +389,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         descriptor->bytes = (uint32_t) bytes;
         descriptor->serial = serial;
         descriptor->next = RN_DESCRIPTOR_NONE;
+        rn_descriptor_enqueue_stamp( region, descriptor );
         if ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
         {
             // RNChannelTypes!Enqueue: a sequenced send stays in the unreliable
@@ -779,15 +782,89 @@ static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now 
 static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d, uint32_t previous )
 {
     rn_region_t * region = endpoint->region;
-    const uint32_t next = region->send_descriptors[d].next;
+    rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+    const uint32_t next = descriptor->next;
+    const bool hole = rn_descriptor_schedule_hole( descriptor );
     if ( previous == RN_DESCRIPTOR_NONE )
         endpoint->unreliable_head = next;
     else
         region->send_descriptors[previous].next = next;
     if ( endpoint->unreliable_tail == d )
         endpoint->unreliable_tail = previous;
-    endpoint->unreliable_count--;
+    if ( hole )
+    {
+        if ( endpoint->unreliable_holes > 0 )
+            endpoint->unreliable_holes--;
+    }
+    else if ( endpoint->unreliable_count > 0 )
+        endpoint->unreliable_count--;
+    descriptor->next = RN_DESCRIPTOR_NONE;
+    descriptor->enqueue_ticket = 0;
+    descriptor->schedule_flags = 0;
     rn_region_send_free( region, d );
+}
+
+static bool rn_endpoint_unreliable_receipt( const rn_send_descriptor_t * descriptor )
+{
+    return descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+}
+
+// One forward pass. Drops holes and entries from another schedule epoch.
+// Live entries keep their order. schedule_work counts each link once.
+static void rn_endpoint_unreliable_rebuild( rn_endpoint_t * endpoint )
+{
+    rn_region_t * region = endpoint->region;
+    uint32_t previous = RN_DESCRIPTOR_NONE;
+    uint32_t d = endpoint->unreliable_head;
+    for ( uint32_t guard = 0; d != RN_DESCRIPTOR_NONE && guard <= region->queue; guard++ )
+    {
+        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        const uint32_t next = descriptor->next;
+        endpoint->ordered.channels.schedule_work++;
+        const bool drop = rn_descriptor_schedule_hole( descriptor ) || !descriptor->in_use ||
+                          descriptor->queue_epoch != region->schedule_epoch || !rn_descriptor_schedule_live( descriptor );
+        if ( drop )
+        {
+            if ( rn_endpoint_unreliable_receipt( descriptor ) )
+                rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial );
+            rn_endpoint_unreliable_unlink( endpoint, d, previous );
+        }
+        else
+            previous = d;
+        d = next;
+    }
+}
+
+bool rn_endpoint_cancel_unreliable( struct rn_endpoint_t * endpoint, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch )
+{
+    if ( !endpoint || !endpoint->region )
+        return false;
+    rn_region_t * region = endpoint->region;
+    if ( region->schedule_epoch != owner_epoch || descriptor >= region->queue )
+        return false;
+    rn_send_descriptor_t * desc = &region->send_descriptors[descriptor];
+    if ( !desc->in_use || desc->generation != generation || desc->queue_epoch != owner_epoch )
+        return false;
+    if ( !rn_descriptor_schedule_live( desc ) )
+        return false;
+    if ( desc->reliability != ROCKETNET_RELIABILITY_UNRELIABLE &&
+         desc->reliability != ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
+         desc->reliability != ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
+        return false;
+    desc->enqueue_ticket = RN_ENQUEUE_HOLE;
+    desc->schedule_flags = (uint16_t) ( desc->schedule_flags & ~RN_SCHEDULE_QUEUED );
+    if ( endpoint->unreliable_count > 0 )
+        endpoint->unreliable_count--;
+    endpoint->unreliable_holes++;
+    if ( endpoint->unreliable_count == 0 || endpoint->unreliable_holes > RN_SCHEDULE_HOLE_BOUND )
+        rn_endpoint_unreliable_rebuild( endpoint );
+    return true;
+}
+
+void rn_endpoint_expire_unreliable( struct rn_endpoint_t * endpoint )
+{
+    if ( endpoint )
+        rn_endpoint_unreliable_rebuild( endpoint );
 }
 
 static void rn_endpoint_unreliable_drop_all( rn_endpoint_t * endpoint, int counter, uint32_t already_counted )
@@ -932,7 +1009,9 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 
     while ( endpoint->write_phase == RN_ENDPOINT_WRITE_UNRELIABLE )
     {
-        if ( endpoint->written >= max_packets || endpoint->unreliable_count == 0 )
+        if ( endpoint->unreliable_holes > 0 )
+            rn_endpoint_unreliable_rebuild( endpoint );
+        if ( endpoint->written >= max_packets || endpoint->unreliable_count == 0 || endpoint->unreliable_head == RN_DESCRIPTOR_NONE )
         {
             endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
             break;
@@ -967,13 +1046,15 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 // the unreliable records, packed several to a packet: the items from the
 // queue head, up to a large sequenced record (sent alone, after these)
 
-static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors )
+static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors, uint32_t * generations, uint32_t * epochs )
 {
     rn_region_t * region = endpoint->region;
     int count = 0;
     for ( uint32_t d = endpoint->unreliable_head; d != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS; d = region->send_descriptors[d].next )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->queue_epoch != region->schedule_epoch )
+            continue;
         if ( rn_endpoint_large_sequenced( endpoint, descriptor ) )
             break; // send the preceding small records first
         rn_packet_item_t * item = &items[count];
@@ -989,6 +1070,8 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
         item->sequencing = descriptor->sequencing & ROCKETNET_MESSAGE_U24_MASK;
         item->send_class = ROCKETNET_SEND_CLASS_UNRELIABLE;
         descriptors[count] = d;
+        generations[count] = descriptor->generation;
+        epochs[count] = descriptor->queue_epoch;
         count++;
     }
     return count;
@@ -1029,7 +1112,9 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
         {
             rn_packet_item_t items[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
             uint32_t descriptors[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            const int count = rn_endpoint_unreliable_items( endpoint, items, descriptors );
+            uint32_t generations[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+            uint32_t epochs[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+            const int count = rn_endpoint_unreliable_items( endpoint, items, descriptors, generations, epochs );
 
             const int packets = rn_packet_builder_write( &endpoint->unreliable_builder, items, count, &payload, 1 );
             if ( packets == 0 )
@@ -1057,20 +1142,40 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             endpoint->packet_records = endpoint->unreliable_builder.packet[0].records;
 
             // the written records' room returns to the region (9.3 step 3):
-            // the frame holds their copy
+            // one forward pass, not one scan per taken record (tla/RNChannelQueues.tla).
+            uint32_t taken_index[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+            uint32_t taken_generation[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+            uint32_t taken_epoch[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
+            int taken_count = 0;
             for ( int i = 0; i < count; i++ )
             {
                 if ( !items[i].taken )
                     continue;
-                uint32_t previous = RN_DESCRIPTOR_NONE;
-                for ( uint32_t d = endpoint->unreliable_head; d != RN_DESCRIPTOR_NONE; previous = d, d = region->send_descriptors[d].next )
+                taken_index[taken_count] = descriptors[i];
+                taken_generation[taken_count] = generations[i];
+                taken_epoch[taken_count] = epochs[i];
+                taken_count++;
+            }
+            uint32_t previous = RN_DESCRIPTOR_NONE;
+            uint32_t d = endpoint->unreliable_head;
+            int taken = 0;
+            for ( uint32_t guard = 0; d != RN_DESCRIPTOR_NONE && taken < taken_count && guard <= region->queue; guard++ )
+            {
+                const uint32_t next = region->send_descriptors[d].next;
+                const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+                const bool match = d == taken_index[taken] &&
+                                   descriptor->generation == taken_generation[taken] &&
+                                   descriptor->queue_epoch == taken_epoch[taken] &&
+                                   descriptor->queue_epoch == region->schedule_epoch &&
+                                   rn_descriptor_schedule_live( descriptor );
+                if ( match )
                 {
-                    if ( d == descriptors[i] )
-                    {
-                        rn_endpoint_unreliable_unlink( endpoint, d, previous );
-                        break;
-                    }
+                    rn_endpoint_unreliable_unlink( endpoint, d, previous );
+                    taken++;
                 }
+                else
+                    previous = d;
+                d = next;
             }
             endpoint->packet_written = 1;
             return (int) endpoint->unreliable_builder.packet[0].payload_bytes;

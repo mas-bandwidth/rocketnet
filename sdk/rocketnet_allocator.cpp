@@ -21,12 +21,12 @@
 //          the entry sizes, pinned to section 14's figures
 // ----------------------------------------------------------------
 
-static_assert( sizeof(rn_channel_send_t) == 32, "channel send state is 32 bytes (14)" );
+static_assert( sizeof(rn_channel_send_t) == 40, "channel send state is 40 bytes (14)" );
 static_assert( sizeof(rn_channel_receive_t) == 24, "channel receive state is 24 bytes (14)" );
 static_assert( sizeof(rn_send_number_t) == 32, "the sender's per-number entry is 32 bytes (14)" );
 static_assert( sizeof(rn_receive_descriptor_t) == 32, "the receiver's descriptor is 32 bytes (14)" );
 static_assert( sizeof(rn_held_entry_t) == 16, "a held-ordered index entry is 16 bytes (14)" );
-static_assert( sizeof(rn_send_descriptor_t) == 64, "a send descriptor is 64 bytes (14)" );
+static_assert( sizeof(rn_send_descriptor_t) == 72, "a send descriptor is 72 bytes (14)" );
 static_assert( sizeof(rn_sent_packet_t) == 32, "a sent-packet entry is 32 bytes (14)" );
 static_assert( sizeof(rn_sent_index_t) == 16, "a sent-packet index entry is 16 bytes (14)" );
 static_assert( sizeof(rn_delivery_t) == 24, "a delivery is 24 bytes (14)" );
@@ -35,8 +35,8 @@ static_assert( sizeof(rn_sequenced_payload_t) == ROCKETNET_MAX_PACKET_PAYLOAD_BY
 static_assert( sizeof(rn_sequenced_hold_t) + sizeof(rn_sequenced_payload_t) == 1432, "separate hot and cold arrays retain the 1432Ru hold term (14)" );
 static_assert( sizeof(rn_sequenced_hold_t) + sizeof(rn_sequenced_payload_t) + 2 * sizeof(uint32_t) == 1440, "a hold with its free-stack and delivered-list indices is the 1440Ru region term (14)" );
 static_assert( sizeof(rn_receipt_t) == 16, "a receipt is 16 bytes (14)" );
-static_assert( sizeof(rn_resend_link_t) == 8, "a resend FIFO link is 8 bytes (14)" );
-static_assert( sizeof(((rn_send_descriptor_t*)0)->reserved) >= 6, "a send descriptor keeps six spare bytes inside the pinned 64 (14)" );
+static_assert( sizeof(rn_resend_link_t) == 16, "a resend FIFO link is 16 bytes (14)" );
+static_assert( offsetof(rn_send_descriptor_t, generation) == 52, "descriptor generation sits after the schedule ticket and epoch (14)" );
 static_assert( sizeof(rn_store_class_t) >= 32, "a store class header stays a small fixed record" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
 
@@ -81,7 +81,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] =
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] =
 {
-    "32C", "16C", "32W", "8W", "32W", "W/8", "16*2W", "B", "64Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1440Ru", "16Rq", "8W", "SR",
+    "40C", "16C", "32W", "8W", "32W", "W/8", "16*2W", "B", "72Q", "S", "32P", "16*2P", "4*16P", "24(W+Du)", "1440Ru", "16Rq", "16W", "SR",
 };
 
 const char * rn_region_part_name( int part )
@@ -526,6 +526,8 @@ void rn_region_carve( rn_region_t * region )
         region->send_numbers[n].descriptor = RN_DESCRIPTOR_NONE;
         region->resend_fifo[n].prev = RN_RESEND_NONE;
         region->resend_fifo[n].next = RN_RESEND_NONE;
+        region->resend_fifo[n].generation = 0;
+        region->resend_fifo[n].owner_epoch = 0;
     }
     memset( region->receive_descriptors, 0, sizeof(rn_receive_descriptor_t) * region->window );
     memset( region->received_bits, 0, region->window / 8 );
@@ -535,6 +537,14 @@ void rn_region_carve( rn_region_t * region )
     // descriptor `i`'s free_handle slot), lazy (tla/RNLazyPool.tla Reset):
     // nothing taken, no descriptor written. A take initializes its descriptor
     // whole, preserving its generation tag and any live stack slot it holds.
+    // Clear schedule tickets on the descriptors this connection took before
+    // the fresh range is forgotten. Generation stays, so the next take still
+    // bumps it; schedule_epoch below makes a stale (generation, old epoch) miss.
+    for ( uint32_t i = 0; i < region->descriptors_fresh; i++ )
+    {
+        region->send_descriptors[i].enqueue_ticket = 0;
+        region->send_descriptors[i].schedule_flags = 0;
+    }
     region->descriptors_free_top = 0;
     region->descriptors_free = region->queue;
     region->descriptors_fresh = 0;
@@ -575,6 +585,11 @@ void rn_region_carve( rn_region_t * region )
     region->exhausted = 0;
     region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     region->send_room_armed = 1;
+
+    region->schedule_epoch++;
+    if ( region->schedule_epoch == 0 )
+        region->schedule_epoch = 1;
+    region->schedule_ticket_next = 1;
 
     region->carves++;
 }
@@ -1528,7 +1543,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 56C + 112.125W + B + 64Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 64C + 120.125W + B + 72Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,
