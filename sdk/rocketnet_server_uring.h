@@ -40,7 +40,7 @@ struct rocketnet_server_uring_t;
 
 #ifndef ROCKETNET_URING_DEFAULT_QUEUES
 #define ROCKETNET_URING_DEFAULT_QUEUES                                       4
-#endif
+#endif // #ifndef ROCKETNET_URING_DEFAULT_QUEUES
 
 #define ROCKETNET_URING_MAX_QUEUES                                          32
 
@@ -178,7 +178,7 @@ void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
 // main thread: no staged slot waiting and no send without its CQE.
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
 #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 // unit suite only (the test hook library): a transport over a fake completion
@@ -227,7 +227,7 @@ void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t
 bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
 int rocketnet_server_uring_test_wait_calls( struct rocketnet_server_uring_t * uring );
-#endif
+#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
 
@@ -260,4 +260,4 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_process_packets( struct rocketnet_server_uring_t * uring );
 
-#endif // ROCKETNET_SDK_ROCKETNET_SERVER_URING_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_URING_H

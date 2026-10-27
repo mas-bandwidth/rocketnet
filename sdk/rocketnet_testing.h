@@ -19,7 +19,7 @@
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 struct rocketnet_client_testing_t
 {
@@ -48,7 +48,7 @@ struct rocketnet_client_t * rocketnet_client_create_testing( void * context,
 #if !ROCKETNET_DEV
 void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
-#endif // !ROCKETNET_DEV
+#endif // #if !ROCKETNET_DEV
 
 #ifdef __cplusplus
 }
@@ -75,6 +75,6 @@ template <typename config_t> static inline struct rocketnet_client_t * rocketnet
     return rocketnet_client_create_testing( context, config, config, status );
 }
 
-#endif // __cplusplus
+#endif // #ifdef __cplusplus
 
-#endif // ROCKETNET_SDK_ROCKETNET_TESTING_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TESTING_H

@@ -73,8 +73,10 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 {
     if ( address_type == 1 )    // ROCKETNET_ADDRESS_IPV4
         return ROCKETNET_IPV4_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+
     if ( address_type == 2 )    // ROCKETNET_ADDRESS_IPV6
         return ROCKETNET_IPV6_HEADER_BYTES + ROCKETNET_UDP_HEADER_BYTES;
+
     return 0;
 }
 
@@ -129,7 +131,7 @@ static inline int rocketnet_wire_header_bytes( int address_type )
 #define ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b ) a##b
 #define ROCKETNET_WIRE_STATIC_ASSERT_JOIN( a, b ) ROCKETNET_WIRE_STATIC_ASSERT_JOIN2( a, b )
 #define ROCKETNET_WIRE_STATIC_ASSERT( condition, message ) typedef char ROCKETNET_WIRE_STATIC_ASSERT_JOIN( rocketnet_wire_static_assert_, __LINE__ )[( condition ) ? 1 : -1]
-#endif
+#endif // #ifdef __cplusplus
 
 ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection request fits one IPv6 datagram" );
 ROCKETNET_WIRE_STATIC_ASSERT( ROCKETNET_CONNECTION_DENIED_WIRE_BYTES <= ROCKETNET_HANDSHAKE_MAX_WIRE_BYTES, "the connection denied fits one IPv6 datagram" );

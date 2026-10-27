@@ -13,12 +13,12 @@
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 void rocketnet_run_tests( void );
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
-#endif // ROCKETNET_SDK_ROCKETNET_TESTS_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TESTS_H

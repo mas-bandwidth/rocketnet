@@ -18,6 +18,7 @@ template <class Bucket, size_t N>
 int rocketnet_stats_window_advance( Bucket ( &buckets )[N], int index, uint64_t frame, double time )
 {
     static_assert( N > 1, "a stats window needs multiple buckets" );
+
     if ( !buckets[index].frame || time - buckets[index].time >= 1.0 / double( N - 1 ) )
     {
         index = ( index + 1 ) % int( N );
@@ -25,6 +26,7 @@ int rocketnet_stats_window_advance( Bucket ( &buckets )[N], int index, uint64_t 
         buckets[index].frame = frame;
         buckets[index].time = time;
     }
+
     return index;
 }
 
