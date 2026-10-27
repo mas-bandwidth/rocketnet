@@ -646,6 +646,19 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'a')
         run: ./bin/source_audit
 
+      # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
+      # pointer-linked or index-linked list: it lexes every tracked C/C++
+      # source outside sodium/ and refuses a self-pointer member, a cursor
+      # replaced by a field read through itself, or a field store followed by
+      # the cursor move that makes it a chain. OS enumeration walks pass only
+      # as rows of the "External ABI traversal sites" table of
+      # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
+      - name: Check no owned linked lists
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: |
+          python3 tools/check_no_owned_linked_lists.py --self-test
+          python3 tools/check_no_owned_linked_lists.py
+
       - name: Check export source gate
         if: runner.os == 'Linux'
         run: python3 tools/test_check_exports.py
