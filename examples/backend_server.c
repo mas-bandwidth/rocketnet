@@ -55,14 +55,27 @@ int main( int argc, char ** argv )
     // a file left by an earlier run names a key this server does not use
     remove( ENV_FILE );
 
-    rocketnet_init( NULL, NULL, NULL );
+    const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
+    if ( init_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: init: %s\n", rocketnet_status_name( init_status ) );
+        return 1;
+    }
 
     // the packet filter is the title's, shared with its clients. A deployment's
     // server takes its backend's public key through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY
     // or in config; a release library refuses the development key
     const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
     struct rocketnet_server_config_t config;
-    rocketnet_server_default_config( &config );
+    const enum rocketnet_status_t server_config_status = rocketnet_server_default_config( &config );
+    if ( server_config_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     config.max_clients = 1;
     config.transport = "portable";
@@ -80,7 +93,9 @@ int main( int argc, char ** argv )
     {
         printf( "FAIL: server start: %s\n", rocketnet_status_name( status ) );
         rn_cli_server_stop_and_destroy( server );
-        rocketnet_term();
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
     printf( "backend_server: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_server_transport_name( server ) );
@@ -90,7 +105,15 @@ int main( int argc, char ** argv )
     char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     char server_public_key_base64[4 * ( ( ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 2 ) / 3 ) + 1];
-    rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) );
+    if ( !rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) ) )
+    {
+        printf( "FAIL: server ipv4 address\n" );
+        rn_cli_server_stop_and_destroy( server );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     rocketnet_server_public_key( server, server_public_key );
     write_base64( server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES, server_public_key_base64 );
     FILE * env = fopen( ENV_FILE, "w" );
@@ -98,7 +121,9 @@ int main( int argc, char ** argv )
     {
         printf( "FAIL: could not write %s\n", ENV_FILE );
         rn_cli_server_stop_and_destroy( server );
-        rocketnet_term();
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
     fprintf( env, "ROCKETNET_BACKEND_SERVER_ADDRESSES=%s\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=%s\n", served_address, server_public_key_base64 );
@@ -151,7 +176,12 @@ int main( int argc, char ** argv )
     }
 
     rn_cli_server_stop_and_destroy( server );
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     printf( had_client && echoed ? "PASS\n" : "FAIL: a client connected and its message was echoed\n" );
     return had_client && echoed ? 0 : 1;
 }
