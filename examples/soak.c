@@ -91,12 +91,12 @@ static void soak_alloc_set_steady( bool steady ) {
     soak_alloc_unlock();
 }
 
-static struct soak_alloc_t soak_alloc_snapshot( void ) {
-    struct soak_alloc_t snapshot;
+static struct soak_alloc_t soak_alloc_read( void ) {
+    struct soak_alloc_t copy;
     soak_alloc_lock();
-    snapshot = g_alloc;
+    copy = g_alloc;
     soak_alloc_unlock();
-    return snapshot;
+    return copy;
 }
 
 // The harness owns backing storage until every SDK object and worker is gone.
@@ -244,7 +244,7 @@ static int soak_arena_self_test( void ) {
     if (reused != first || g_arena.used != arena_bytes) return 1;
     soak_free(NULL, second);
     soak_free(NULL, reused);
-    const struct soak_alloc_t before_reset = soak_alloc_snapshot();
+    const struct soak_alloc_t before_reset = soak_alloc_read();
     if (before_reset.live_allocs != 0 || before_reset.live_bytes != 0 ||
         g_arena.free_count != 2 || !soak_arena_release()) return 1;
 
@@ -691,7 +691,7 @@ int main( int argc, char ** argv ) {
     rocketnet_term(); inited = false;
     // destroy never needs more memory than the run did (Linux: VmHWM)
     CHECK( g_life.shutdown_peak_rss <= g_life.running_peak_rss );
-    const struct soak_alloc_t allocation_stats = soak_alloc_snapshot();
+    const struct soak_alloc_t allocation_stats = soak_alloc_read();
     CHECK( allocation_stats.live_allocs == 0 && allocation_stats.live_bytes == 0 );
     qsort( srv_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
     qsort( cli_us, (size_t) soak_ticks, sizeof( double ), cmp_double );
@@ -722,7 +722,7 @@ int main( int argc, char ** argv ) {
 cleanup:
     if ( !g_life.shut_down ) soak_shutdown( clients, num_clients, server );
     if ( inited ) rocketnet_term();
-    const struct soak_alloc_t final_allocations = soak_alloc_snapshot();
+    const struct soak_alloc_t final_allocations = soak_alloc_read();
     if (final_allocations.live_allocs || final_allocations.live_bytes) {
         printf("FAIL: arena still has live SDK allocations\n");
         exit_code = 1;
