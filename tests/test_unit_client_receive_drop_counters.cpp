@@ -127,7 +127,7 @@ static double drop_counters_time( void * context )
 static void drop_counters_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
@@ -256,12 +256,11 @@ static bool drop_counters_refusal_oracle( const struct rocketnet_counters_t * be
                                           char * report, int report_bytes )
 {
     return rocketnet_counters_expect_core( before, after,
-    {
-        { ROCKETNET_COUNTER_PACKETS_RECEIVED, too_short + too_large },
-        { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, too_short },
-        { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, too_large },
-        { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, foreign }
-    }, report, report_bytes );
+                                           { { ROCKETNET_COUNTER_PACKETS_RECEIVED, too_short + too_large },
+                                             { ROCKETNET_COUNTER_PREFILTER_TOO_SHORT, too_short },
+                                             { ROCKETNET_COUNTER_PREFILTER_TOO_LARGE, too_large },
+                                             { ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE, foreign } },
+                                           report, report_bytes );
 }
 
 static void drop_counters_require_refusal_oracle( const struct rocketnet_counters_t * before,
@@ -353,13 +352,13 @@ static void drop_counters_run( bool batch )
         too_short++;
     }
     const int short_sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
-    for ( size_t i = 0; i < sizeof(short_sizes) / sizeof(short_sizes[0]); i++ )
+    for ( size_t i = 0; i < sizeof( short_sizes ) / sizeof( short_sizes[0] ); i++ )
     {
         drop_counters_push( driver, server, short_sizes[i] );
         too_short++;
     }
     const int large_sizes[] = { ROCKETNET_RECEIVE_CEILING + 1, 1500, 9000, 65507 };
-    for ( size_t i = 0; i < sizeof(large_sizes) / sizeof(large_sizes[0]); i++ )
+    for ( size_t i = 0; i < sizeof( large_sizes ) / sizeof( large_sizes[0] ); i++ )
     {
         drop_counters_push( driver, server, large_sizes[i] );
         too_large++;
@@ -474,10 +473,10 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
 
     const char * server = "127.0.0.1:40000";
     const int short_sizes[] = { 1, ROCKETNET_PREFILTER_BYTES - 1 };
-    for ( size_t i = 0; i < sizeof(short_sizes) / sizeof(short_sizes[0]); i++ )
+    for ( size_t i = 0; i < sizeof( short_sizes ) / sizeof( short_sizes[0] ); i++ )
         drop_counters_push( driver, server, short_sizes[i] );
     const int large_sizes[] = { ROCKETNET_RECEIVE_CEILING + 1, 1500, 9000, 65507 };
-    for ( size_t i = 0; i < sizeof(large_sizes) / sizeof(large_sizes[0]); i++ )
+    for ( size_t i = 0; i < sizeof( large_sizes ) / sizeof( large_sizes[0] ); i++ )
         drop_counters_push( driver, server, large_sizes[i] );
 #if ROCKETNET_DEV
     uint8_t valid_payload[ROCKETNET_RECEIVE_CEILING];

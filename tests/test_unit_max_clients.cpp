@@ -169,7 +169,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     check( slots != NULL );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0xC7, sizeof(user_data) );
+    memset( user_data, 0xC7, sizeof( user_data ) );
 
     uint64_t ids[collision_count];
     const uint64_t wanted = probe_bound - 12;
@@ -220,7 +220,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     check( !rocketnet_client_slots_release_handle( slots, &stale ) );
     check( rocketnet_client_slots_find( slots, replacement ) == middle );
     check( rocketnet_client_slots_mapping_index( slots, middle ) == 99 );
-    check( memcmp( rocketnet_client_slots_user_data( slots, middle ), user_data, sizeof(user_data) ) == 0 );
+    check( memcmp( rocketnet_client_slots_user_data( slots, middle ), user_data, sizeof( user_data ) ) == 0 );
     for ( int i = 0; i < collision_count; ++i )
     {
         if ( i != middle )
@@ -249,7 +249,7 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
     check( slots != NULL );
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0x5A, sizeof(user_data) );
+    memset( user_data, 0x5A, sizeof( user_data ) );
     for ( int i = 0; i < capacity; ++i )
     {
         const uint64_t id = ( (uint64_t) (uint32_t) ( i + 1 ) << 32 ) | UINT64_C( 0xA5A5A5A5 );

@@ -142,7 +142,9 @@ int main( void )
 
         // the server's one queue names each message's channel: the reliable burst is on channel 1
         const struct rocketnet_message_batch_t * batch;
-        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL ) {}
+        while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+        {
+        }
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
             for ( int i = 0; i < batch->num_messages; i++ )
                 reliable_received += batch->channel[i] == 1;

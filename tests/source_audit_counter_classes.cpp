@@ -40,8 +40,7 @@ struct counters_row_t
     int family;                 // the RECEIVED counter this outcome sums into, or ROCKETNET_COUNTER_NONE
 };
 
-static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] =
-{
+static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] = {
 #define ROCKETNET_COUNTER_TEST_ROW( name, klass, family ) { #name, ROCKETNET_COUNTER_CLASS_##klass, ROCKETNET_COUNTER_##family },
     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_TEST_ROW )
 #undef ROCKETNET_COUNTER_TEST_ROW
@@ -72,7 +71,7 @@ static std::vector<std::string> counters_split_list( const char * list )
 {
     std::vector<std::string> out;
     std::string item;
-    for ( const char * c = list; ; c++ )
+    for ( const char * c = list;; c++ )
     {
         if ( *c == '|' || *c == '\0' )
         {
@@ -97,7 +96,7 @@ static bool counters_read_file( const std::string & relative_path, std::string &
     char buffer[65536];
     size_t n;
     contents.clear();
-    while ( ( n = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
+    while ( ( n = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         contents.append( buffer, n );
     fclose( file );
     return true;
@@ -113,7 +112,7 @@ static bool counters_is_identifier_char( char c )
 static void counters_collect_names( const std::string & text, std::set<std::string> & names )
 {
     static const char prefix[] = "ROCKETNET_COUNTER_";
-    const size_t prefix_bytes = sizeof(prefix) - 1;
+    const size_t prefix_bytes = sizeof( prefix ) - 1;
     size_t at = 0;
     while ( ( at = text.find( prefix, at ) ) != std::string::npos )
     {
@@ -177,8 +176,7 @@ struct counters_exception_t
     const char * why;
 };
 
-static const counters_exception_t counters_no_code_path[] =
-{
+static const counters_exception_t counters_no_code_path[] = {
     { NULL, NULL }
 };
 
@@ -269,14 +267,13 @@ struct counters_ladder_t
     const char * received;      // the RECEIVED counter whose outcomes this function counts
 };
 
-static const counters_ladder_t counters_ladders[] =
-{
+static const counters_ladder_t counters_ladders[] = {
     { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_protocol_process_connection_request", "CONNECTION_REQUEST_RECEIVED" },
-    { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_opened_request",              "CONNECTION_REQUEST_RECEIVED" },
-    { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_connection_response",         "CONNECTION_RESPONSE_RECEIVED" },
-    { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_cookie",                      "CLIENT_COOKIE_RECEIVED" },
-    { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_challenge",                   "CLIENT_CHALLENGE_RECEIVED" },
-    { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_denied",                      "CLIENT_DENIED_RECEIVED" },
+    { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_opened_request", "CONNECTION_REQUEST_RECEIVED" },
+    { "sdk/rocketnet_server_protocol.cpp", "rocketnet_server_process_connection_response", "CONNECTION_RESPONSE_RECEIVED" },
+    { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_cookie", "CLIENT_COOKIE_RECEIVED" },
+    { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_challenge", "CLIENT_CHALLENGE_RECEIVED" },
+    { "sdk/rocketnet_client_protocol.cpp", "rocketnet_client_process_denied", "CLIENT_DENIED_RECEIVED" },
 };
 
 // the text of a function defined at the start of a line: from its name to the
@@ -315,7 +312,7 @@ static std::vector<std::string> counters_incremented( const std::string & text )
 {
     std::vector<std::string> names;
     static const char prefix[] = "ROCKETNET_COUNTER_";
-    const size_t prefix_bytes = sizeof(prefix) - 1;
+    const size_t prefix_bytes = sizeof( prefix ) - 1;
     size_t at = 0;
     while ( ( at = text.find( prefix, at ) ) != std::string::npos )
     {
@@ -341,7 +338,7 @@ static std::vector<std::string> counters_incremented( const std::string & text )
 static void test_counters_every_outcome_in_at_most_one_family()
 {
     int shared = 0;
-    for ( size_t i = 0; i < sizeof(counters_ladders) / sizeof(counters_ladders[0]); i++ )
+    for ( size_t i = 0; i < sizeof( counters_ladders ) / sizeof( counters_ladders[0] ); i++ )
     {
         const counters_ladder_t & ladder = counters_ladders[i];
 

@@ -21,10 +21,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#if defined(TEST_PRE_FIX_ESBMC_R_OK)
+#if defined( TEST_PRE_FIX_ESBMC_R_OK )
 #include <stdbool.h>
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 void __ESBMC_assume( bool );
 void __ESBMC_assert( bool, const char * );
@@ -38,7 +39,7 @@ uint16_t rocketnet_esbmc_nondet_ushort( void );
 #define __CPROVER_r_ok( p, n ) __ESBMC_r_ok( (void *) ( p ), (unsigned long) ( n ) )
 #define __CPROVER_w_ok( p, n ) __ESBMC_r_ok( (void *) ( p ), (unsigned long) ( n ) )
 #define nondet_ushort rocketnet_esbmc_nondet_ushort
-#elif defined(TEST_LIBC_CPROVER_R_OK)
+#elif defined( TEST_LIBC_CPROVER_R_OK )
 #include <stdbool.h>
 #define __CPROVER_assume( c ) __ESBMC_assume( (bool) ( c ) )
 #define __CPROVER_assert( c, m ) __ESBMC_assert( (bool) ( c ), ( m ) )
@@ -57,24 +58,24 @@ int main( void )
     __CPROVER_assume( buf != NULL );
 
     __CPROVER_assert( __CPROVER_r_ok( buf, (size_t) n ),
-        "full symbolic malloc extent is readable" );
+                      "full symbolic malloc extent is readable" );
     __CPROVER_assert( __CPROVER_w_ok( buf, (size_t) n ),
-        "full symbolic malloc extent is writable" );
+                      "full symbolic malloc extent is writable" );
 
     uint16_t k = nondet_ushort();
     __CPROVER_assume( k <= n );
 
     __CPROVER_assert( __CPROVER_r_ok( buf + k, (size_t) ( n - k ) ),
-        "symbolic suffix slice [k, n) of malloc(n) is readable" );
+                      "symbolic suffix slice [k, n) of malloc(n) is readable" );
     __CPROVER_assert( __CPROVER_w_ok( buf + k, (size_t) ( n - k ) ),
-        "symbolic suffix slice [k, n) of malloc(n) is writable" );
+                      "symbolic suffix slice [k, n) of malloc(n) is writable" );
 
     uint8_t stack_buf[64];
     uint16_t sb = nondet_ushort();
     __CPROVER_assume( sb <= 64 );
     const uint8_t * tail = stack_buf + ( 64 - sb );
     __CPROVER_assert( __CPROVER_r_ok( tail, (size_t) sb ),
-        "symbolic tail slice of stack buffer is readable" );
+                      "symbolic tail slice of stack buffer is readable" );
 
     free( buf );
     return 0;

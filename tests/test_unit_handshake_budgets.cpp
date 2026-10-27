@@ -43,7 +43,7 @@ struct budgets_server_t
 static void budgets_fill_vector_fields( struct rocketnet_signed_connect_data_t * signed_fields,
                                         struct rocketnet_connect_token_private_t * private_fields )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -54,7 +54,7 @@ static void budgets_fill_vector_fields( struct rocketnet_signed_connect_data_t *
     memcpy( signed_fields->ipv4_address, server_address, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -64,7 +64,7 @@ static void budgets_fill_vector_fields( struct rocketnet_signed_connect_data_t *
 
 static void budgets_server_setup( struct budgets_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -164,14 +164,14 @@ static void budgets_check_signature_budget()
     for ( int i = 0; i <= budget; i++ )
     {
         uint8_t mutated[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
-        memcpy( mutated, request, sizeof(mutated) );
+        memcpy( mutated, request, sizeof( mutated ) );
         mutated[signature_offset] ^= 1;
 
         response_bytes = 0;
         int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                    mutated, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                    ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                    response, &response_bytes );
+                                                                           mutated, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                           ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                           response, &response_bytes );
 
         // a refused request is never answered, whether the verify failed or
         // the budget refused it before the verify
@@ -205,15 +205,15 @@ static void test_handshake_budgets_pinned()
     {
         struct rocketnet_address_t address;
         char addr_str[64];
-        snprintf( addr_str, sizeof(addr_str), "10.1.%d.%d:56789", ( i / 255 ) + 1, ( i % 255 ) + 1 );
+        snprintf( addr_str, sizeof( addr_str ), "10.1.%d.%d:56789", ( i / 255 ) + 1, ( i % 255 ) + 1 );
         check( rocketnet_address_parse( &address, addr_str ) );
         budgets_build_request( request, i, &address, test.server.cookie_key );
 
         response_bytes = 0;
         int result = rocketnet_server_protocol_process_connection_request( &test.server, &address,
-                                                    request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                    ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                    response, &response_bytes );
+                                                                           request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                           ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                           response, &response_bytes );
         if ( i < budget )
         {
             check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
@@ -280,7 +280,7 @@ static void budgets_client_response_from_challenge( const uint8_t * challenge, i
 static void budgets_forged_address( struct rocketnet_address_t * address, int i )
 {
     char addr_str[64];
-    snprintf( addr_str, sizeof(addr_str), "10.2.%d.%d:56789", ( i / 250 ) + 1, ( i % 250 ) + 1 );
+    snprintf( addr_str, sizeof( addr_str ), "10.2.%d.%d:56789", ( i / 250 ) + 1, ( i % 250 ) + 1 );
     check( rocketnet_address_parse( address, addr_str ) );
 }
 
@@ -299,9 +299,9 @@ static int budgets_send_forged( struct budgets_server_t * test, const struct roc
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     int result = rocketnet_server_protocol_process_connection_request( &test->server, address,
-                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                response, &response_bytes );
+                                                                       request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                       ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                       response, &response_bytes );
     check( response_bytes == 0 );
     return result;
 }
@@ -356,9 +356,9 @@ static void test_handshake_failure_budget_no_global_lockout()
     uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
     int challenge_bytes = 0;
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
-                                                ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                challenge, &challenge_bytes );
+                                                                       request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                       ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                       challenge, &challenge_bytes );
     check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == 1 );
@@ -372,7 +372,7 @@ static void test_handshake_failure_budget_no_global_lockout()
         uint8_t payload[ROCKETNET_RECEIVE_CEILING];
         int payload_bytes = 0;
         int payload_client_index = -1;
-        result = rocketnet_server_protocol_process_packet( &test.server, &test.client_address, response, sizeof(response),
+        result = rocketnet_server_protocol_process_packet( &test.server, &test.client_address, response, sizeof( response ),
                                                            ROCKETNET_TEST_CREATE_TS, 1000.0,
                                                            out, &out_bytes, payload, &payload_bytes, &payload_client_index );
         check( result == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );

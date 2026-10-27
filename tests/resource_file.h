@@ -12,7 +12,7 @@
 #include <stdio.h>
 #include <string>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -56,7 +56,7 @@ inline std::wstring rocketnet_test_wide_path( const std::string & path )
     std::replace( wide.begin(), wide.end(), L'/', L'\\' );
     if ( wide.compare( 0, 4, L"\\\\?\\" ) == 0 )
         return wide;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     // a \\?\ path is taken literally: ".." and relative paths are not resolved,
     // so resolve to the full path first
     const DWORD length = GetFullPathNameW( wide.c_str(), 0, NULL, NULL );
@@ -76,14 +76,14 @@ inline std::wstring rocketnet_test_wide_path( const std::string & path )
 
 inline FILE * rocketnet_test_fopen( const std::string & path, const char * mode )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const std::wstring wide = rocketnet_test_wide_path( path );
     if ( wide.empty() )
         return NULL;
     const std::wstring wide_mode = rocketnet_test_utf8_to_wide( mode );
     if ( wide_mode.empty() )
         return NULL;
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
     FILE * file = NULL;
     if ( _wfopen_s( &file, wide.c_str(), wide_mode.c_str() ) != 0 )
         return NULL;

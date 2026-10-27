@@ -301,7 +301,7 @@ bool rn_block_shape_valid( const struct rn_channels_t * channels, const struct r
 // from the record so dispatch stands alone.
 struct rn_receive_descriptor_t * rn_channels_descriptor( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_slot );
 
-#if defined(ROCKETNET_BLOCK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
 // Present only in the unit-test library: the receive descriptors a code-2
 // block's chunks visit on their way to one delivery, counted as work done.
 struct rn_block_cost_t

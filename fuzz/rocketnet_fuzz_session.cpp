@@ -80,7 +80,7 @@ static void rocketnet_fuzz_session_checks_reset()
     struct rocketnet_dst_check_state_t * st = &rocketnet_fuzz_session_checks;
     memset( st, 0, offsetof( struct rocketnet_dst_check_state_t, stream ) );
     const size_t tail = offsetof( struct rocketnet_dst_check_state_t, slot_client_id );
-    memset( (uint8_t*) st + tail, 0, sizeof( *st ) - tail );
+    memset( (uint8_t *) st + tail, 0, sizeof( *st ) - tail );
     for ( int channel = 0; channel < ROCKETNET_FUZZ_NUM_CHANNELS; channel++ )
     {
         memset( &st->stream[rocketnet_fuzz_session_stream_index( ROCKETNET_FUZZ_SESSION_SERVER, channel )], 0, sizeof( st->stream[0] ) );
@@ -267,8 +267,7 @@ static void rocketnet_fuzz_session_reverse( struct rocketnet_fuzz_ring_t * ring 
     }
 }
 
-static const uint8_t rocketnet_fuzz_session_sealed_types[] =
-{
+static const uint8_t rocketnet_fuzz_session_sealed_types[] = {
     ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
     ROCKETNET_CONNECTION_ACK_PACKET, ROCKETNET_CONNECTION_FRAGMENT_PACKET
 };
@@ -478,12 +477,30 @@ static void rocketnet_fuzz_session_traffic( std::vector<uint8_t> & s, int bytes 
 
 static bool rocketnet_fuzz_session_generate( const char * dir )
 {
-    struct named_t { std::string name; std::vector<uint8_t> script; };
+    struct named_t
+    {
+        std::string name;
+        std::vector<uint8_t> script;
+    };
     std::vector<named_t> seeds;
 
-    { named_t n = { "every_type_small", { 0x00 } }; rocketnet_fuzz_session_traffic( n.script, 16 ); seeds.push_back( n ); }
-    { named_t n = { "every_type_blocks", { 0x00 } }; rocketnet_fuzz_session_traffic( n.script, 6000 ); seeds.push_back( n ); }
-    { named_t n = { "handshake_start", { 0x10 } }; for ( int i = 0; i < 40; i++ ) n.script.push_back( 0 ); rocketnet_fuzz_session_traffic( n.script, 64 ); seeds.push_back( n ); }
+    {
+        named_t n = { "every_type_small", { 0x00 } };
+        rocketnet_fuzz_session_traffic( n.script, 16 );
+        seeds.push_back( n );
+    }
+    {
+        named_t n = { "every_type_blocks", { 0x00 } };
+        rocketnet_fuzz_session_traffic( n.script, 6000 );
+        seeds.push_back( n );
+    }
+    {
+        named_t n = { "handshake_start", { 0x10 } };
+        for ( int i = 0; i < 40; i++ )
+            n.script.push_back( 0 );
+        rocketnet_fuzz_session_traffic( n.script, 64 );
+        seeds.push_back( n );
+    }
     {
         // the faulty tick, each decision in turn: deliver, drop, duplicate, hold
         named_t n = { "faulty_ticks", { 0x00 } };

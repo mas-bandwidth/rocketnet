@@ -39,15 +39,15 @@ struct rocketnet_gateway_netlink_attributes_t
 
 static bool rocketnet_gateway_netlink_walk_attributes( const uint8_t * data, size_t bytes, rocketnet_gateway_netlink_attributes_t * attributes )
 {
-    memset( attributes, 0, sizeof(*attributes) );
+    memset( attributes, 0, sizeof( *attributes ) );
     size_t offset = 0;
     while ( offset < bytes )
     {
         struct rtattr attribute;
-        if ( bytes - offset < sizeof(attribute) )
+        if ( bytes - offset < sizeof( attribute ) )
             return false;
-        memcpy( &attribute, data + offset, sizeof(attribute) );
-        if ( attribute.rta_len < sizeof(attribute) || attribute.rta_len > bytes - offset )
+        memcpy( &attribute, data + offset, sizeof( attribute ) );
+        if ( attribute.rta_len < sizeof( attribute ) || attribute.rta_len > bytes - offset )
             return false;
         const unsigned int type = (unsigned int) ( attribute.rta_type & NLA_TYPE_MASK );
         if ( type < ROCKETNET_GATEWAY_NETLINK_MAX_ATTRIBUTE && attributes->value[type] == NULL )
@@ -62,9 +62,9 @@ static bool rocketnet_gateway_netlink_walk_attributes( const uint8_t * data, siz
 
 static bool rocketnet_gateway_netlink_u32( const rocketnet_gateway_netlink_attributes_t * attributes, unsigned int type, uint32_t * value )
 {
-    if ( attributes->value[type] == NULL || attributes->bytes[type] != sizeof(uint32_t) )
+    if ( attributes->value[type] == NULL || attributes->bytes[type] != sizeof( uint32_t ) )
         return false;
-    memcpy( value, attributes->value[type], sizeof(uint32_t) );
+    memcpy( value, attributes->value[type], sizeof( uint32_t ) );
     return true;
 }
 
@@ -76,7 +76,7 @@ static size_t rocketnet_gateway_netlink_address_bytes( int family )
 // one message of the wanted type, its fixed body (rtmsg or ndmsg) and its
 // attributes: MORE when it is not the answer, FOUND when it is, MALFORMED
 
-typedef int (*rocketnet_gateway_netlink_match_t)( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context );
+typedef int ( *rocketnet_gateway_netlink_match_t )( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context );
 
 // the walk of one received datagram, shared by both dumps
 
@@ -92,10 +92,10 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
     while ( offset < bytes )
     {
         struct nlmsghdr header;
-        if ( bytes - offset < sizeof(header) )
+        if ( bytes - offset < sizeof( header ) )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
-        memcpy( &header, data + offset, sizeof(header) );
-        if ( header.nlmsg_len < sizeof(header) || header.nlmsg_len > bytes - offset )
+        memcpy( &header, data + offset, sizeof( header ) );
+        if ( header.nlmsg_len < sizeof( header ) || header.nlmsg_len > bytes - offset )
             return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
 
         const uint8_t * payload = data + offset + NLMSG_HDRLEN;
@@ -115,9 +115,9 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
             if ( header.nlmsg_type == NLMSG_ERROR )
             {
                 int code;
-                if ( payload_bytes < sizeof(code) )
+                if ( payload_bytes < sizeof( code ) )
                     return ROCKETNET_GATEWAY_NETLINK_MALFORMED;
-                memcpy( &code, payload, sizeof(code) );
+                memcpy( &code, payload, sizeof( code ) );
                 if ( code != 0 )
                 {
                     *error = code < 0 ? -code : code;
@@ -129,10 +129,10 @@ static int rocketnet_gateway_netlink_parse( const uint8_t * data, size_t bytes, 
             {
                 // a dump's NLMSG_DONE carries the dump's result: negative is an errno
 
-                if ( payload_bytes >= sizeof(int) )
+                if ( payload_bytes >= sizeof( int ) )
                 {
                     int code;
-                    memcpy( &code, payload, sizeof(code) );
+                    memcpy( &code, payload, sizeof( code ) );
                     if ( code < 0 )
                     {
                         *error = -code;
@@ -176,7 +176,7 @@ struct rocketnet_gateway_netlink_route_context_t
 // malformed. No hop on this interface is not this interface's route.
 
 static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * data, size_t bytes, int family, int want_interface,
-                                                              int * interface_index, const uint8_t ** gateway, size_t * gateway_bytes )
+                                                             int * interface_index, const uint8_t ** gateway, size_t * gateway_bytes )
 {
     const size_t address_bytes = rocketnet_gateway_netlink_address_bytes( family );
     size_t offset = 0;
@@ -213,12 +213,12 @@ static int rocketnet_gateway_netlink_multipath_on_interface( const uint8_t * dat
 
 static int rocketnet_gateway_netlink_match_route( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context )
 {
-    rocketnet_gateway_netlink_route_context_t * route = (rocketnet_gateway_netlink_route_context_t*) context;
+    rocketnet_gateway_netlink_route_context_t * route = (rocketnet_gateway_netlink_route_context_t *) context;
 
     struct rtmsg message;
-    rocketnet_assert( body_bytes == sizeof(message) );
+    rocketnet_assert( body_bytes == sizeof( message ) );
     (void) body_bytes;
-    memcpy( &message, body, sizeof(message) );
+    memcpy( &message, body, sizeof( message ) );
 
     if ( message.rtm_family != route->family || message.rtm_dst_len != 0 || message.rtm_type != RTN_UNICAST || ( message.rtm_flags & RTM_F_CLONED ) )
         return ROCKETNET_GATEWAY_NETLINK_MORE;
@@ -269,7 +269,7 @@ int rocketnet_gateway_netlink_parse_route( const uint8_t * data, size_t bytes, u
     rocketnet_assert( interface_index > 0 );
     rocketnet_assert( gateway );
     rocketnet_gateway_netlink_route_context_t context = { family, interface_index, gateway };
-    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWROUTE, sizeof(struct rtmsg), rocketnet_gateway_netlink_match_route, &context, error );
+    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWROUTE, sizeof( struct rtmsg ), rocketnet_gateway_netlink_match_route, &context, error );
 }
 
 // ---------------------------------------------------------------------------
@@ -290,12 +290,12 @@ struct rocketnet_gateway_netlink_neighbor_context_t
 
 static int rocketnet_gateway_netlink_match_neighbor( const uint8_t * body, size_t body_bytes, const rocketnet_gateway_netlink_attributes_t * attributes, void * context )
 {
-    rocketnet_gateway_netlink_neighbor_context_t * neighbor = (rocketnet_gateway_netlink_neighbor_context_t*) context;
+    rocketnet_gateway_netlink_neighbor_context_t * neighbor = (rocketnet_gateway_netlink_neighbor_context_t *) context;
 
     struct ndmsg message;
-    rocketnet_assert( body_bytes == sizeof(message) );
+    rocketnet_assert( body_bytes == sizeof( message ) );
     (void) body_bytes;
-    memcpy( &message, body, sizeof(message) );
+    memcpy( &message, body, sizeof( message ) );
 
     if ( message.ndm_family != neighbor->family || message.ndm_ifindex != neighbor->interface_index )
         return ROCKETNET_GATEWAY_NETLINK_MORE;
@@ -325,7 +325,7 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
     rocketnet_assert( gateway );
     rocketnet_assert( mac );
     rocketnet_gateway_netlink_neighbor_context_t context = { family, interface_index, gateway, mac };
-    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWNEIGH, sizeof(struct ndmsg), rocketnet_gateway_netlink_match_neighbor, &context, error );
+    return rocketnet_gateway_netlink_parse( data, bytes, sequence, port_id, RTM_NEWNEIGH, sizeof( struct ndmsg ), rocketnet_gateway_netlink_match_neighbor, &context, error );
 }
 
 // ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ int rocketnet_gateway_netlink_parse_neighbor( const uint8_t * data, size_t bytes
 
 #define ROCKETNET_GATEWAY_NETLINK_SEQUENCE 1
 
-typedef int (*rocketnet_gateway_netlink_parse_t)( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error );
+typedef int ( *rocketnet_gateway_netlink_parse_t )( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error );
 
 static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, rocketnet_gateway_netlink_parse_t parse, void * context, int * error )
 {
@@ -366,18 +366,18 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     }
 
     struct timeval timeout;
-    memset( &timeout, 0, sizeof(timeout) );
+    memset( &timeout, 0, sizeof( timeout ) );
     timeout.tv_sec = ROCKETNET_GATEWAY_NETLINK_TIMEOUT_SECONDS;
 
     struct sockaddr_nl local;
-    memset( &local, 0, sizeof(local) );
+    memset( &local, 0, sizeof( local ) );
     local.nl_family = AF_NETLINK;
-    socklen_t local_bytes = sizeof(local);
+    socklen_t local_bytes = sizeof( local );
 
-    if ( setsockopt( fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout) ) != 0 ||
-         setsockopt( fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout) ) != 0 ||
-         bind( fd, (struct sockaddr*) &local, sizeof(local) ) != 0 ||
-         getsockname( fd, (struct sockaddr*) &local, &local_bytes ) != 0 || local_bytes != sizeof(local) )
+    if ( setsockopt( fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof( timeout ) ) != 0 ||
+         setsockopt( fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof( timeout ) ) != 0 ||
+         bind( fd, (struct sockaddr *) &local, sizeof( local ) ) != 0 ||
+         getsockname( fd, (struct sockaddr *) &local, &local_bytes ) != 0 || local_bytes != sizeof( local ) )
     {
         *error = errno;
         close( fd );
@@ -387,43 +387,43 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     // the request: a header and the family's rtmsg or ndmsg, every other
     // field zero, the dump filtered by the parse
 
-    uint8_t request[NLMSG_SPACE( sizeof(struct rtmsg) > sizeof(struct ndmsg) ? sizeof(struct rtmsg) : sizeof(struct ndmsg) )];
-    memset( request, 0, sizeof(request) );
-    const size_t body_bytes = request_type == RTM_GETROUTE ? sizeof(struct rtmsg) : sizeof(struct ndmsg);
+    uint8_t request[NLMSG_SPACE( sizeof( struct rtmsg ) > sizeof( struct ndmsg ) ? sizeof( struct rtmsg ) : sizeof( struct ndmsg ) )];
+    memset( request, 0, sizeof( request ) );
+    const size_t body_bytes = request_type == RTM_GETROUTE ? sizeof( struct rtmsg ) : sizeof( struct ndmsg );
     struct nlmsghdr header;
-    memset( &header, 0, sizeof(header) );
+    memset( &header, 0, sizeof( header ) );
     header.nlmsg_len = (uint32_t) NLMSG_LENGTH( body_bytes );
     header.nlmsg_type = request_type;
     header.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
     header.nlmsg_seq = ROCKETNET_GATEWAY_NETLINK_SEQUENCE;
-    memcpy( request, &header, sizeof(header) );
+    memcpy( request, &header, sizeof( header ) );
     if ( request_type == RTM_GETROUTE )
     {
         struct rtmsg message;
-        memset( &message, 0, sizeof(message) );
+        memset( &message, 0, sizeof( message ) );
         message.rtm_family = (unsigned char) family;
-        memcpy( request + NLMSG_HDRLEN, &message, sizeof(message) );
+        memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
     }
     else
     {
         struct ndmsg message;
-        memset( &message, 0, sizeof(message) );
+        memset( &message, 0, sizeof( message ) );
         message.ndm_family = (unsigned char) family;
-        memcpy( request + NLMSG_HDRLEN, &message, sizeof(message) );
+        memcpy( request + NLMSG_HDRLEN, &message, sizeof( message ) );
     }
 
     struct sockaddr_nl kernel;
-    memset( &kernel, 0, sizeof(kernel) );
+    memset( &kernel, 0, sizeof( kernel ) );
     kernel.nl_family = AF_NETLINK;
 
-    if ( sendto( fd, request, header.nlmsg_len, 0, (struct sockaddr*) &kernel, sizeof(kernel) ) != (ssize_t) header.nlmsg_len )
+    if ( sendto( fd, request, header.nlmsg_len, 0, (struct sockaddr *) &kernel, sizeof( kernel ) ) != (ssize_t) header.nlmsg_len )
     {
         *error = errno;
         close( fd );
         return ROCKETNET_GATEWAY_NETLINK_SYSTEM;
     }
 
-    alignas(8) uint8_t buffer[ROCKETNET_GATEWAY_NETLINK_BUFFER_BYTES];
+    alignas( 8 ) uint8_t buffer[ROCKETNET_GATEWAY_NETLINK_BUFFER_BYTES];
 
     // the read bound running out is SYSTEM with E2BIG
     int result = ROCKETNET_GATEWAY_NETLINK_SYSTEM;
@@ -432,14 +432,14 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     for ( int read = 0; read < ROCKETNET_GATEWAY_NETLINK_MAX_READS; read++ )
     {
         struct sockaddr_nl from;
-        memset( &from, 0, sizeof(from) );
+        memset( &from, 0, sizeof( from ) );
         struct iovec vector;
         vector.iov_base = buffer;
-        vector.iov_len = sizeof(buffer);
+        vector.iov_len = sizeof( buffer );
         struct msghdr message;
-        memset( &message, 0, sizeof(message) );
+        memset( &message, 0, sizeof( message ) );
         message.msg_name = &from;
-        message.msg_namelen = sizeof(from);
+        message.msg_namelen = sizeof( from );
         message.msg_iov = &vector;
         message.msg_iovlen = 1;
 
@@ -461,7 +461,7 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
 
         // only the kernel (port id 0) answers a dump
 
-        if ( message.msg_namelen != sizeof(from) || from.nl_pid != 0 )
+        if ( message.msg_namelen != sizeof( from ) || from.nl_pid != 0 )
             continue;
 
         result = parse( buffer, (size_t) received, ROCKETNET_GATEWAY_NETLINK_SEQUENCE, local.nl_pid, context, error );
@@ -484,7 +484,7 @@ struct rocketnet_gateway_netlink_route_query_t
 
 static int rocketnet_gateway_netlink_route_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
 {
-    const rocketnet_gateway_netlink_route_query_t * query = (const rocketnet_gateway_netlink_route_query_t*) context;
+    const rocketnet_gateway_netlink_route_query_t * query = (const rocketnet_gateway_netlink_route_query_t *) context;
     return rocketnet_gateway_netlink_parse_route( data, bytes, sequence, port_id, query->family, query->interface_index, query->gateway, error );
 }
 
@@ -505,7 +505,7 @@ struct rocketnet_gateway_netlink_neighbor_query_t
 
 static int rocketnet_gateway_netlink_neighbor_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
 {
-    const rocketnet_gateway_netlink_neighbor_query_t * query = (const rocketnet_gateway_netlink_neighbor_query_t*) context;
+    const rocketnet_gateway_netlink_neighbor_query_t * query = (const rocketnet_gateway_netlink_neighbor_query_t *) context;
     return rocketnet_gateway_netlink_parse_neighbor( data, bytes, sequence, port_id, query->family, query->interface_index, query->gateway, query->mac, error );
 }
 
@@ -520,13 +520,13 @@ const char * rocketnet_gateway_netlink_result_name( int result )
 {
     switch ( result )
     {
-        case ROCKETNET_GATEWAY_NETLINK_MORE:        return "no answer";
-        case ROCKETNET_GATEWAY_NETLINK_FOUND:       return "found";
-        case ROCKETNET_GATEWAY_NETLINK_DONE:        return "not found";
-        case ROCKETNET_GATEWAY_NETLINK_MALFORMED:   return "malformed reply";
-        case ROCKETNET_GATEWAY_NETLINK_ERROR:       return "kernel error";
-        case ROCKETNET_GATEWAY_NETLINK_SYSTEM:      return "socket error";
-        default:                                    return "unknown";
+        case ROCKETNET_GATEWAY_NETLINK_MORE:      return "no answer";
+        case ROCKETNET_GATEWAY_NETLINK_FOUND:     return "found";
+        case ROCKETNET_GATEWAY_NETLINK_DONE:      return "not found";
+        case ROCKETNET_GATEWAY_NETLINK_MALFORMED: return "malformed reply";
+        case ROCKETNET_GATEWAY_NETLINK_ERROR:     return "kernel error";
+        case ROCKETNET_GATEWAY_NETLINK_SYSTEM:    return "socket error";
+        default:                                  return "unknown";
     }
 }
 

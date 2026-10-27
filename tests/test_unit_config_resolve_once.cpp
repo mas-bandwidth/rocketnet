@@ -86,8 +86,8 @@ static void resolve_once_token( const rocketnet_server_t * server, const resolve
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
-        RESOLVE_ONCE_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     RESOLVE_ONCE_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
@@ -277,7 +277,7 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
     {
         for ( int server = 0; server < 2; server++ )
         {
-            memset( &guarded, 0xA5, sizeof(guarded) );
+            memset( &guarded, 0xA5, sizeof( guarded ) );
 #if ROCKETNET_ASSERTS
             const int assertions_before_parse = config_ladder_max_assertions;
 #endif

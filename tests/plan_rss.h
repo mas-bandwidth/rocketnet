@@ -44,7 +44,7 @@
 #include <cstdio>
 #include <cstdlib>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -107,7 +107,9 @@ inline void plan_rss_count( uint64_t bytes )
 {
     const uint64_t live = plan_rss_live().fetch_add( bytes ) + bytes;
     uint64_t peak = plan_rss_peak().load();
-    while ( live > peak && !plan_rss_peak().compare_exchange_weak( peak, live ) ) {}
+    while ( live > peak && !plan_rss_peak().compare_exchange_weak( peak, live ) )
+    {
+    }
 }
 
 inline void plan_rss_uncount( uint64_t bytes )
@@ -117,7 +119,7 @@ inline void plan_rss_uncount( uint64_t bytes )
 
 inline void * plan_rss_map( size_t bytes )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     return VirtualAlloc( NULL, bytes, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE );
 #else
     void * block = mmap( NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0 );
@@ -127,7 +129,7 @@ inline void * plan_rss_map( size_t bytes )
 
 inline void plan_rss_unmap( void * block, size_t bytes )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     (void) bytes;
     VirtualFree( block, 0, MEM_RELEASE );
 #else
@@ -155,7 +157,7 @@ inline void * plan_rss_malloc( void * context, size_t bytes )
     }
     if ( !block )
         return NULL;
-    plan_rss_header_t * header = (plan_rss_header_t*) block;
+    plan_rss_header_t * header = (plan_rss_header_t *) block;
     header->bytes = bytes;
     header->mapped_bytes = mapped_bytes;
     plan_rss_count( bytes );
@@ -167,7 +169,7 @@ inline void plan_rss_free( void * context, void * p )
     (void) context;
     if ( !p )
         return;
-    plan_rss_header_t * header = ( (plan_rss_header_t*) p ) - 1;
+    plan_rss_header_t * header = ( (plan_rss_header_t *) p ) - 1;
     plan_rss_uncount( header->bytes );
     if ( header->mapped_bytes )
         plan_rss_unmap( header, header->mapped_bytes );

@@ -25,7 +25,7 @@ static uint64_t rn_window_send_position( const rn_window_send_t * send, uint64_t
 // p+span. A failed first write counts once until U' moves or one succeeds.
 // tla/RNWindow.tla NumberRecord
 static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
-                                  uint64_t span, int holdable, uint64_t * position )
+                                 uint64_t span, int holdable, uint64_t * position )
 {
     const uint64_t W = send->region->window;
     const uint64_t B = send->region->ring_bytes;
@@ -44,8 +44,7 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
     else if ( fits && holdable )
     {
         p = rn_window_send_position( send, span );
-        const uint64_t floor = send->U_prime < send->next ?
-            send->region->send_numbers[send->U_prime % W].ring_start : p;
+        const uint64_t floor = send->U_prime < send->next ? send->region->send_numbers[send->U_prime % W].ring_start : p;
         rocketnet_assert( p >= floor );
         fits = fits && span <= B && p >= floor && p - floor <= B - span;
     }
@@ -55,7 +54,7 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
         {
             if ( send->region->counters )
                 rocketnet_platform_atomic_add_u64(
-                    (volatile uint64_t*) &send->region->counters->values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL], 1 );
+                    (volatile uint64_t *) &send->region->counters->values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL], 1 );
             send->stalled = 1;
         }
         return 0;
@@ -68,8 +67,8 @@ static int rn_window_send_admit( rn_window_send_t * send, uint32_t count,
 // Code 2 gets a zero-byte ring anchor at p so it can safely be U'.
 // tla/RNWindow.tla NumberRecord
 static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
-                                        uint32_t descriptor, uint16_t fragment,
-                                        uint64_t ring_start, uint64_t bytes16 )
+                                       uint32_t descriptor, uint16_t fragment,
+                                       uint64_t ring_start, uint64_t bytes16 )
 {
     rocketnet_assert( bytes16 % 16 == 0 && bytes16 / 16 <= UINT8_MAX );
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
@@ -134,7 +133,7 @@ int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t byte
 // (CHANNELS 13.3 check 8); RNRing abstracts it to a full F stride.
 // tla/RNWindow.tla NumberRecord
 uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, uint32_t bytes,
-                                            uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start )
+                                           uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start )
 {
     rocketnet_assert( send && send->region && first_number && ring_start );
     rocketnet_assert( code >= ROCKETNET_MESSAGE_CODE_RELIABLE && code <= ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED );
@@ -153,7 +152,7 @@ uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, ui
     const uint64_t first = send->next;
     for ( uint32_t i = 0; i < count; i++ )
         rn_window_send_set_number( send, first + i, descriptor, (uint16_t) i,
-                                    p + (uint64_t) i * F, i + 1 == count ? last16 : F );
+                                   p + (uint64_t) i * F, i + 1 == count ? last16 : F );
     send->next += count;
     send->ring_next = p + span;
     send->stalled = 0;

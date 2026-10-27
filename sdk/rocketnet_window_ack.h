@@ -40,7 +40,7 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 // Present only in the unit-test library; counts actual work, not ACK calls.
 struct rn_ack_cost_t
 {

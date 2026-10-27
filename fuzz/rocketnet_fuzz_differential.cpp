@@ -83,7 +83,7 @@ static int64_t s64( int64_t v )
 
 static void decode_case( const uint8_t * data, size_t size, struct differential_case_t * c )
 {
-    memset( c, 0, sizeof(*c) );
+    memset( c, 0, sizeof( *c ) );
     if ( size < 25 )
         return;
     c->address_mode = data[0] % 4;
@@ -101,7 +101,7 @@ static void report_case( const struct differential_case_t * c, const struct deci
 {
     fprintf( stderr, "differential finding: verdict %s\n", v );
     fprintf( stderr, "  case: create=%+lld expire=%+lld timeout=%d prot_wrong=%u "
-                      "addr=%u flip=%u occ=%u replay=%u\n",
+                     "addr=%u flip=%u occ=%u replay=%u\n",
              (long long) c->create_offset, (long long) c->expire_offset,
              c->timeout_seconds, c->protocol_wrong, c->address_mode,
              c->flip_authenticator, c->occupied_slots, c->replay );

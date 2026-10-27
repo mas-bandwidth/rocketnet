@@ -52,18 +52,31 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 
 #define ROCKETNET_CLIENT_IO_NUM_RINGS 3
 
-enum { ROCKETNET_CLIENT_IO_IDLE = 0, ROCKETNET_CLIENT_IO_WORKED = 1, ROCKETNET_CLIENT_IO_EXITED = 2 };
+enum
+{
+    ROCKETNET_CLIENT_IO_IDLE = 0,
+    ROCKETNET_CLIENT_IO_WORKED = 1,
+    ROCKETNET_CLIENT_IO_EXITED = 2
+};
 
 // rocketnet_client_io_hand_off results: the ring went to the I/O thread, there
 // was nothing to hand off, or the exchange was deferred (no ring free, or the
 // mutex busy) and the committed slots stay in the Filling ring.
 
-enum { ROCKETNET_CLIENT_RINGS_HANDED_OFF = 0, ROCKETNET_CLIENT_RINGS_EMPTY = 1, ROCKETNET_CLIENT_RINGS_LATE = 2 };
+enum
+{
+    ROCKETNET_CLIENT_RINGS_HANDED_OFF = 0,
+    ROCKETNET_CLIENT_RINGS_EMPTY = 1,
+    ROCKETNET_CLIENT_RINGS_LATE = 2
+};
 
 struct rocketnet_client_io_ring_view_t
 {
-    uint8_t * data; size_t frame_stride; size_t wire_offset;    // slot i: data + i * frame_stride + wire_offset
-    const uint8_t * wire_bytes; size_t wire_bytes_stride;       // slot i's int byte count; 0 is aborted
+    uint8_t * data;
+    size_t frame_stride;
+    size_t wire_offset;    // slot i: data + i * frame_stride + wire_offset
+    const uint8_t * wire_bytes;
+    size_t wire_bytes_stride;       // slot i's int byte count; 0 is aborted
 };
 
 // the I/O thread fills one buffer while update processes another
@@ -83,7 +96,7 @@ struct rocketnet_client_receive_buffer_t
     size_t packet_bytes[ROCKETNET_NUM_CLIENT_PACKETS];
     uint8_t verdict[ROCKETNET_NUM_CLIENT_PACKETS];
     uint64_t sequence[ROCKETNET_NUM_CLIENT_PACKETS];
-    uint8_t data[ROCKETNET_FRAME_SIZE*ROCKETNET_NUM_CLIENT_PACKETS];
+    uint8_t data[ROCKETNET_FRAME_SIZE * ROCKETNET_NUM_CLIENT_PACKETS];
 };
 
 // The I/O thread's open block (docs/CLIENT-IO-DECRYPT.md): an I/O-owned copy
@@ -140,7 +153,8 @@ struct rocketnet_client_io_t
     int receive_held;                           // main thread only, or -1
     rocketnet_client_receive_buffer_t * buffer[ROCKETNET_CLIENT_IO_NUM_BUFFERS];
     int fill_slots;                             // data slots used in the I/O thread's buffer
-    double (*time)( void * context ); void * time_context;
+    double ( *time )( void * context );
+    void * time_context;
     double guard_timeout_seconds;               // ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS
     std::atomic<bool> quit;
     std::atomic<bool> stopped; // released only after the final core access
@@ -153,9 +167,9 @@ struct rocketnet_client_io_t
 // buffers the transport owns, and the transport's handoff mutex. Ring 0 is
 // the first Filling ring and buffer 0 the I/O thread's first buffer.
 inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketnet_client_transport_io_t * transport,
-    rocketnet_platform_mutex_t * mutex, const rocketnet_client_io_ring_view_t * views,
-    rocketnet_client_receive_buffer_t * const * buffers,
-    double (*time)( void * context ), void * time_context )
+                                      rocketnet_platform_mutex_t * mutex, const rocketnet_client_io_ring_view_t * views,
+                                      rocketnet_client_receive_buffer_t * const * buffers,
+                                      double ( *time )( void * context ), void * time_context )
 {
     io->transport = transport;
     io->mutex = mutex;
@@ -202,8 +216,8 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
 // refused, so the main thread never writes the copy while the I/O thread may
 // read it.
 inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const uint8_t * session_server_to_client,
-    uint64_t protocol_id, const uint8_t * connection_salt, const uint8_t * packet_filter,
-    const rocketnet_address_t * server_address )
+                                              uint64_t protocol_id, const uint8_t * connection_salt, const uint8_t * packet_filter,
+                                              const rocketnet_address_t * server_address )
 {
     if ( io->open.epoch.load( std::memory_order_relaxed ) != ROCKETNET_CLIENT_IO_EPOCH_NONE )
         return;
@@ -264,12 +278,12 @@ inline int rocketnet_client_io_session_floor( int type )
 {
     switch ( type )
     {
-        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET:    return ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
-        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:       return ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;
-        case ROCKETNET_CONNECTION_DISCONNECT_PACKET:    return ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
-        case ROCKETNET_CONNECTION_ACK_PACKET:           return ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;
-        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:      return ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;
-        default:                                        return 0;
+        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET: return ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    return ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_DISCONNECT_PACKET: return ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_ACK_PACKET:        return ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   return ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;
+        default:                                     return 0;
     }
 }
 
@@ -286,7 +300,7 @@ inline int rocketnet_client_io_session_floor( int type )
 // replaces the ciphertext behind the wire header. The wire byte count is kept.
 // The I/O thread writes no counter.
 inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, const rocketnet_address_t * from,
-    uint8_t * packet_data, int packet_bytes, uint8_t * out_verdict, uint64_t * out_sequence )
+                                                  uint8_t * packet_data, int packet_bytes, uint8_t * out_verdict, uint64_t * out_sequence )
 {
     *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_RAW;
     *out_sequence = 0;
@@ -318,8 +332,8 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
     }
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     const int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet_data, packet_bytes,
-        (uint8_t) type, sequence, io->open.protocol_id, io->open.connection_salt, NULL,
-        io->open.session_server_to_client );
+                                                           (uint8_t) type, sequence, io->open.protocol_id, io->open.connection_salt, NULL,
+                                                           io->open.session_server_to_client );
     if ( opened_bytes < 0 )
     {
         *out_verdict = ROCKETNET_CLIENT_IO_VERDICT_DID_NOT_OPEN;
@@ -533,8 +547,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             rocketnet_client_io_send_ring( io, io->send_ring );
             worked = true;
         }
-    }
-    while ( quitting && io->send_ring >= 0 );
+    } while ( quitting && io->send_ring >= 0 );
 
     if ( quitting )
     {
@@ -575,7 +588,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const double now = io->time( io->time_context );
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
             const int got = io->transport->operations->receive_batch( io->transport->instance, from, packet_data,
-                ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
+                                                                      ROCKETNET_FRAME_SIZE, packet_bytes, max_packets );
             // a count past the slots asked for, or a byte count that is
             // negative or beyond the UDP envelope, is a transport fault and is not stored
             if ( got < 0 )
@@ -598,20 +611,20 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 {
                     io->transport_faults++;
                     if ( io->prefilter_too_large && packet_bytes[i] > ROCKETNET_FRAME_SIZE )
-                        (*io->prefilter_too_large)++;
+                        ( *io->prefilter_too_large )++;
                     continue;
                 }
                 if ( accepted != i )
                     memmove( packet_data + (size_t) accepted * ROCKETNET_FRAME_SIZE,
-                        packet_data + (size_t) i * ROCKETNET_FRAME_SIZE,
-                        (size_t) ( packet_bytes[i] < ROCKETNET_FRAME_SIZE ? packet_bytes[i] : ROCKETNET_FRAME_SIZE ) );
+                             packet_data + (size_t) i * ROCKETNET_FRAME_SIZE,
+                             (size_t) ( packet_bytes[i] < ROCKETNET_FRAME_SIZE ? packet_bytes[i] : ROCKETNET_FRAME_SIZE ) );
                 const int index = buffer->num_packets;
                 buffer->from[index] = from[i];
                 buffer->receive_time[index] = now;
                 buffer->packet_data[index] = buffer->data + (size_t) ( io->fill_slots + accepted ) * ROCKETNET_FRAME_SIZE;
                 buffer->packet_bytes[index] = (size_t) packet_bytes[i];
                 rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
-                    (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
+                                                      (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
                 buffer->num_packets++;
                 accepted++;
             }
@@ -626,14 +639,14 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             const double now = io->time( io->time_context );
             uint8_t * packet_data = buffer->data + (size_t) io->fill_slots * ROCKETNET_FRAME_SIZE;
             const int bytes = io->transport->operations->receive( io->transport->instance, &from, packet_data,
-                ROCKETNET_RECEIVE_PACKET_BYTES );
+                                                                  ROCKETNET_RECEIVE_PACKET_BYTES );
             if ( bytes == 0 )
                 break;
             if ( bytes < 0 || bytes > ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES )
             {
                 io->transport_faults++;
                 if ( io->prefilter_too_large && bytes > ROCKETNET_RECEIVE_PACKET_BYTES )
-                    (*io->prefilter_too_large)++;
+                    ( *io->prefilter_too_large )++;
                 break;
             }
             const int index = buffer->num_packets;
@@ -642,7 +655,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
             buffer->packet_data[index] = packet_data;
             buffer->packet_bytes[index] = (size_t) bytes;
             rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
-                (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
+                                                  (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
             buffer->num_packets++;
             io->fill_slots++;
             worked = true;
@@ -726,21 +739,21 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // and destroy requires completion. Returns NULL on any create refusal.
 #if ROCKETNET_DEV
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( void * context, const uint8_t * connect_token,
-    const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
+                                                                                     const struct rocketnet_client_transport_config_t * config, double time,
+                                                                                     const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 
 // Unit tests only: as create_step_driven, with the Unix timestamp supplied by
 // the test so token expiry is deterministic and no wall clock is read.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
-    const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
-    const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
+                                                                                                  const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
+                                                                                                  const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 
 // As the step-driven create above, and when status is not NULL it is written
 // with ROCKETNET_STATUS_OK or the refusal's section-2.1 code (a config whose
 // step_driven field asks for a transport with no non-blocking step is refused).
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_ex( void * context, const uint8_t * connect_token,
-    const struct rocketnet_client_transport_config_t * config, double time,
-    const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status );
+                                                                                        const struct rocketnet_client_transport_config_t * config, double time,
+                                                                                        const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status );
 
 // Unit tests only: execute one legacy receive-worker iteration on a transport
 // created by the no-thread fixture, stamping receives with synthetic time.

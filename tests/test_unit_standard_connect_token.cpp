@@ -15,14 +15,13 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
 #endif
 
-static const uint8_t rn_test_wrong_server_public_key[32] =
-{
+static const uint8_t rn_test_wrong_server_public_key[32] = {
     0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
     0xdd, 0xee, 0xff, 0x00, 0x10, 0x20, 0x30, 0x40, 0x50, 0x60, 0x70, 0x80,
     0x90, 0xa0, 0xb0, 0xc0, 0xd0, 0xe0, 0xf0, 0x01
@@ -37,9 +36,12 @@ static void rn_test_fill_signed( struct rocketnet_signed_connect_data_t * sf )
     sf->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     sf->timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     sf->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-    sf->ipv4_address[0] = 127; sf->ipv4_address[1] = 0;
-    sf->ipv4_address[2] = 0; sf->ipv4_address[3] = 1;
-    sf->ipv4_address[4] = 0x40; sf->ipv4_address[5] = 0x9c;
+    sf->ipv4_address[0] = 127;
+    sf->ipv4_address[1] = 0;
+    sf->ipv4_address[2] = 0;
+    sf->ipv4_address[3] = 1;
+    sf->ipv4_address[4] = 0x40;
+    sf->ipv4_address[5] = 0x9c;
     memcpy( sf->server_public_key, rocketnet_test_server_public_key, 32 );
 }
 
@@ -53,8 +55,7 @@ static void rn_test_fill_private( struct rocketnet_connect_token_private_t * pf 
 
 #if ROCKETNET_DEV
 
-static const rn_standard_vector_t standard_connect_token_table[] =
-{
+static const rn_standard_vector_t standard_connect_token_table[] = {
     RN_STANDARD_VECTOR( "t6.frozen-token", "931a7c4e887766554433221100f9ac68000000002cfaac68000000000a00000001cb00710a409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801cb310fdd303d6aad8c7900dfc4252d94d2134f1e6e17320f4c5b1bd4f2879da3ce2f287720861887378edf01de9befc09f1bf01fd3df19e2a79e60859e896346eb60c08f686721d81946e781e1ae2c3716a465880a3a5f068ede0b039cf5281a97cd36717766b5bb13869838ecb333d9eeb1042bf7a7b8f62f9cbb020ddbda6cb5f44e4def43666642ff8e6f835a5f295dd8d7bf2268684b2a93ec17ac8fdc4c4f05e5b09927b6afac3ec0f00508e9d43316600c6b745d6dbb9c68f12d569a19573d460ba34e801d744d6db6a0a01bd35b4e08d5203bbbd44367ef89bcbb3827fd80295f2b9404cdd2979e3aa17513ff9f42b6706248ea762282028d4fe0cf71156554f26bf90cb2bfcfef438b5e68ad2501f9e3be24bc0b33651ec756f60f423f324d90323adc9f6c8f1762b02ba31c7e79626067fe7f109594a803d330502feb03f61e9297ec11aadebcd69bac0bfd05c1c5c144ae23bcd114c35322e797843e95ccb8bc9748fda08197ce6d5a10c83bcb0eb7ff471d738a742f68fa3eb77dfadd320a11a55420e3ccd03f15efc183a5dd35cf8657fa712b7c97496000e6a5468d800d49d1345ce185dc0f7bc7147a9000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000006b3692b49d36b7a276303340ab8399b98561ac6881fc7aa2bb60ffe07732ea7121fe5044ebb5f53dbe768b800c30d75370eb9beb4914ae133da64ea6b09e760d0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" ),
     RN_STANDARD_VECTOR( "t6.token-identifier", "f520da9d95fd072256b47d755f810f61" ),
     RN_STANDARD_VECTOR( "t6.bad-address-flags", "931a7c4e887766554433221100f9ac68000000002cfaac68000000000a000000057f000001409c0000000000000000000000000000000000003d2490889d374c296fab1d5770cb71476a06f74ef2f2540cf2215f7614f4801c392d174a38b3b1beafaf1fe824870841c5fa531bc6eafdb6402c124664488c1ca2b957f072747ef5ea9e73f1a1d1c2d1186072cd71305c22e1e48455146f1b4d5303ab2f8c0cf00862b27bb946f0e68d7110d0d02c7d32a8325457e1984828353d13d884013499648a55d51f5dad4c374d1bd6c240e77007e155113cbda35738507b96401aa610cf2f5c42e84a929390bbafc5da0ea875d2613b47d3a06cd0e0178deeb75fad63dd866c56a50915ff448c3f2ff14dc2dbb060e5c5fc88565a00c42ae4a657a3387e5db997a9f962275733d029a8f6f1f3bb09a1e3e6ad155fcd02e46942c06ac87597ee1e14eedfa4b64c431f63effcb24aef3e22ec05f2efb14a59bc5a80a12ecbd0d4c751bc21623537d5a5a68b983a8b694a9b9ded5ee7d68c90c20d0de3fb88455ebcc69527b652e8588c9098a3afc7615d659192fecc28290663e362fce1b3dff5f074bb04fae373d2a4b0145c1234a0087c4473122179682c1fa136c2f1c39f18b3487878ef0553dba3e901a6a1b358a73c8d34d2fde7ff83ad04a1c765695f9ab95fe82e3171e6a0d515dafdff12b0912a4cac7eec77141019834f3eb8af6a8d23bfba36794a00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000806f9f78d4609e475dae145d4d0cdc9bcc3f462cd883102dd1dd1c65e68b39f3fb89f8825047650fa50de6b070e0011a90a52f7cac9139a785f2b6b652fd7f070102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebfc000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" ),
@@ -113,7 +114,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
         sf.address_flags = 0x05;
         rn_test_fill_private( &pf );
         return rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_test_backend_secret_key,
-                        rocketnet_test_token_vector_ephemeral_secret[1], out ) ? ROCKETNET_CONNECT_TOKEN_BYTES : -1;
+                                                            rocketnet_test_token_vector_ephemeral_secret[1], out )
+                   ? ROCKETNET_CONNECT_TOKEN_BYTES
+                   : -1;
     }
 
     if ( strcmp( id, "t6.wrong-server-key" ) == 0 )
@@ -124,7 +127,9 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
         memcpy( sf.server_public_key, rn_test_wrong_server_public_key, 32 );
         rn_test_fill_private( &pf );
         return rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_test_backend_secret_key,
-                        rocketnet_test_token_vector_ephemeral_secret[2], out ) ? ROCKETNET_CONNECT_TOKEN_BYTES : -1;
+                                                            rocketnet_test_token_vector_ephemeral_secret[2], out )
+                   ? ROCKETNET_CONNECT_TOKEN_BYTES
+                   : -1;
     }
 
     if ( strcmp( id, "t6.sealed-mismatch" ) == 0 )
@@ -148,10 +153,14 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
         crypto_sign_detached( signature, NULL, signed_buffer, sizeof( signed_buffer ), rocketnet_test_backend_secret_key );
 
         uint8_t * p = out;
-        memcpy( p, signed_buffer, ROCKETNET_SIGNED_CONNECT_DATA_BYTES ); p += ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
-        memcpy( p, signature, ROCKETNET_SIGNATURE_BYTES ); p += ROCKETNET_SIGNATURE_BYTES;
-        memcpy( p, pf.client_to_server_key, ROCKETNET_KEY_BYTES ); p += ROCKETNET_KEY_BYTES;
-        memcpy( p, pf.server_to_client_key, ROCKETNET_KEY_BYTES ); p += ROCKETNET_KEY_BYTES;
+        memcpy( p, signed_buffer, ROCKETNET_SIGNED_CONNECT_DATA_BYTES );
+        p += ROCKETNET_SIGNED_CONNECT_DATA_BYTES;
+        memcpy( p, signature, ROCKETNET_SIGNATURE_BYTES );
+        p += ROCKETNET_SIGNATURE_BYTES;
+        memcpy( p, pf.client_to_server_key, ROCKETNET_KEY_BYTES );
+        p += ROCKETNET_KEY_BYTES;
+        memcpy( p, pf.server_to_client_key, ROCKETNET_KEY_BYTES );
+        p += ROCKETNET_KEY_BYTES;
         memset( p, 0, (size_t) ( ROCKETNET_CONNECT_TOKEN_BYTES - ( p - out ) ) );
         return ROCKETNET_CONNECT_TOKEN_BYTES;
     }
@@ -197,7 +206,7 @@ static void test_standard_connect_token_vectors()
     rn_test_fill_private( &pf );
 #if ROCKETNET_DEV
     rocketnet_unit_check( rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_test_backend_secret_key,
-                        rocketnet_test_token_vector_ephemeral_secret[1], token ) );
+                                                                       rocketnet_test_token_vector_ephemeral_secret[1], token ) );
 #else
     rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
 #endif
@@ -212,7 +221,7 @@ static void test_standard_connect_token_vectors()
     rn_test_fill_private( &pf );
 #if ROCKETNET_DEV
     rocketnet_unit_check( rocketnet_write_connect_token_deterministic( &sf, &pf, rocketnet_test_backend_secret_key,
-                        rocketnet_test_token_vector_ephemeral_secret[2], token ) );
+                                                                       rocketnet_test_token_vector_ephemeral_secret[2], token ) );
 #else
     rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
 #endif

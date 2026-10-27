@@ -164,13 +164,20 @@ static void test_ack_block_build_word_scan_matches_bit_walk()
                                ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * 8, ROCKETNET_ACK_BLOCK_MAX_BYTES };
     for ( int c = 0; c < 4; c++ )
     {
-        equiv_fill_pattern( &replay, 20000, 98, 0, 0xA11CE001ull );  equiv_compare( &replay, capacities[c] ); // sparse loss
-        equiv_fill_pattern( &replay, 20000, 20, 0, 0xA11CE002ull );  equiv_compare( &replay, capacities[c] ); // dense loss
-        equiv_fill_pattern( &replay, 20000, 0, 1, 0xA11CE003ull );   equiv_compare( &replay, capacities[c] ); // alternating
-        equiv_fill_pattern( &replay, 20000, 100, 0, 0xA11CE004ull ); equiv_compare( &replay, capacities[c] ); // full window
-        equiv_fill_pattern( &replay, 0, 0, 0, 0xA11CE005ull );       equiv_compare( &replay, capacities[c] ); // empty window
-        equiv_fill_pattern( &replay, 4223, 50, 0, 0xA11CE006ull );   equiv_compare( &replay, capacities[c] ); // wrapped across 4096
-        equiv_fill_pattern( &replay, 2000, 50, 0, 0xA11CE007ull );   equiv_compare( &replay, capacities[c] ); // largest below 4096
+        equiv_fill_pattern( &replay, 20000, 98, 0, 0xA11CE001ull );
+        equiv_compare( &replay, capacities[c] ); // sparse loss
+        equiv_fill_pattern( &replay, 20000, 20, 0, 0xA11CE002ull );
+        equiv_compare( &replay, capacities[c] ); // dense loss
+        equiv_fill_pattern( &replay, 20000, 0, 1, 0xA11CE003ull );
+        equiv_compare( &replay, capacities[c] ); // alternating
+        equiv_fill_pattern( &replay, 20000, 100, 0, 0xA11CE004ull );
+        equiv_compare( &replay, capacities[c] ); // full window
+        equiv_fill_pattern( &replay, 0, 0, 0, 0xA11CE005ull );
+        equiv_compare( &replay, capacities[c] ); // empty window
+        equiv_fill_pattern( &replay, 4223, 50, 0, 0xA11CE006ull );
+        equiv_compare( &replay, capacities[c] ); // wrapped across 4096
+        equiv_fill_pattern( &replay, 2000, 50, 0, 0xA11CE007ull );
+        equiv_compare( &replay, capacities[c] ); // largest below 4096
     }
 
     // boundary largests and single-bit windows
@@ -206,8 +213,10 @@ static void test_ack_block_build_word_scan_matches_bit_walk()
         {
             uint64_t word = equiv_random();
             // vary density by iteration so sparse and dense windows both occur
-            if ( ( iter % 3 ) == 0 ) word &= equiv_random();
-            if ( ( iter % 3 ) == 1 ) word |= equiv_random();
+            if ( ( iter % 3 ) == 0 )
+                word &= equiv_random();
+            if ( ( iter % 3 ) == 1 )
+                word |= equiv_random();
             replay.window[w] = word;
         }
         equiv_set_bit( &replay, highest );

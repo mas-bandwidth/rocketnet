@@ -97,9 +97,9 @@ struct rocketnet_ordered_measurement_t
 };
 
 static void rocketnet_ordered_print_measurement( const char * name,
-                                                  const rocketnet_ordered_measurement_t * m,
-                                                  int client_to_server,
-                                                  const char * reason )
+                                                 const rocketnet_ordered_measurement_t * m,
+                                                 int client_to_server,
+                                                 const char * reason )
 {
     printf( "%s: %s delivered=%d/%d completion_ms=%.1f resends=%llu wire_to_server=%lld wire_to_client=%lld payload_bytes=%llu budget_min_ms=%.1f factor=%.3f\n",
             name, reason, m->delivered, rocketnet_ordered_message_count,
@@ -178,7 +178,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     uint8_t payload[262144];
     double send_time[64] = { 0 };
     rocketnet_ordered_measurement_t measurement;
-    memset( &measurement, 0, sizeof(measurement) );
+    memset( &measurement, 0, sizeof( measurement ) );
     for ( int i = 0; i < rocketnet_ordered_message_count; i++ )
         measurement.payload_bytes += (uint64_t) rocketnet_ordered_size( i );
 
@@ -256,8 +256,9 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     if ( !complete || !within_budget || !no_overflow || !no_allocations )
     {
         printf( "seed=0x%016llx\n", (unsigned long long) h.seed );
-        const char * reason = !complete ? "incomplete" : !within_budget ? "budget_multiple" :
-                             !no_overflow ? "harness_overflow" : "allocation_after_create";
+        const char * reason = !complete ? "incomplete" : !within_budget ? "budget_multiple"
+                                                     : !no_overflow     ? "harness_overflow"
+                                                                        : "allocation_after_create";
         const rn_message_object_t * sender = client_to_server ? &h.message_client->object : &h.message_server->object;
         const int connection = client_to_server ? 0 : h.client_slot;
         printf( "ordered_state next_to_send=%d sender_state=%d sender_disconnect_reason=%d memory_exhausted=%llu send_store_full=%llu\n",

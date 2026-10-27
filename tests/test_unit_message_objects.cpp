@@ -508,8 +508,7 @@ static uint64_t mo_message_object_layout_formula( const rocketnet_message_config
     sized.server_send_kbps = kbps;
     const uint64_t n = (uint64_t) connections;
     const uint64_t deliveries = (uint64_t) sized.reliable_messages_in_flight + (uint64_t) sized.unreliable_messages_per_update;
-    uint64_t offset = mo_align64( sizeof( rn_message_object_t ) > sizeof( rocketnet_message_server_t ) ?
-                                  sizeof( rn_message_object_t ) : sizeof( rocketnet_message_server_t ) );
+    uint64_t offset = mo_align64( sizeof( rn_message_object_t ) > sizeof( rocketnet_message_server_t ) ? sizeof( rn_message_object_t ) : sizeof( rocketnet_message_server_t ) );
     offset += mo_align64( ( old_cursor_array ? sizeof( mo_old_message_connection_hot_t ) : sizeof( rn_message_connection_hot_t ) ) * n );
     offset += mo_align64( sizeof( rn_message_connection_t ) * n );
     offset += mo_align64( deliveries ) * n;
@@ -537,7 +536,7 @@ static void test_receive_cursor_scalar_layout_and_exact_blocks()
             const uint64_t current_formula = mo_message_object_layout_formula( &config, n, is_server, false );
             const uint64_t old_formula = mo_message_object_layout_formula( &config, n, is_server, true );
             const uint64_t removed_hot_bytes = mo_align64( sizeof( mo_old_message_connection_hot_t ) * (uint64_t) n ) -
-                                                       mo_align64( sizeof( rn_message_connection_hot_t ) * (uint64_t) n );
+                                               mo_align64( sizeof( rn_message_connection_hot_t ) * (uint64_t) n );
             const uint64_t removed_cursor_bytes = mo_align64( sizeof( uint32_t ) * (uint64_t) channels[c] ) * (uint64_t) n;
             check( actual == current_formula );
             check( old_formula == actual + removed_hot_bytes + removed_cursor_bytes );
@@ -700,7 +699,10 @@ static int mo_asserts = 0;
 
 static void mo_assert_hook( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
     mo_asserts++;
 }
 
@@ -819,7 +821,8 @@ static void test_message_refused_finish_and_start_log_one_error()
         const int reliability = mode == 0 ? ROCKETNET_RELIABILITY_UNRELIABLE : ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
         uint8_t * p = rn_message_object_start( object, 0, channel, reliability, 10 );
         check( p != NULL );
-        if ( !p ) break;
+        if ( !p )
+            break;
         const uint64_t line_before = (uint64_t) g_mo_error_lines;
         check( rn_message_object_finish( object, 0, 0 ) == 0 );     // bytes_written 0
         check( (uint64_t) g_mo_error_lines == line_before + 1 );
@@ -827,7 +830,8 @@ static void test_message_refused_finish_and_start_log_one_error()
 
         p = rn_message_object_start( object, 0, channel, reliability, 10 );
         check( p != NULL );
-        if ( !p ) break;
+        if ( !p )
+            break;
         check( rn_message_object_finish( object, 0, 11 ) == 0 );    // past the reservation
         check( (uint64_t) g_mo_error_lines == line_before + 2 );
         check( strstr( g_mo_last_line, "message finish refused" ) != NULL );
@@ -1025,7 +1029,7 @@ static void test_release_returns_room()
 
     // update with a held view: the named error, the assert in a debug build,
     // and the views are taken back so nothing grows
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
@@ -1193,8 +1197,8 @@ static void test_receive_cursor_single_then_batch_across_connections()
             uint8_t bytes[32];
             mo_fill( bytes, (uint32_t) ( 100 * ( slot + 1 ) + message ), sizeof( bytes ) );
             check( rocketnet_message_client_send( pair.clients[slot], message & 1,
-                                                   ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
-                                                   bytes, (int) sizeof( bytes ) ) != 0 );
+                                                  ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+                                                  bytes, (int) sizeof( bytes ) ) != 0 );
         }
         rocketnet_message_client_send_packets( pair.clients[slot] );
     }
@@ -1645,19 +1649,32 @@ static bool mo_region_bookkeeping_equal( const rn_region_t * a, const rn_region_
         return false;
     if ( a->span_head != b->span_head || a->span_tail != b->span_tail || a->span_first != b->span_first || a->span_last != b->span_last || a->span_ticket_next != b->span_ticket_next )
         return false;
-    if ( memcmp( a->channel_send, b->channel_send, sizeof(rn_channel_send_t) * a->num_channels ) != 0 ) return false;
-    if ( memcmp( a->channel_receive, b->channel_receive, sizeof(rn_channel_receive_t) * a->num_channels ) != 0 ) return false;
-    if ( memcmp( a->send_numbers, b->send_numbers, sizeof(rn_send_number_t) * a->window ) != 0 ) return false;
-    if ( memcmp( a->receive_descriptors, b->receive_descriptors, sizeof(rn_receive_descriptor_t) * a->window ) != 0 ) return false;
-    if ( memcmp( a->received_bits, b->received_bits, a->window / 8 ) != 0 ) return false;
-    if ( memcmp( a->held_index, b->held_index, sizeof(rn_held_entry_t) * a->held_entries ) != 0 ) return false;
-    if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof(rn_send_descriptor_t) * a->descriptors_fresh ) != 0 ) return false;
-    if ( memcmp( a->sent_packets, b->sent_packets, sizeof(rn_sent_packet_t) * a->packets ) != 0 ) return false;
-    if ( memcmp( a->sent_index, b->sent_index, sizeof(rn_sent_index_t) * a->sent_index_entries ) != 0 ) return false;
-    if ( memcmp( a->sent_refs, b->sent_refs, sizeof(uint32_t) * a->sent_ref_entries ) != 0 ) return false;
-    if ( memcmp( a->deliveries, b->deliveries, sizeof(rn_delivery_t) * a->delivery_entries ) != 0 ) return false;
-    if ( memcmp( a->receipts, b->receipts, sizeof(rn_receipt_t) * a->receipt_entries ) != 0 ) return false;
-    if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof(rn_resend_link_t) * a->window ) != 0 ) return false;
+    if ( memcmp( a->channel_send, b->channel_send, sizeof( rn_channel_send_t ) * a->num_channels ) != 0 )
+        return false;
+    if ( memcmp( a->channel_receive, b->channel_receive, sizeof( rn_channel_receive_t ) * a->num_channels ) != 0 )
+        return false;
+    if ( memcmp( a->send_numbers, b->send_numbers, sizeof( rn_send_number_t ) * a->window ) != 0 )
+        return false;
+    if ( memcmp( a->receive_descriptors, b->receive_descriptors, sizeof( rn_receive_descriptor_t ) * a->window ) != 0 )
+        return false;
+    if ( memcmp( a->received_bits, b->received_bits, a->window / 8 ) != 0 )
+        return false;
+    if ( memcmp( a->held_index, b->held_index, sizeof( rn_held_entry_t ) * a->held_entries ) != 0 )
+        return false;
+    if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof( rn_send_descriptor_t ) * a->descriptors_fresh ) != 0 )
+        return false;
+    if ( memcmp( a->sent_packets, b->sent_packets, sizeof( rn_sent_packet_t ) * a->packets ) != 0 )
+        return false;
+    if ( memcmp( a->sent_index, b->sent_index, sizeof( rn_sent_index_t ) * a->sent_index_entries ) != 0 )
+        return false;
+    if ( memcmp( a->sent_refs, b->sent_refs, sizeof( uint32_t ) * a->sent_ref_entries ) != 0 )
+        return false;
+    if ( memcmp( a->deliveries, b->deliveries, sizeof( rn_delivery_t ) * a->delivery_entries ) != 0 )
+        return false;
+    if ( memcmp( a->receipts, b->receipts, sizeof( rn_receipt_t ) * a->receipt_entries ) != 0 )
+        return false;
+    if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof( rn_resend_link_t ) * a->window ) != 0 )
+        return false;
     for ( uint32_t h = 0; h < a->holds; h++ )
     {
         const rn_sequenced_hold_t * x = &a->sequenced_messages_held[h];
@@ -2431,7 +2448,7 @@ static void test_rnslots_witness_replays()
         const uint8_t * data = NULL;
         int bytes = 0;
         check( rocketnet_message_server_receive( pair.server, NULL, NULL, &data, &bytes ) == 1 );
-        void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+        void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
         rocketnet_assert_function( mo_assert_hook );
         mo_asserts = 0;
         pair.time += 0.01;
@@ -2475,7 +2492,7 @@ static void test_message_objects_client_clock_starts_at_first_update()
     check( client );
     mo_net_connect( net, 0 );
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
     const uint64_t misuse_before = rocketnet_api_misuse_count();
@@ -2914,11 +2931,17 @@ struct mo_room_case_t
 
 // every reliability and size the query is asked for at each step: each store
 // class, the spans, a promotion, and the refusals
-static const int mo_room_ask_reliabilities[] =
-{
-    ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_RELIABLE,
-    ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
-    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, -1, 99,
+static const int mo_room_ask_reliabilities[] = {
+    ROCKETNET_RELIABILITY_UNRELIABLE,
+    ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
+    ROCKETNET_RELIABILITY_RELIABLE,
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
+    ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
+    ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
+    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT,
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT,
+    -1,
+    99,
 };
 static const int mo_room_ask_bytes[] = { -1, 0, 1, 100, 300, 1000, 1152, 1153, 2000, 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES, 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1 };
 static const int mo_room_ask_channels[] = { -1, 0, 3, 4 };
@@ -3037,8 +3060,7 @@ static void test_send_room_query_says_no_exactly_when_a_start_exhausts()
 {
     // the small config: 16 descriptors, a store of 12288 bytes in three
     // classes, and the spans sized by receive_message_buffer_bytes
-    const mo_room_case_t cases[] =
-    {
+    const mo_room_case_t cases[] = {
         { "small reliable ordered, the descriptors run out", ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100, 0, ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL },
         { "large-class reliable, the store runs out", ROCKETNET_RELIABILITY_RELIABLE, 1000, 0, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL },
         { "span reliable with receipt, the spans run out", ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 2000, 8192, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL },
@@ -3323,7 +3345,7 @@ static bool mo_send_and_verify_delivery( mo_pair_t * pair, bool from_client, uin
 
 static void test_update_time_bad_counted_once_never_stored_or_wedged()
 {
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
@@ -3402,7 +3424,7 @@ static void test_update_time_bad_counted_once_never_stored_or_wedged()
 
 static void test_update_time_first_update_not_finite_refused()
 {
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 
@@ -3677,8 +3699,8 @@ static void reconnect_connect( reconnect_world_t * world, int client )
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( world->backend_secret, world->server_public,
-        RECONNECT_PROTOCOL, addresses, 1, RECONNECT_CLIENT_ID, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     RECONNECT_PROTOCOL, addresses, 1, RECONNECT_CLIENT_ID, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
     check( rocketnet_client_connect( world->clients[client], token_string ) == ROCKETNET_STATUS_OK );
@@ -3694,10 +3716,20 @@ static int reconnect_exchange( reconnect_world_t * world, int client, uint8_t ta
     {
         uint8_t * up = rocketnet_client_start_message( c, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
         check( up != NULL );
-        if ( up ) { up[0] = tag; up[1] = (uint8_t) i; check( rocketnet_client_finish_message( c, 2 ) != 0 ); }
+        if ( up )
+        {
+            up[0] = tag;
+            up[1] = (uint8_t) i;
+            check( rocketnet_client_finish_message( c, 2 ) != 0 );
+        }
         uint8_t * down = rocketnet_server_start_message( world->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 2 );
         check( down != NULL );
-        if ( down ) { down[0] = tag; down[1] = (uint8_t) i; check( rocketnet_server_finish_message( world->server, 2 ) != 0 ); }
+        if ( down )
+        {
+            down[0] = tag;
+            down[1] = (uint8_t) i;
+            check( rocketnet_server_finish_message( world->server, 2 ) != 0 );
+        }
     }
     int at_server = 0, at_client = 0;
     for ( int step = 0; step < 300 && ( at_server < want || at_client < want ); step++ )
@@ -3833,12 +3865,10 @@ static void mo_not_received_send( mo_pair_t * pair, bool to_client )
 {
     for ( int m = 0; m < MO_NOT_RECEIVED_MESSAGES; m++ )
     {
-        uint8_t * q = to_client ? rocketnet_message_server_start( pair->server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 ) :
-                                  rocketnet_message_client_start( pair->clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 );
+        uint8_t * q = to_client ? rocketnet_message_server_start( pair->server, 0, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 ) : rocketnet_message_client_start( pair->clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 64 );
         check( q );
         mo_fill( q, (uint32_t) ( 100 + m ), 64 );
-        check( to_client ? rocketnet_message_server_finish( pair->server, 0, 64 ) != 0 :
-                           rocketnet_message_client_finish( pair->clients[0], 64 ) != 0 );
+        check( to_client ? rocketnet_message_server_finish( pair->server, 0, 64 ) != 0 : rocketnet_message_client_finish( pair->clients[0], 64 ) != 0 );
     }
     if ( to_client )
         rocketnet_message_server_send_packets( pair->server );
@@ -3876,7 +3906,7 @@ static void mo_not_received_case( bool to_client )
         rn_message_object_release( receiver, data );
     }
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
     check( mo_counter( counters, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED ) == 0 );
@@ -4174,7 +4204,7 @@ REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
 
 static void test_message_object_clock_resumes_after_backwards_step()
 {
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mo_assert_hook );
     mo_asserts = 0;
 

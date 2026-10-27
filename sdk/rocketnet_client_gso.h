@@ -76,11 +76,11 @@ struct rocketnet_client_transport_io_operations_t;
 // socket does not speak.
 struct rocketnet_client_gso_syscalls_t
 {
-    int (*sendmmsg)( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
-    int (*segment_probe)( void * context, int socket );
-    int (*recvmmsg)( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
-    int (*gro_enable)( void * context, int socket );
-    bool (*read_address)( void * context, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
+    int ( *sendmmsg )( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
+    int ( *segment_probe )( void * context, int socket );
+    int ( *recvmmsg )( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
+    int ( *gro_enable )( void * context, int socket );
+    bool ( *read_address )( void * context, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 };
 
 // the kernel's: sendmmsg(2), setsockopt(UDP_SEGMENT, 0), recvmmsg(2) with
@@ -176,7 +176,7 @@ int rocketnet_client_gso_receive_batch( struct rocketnet_client_gso_t * gso, str
 // The gso client transport operations, the client column of the gso row.
 extern const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations;
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 // Test seam: a client created while this is set keeps the plain tier, and the
 // segmented messages every gso client has sent, summed.
 extern std::atomic<bool> rocketnet_client_gso_test_disable_segment;

@@ -39,7 +39,7 @@ struct salt_mismatch_server_t
 
 static void salt_mismatch_server_setup( struct salt_mismatch_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -77,7 +77,7 @@ static void salt_mismatch_build_request( uint8_t * request, const uint8_t * salt
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
 
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -88,7 +88,7 @@ static void salt_mismatch_build_request( uint8_t * request, const uint8_t * salt
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -116,8 +116,7 @@ static int salt_mismatch_process( struct salt_mismatch_server_t * test,
                                                                  response, response_bytes );
 }
 
-static const uint8_t salt_mismatch_alternate_salt[ROCKETNET_CONNECTION_SALT_BYTES] =
-{
+static const uint8_t salt_mismatch_alternate_salt[ROCKETNET_CONNECTION_SALT_BYTES] = {
     0x53, 0x41, 0x4c, 0x54, 0x30, 0x30, 0x30, 0x32
 };
 

@@ -39,26 +39,31 @@
 
 #include "../tests/portable_crt.h"
 
-#if defined(ROCKETNET_FUNCTIONAL_PRODUCTION) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
 #include "rocketnet_base64.h"
 #include <sodium.h>
 // Production functional shim: test-owned production keys (never the published
 // development keys), minted only with the production token writer. The
 // production library under test supplies every transport; this code runs in
 // the test executable only and is compiled only for functional_production.
-static const uint64_t rocketnet_functional_production_protocol_id = UINT64_C(0x50524F4455435401);
+static const uint64_t rocketnet_functional_production_protocol_id = UINT64_C( 0x50524F4455435401 );
 static void rocketnet_functional_production_keys( uint8_t * backend_public, uint8_t * backend_secret, uint8_t * server_public, uint8_t * server_secret )
 {
     uint8_t seed[32];
-    for ( int i = 0; i < 32; i++ ) seed[i] = (uint8_t) ( 0x50 + i );
-    if ( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) != ROCKETNET_STATUS_OK ) exit( 1 );
-    for ( int i = 0; i < 32; i++ ) server_secret[i] = (uint8_t) ( 0x70 + i );
-    if ( crypto_scalarmult_base( server_public, server_secret ) != 0 ) exit( 1 );
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x50 + i );
+    if ( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) != ROCKETNET_STATUS_OK )
+        exit( 1 );
+    for ( int i = 0; i < 32; i++ )
+        server_secret[i] = (uint8_t) ( 0x70 + i );
+    if ( crypto_scalarmult_base( server_public, server_secret ) != 0 )
+        exit( 1 );
 }
 const uint8_t rocketnet_functional_production_backend_secret_key[64] = { 0 };
 void rocketnet_functional_production_server_config( struct rocketnet_server_transport_config_t * config )
 {
-    if ( !config ) return;
+    if ( !config )
+        return;
     uint8_t backend_public[32], backend_secret[64], server_public[32], server_secret[32];
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
     rocketnet_server_transport_default_config_current( config );
@@ -67,7 +72,7 @@ void rocketnet_functional_production_server_config( struct rocketnet_server_tran
     memcpy( config->server_public_key, server_public, 32 );
     memcpy( config->server_secret_key, server_secret, 32 );
     static const uint8_t production_filter[4] = { 0x51, 0x52, 0x53, 0x54 };
-    memcpy( config->packet_filter, production_filter, sizeof(production_filter) );
+    memcpy( config->packet_filter, production_filter, sizeof( production_filter ) );
 }
 enum rocketnet_status_t rocketnet_functional_production_write_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
 {
@@ -82,13 +87,17 @@ enum rocketnet_status_t rocketnet_functional_production_create_token( const char
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
     const char * addresses[2];
     int count = 0;
-    if ( server_address_ipv4 ) addresses[count++] = server_address_ipv4;
-    if ( server_address_ipv6 ) addresses[count++] = server_address_ipv6;
-    if ( count == 0 || !server_public_key || !connect_token ) return ROCKETNET_STATUS_INVALID_ARGUMENT;
+    if ( server_address_ipv4 )
+        addresses[count++] = server_address_ipv4;
+    if ( server_address_ipv6 )
+        addresses[count++] = server_address_ipv6;
+    if ( count == 0 || !server_public_key || !connect_token )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    enum rocketnet_status_t status = rocketnet_write_production_connect_token( backend_secret, server_public_key, protocol_id, addresses, count, client_id, unix_timestamp, unix_timestamp + (uint64_t) expire_seconds, timeout_seconds, user_data, token, sizeof(token) );
-    if ( status != ROCKETNET_STATUS_OK ) return status;
-    return rocketnet_base64_encode_data( token, sizeof(token), connect_token, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) > 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
+    enum rocketnet_status_t status = rocketnet_write_production_connect_token( backend_secret, server_public_key, protocol_id, addresses, count, client_id, unix_timestamp, unix_timestamp + (uint64_t) expire_seconds, timeout_seconds, user_data, token, sizeof( token ) );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+    return rocketnet_base64_encode_data( token, sizeof( token ), connect_token, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) > 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
 #endif
 
@@ -123,7 +132,7 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 // with; an epoch of zero returns the wall clock both ends then read.
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time )
 {
-    return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : (uint64_t) ::time( NULL );
+    return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : ( uint64_t )::time( NULL );
 }
 
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32
@@ -144,8 +153,8 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
     (void) context;
     (void) length;
     char line[ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
-    const int line_length = snprintf( line, sizeof(line), "%s", message );
-    if ( line_length < 0 || (size_t) line_length >= sizeof(line) )
+    const int line_length = snprintf( line, sizeof( line ), "%s", message );
+    if ( line_length < 0 || (size_t) line_length >= sizeof( line ) )
         return;
 
     if ( level == ROCKETNET_LOG_LEVEL_NONE )
@@ -203,7 +212,7 @@ struct rocketnet_test_env_guard_t
 static void rocketnet_test_env_save( struct rocketnet_test_env_guard_t * guard, const char * name )
 {
     guard->name = name;
-    guard->was_set = rocketnet_test_getenv( name, guard->saved, sizeof(guard->saved) ) != 0;
+    guard->was_set = rocketnet_test_getenv( name, guard->saved, sizeof( guard->saved ) ) != 0;
 }
 
 static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard, const char * name )
@@ -226,50 +235,59 @@ static void rocketnet_test_capture_log( void * context, enum rocketnet_log_level
     (void) length;
     (void) level;
     char line[1024];
-    snprintf( line, sizeof(line), "%s", message );
+    snprintf( line, sizeof( line ), "%s", message );
     const size_t used = strlen( rocketnet_test_captured_log );
-    snprintf( rocketnet_test_captured_log + used, sizeof(rocketnet_test_captured_log) - used, "%s\n", line );
+    snprintf( rocketnet_test_captured_log + used, sizeof( rocketnet_test_captured_log ) - used, "%s\n", line );
 }
 
 class rocketnet_test_environment_t
 {
-    struct entry_t { std::string name, value; bool present; };
-    std::vector<entry_t> entries;
-    void clear(const char * name)
+    struct entry_t
     {
-        if (strcmp(name, "ROCKETNET_SERVER_TRANSPORT") == 0) return;
-        if (strcmp(name, "ROCKETNET_CLIENT_TRANSPORT") == 0) return;
-        for (const auto & entry : entries) if (entry.name == name) return;
+        std::string name, value;
+        bool present;
+    };
+    std::vector<entry_t> entries;
+    void clear( const char * name )
+    {
+        if ( strcmp( name, "ROCKETNET_SERVER_TRANSPORT" ) == 0 )
+            return;
+        if ( strcmp( name, "ROCKETNET_CLIENT_TRANSPORT" ) == 0 )
+            return;
+        for ( const auto & entry : entries )
+            if ( entry.name == name )
+                return;
         char value[4096];
-        const bool present = rocketnet_test_getenv(name, value, sizeof(value)) != 0;
-        entries.push_back({name, value, present});
-        rocketnet_check(unsetenv(name) == 0);
+        const bool present = rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
+        entries.push_back( { name, value, present } );
+        rocketnet_check( unsetenv( name ) == 0 );
     }
+
 public:
     rocketnet_test_environment_t()
     {
-        for (int side = 0; side < 2; ++side)
+        for ( int side = 0; side < 2; ++side )
         {
             int count = 0;
-            const auto * fields = side ? rocketnet_server_transport_config_fields(&count)
-                                       : rocketnet_client_transport_config_fields(&count);
-            for (int i = 0; i < count; ++i)
+            const auto * fields = side ? rocketnet_server_transport_config_fields( &count )
+                                       : rocketnet_client_transport_config_fields( &count );
+            for ( int i = 0; i < count; ++i )
             {
                 char name[128];
-                rocketnet_check(rocketnet_config_env_var_name_for(side ? "server" : "client", fields[i].name, name, sizeof(name)));
-                clear(name);
+                rocketnet_check( rocketnet_config_env_var_name_for( side ? "server" : "client", fields[i].name, name, sizeof( name ) ) );
+                clear( name );
             }
         }
-        clear("ROCKETNET_SERVER_IPV4_ADDRESS");
-        clear("ROCKETNET_SERVER_IPV6_ADDRESS");
-        clear("ROCKETNET_SERVER_NUM_OS_CPUS");
-        clear("ROCKETNET_GATEWAY_ETHERNET_ADDRESS");
+        clear( "ROCKETNET_SERVER_IPV4_ADDRESS" );
+        clear( "ROCKETNET_SERVER_IPV6_ADDRESS" );
+        clear( "ROCKETNET_SERVER_NUM_OS_CPUS" );
+        clear( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS" );
     }
     ~rocketnet_test_environment_t()
     {
-        for (const auto & entry : entries)
-            rocketnet_check((entry.present ? setenv(entry.name.c_str(), entry.value.c_str(), 1)
-                                           : unsetenv(entry.name.c_str())) == 0);
+        for ( const auto & entry : entries )
+            rocketnet_check( ( entry.present ? setenv( entry.name.c_str(), entry.value.c_str(), 1 )
+                                             : unsetenv( entry.name.c_str() ) ) == 0 );
     }
 };
 

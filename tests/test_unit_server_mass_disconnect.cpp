@@ -40,7 +40,7 @@
 // sdk/rocketnet_server_transport.cpp)
 uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport );
 int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_server_transport_t * server_transport,
-    int index, uint8_t * out, int out_bytes, int * head, int * count );
+                                                              int index, uint8_t * out, int out_bytes, int * head, int * count );
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -155,8 +155,8 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
-        MASS_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
-        1000, 1300, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     MASS_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
+                                                     1000, 1300, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
@@ -306,7 +306,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     for ( int i = 0; i < kicked; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( population.clients[i], 0,
-            ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
+                                                        ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
         check( out != NULL );
         out[0] = (uint8_t) i;
         check( rocketnet_client_finish_message( population.clients[i], 1 ) != 0 );
@@ -320,7 +320,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     rocketnet_server_send_packets( population.server );
     check( rocketnet_server_num_connected_clients( population.server ) == MASS_DISCONNECT_CLIENTS );
 
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( mass_disconnect_assert_hook );
     mass_disconnect_asserts = 0;
     const uint64_t before = rocketnet_server_transport_disconnect_seals_for_test( transport );
@@ -343,7 +343,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
     int remaining = -1;
     uint8_t key[ROCKETNET_KEY_BYTES];
     check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
-        (int) sizeof( key ), NULL, &remaining ) == 1 );
+                                                                     (int) sizeof( key ), NULL, &remaining ) == 1 );
     check( remaining == kicked - allowance / ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     check( mass_disconnect_key_nonzero( key ) > 0 );
 
@@ -359,13 +359,13 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
         check( frame_seals <= (uint64_t) allowance );
         sealed += frame_seals;
         check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
-            (int) sizeof( key ), NULL, &remaining ) == 1 );
+                                                                         (int) sizeof( key ), NULL, &remaining ) == 1 );
     }
     check( sealed == (uint64_t) kicked * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
     {
         check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, i, key,
-            (int) sizeof( key ), NULL, NULL ) == 1 );
+                                                                         (int) sizeof( key ), NULL, NULL ) == 1 );
         check( mass_disconnect_key_nonzero( key ) == 0 );
     }
 
@@ -524,11 +524,11 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
     int head = -1;
     int count = -1;
     check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key_before,
-        (int) sizeof( key_before ), &head, &count ) == 1 );
+                                                                     (int) sizeof( key_before ), &head, &count ) == 1 );
     check( count == ROCKETNET_MAX_CLIENTS );
     check( head >= 0 && head < ROCKETNET_MAX_CLIENTS );
     check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, head, key_before,
-        (int) sizeof( key_before ), NULL, NULL ) == 1 );
+                                                                     (int) sizeof( key_before ), NULL, NULL ) == 1 );
     check( mass_disconnect_key_nonzero( key_before ) > 0 );
 
     // The server slots are already closed, so release the old client-side
@@ -560,7 +560,7 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
     int retained_head = -1;
     int retained_count = -1;
     check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, retained_key,
-        (int) sizeof( retained_key ), &retained_head, &retained_count ) == 1 );
+                                                                     (int) sizeof( retained_key ), &retained_head, &retained_count ) == 1 );
     check( retained_count == ROCKETNET_MAX_CLIENTS );
     check( retained_head == head );
 
@@ -572,7 +572,7 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
     int after_head = -1;
     int after_count = -1;
     check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, retained_head, retained_key,
-        (int) sizeof( retained_key ), &after_head, &after_count ) == 1 );
+                                                                     (int) sizeof( retained_key ), &after_head, &after_count ) == 1 );
     check( after_count == ROCKETNET_MAX_CLIENTS );
     check( after_head == retained_head );
     check( mass_disconnect_key_nonzero( retained_key ) > 0 );
@@ -591,14 +591,14 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
         check( sealed <= (uint64_t) allowance );
         uint8_t key[ROCKETNET_KEY_BYTES];
         check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
-            (int) sizeof( key ), NULL, &remaining ) == 1 );
+                                                                         (int) sizeof( key ), NULL, &remaining ) == 1 );
     }
 
     for ( int i = 0; i < ROCKETNET_MAX_CLIENTS; i++ )
     {
         uint8_t key[ROCKETNET_KEY_BYTES];
         check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, i, key,
-            (int) sizeof( key ), NULL, NULL ) == 1 );
+                                                                         (int) sizeof( key ), NULL, NULL ) == 1 );
         check( mass_disconnect_key_nonzero( key ) == 0 );
     }
 
@@ -631,10 +631,10 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
         check( rocketnet_server_transport_disconnect_seals_for_test( transport ) - before <= (uint64_t) allowance );
         uint8_t key[ROCKETNET_KEY_BYTES];
         check( rocketnet_server_transport_disconnect_burst_key_for_test( transport, 0, key,
-            (int) sizeof( key ), NULL, &recovery_remaining ) == 1 );
+                                                                         (int) sizeof( key ), NULL, &recovery_remaining ) == 1 );
     }
     check( rocketnet_server_transport_disconnect_seals_for_test( transport ) - before_recovery ==
-        (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+           (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     rn_test_client_stop_and_destroy( recovery );
 
     mass_disconnect_destroy_all( &population );

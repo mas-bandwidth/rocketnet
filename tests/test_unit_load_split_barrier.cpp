@@ -119,8 +119,16 @@ static void barrier_deliver( struct barrier_world_t * world, double now )
         const int client = message->client;
         if ( message->to_server )
         {
-            if ( message->kind == BARRIER_ACK ) { check( !world->arm_acked[client] ); world->arm_acked[client] = 1; }
-            if ( message->kind == BARRIER_GO_ACK ) { check( !world->go_acked[client] ); world->go_acked[client] = 1; }
+            if ( message->kind == BARRIER_ACK )
+            {
+                check( !world->arm_acked[client] );
+                world->arm_acked[client] = 1;
+            }
+            if ( message->kind == BARRIER_GO_ACK )
+            {
+                check( !world->go_acked[client] );
+                world->go_acked[client] = 1;
+            }
             continue;
         }
         if ( message->kind == BARRIER_END )

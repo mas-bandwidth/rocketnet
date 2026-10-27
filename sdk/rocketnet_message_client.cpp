@@ -244,9 +244,7 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
     // first update, whatever the game's clock reads then. time comes in only
     // through update.
 
-    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ?
-        rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, status ) :
-        rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
+    rocketnet_client_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_client_transport_create_resolved( context, connect_token, transport_config, 0.0, *resolved_memory_budget, status ) : rocketnet_client_transport_create_current_ex( context, connect_token, transport_config, 0.0, status );
     if ( !transport )
     {
         if ( *status == ROCKETNET_STATUS_OK )

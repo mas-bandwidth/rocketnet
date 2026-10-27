@@ -68,7 +68,8 @@
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -432,9 +433,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     switch ( data[0] & 3 )
     {
         case 0: fuzz_private_layout( body, body_size ); break;
-        case 1: fuzz_signed_layout( body, body_size );  break;
-        case 2: fuzz_minted( body, body_size );         break;
-        case 3: fuzz_raw_signed( body, body_size );     break;
+        case 1: fuzz_signed_layout( body, body_size ); break;
+        case 2: fuzz_minted( body, body_size ); break;
+        case 3: fuzz_raw_signed( body, body_size ); break;
     }
     return 0;
 }

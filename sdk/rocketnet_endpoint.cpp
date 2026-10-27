@@ -31,7 +31,7 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
     // the owner's message counters, which the region was carved with
     rocketnet_counters_t * counters = endpoint->region->counters;
     if ( counters )
-        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], amount );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], amount );
 }
 
 // The unreliable FIFO is the flat send_descriptors array ordered by
@@ -94,10 +94,8 @@ static_assert( ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES == ROCKETNET_MESSAGE_SINGL
 static bool rn_endpoint_unreliable_over_record_capacity( int reliability, int channel, int bytes, int capacity )
 {
     // Every unreliable mode uses the same record-size rule, including its wire header and form byte.
-    const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ?
-        3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
-    const int one_packet_capacity = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? capacity :
-        ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
+    const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
+    const int one_packet_capacity = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? capacity : ( capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
     return (uint64_t) (uint32_t) bytes + (uint64_t) header + 1u > (uint64_t) one_packet_capacity;
 }
 
@@ -252,9 +250,8 @@ static int rn_endpoint_send_route( const rn_endpoint_t * endpoint, int channel, 
     {
         // The promotion rule: code 0 to 2, code 1 to 4, and
         // code 5 to its reliable receipt twin (wire code 2, receipt kept).
-        *out_type = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_RELIABILITY_RELIABLE :
-                    reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED :
-                    ROCKETNET_RELIABILITY_RELIABLE;
+        *out_type = reliability == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_RELIABILITY_RELIABLE : reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED
+                                                                                                                                                                 : ROCKETNET_RELIABILITY_RELIABLE;
         return RN_ENDPOINT_ROUTE_CHANNELS;
     }
 
@@ -391,15 +388,14 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
     // Start reserves for its requested capacity; finish decides promotion
     // from the actual byte count and can downgrade a short reservation.
     const bool reserved_reliable = endpoint->ordered.channels.pending != RN_DESCRIPTOR_NONE;
-    const uint32_t channel = reserved_reliable ? endpoint->ordered.channels.pending_channel :
-        endpoint->region->send_descriptors[endpoint->pending_descriptor].channel;
+    const uint32_t channel = reserved_reliable ? endpoint->ordered.channels.pending_channel : endpoint->region->send_descriptors[endpoint->pending_descriptor].channel;
     const int transport_max = endpoint->max_payload_bytes > 0 ? endpoint->max_payload_bytes : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     const int record_capacity = transport_max < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? transport_max : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     // Finish applies the same record-size rule to the bytes actually committed.
     const bool actual_over_record = rn_endpoint_unreliable_over_record_capacity( endpoint->pending_type, (int) channel, bytes, record_capacity );
     const bool unreliable_source = endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE ||
-        endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
-        endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
+                                   endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
+                                   endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
     const bool promoted = reserved_reliable && unreliable_source && actual_over_record;
     if ( rn_endpoint_reliable_path( endpoint, endpoint->pending_type ) || promoted )
     {
@@ -413,9 +409,8 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         if ( promoted )
         {
             // Promotion: every promotion is counted, once per send.
-            const int counter = endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE :
-                                endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED :
-                                ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;
+            const int counter = endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE : endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED
+                                                                                                                                                                                                                  : ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT;
             rn_endpoint_count( endpoint, counter );
         }
     }
@@ -1117,8 +1112,7 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
         item->number = ROCKETNET_PACKET_NUMBER_NONE;
         item->descriptor = d;
         item->channel = descriptor->channel;
-        item->code = descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ?
-                     ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED : ROCKETNET_MESSAGE_CODE_UNRELIABLE;
+        item->code = descriptor->reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ? ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED : ROCKETNET_MESSAGE_CODE_UNRELIABLE;
         item->ordering = descriptor->ordering & ROCKETNET_MESSAGE_U24_MASK;
         item->sequencing = descriptor->sequencing & ROCKETNET_MESSAGE_U24_MASK;
         item->send_class = ROCKETNET_SEND_CLASS_UNRELIABLE;

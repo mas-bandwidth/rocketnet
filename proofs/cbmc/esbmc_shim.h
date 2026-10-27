@@ -34,14 +34,15 @@
 #ifdef __cplusplus
 #include <cmath>
 using std::isfinite;
-extern "C" {
+extern "C"
+{
 #endif
 
 void __ESBMC_assume( bool );
 void __ESBMC_assert( bool, const char * );
-__attribute__((annotate("__ESBMC_inf_size"))) extern bool __ESBMC_alloc[1];
-__attribute__((annotate("__ESBMC_inf_size"))) extern bool __ESBMC_is_dynamic[1];
-__attribute__((annotate("__ESBMC_inf_size"))) extern size_t __ESBMC_alloc_size[1];
+__attribute__( ( annotate( "__ESBMC_inf_size" ) ) ) extern bool __ESBMC_alloc[1];
+__attribute__( ( annotate( "__ESBMC_inf_size" ) ) ) extern bool __ESBMC_is_dynamic[1];
+__attribute__( ( annotate( "__ESBMC_inf_size" ) ) ) extern size_t __ESBMC_alloc_size[1];
 size_t __ESBMC_POINTER_OBJECT( const void * );
 long __ESBMC_POINTER_OFFSET( const void * );
 size_t __ESBMC_get_object_size( const void * );

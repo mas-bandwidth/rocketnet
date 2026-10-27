@@ -29,7 +29,7 @@
 #include <time.h>
 #include <errno.h>
 #include <stdint.h>
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include <process.h>
 #define getpid _getpid
 #else
@@ -46,7 +46,8 @@ static volatile int quit;
 
 void interrupt_handler( int signal )
 {
-    (void) signal; quit = 1;
+    (void) signal;
+    quit = 1;
 }
 
 typedef struct opts_t
@@ -116,7 +117,7 @@ static double parse_f64( const char * s, const char * flag )
 
 static void default_opts( opts_t * o, int argc, char ** argv )
 {
-    memset( o, 0, sizeof(*o) );
+    memset( o, 0, sizeof( *o ) );
     o->address = argc > 1 ? argv[1] : "127.0.0.1:40000";
     o->label = "client";
     o->duration = 35.0;
@@ -147,8 +148,13 @@ static unsigned parse_modes( const char * s )
         }
         mask |= 1u << v;
         p = end;
-        if ( *p == ',' ) p++;
-        else if ( *p ) { fprintf( stderr, "client: --modes wants a comma-separated list of modes 0 to 7\n" ); exit( 2 ); }
+        if ( *p == ',' )
+            p++;
+        else if ( *p )
+        {
+            fprintf( stderr, "client: --modes wants a comma-separated list of modes 0 to 7\n" );
+            exit( 2 );
+        }
     }
     if ( !mask )
     {
@@ -225,9 +231,9 @@ static void parse_args( opts_t * o, int argc, char ** argv, int * self_test, con
 // ---- results ----
 
 static void r_cell( FILE * f, const char * label, int window, int dir, int mode, int channel,
-                     int bucket, uint64_t sent, uint64_t received, uint64_t verified, uint64_t failed,
-                     uint64_t lost, uint64_t superseded, uint64_t missing, uint64_t ooo,
-                     uint64_t dup, uint64_t over, uint64_t paced )
+                    int bucket, uint64_t sent, uint64_t received, uint64_t verified, uint64_t failed,
+                    uint64_t lost, uint64_t superseded, uint64_t missing, uint64_t ooo,
+                    uint64_t dup, uint64_t over, uint64_t paced )
 {
     fprintf( f, "cell\t%s\t%d\t%d\t%d\t%d\t%s\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\t%llu\n",
              label, window, dir, mode, channel, rocketnet_live_bucket_name( bucket ),
@@ -250,8 +256,8 @@ static void r_cycle( FILE * f, const char * label, int cycle, const char * kind 
 // section 7, "Failures are recorded with their reason": the denial code or
 // client state, the side, the counters at that moment and a log excerpt.
 static void r_fail( FILE * f, const char * label, int cycle, int dir, int mode, int channel,
-                     uint32_t sequence, const char * reason, int bytes,
-                     int denial, const char * side, const char * counters, const char * excerpt )
+                    uint32_t sequence, const char * reason, int bytes,
+                    int denial, const char * side, const char * counters, const char * excerpt )
 {
     fprintf( f, "fail\t%s\t%d\t%d\t%d\t%d\t%u\t%s\t%d\t%d\t%s\t%s\t%s\n", label, cycle, dir, mode, channel,
              (unsigned) sequence, reason, bytes, denial, side, counters ? counters : "-", excerpt ? excerpt : "-" );
@@ -289,17 +295,20 @@ static void r_rss( FILE * f, const char * label, double seconds, long kb )
 static long resident_kb( void )
 {
     FILE * f = rocketnet_test_fopen( "/proc/self/statm", "r" );
-    if ( !f ) return 0;
+    if ( !f )
+        return 0;
     char line[256];
     const int have_line = fgets( line, sizeof( line ), f ) != NULL;
     fclose( f );
-    if ( !have_line ) return 0;
+    if ( !have_line )
+        return 0;
     /* statm is "total resident ...": skip the total, read the resident pages */
     char * after_total = NULL;
     char * after_resident = NULL;
     strtol( line, &after_total, 10 );
     const long resident = strtol( after_total, &after_resident, 10 );
-    if ( after_total == line || after_resident == after_total ) return 0;
+    if ( after_total == line || after_resident == after_total )
+        return 0;
     return resident; /* pages; the page size is 4 KiB on Linux, kb = pages * 4 */
 }
 
@@ -409,9 +418,11 @@ static int send_message( struct rocketnet_client_t * client, int mode, int chann
                          uint32_t sequence, uint8_t * buf, int cap, matrix_state_t * st )
 {
     int len = rocketnet_live_generate( &st->cfg, 0, mode, channel, cycle, sequence, buf, cap );
-    if ( len <= 0 ) return 0;
+    if ( len <= 0 )
+        return 0;
     uint8_t * out = rocketnet_client_start_message( client, channel, (enum rocketnet_reliability_t) mode, len );
-    if ( !out ) return -1;
+    if ( !out )
+        return -1;
     memcpy( out, buf, (size_t) len );
     rocketnet_client_finish_message( client, len );
     return len;
@@ -431,7 +442,7 @@ static int seen_test_and_set( stream_t * s, uint32_t sequence )
     {
         const uint32_t gap = sequence - s->seen_high;
         if ( gap >= 65536u )
-            memset( s->seen, 0, sizeof(s->seen) );
+            memset( s->seen, 0, sizeof( s->seen ) );
         else
             for ( uint32_t q = s->seen_high + 1; q <= sequence; q++ )
                 s->seen[( q >> 6 ) & 1023] &= ~( 1ull << ( q & 63 ) );
@@ -462,7 +473,8 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
             const uint8_t * data = batch->data[m];
             const int bytes = batch->bytes[m];
             const int channel = batch->channel[m];
-            if ( bytes < 1 ) continue;
+            if ( bytes < 1 )
+                continue;
             int tag = data[0];
             int mode = tag & 7;
             int recv_channel = ( mode == 0 || mode == 2 || mode == 5 || mode == 6 ) ? 0 : channel;
@@ -479,9 +491,9 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
             {
                 const uint32_t seq = rocketnet_live_sequence( data, bytes );
                 char excerpt[128];
-                snprintf( excerpt, sizeof(excerpt), "check=%s offset=%d", rocketnet_live_result_name( r ), bad );
+                snprintf( excerpt, sizeof( excerpt ), "check=%s offset=%d", rocketnet_live_result_name( r ), bad );
                 r_fail( st->res, st->o->label, (int) st->cycle, 1, mode, sender_channel, seq,
-                         rocketnet_live_result_name( r ), bytes, 0, "receiver", "-", excerpt );
+                        rocketnet_live_result_name( r ), bytes, 0, "receiver", "-", excerpt );
                 cell->failed++;
                 st->fails++;
             }
@@ -497,9 +509,9 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
                     {
                         cell->dup++;
                         char excerpt[96];
-                        snprintf( excerpt, sizeof(excerpt), "duplicate sequence=%u", (unsigned) seq );
+                        snprintf( excerpt, sizeof( excerpt ), "duplicate sequence=%u", (unsigned) seq );
                         r_fail( st->res, st->o->label, (int) st->cycle, 1, mode, sender_channel, seq,
-                                 "duplicate", bytes, 0, "receiver", "-", excerpt );
+                                "duplicate", bytes, 0, "receiver", "-", excerpt );
                         st->fails++;
                     }
                     if ( mode == 3 || mode == 7 )
@@ -551,20 +563,28 @@ static void receive_check( matrix_state_t * st, struct rocketnet_client_t * clie
 
 static double quantile( const double * values, int count, double q )
 {
-    if ( count <= 0 ) return 0.0;
-    double * copy = (double *) malloc( (size_t) count * sizeof(double) );
-    if ( !copy ) return 0.0;
-    memcpy( copy, values, (size_t) count * sizeof(double) );
+    if ( count <= 0 )
+        return 0.0;
+    double * copy = (double *) malloc( (size_t) count * sizeof( double ) );
+    if ( !copy )
+        return 0.0;
+    memcpy( copy, values, (size_t) count * sizeof( double ) );
     for ( int i = 1; i < count; i++ )
     {
         double v = copy[i];
         int j = i - 1;
-        while ( j >= 0 && copy[j] > v ) { copy[j + 1] = copy[j]; j--; }
+        while ( j >= 0 && copy[j] > v )
+        {
+            copy[j + 1] = copy[j];
+            j--;
+        }
         copy[j + 1] = v;
     }
     int index = (int) ( q * ( count - 1 ) + 0.5 );
-    if ( index < 0 ) index = 0;
-    if ( index >= count ) index = count - 1;
+    if ( index < 0 )
+        index = 0;
+    if ( index >= count )
+        index = count - 1;
     double result = copy[index];
     free( copy );
     return result;
@@ -579,7 +599,8 @@ static long resident_kb( void );
 // resident size is written.
 static void sample_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
 {
-    if ( !client ) return;
+    if ( !client )
+        return;
     struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( client );
     if ( !message_client )
     {
@@ -596,14 +617,14 @@ static void sample_counters( matrix_state_t * st, struct rocketnet_client_t * cl
         r_counters( st->res, st->o->label, rocketnet_counter_name( i ), value, seconds );
     }
     char report[256];
-    const int mc = rocketnet_counters_conserved( message, report, (int) sizeof(report) );
-    const int tc = rocketnet_counters_conserved( transport_counters, report, (int) sizeof(report) );
+    const int mc = rocketnet_counters_conserved( message, report, (int) sizeof( report ) );
+    const int tc = rocketnet_counters_conserved( transport_counters, report, (int) sizeof( report ) );
     fprintf( st->res, "conserved\t%s\t%.1f\t%d\t%d\n", st->o->label, seconds, mc, tc );
     r_rss( st->res, st->o->label, seconds, resident_kb() * 4 );
     if ( !mc || !tc )
     {
         char excerpt[160];
-        snprintf( excerpt, sizeof(excerpt), "conservation message=%d transport=%d", mc, tc );
+        snprintf( excerpt, sizeof( excerpt ), "conservation message=%d transport=%d", mc, tc );
         r_fail( st->res, st->o->label, (int) st->cycle, 0, 0, 0, 0, "counters-not-conserved", 0, 0, "client", "-", excerpt );
         st->fails++;
     }
@@ -628,7 +649,8 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
     const struct rocketnet_counters_t * counters = rocketnet_message_client_counters( message_client );
     for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
     {
-        if ( !( st->o->mode_mask & ( 1u << mode ) ) ) continue;
+        if ( !( st->o->mode_mask & ( 1u << mode ) ) )
+            continue;
         const int max_m = (int) rocketnet_live_mode_max( &st->cfg, mode );
         const int channels[2] = { 0, last_stream_channel( mode ) };
         for ( int k = 0; k < 2; k++ )
@@ -641,7 +663,7 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
             {
                 rocketnet_client_finish_message( client, max_m + 1 );
                 char excerpt[96];
-                snprintf( excerpt, sizeof(excerpt), "start accepted %d bytes", max_m + 1 );
+                snprintf( excerpt, sizeof( excerpt ), "start accepted %d bytes", max_m + 1 );
                 r_fail( st->res, st->o->label, window, 0, mode, channel, 0, "over-max-not-refused", max_m + 1, 0, "client", "-", excerpt );
                 st->fails++;
                 rocketnet_client_abort_message( client );
@@ -654,10 +676,10 @@ static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * clien
             if ( after != before + 1 )
             {
                 char excerpt[128];
-                snprintf( excerpt, sizeof(excerpt), "counter=%s delta=%llu", rocketnet_counter_name( counter ),
+                snprintf( excerpt, sizeof( excerpt ), "counter=%s delta=%llu", rocketnet_counter_name( counter ),
                           (unsigned long long) ( after - before ) );
                 r_fail( st->res, st->o->label, window, 0, mode, channel, 0, "over-counter-delta", max_m + 1,
-                         0, "client", "-", excerpt );
+                        0, "client", "-", excerpt );
                 st->fails++;
             }
         }
@@ -671,26 +693,34 @@ static void run_matrix( opts_t * o )
     if ( o->results_path )
     {
         res = rocketnet_test_fopen( o->results_path, "w" );
-        if ( !res ) { perror( "client: results" ); exit( 1 ); }
+        if ( !res )
+        {
+            perror( "client: results" );
+            exit( 1 );
+        }
     }
     if ( o->status_path )
     {
         status = rocketnet_test_fopen( o->status_path, "w" );
-        if ( !status ) { perror( "client: status" ); exit( 1 ); }
+        if ( !status )
+        {
+            perror( "client: status" );
+            exit( 1 );
+        }
     }
 
     matrix_state_t st;
-    memset( &st, 0, sizeof(st) );
+    memset( &st, 0, sizeof( st ) );
     st.o = o;
     st.res = res;
     st.status = status;
     st.cfg.seed = (uint32_t) o->seed;
     st.cfg.max_message_bytes = 262144;
-    st.streams = (stream_t *) calloc( ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS, sizeof(stream_t) );
-    st.cells = (cell_counts_t *) calloc( 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS, sizeof(cell_counts_t) );
-    st.rtt = (double *) calloc( 200000, sizeof(double) );
-    st.loss = (double *) calloc( 200000, sizeof(double) );
-    st.reconnect_ms = (double *) calloc( 4096, sizeof(double) );
+    st.streams = (stream_t *) calloc( ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS, sizeof( stream_t ) );
+    st.cells = (cell_counts_t *) calloc( 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS, sizeof( cell_counts_t ) );
+    st.rtt = (double *) calloc( 200000, sizeof( double ) );
+    st.loss = (double *) calloc( 200000, sizeof( double ) );
+    st.reconnect_ms = (double *) calloc( 4096, sizeof( double ) );
     if ( !st.streams || !st.cells || !st.rtt || !st.loss || !st.reconnect_ms )
     {
         fprintf( stderr, "client: out of memory\n" );
@@ -720,7 +750,7 @@ static void run_matrix( opts_t * o )
         if ( last_clock && now < last_clock )
         {
             char excerpt[96];
-            snprintf( excerpt, sizeof(excerpt), "clock went back %lld s", last_clock - now );
+            snprintf( excerpt, sizeof( excerpt ), "clock went back %lld s", last_clock - now );
             r_fail( res, o->label, window, 0, 0, 0, 0, "clock-went-backwards", 0, 0, "client", "-", excerpt );
             st.fails++;
         }
@@ -750,7 +780,8 @@ static void run_matrix( opts_t * o )
 
         enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
         struct rocketnet_client_t * client = rocketnet_client_create( NULL, &cc, &create_status );
-        if ( !client ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
+        if ( !client )
+            printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
             rn_cli_client_stop_and_destroy( client );
@@ -806,13 +837,14 @@ static void run_matrix( opts_t * o )
         else
         {
             char counters[160];
-            snprintf( counters, sizeof(counters), "state=%s denied_state=%d", rocketnet_client_state_name( state_at_fail ), state_at_fail );
+            snprintf( counters, sizeof( counters ), "state=%s denied_state=%d", rocketnet_client_state_name( state_at_fail ), state_at_fail );
             const int denial = state_at_fail < 0 ? state_at_fail : 0;
             r_fail( res, o->label, window, 0, 0, 0, 0, "connect-failed", 0, denial, "client", counters,
                     rocketnet_client_state_name( state_at_fail ) );
             r_event( res, o->label, window, state_at_fail < 0 ? "denial" : "connect-timeout",
                      rocketnet_client_state_name( state_at_fail ) );
-            if ( state_at_fail < 0 ) st.denials++;
+            if ( state_at_fail < 0 )
+                st.denials++;
             st.fails++;
             rn_cli_client_stop_and_destroy( client );
             break;
@@ -821,8 +853,8 @@ static void run_matrix( opts_t * o )
             fprintf( status, "client\tconnected\n" );
 
         /* the stress window */
-        memset( st.streams, 0, ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * sizeof(stream_t) );
-        memset( st.cells, 0, 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS * sizeof(cell_counts_t) );
+        memset( st.streams, 0, ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * sizeof( stream_t ) );
+        memset( st.cells, 0, 2 * ROCKETNET_LIVE_NUM_MODES * ROCKETNET_LIVE_NUM_CHANNELS * ROCKETNET_LIVE_NUM_BUCKETS * sizeof( cell_counts_t ) );
         for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES; m++ )
             for ( int c = 0; c < ROCKETNET_LIVE_NUM_CHANNELS; c++ )
             {
@@ -835,7 +867,7 @@ static void run_matrix( opts_t * o )
         double last_counters = w0;
         double last_stat = w0;
         uint8_t buf[262144 + 16];
-        int cap = (int) sizeof(buf);
+        int cap = (int) sizeof( buf );
         int aborted = 0;
 
         while ( !quit && rocketnet_time() - w0 < o->duration )
@@ -846,7 +878,7 @@ static void run_matrix( opts_t * o )
             {
                 char excerpt[128];
                 // a negative state names how the connection ended
-                snprintf( excerpt, sizeof(excerpt), "state=%s", rocketnet_client_state_name( state ) );
+                snprintf( excerpt, sizeof( excerpt ), "state=%s", rocketnet_client_state_name( state ) );
                 r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect", 0, state, "client",
                         "-", excerpt );
                 r_event( res, o->label, window, "unexpected-disconnect", rocketnet_client_state_name( state ) );
@@ -857,10 +889,12 @@ static void run_matrix( opts_t * o )
             /* send: one message per stream per pass, round robin */
             for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES && !quit; m++ )
             {
-                if ( !( o->mode_mask & ( 1u << m ) ) ) continue;
+                if ( !( o->mode_mask & ( 1u << m ) ) )
+                    continue;
                 for ( int c = 0; c < o->channels; c++ )
                 {
-                    if ( !stream_channels( m, c ) ) continue;
+                    if ( !stream_channels( m, c ) )
+                        continue;
                     stream_t * s = RN_STREAM( &st, m, c );
                     int r = send_message( client, m, c, st.cycle, s->sequence, buf, cap, &st );
                     if ( r > 0 )
@@ -872,7 +906,7 @@ static void run_matrix( opts_t * o )
                     else if ( r == -1 )
                     {
                         char excerpt[96];
-                        snprintf( excerpt, sizeof(excerpt), "start refused mode=%d channel=%d", m, c );
+                        snprintf( excerpt, sizeof( excerpt ), "start refused mode=%d channel=%d", m, c );
                         r_fail( res, o->label, window, 0, m, c, s->sequence, "send-start-failed", 0, 0,
                                 "client", "-", excerpt );
                         st.fails++;
@@ -921,7 +955,7 @@ static void run_matrix( opts_t * o )
                 if ( rocketnet_client_state( client ) < 0 )
                 {
                     char excerpt[128];
-                    snprintf( excerpt, sizeof(excerpt), "state=%s during drain", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
+                    snprintf( excerpt, sizeof( excerpt ), "state=%s during drain", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
                     r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect", 0,
                             rocketnet_client_state( client ), "client", "-", excerpt );
                     r_event( res, o->label, window, "unexpected-disconnect", "drain" );
@@ -937,7 +971,8 @@ static void run_matrix( opts_t * o )
         for ( int dir = 0; dir < 2; dir++ )
             for ( int m = 0; m < ROCKETNET_LIVE_NUM_MODES; m++ )
             {
-                if ( !( o->mode_mask & ( 1u << m ) ) ) continue;
+                if ( !( o->mode_mask & ( 1u << m ) ) )
+                    continue;
                 for ( int c = 0; c < o->channels; c++ )
                     for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
                     {
@@ -946,8 +981,8 @@ static void run_matrix( opts_t * o )
                              cell->superseded || cell->missing || cell->ooo || cell->dup || cell->over || cell->paced )
                         {
                             r_cell( res, o->label, window, dir, m, c, b,
-                                     cell->sent, cell->received, cell->verified, cell->failed, cell->lost,
-                                     cell->superseded, cell->missing, cell->ooo, cell->dup, cell->over, cell->paced );
+                                    cell->sent, cell->received, cell->verified, cell->failed, cell->lost,
+                                    cell->superseded, cell->missing, cell->ooo, cell->dup, cell->over, cell->paced );
                         }
                     }
             }
@@ -961,7 +996,7 @@ static void run_matrix( opts_t * o )
         if ( !aborted && ended < 0 )
         {
             char excerpt[96];
-            snprintf( excerpt, sizeof(excerpt), "state=%s before clean close", rocketnet_client_state_name( (enum rocketnet_client_state_t) ended ) );
+            snprintf( excerpt, sizeof( excerpt ), "state=%s before clean close", rocketnet_client_state_name( (enum rocketnet_client_state_t) ended ) );
             r_fail( res, o->label, window, 0, 0, 0, 0, "unexpected-disconnect-reason", 0, ended, "client", "-", excerpt );
             r_event( res, o->label, window, "unexpected-disconnect", "reason" );
             st.fails++;
@@ -979,7 +1014,8 @@ static void run_matrix( opts_t * o )
     // section 7, per bench: connect and reconnect times, RTT quantiles, loss
     double reconnect_max = 0.0;
     for ( int i = 0; i < st.reconnect_count; i++ )
-        if ( st.reconnect_ms[i] > reconnect_max ) reconnect_max = st.reconnect_ms[i];
+        if ( st.reconnect_ms[i] > reconnect_max )
+            reconnect_max = st.reconnect_ms[i];
     r_bench( res, o->label, st.connect_count, st.connect_ok,
              st.connect_count ? st.connect_ms_sum / st.connect_count : 0.0,
              quantile( st.reconnect_ms, st.reconnect_count, 0.50 ),
@@ -1002,8 +1038,10 @@ static void run_matrix( opts_t * o )
 
     if ( status )
         fprintf( status, "client\tdone\n" );
-    if ( res != stdout ) fclose( res );
-    if ( status ) fclose( status );
+    if ( res != stdout )
+        fclose( res );
+    if ( status )
+        fclose( status );
 }
 
 int main( int argc, char ** argv )
@@ -1064,7 +1102,7 @@ int main( int argc, char ** argv )
     uint64_t payloads_sent = 0;
     uint64_t payloads_received = 0;
 
-    uint8_t * received = (uint8_t*) malloc( (size_t) rocketnet_client_transport_max_payload_bytes( client ) );
+    uint8_t * received = (uint8_t *) malloc( (size_t) rocketnet_client_transport_max_payload_bytes( client ) );
     if ( !received )
     {
         rn_native_client_transport_stop_and_destroy( client );
@@ -1088,7 +1126,7 @@ int main( int argc, char ** argv )
         if ( state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-            rocketnet_client_transport_send_packet( client, payload, sizeof(payload) );
+            rocketnet_client_transport_send_packet( client, payload, sizeof( payload ) );
             payloads_sent++;
 
             int received_bytes;

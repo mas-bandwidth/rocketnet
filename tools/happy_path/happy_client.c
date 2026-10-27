@@ -69,7 +69,9 @@ int main( int argc, char ** argv )
         for ( int j = 0; j < 2 && value >= 0; j++ )
         {
             const char c = key_hex[2 * i + j];
-            const int nibble = ( c >= '0' && c <= '9' ) ? c - '0' : ( c >= 'a' && c <= 'f' ) ? c - 'a' + 10 : ( c >= 'A' && c <= 'F' ) ? c - 'A' + 10 : -1;
+            const int nibble = ( c >= '0' && c <= '9' ) ? c - '0' : ( c >= 'a' && c <= 'f' ) ? c - 'a' + 10
+                                                                : ( c >= 'A' && c <= 'F' )   ? c - 'A' + 10
+                                                                                             : -1;
             value = nibble < 0 ? -1 : value * 16 + nibble;
         }
         if ( value < 0 )

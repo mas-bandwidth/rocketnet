@@ -66,7 +66,7 @@ static void fake_iocp_queue( int kind, int receive, bool ok, int packet_bytes, c
 {
     rocketnet_unit_check( fake_iocp.num_queued < FAKE_IOCP_MAX_QUEUED );
     rocketnet_client_iocp_completion_t * completion = &fake_iocp.queued[fake_iocp.num_queued++];
-    memset( completion, 0, sizeof(*completion) );
+    memset( completion, 0, sizeof( *completion ) );
     completion->kind = kind;
     completion->receive = receive;
     completion->ok = ok;
@@ -103,8 +103,8 @@ static int fake_iocp_dequeue( void * context, rocketnet_client_iocp_completion_t
         return 0;
     }
     const int count = fake_iocp.num_queued < max_completions ? fake_iocp.num_queued : max_completions;
-    memcpy( completions, fake_iocp.queued, sizeof(completions[0]) * (size_t) count );
-    memmove( fake_iocp.queued, fake_iocp.queued + count, sizeof(fake_iocp.queued[0]) * (size_t) ( fake_iocp.num_queued - count ) );
+    memcpy( completions, fake_iocp.queued, sizeof( completions[0] ) * (size_t) count );
+    memmove( fake_iocp.queued, fake_iocp.queued + count, sizeof( fake_iocp.queued[0] ) * (size_t) ( fake_iocp.num_queued - count ) );
     fake_iocp.num_queued -= count;
     return count;
 }
@@ -125,21 +125,20 @@ static void fake_iocp_close( void * context )
         fake_iocp.aborts_held += fake_iocp.posted[i] ? 1 : 0;
 }
 
-static const rocketnet_client_iocp_port_t fake_iocp_port =
-{
+static const rocketnet_client_iocp_port_t fake_iocp_port = {
     fake_iocp_post_receive, fake_iocp_dequeue, fake_iocp_post_wake, fake_iocp_close
 };
 
 static void fake_iocp_reset()
 {
-    memset( &fake_iocp, 0, sizeof(fake_iocp) );
+    memset( &fake_iocp, 0, sizeof( fake_iocp ) );
     fake_iocp.time = 1000.0;
 }
 
 static rocketnet_address_t fake_iocp_server( uint16_t port )
 {
     rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     address.type = ROCKETNET_ADDRESS_IPV4;
     address.data.ipv4[0] = 127;
     address.data.ipv4[3] = 1;
@@ -166,7 +165,7 @@ static uint8_t test_iocp_buffers[FAKE_IOCP_RECEIVES * FAKE_IOCP_BUFFER_BYTES];
 static void test_iocp_create()
 {
     fake_iocp_reset();
-    memset( test_iocp_buffers, 0xEE, sizeof(test_iocp_buffers) );
+    memset( test_iocp_buffers, 0xEE, sizeof( test_iocp_buffers ) );
     rocketnet_unit_check( rocketnet_client_iocp_init( &test_iocp, &fake_iocp_port, &fake_iocp, test_iocp_buffers, FAKE_IOCP_BUFFER_BYTES, FAKE_IOCP_RECEIVES ) == 4 );
     rocketnet_unit_check( fake_iocp.posts == 4 );
     rocketnet_unit_check( test_iocp.num_posted == 4 );
@@ -190,7 +189,7 @@ static void test_client_iocp_receive_completes_into_slots()
     fake_iocp_deliver( 2, 10, 20, 40000 );
     fake_iocp_deliver( 0, 50, 30, 40001 );
     fake_iocp_deliver( 3, 90, 40, 40002 );
-    memset( slots, 0, sizeof(slots) );
+    memset( slots, 0, sizeof( slots ) );
     rocketnet_unit_check( rocketnet_client_iocp_receive_batch( &test_iocp, from, slots, 32, packet_bytes, 2 ) == 2 );
     rocketnet_unit_check( packet_bytes[0] == 20 );
     rocketnet_unit_check( packet_bytes[1] == 30 );

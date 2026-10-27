@@ -461,7 +461,7 @@ static inline bool rn_descriptor_schedule_live( const rn_send_descriptor_t * des
            descriptor->enqueue_ticket != 0 && descriptor->enqueue_ticket != RN_ENQUEUE_HOLE;
 }
 
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 // Present only in the unit-test library; counts descriptors examined by
 // rn_span_unlink's edge search, never production state.
 struct rn_span_cost_t

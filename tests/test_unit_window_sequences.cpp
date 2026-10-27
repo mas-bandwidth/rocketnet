@@ -337,7 +337,7 @@ static int world_take_descriptor( world_t * w, uint32_t bytes, uint32_t * descri
 }
 
 static void world_commit( world_t * w, uint64_t first, uint32_t count, uint32_t descriptor,
-                           uint64_t ring, uint32_t stride, uint32_t last_len, uint32_t payload )
+                          uint64_t ring, uint32_t stride, uint32_t last_len, uint32_t payload )
 {
     for ( uint32_t f = 0; f < count; f++ )
     {

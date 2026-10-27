@@ -17,14 +17,15 @@
 #include "rocketnet.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 struct rocketnet_client_testing_t
 {
     // the receive stamp clock; NULL is the platform clock; runs on the
     // network thread, and on the caller's thread during disconnect and destroy
-    double (*time_callback)( void * context );
+    double ( *time_callback )( void * context );
 
     // Development only: true runs the client's I/O step inside update and
     // send_packets on the caller's thread, with no network thread. The field

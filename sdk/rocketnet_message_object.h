@@ -49,18 +49,18 @@ struct rn_message_link_t
 {
     void * transport;
 
-    void (*update)( void * transport, double time );
+    void ( *update )( void * transport, double time );
 
     // the update's payload batch, valid until the next update. The client's
     // link leaves *client_index NULL.
-    int (*payloads)( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
+    int ( *payloads )( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes );
 
     // Publish ACK eligibility only after successful message processing.
-    void (*accept_payload)( void * transport, int k );
+    void ( *accept_payload )( void * transport, int k );
 
     // the transport's acked packet ids of the last update (R1: the only ack).
     // The client's link leaves *client_index NULL.
-    int (*acked)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
+    int ( *acked )( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 
     // the connection entry k of the update's payload batch (payload_connection)
     // or acked batch (acked_connection) was received for (P9b), which
@@ -69,47 +69,47 @@ struct rn_message_link_t
     // rocketnet_server_transport_acked_connection_ids; the client's link
     // answers 1, the id of its one connection, for every entry. NULL (the
     // unit suite's untagged fakes): rn_message_admit tags the entry itself.
-    uint64_t (*payload_connection)( void * transport, int k );
-    uint64_t (*acked_connection)( void * transport, int k );
+    uint64_t ( *payload_connection )( void * transport, int k );
+    uint64_t ( *acked_connection )( void * transport, int k );
 
     // The configured payload limit, after transport defaults. A large
     // unreliable record is refused before enqueue if it cannot fit an arena.
-    int (*max_payload_bytes)( void * transport );
-    uint8_t * (*start_packet)( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
-    int (*finish_packet)( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
-    void (*abort_packet)( void * transport, struct rocketnet_packet_context_t * context );
-    void (*send_packets)( void * transport );
+    int ( *max_payload_bytes )( void * transport );
+    uint8_t * ( *start_packet )( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
+    int ( *finish_packet )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+    void ( *abort_packet )( void * transport, struct rocketnet_packet_context_t * context );
+    void ( *send_packets )( void * transport );
 
     // How many payload frames the transport may still start this update.
     // NULL (the client's link, the unit suite's fakes): no transport-side
     // cap. The server's link reads it so a rotation advances only over
     // clients that had a chance to send.
-    int (*send_capacity_available)( void * transport );
+    int ( *send_capacity_available )( void * transport );
     // Connected clients whose next send round must remain available.
-    int (*send_connected_count)( void * transport );
+    int ( *send_connected_count )( void * transport );
 
     // the connection in the slot now: a nonzero id, or 0 when none (RNSlots
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
     // connection a slot holds (P9a). The client's link answers 1 while it is
     // CONNECTED.
-    uint64_t (*connection)( void * transport, int client_index );
+    uint64_t ( *connection )( void * transport, int client_index );
 
-    void (*disconnect)( void * transport, int client_index );
+    void ( *disconnect )( void * transport, int client_index );
 
     // the transport's state, ROCKETNET_CLIENT_TRANSPORT_STATE_* or
     // ROCKETNET_SERVER_TRANSPORT_*
-    int (*state)( void * transport );
+    int ( *state )( void * transport );
 
     // the reason the client's transport ended its connection with, a
     // ROCKETNET_DISCONNECT_REASON_*, read once the transport is terminal.
     // NULL (the server's link, the unit suite's): the transport names none.
-    int (*end_reason)( void * transport );
+    int ( *end_reason )( void * transport );
 
     // NULL: the object does not own the transport
-    void (*stop)( void * transport );
-    bool (*stopped)( const void * transport );
-    void (*destroy)( void * transport );
+    void ( *stop )( void * transport );
+    bool ( *stopped )( const void * transport );
+    void ( *destroy )( void * transport );
 
     // 1 for a transport whose clock was seeded at 0.0 at create (the client's,
     // whose create takes no time): its clock starts at the object's first

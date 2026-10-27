@@ -30,7 +30,7 @@ static std::string xdp_host_read_file( const char * relative )
     }
     char buffer[4096];
     size_t got;
-    while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
+    while ( ( got = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, got );
     fclose( file );
     return text;

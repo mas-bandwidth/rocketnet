@@ -33,7 +33,7 @@
 
 static inline void rocketnet_xdp_replay_key_from_address( const struct rocketnet_address_t * address, struct rocketnet_server_xdp_replay_key_t * key )
 {
-    memset( key, 0, sizeof(*key) );
+    memset( key, 0, sizeof( *key ) );
 
     if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {
@@ -98,7 +98,7 @@ static inline uint32_t rocketnet_xdp_replay_marks_reset_keeping( struct rocketne
             continue;
         bool superseded = false;
         for ( uint32_t j = 0; j < marks->mark_count && !superseded; j++ )
-            superseded = mark_applied[j] && memcmp( &marks->mark_keys[j], &marks->forgets[i], sizeof(marks->forgets[i]) ) == 0;
+            superseded = mark_applied[j] && memcmp( &marks->mark_keys[j], &marks->forgets[i], sizeof( marks->forgets[i] ) ) == 0;
         if ( superseded )
             continue;
         if ( kept != i )
@@ -156,7 +156,7 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
     marks->forget_count++;
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
     {
-        if ( memcmp( &marks->mark_keys[i], key, sizeof(*key) ) == 0 )
+        if ( memcmp( &marks->mark_keys[i], key, sizeof( *key ) ) == 0 )
         {
             rocketnet_xdp_replay_marks_drop_kept( marks, i );
             break;
@@ -177,7 +177,7 @@ static inline bool rocketnet_xdp_replay_marks_mark( struct rocketnet_xdp_replay_
     rocketnet_xdp_replay_key_from_address( address, &key );
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
     {
-        if ( memcmp( &marks->mark_keys[i], &key, sizeof(key) ) == 0 )
+        if ( memcmp( &marks->mark_keys[i], &key, sizeof( key ) ) == 0 )
         {
             marks->mark_values[i].high_water = high_water;
             marks->mark_values[i].pad = 0;
@@ -230,7 +230,7 @@ static inline bool rocketnet_xdp_replay_marks_holds_greeting( const struct rocke
     rocketnet_xdp_replay_key_from_address( address, &key );
     for ( uint32_t i = 0; i < marks->kept_mark_count; i++ )
     {
-        if ( marks->mark_values[i].high_water == 0 && memcmp( &marks->mark_keys[i], &key, sizeof(key) ) == 0 )
+        if ( marks->mark_values[i].high_water == 0 && memcmp( &marks->mark_keys[i], &key, sizeof( key ) ) == 0 )
             return true;
     }
     return false;

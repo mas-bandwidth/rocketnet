@@ -81,7 +81,7 @@ static inline void rocketnet_test_env_restore()
 // name before each case (tests/test.cpp), so cases stay isolated.
 static inline int rocketnet_test_env_setenv( const char * name, const char * value, int overwrite )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     if ( !overwrite )
     {
         char * existing = NULL;
@@ -103,7 +103,7 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
 
 static inline int rocketnet_test_env_unsetenv( const char * name )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     return _putenv_s( name, "" );
 #else
     return unsetenv( name );

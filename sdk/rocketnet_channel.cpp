@@ -17,7 +17,7 @@
 static void rn_channels_count( rocketnet_counters_t * counters, int counter )
 {
     if ( counters )
-        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &counters->values[counter], 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
 }
 
 static inline uint32_t rn_u24( uint32_t value )
@@ -218,7 +218,7 @@ bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * reg
     // channel or unreliable sequences, and no channel is ready. This is the
     // flat-storage form of the carved queue heads rn_region_carve resets;
     // a binding made without a carve gets the same empty start.
-    memset( region->channel_send, 0, sizeof(rn_channel_send_t) * num_channels );
+    memset( region->channel_send, 0, sizeof( rn_channel_send_t ) * num_channels );
     for ( uint32_t c = 0; c < num_channels; c++ )
     {
         region->channel_send[c].queue_head = RN_DESCRIPTOR_NONE;
@@ -369,19 +369,18 @@ static_assert( ROCKETNET_MESSAGE_NUM_VIOLATIONS == 13, "a new message violation 
 // the tie is checked at compile time.
 static constexpr int rn_violation_counter( int violation )
 {
-    return violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ? ROCKETNET_COUNTER_MESSAGE_BAD_FORM :
-           violation == ROCKETNET_MESSAGE_VIOLATION_TRUNCATED ? ROCKETNET_COUNTER_MESSAGE_TRUNCATED :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS ? ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH ? ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL ? ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL :
-           violation == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED ? ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_RING ? ROCKETNET_COUNTER_MESSAGE_BAD_RING :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE ? ROCKETNET_COUNTER_MESSAGE_BAD_SIZE :
-           violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL ? ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL :
-           violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW ? ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW :
-           violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION ? ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION :
-           ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION;
+    return violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ? ROCKETNET_COUNTER_MESSAGE_BAD_FORM : violation == ROCKETNET_MESSAGE_VIOLATION_TRUNCATED           ? ROCKETNET_COUNTER_MESSAGE_TRUNCATED
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS             ? ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH            ? ROCKETNET_COUNTER_MESSAGE_BAD_LENGTH
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL           ? ROCKETNET_COUNTER_MESSAGE_BAD_CHANNEL
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED      ? ROCKETNET_COUNTER_MESSAGE_TYPE_NOT_ENABLED
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK             ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_RING              ? ROCKETNET_COUNTER_MESSAGE_BAD_RING
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE              ? ROCKETNET_COUNTER_MESSAGE_BAD_SIZE
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL           ? ROCKETNET_COUNTER_MESSAGE_BAD_CONTROL
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW ? ROCKETNET_COUNTER_MESSAGE_NUMBER_OUTSIDE_WINDOW
+                                                                                                : violation == ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION        ? ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION
+                                                                                                                                                                 : ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION;
 }
 
 static_assert( rn_violation_counter( ROCKETNET_MESSAGE_VIOLATION_BAD_FORM ) == ROCKETNET_COUNTER_MESSAGE_BAD_FORM,
@@ -768,7 +767,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
 
     // the fragment's own ring span lies inside the ring (code 2's check, unified)
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
-                                      rn_round16( (uint64_t) record->bytes ) ) )
+                                     rn_round16( (uint64_t) record->bytes ) ) )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
@@ -1262,9 +1261,8 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     memset( &sequenced_shape, 0, sizeof( sequenced_shape ) );
     sequenced_shape.code = ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED;
     sequenced_shape.channel = channel;
-    const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 :
-        type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 1 - (uint32_t) rocketnet_message_record_header_bytes( &sequenced_shape ) :
-        rn_channels_small_limit( channels );
+    const uint32_t small_limit = type == ROCKETNET_CHANNEL_TYPE_RELIABLE ? channels->payload_capacity - 7 : type == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ? channels->payload_capacity - 1 - (uint32_t) rocketnet_message_record_header_bytes( &sequenced_shape )
+                                                                                                                                                              : rn_channels_small_limit( channels );
     descriptor->fragments = (uint16_t) ( bytes <= small_limit ? 1 : ( bytes + F - 1 ) / F );
     descriptor->channel = (uint16_t) channel;
     descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
@@ -1383,16 +1381,19 @@ int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketne
     }
 
     const struct rocketnet_message_config_body_t * own = &ordered->config;
-    struct field_t { const char * name; uint32_t own, remote; };
-    const field_t fields[] =
+    struct field_t
     {
-        { "version",            own->version,            remote.version },
-        { "enabled",            own->enabled,            remote.enabled },
-        { "num_channels",       own->num_channels,       remote.num_channels },
-        { "reliable_messages_in_flight",    own->reliable_messages_in_flight,    remote.reliable_messages_in_flight },
+        const char * name;
+        uint32_t own, remote;
+    };
+    const field_t fields[] = {
+        { "version", own->version, remote.version },
+        { "enabled", own->enabled, remote.enabled },
+        { "num_channels", own->num_channels, remote.num_channels },
+        { "reliable_messages_in_flight", own->reliable_messages_in_flight, remote.reliable_messages_in_flight },
         { "receive_message_buffer_bytes", own->receive_message_buffer_bytes, remote.receive_message_buffer_bytes },
-        { "max_message_bytes",  own->max_message_bytes,  remote.max_message_bytes },
-        { "fragment_bytes",     own->fragment_bytes,     remote.fragment_bytes },
+        { "max_message_bytes", own->max_message_bytes, remote.max_message_bytes },
+        { "fragment_bytes", own->fragment_bytes, remote.fragment_bytes },
     };
     for ( size_t i = 0; i < sizeof( fields ) / sizeof( fields[0] ); i++ )
     {

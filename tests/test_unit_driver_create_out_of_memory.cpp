@@ -68,7 +68,7 @@ struct transport_oom_env_pin_t
 #if ROCKETNET_DEV
 static void transport_oom_env_set_aside( const char * name, transport_oom_env_pin_t * saved )
 {
-    saved->was_set = rocketnet_test_env_getenv( name, saved->value, sizeof(saved->value) ) != 0;
+    saved->was_set = rocketnet_test_env_getenv( name, saved->value, sizeof( saved->value ) ) != 0;
     rocketnet_test_env_unsetenv( name );
 }
 #endif // #if ROCKETNET_DEV
@@ -92,7 +92,7 @@ struct transport_oom_allocator_t
 
 static void * transport_oom_allocate( void * context, size_t bytes )
 {
-    transport_oom_allocator_t * state = (transport_oom_allocator_t*) context;
+    transport_oom_allocator_t * state = (transport_oom_allocator_t *) context;
     const int call = ++state->calls;
     state->asked_bytes[0] = state->asked_bytes[1];
     state->asked_bytes[1] = bytes;
@@ -101,18 +101,18 @@ static void * transport_oom_allocate( void * context, size_t bytes )
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
-    uintptr_t address = ( ( (uintptr_t) base + sizeof(void*) + 63 ) & ~(uintptr_t)63 ) + 16;
-    memcpy( (void*) ( address - sizeof(void*) ), &base, sizeof(base) );
-    memset( (void*) address, 0xA5, bytes );
+    uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
+    memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    memset( (void *) address, 0xA5, bytes );
     ++state->live;
-    return (void*) address;
+    return (void *) address;
 }
 
 static void transport_oom_release( void * context, void * pointer )
 {
-    transport_oom_allocator_t * state = (transport_oom_allocator_t*) context;
+    transport_oom_allocator_t * state = (transport_oom_allocator_t *) context;
     void * base = NULL;
-    memcpy( &base, (uint8_t*) pointer - sizeof(void*), sizeof(base) );
+    memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     --state->live;
     free( base );
 }
@@ -121,7 +121,7 @@ static void transport_oom_release( void * context, void * pointer )
 // allocator, and initialize with its state as the context
 static void transport_oom_begin( transport_oom_allocator_t * state )
 {
-    memset( state, 0, sizeof(*state) );
+    memset( state, 0, sizeof( *state ) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     int status = -1;
     check( rocketnet_init_ex( state, transport_oom_allocate, transport_oom_release, &status ) );
@@ -140,7 +140,10 @@ static void transport_oom_end( transport_oom_allocator_t * state )
 
 // ---- an in-memory transport with three allocations -----------------------------
 
-enum { TRANSPORT_OOM_BLOCKS = 3 };
+enum
+{
+    TRANSPORT_OOM_BLOCKS = 3
+};
 
 struct transport_oom_instance_t
 {
@@ -154,10 +157,10 @@ static void * transport_oom_create( void * context )
 {
     if ( transport_oom_refuse )
         return NULL;
-    transport_oom_instance_t * instance = (transport_oom_instance_t*) rocketnet_malloc( context, sizeof(transport_oom_instance_t) );
+    transport_oom_instance_t * instance = (transport_oom_instance_t *) rocketnet_malloc( context, sizeof( transport_oom_instance_t ) );
     if ( !instance )
         return NULL;
-    memset( instance, 0, sizeof(*instance) );
+    memset( instance, 0, sizeof( *instance ) );
     instance->context = context;
     for ( int i = 1; i < TRANSPORT_OOM_BLOCKS; i++ )
     {
@@ -175,16 +178,20 @@ static void * transport_oom_create( void * context )
 
 static void transport_oom_destroy( void * transport )
 {
-    transport_oom_instance_t * instance = (transport_oom_instance_t*) transport;
+    transport_oom_instance_t * instance = (transport_oom_instance_t *) transport;
     for ( int i = 1; i < TRANSPORT_OOM_BLOCKS; i++ )
         rocketnet_free( instance->context, instance->blocks[i] );
     rocketnet_free( instance->context, instance );
 }
 
 static void * transport_oom_server_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * )
-{ return transport_oom_create( context ); }
+{
+    return transport_oom_create( context );
+}
 static void * transport_oom_client_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * )
-{ return transport_oom_create( context ); }
+{
+    return transport_oom_create( context );
+}
 static void transport_oom_stop( void * ) {}
 static bool transport_oom_stopped( void * ) { return true; }
 static void transport_oom_send_batch( void *, const rocketnet_platform_send_t *, int ) {}
@@ -200,7 +207,8 @@ static void test_transport_open_reports_out_of_memory()
     rocketnet_server_transport_io_operations_t server_operations = {};
     server_operations.create = transport_oom_server_create;
     server_operations.destroy = transport_oom_destroy;
-    server_operations.stop = transport_oom_stop; server_operations.stopped = transport_oom_stopped;
+    server_operations.stop = transport_oom_stop;
+    server_operations.stopped = transport_oom_stopped;
     server_operations.send_batch = transport_oom_send_batch;
     server_operations.receive_batch = transport_oom_receive_batch;
 
@@ -291,7 +299,7 @@ static void transport_oom_production_server_config( struct rocketnet_server_tran
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
     config->max_clients = 1;
-    snprintf( config->transport, sizeof(config->transport), "%s", transport );
+    snprintf( config->transport, sizeof( config->transport ), "%s", transport );
 }
 
 // the allocations of a pinned loopback create, counted by failing each in
@@ -358,7 +366,7 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
 {
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.transport, sizeof(config.transport), "%s", transport );
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.step_driven = 1;
     config.time_callback = transport_oom_time_callback;
     for ( int k = 1; k <= 256; k++ )
@@ -405,7 +413,7 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
     const char * addresses[] = { "127.0.0.1:50000" };
     check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key, protocol_id, addresses, 1,
                                                      0x9e3779b97f4a7c15ULL, 0, 1ULL << 40, 60, NULL,
-                                                     token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+                                                     token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
 
     const int allocations = transport_oom_walk_client( &state, token, "loopback" );
@@ -431,12 +439,18 @@ enum
     TRANSPORT_OOM_ADAPTERS_OVERFLOW,
     TRANSPORT_OOM_ADAPTERS_ERROR,
 };
-enum { TRANSPORT_OOM_ADAPTERS_ATTEMPTS = 3 };
-extern void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int (*query)( void * buffer, unsigned long * bytes ) );
+enum
+{
+    TRANSPORT_OOM_ADAPTERS_ATTEMPTS = 3
+};
+extern void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int ( *query )( void * buffer, unsigned long * bytes ) );
 
 // a refusing allocator gives way after this many refusals, so a loop with no
 // bound ends and its count is read, rather than hanging the suite
-enum { TRANSPORT_OOM_GIVE_WAY = 64 };
+enum
+{
+    TRANSPORT_OOM_GIVE_WAY = 64
+};
 
 // the fake query: the scripted answer, with the size it asks for on overflow.
 // The fetch never passes a NULL buffer; if it did, the fake answers overflow,
@@ -543,7 +557,7 @@ static void test_platform_adapters_fetch_is_bounded()
 static void test_platform_init_survives_a_refusing_allocator()
 {
     transport_oom_allocator_t state;
-    memset( &state, 0, sizeof(state) );
+    memset( &state, 0, sizeof( state ) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     state.refuse_through = TRANSPORT_OOM_GIVE_WAY;
     int status = -1;

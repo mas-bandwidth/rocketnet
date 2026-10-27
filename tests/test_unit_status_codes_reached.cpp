@@ -83,8 +83,8 @@ static void reached_token( rocketnet_server_t * server, const reached_identity_t
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
-        REACHED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, REACHED_TIMEOUT_SECONDS, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     REACHED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, REACHED_TIMEOUT_SECONDS, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
@@ -97,14 +97,14 @@ static int refuse_platform_start( void )
 static int refuse_waitable_timer_calls;
 static unsigned refuse_waitable_timer_flags[4];
 
-static void* refuse_waitable_timer( unsigned flags )
+static void * refuse_waitable_timer( unsigned flags )
 {
     if ( refuse_waitable_timer_calls < 4 )
         refuse_waitable_timer_flags[refuse_waitable_timer_calls] = flags;
     ++refuse_waitable_timer_calls;
     if ( flags == 0x00000002u )
         return NULL;
-    return (void*) 1;
+    return (void *) 1;
 }
 
 static int refuse_mutex( rocketnet_platform_mutex_t * mutex )
@@ -206,7 +206,7 @@ struct reached_allocator_t
 
 static void * reached_allocate( void * context, size_t bytes )
 {
-    reached_allocator_t * state = (reached_allocator_t*) context;
+    reached_allocator_t * state = (reached_allocator_t *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
         return NULL;
@@ -218,7 +218,7 @@ static void * reached_allocate( void * context, size_t bytes )
 
 static void reached_release( void * context, void * pointer )
 {
-    reached_allocator_t * state = (reached_allocator_t*) context;
+    reached_allocator_t * state = (reached_allocator_t *) context;
     if ( !pointer )
         return;
     --state->live;

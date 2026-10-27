@@ -68,7 +68,7 @@ static void harness_reader( void )
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
     {
         __CPROVER_assert( rocketnet_message_reader_next( &reader, &record ) == 0,
-            "refused payload yields no record" );
+                          "refused payload yields no record" );
         return;
     }
 
@@ -88,13 +88,12 @@ static void harness_reader( void )
             const int span = (int) record.fragments * F + ( last ? round16( record.bytes ) : 16 );
             __CPROVER_assert( base >= 0, "block base is inside the ring" );
             __CPROVER_assert( (long long) base * 16 + span <= limits.receive_message_buffer_bytes,
-                "block span fits the ring" );
+                              "block span fits the ring" );
         }
-        else if ( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED
-                  || record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
+        else if ( record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || record.code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
         {
             __CPROVER_assert( (long long) record.ring * 16 + round16( record.bytes ) <= limits.receive_message_buffer_bytes,
-                "holdable span fits the ring" );
+                              "holdable span fits the ring" );
         }
 
         yielded++;
@@ -110,29 +109,29 @@ static void harness_short_and_config( void )
     uint8_t payload[BOUND];
     struct rocketnet_message_reader_t reader;
     __CPROVER_assert( rocketnet_message_reader_begin( &reader, payload, 0, &limits ) == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM,
-        "empty payload is a bad form" );
+                      "empty payload is a bad form" );
     __CPROVER_assert( rocketnet_message_reader_begin( &reader, payload, 1, &limits ) == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM,
-        "one-byte payload is a bad form" );
+                      "one-byte payload is a bad form" );
     __CPROVER_assert( rocketnet_message_reader_begin( &reader, NULL, BOUND, &limits ) == ROCKETNET_MESSAGE_VIOLATION_BAD_FORM,
-        "null payload is a bad form" );
+                      "null payload is a bad form" );
 
     struct rocketnet_message_config_body_t body;
     uint8_t config[ROCKETNET_MESSAGE_CONFIG_BYTES];
     uint8_t short_config[4];
     (void) rocketnet_message_read_config_body( config, ROCKETNET_MESSAGE_CONFIG_BYTES, &body );
     __CPROVER_assert( rocketnet_message_read_config_body( NULL, ROCKETNET_MESSAGE_CONFIG_BYTES, &body ) == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL,
-        "null config is refused" );
+                      "null config is refused" );
     __CPROVER_assert( rocketnet_message_read_config_body( config, 0, &body ) == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL,
-        "empty config is refused" );
+                      "empty config is refused" );
     __CPROVER_assert( rocketnet_message_read_config_body( short_config, 4, &body ) == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL,
-        "short config is refused" );
+                      "short config is refused" );
 }
 
 int main( void )
 {
     harness_reader();
     harness_short_and_config();
-#if defined(REACHABILITY_CONTROL)
+#if defined( REACHABILITY_CONTROL )
     __CPROVER_assert( 0, "message-read reachability control" );
 #endif
     return 0;

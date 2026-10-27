@@ -17,7 +17,8 @@
 #include "rocketnet.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /// Config revision sizes (docs/ABI-EVOLUTION.md): the end of a revision's last
@@ -55,21 +56,21 @@ static inline int rocketnet_disconnect_reason_standard_code( int reason )
 {
     switch ( reason )
     {
-        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:           return 1;
-        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:        return 3;
-        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:          return 4;
-        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED:  return 5;
-        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:       return 6;
-        case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:      return 7;
-        default:                                                    return 0;
+        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:          return 1;
+        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:       return 3;
+        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:       return 4;
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED: return 5;
+        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:      return 6;
+        case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:     return 7;
+        default:                                                   return 0;
     }
 }
 
 /// What the message layer's update returns. The public update returns void.
 enum rocketnet_update_result_t
 {
-    ROCKETNET_UPDATE_OK                                         =  0,  ///< The update ran
-    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED                       = -1   ///< A received message view was still held at update
+    ROCKETNET_UPDATE_OK = 0,  ///< The update ran
+    ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED = -1   ///< A received message view was still held at update
 };
 
 /// The process-wide log level in force: a relaxed atomic read for the SDK's
@@ -201,22 +202,28 @@ struct rocketnet_packet_context_t;      // defined below, with the send surface
  * @param format NUL-terminated printf format; NULL is a counted no-op.
  * The remaining arguments must match the conversion specifiers in format.
  */
-ROCKETNET_PRINTF_FORMAT( 2, 3 ) void rocketnet_printf( int level, const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 2, 3 )
+void rocketnet_printf( int level, const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_INFO. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_info( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 )
+void rocketnet_info( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_WARN. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_warn( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 )
+void rocketnet_warn( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_ERROR. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_error( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 )
+void rocketnet_error( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_DEBUG. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_debug( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 )
+void rocketnet_debug( const char * format, ... );
 
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
-ROCKETNET_PRINTF_FORMAT( 1, 2 ) void rocketnet_spam( const char * format, ... );
+ROCKETNET_PRINTF_FORMAT( 1, 2 )
+void rocketnet_spam( const char * format, ... );
 
 /** @brief Formats a user identifier as lowercase hexadecimal. @param user_id Identifier to format. @param buffer Caller-owned output buffer; NULL is a counted no-op returning NULL. @param buffer_size Buffer capacity in bytes; zero writes no bytes. @return buffer, or NULL when buffer is NULL. A nonempty buffer is NUL-terminated and may contain a truncated string. */
 const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size );
@@ -330,9 +337,9 @@ struct rocketnet_client_transport_config_t
     /** @brief Ordered transport candidate list; defaults to auto. */
     char transport[ROCKETNET_TRANSPORT_STRING_LENGTH];    // the candidate list; default "auto"
     /** @brief Optional state transition callback; NULL disables it. It receives the create context and previous and current states. */
-    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
+    void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
-    double (*time_callback)( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
+    double ( *time_callback )( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
     uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t step_driven;                           // development only: 1 runs the I/O step on the caller; production leaves this 0
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
@@ -704,7 +711,12 @@ int rocketnet_client_transport_acked_packets( struct rocketnet_client_transport_
 struct rocketnet_address_t
 {
     /** @brief Address bytes or groups selected by type. */
-    union { uint32_t ip; uint8_t ipv4[4]; uint16_t ipv6[8]; } data;
+    union
+    {
+        uint32_t ip;
+        uint8_t ipv4[4];
+        uint16_t ipv6[8];
+    } data;
     /** @brief Port from 0 through 65535; zero means no explicit port. */
     uint16_t port;
     /** @brief ROCKETNET_ADDRESS_NONE, ROCKETNET_ADDRESS_IPV4, or ROCKETNET_ADDRESS_IPV6. */
@@ -1683,9 +1695,9 @@ uint64_t rocketnet_message_client_required_memory( const struct rocketnet_messag
 // a NULL connect_token is a counted no-op that returns NULL. NULL configs are the defaults.
 // create reads no clock: the connect attempt starts at the first update, at whatever time the game passes it, and every time comes in through update.
 struct rocketnet_message_client_t * rocketnet_message_client_create( void * context, const uint8_t * connect_token,
-                                                                                    const struct rocketnet_client_transport_config_t * transport_config,
-                                                                                    const struct rocketnet_message_config_t * message_config,
-                                                                                    void * memory, uint64_t memory_bytes, uint32_t send_kbps );
+                                                                     const struct rocketnet_client_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
 // As rocketnet_message_client_create, with the section-2.1 code written to
 // *status on every return path when status is not NULL: the transport's own
@@ -1717,9 +1729,9 @@ struct rocketnet_message_client_t * rocketnet_message_client_create_ex( void * c
  * @details The library must be initialized first. Unknown non-NULL config sizes are refused before create checks. The object owns its transport; destroy the client to release it. A supplied memory region remains caller-owned and must outlive the client.
  */
 struct rocketnet_message_client_t * rocketnet_message_client_create_sized( void * context, const uint8_t * connect_token,
-                                                                                          const struct rocketnet_client_transport_config_t * transport_config, size_t transport_config_bytes,
-                                                                                          const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
-                                                                                          void * memory, uint64_t memory_bytes, uint32_t send_kbps );
+                                                                           const struct rocketnet_client_transport_config_t * transport_config, size_t transport_config_bytes,
+                                                                           const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
+                                                                           void * memory, uint64_t memory_bytes, uint32_t send_kbps );
 
 // a NULL client is a counted no-op.
 void rocketnet_message_client_destroy( struct rocketnet_message_client_t * client );
@@ -1802,9 +1814,9 @@ uint64_t rocketnet_message_server_required_memory( const struct rocketnet_server
 
 // a NULL address is a counted no-op that returns NULL. NULL configs are the defaults.
 struct rocketnet_message_server_t * rocketnet_message_server_create( void * context, const char * address,
-                                                                                    const struct rocketnet_server_transport_config_t * transport_config,
-                                                                                    const struct rocketnet_message_config_t * message_config,
-                                                                                    void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
+                                                                     const struct rocketnet_server_transport_config_t * transport_config,
+                                                                     const struct rocketnet_message_config_t * message_config,
+                                                                     void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
 // As rocketnet_message_server_create, with the section-2.1 code written to
 // *status on every return path when status is not NULL: the transport's own
@@ -1836,9 +1848,9 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_ex( void * c
  * @details The library must be initialized first. Unknown non-NULL config sizes are refused before create checks. Destroy the server to release its owned transport. Supplied memory remains caller-owned and must outlive the server.
  */
 struct rocketnet_message_server_t * rocketnet_message_server_create_sized( void * context, const char * address,
-                                                                                          const struct rocketnet_server_transport_config_t * transport_config, size_t transport_config_bytes,
-                                                                                          const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
-                                                                                          void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
+                                                                           const struct rocketnet_server_transport_config_t * transport_config, size_t transport_config_bytes,
+                                                                           const struct rocketnet_message_config_t * message_config, size_t message_config_bytes,
+                                                                           void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps );
 
 // a NULL server is a counted no-op.
 void rocketnet_message_server_destroy( struct rocketnet_message_server_t * server );

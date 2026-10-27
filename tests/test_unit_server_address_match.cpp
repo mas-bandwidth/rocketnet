@@ -39,7 +39,7 @@ struct rocketnet_server_address_match_server_t
 
 static void rocketnet_server_address_match_server_setup( struct rocketnet_server_address_match_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -83,8 +83,8 @@ static void rocketnet_server_address_match_mint_request( uint8_t * request, uint
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -131,17 +131,17 @@ void test_rocketnet_test_server_address_match_v4_mapped()
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
     const uint64_t before = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 100.0,
-                                                                               response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before );
 
     // v4-mapped ::ffff:127.0.0.1:40000, normalised to the same loopback
-    const uint8_t mapped_ipv6[18] = { 0,0, 0,0, 0,0, 0,0, 0,0, 0xFF,0xFF, 0x00,0x7F, 0x01,0x00, 0x40,0x9c };
+    const uint8_t mapped_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x00, 0x7F, 0x01, 0x00, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, mapped_ipv6 );
     const uint64_t before_mapped = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 100.0,
-                                                                               response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_mapped );
 
     // a foreign IPv4 is still refused
@@ -149,8 +149,8 @@ void test_rocketnet_test_server_address_match_v4_mapped()
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, foreign_ipv4, NULL );
     const uint64_t before_foreign = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 100.0,
-                                                                               response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
+                                                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_foreign + 1 );
 
     rocketnet_server_address_match_server_teardown( &test );
@@ -177,40 +177,40 @@ void test_rocketnet_test_server_address_match_two_address_token()
 
     // 127.0.0.1:40000 and [::1]:40000
     const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
-    const uint8_t loopback_ipv6[18] = { 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0x01,0x00, 0x40,0x9c };
+    const uint8_t loopback_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
 
     // an IPv4 server at 127.0.0.1:40000, no IPv6
-    memset( &test.server.advertised_ipv6, 0, sizeof(test.server.advertised_ipv6) );
+    memset( &test.server.advertised_ipv6, 0, sizeof( test.server.advertised_ipv6 ) );
     rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
 
     rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
     const uint64_t before_ipv4 = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                               response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_ipv4 );
 
     // an IPv6 server at [::1]:40000, no IPv4; the request arrives over IPv6,
     // so the token's IPv6 address is the one checked (TokenAddressAdvertised)
-    memset( &test.server.advertised_ipv4, 0, sizeof(test.server.advertised_ipv4) );
+    memset( &test.server.advertised_ipv4, 0, sizeof( test.server.advertised_ipv4 ) );
     rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::1]:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "[2001:db8::7]:56789" ) );
 
     rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
     const uint64_t before_ipv6 = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                               response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                                response, &response_bytes ) != ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_ipv6 );
 
     // both addresses foreign to the IPv6 server: still refused
     const uint8_t foreign_ipv4[6] = { 198, 51, 100, 1, 0x40, 0x9c };
-    const uint8_t foreign_ipv6[18] = { 0x01,0x20, 0xb8,0x0d, 0,0, 0,0, 0,0, 0,0, 0,0, 0x01,0x00, 0x40,0x9c };
+    const uint8_t foreign_ipv6[18] = { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, both, foreign_ipv4, foreign_ipv6 );
     const uint64_t before_foreign = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
-                                                                               request, sizeof(request), ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                               response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+                                                                                request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                                response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( test.counters.values[addr_counter] == before_foreign + 1 );
 
     rocketnet_server_address_match_server_teardown( &test );

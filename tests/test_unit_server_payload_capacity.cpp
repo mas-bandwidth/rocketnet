@@ -53,8 +53,8 @@ static void test_server_payload_capacity_uses_live_session_path()
 {
     struct rocketnet_server_protocol_t server;
     struct rocketnet_counters_t counters;
-    memset( &server, 0, sizeof(server) );
-    memset( &counters, 0, sizeof(counters) );
+    memset( &server, 0, sizeof( server ) );
+    memset( &counters, 0, sizeof( counters ) );
 
     uint64_t connection_ids[1] = { 41 };
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -82,10 +82,38 @@ static void test_server_payload_capacity_uses_live_session_path()
     mapping->control->established = 1;
 
     const uint8_t expected[32] = {
-        0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-        0x10, 0x32, 0x54, 0x76, 0x98, 0xba, 0xdc, 0xfe,
-        0xff, 0xee, 0xdd, 0xcc, 0xbb, 0xaa, 0x99, 0x88,
-        0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11, 0x00,
+        0x01,
+        0x23,
+        0x45,
+        0x67,
+        0x89,
+        0xab,
+        0xcd,
+        0xef,
+        0x10,
+        0x32,
+        0x54,
+        0x76,
+        0x98,
+        0xba,
+        0xdc,
+        0xfe,
+        0xff,
+        0xee,
+        0xdd,
+        0xcc,
+        0xbb,
+        0xaa,
+        0x99,
+        0x88,
+        0x77,
+        0x66,
+        0x55,
+        0x44,
+        0x33,
+        0x22,
+        0x11,
+        0x00,
     };
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
@@ -95,14 +123,14 @@ static void test_server_payload_capacity_uses_live_session_path()
     int payload_bytes = 777;
     int payload_client_index = 777;
 
-    int packet_bytes = seal_payload( packet, 1, expected, (int) sizeof(expected) );
+    int packet_bytes = seal_payload( packet, 1, expected, (int) sizeof( expected ) );
     rocketnet_unit_check( packet_bytes > 0 );
     const struct rocketnet_counters_t before_small = counters;
     rocketnet_unit_check( rocketnet_server_protocol_process_received( &server, &from, mapping_index,
                                                                       packet, packet_bytes,
                                                                       ROCKETNET_TEST_CREATE_TS, 100.0,
                                                                       response, &response_bytes,
-                                                                      opened, (int) sizeof(expected) - 1,
+                                                                      opened, (int) sizeof( expected ) - 1,
                                                                       &payload, &payload_bytes,
                                                                       &payload_client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( response_bytes == 0 );
@@ -119,19 +147,19 @@ static void test_server_payload_capacity_uses_live_session_path()
                          ROCKETNET_COUNTER_PAYLOAD_RECEIVED,
                          ROCKETNET_COUNTER_RECEIVE_CURSOR_TOO_SMALL );
 
-    packet_bytes = seal_payload( packet, 2, expected, (int) sizeof(expected) );
+    packet_bytes = seal_payload( packet, 2, expected, (int) sizeof( expected ) );
     rocketnet_unit_check( packet_bytes > 0 );
     const struct rocketnet_counters_t before_fit = counters;
     rocketnet_unit_check( rocketnet_server_protocol_process_received( &server, &from, mapping_index,
                                                                       packet, packet_bytes,
                                                                       ROCKETNET_TEST_CREATE_TS, 100.1,
                                                                       response, &response_bytes,
-                                                                      opened, (int) sizeof(expected),
+                                                                      opened, (int) sizeof( expected ),
                                                                       &payload, &payload_bytes,
                                                                       &payload_client_index ) == ROCKETNET_SERVER_PROCESS_ACCEPTED );
-    rocketnet_unit_check( payload >= opened && payload + payload_bytes <= opened + sizeof(opened) );
-    rocketnet_unit_check( payload_bytes == (int) sizeof(expected) );
-    rocketnet_unit_check( memcmp( payload, expected, sizeof(expected) ) == 0 );
+    rocketnet_unit_check( payload >= opened && payload + payload_bytes <= opened + sizeof( opened ) );
+    rocketnet_unit_check( payload_bytes == (int) sizeof( expected ) );
+    rocketnet_unit_check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
     rocketnet_unit_check( payload_client_index == client_index );
     rocketnet_unit_check( server.payload_sequence == 2 );
     rocketnet_unit_check( server.payload_connection_id == connection_ids[client_index] );

@@ -20,8 +20,7 @@
 // context and closes with destroy counted once.
 static void test_fake_client_transport_io_opens_with_all_eight()
 {
-    const rocketnet_client_transport_io_operations_t * tables[] =
-    {
+    const rocketnet_client_transport_io_operations_t * tables[] = {
         &rocketnet_fake_client_operations_base,
         &rocketnet_fake_client_operations_io,
         &rocketnet_fake_client_operations_batch
@@ -83,18 +82,18 @@ static void test_fake_client_receive_batch_layout()
     rocketnet_address_t from[2];
     int bytes[2];
 
-    int got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t*) storage, 2048, bytes, 2 );
+    int got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t *) storage, 2048, bytes, 2 );
     rocketnet_unit_check( got == 2 );
     rocketnet_unit_check( bytes[0] == 10 && bytes[1] == 20 );
     rocketnet_unit_check( rocketnet_address_equal( &from[0], &a1 ) );
     rocketnet_unit_check( rocketnet_address_equal( &from[1], &a2 ) );
 
-    got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t*) storage, 2048, bytes, 2 );
+    got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t *) storage, 2048, bytes, 2 );
     rocketnet_unit_check( got == 1 );
     rocketnet_unit_check( bytes[0] == 30 );
     rocketnet_unit_check( rocketnet_address_equal( &from[0], &a3 ) );
 
-    got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t*) storage, 2048, bytes, 2 );
+    got = rocketnet_fake_client_operations_batch.receive_batch( &fake, from, (uint8_t *) storage, 2048, bytes, 2 );
     rocketnet_unit_check( got == 0 );
 }
 
@@ -198,7 +197,9 @@ static void fake_disconnect_send( void * transport, const rocketnet_address_t * 
 
 static bool fake_disconnect_wait( void * transport, bool readable, double timeout_seconds )
 {
-    (void) transport; (void) readable; (void) timeout_seconds;
+    (void) transport;
+    (void) readable;
+    (void) timeout_seconds;
     return false;
 }
 
@@ -276,7 +277,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     const char * addresses[] = { server_string };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret, server_public,
-        fake_disconnect_protocol_id, addresses, 1, 0xF00DULL, 1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                                    fake_disconnect_protocol_id, addresses, 1, 0xF00DULL, 1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_io_operations_t operations = *rocketnet_loopback_transport.client;
     operations.send = fake_disconnect_send;

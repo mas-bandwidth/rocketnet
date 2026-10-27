@@ -93,8 +93,8 @@ static void rocketnet_fuzz_build_base_token()
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
 
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
@@ -199,7 +199,7 @@ static void rocketnet_fuzz_token_ladder( const uint8_t * token_data, int touched
 static void rocketnet_fuzz_client_connect( const uint8_t * token_data, uint64_t current_timestamp )
 {
     static struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     static struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
@@ -301,7 +301,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         // the transport's fixed-length receive path presents it
         if ( body_size > ROCKETNET_CONNECT_TOKEN_BYTES )
             body_size = ROCKETNET_CONNECT_TOKEN_BYTES;
-        memset( token_data, 0, sizeof(token_data) );
+        memset( token_data, 0, sizeof( token_data ) );
         memcpy( token_data, body, body_size );
 
         rocketnet_fuzz_token_ladder( token_data, 0, 0, 0 );
@@ -314,13 +314,13 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // and the oracle switches track only EFFECTIVE flips.
     rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_STRUCTURED;
 
-    memcpy( token_data, rocketnet_fuzz_base_token, sizeof(token_data) );
+    memcpy( token_data, rocketnet_fuzz_base_token, sizeof( token_data ) );
 
     size_t offset = 0;
     while ( offset + 3 <= body_size )
     {
-        const int position = (int) ( ( (size_t) body[offset] | ( (size_t) body[offset+1] << 8 ) ) % ROCKETNET_CONNECT_TOKEN_BYTES );
-        token_data[position] ^= body[offset+2];
+        const int position = (int) ( ( (size_t) body[offset] | ( (size_t) body[offset + 1] << 8 ) ) % ROCKETNET_CONNECT_TOKEN_BYTES );
+        token_data[position] ^= body[offset + 2];
         offset += 3;
     }
 
@@ -330,9 +330,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // token a forgery
     const int touched_covered = memcmp( token_data, rocketnet_fuzz_base_token, FUZZ_TOKEN_COVERED_BYTES ) != 0;
     const int touched_any = touched_covered ||
-        memcmp( token_data + FUZZ_TOKEN_COVERED_BYTES,
-                rocketnet_fuzz_base_token + FUZZ_TOKEN_COVERED_BYTES,
-                ROCKETNET_CONNECT_TOKEN_BYTES - FUZZ_TOKEN_COVERED_BYTES ) != 0;
+                            memcmp( token_data + FUZZ_TOKEN_COVERED_BYTES,
+                                    rocketnet_fuzz_base_token + FUZZ_TOKEN_COVERED_BYTES,
+                                    ROCKETNET_CONNECT_TOKEN_BYTES - FUZZ_TOKEN_COVERED_BYTES ) != 0;
 
     if ( touched_covered )
         rocketnet_fuzz_connect_coverage |= ROCKETNET_FUZZ_CONNECT_COVERED_MUTATION;
@@ -375,8 +375,7 @@ struct rocketnet_fuzz_connect_seed_spec_t
     int kind;
 };
 
-static const struct rocketnet_fuzz_connect_seed_spec_t rocketnet_fuzz_connect_seed_specs[] =
-{
+static const struct rocketnet_fuzz_connect_seed_spec_t rocketnet_fuzz_connect_seed_specs[] = {
     { "seed_type_signature_rejected", ROCKETNET_FUZZ_CONNECT_RAW | ROCKETNET_FUZZ_CONNECT_SIGNATURE_REJECTED, ROCKETNET_FUZZ_CONNECT_SEED_ARBITRARY },
     { "seed_type_client_flags_invalid", ROCKETNET_FUZZ_CONNECT_RAW | ROCKETNET_FUZZ_CONNECT_CLIENT_FLAGS | ROCKETNET_FUZZ_CONNECT_SIGNATURE_REJECTED, ROCKETNET_FUZZ_CONNECT_SEED_FLAGS },
     { "seed_type_client_version_invalid", ROCKETNET_FUZZ_CONNECT_RAW | ROCKETNET_FUZZ_CONNECT_CLIENT_VERSION | ROCKETNET_FUZZ_CONNECT_SIGNATURE_REJECTED, ROCKETNET_FUZZ_CONNECT_SEED_VERSION },
@@ -417,8 +416,8 @@ static void rocketnet_fuzz_connect_mint_token( uint8_t address_flags, int ipv6, 
 {
     struct rocketnet_signed_connect_data_t sf;
     struct rocketnet_connect_token_private_t pf;
-    memset( &sf, 0, sizeof(sf) );
-    memset( &pf, 0, sizeof(pf) );
+    memset( &sf, 0, sizeof( sf ) );
+    memset( &pf, 0, sizeof( pf ) );
     sf.version = ROCKETNET_WIRE_VERSION;
     sf.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     sf.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -481,7 +480,7 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
     output[1] = 0;
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    memset( token, 0, sizeof(token) );
+    memset( token, 0, sizeof( token ) );
 
     switch ( kind )
     {
@@ -491,20 +490,20 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
             break;
         case ROCKETNET_FUZZ_CONNECT_SEED_FLAGS:
             rocketnet_fuzz_connect_fill_header( token, ROCKETNET_WIRE_VERSION, 0x04,
-                ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 300, 10 );
+                                                ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 300, 10 );
             break;
         case ROCKETNET_FUZZ_CONNECT_SEED_VERSION:
             rocketnet_fuzz_connect_fill_header( token, 0, ROCKETNET_ADDRESS_FLAG_IPV4,
-                ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 300, 10 );
+                                                ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 300, 10 );
             break;
         case ROCKETNET_FUZZ_CONNECT_SEED_WINDOW:
             rocketnet_fuzz_connect_fill_header( token, ROCKETNET_WIRE_VERSION, ROCKETNET_ADDRESS_FLAG_IPV4,
-                ROCKETNET_TEST_CREATE_TS + 300, ROCKETNET_TEST_CREATE_TS, 10 );
+                                                ROCKETNET_TEST_CREATE_TS + 300, ROCKETNET_TEST_CREATE_TS, 10 );
             break;
         case ROCKETNET_FUZZ_CONNECT_SEED_EXPIRED:
             output[1] = 5;
             rocketnet_fuzz_connect_fill_header( token, ROCKETNET_WIRE_VERSION, ROCKETNET_ADDRESS_FLAG_IPV4,
-                ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 300, 10 );
+                                                ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_CREATE_TS + 300, 10 );
             break;
         case ROCKETNET_FUZZ_CONNECT_SEED_IPV4:
             rocketnet_fuzz_connect_mint_token( ROCKETNET_ADDRESS_FLAG_IPV4, 0, token );
@@ -516,7 +515,7 @@ static size_t rocketnet_fuzz_connect_build_seed( int kind, uint8_t * output, siz
             return 0;
     }
 
-    memcpy( output + 2, token, sizeof(token) );
+    memcpy( output + 2, token, sizeof( token ) );
     return 2 + ROCKETNET_CONNECT_TOKEN_BYTES;
 }
 

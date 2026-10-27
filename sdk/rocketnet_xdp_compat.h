@@ -52,10 +52,10 @@ static inline int rocketnet_xdp_query_attached( int interface_index, rocketnet_x
 {
 #if ROCKETNET_XDP_LEGACY_LIBBPF
     struct xdp_link_info info = {};
-    const int result = bpf_get_link_xdp_info( interface_index, &info, sizeof(info), 0 );
+    const int result = bpf_get_link_xdp_info( interface_index, &info, sizeof( info ), 0 );
 #else
     struct bpf_xdp_query_opts info = {};
-    info.sz = sizeof(info);
+    info.sz = sizeof( info );
     const int result = bpf_xdp_query( interface_index, 0, &info );
 #endif
     attached->prog_id = info.prog_id;
@@ -71,9 +71,11 @@ static inline rocketnet_xdp_program_t * rocketnet_xdp_program_open( struct bpf_o
 {
 #if ROCKETNET_XDP_LEGACY_LIBBPF
     struct bpf_program * program = bpf_object__find_program_by_name( object, "server_xdp_filter" );
-    if ( !program ) return NULL;
+    if ( !program )
+        return NULL;
     bpf_program__set_type( program, BPF_PROG_TYPE_XDP );
-    if ( bpf_object__load( object ) != 0 ) return NULL;
+    if ( bpf_object__load( object ) != 0 )
+        return NULL;
     return program;
 #else
     struct xdp_program * program = xdp_program__from_bpf_obj( object, "server_xdp" );
@@ -97,7 +99,7 @@ static inline int rocketnet_xdp_program_detach( rocketnet_xdp_program_t * progra
     // Compare-and-detach: never remove a program that replaced ours after
     // attachment. The kernel checks old_fd atomically with the detach.
     struct bpf_xdp_set_link_opts options = {};
-    options.sz = sizeof(options);
+    options.sz = sizeof( options );
     options.old_fd = bpf_program__fd( program );
     const __u32 flags = ( skb ? XDP_FLAGS_SKB_MODE : XDP_FLAGS_DRV_MODE ) | XDP_FLAGS_REPLACE;
     return bpf_set_link_xdp_fd_opts( interface_index, -1, flags, &options );

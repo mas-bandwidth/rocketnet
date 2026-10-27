@@ -11,8 +11,8 @@ struct dispatch_fixture
     uint64_t starts, finishes, sum;
     uint8_t frame[16];
 };
-void dispatch_fixture_init(dispatch_fixture *);
-uint8_t * dispatch_fixture_start(void *, const rocketnet_address_t *, uint64_t *);
-void dispatch_fixture_finish(void *, uint64_t, uint8_t *, int);
+void dispatch_fixture_init( dispatch_fixture * );
+uint8_t * dispatch_fixture_start( void *, const rocketnet_address_t *, uint64_t * );
+void dispatch_fixture_finish( void *, uint64_t, uint8_t *, int );
 
 #endif // ROCKETNET_BENCH_DRIVER_DISPATCH_FIXTURE_H

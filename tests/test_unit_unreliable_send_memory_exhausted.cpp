@@ -30,7 +30,10 @@ static double unreliable_exhaust_clock( void * ) { return g_unreliable_exhaust_n
 static int g_unreliable_exhaust_asserts = 0;
 static void unreliable_exhaust_count_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
     g_unreliable_exhaust_asserts++;
 }
 
@@ -39,11 +42,15 @@ static void unreliable_exhaust_frame( rocketnet_server_t * server, rocketnet_cli
     for ( int i = 0; i < num_clients; i++ )
     {
         rocketnet_client_update( clients[i], g_unreliable_exhaust_now );
-        while ( rocketnet_client_receive_messages( clients[i] ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( clients[i] ) != NULL )
+        {
+        }
         rocketnet_client_send_packets( clients[i] );
     }
     rocketnet_server_update( server, g_unreliable_exhaust_now );
-    while ( rocketnet_server_receive_messages( server ) != NULL ) {}
+    while ( rocketnet_server_receive_messages( server ) != NULL )
+    {
+    }
     rocketnet_server_send_packets( server );
     g_unreliable_exhaust_now += 0.01;
 }
@@ -90,7 +97,7 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
 
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         check( rn_test_server_token_string( backend_secret, server, UNRELIABLE_EXHAUST_PROTOCOL, addresses, 1,
-            (uint64_t) ( 0x81 + i ), 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+                                            (uint64_t) ( 0x81 + i ), 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
         check( rocketnet_client_connect( clients[i], token ) == ROCKETNET_STATUS_OK );
     }
 

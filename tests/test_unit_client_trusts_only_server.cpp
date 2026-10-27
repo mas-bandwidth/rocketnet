@@ -49,7 +49,7 @@ static const int32_t client_trusts_timeout_seconds = 5;
 static void client_trusts_mint( uint8_t * token_data )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -61,7 +61,7 @@ static void client_trusts_mint( uint8_t * token_data )
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -74,7 +74,7 @@ static void client_trusts_mint( uint8_t * token_data )
 // connects at 1000.0 and sends the first request at 1000.0
 static void client_trusts_connect( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
 {
-    memset( counters, 0, sizeof(*counters) );
+    memset( counters, 0, sizeof( *counters ) );
     rocketnet_client_protocol_init( client, counters );
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_trusts_mint( token_data );
@@ -97,7 +97,7 @@ static void client_trusts_deliver_cookie( struct rocketnet_client_protocol_t * c
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     check( rocketnet_client_protocol_process_packet( client, cookie, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES, time,
-                                                     payload, sizeof(payload), &payload_bytes ) );
+                                                     payload, sizeof( payload ), &payload_bytes ) );
 }
 
 // a cookie in requesting cookie (1) and again in sending connection request
@@ -175,7 +175,7 @@ static double client_trusts_time( void * context )
 static void client_trusts_transport_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;

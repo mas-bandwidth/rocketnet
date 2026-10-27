@@ -194,7 +194,7 @@ int main( void )
     __CPROVER_assert( rocketnet_reconstruct_u24( (uint32_t) n, reference ) == n,
                       "24-bit in-window value round-trips across the wrap" );
 
-#if defined(REACHABILITY_CONTROL)
+#if defined( REACHABILITY_CONTROL )
     __CPROVER_assert( 0, "reconstruct reachability control" );
 #endif
     return 0;

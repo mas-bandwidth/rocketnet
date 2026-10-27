@@ -57,7 +57,7 @@ static void test_platform_mac_primary_interface_refuses_null()
 static void test_platform_socket_hygiene_mapped_source_decision()
 {
     struct rocketnet_address_t mapped;
-    memset( &mapped, 0, sizeof(mapped) );
+    memset( &mapped, 0, sizeof( mapped ) );
     rocketnet_unit_check( rocketnet_address_parse( &mapped, "[::ffff:1.2.3.4]:40000" ) );
     rocketnet_unit_check( rocketnet_address_is_ipv4_in_ipv6( &mapped ) );
 
@@ -74,36 +74,36 @@ static void test_platform_socket_hygiene_mapped_source_decision()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
     // On the receive path with a non-dual-stack socket:
     struct rocketnet_platform_socket_t s;
-    memset( &s, 0, sizeof(s) );
+    memset( &s, 0, sizeof( s ) );
     s.ipv6 = false; // non-dual-stack
 
     struct sockaddr_storage storage;
-    memset( &storage, 0, sizeof(storage) );
-    struct sockaddr_in6 * in6 = (struct sockaddr_in6*) &storage;
+    memset( &storage, 0, sizeof( storage ) );
+    struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) &storage;
     in6->sin6_family = AF_INET6;
     in6->sin6_port = htons( 40000 );
     inet_pton( AF_INET6, "::ffff:1.2.3.4", &in6->sin6_addr );
 
     struct rocketnet_address_t from;
-    memset( &from, 0, sizeof(from) );
+    memset( &from, 0, sizeof( from ) );
     bool accepted = rocketnet_platform_mmsg_read_sockaddr( &s, &storage, &from );
     // At BASE, mmsg_read_sockaddr accepted the mapped source on a non-dual-stack socket (accepted == true).
     // With the fix, it calls rocketnet_address_accept_received_source and refuses it (accepted == false).
     rocketnet_unit_check( !accepted );
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     struct rocketnet_platform_socket_t s;
-    memset( &s, 0, sizeof(s) );
+    memset( &s, 0, sizeof( s ) );
     s.ipv6 = false; // non-dual-stack
 
     struct sockaddr_storage storage;
-    memset( &storage, 0, sizeof(storage) );
-    struct sockaddr_in6 * in6 = (struct sockaddr_in6*) &storage;
+    memset( &storage, 0, sizeof( storage ) );
+    struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) &storage;
     in6->sin6_family = AF_INET6;
     in6->sin6_port = htons( 40000 );
     inet_pton( AF_INET6, "::ffff:1.2.3.4", &in6->sin6_addr );
 
     struct rocketnet_address_t from;
-    memset( &from, 0, sizeof(from) );
+    memset( &from, 0, sizeof( from ) );
     bool accepted = rocketnet_msgx_read_sockaddr( &s, &storage, &from );
     rocketnet_unit_check( !accepted );
 #endif
@@ -123,7 +123,7 @@ static void test_platform_socket_hygiene_timeout_milliseconds_rounds_up()
 {
     rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 0.0005f ) == 1 );
     rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1.5f ) == 1500 );
-    rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1e10f ) == UINT32_C(0xFFFFFFFE) );
+    rocketnet_unit_check( rocketnet_platform_timeout_milliseconds( 1e10f ) == UINT32_C( 0xFFFFFFFE ) );
 }
 
 static void test_platform_socket_hygiene_sleep_split()
@@ -168,12 +168,12 @@ struct platform_socket_hygiene_script_t
 
 static int platform_socket_hygiene_scripted_receive( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from )
 {
-    platform_socket_hygiene_script_t * script = (platform_socket_hygiene_script_t*) user;
+    platform_socket_hygiene_script_t * script = (platform_socket_hygiene_script_t *) user;
     const int index = script->calls++;
     if ( index >= script->count )
         return -1;
     const platform_socket_hygiene_datagram_t * datagram = &script->datagrams[index];
-    struct sockaddr_in6 * in6 = (struct sockaddr_in6*) from;
+    struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) from;
     in6->sin6_family = AF_INET6;
     in6->sin6_port = htons( datagram->port );
     memcpy( &in6->sin6_addr, datagram->addr, 16 );
@@ -186,7 +186,7 @@ static int platform_socket_hygiene_scripted_receive( void * user, void * packet_
 static int platform_socket_hygiene_receive_scripted( bool ipv6, platform_socket_hygiene_script_t * script, struct rocketnet_address_t * from, uint8_t * packet, int packet_capacity )
 {
     struct rocketnet_platform_socket_t socket;
-    memset( &socket, 0, sizeof(socket) );
+    memset( &socket, 0, sizeof( socket ) );
     socket.ipv6 = ipv6;
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     socket.handle = INVALID_SOCKET;
@@ -203,7 +203,7 @@ static int platform_socket_hygiene_receive_scripted( bool ipv6, platform_socket_
 static void test_platform_socket_hygiene_batch_hook_drained_reads_nothing()
 {
     struct rocketnet_platform_socket_t socket;
-    memset( &socket, 0, sizeof(socket) );
+    memset( &socket, 0, sizeof( socket ) );
     socket.handle = INVALID_SOCKET;
     platform_socket_hygiene_script_t script = { NULL, 0, 0 };
     rocketnet_platform_socket_set_receive_hook( &socket, platform_socket_hygiene_scripted_receive, &script );
@@ -218,8 +218,8 @@ static void test_platform_socket_hygiene_batch_hook_drained_reads_nothing()
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_batch_hook_drained_reads_nothing );
 #endif
 
-static const platform_socket_hygiene_datagram_t platform_socket_hygiene_mapped = { { 0,0,0,0, 0,0,0,0, 0,0,0xff,0xff, 1,2,3,4 }, 40000, "spoof" };
-static const platform_socket_hygiene_datagram_t platform_socket_hygiene_native = { { 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,1 }, 40001, "good" };
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_mapped = { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4 }, 40000, "spoof" };
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_native = { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }, 40001, "good" };
 
 static void test_platform_socket_hygiene_refused_source_reads_next()
 {
@@ -229,9 +229,9 @@ static void test_platform_socket_hygiene_refused_source_reads_next()
     const platform_socket_hygiene_datagram_t datagrams[] = { platform_socket_hygiene_mapped, platform_socket_hygiene_native };
     platform_socket_hygiene_script_t script = { datagrams, 2, 0 };
     struct rocketnet_address_t from;
-    memset( &from, 0, sizeof(from) );
+    memset( &from, 0, sizeof( from ) );
     uint8_t packet[64];
-    const int bytes = platform_socket_hygiene_receive_scripted( false, &script, &from, packet, (int) sizeof(packet) );
+    const int bytes = platform_socket_hygiene_receive_scripted( false, &script, &from, packet, (int) sizeof( packet ) );
     rocketnet_unit_check( bytes == 4 );
     rocketnet_unit_check( memcmp( packet, "good", 4 ) == 0 );
     rocketnet_unit_check( script.calls == 2 );
@@ -248,9 +248,9 @@ static void test_platform_socket_hygiene_refused_source_then_drained()
     const platform_socket_hygiene_datagram_t datagrams[] = { platform_socket_hygiene_mapped, platform_socket_hygiene_mapped };
     platform_socket_hygiene_script_t script = { datagrams, 2, 0 };
     struct rocketnet_address_t from;
-    memset( &from, 0, sizeof(from) );
+    memset( &from, 0, sizeof( from ) );
     uint8_t packet[64];
-    const int bytes = platform_socket_hygiene_receive_scripted( false, &script, &from, packet, (int) sizeof(packet) );
+    const int bytes = platform_socket_hygiene_receive_scripted( false, &script, &from, packet, (int) sizeof( packet ) );
     rocketnet_unit_check( bytes == 0 );
     rocketnet_unit_check( script.calls == 3 );
 }
@@ -263,10 +263,10 @@ static void test_platform_socket_hygiene_dual_stack_accepts_mapped()
     const platform_socket_hygiene_datagram_t datagrams[] = { platform_socket_hygiene_mapped };
     platform_socket_hygiene_script_t script = { datagrams, 1, 0 };
     struct rocketnet_address_t from;
-    memset( &from, 0, sizeof(from) );
+    memset( &from, 0, sizeof( from ) );
     uint8_t packet[64];
-    const int bytes = platform_socket_hygiene_receive_scripted( true, &script, &from, packet, (int) sizeof(packet) );
-#if defined(__OpenBSD__)
+    const int bytes = platform_socket_hygiene_receive_scripted( true, &script, &from, packet, (int) sizeof( packet ) );
+#if defined( __OpenBSD__ )
     // OpenBSD keeps IPv6 sockets IPv6-only, so a mapped source is refused.
     rocketnet_unit_check( bytes == 0 );
     rocketnet_unit_check( script.calls == 2 );
@@ -289,7 +289,7 @@ static void test_platform_socket_hygiene_dual_stack_accepts_mapped()
 static int platform_socket_hygiene_weather_drain( bool msgx, int max_packets )
 {
     struct rocketnet_platform_socket_t socket;
-    memset( &socket, 0, sizeof(socket) );
+    memset( &socket, 0, sizeof( socket ) );
     socket.handle = -1;
     socket.msgx = msgx;
 
@@ -316,12 +316,12 @@ static void test_platform_receive_weather_drain_is_bounded()
 static void test_platform_single_receive_weather_drain_is_bounded()
 {
     struct rocketnet_platform_socket_t socket;
-    memset( &socket, 0, sizeof(socket) );
+    memset( &socket, 0, sizeof( socket ) );
     socket.handle = -1;
     struct rocketnet_address_t from;
     uint8_t packet_data[64];
     rocketnet_platform_inject_receive_errno_repeat_for_testing( ENOBUFS, 1000000 );
-    const int received = rocketnet_platform_socket_receive_packet( &socket, &from, packet_data, (int) sizeof(packet_data) );
+    const int received = rocketnet_platform_socket_receive_packet( &socket, &from, packet_data, (int) sizeof( packet_data ) );
     const int remaining = rocketnet_platform_receive_errno_remaining_for_testing();
     rocketnet_platform_inject_receive_errno_for_testing( 0 );
     rocketnet_unit_check( received == 0 );

@@ -90,8 +90,8 @@ static void receipts_kicked_token( const receipts_kicked_identity_t * identity, 
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
-        RECEIPTS_KICKED_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     RECEIPTS_KICKED_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
@@ -150,7 +150,9 @@ static uint32_t receipts_kicked_send_receipt_message( rocketnet_server_t * serve
 {
     uint8_t * p = rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 3 );
     check( p != NULL );
-    p[0] = value; p[1] = 2; p[2] = 3;
+    p[0] = value;
+    p[1] = 2;
+    p[2] = 3;
     const uint32_t serial = rocketnet_server_finish_message( server, 3 );
     check( serial != 0 );
     rocketnet_server_send_packets( server );

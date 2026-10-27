@@ -57,8 +57,7 @@ static inline bool rocketnet_rio_layout_plan(
     int address_bytes, uint64_t page_bytes,
     struct rocketnet_rio_layout_t * out )
 {
-    if ( send_frames <= 0 || receives <= 0 || frame_bytes <= 0
-      || receive_slice_bytes <= 0 || address_bytes <= 0 )
+    if ( send_frames <= 0 || receives <= 0 || frame_bytes <= 0 || receive_slice_bytes <= 0 || address_bytes <= 0 )
         return false;
     if ( page_bytes == 0 || ( page_bytes & ( page_bytes - 1 ) ) != 0 )
         return false;
@@ -72,31 +71,39 @@ static inline bool rocketnet_rio_layout_plan(
 
     // the send-frames sub-region starts at offset 0.
     uint64_t send_frames_bytes;
-    if ( send_frames_count > UINT64_MAX / frame_stride ) return false;
+    if ( send_frames_count > UINT64_MAX / frame_stride )
+        return false;
     send_frames_bytes = send_frames_count * frame_stride;
     uint64_t send_addresses_bytes;
-    if ( send_frames_count > UINT64_MAX / addr_stride ) return false;
+    if ( send_frames_count > UINT64_MAX / addr_stride )
+        return false;
     send_addresses_bytes = send_frames_count * addr_stride;
     uint64_t receive_slices_bytes;
-    if ( receives_count > UINT64_MAX / slice_stride ) return false;
+    if ( receives_count > UINT64_MAX / slice_stride )
+        return false;
     receive_slices_bytes = receives_count * slice_stride;
     uint64_t receive_addresses_bytes;
-    if ( receives_count > UINT64_MAX / addr_stride ) return false;
+    if ( receives_count > UINT64_MAX / addr_stride )
+        return false;
     receive_addresses_bytes = receives_count * addr_stride;
 
     uint64_t send_addresses_offset = send_frames_bytes;
     uint64_t receive_slices_offset;
-    if ( send_addresses_offset > UINT64_MAX - send_addresses_bytes ) return false;
+    if ( send_addresses_offset > UINT64_MAX - send_addresses_bytes )
+        return false;
     receive_slices_offset = send_addresses_offset + send_addresses_bytes;
     uint64_t receive_addresses_offset;
-    if ( receive_slices_offset > UINT64_MAX - receive_slices_bytes ) return false;
+    if ( receive_slices_offset > UINT64_MAX - receive_slices_bytes )
+        return false;
     receive_addresses_offset = receive_slices_offset + receive_slices_bytes;
     uint64_t end;
-    if ( receive_addresses_offset > UINT64_MAX - receive_addresses_bytes ) return false;
+    if ( receive_addresses_offset > UINT64_MAX - receive_addresses_bytes )
+        return false;
     end = receive_addresses_offset + receive_addresses_bytes;
 
     uint64_t total = rocketnet_rio_round_up64( end, page_bytes );
-    if ( total > UINT32_MAX ) return false;
+    if ( total > UINT32_MAX )
+        return false;
 
     out->send_frames_offset = 0;
     out->send_addresses_offset = send_addresses_offset;
@@ -121,41 +128,39 @@ static inline uint64_t rocketnet_rio_element_stride( int element_bytes )
 static inline uint64_t rocketnet_rio_send_frame_offset(
     const struct rocketnet_rio_layout_t * p, int index )
 {
-    if ( index < 0 || index >= p->send_frames ) return UINT64_MAX;
-    return p->send_frames_offset
-         + (uint64_t) index * rocketnet_rio_element_stride( p->frame_bytes );
+    if ( index < 0 || index >= p->send_frames )
+        return UINT64_MAX;
+    return p->send_frames_offset + (uint64_t) index * rocketnet_rio_element_stride( p->frame_bytes );
 }
 
 static inline uint64_t rocketnet_rio_send_address_offset(
     const struct rocketnet_rio_layout_t * p, int index )
 {
-    if ( index < 0 || index >= p->send_frames ) return UINT64_MAX;
-    return p->send_addresses_offset
-         + (uint64_t) index * rocketnet_rio_element_stride( p->address_bytes );
+    if ( index < 0 || index >= p->send_frames )
+        return UINT64_MAX;
+    return p->send_addresses_offset + (uint64_t) index * rocketnet_rio_element_stride( p->address_bytes );
 }
 
 static inline uint64_t rocketnet_rio_receive_slice_offset(
     const struct rocketnet_rio_layout_t * p, int index )
 {
-    if ( index < 0 || index >= p->receives ) return UINT64_MAX;
-    return p->receive_slices_offset
-         + (uint64_t) index * rocketnet_rio_element_stride( p->receive_slice_bytes );
+    if ( index < 0 || index >= p->receives )
+        return UINT64_MAX;
+    return p->receive_slices_offset + (uint64_t) index * rocketnet_rio_element_stride( p->receive_slice_bytes );
 }
 
 static inline uint64_t rocketnet_rio_receive_address_offset(
     const struct rocketnet_rio_layout_t * p, int index )
 {
-    if ( index < 0 || index >= p->receives ) return UINT64_MAX;
-    return p->receive_addresses_offset
-         + (uint64_t) index * rocketnet_rio_element_stride( p->address_bytes );
+    if ( index < 0 || index >= p->receives )
+        return UINT64_MAX;
+    return p->receive_addresses_offset + (uint64_t) index * rocketnet_rio_element_stride( p->address_bytes );
 }
 
 // packs kind in bits 56..63, phase in bits 48..55 and index in bits 0..31.
 static inline uint64_t rocketnet_rio_context( int kind, int phase, uint32_t index )
 {
-    return ( (uint64_t)(uint8_t) kind << 56 )
-         | ( (uint64_t)(uint8_t) phase << 48 )
-         | index;
+    return ( (uint64_t) (uint8_t) kind << 56 ) | ( (uint64_t) (uint8_t) phase << 48 ) | index;
 }
 
 static inline int rocketnet_rio_context_kind( uint64_t context )

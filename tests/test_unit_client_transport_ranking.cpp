@@ -145,7 +145,7 @@ static struct
 
 static void ranking_record_reset( const char * refuse_first, const char * refuse_second )
 {
-    memset( &ranking_record, 0, sizeof(ranking_record) );
+    memset( &ranking_record, 0, sizeof( ranking_record ) );
     ranking_record.refuse[0] = refuse_first;
     ranking_record.refuse[1] = refuse_second;
 }
@@ -154,7 +154,7 @@ static void * ranking_create( void * context, const rocketnet_client_transport_i
 {
     check( config && config->name );
     check( ranking_record.num_creates < RANKING_MAX_CREATES );
-    snprintf( ranking_record.creates[ranking_record.num_creates++], sizeof(ranking_record.creates[0]), "%s", config->name );
+    snprintf( ranking_record.creates[ranking_record.num_creates++], sizeof( ranking_record.creates[0] ), "%s", config->name );
     for ( int i = 0; i < 2; i++ )
         if ( ranking_record.refuse[i] && strcmp( ranking_record.refuse[i], config->name ) == 0 )
             return NULL;    // a refusal: no allocation failed, so the ladder falls
@@ -173,7 +173,7 @@ static struct
 static void ranking_log_capture( void *, enum rocketnet_log_level_t, const char * message, size_t )
 {
     if ( ranking_log.num_lines < RANKING_LOG_LINES )
-        snprintf( ranking_log.lines[ranking_log.num_lines++], sizeof(ranking_log.lines[0]), "%s", message );
+        snprintf( ranking_log.lines[ranking_log.num_lines++], sizeof( ranking_log.lines[0] ), "%s", message );
 }
 
 static int ranking_log_count( const char * text )
@@ -193,7 +193,7 @@ static double ranking_time( void * ) { return ranking_clock; }
 static void ranking_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
@@ -216,8 +216,8 @@ struct ranking_env_t
 
 static void ranking_env_set_aside( ranking_env_t * saved )
 {
-    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof(saved->value) ) != 0;
-#if defined(_WIN32)
+    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
+#if defined( _WIN32 )
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
 #else
     unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
@@ -228,7 +228,7 @@ static void ranking_env_put_back( const ranking_env_t * saved )
 {
     if ( !saved->was_set )
         return;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved->value );
 #else
     setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
@@ -248,7 +248,7 @@ struct ranking_result_t
 static ranking_result_t ranking_create_client( const char * transport, const char * refuse_first, const char * refuse_second )
 {
     ranking_record_reset( refuse_first, refuse_second );
-    memset( &ranking_log, 0, sizeof(ranking_log) );
+    memset( &ranking_log, 0, sizeof( ranking_log ) );
 
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.create = ranking_create;
@@ -258,7 +258,7 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
     ranking_token( token );
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.transport, sizeof(config.transport), "%s", transport );
+    snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.time_callback = ranking_time;
 
     const rocketnet_log_level_t saved_level = rocketnet_log_level_current();
@@ -266,7 +266,7 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
     rocketnet_log_function( ranking_log_capture, NULL );
 
     ranking_result_t result;
-    memset( &result, 0, sizeof(result) );
+    memset( &result, 0, sizeof( result ) );
     result.status = -1;
     ranking_clock = 1000.0;
     rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_ex( NULL, token, &config, ranking_clock, &operations, fake, &result.status );
@@ -277,7 +277,7 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
     result.created = client != NULL;
     if ( client )
     {
-        snprintf( result.name, sizeof(result.name), "%s", rocketnet_client_transport_io_name( client ) );
+        snprintf( result.name, sizeof( result.name ), "%s", rocketnet_client_transport_io_name( client ) );
         rn_test_client_transport_stop_and_destroy( client );
     }
     result.destroy_calls = fake->destroy_calls;
@@ -331,10 +331,10 @@ static void test_client_ranking_falls_back_to_portable()
 
         // the refusal is logged once, and the grant names it once
         char refused[64];
-        snprintf( refused, sizeof(refused), "client transport %s refused", native );
+        snprintf( refused, sizeof( refused ), "client transport %s refused", native );
         check( ranking_log_count( refused ) == 1 );
         char granted[96];
-        snprintf( granted, sizeof(granted), "client transport ladder granted portable after refusals: %s", native );
+        snprintf( granted, sizeof( granted ), "client transport ladder granted portable after refusals: %s", native );
         check( ranking_log_count( granted ) == 1 );
         check( ranking_log_count( "refused" ) == 1 );
     }
@@ -386,7 +386,7 @@ static void test_client_ranking_pin_is_honoured()
     {
         const char * native = ranking_native_client( ROCKETNET_PLATFORM );
         char list[64];
-        snprintf( list, sizeof(list), "portable,%s", native ? native : "portable" );
+        snprintf( list, sizeof( list ), "portable,%s", native ? native : "portable" );
         const ranking_result_t result = ranking_create_client( list, NULL, NULL );
         check( result.created );
         check( strcmp( result.name, "portable" ) == 0 );

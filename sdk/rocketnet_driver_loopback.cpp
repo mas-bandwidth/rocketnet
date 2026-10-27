@@ -67,7 +67,8 @@ struct rocketnet_loopback_state_init_t
     {
         rocketnet_platform_mutex_create( &state.mutex );
         state.next_port = ROCKETNET_LOOPBACK_FIRST_PORT;
-        for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i ) state.send_failures[i].store( 0 );
+        for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+            state.send_failures[i].store( 0 );
     }
 };
 
@@ -77,12 +78,12 @@ static rocketnet_loopback_state_t & loopback_state()
     return init.state;
 }
 
-#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
+#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
 static bool loopback_test_send_contention = false;
 void rocketnet_loopback_test_send_contention( bool busy ) { loopback_test_send_contention = busy; }
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) instance;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) instance;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     *head = ep->head;
@@ -93,8 +94,9 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
 
 static bool loopback_try_send_lock( rocketnet_loopback_state_t & state )
 {
-#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
-    if ( loopback_test_send_contention ) return false;
+#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+    if ( loopback_test_send_contention )
+        return false;
 #endif
     return rocketnet_platform_mutex_try_acquire( &state.mutex );
 }
@@ -108,7 +110,7 @@ static void loopback_send_failed( rocketnet_loopback_endpoint_t * sender, uint64
 static uint64_t loopback_send_failures( void * instance )
 {
     rocketnet_loopback_state_t & state = loopback_state();
-    return state.send_failures[(rocketnet_loopback_endpoint_t*) instance - state.endpoints].load( std::memory_order_relaxed );
+    return state.send_failures[(rocketnet_loopback_endpoint_t *) instance - state.endpoints].load( std::memory_order_relaxed );
 }
 
 static bool loopback_is_wildcard( const rocketnet_address_t & address )
@@ -291,8 +293,8 @@ static void * loopback_create( void * context, rocketnet_address_t * bind, int q
     }
 
     rocketnet_loopback_endpoint_t * ep = &state.endpoints[slot];
-    ep->packets = (rocketnet_loopback_packet_t*) rocketnet_malloc( context,
-        rocketnet_loopback_queue_bytes( queue_packets ) );
+    ep->packets = (rocketnet_loopback_packet_t *) rocketnet_malloc( context,
+                                                                    rocketnet_loopback_queue_bytes( queue_packets ) );
     if ( !ep->packets )
         return NULL;
     ep->context = context;
@@ -321,7 +323,7 @@ static void * loopback_client_create( void * context, const rocketnet_client_tra
 
 static void loopback_destroy( void * transport )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     uint16_t * bound = loopback_bound_entry( state, ep->bind.type, ep->bind.port );
@@ -342,7 +344,7 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
 {
     if ( bytes <= 0 || bytes > ROCKETNET_RECEIVE_CEILING )
         return;
-    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
+    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     // Ordinary client sends preserve in-process delivery under concurrent
     // receive traffic. Disconnect/stop/check never invoke this callback:
@@ -372,11 +374,12 @@ static void loopback_send( void * transport, const rocketnet_address_t * to, con
 
 static void loopback_server_send_batch_impl( void * transport, const rocketnet_platform_send_t * packets, int count, bool shutdown )
 {
-    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t*) transport;
+    rocketnet_loopback_endpoint_t * sender = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     if ( shutdown && !loopback_try_send_lock( state ) )
     {
-        if ( count > 0 ) loopback_send_failed( sender, (uint64_t) count );
+        if ( count > 0 )
+            loopback_send_failed( sender, (uint64_t) count );
         return;
     }
     if ( !shutdown )
@@ -419,7 +422,7 @@ static void loopback_server_send_batch_shutdown( void * transport, const rocketn
 
 static int loopback_server_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     int received = 0;
@@ -443,7 +446,7 @@ static int loopback_server_receive_batch( void * transport, rocketnet_address_t 
 
 static int loopback_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) transport;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     if ( ep->count == 0 )
@@ -462,8 +465,7 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
     return bytes;
 }
 
-static const rocketnet_server_transport_io_operations_t loopback_server_operations =
-{
+static const rocketnet_server_transport_io_operations_t loopback_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, loopback_server_create, loopback_destroy, loopback_stop, loopback_stopped,
     NULL, NULL, NULL, NULL, NULL, loopback_server_send_batch, loopback_server_receive_batch,
     NULL, NULL, NULL, NULL, NULL, loopback_send_failures, loopback_server_send_batch_shutdown
@@ -472,14 +474,13 @@ static const rocketnet_server_transport_io_operations_t loopback_server_operatio
 // no connect: the loopback router is one in-process table shared by every
 // endpoint, with no socket to connect; the client's own source check
 // (rocketnet_client_process_packet) is the only filter on this transport
-static const rocketnet_client_transport_io_operations_t loopback_client_operations =
-{ loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive, NULL, NULL, NULL, NULL, loopback_send_failures, NULL };
+static const rocketnet_client_transport_io_operations_t loopback_client_operations = { loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive, NULL, NULL, NULL, NULL, loopback_send_failures, NULL };
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance )
 {
-    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t*) instance;
+    rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) instance;
     rocketnet_loopback_state_t & state = loopback_state();
     rocketnet_platform_mutex_guard( &state.mutex );
     return ep->dropped;

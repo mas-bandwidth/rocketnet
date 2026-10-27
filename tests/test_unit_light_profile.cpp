@@ -26,7 +26,7 @@
 // io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
 // host whose ladder grants fewer transports reports less; the check is at
 // most.
-#if defined(_WIN32)
+#if defined( _WIN32 )
 // Windows adds, on the server, over the figures before them: the TX banks
 // sized at 16 packets per client (3 banks x 15,000 more packets x 1500 bytes
 // at 1000 clients: 67,500,000) and 231 bytes of the send handoff's per-path
@@ -45,7 +45,7 @@
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
 #endif
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
 // macOS adds, over the figures before them: per socket, the send failure
 // counts by call and errno (3 calls x 13 kinds x 8 bytes, plus the first
 // other errno: 320 bytes; the client opens 2 sockets, so 640); on the server,

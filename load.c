@@ -61,7 +61,7 @@
 /* the title's protocol id: the server config's and every token's */
 #define LOAD_PROTOCOL_ID 0x1122334455667788ULL
 
-#if defined(__linux__) && !defined(_GNU_SOURCE)
+#if defined( __linux__ ) && !defined( _GNU_SOURCE )
 #define _GNU_SOURCE     /* setns, for LOAD_CLIENT_NETNS */
 #endif
 
@@ -77,21 +77,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 #include <fcntl.h>
 #endif
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <libproc.h>
 #include <unistd.h>
 #endif
 
-#if defined(__linux__)
+#if defined( __linux__ )
 #include <sched.h>
 #endif
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 #include <sys/resource.h>
 #include <unistd.h>
 #else
@@ -146,8 +146,7 @@ struct load_timing_t
     uint64_t overbudget_count[LOAD_TIMING_CALL_COUNT];
 };
 
-static const char * load_timing_names[LOAD_TIMING_CALL_COUNT] =
-{
+static const char * load_timing_names[LOAD_TIMING_CALL_COUNT] = {
     "client_update",
     "client_send_packets",
     "client_state",
@@ -169,7 +168,7 @@ static const char * load_timing_names[LOAD_TIMING_CALL_COUNT] =
 
 static uint64_t load_clock_ns( void )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     LARGE_INTEGER counter;
     static LARGE_INTEGER frequency;
     if ( frequency.QuadPart == 0 && !QueryPerformanceFrequency( &frequency ) )
@@ -407,12 +406,12 @@ static void interrupt_handler( int sig )
 
 static long count_open_fds( void )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     DWORD handles = 0;
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
         return (long) handles;
     return -1;
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
     const int bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( bytes <= 0 )
         return -1;
@@ -443,7 +442,7 @@ static long count_open_fds( void )
 
 static long count_threads( void )
 {
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
     thread_act_array_t threads = NULL;
     mach_msg_type_number_t count = 0;
     if ( task_threads( mach_task_self(), &threads, &count ) != KERN_SUCCESS )
@@ -453,7 +452,7 @@ static long count_threads( void )
     (void) vm_deallocate( mach_task_self(), (vm_address_t) threads,
                           (vm_size_t) ( count * sizeof( thread_act_t ) ) );
     return (long) count;
-#elif defined(__linux__)
+#elif defined( __linux__ )
     FILE * f = fopen( "/proc/self/status", "r" );
     if ( f )
     {
@@ -471,7 +470,7 @@ static long count_threads( void )
         return threads;
     }
     return -1;
-#elif defined(_WIN32)
+#elif defined( _WIN32 )
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
         return -1;
@@ -496,7 +495,14 @@ static long count_threads( void )
 
 /* The resource phases each harness role samples, by count for the receipt
  * and by census for the verdict (load_census.h). load and load_split share them. */
-enum { LOAD_PRE_INIT, LOAD_POST_INIT, LOAD_PRE_TERM, LOAD_POST_TERM, LOAD_PHASES };
+enum
+{
+    LOAD_PRE_INIT,
+    LOAD_POST_INIT,
+    LOAD_PRE_TERM,
+    LOAD_POST_TERM,
+    LOAD_PHASES
+};
 static struct load_census_t load_census_phase[LOAD_PHASES];
 #define LOAD_CENSUS( phase ) ( (void) load_census_take( &load_census_phase[phase] ) )
 
@@ -508,50 +514,58 @@ static struct load_census_t load_census_phase[LOAD_PHASES];
  * Nothing here is checked: the warm cycle only pays first-use costs. */
 static void load_warm_cycle( void )
 {
-    if ( rocketnet_init(NULL, NULL, NULL) != ROCKETNET_STATUS_OK ) return;
+    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+        return;
     static const uint8_t dev_backend_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t server_config;
-    rocketnet_server_default_config(&server_config);
+    rocketnet_server_default_config( &server_config );
     server_config.protocol_id = LOAD_PROTOCOL_ID;
     server_config.max_clients = 1;
-    memcpy(server_config.backend_public_key, dev_backend_key, sizeof(server_config.backend_public_key));
+    memcpy( server_config.backend_public_key, dev_backend_key, sizeof( server_config.backend_public_key ) );
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create(NULL, "127.0.0.1:0", NULL, &server_config, &status);
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     struct rocketnet_client_t * client = NULL;
-    if ( server && rocketnet_server_start(server) == ROCKETNET_STATUS_OK )
+    if ( server && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK )
     {
         char address[64];
-        snprintf(address, sizeof(address), "127.0.0.1:%u", (unsigned) rocketnet_server_port(server));
+        snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
         uint8_t key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-        rocketnet_server_public_key(server, key);
+        rocketnet_server_public_key( server, key );
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         struct rocketnet_client_config_t client_config;
-        rocketnet_client_default_config(&client_config);
-        if ( rocketnet_create_dev_connect_token(address, NULL, key, 30, 10, 1, LOAD_PROTOCOL_ID,
-                                                (uint64_t) time(NULL), NULL, token) == ROCKETNET_STATUS_OK )
-            client = rocketnet_client_create(NULL, &client_config, &status);
-        if ( client && rocketnet_client_connect(client, token) != ROCKETNET_STATUS_OK )
+        rocketnet_client_default_config( &client_config );
+        if ( rocketnet_create_dev_connect_token( address, NULL, key, 30, 10, 1, LOAD_PROTOCOL_ID,
+                                                 (uint64_t) time( NULL ), NULL, token ) == ROCKETNET_STATUS_OK )
+            client = rocketnet_client_create( NULL, &client_config, &status );
+        if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
         {
-            rocketnet_client_destroy(client);
+            rocketnet_client_destroy( client );
             client = NULL;
         }
         for ( int frame = 0; frame < 50; ++frame )
         {
-            rocketnet_server_update(server, rocketnet_time());
-            while ( rocketnet_server_receive_messages(server) != NULL ) {}
-            rocketnet_server_send_packets(server);
+            rocketnet_server_update( server, rocketnet_time() );
+            while ( rocketnet_server_receive_messages( server ) != NULL )
+            {
+            }
+            rocketnet_server_send_packets( server );
             if ( client )
             {
-                rocketnet_client_update(client, rocketnet_time());
-                while ( rocketnet_client_receive_messages(client) != NULL ) {}
-                rocketnet_client_send_packets(client);
-                if ( frame >= 10 && rocketnet_client_state(client) == ROCKETNET_CLIENT_STATE_CONNECTED ) break;
+                rocketnet_client_update( client, rocketnet_time() );
+                while ( rocketnet_client_receive_messages( client ) != NULL )
+                {
+                }
+                rocketnet_client_send_packets( client );
+                if ( frame >= 10 && rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
+                    break;
             }
-            rocketnet_sleep(0.01);
+            rocketnet_sleep( 0.01 );
         }
     }
-    if ( client ) rn_cli_client_stop_and_destroy(client);
-    if ( server ) rn_cli_server_stop_and_destroy(server);
+    if ( client )
+        rn_cli_client_stop_and_destroy( client );
+    if ( server )
+        rn_cli_server_stop_and_destroy( server );
     rocketnet_term();
 }
 
@@ -561,22 +575,22 @@ static void load_warm_cycle( void )
  * reported, not counted. Without a census (a platform that has none) the
  * counts must return to both phase baselines. */
 static int load_resource_verdict( const char * role,
-                                   long fds_pre_init, long fds_post_init, long fds_pre_term, long fds_post_term,
-                                   long threads_pre_init, long threads_post_init, long threads_pre_term, long threads_post_term,
-                                   struct load_census_survivors_t * operational, struct load_census_survivors_t * total,
-                                   int * census )
+                                  long fds_pre_init, long fds_post_init, long fds_pre_term, long fds_post_term,
+                                  long threads_pre_init, long threads_post_init, long threads_pre_term, long threads_post_term,
+                                  struct load_census_survivors_t * operational, struct load_census_survivors_t * total,
+                                  int * census )
 {
     char prefix[64];
-    snprintf(prefix, sizeof(prefix), "load_resource: role=%s", role);
+    snprintf( prefix, sizeof( prefix ), "load_resource: role=%s", role );
     const int counted = fds_pre_init >= 0 && fds_post_init >= 0 && fds_pre_term >= 0 && fds_post_term >= 0 &&
-        threads_pre_init >= 0 && threads_post_init >= 0 && threads_pre_term >= 0 && threads_post_term >= 0;
-    *census = load_census_survivors(prefix, "operational", 1, &load_census_phase[LOAD_POST_INIT], &load_census_phase[LOAD_PRE_TERM], operational) &&
-              load_census_survivors(prefix, "total", 0, &load_census_phase[LOAD_PRE_INIT], &load_census_phase[LOAD_POST_TERM], total);
+                        threads_pre_init >= 0 && threads_post_init >= 0 && threads_pre_term >= 0 && threads_post_term >= 0;
+    *census = load_census_survivors( prefix, "operational", 1, &load_census_phase[LOAD_POST_INIT], &load_census_phase[LOAD_PRE_TERM], operational ) &&
+              load_census_survivors( prefix, "total", 0, &load_census_phase[LOAD_PRE_INIT], &load_census_phase[LOAD_POST_TERM], total );
     if ( *census )
         return counted && operational->threads == 0 && operational->handles == 0 &&
                total->threads == 0 && total->handles == 0;
-    memset(operational, 0, sizeof(*operational));
-    memset(total, 0, sizeof(*total));
+    memset( operational, 0, sizeof( *operational ) );
+    memset( total, 0, sizeof( *total ) );
     return counted && fds_post_init == fds_pre_term && fds_pre_init == fds_post_term &&
            threads_post_init == threads_pre_term && threads_pre_init == threads_post_term;
 }
@@ -584,12 +598,12 @@ static int load_resource_verdict( const char * role,
 static void sample_resources( long * peak_fds, long * peak_threads )
 {
     const long fds = count_open_fds();
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     const long threads = count_threads();
 #endif
     if ( fds > *peak_fds )
         *peak_fds = fds;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     /* The global Toolhelp thread enumeration is expensive at large populations.
        Windows thread counts are sampled at named phase boundaries instead. */
     (void) peak_threads;
@@ -599,7 +613,7 @@ static void sample_resources( long * peak_fds, long * peak_threads )
 #endif
 }
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 static void sample_thread_boundary( long * peak_threads )
 {
     const long threads = count_threads();
@@ -608,7 +622,7 @@ static void sample_thread_boundary( long * peak_threads )
 }
 #endif
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 struct load_fd_limit_t
 {
     rlim_t soft;
@@ -673,7 +687,7 @@ static int ensure_fd_limit( int num_clients, struct load_fd_limit_t * limit )
 
 static uint64_t query_rss_bytes( void )
 {
-#if defined(__linux__)
+#if defined( __linux__ )
     FILE * f = fopen( "/proc/self/statm", "r" );
     if ( f )
     {
@@ -692,11 +706,11 @@ static uint64_t query_rss_bytes( void )
         }
     }
 #endif
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     struct rusage ru;
     if ( getrusage( RUSAGE_SELF, &ru ) == 0 )
     {
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
         return (uint64_t) ru.ru_maxrss;
 #else
         return (uint64_t) ru.ru_maxrss * 1024ULL;
@@ -834,8 +848,14 @@ static int cmp_double( const void * a, const void * b )
 #define LOAD_NAME_ONE( name ) #name,
 #define LOAD_VALUE_ONE( name ) values[k++] = stats.name;
 
-enum { LOAD_SERVER_COUNTERS = 0 LOAD_SERVER_COUNTER_FIELDS( LOAD_COUNT_ONE ) };
-enum { LOAD_CLIENT_COUNTERS = 0 LOAD_CLIENT_COUNTER_FIELDS( LOAD_COUNT_ONE ) };
+enum
+{
+    LOAD_SERVER_COUNTERS = 0 LOAD_SERVER_COUNTER_FIELDS( LOAD_COUNT_ONE )
+};
+enum
+{
+    LOAD_CLIENT_COUNTERS = 0 LOAD_CLIENT_COUNTER_FIELDS( LOAD_COUNT_ONE )
+};
 
 static const char * server_counter_names[LOAD_SERVER_COUNTERS] = { LOAD_SERVER_COUNTER_FIELDS( LOAD_NAME_ONE ) };
 static const char * client_counter_names[LOAD_CLIENT_COUNTERS] = { LOAD_CLIENT_COUNTER_FIELDS( LOAD_NAME_ONE ) };
@@ -1019,7 +1039,7 @@ int main( int argc, char ** argv )
         return 2;
     }
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     char fd_limit_soft_text[32] = "n/a";
     char fd_limit_hard_text[32] = "n/a";
     if ( !plan_only )
@@ -1172,12 +1192,9 @@ int main( int argc, char ** argv )
     int * client_slot = (int *) calloc( (size_t) num_clients, sizeof( int ) );
     double * client_connect_seconds = (double *) malloc( (size_t) num_clients * sizeof( double ) );
     uint32_t * client_next_combo = (uint32_t *) calloc( (size_t) num_clients, sizeof( uint32_t ) );
-    double * client_next_message_due = fixed_message_rate ?
-        (double *) calloc( (size_t) num_clients, sizeof( double ) ) : NULL;
-    struct load_wire_sample_t * client_wire_start = fixed_message_rate ?
-        (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
-    struct load_wire_sample_t * client_wire_end = fixed_message_rate ?
-        (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
+    double * client_next_message_due = fixed_message_rate ? (double *) calloc( (size_t) num_clients, sizeof( double ) ) : NULL;
+    struct load_wire_sample_t * client_wire_start = fixed_message_rate ? (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
+    struct load_wire_sample_t * client_wire_end = fixed_message_rate ? (struct load_wire_sample_t *) calloc( (size_t) num_clients, sizeof( struct load_wire_sample_t ) ) : NULL;
     struct load_stream_state_t * c2s_streams = (struct load_stream_state_t *) calloc(
         (size_t) num_clients * LOAD_NUM_COMBOS, sizeof( struct load_stream_state_t ) );
     struct load_stream_state_t * s2c_streams = (struct load_stream_state_t *) calloc(
@@ -1200,7 +1217,7 @@ int main( int argc, char ** argv )
     const double token_setup_start = rocketnet_time();
     const uint64_t token_now = (uint64_t) time( NULL );
 
-#if defined(__linux__)
+#if defined( __linux__ )
     int self_netns = -1;
     int client_netns = -1;
     char client_netns_path[256];
@@ -1219,7 +1236,7 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < num_clients; i++ )
     {
         char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-#if defined(__linux__)
+#if defined( __linux__ )
         if ( client_netns >= 0 && setns( client_netns, CLONE_NEWNET ) != 0 )
         {
             fprintf( stderr, "load: setns into %s failed: %s\n", client_netns_path, strerror( errno ) );
@@ -1243,7 +1260,7 @@ int main( int argc, char ** argv )
             fprintf( stderr, "load: failed to connect client %d\n", i );
             return 1;
         }
-#if defined(__linux__)
+#if defined( __linux__ )
         if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
         {
             fprintf( stderr, "load: setns back to the server namespace failed: %s\n", strerror( errno ) );
@@ -1252,7 +1269,7 @@ int main( int argc, char ** argv )
 #endif
         client_next_combo[i] = (uint32_t) ( i % LOAD_NUM_COMBOS );
     }
-#if defined(__linux__)
+#if defined( __linux__ )
     if ( client_netns >= 0 )
     {
         close( client_netns );
@@ -1260,7 +1277,7 @@ int main( int argc, char ** argv )
     }
 #endif
     sample_resources( &fds_peak, &threads_peak );
-#if defined(_WIN32)
+#if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* post setup, before connect */
 #endif
     const double token_setup_elapsed = rocketnet_time() - token_setup_start;
@@ -1419,7 +1436,7 @@ int main( int argc, char ** argv )
         rocketnet_sleep( 0.001 );
     }
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* post connect, before traffic */
 #endif
     /* Step 2: Drive traffic for <seconds>, then 3.0s drain for in-flight delivery */
@@ -1648,7 +1665,9 @@ int main( int argc, char ** argv )
                             const int expected_rx_ch = ( msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE ||
                                                          msg_combo == ROCKETNET_RELIABILITY_RELIABLE ||
                                                          msg_combo == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ||
-                                                         msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT ) ? 0 : (int) msg_combo;
+                                                         msg_combo == ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT )
+                                                           ? 0
+                                                           : (int) msg_combo;
                             struct load_stream_state_t * cst = &c2s_streams[(size_t) msg_client * LOAD_NUM_COMBOS + msg_combo];
                             const int dup = stream_seen_test_and_set( cst, msg_seq );
 
@@ -1716,7 +1735,7 @@ int main( int argc, char ** argv )
     }
 
     timing.enabled = 0;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     sample_thread_boundary( &threads_peak ); /* after traffic and bounded drain */
 #endif
 
@@ -1773,8 +1792,7 @@ int main( int argc, char ** argv )
     uint64_t s2c_sent_total = 0;
     for ( int i = 0; i < num_clients; i++ )
         s2c_sent_total += s2c_streams[i].sent_count;
-    const double application_rate_window_seconds = fixed_message_rate && wire_window_seconds > 0.0 ?
-        wire_window_seconds : duration_seconds;
+    const double application_rate_window_seconds = fixed_message_rate && wire_window_seconds > 0.0 ? wire_window_seconds : duration_seconds;
     const double actual_c2s_messages_per_client_second =
         (double) c2s_sent_total / ( (double) num_clients * application_rate_window_seconds );
     const double actual_s2c_messages_per_client_second =
@@ -1790,8 +1808,8 @@ int main( int argc, char ** argv )
     double max_client_wire_up_kbps = 0.0;
     double max_client_wire_down_kbps = 0.0;
     int wire_metrics_valid = !fixed_message_rate || ( wire_window_seconds > 0.0 &&
-        server_wire_end.sent >= server_wire_start.sent &&
-        server_wire_end.received >= server_wire_start.received );
+                                                      server_wire_end.sent >= server_wire_start.sent &&
+                                                      server_wire_end.received >= server_wire_start.received );
     if ( fixed_message_rate && wire_metrics_valid )
     {
         traffic_server_wire_bytes_sent = server_wire_end.sent - server_wire_start.sent;
@@ -1809,8 +1827,7 @@ int main( int argc, char ** argv )
         const uint64_t down_bytes = client_wire_end[i].received - client_wire_start[i].received;
         traffic_client_wire_bytes_sent += up_bytes;
         traffic_client_wire_bytes_received += down_bytes;
-        const double observed_seconds = drop_injected && i == 0 ?
-            dropped_client_wire_observed_seconds : wire_window_seconds;
+        const double observed_seconds = drop_injected && i == 0 ? dropped_client_wire_observed_seconds : wire_window_seconds;
         if ( observed_seconds <= 0.0 )
             wire_metrics_valid = 0;
         else
@@ -1823,18 +1840,14 @@ int main( int argc, char ** argv )
                 max_client_wire_down_kbps = down_kbps;
         }
     }
-    const double aggregate_client_wire_up_kbps = wire_window_seconds > 0.0 ?
-        (double) traffic_client_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
-    const double aggregate_client_wire_down_kbps = wire_window_seconds > 0.0 ?
-        (double) traffic_client_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
-    const double aggregate_server_wire_up_kbps = wire_window_seconds > 0.0 ?
-        (double) traffic_server_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
-    const double aggregate_server_wire_down_kbps = wire_window_seconds > 0.0 ?
-        (double) traffic_server_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_client_wire_up_kbps = wire_window_seconds > 0.0 ? (double) traffic_client_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_client_wire_down_kbps = wire_window_seconds > 0.0 ? (double) traffic_client_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_server_wire_up_kbps = wire_window_seconds > 0.0 ? (double) traffic_server_wire_bytes_sent * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
+    const double aggregate_server_wire_down_kbps = wire_window_seconds > 0.0 ? (double) traffic_server_wire_bytes_received * 8.0 / ( wire_window_seconds * 1000.0 ) : 0.0;
     const int client_wire_under_100kbps = !fixed_message_rate ||
-        ( wire_metrics_valid && max_client_wire_up_kbps < 100.0 && max_client_wire_down_kbps < 100.0 );
+                                          ( wire_metrics_valid && max_client_wire_up_kbps < 100.0 && max_client_wire_down_kbps < 100.0 );
     const int application_offers_accepted = !fixed_message_rate ||
-        ( c2s_offered_total == c2s_sent_total && s2c_offered_total == s2c_sent_total );
+                                            ( c2s_offered_total == c2s_sent_total && s2c_offered_total == s2c_sent_total );
 
     const uint64_t total_counted_drops = client_counted_drops + server_counted_drops;
     const int crit1_connect_within_10s = ( all_connected && connect_elapsed <= LOAD_CONNECT_DEADLINE_S ) ? 1 : 0;
@@ -1858,8 +1871,7 @@ int main( int argc, char ** argv )
             if ( s2c_streams[i].sent_count > s2c_streams[i].recv_count )
                 unresolved_s2c += s2c_streams[i].sent_count - s2c_streams[i].recv_count;
         }
-        fprintf( stderr, "load: drain clients_visited=%d/%d unresolved_c2s=%" PRIu64
-                         " unresolved_s2c=%" PRIu64 " elapsed_s=%.3f deadline_s=%.3f\n",
+        fprintf( stderr, "load: drain clients_visited=%d/%d unresolved_c2s=%" PRIu64 " unresolved_s2c=%" PRIu64 " elapsed_s=%.3f deadline_s=%.3f\n",
                  drain_clients_visited, num_clients, unresolved_c2s, unresolved_s2c,
                  rocketnet_time() - traffic_start, duration_seconds + drain_seconds );
     }
@@ -1945,14 +1957,14 @@ int main( int argc, char ** argv )
         failed_criterion = "application_offers_accepted";
 
     int pass = crit1_connect_within_10s &&
-                     crit2_no_unexpected_disconnect &&
-                     crit3_reliable_delivery &&
-                     crit4_unreliable_integrity &&
-                     crit5_counters_agree &&
-                     wire_metrics_valid &&
-                     client_wire_under_100kbps &&
-                     application_offers_accepted &&
-                     !quit;
+               crit2_no_unexpected_disconnect &&
+               crit3_reliable_delivery &&
+               crit4_unreliable_integrity &&
+               crit5_counters_agree &&
+               wire_metrics_valid &&
+               client_wire_under_100kbps &&
+               application_offers_accepted &&
+               !quit;
 
     char server_transport_io[32];
     char client_transport_io[32];
@@ -1984,7 +1996,7 @@ int main( int argc, char ** argv )
     const long fds_pre_term = count_open_fds();
     const long threads_pre_term = count_threads();
     LOAD_CENSUS( LOAD_PRE_TERM );
-#if defined(_WIN32)
+#if defined( _WIN32 )
     if ( threads_pre_term > threads_peak )
         threads_peak = threads_pre_term;
 #endif
@@ -1998,9 +2010,9 @@ int main( int argc, char ** argv )
     struct load_census_survivors_t survivors_operational, survivors_total;
     int census = 0;
     const int resource_baseline = load_resource_verdict( "load",
-        fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
-        threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
-        &survivors_operational, &survivors_total, &census );
+                                                         fds_pre_init, fds_post_init, fds_pre_term, fds_post_term,
+                                                         threads_pre_init, threads_post_init, threads_pre_term, threads_post_term,
+                                                         &survivors_operational, &survivors_total, &census );
     const char * resource_schema = census ? "census_v1" : "phase_counts_v1";
     if ( term_status != ROCKETNET_STATUS_OK )
     {
@@ -2014,7 +2026,7 @@ int main( int argc, char ** argv )
             failed_criterion = "resource_baseline";
         pass = 0;
     }
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const char * timing_baseline = fixed_message_rate ? "fixed_rate_win_boundary_threads_v2" : "fair_drain_win_boundary_threads_v2";
     const char * thread_peak_scope = "post_init_post_setup_post_connect_post_drain_pre_term_boundaries";
 #else

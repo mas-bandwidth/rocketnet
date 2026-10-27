@@ -46,7 +46,7 @@ struct internal_error_server_t
 
 static void internal_error_server_setup( struct internal_error_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -86,7 +86,7 @@ static void internal_error_server_teardown( struct internal_error_server_t * tes
 static void internal_error_build_request( uint8_t * request, uint64_t client_id )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -94,11 +94,11 @@ static void internal_error_build_request( uint8_t * request, uint64_t client_id 
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
-    memcpy( signed_fields.ipv4_address, server_address, sizeof(server_address) );
+    memcpy( signed_fields.ipv4_address, server_address, sizeof( server_address ) );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = client_id;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -123,10 +123,10 @@ static int internal_error_process( struct internal_error_server_t * test,
     int payload_bytes = 99;
     int payload_client_index = 99;
     const int result = rocketnet_server_protocol_process_packet( &test->server, &test->client_address,
-                                                                  packet, packet_bytes,
-                                                                  ROCKETNET_TEST_CREATE_TS, 1000.0,
-                                                                  response, response_bytes,
-                                                                  payload, &payload_bytes, &payload_client_index );
+                                                                 packet, packet_bytes,
+                                                                 ROCKETNET_TEST_CREATE_TS, 1000.0,
+                                                                 response, response_bytes,
+                                                                 payload, &payload_bytes, &payload_client_index );
     check( payload_bytes == 0 );
     check( payload_client_index == -1 );
     return result;
@@ -153,14 +153,14 @@ static void internal_error_derive_keys( const uint8_t * challenge, int challenge
     const uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
     memcpy( session_nonce, challenge + ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES,
-            sizeof(session_nonce) );
+            sizeof( session_nonce ) );
 
     struct rocketnet_connection_keys_t handshake_keys;
     rocketnet_derive_handshake_keys( &handshake_keys,
                                      rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
                                      rocketnet_test_salt, session_nonce );
     uint8_t server_ephemeral[ROCKETNET_KEY_BYTES];
-    check( rocketnet_open_sealed_packet( server_ephemeral, session_nonce, sizeof(server_ephemeral),
+    check( rocketnet_open_sealed_packet( server_ephemeral, session_nonce, sizeof( server_ephemeral ),
                                          challenge, challenge_bytes, ROCKETNET_CONNECTION_CHALLENGE_PACKET,
                                          sequence, ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt,
                                          rocketnet_test_client_eph_public,
@@ -178,7 +178,7 @@ static void internal_error_build_response( uint8_t * response,
     const uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     check( rocketnet_write_sealed_packet( response, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                           rocketnet_test_filter_value, 1, NULL,
-                                          padding, sizeof(padding), ROCKETNET_TEST_PROTOCOL_ID,
+                                          padding, sizeof( padding ), ROCKETNET_TEST_PROTOCOL_ID,
                                           rocketnet_test_salt, rocketnet_test_client_eph_public,
                                           keys->handshake_client_to_server ) == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
 }
@@ -186,7 +186,7 @@ static void internal_error_build_response( uint8_t * response,
 static void internal_error_fill_only_slot( struct internal_error_server_t * test )
 {
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
     check( rocketnet_client_slots_assign( test->server.client_slots, UINT64_C( 0xD00D ), -1, user_data ) == 0 );
 }
 
@@ -244,16 +244,16 @@ static void test_connection_request_internal_error_counter_executes()
 
     struct rocketnet_counters_t before = test.counters;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    memset( response, 0xA5, sizeof(response) );
+    memset( response, 0xA5, sizeof( response ) );
     int response_bytes = 99;
     test.server.test_fail_fixed_writer = ROCKETNET_SERVER_TEST_FAIL_REQUEST_DENIED_WRITER;
     internal_error_begin_assert_capture( "rocketnet_server_process_opened_request" );
-    const int result = internal_error_process( &test, request, sizeof(request), response, &response_bytes );
+    const int result = internal_error_process( &test, request, sizeof( request ), response, &response_bytes );
     internal_error_end_assert_capture();
 
     check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( response_bytes == 0 );
-    internal_error_check_sentinel( response, sizeof(response), 0xA5 );
+    internal_error_check_sentinel( response, sizeof( response ), 0xA5 );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
     rocketnet_counters_expect( &before, &test.counters,
                                { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
@@ -274,7 +274,7 @@ static void test_connection_response_internal_error_counter_executes()
 
     uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
     int challenge_bytes = 0;
-    check( internal_error_process( &test, request, sizeof(request), challenge, &challenge_bytes ) ==
+    check( internal_error_process( &test, request, sizeof( request ), challenge, &challenge_bytes ) ==
            ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     struct rocketnet_connection_keys_t keys;
@@ -291,17 +291,17 @@ static void test_connection_response_internal_error_counter_executes()
 
     struct rocketnet_counters_t before = test.counters;
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
-    memset( response, 0x5A, sizeof(response) );
+    memset( response, 0x5A, sizeof( response ) );
     int response_bytes = 99;
     test.server.test_fail_fixed_writer = ROCKETNET_SERVER_TEST_FAIL_RESPONSE_DENIED_WRITER;
     internal_error_begin_assert_capture( "rocketnet_server_process_connection_response" );
-    const int result = internal_error_process( &test, client_response, sizeof(client_response),
+    const int result = internal_error_process( &test, client_response, sizeof( client_response ),
                                                response, &response_bytes );
     internal_error_end_assert_capture();
 
     check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( response_bytes == 0 );
-    internal_error_check_sentinel( response, sizeof(response), 0x5A );
+    internal_error_check_sentinel( response, sizeof( response ), 0x5A );
     check( mapping->send_sequence_handshake == sequence_before );
     check( mapping->control->client_index == -1 );
     check( !mapping->control->established );

@@ -173,10 +173,10 @@ struct rocketnet_reassembly_set_t
 // The plain forms size the delivered arena at capacity x the aligned maximum
 // payload; the _delivered forms take the caller's byte bound, at least one
 // maximum payload.
-uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
-bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
-uint64_t rocketnet_reassembly_memory_required_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
-bool rocketnet_reassembly_memory_allowed_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
+uint64_t rocketnet_reassembly_memory_required( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
+bool rocketnet_reassembly_memory_allowed( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
+uint64_t rocketnet_reassembly_memory_required_delivered( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
+bool rocketnet_reassembly_memory_allowed_delivered( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
 
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );

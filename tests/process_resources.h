@@ -79,21 +79,21 @@
 #include <string.h>
 #include <stdlib.h>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
 #include <libproc.h>
 #include <sys/proc_info.h>
 #include <unistd.h>
 #else
 #include <dirent.h>
 #include <errno.h>
-#if defined(__GLIBC__)
+#if defined( __GLIBC__ )
 #include <malloc.h>
 #endif
 #include <sys/mman.h>
@@ -104,7 +104,7 @@
 #define PROCESS_RESOURCES_THREADS 1
 #define PROCESS_RESOURCES_MEMORY 2
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #define PROCESS_RESOURCES_OS_THREADS 3
 #define PROCESS_RESOURCES_COUNT 4
 #else
@@ -123,23 +123,23 @@ static inline const char * process_resources_name( int index )
 {
     switch ( index )
     {
-#if defined(_WIN32)
-        case PROCESS_RESOURCES_HANDLES: return "handles";
-        case PROCESS_RESOURCES_THREADS: return "threads";
-        case PROCESS_RESOURCES_MEMORY:  return "private_bytes";
+#if defined( _WIN32 )
+        case PROCESS_RESOURCES_HANDLES:    return "handles";
+        case PROCESS_RESOURCES_THREADS:    return "threads";
+        case PROCESS_RESOURCES_MEMORY:     return "private_bytes";
         case PROCESS_RESOURCES_OS_THREADS: return "os_threads";
 #else
         case PROCESS_RESOURCES_HANDLES: return "fds";
         case PROCESS_RESOURCES_THREADS: return "threads";
         case PROCESS_RESOURCES_MEMORY:  return "resident_bytes";
 #endif
-        default:                        return "unknown";
+        default: return "unknown";
     }
 }
 
 static inline int64_t process_resources_page_bytes( void )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     SYSTEM_INFO info;
     GetSystemInfo( &info );
     return (int64_t) info.dwPageSize;
@@ -149,7 +149,7 @@ static inline int64_t process_resources_page_bytes( void )
 #endif
 }
 
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if !defined( _WIN32 ) && !defined( __APPLE__ )
 
 static inline int64_t process_resources_count_directory( const char * path )
 {
@@ -189,7 +189,7 @@ static inline int64_t process_resources_resident_bytes( void )
 
 #endif
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 // Windows only: a thread's start address (ThreadQuerySetWin32StartAddress),
 // and whether it is inside ntdll.dll. A thread starting in ntdll is the OS's
 // own: the thread pool's workers and the parallel loader's (TppWorkerThread),
@@ -200,7 +200,7 @@ static inline int64_t process_resources_resident_bytes( void )
 // start address cannot be read: only a proven OS thread is left out of the
 // threads count.
 
-typedef LONG (WINAPI * process_resources_query_thread_t)( HANDLE thread, int information_class, void * information, ULONG information_bytes, ULONG * returned_bytes );
+typedef LONG( WINAPI * process_resources_query_thread_t )( HANDLE thread, int information_class, void * information, ULONG information_bytes, ULONG * returned_bytes );
 
 static inline int process_resources_thread_is_os( DWORD thread_id, uintptr_t * start_offset )
 {
@@ -293,7 +293,7 @@ static inline int process_resources_read( struct process_resources_t * resources
     for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
         resources->values[i] = -1;
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 
     DWORD handles = 0;
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
@@ -307,7 +307,7 @@ static inline int process_resources_read( struct process_resources_t * resources
     if ( GetProcessMemoryInfo( GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *) &memory, sizeof( memory ) ) )
         resources->values[PROCESS_RESOURCES_MEMORY] = (int64_t) memory.PrivateUsage;
 
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
 
     const int fd_bytes = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, NULL, 0 );
     if ( fd_bytes > 0 )
@@ -384,7 +384,7 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
     // Windows the handles of the OS's retiring pool workers close with them)
     if ( index == PROCESS_RESOURCES_HANDLES )
         return end <= start;
-#if defined(_WIN32)
+#if defined( _WIN32 )
     if ( index == PROCESS_RESOURCES_OS_THREADS )
         return end <= start;
 #endif
@@ -401,7 +401,7 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
 
 static inline int64_t process_resources_touch_all( void )
 {
-#if !defined(_WIN32) && !defined(__APPLE__) && defined(MADV_POPULATE_WRITE) && defined(MADV_POPULATE_READ)
+#if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ )
     FILE * file = fopen( "/proc/self/maps", "r" );
     if ( !file )
         return -1;
@@ -439,7 +439,7 @@ static inline int64_t process_resources_touch_all( void )
 
 static inline int process_resources_keep_freed_pages( void )
 {
-#if defined(__GLIBC__) && !defined(_WIN32) && !defined(__APPLE__)
+#if defined( __GLIBC__ ) && !defined( _WIN32 ) && !defined( __APPLE__ )
     return mallopt( M_TRIM_THRESHOLD, 0x7fffffff ) == 1;
 #else
     return 0;
@@ -453,7 +453,7 @@ static inline int process_resources_smaps( int64_t * rss_bytes, int64_t * privat
 {
     *rss_bytes = -1;
     *private_dirty_bytes = -1;
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if !defined( _WIN32 ) && !defined( __APPLE__ )
     FILE * file = fopen( "/proc/self/smaps_rollup", "r" );
     if ( !file )
         return 0;

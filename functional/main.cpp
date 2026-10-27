@@ -11,7 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
-#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 #include "channel_harness.h"
 #endif
 #include "../tests/plan_rss.h"
@@ -33,7 +33,7 @@ extern void * rocketnet_global_context;
 
 static int rocketnet_functional_worker( const char * name )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     // MSVC treats _IOLBF as full buffering and rejects a zero buffer size.
     // A 4096-byte buffer paired with explicit fflush keeps each worker's
     // test-name line in a single pipe write.
@@ -45,7 +45,7 @@ static int rocketnet_functional_worker( const char * name )
     setvbuf( stderr, NULL, _IOLBF, 0 );
 #endif
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const int cleared = _putenv_s( "ROCKETNET_LOG_LEVEL", "" );
 #else
     const int cleared = unsetenv( "ROCKETNET_LOG_LEVEL" );
@@ -81,7 +81,7 @@ int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 int rocketnet_posix_hard_killed_client_test_group( const char * name );
 suite_exec rocketnet_unit_case_memory_exec();
 
-#if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
+#if defined( _WIN32 ) || defined( __APPLE__ ) || defined( __linux__ )
 
 // Preserve suite ordering. All cases run serially, including sibling binaries.
 //
@@ -93,7 +93,7 @@ suite_exec rocketnet_unit_case_memory_exec();
 // pairs only in the nightly tier (functional/posix_lifecycle_stress.cpp).
 static int rocketnet_functional_test_group( const char * name )
 {
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
     // This case drives eight unpaced senders while destroying their server.
     // On Darwin its flood can overflow the shared loopback input queue and
     // drop packets belonging to unrelated exact-delivery cases. Keep the
@@ -107,7 +107,7 @@ static int rocketnet_functional_test_group( const char * name )
     };
     for ( const char * prefix : nightly )
         if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
-#if defined(ROCKETNET_FUNCTIONAL_PRODUCTION) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
             return SUITE_GROUP_NIGHTLY;
 #else
             return rocketnet_posix_hard_killed_client_test_group( name ) | SUITE_GROUP_NIGHTLY;
@@ -115,10 +115,10 @@ static int rocketnet_functional_test_group( const char * name )
 #endif
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
-#if defined(ROCKETNET_FUNCTIONAL_PRODUCTION) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
     (void) name;
     return 0;
-#elif defined(_WIN32)
+#elif defined( _WIN32 )
     return 0;
 #else
     return rocketnet_posix_hard_killed_client_test_group( name );
@@ -174,7 +174,7 @@ int main( int argc, char ** argv )
     // the child client of the hard-killed client cases
     // (functional/posix_hard_killed_client.cpp), started by posix_spawn and
     // ended by the case with SIGKILL
-#if !defined(ROCKETNET_FUNCTIONAL_PRODUCTION) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
     if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
         return rocketnet_posix_hard_killed_child_main( argc, argv );
 
@@ -184,9 +184,9 @@ int main( int argc, char ** argv )
         return 1;
     }
 #endif
-#if defined(ROCKETNET_FUNCTIONAL_PRODUCTION) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
-#elif defined(_WIN32)
+#elif defined( _WIN32 )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
@@ -194,7 +194,7 @@ int main( int argc, char ** argv )
         { "test_iocp", "test_iocp", NULL, true },
     };
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
@@ -202,7 +202,7 @@ int main( int argc, char ** argv )
         { "test_msgx", "test_msgx", NULL, true },
     };
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
-#elif defined(__linux__)
+#elif defined( __linux__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
@@ -214,13 +214,13 @@ int main( int argc, char ** argv )
     // io_uring cases are bounded by RLIMIT_MEMLOCK as well as by the one job:
     // a limit under one case's need fails the suite before it starts, naming
     // the limit (tests/suite_runner.h, tools/check_memlock.sh)
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
 #else
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof(execs) / sizeof(execs[0]), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #endif
 }

@@ -65,23 +65,24 @@ struct rocketnet_server_iocp_t;
 // bind_address is updated with the actual port. IPv6 sockets accept both
 // families and normalize mapped IPv4 sources. Zero workers selects the default.
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
-    rocketnet_address_t * bind_address, int num_workers
+                                                        rocketnet_address_t * bind_address, int num_workers
 #if ROCKETNET_DEV
     // Development constructor controls: fail after socket, port, first worker
     // or first receive, and optionally force the per-datagram fallback paths.
-    , int fail_stage = 0, int flags = 0
+                                                        ,
+                                                        int fail_stage = 0, int flags = 0
 #endif
-    );
+);
 void rocketnet_server_iocp_destroy( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp );
 bool rocketnet_server_iocp_stopped( rocketnet_server_iocp_t * iocp );
 
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp,
-    const rocketnet_address_t * to, uint64_t * packet_id );
+                                              const rocketnet_address_t * to, uint64_t * packet_id );
 void rocketnet_server_iocp_finish_packet( rocketnet_server_iocp_t * iocp,
-    uint64_t packet_id, uint8_t * frame, int packet_bytes );
+                                          uint64_t packet_id, uint8_t * frame, int packet_bytes );
 void rocketnet_server_iocp_abort_packet( rocketnet_server_iocp_t * iocp,
-    uint64_t packet_id, uint8_t * frame );
+                                         uint64_t packet_id, uint8_t * frame );
 void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_receive_packets( rocketnet_server_iocp_t * iocp );
 rocketnet_server_socket_process_packets_t * rocketnet_server_iocp_process_packets( rocketnet_server_iocp_t * iocp );
@@ -115,7 +116,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 void rocketnet_server_iocp_test_force_flags( int flags );
 #endif
 
-#if ROCKETNET_DEV && defined(ROCKETNET_IOCP_TESTS)
+#if ROCKETNET_DEV && defined( ROCKETNET_IOCP_TESTS )
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 // TX tests can hold worker service or the short publication mutex separately.
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
@@ -143,7 +144,7 @@ struct rocketnet_server_iocp_test_queue_stats_t
     int live_run_refs;
 };
 void rocketnet_server_iocp_test_queue_stats( rocketnet_server_iocp_t * iocp,
-    rocketnet_server_iocp_test_queue_stats_t * stats );
+                                             rocketnet_server_iocp_test_queue_stats_t * stats );
 
 // The fault seam. The next count events at a fault point fail with status, as
 // the host fails them: a send or receive completion reports status as its

@@ -203,77 +203,77 @@ static int replay_near_partition_matches( int part, int begin, int end,
     }
 }
 
-static void replay_near_partition_witness( int part, uint64_t *highest_opened,
-                                           uint64_t *sequence,
-                                           uint64_t *chosen_word )
+static void replay_near_partition_witness( int part, uint64_t * highest_opened,
+                                           uint64_t * sequence,
+                                           uint64_t * chosen_word )
 {
     switch ( part )
     {
-    case 0: /* nw_empty_clear: begin=2, end=2 */
-        *highest_opened = 1;
-        *sequence = 2;
-        *chosen_word = 0;
-        break;
-    case 1: /* nw_single_partial_cleared_set: begin=1, end=2, first=0, set=0 */
-        *highest_opened = 0;
-        *sequence = 2;
-        *chosen_word = 0;
-        break;
-    case 2: /* nw_single_partial_cleared_only: begin=62, end=64, first=0, set=1 */
-        *highest_opened = 61;
-        *sequence = 64;
-        *chosen_word = 0;
-        break;
-    case 3: /* nw_single_partial_set_only: begin=62, end=64, first=0, set=1 */
-        *highest_opened = 61;
-        *sequence = 64;
-        *chosen_word = 1;
-        break;
-    case 4: /* nw_single_partial_untouched: begin=1, end=2, first=0, set=0 */
-        *highest_opened = 0;
-        *sequence = 2;
-        *chosen_word = 1;
-        break;
-    case 5: /* nw_multi_first_word: begin=1, end=66, first=0, last=1 */
-        *highest_opened = 0;
-        *sequence = 66;
-        *chosen_word = 0;
-        break;
-    case 6: /* nw_multi_interior_word: begin=1, end=130, first=0, last=2 */
-        *highest_opened = 0;
-        *sequence = 130;
-        *chosen_word = 1;
-        break;
-    case 7: /* nw_multi_last_word: begin=1, end=66, first=0, last=1 */
-        *highest_opened = 0;
-        *sequence = 66;
-        *chosen_word = 1;
-        break;
-    case 8: /* nw_multi_outside_word: begin=1, end=66, first=0, last=1 */
-        *highest_opened = 0;
-        *sequence = 66;
-        *chosen_word = 2;
-        break;
-    case 9: /* wrap_coincident_word: begin=63, delta=4095, end=4157, first=0, wrap_last=0 */
-        *highest_opened = 62;
-        *sequence = 4157;
-        *chosen_word = 0;
-        break;
-    case 10: /* wrap_high_span_only: begin=4095, end=4097, first=63, wrap_last=0 */
-        *highest_opened = 4094;
-        *sequence = 4097;
-        *chosen_word = 63;
-        break;
-    case 11: /* wrap_low_span_only: begin=4095, end=4097, first=63, wrap_last=0 */
-        *highest_opened = 4094;
-        *sequence = 4097;
-        *chosen_word = 0;
-        break;
-    default: /* 12: wrap_outside_spans: begin=4095, end=4097, first=63, wrap_last=0 */
-        *highest_opened = 4094;
-        *sequence = 4097;
-        *chosen_word = 1;
-        break;
+        case 0: /* nw_empty_clear: begin=2, end=2 */
+            *highest_opened = 1;
+            *sequence = 2;
+            *chosen_word = 0;
+            break;
+        case 1: /* nw_single_partial_cleared_set: begin=1, end=2, first=0, set=0 */
+            *highest_opened = 0;
+            *sequence = 2;
+            *chosen_word = 0;
+            break;
+        case 2: /* nw_single_partial_cleared_only: begin=62, end=64, first=0, set=1 */
+            *highest_opened = 61;
+            *sequence = 64;
+            *chosen_word = 0;
+            break;
+        case 3: /* nw_single_partial_set_only: begin=62, end=64, first=0, set=1 */
+            *highest_opened = 61;
+            *sequence = 64;
+            *chosen_word = 1;
+            break;
+        case 4: /* nw_single_partial_untouched: begin=1, end=2, first=0, set=0 */
+            *highest_opened = 0;
+            *sequence = 2;
+            *chosen_word = 1;
+            break;
+        case 5: /* nw_multi_first_word: begin=1, end=66, first=0, last=1 */
+            *highest_opened = 0;
+            *sequence = 66;
+            *chosen_word = 0;
+            break;
+        case 6: /* nw_multi_interior_word: begin=1, end=130, first=0, last=2 */
+            *highest_opened = 0;
+            *sequence = 130;
+            *chosen_word = 1;
+            break;
+        case 7: /* nw_multi_last_word: begin=1, end=66, first=0, last=1 */
+            *highest_opened = 0;
+            *sequence = 66;
+            *chosen_word = 1;
+            break;
+        case 8: /* nw_multi_outside_word: begin=1, end=66, first=0, last=1 */
+            *highest_opened = 0;
+            *sequence = 66;
+            *chosen_word = 2;
+            break;
+        case 9: /* wrap_coincident_word: begin=63, delta=4095, end=4157, first=0, wrap_last=0 */
+            *highest_opened = 62;
+            *sequence = 4157;
+            *chosen_word = 0;
+            break;
+        case 10: /* wrap_high_span_only: begin=4095, end=4097, first=63, wrap_last=0 */
+            *highest_opened = 4094;
+            *sequence = 4097;
+            *chosen_word = 63;
+            break;
+        case 11: /* wrap_low_span_only: begin=4095, end=4097, first=63, wrap_last=0 */
+            *highest_opened = 4094;
+            *sequence = 4097;
+            *chosen_word = 0;
+            break;
+        default: /* 12: wrap_outside_spans: begin=4095, end=4097, first=63, wrap_last=0 */
+            *highest_opened = 4094;
+            *sequence = 4097;
+            *chosen_word = 1;
+            break;
     }
 }
 
@@ -326,8 +326,8 @@ int harness_replay_near_partition_completeness( void )
     uint64_t w_word = 0;
     replay_near_partition_witness( (int) part_id, &w_high, &w_seq, &w_word );
     __CPROVER_assert( w_high < UINT64_MAX && w_seq > w_high &&
-                      ( w_seq - w_high ) < ROCKETNET_REPLAY_WINDOW_BITS &&
-                      w_word < ROCKETNET_REPLAY_WINDOW_WORDS,
+                          ( w_seq - w_high ) < ROCKETNET_REPLAY_WINDOW_BITS &&
+                          w_word < ROCKETNET_REPLAY_WINDOW_WORDS,
                       "each partition reachability witness lies inside the full near-window domain" );
     int w_begin = (int) ( ( w_high + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS );
     int w_end = w_begin + (int) ( w_seq - w_high ) - 1;
@@ -352,7 +352,7 @@ static int harness_replay_near_case( int mode )
     int set_word;
     int w;
 
-#if defined(REPLAY_REACHABILITY_WITNESS)
+#if defined( REPLAY_REACHABILITY_WITNESS )
     if ( mode >= 0 && mode < REPLAY_NEAR_PARTITION_COUNT )
     {
         replay_near_partition_witness( mode, &replay.highest_opened, &sequence,
@@ -412,7 +412,7 @@ static int harness_replay_near_case( int mode )
                       "highest_opened advances to the received sequence" );
     __CPROVER_assert( replay.window[chosen_word] == expected_word,
                       "a smaller delta clears exactly the vacated bits in every chosen word" );
-#if defined(REPLAY_REACHABILITY_WITNESS)
+#if defined( REPLAY_REACHABILITY_WITNESS )
     __CPROVER_assert( 0, "replay path reachability negative control" );
 #endif
     return 0;
@@ -476,7 +476,7 @@ int harness_replay_far( void )
         __CPROVER_assert( replay.window[w] == word,
                           "a delta at least the width clears every word" );
     }
-#if defined(REPLAY_FAR_REACHABILITY)
+#if defined( REPLAY_FAR_REACHABILITY )
     __CPROVER_assert( 0, "replay-far reachability control" );
 #endif
     return 0;

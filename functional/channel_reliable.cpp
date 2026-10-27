@@ -87,7 +87,11 @@ void reliable_mixed_sizes_over_lossy_link()
 // B takes n + 1. B's first packet arrives, then B's resend, then A's resend.
 void reliable_duplicate_after_gap_delivered_once()
 {
-    enum { a_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES - 8, b_bytes = 4 };
+    enum
+    {
+        a_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES - 8,
+        b_bytes = 4
+    };
     rocketnet_channel_harness_t h;
     reliable_check( rocketnet_channel_harness_create( &h ) );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
@@ -208,9 +212,9 @@ static void reliable_receive_full_recovers_direction( int to_server, int reliabi
     const uint64_t receive_floor = rx->ordered.receive.R;
     rx->ordered.channels.delivery_capacity = 0;
     uint8_t message[8192];
-    for ( int i = 0; i < message_bytes; ++i ) message[i] = (uint8_t) ( i * 31 + 7 );
-    reliable_check( ( to_server ? rocketnet_channel_harness_client_send( &h, 0, reliability, message, message_bytes ) :
-                                 rocketnet_channel_harness_server_send( &h, 0, reliability, message, message_bytes ) ) != 0 );
+    for ( int i = 0; i < message_bytes; ++i )
+        message[i] = (uint8_t) ( i * 31 + 7 );
+    reliable_check( ( to_server ? rocketnet_channel_harness_client_send( &h, 0, reliability, message, message_bytes ) : rocketnet_channel_harness_server_send( &h, 0, reliability, message, message_bytes ) ) != 0 );
     // Long enough for an ACK and at least one retry, but below the reliable
     // timeout. Neither end may disconnect or forget the rejected message.
     for ( int i = 0; i < 180 && h.connected; ++i )
@@ -224,15 +228,13 @@ static void reliable_receive_full_recovers_direction( int to_server, int reliabi
     reliable_check( tx->ordered.send.U != tx->ordered.send.next );
     reliable_check( rx->ordered.receive.R == receive_floor );
     rocketnet_channel_delivery_t delivery;
-    reliable_check( !( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) :
-                                  rocketnet_channel_harness_client_collect( &h, 0, &delivery ) ) );
+    reliable_check( !( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) : rocketnet_channel_harness_client_collect( &h, 0, &delivery ) ) );
     rx->ordered.channels.delivery_capacity = capacity;
     int received = 0;
     for ( int i = 0; i < 600; ++i )
     {
         reliable_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) );
-        while ( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) :
-                            rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
+        while ( to_server ? rocketnet_channel_harness_server_collect( &h, 0, &delivery ) : rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
         {
             reliable_check( delivery.bytes == message_bytes && memcmp( delivery.data, message, (size_t) message_bytes ) == 0 );
             ++received;
@@ -253,7 +255,7 @@ void reliable_receive_full_recovers_server_to_client() { reliable_receive_full_r
 void reliable_receive_full_recovers_all_modes()
 {
     const int modes[] = { ROCKETNET_RELIABILITY_RELIABLE_ORDERED, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED,
-                         ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT };
+                          ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT };
     for ( int direction = 0; direction < 2; ++direction )
     {
         reliable_receive_full_recovers_direction( direction, ROCKETNET_RELIABILITY_RELIABLE, 8192 );
@@ -273,7 +275,8 @@ void reliable_receive_full_partial_packet_recovers()
         reliable_check( rocketnet_channel_harness_create( &h ) );
         rocketnet_channel_harness_set_link( &h, 0, 0, 0, 0 );
         reliable_check( rocketnet_channel_harness_connect( &h, 600 ) );
-        for ( int i = 0; i < 120; ++i ) rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+        for ( int i = 0; i < 120; ++i )
+            rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
         rn_message_object_t * receiver = to_server ? &h.message_server->object : &h.message_client->object;
         rn_message_object_t * sender = to_server ? &h.message_client->object : &h.message_server->object;
         rn_message_connection_t * rx = &receiver->connections[to_server ? h.client_slot : 0];
@@ -283,8 +286,7 @@ void reliable_receive_full_partial_packet_recovers()
         rx->ordered.channels.delivery_capacity = 1;
         const uint8_t a[4] = { 1, 2, 3, 4 }, b[4] = { 5, 6, 7, 8 };
         for ( const uint8_t * data : { a, b } )
-            reliable_check( ( to_server ? rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, 4 ) :
-                                         rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, 4 ) ) != 0 );
+            reliable_check( ( to_server ? rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, 4 ) : rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, 4 ) ) != 0 );
         int first = 0, second = 0;
         rocketnet_channel_delivery_t delivery;
         for ( int i = 0; i < 20 && first == 0; ++i )
@@ -325,7 +327,8 @@ void reliable_receive_full_ordered_gap_recovers()
     reliable_check( rocketnet_channel_harness_create( &h ) );
     rocketnet_channel_harness_set_link( &h, 0, 0, 0, 0 );
     reliable_check( rocketnet_channel_harness_connect( &h, 600 ) );
-    for ( int i = 0; i < 120; ++i ) rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+    for ( int i = 0; i < 120; ++i )
+        rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     rn_message_connection_t * rx = &h.message_server->object.connections[h.client_slot];
     const uint32_t capacity = rx->ordered.channels.delivery_capacity;
     const uint64_t floor = rx->ordered.receive.R;
@@ -374,10 +377,11 @@ void reliable_receive_full_ordered_gap_recovers()
 void default_one_mib_messages_all_modes()
 {
     static uint8_t data[ROCKETNET_MAX_MESSAGE_BYTES];
-    const int bytes = (int) sizeof(data);
+    const int bytes = (int) sizeof( data );
     for ( int mode = 0; mode < 8; ++mode )
     {
-        for ( int i = 0; i < bytes; ++i ) data[i] = (uint8_t) ( ( i * 17 + mode * 31 ) & 255 );
+        for ( int i = 0; i < bytes; ++i )
+            data[i] = (uint8_t) ( ( i * 17 + mode * 31 ) & 255 );
         rocketnet_channel_harness_t h;
         reliable_check( rocketnet_channel_harness_create( &h ) );
         reliable_check( h.message_config.max_message_bytes == bytes );
@@ -393,14 +397,15 @@ void default_one_mib_messages_all_modes()
             while ( rocketnet_channel_harness_client_collect( &h, 0, &delivery ) )
             {
                 reliable_check( ++client_seen == 1 && delivery.bytes == bytes );
-                reliable_check( memcmp( delivery.data, data, sizeof(data) ) == 0 );
+                reliable_check( memcmp( delivery.data, data, sizeof( data ) ) == 0 );
             }
             while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
             {
                 reliable_check( ++server_seen == 1 && delivery.bytes == bytes );
-                reliable_check( memcmp( delivery.data, data, sizeof(data) ) == 0 );
+                reliable_check( memcmp( delivery.data, data, sizeof( data ) ) == 0 );
             }
-            if ( client_seen && server_seen && ++settled == 120 ) break;
+            if ( client_seen && server_seen && ++settled == 120 )
+                break;
         }
         printf( "default 1 MiB mode=%d client_received=%d server_received=%d\n", mode, client_seen, server_seen );
         reliable_check( client_seen == 1 && server_seen == 1 );

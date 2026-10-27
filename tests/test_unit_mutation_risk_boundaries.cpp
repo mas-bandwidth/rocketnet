@@ -27,13 +27,13 @@
 
 static rocketnet_ack_endpoint_t * risk_ack_endpoint()
 {
-    auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof(rocketnet_ack_endpoint_t) );
+    auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( rocketnet_ack_endpoint_t ) );
     check( endpoint );
-    memset( (void *) endpoint, 0, sizeof(rocketnet_ack_endpoint_t) );
+    memset( (void *) endpoint, 0, sizeof( rocketnet_ack_endpoint_t ) );
     rocketnet_ack_endpoint_reset( endpoint );
-    memset( endpoint->sent_written, 0xFF, sizeof(endpoint->sent_written) );
-    memset( endpoint->received_written, 0xFF, sizeof(endpoint->received_written) );
-    memset( endpoint->aggregates_written, 0xFF, sizeof(endpoint->aggregates_written) );
+    memset( endpoint->sent_written, 0xFF, sizeof( endpoint->sent_written ) );
+    memset( endpoint->received_written, 0xFF, sizeof( endpoint->received_written ) );
+    memset( endpoint->aggregates_written, 0xFF, sizeof( endpoint->aggregates_written ) );
     return endpoint;
 }
 
@@ -45,7 +45,7 @@ static void risk_ack_record( rocketnet_ack_endpoint_t * endpoint, uint64_t seque
 static void risk_ack_largest( rocketnet_ack_endpoint_t * endpoint, uint64_t sequence, double time )
 {
     rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = sequence;
     block.first_range_length = 1;
     uint64_t ids[1], unknown = 0, full = 0;
@@ -94,7 +94,8 @@ static const struct rocketnet_reassembly_counters_t risk_counters = {
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 struct risk_reassembly_t
 {
@@ -106,7 +107,7 @@ struct risk_reassembly_t
 
 static void risk_reassembly_begin( struct risk_reassembly_t * h )
 {
-    memset( h, 0, sizeof(*h) );
+    memset( h, 0, sizeof( *h ) );
     h->counters = h->counters_storage.values;
     h->set = rocketnet_reassembly_set_create( NULL, 1, 7, 8192, 4 );
     check( h->set != NULL );
@@ -211,7 +212,7 @@ struct risk_window_t
 static void risk_window_begin( struct risk_window_t * w )
 {
     rocketnet_message_default_config( &w->config );
-    memset( &w->counters, 0, sizeof(w->counters) );
+    memset( &w->counters, 0, sizeof( w->counters ) );
     w->arena = rn_arena_create( NULL, &w->config, 1, &w->counters );
     check( w->arena );
     w->region = rn_arena_region( w->arena, 0 );
@@ -365,18 +366,27 @@ static void test_window_ack_out_of_order_fragment_chain()
 
     // Middle fragment acked first: its own chunk, and only it, goes.
     check( rn_window_ack_on_ack( &w.ack, 3, 1000.05 ) == 1 );
-    { const uint32_t expected[2] = { chunks[0], chunks[2] }; risk_check_chain( region, d_block, expected, 2 ); }
+    {
+        const uint32_t expected[2] = { chunks[0], chunks[2] };
+        risk_check_chain( region, d_block, expected, 2 );
+    }
     check( region->send_descriptors[d_block].in_use == 1 );
     check( region->send_descriptors[d_block].fragments_acked == 1 );
 
     // An interleaved unrelated descriptor acks without touching the chain.
     check( rn_window_ack_on_ack( &w.ack, 1, 1000.06 ) == 1 );
-    { const uint32_t expected[2] = { chunks[0], chunks[2] }; risk_check_chain( region, d_block, expected, 2 ); }
+    {
+        const uint32_t expected[2] = { chunks[0], chunks[2] };
+        risk_check_chain( region, d_block, expected, 2 );
+    }
     check( region->send_descriptors[d_block].fragments_acked == 1 );
 
     // Last fragment acked second: the tail chunk goes, the head stays.
     check( rn_window_ack_on_ack( &w.ack, 4, 1000.07 ) == 1 );
-    { const uint32_t expected[1] = { chunks[0] }; risk_check_chain( region, d_block, expected, 1 ); }
+    {
+        const uint32_t expected[1] = { chunks[0] };
+        risk_check_chain( region, d_block, expected, 1 );
+    }
     check( region->send_descriptors[d_block].in_use == 1 );
     check( region->send_descriptors[d_block].fragments_acked == 2 );
 

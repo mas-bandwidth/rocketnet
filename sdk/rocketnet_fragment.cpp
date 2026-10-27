@@ -15,8 +15,8 @@
 // The transport's reassembled payload maximum lies between one packet's
 // payload and the wire's fragmented payload maximum.
 ROCKETNET_STATIC_ASSERT( ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES &&
-    ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
-    "the transport's payload maximum is within the fragment limits" );
+                             ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES,
+                         "the transport's payload maximum is within the fragment limits" );
 
 void rocketnet_write_fragment_header( uint8_t * output, uint32_t payload_id, int fragment_index, int fragment_count )
 {
@@ -83,49 +83,49 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 // the delivered arena's bytes when every completion may be a maximum
 // payload: capacity x the 16-aligned maximum (the packing stride bound)
 
-static uint64_t rocketnet_reassembly_full_delivered_bytes(int max_payload_bytes, int delivered_capacity)
+static uint64_t rocketnet_reassembly_full_delivered_bytes( int max_payload_bytes, int delivered_capacity )
 {
-    if (max_payload_bytes < 1 || delivered_capacity < 1)
+    if ( max_payload_bytes < 1 || delivered_capacity < 1 )
         return 0;
-    return (uint64_t)delivered_capacity * (uint64_t)ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED(max_payload_bytes);
+    return (uint64_t) delivered_capacity * (uint64_t) ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( max_payload_bytes );
 }
 
-uint64_t rocketnet_reassembly_memory_required_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes)
+uint64_t rocketnet_reassembly_memory_required_delivered( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes )
 {
-    if (num_connections < 1 || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS ||
-        max_payload_bytes < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || delivered_capacity < 1 ||
-        delivered_bytes < (uint64_t)max_payload_bytes)
+    if ( num_connections < 1 || num_slots < 1 || num_slots > ROCKETNET_MAX_FRAGMENTS ||
+         max_payload_bytes < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES || max_payload_bytes > ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES || delivered_capacity < 1 ||
+         delivered_bytes < (uint64_t) max_payload_bytes )
         return 0;
-    uint64_t total = sizeof(rocketnet_reassembly_set_t);
-    const uint64_t slots = (uint64_t)num_connections * (uint64_t)num_slots;
-    if (!rocketnet_memory_add(total, slots, sizeof(rocketnet_reassembly_slot_t)) ||
-        !rocketnet_memory_add(total, (uint64_t)num_connections, sizeof(uint32_t)) ||
-        !rocketnet_memory_add(total, slots, (uint64_t)max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES) ||
-        !rocketnet_memory_add(total, 1, delivered_bytes) || total > SIZE_MAX)
+    uint64_t total = sizeof( rocketnet_reassembly_set_t );
+    const uint64_t slots = (uint64_t) num_connections * (uint64_t) num_slots;
+    if ( !rocketnet_memory_add( total, slots, sizeof( rocketnet_reassembly_slot_t ) ) ||
+         !rocketnet_memory_add( total, (uint64_t) num_connections, sizeof( uint32_t ) ) ||
+         !rocketnet_memory_add( total, slots, (uint64_t) max_payload_bytes + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES ) ||
+         !rocketnet_memory_add( total, 1, delivered_bytes ) || total > SIZE_MAX )
         return 0;
     return total;
 }
 
-uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity)
+uint64_t rocketnet_reassembly_memory_required( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity )
 {
-    return rocketnet_reassembly_memory_required_delivered(num_connections, num_slots, max_payload_bytes, delivered_capacity,
-        rocketnet_reassembly_full_delivered_bytes(max_payload_bytes, delivered_capacity));
+    return rocketnet_reassembly_memory_required_delivered( num_connections, num_slots, max_payload_bytes, delivered_capacity,
+                                                           rocketnet_reassembly_full_delivered_bytes( max_payload_bytes, delivered_capacity ) );
 }
 
-bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity)
+bool rocketnet_reassembly_memory_allowed( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity )
 {
-    return rocketnet_reassembly_memory_allowed_delivered(num_connections, num_slots, max_payload_bytes, delivered_capacity,
-        rocketnet_reassembly_full_delivered_bytes(max_payload_bytes, delivered_capacity));
+    return rocketnet_reassembly_memory_allowed_delivered( num_connections, num_slots, max_payload_bytes, delivered_capacity,
+                                                          rocketnet_reassembly_full_delivered_bytes( max_payload_bytes, delivered_capacity ) );
 }
 
-bool rocketnet_reassembly_memory_allowed_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes)
+bool rocketnet_reassembly_memory_allowed_delivered( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes )
 {
-    const uint64_t bytes = rocketnet_reassembly_memory_required_delivered(num_connections, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes);
-    const uint64_t budget = (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
-    if (!bytes || bytes > budget)
+    const uint64_t bytes = rocketnet_reassembly_memory_required_delivered( num_connections, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes );
+    const uint64_t budget = (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
+    if ( !bytes || bytes > budget )
     {
-        rocketnet_error("reassembly geometry refused: requires %llu bytes, component budget %llu bytes",
-            (unsigned long long)bytes, (unsigned long long)budget);
+        rocketnet_error( "reassembly geometry refused: requires %llu bytes, component budget %llu bytes",
+                         (unsigned long long) bytes, (unsigned long long) budget );
         return false;
     }
     return true;
@@ -196,14 +196,14 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
     rocketnet_assert( max_payload_bytes >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     rocketnet_assert( delivered_capacity > 0 );
 
-    if (!rocketnet_reassembly_memory_allowed_delivered(num_connections, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes))
+    if ( !rocketnet_reassembly_memory_allowed_delivered( num_connections, num_slots, max_payload_bytes, delivered_capacity, delivered_bytes ) )
         return NULL;
 
-    struct rocketnet_reassembly_set_t * set = (struct rocketnet_reassembly_set_t*) rocketnet_malloc( context, sizeof(struct rocketnet_reassembly_set_t) );
+    struct rocketnet_reassembly_set_t * set = (struct rocketnet_reassembly_set_t *) rocketnet_malloc( context, sizeof( struct rocketnet_reassembly_set_t ) );
     if ( !set )
         return NULL;
 
-    memset( set, 0, sizeof(struct rocketnet_reassembly_set_t) );
+    memset( set, 0, sizeof( struct rocketnet_reassembly_set_t ) );
 
     set->context = context;
     set->num_connections = num_connections;
@@ -216,9 +216,9 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
     // the per-connection stale-rule references ride at the tail of the slot
     // records' allocation, so the set keeps its allocation count
 
-    const size_t slot_records_bytes = (size_t) num_connections * (size_t) num_slots * sizeof(struct rocketnet_reassembly_slot_t);
-    set->slots = (struct rocketnet_reassembly_slot_t*) rocketnet_malloc( context, slot_records_bytes + (size_t) num_connections * sizeof(uint32_t) );
-    set->arena = (uint8_t*) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * set->slot_arena_bytes );
+    const size_t slot_records_bytes = (size_t) num_connections * (size_t) num_slots * sizeof( struct rocketnet_reassembly_slot_t );
+    set->slots = (struct rocketnet_reassembly_slot_t *) rocketnet_malloc( context, slot_records_bytes + (size_t) num_connections * sizeof( uint32_t ) );
+    set->arena = (uint8_t *) rocketnet_malloc( context, (size_t) num_connections * (size_t) num_slots * set->slot_arena_bytes );
 
     // The delivered mirror is this implementation's own addition beyond
     // the standard's arena arithmetic: the per-update home of completed
@@ -232,7 +232,7 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
     // connections x slots x (max payload + staging) for the arena plus
     // delivered_bytes for this mirror; slot records ride along.
 
-    set->delivered = (uint8_t*) rocketnet_malloc( context, set->delivered_bytes );
+    set->delivered = (uint8_t *) rocketnet_malloc( context, set->delivered_bytes );
 
     if ( !set->slots || !set->arena || !set->delivered )
     {
@@ -241,8 +241,8 @@ struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( v
     }
 
     memset( set->slots, 0, slot_records_bytes );
-    set->newest_completed = (uint32_t*) ( (uint8_t*) set->slots + slot_records_bytes );
-    memset( set->newest_completed, 0, (size_t) num_connections * sizeof(uint32_t) );
+    set->newest_completed = (uint32_t *) ( (uint8_t *) set->slots + slot_records_bytes );
+    memset( set->newest_completed, 0, (size_t) num_connections * sizeof( uint32_t ) );
 
     return set;
 }
@@ -270,7 +270,7 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
     if ( connection_index < 0 || connection_index >= set->num_connections )
         return;
 
-    memset( set->slots + connection_index * set->num_slots, 0, (size_t) set->num_slots * sizeof(struct rocketnet_reassembly_slot_t) );
+    memset( set->slots + connection_index * set->num_slots, 0, (size_t) set->num_slots * sizeof( struct rocketnet_reassembly_slot_t ) );
     set->newest_completed[connection_index] = 0;
 }
 
@@ -286,7 +286,7 @@ void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * 
 
 static void rocketnet_reassembly_clear_slot( struct rocketnet_reassembly_slot_t * slot )
 {
-    memset( slot, 0, sizeof(struct rocketnet_reassembly_slot_t) );
+    memset( slot, 0, sizeof( struct rocketnet_reassembly_slot_t ) );
 }
 
 // a fragment bit, and setting it: num_received tracks the set bits
@@ -456,7 +456,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     // pin is computed here, refused before anything mutates.
 
     const int stride = ( same_payload && slot->fragment_stride != 0 ) ? slot->fragment_stride
-                     : ( !is_final ? fragment_bytes : 0 );                          // 0 = still unknown: a final arriving first
+                                                                      : ( !is_final ? fragment_bytes : 0 );                          // 0 = still unknown: a final arriving first
 
     if ( same_payload && slot->fragment_stride != 0 )
     {
@@ -637,10 +637,11 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 //                          the send arena
 // -----------------------------------------
 
-uint64_t rocketnet_send_arena_allocation_bytes(int slots, int bytes)
+uint64_t rocketnet_send_arena_allocation_bytes( int slots, int bytes )
 {
-    if (slots < 1 || bytes < 1) return 0;
-    return rocketnet_memory_allocations({sizeof(rocketnet_send_arena_t), (uint64_t)slots * (uint64_t)bytes});
+    if ( slots < 1 || bytes < 1 )
+        return 0;
+    return rocketnet_memory_allocations( { sizeof( rocketnet_send_arena_t ), (uint64_t) slots * (uint64_t) bytes } );
 }
 
 struct rocketnet_send_arena_t * rocketnet_send_arena_create( void * context, int num_slots, int slot_bytes )
@@ -648,16 +649,16 @@ struct rocketnet_send_arena_t * rocketnet_send_arena_create( void * context, int
     rocketnet_assert( num_slots > 0 );
     rocketnet_assert( slot_bytes > 0 );
 
-    struct rocketnet_send_arena_t * arena = (struct rocketnet_send_arena_t*) rocketnet_malloc( context, sizeof(struct rocketnet_send_arena_t) );
+    struct rocketnet_send_arena_t * arena = (struct rocketnet_send_arena_t *) rocketnet_malloc( context, sizeof( struct rocketnet_send_arena_t ) );
     if ( !arena )
         return NULL;
 
-    memset( arena, 0, sizeof(struct rocketnet_send_arena_t) );
+    memset( arena, 0, sizeof( struct rocketnet_send_arena_t ) );
 
     arena->context = context;
     arena->num_slots = num_slots;
     arena->slot_bytes = slot_bytes;
-    arena->data = (uint8_t*) rocketnet_malloc( context, (size_t) num_slots * (size_t) slot_bytes );
+    arena->data = (uint8_t *) rocketnet_malloc( context, (size_t) num_slots * (size_t) slot_bytes );
     if ( !arena->data )
     {
         rocketnet_free( context, arena );

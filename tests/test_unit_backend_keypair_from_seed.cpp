@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include <string.h>
 
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
@@ -34,8 +34,7 @@ static const uint64_t backend_seed_create_timestamp = 1756166400ULL;
 static const uint64_t backend_seed_expire_timestamp = 1756166700ULL;
 static const int32_t backend_seed_timeout_seconds = 10;
 
-static const char * const backend_seed_addresses[] =
-{
+static const char * const backend_seed_addresses[] = {
     "203.0.113.10:40000",
 };
 
@@ -57,22 +56,22 @@ void test_backend_keypair_from_seed_round_trip()
                                                                     backend_seed_protocol_id, backend_seed_addresses, 1,
                                                                     backend_seed_client_id, backend_seed_create_timestamp,
                                                                     backend_seed_expire_timestamp, backend_seed_timeout_seconds,
-                                                                    NULL, token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+                                                                    NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_connect_token_t parsed;
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature,
-                                                               backend_public_key ) == 1 );
+                                                                backend_public_key ) == 1 );
 
     struct rocketnet_connect_token_private_t opened;
     rocketnet_unit_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data,
-                                                               server_public_key, server_secret_key ) == 1 );
+                                                                server_public_key, server_secret_key ) == 1 );
     rocketnet_unit_check( opened.client_id == backend_seed_client_id );
     rocketnet_unit_check( opened.protocol_id == backend_seed_protocol_id );
 
-    sodium_memzero( backend_secret_key, sizeof(backend_secret_key) );
-    sodium_memzero( server_secret_key, sizeof(server_secret_key) );
-    sodium_memzero( &opened, sizeof(opened) );
+    sodium_memzero( backend_secret_key, sizeof( backend_secret_key ) );
+    sodium_memzero( server_secret_key, sizeof( server_secret_key ) );
+    sodium_memzero( &opened, sizeof( opened ) );
 }
 
 void test_backend_keypair_from_seed_is_deterministic()
@@ -98,9 +97,9 @@ void test_backend_keypair_from_seed_is_deterministic()
     rocketnet_unit_check( memcmp( public_a, public_c, ROCKETNET_BACKEND_PUBLIC_KEY_BYTES ) != 0 );
     rocketnet_unit_check( memcmp( secret_a, secret_c, RN_TEST_BACKEND_SECRET_KEY_BYTES ) != 0 );
 
-    sodium_memzero( secret_a, sizeof(secret_a) );
-    sodium_memzero( secret_b, sizeof(secret_b) );
-    sodium_memzero( secret_c, sizeof(secret_c) );
+    sodium_memzero( secret_a, sizeof( secret_a ) );
+    sodium_memzero( secret_b, sizeof( secret_b ) );
+    sodium_memzero( secret_c, sizeof( secret_c ) );
 }
 
 void test_backend_keypair_from_seed_matches_the_library()
@@ -119,8 +118,8 @@ void test_backend_keypair_from_seed_matches_the_library()
     rocketnet_unit_check( memcmp( public_key, library_public_key, ROCKETNET_BACKEND_PUBLIC_KEY_BYTES ) == 0 );
     rocketnet_unit_check( memcmp( secret_key, library_secret_key, RN_TEST_BACKEND_SECRET_KEY_BYTES ) == 0 );
 
-    sodium_memzero( secret_key, sizeof(secret_key) );
-    sodium_memzero( library_secret_key, sizeof(library_secret_key) );
+    sodium_memzero( secret_key, sizeof( secret_key ) );
+    sodium_memzero( library_secret_key, sizeof( library_secret_key ) );
 }
 
 // a NULL argument is API misuse: the guard records it and fires rocketnet_assert, which traps in a build with asserts on.
@@ -147,24 +146,24 @@ void test_backend_keypair_from_seed_null_refused()
     uint8_t public_reference[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t secret_reference[RN_TEST_BACKEND_SECRET_KEY_BYTES];
 
-    memset( public_reference, 0xa5, sizeof(public_reference) );
-    memset( secret_reference, 0xa5, sizeof(secret_reference) );
+    memset( public_reference, 0xa5, sizeof( public_reference ) );
+    memset( secret_reference, 0xa5, sizeof( secret_reference ) );
 
-    memcpy( public_key, public_reference, sizeof(public_key) );
-    memcpy( secret_key, secret_reference, sizeof(secret_key) );
+    memcpy( public_key, public_reference, sizeof( public_key ) );
+    memcpy( secret_key, secret_reference, sizeof( secret_key ) );
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( NULL, public_key, secret_key ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_unit_check( memcmp( public_key, public_reference, sizeof(public_key) ) == 0 );
-    rocketnet_unit_check( memcmp( secret_key, secret_reference, sizeof(secret_key) ) == 0 );
+    rocketnet_unit_check( memcmp( public_key, public_reference, sizeof( public_key ) ) == 0 );
+    rocketnet_unit_check( memcmp( secret_key, secret_reference, sizeof( secret_key ) ) == 0 );
 
-    memcpy( public_key, public_reference, sizeof(public_key) );
-    memcpy( secret_key, secret_reference, sizeof(secret_key) );
+    memcpy( public_key, public_reference, sizeof( public_key ) );
+    memcpy( secret_key, secret_reference, sizeof( secret_key ) );
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, NULL, secret_key ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_unit_check( memcmp( secret_key, secret_reference, sizeof(secret_key) ) == 0 );
+    rocketnet_unit_check( memcmp( secret_key, secret_reference, sizeof( secret_key ) ) == 0 );
 
-    memcpy( public_key, public_reference, sizeof(public_key) );
-    memcpy( secret_key, secret_reference, sizeof(secret_key) );
+    memcpy( public_key, public_reference, sizeof( public_key ) );
+    memcpy( secret_key, secret_reference, sizeof( secret_key ) );
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, public_key, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_unit_check( memcmp( public_key, public_reference, sizeof(public_key) ) == 0 );
+    rocketnet_unit_check( memcmp( public_key, public_reference, sizeof( public_key ) ) == 0 );
 
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( backend_keypair_from_seed_asserts == 3 );

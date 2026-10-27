@@ -811,7 +811,8 @@ static void rn_blaster_print_plan( const rn_blaster_options_t & options, const r
                 " pacing=ack-driven rate_pps_ignored=true\n",
                 manifest.count, mutation_datagrams, manifest.count );
         printf( "PLAN server_transport_profile=%s profile_source=operator-declared runtime_autodetect=false"
-                " counter_observed=false\n", options.server_transport_profile.c_str() );
+                " counter_observed=false\n",
+                options.server_transport_profile.c_str() );
         const int profile = rn_blaster_server_transport_profile( options.server_transport_profile );
         rocketnet_assert( profile >= 0 );
         for ( uint32_t i = 0; i < manifest.count; ++i )

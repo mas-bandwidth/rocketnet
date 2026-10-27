@@ -91,7 +91,7 @@ static uint64_t sim_read_u64_le( const uint8_t * in )
 
 static void sim_schedule_begin( struct sim_schedule_t * s )
 {
-    memset( s, 0, sizeof(*s) );
+    memset( s, 0, sizeof( *s ) );
     s->sim = rocketnet_network_simulator_create( NULL, SIM_SCHEDULE_MAX_PACKETS, 1 );
     rocketnet_unit_check( s->sim != NULL );
     rocketnet_network_simulator_config( s->sim, 0.0, 0.0, 0.0f, 0.0f );
@@ -174,7 +174,8 @@ static const struct rocketnet_reassembly_counters_t sim_fragment_counters = {
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 // builds one fragment's type data -- header plus patterned bytes read from the
 // position the fragment claims, so a reassembled payload is verifiable
@@ -206,7 +207,7 @@ static void test_sim_schedule_long_skip_stragglers()
     sim_schedule_begin( &sched );
 
     struct rocketnet_replay_protection_t replay;
-    memset( &replay, 0, sizeof(replay) );
+    memset( &replay, 0, sizeof( replay ) );
 
     const uint64_t skips[] = { 64, 255, 256, 4095, 4096, 4097, 65536 };
     uint64_t highest = 0;
@@ -215,7 +216,7 @@ static void test_sim_schedule_long_skip_stragglers()
     // each packet needs its own buffer -- the queue stores pointers and the
     // wire copies them only at flush.
     uint8_t skip_packets[7][8];
-    for ( int i = 0; i < (int) ( sizeof(skips) / sizeof(skips[0]) ); i++ )
+    for ( int i = 0; i < (int) ( sizeof( skips ) / sizeof( skips[0] ) ); i++ )
     {
         highest += skips[i];
         sim_write_u64_le( skip_packets[i], highest );
@@ -276,7 +277,7 @@ static void test_sim_schedule_long_skip_stragglers()
 static void test_sim_schedule_final_fragment_first()
 {
     struct rocketnet_counters_t counters_storage;
-    memset( &counters_storage, 0, sizeof(counters_storage) );
+    memset( &counters_storage, 0, sizeof( counters_storage ) );
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &sim_fragment_counters;
 
@@ -343,7 +344,7 @@ static void test_sim_schedule_final_fragment_first()
 static void test_sim_schedule_batch_cap()
 {
     struct rocketnet_counters_t counters_storage;
-    memset( &counters_storage, 0, sizeof(counters_storage) );
+    memset( &counters_storage, 0, sizeof( counters_storage ) );
     uint64_t * counters = counters_storage.values;
     const struct rocketnet_reassembly_counters_t * table = &sim_fragment_counters;
 
@@ -419,9 +420,9 @@ static void test_sim_schedule_batch_cap()
 static void sim_run_same_tick_slot_reuse( bool same_address )
 {
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
+    memset( &server, 0, sizeof( server ) );
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     uint64_t connection_ids[4] = {};
     uint64_t acked_connection_ids[16] = {};
 
@@ -443,7 +444,7 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     rocketnet_unit_check( rocketnet_address_parse( &addr_a, "198.51.100.7:56789" ) );
     rocketnet_unit_check( rocketnet_address_parse( &addr_b, same_address ? "198.51.100.7:56789" : "198.51.100.8:56789" ) );
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-    memset( user_data, 0, sizeof(user_data) );
+    memset( user_data, 0, sizeof( user_data ) );
 
     uint8_t b_salt[ROCKETNET_CONNECTION_SALT_BYTES];
     for ( int i = 0; i < ROCKETNET_CONNECTION_SALT_BYTES; i++ )
@@ -491,10 +492,10 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     // A's stale payload, ack (acknowledging sequence 1), keep-alive, and
     // completing fragment 1/2, all sealed under A's session key and salt
     struct rocketnet_replay_protection_t ack_seq1_replay;
-    memset( &ack_seq1_replay, 0, sizeof(ack_seq1_replay) );
+    memset( &ack_seq1_replay, 0, sizeof( ack_seq1_replay ) );
     rocketnet_replay_advance( &ack_seq1_replay, 1 );
     uint8_t ack_seq1_block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
-    const int ack_seq1_block_bytes = rocketnet_ack_block_build( ack_seq1_block, sizeof(ack_seq1_block), &ack_seq1_replay );
+    const int ack_seq1_block_bytes = rocketnet_ack_block_build( ack_seq1_block, sizeof( ack_seq1_block ), &ack_seq1_replay );
     rocketnet_unit_check( ack_seq1_block_bytes >= ROCKETNET_ACK_BLOCK_MIN_BYTES );
 
     uint8_t a_payload_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 4];
@@ -503,10 +504,10 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     memcpy( a_payload_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, a_data, 4 );
     uint8_t a_payload_packet[ROCKETNET_RECEIVE_CEILING];
     int a_payload_bytes = rocketnet_write_sealed_packet( a_payload_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                          rocketnet_test_filter_value, 2, NULL,
-                                                          a_payload_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + 4,
-                                                          ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
-                                                          rocketnet_test_session_c2s_key );
+                                                         rocketnet_test_filter_value, 2, NULL,
+                                                         a_payload_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + 4,
+                                                         ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
+                                                         rocketnet_test_session_c2s_key );
     rocketnet_unit_check( a_payload_bytes != 0 );
 
     uint8_t a_ack_packet[ROCKETNET_RECEIVE_CEILING];
@@ -518,11 +519,11 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     rocketnet_unit_check( a_ack_bytes != 0 );
 
     uint8_t a_keep_alive_plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 8];
-    memset( a_keep_alive_plaintext, 0, sizeof(a_keep_alive_plaintext) );
+    memset( a_keep_alive_plaintext, 0, sizeof( a_keep_alive_plaintext ) );
     uint8_t a_keep_alive_packet[ROCKETNET_RECEIVE_CEILING];
     int a_keep_alive_bytes = rocketnet_write_sealed_packet( a_keep_alive_packet, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
                                                             rocketnet_test_filter_value, 4, NULL,
-                                                            a_keep_alive_plaintext, sizeof(a_keep_alive_plaintext),
+                                                            a_keep_alive_plaintext, sizeof( a_keep_alive_plaintext ),
                                                             ROCKETNET_TEST_PROTOCOL_ID, rocketnet_test_salt, NULL,
                                                             rocketnet_test_session_c2s_key );
     rocketnet_unit_check( a_keep_alive_bytes != 0 );
@@ -570,10 +571,10 @@ static void sim_run_same_tick_slot_reuse( bool same_address )
     memcpy( b_payload_plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, b_data, 4 );
     uint8_t b_payload_packet[ROCKETNET_RECEIVE_CEILING];
     int b_payload_bytes = rocketnet_write_sealed_packet( b_payload_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                          rocketnet_test_filter_value, 1, NULL,
-                                                          b_payload_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + 4,
-                                                          ROCKETNET_TEST_PROTOCOL_ID, b_salt, NULL,
-                                                          rocketnet_test_session_s2c_key );
+                                                         rocketnet_test_filter_value, 1, NULL,
+                                                         b_payload_plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES + 4,
+                                                         ROCKETNET_TEST_PROTOCOL_ID, b_salt, NULL,
+                                                         rocketnet_test_session_s2c_key );
     rocketnet_unit_check( b_payload_bytes != 0 );
 
     uint8_t b_ack_packet[ROCKETNET_RECEIVE_CEILING];
@@ -766,7 +767,7 @@ static void test_sim_schedule_sequence_wrap()
     // the replay window, seeded near 2^24 - 128: 512 packets across the
     // boundary are each accepted exactly once and the floor moves forward.
     struct rocketnet_replay_protection_t replay;
-    memset( &replay, 0, sizeof(replay) );
+    memset( &replay, 0, sizeof( replay ) );
     const uint64_t win_base = ( 1ULL << 24 ) - 128;
     uint8_t replay_packets[512][8];
     for ( int i = 0; i < 512; i++ )
@@ -823,11 +824,11 @@ static void test_address_equal_degenerate_types_never_equal()
 {
     struct rocketnet_address_t a;
     struct rocketnet_address_t b;
-    memset( &a, 0, sizeof(a) );
-    memset( &b, 0, sizeof(b) );
+    memset( &a, 0, sizeof( a ) );
+    memset( &b, 0, sizeof( b ) );
     a.type = ROCKETNET_ADDRESS_NONE;
     b.type = ROCKETNET_ADDRESS_NONE;
-    rocketnet_unit_check( memcmp( &a, &b, sizeof(a) ) == 0 );
+    rocketnet_unit_check( memcmp( &a, &b, sizeof( a ) ) == 0 );
     rocketnet_unit_check( !rocketnet_address_equal( &a, &b ) );
     rocketnet_unit_check( !rocketnet_address_equal( &a, &a ) );
 }
@@ -866,8 +867,8 @@ static void test_simulator_bitmap_membership_generation_and_bounds()
     const uint8_t * replacement_packet = &replacement;
     const int replacement_bytes = 1;
     rocketnet_unit_check( rocketnet_network_simulator_deliver_packets( sim, &from, &to,
-                                                                        &replacement_packet, &replacement_bytes,
-                                                                        1, 10.0 ) == 1 );
+                                                                       &replacement_packet, &replacement_bytes,
+                                                                       1, 10.0 ) == 1 );
     struct rocketnet_network_simulator_slot_handle_t replacement_handle;
     rocketnet_unit_check( rocketnet_network_simulator_test_handle_for_slot( sim, 64, &replacement_handle ) );
     rocketnet_unit_check( replacement_handle.generation != old_handle.generation );

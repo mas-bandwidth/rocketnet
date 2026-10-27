@@ -372,10 +372,14 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
 #if ROCKETNET_DEV
-    if ( had_client_env ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
-    if ( had_server_env ) check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+    if ( had_client_env )
+        check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    if ( had_server_env )
+        check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 #endif // #if ROCKETNET_DEV
 
     // a transport list that does not parse
@@ -425,8 +429,10 @@ static void test_create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_client_present ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    if ( prior_client_present )
+        check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
 
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
@@ -436,8 +442,10 @@ static void test_create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_server_present ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    if ( prior_server_present )
+        check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
 #endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
@@ -461,7 +469,7 @@ static void test_create_reports_status_out_of_memory()
 
     // walk every allocation client create makes: each failure is
     // OUT_OF_MEMORY with nothing left allocated, then success
-    for ( int fail_at = 1; ; fail_at++ )
+    for ( int fail_at = 1;; fail_at++ )
     {
         check( fail_at < 64 );
         state.calls = 0;
@@ -479,7 +487,7 @@ static void test_create_reports_status_out_of_memory()
         check( state.live == 0 );
     }
 
-    for ( int fail_at = 1; ; fail_at++ )
+    for ( int fail_at = 1;; fail_at++ )
     {
         check( fail_at < 64 );
         state.calls = 0;

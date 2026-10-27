@@ -24,8 +24,7 @@
 
 // the transport counter of each kernel prefilter counter, in wire order
 
-static const int prefilter_kernel_counters[] =
-{
+static const int prefilter_kernel_counters[] = {
     ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_LARGE,
@@ -39,7 +38,7 @@ static const int prefilter_kernel_counters[] =
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
     ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION,
 };
-static_assert( sizeof(prefilter_kernel_counters) / sizeof(prefilter_kernel_counters[0]) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
+static_assert( sizeof( prefilter_kernel_counters ) / sizeof( prefilter_kernel_counters[0] ) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
                "every kernel prefilter counter needs a test mapping" );
 
 static void test_prefilter_counters_map_each_kernel_counter()
@@ -47,7 +46,7 @@ static void test_prefilter_counters_map_each_kernel_counter()
     for ( int i = 0; i < ROCKETNET_SERVER_XDP_NUM_COUNTERS; i++ )
     {
         struct rocketnet_counters_t counters;
-        memset( &counters, 0, sizeof(counters) );
+        memset( &counters, 0, sizeof( counters ) );
         counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED] = 7;
 
         uint64_t prefilter[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = { 0 };
@@ -75,9 +74,19 @@ static void test_prefilter_counters_are_assigned_not_added()
         counters.values[i] = seeded[i];
     }
 
-    const uint64_t first[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-    {
-        101, 203, 307, 409, 503, 607, 709, 811, 907, 1009, 1103, 1201,
+    const uint64_t first[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
+        101,
+        203,
+        307,
+        409,
+        503,
+        607,
+        709,
+        811,
+        907,
+        1009,
+        1103,
+        1201,
     };
     rocketnet_counters_apply_prefilter( &counters, first );
     for ( int counter = 0; counter < ROCKETNET_NUM_COUNTERS; counter++ )
@@ -89,9 +98,19 @@ static void test_prefilter_counters_are_assigned_not_added()
         check( counters.values[counter] == ( mapped < 0 ? seeded[counter] : first[mapped] ) );
     }
 
-    const uint64_t second[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-    {
-        1301, 1409, 1511, 1601, 1709, 1801, 1901, 2003, 2111, 2203, 2309, 2411,
+    const uint64_t second[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
+        1301,
+        1409,
+        1511,
+        1601,
+        1709,
+        1801,
+        1901,
+        2003,
+        2111,
+        2203,
+        2309,
+        2411,
     };
     rocketnet_counters_apply_prefilter( &counters, second );
     for ( int counter = 0; counter < ROCKETNET_NUM_COUNTERS; counter++ )

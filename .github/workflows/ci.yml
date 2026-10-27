@@ -2522,6 +2522,29 @@ jobs:
           printf '%s\n' "$output"
           grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
+  # every tracked C and C++ source outside the vendored trees and generated
+  # files must match .clang-format under clang-format 18 (tools/format/
+  # check_format.sh); one unformatted file fails the job, `make format-check`
+  # runs the same check locally
+  format-check:
+    name: format check (clang-format 18)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check clang-format 18 is present
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v clang-format-18 >/dev/null 2>&1; then echo "TOOL-MISSING clang-format-18 (missing) on $RUNNER_NAME"; exit 1; fi
+          clang-format-18 --version
+      - name: Test the format checker
+        run: sh tools/format/test_check_format.sh
+      - name: Every source is formatted
+        run: sh tools/format/check_format.sh
+
   runs-on-lint:
     # Owner, 2026-10-18: "all CI should run on our fleet, not github." Refuses a GitHub-hosted runs-on label.
     name: runs-on-lint

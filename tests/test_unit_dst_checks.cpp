@@ -194,8 +194,8 @@ static void sequenced_end( struct rocketnet_dst_check_state_t * st )
 {
     int live[ROCKETNET_DST_CHECK_MAX_SESSIONS];
     uint64_t identity[ROCKETNET_DST_CHECK_MAX_SESSIONS];
-    memset( live, 0, sizeof(live) );
-    memset( identity, 0, sizeof(identity) );
+    memset( live, 0, sizeof( live ) );
+    memset( identity, 0, sizeof( identity ) );
     live[17] = 1;
     identity[17] = 1;
     st->step = 4000;

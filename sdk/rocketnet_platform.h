@@ -15,7 +15,7 @@
 #include <winsock2.h>
 #endif
 
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
 #include <intrin.h>
 #endif
 
@@ -24,7 +24,7 @@
 // uses the bit-scan intrinsics.
 static inline int rocketnet_platform_clz64( uint64_t value )
 {
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
     unsigned long index;
     _BitScanReverse64( &index, value );
     return 63 - (int) index;
@@ -35,7 +35,7 @@ static inline int rocketnet_platform_clz64( uint64_t value )
 
 static inline int rocketnet_platform_ctz64( uint64_t value )
 {
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
     unsigned long index;
     _BitScanForward64( &index, value );
     return (int) index;
@@ -44,7 +44,7 @@ static inline int rocketnet_platform_ctz64( uint64_t value )
 #endif
 }
 
-#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined(__cplusplus)
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( __cplusplus )
 // Private static-development-library fixture interface. Never compiled into a
 // production or shared library. RIO IDs are resources, not Windows HANDLEs.
 enum rocketnet_lifecycle_resource_kind_t
@@ -112,12 +112,13 @@ struct sockaddr_in;
  * @param arg User argument; NULL is passed through unchanged.
  * @return None.
  */
-typedef void (*rocketnet_platform_thread_func_t)(void*);
+typedef void ( *rocketnet_platform_thread_func_t )( void * );
 
 // ----------------------------------------------------------------
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /**
@@ -375,7 +376,8 @@ int rocketnet_platform_client_bind_family( int server_address_type, bool ipv6_av
 // ----------------------------------------------------------------
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /**
@@ -691,7 +693,7 @@ uint64_t rocketnet_platform_send_errnos_read( struct rocketnet_platform_send_err
  */
 int rocketnet_platform_send_errnos_format( struct rocketnet_platform_send_errnos_t * errnos, char * buffer, size_t size );
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 /**
  * @brief Test-only seam: makes the next sends on one socket report an error.
  *
@@ -717,7 +719,7 @@ void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket
 int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
 #endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+#if defined( ROCKETNET_RECEIVE_TEST_HOOKS )
 struct sockaddr_storage;
 /**
  * @brief Test-only receive hook: one datagram per call.
@@ -725,7 +727,7 @@ struct sockaddr_storage;
  * Writes the datagram into packet_data (at most max_packet_size bytes) and its
  * source into from, and returns the datagram size; -1 reads as "socket drained".
  */
-typedef int (*rocketnet_platform_receive_hook_t)( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from );
+typedef int ( *rocketnet_platform_receive_hook_t )( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from );
 
 /**
  * @brief Test-only seam: feeds one socket's single-packet receive from a hook.
@@ -780,7 +782,7 @@ struct rocketnet_platform_socket_t * rocketnet_server_transport_platform_socket_
 // and recvmmsg on the I/O thread behind the same signatures as the seam
 // above. Internal, no export, defined only where __linux__ is set.
 
-#if defined(__linux__)
+#if defined( __linux__ )
 /**
  * @brief Sends a batch with Linux sendmmsg on the caller's I/O thread.
  *
@@ -824,10 +826,10 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // WSAEventSelect FD_READ beside a manual-reset event (docs/CLIENT-IO.md
 // "The wake"), so the portable client runs on the I/O
 // thread there.
-#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__linux__) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
 #endif
-#if defined(ROCKETNET_PLATFORM_HAS_WAKE) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 #define ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE 1
 #endif
 /**
@@ -885,7 +887,8 @@ void rocketnet_platform_wake_set( struct rocketnet_platform_wake_t * wake );
 // ----------------------------------------------------------------
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /**
@@ -991,7 +994,7 @@ struct rocketnet_platform_priority_calls_t
     /** @brief Platform startup (Windows WSAStartup); 0 on success, nonzero on failure. */
     int ( *platform_start )( void );
     /** @brief Windows: CreateWaitableTimerExW; NULL on failure. Frame sync requests CREATE_WAITABLE_TIMER_HIGH_RESOLUTION (0x00000002) and refuses creation without falling back to a coarse timer when unavailable. Off Windows the handle is unused and the entry returns a non-NULL placeholder only for the high-resolution flag, so NULL stays the failure answer on every platform. */
-    void* ( *create_waitable_timer )( unsigned flags );
+    void * ( *create_waitable_timer )( unsigned flags );
 };
 
 /**
@@ -1146,9 +1149,9 @@ struct rocketnet_platform_mutex_helper_t
 #endif // #if ROCKETNET_SPIKE_TRACKING
 
 #if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line ) : mutex(held_mutex), file(file), line(line), start_time(rocketnet_platform_time())
+inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line ) : mutex( held_mutex ), file( file ), line( line ), start_time( rocketnet_platform_time() )
 #else // #if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex ) : mutex(held_mutex)
+inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex ) : mutex( held_mutex )
 #endif // #if ROCKETNET_SPIKE_TRACKING
 {
     rocketnet_assert( mutex );
@@ -1186,156 +1189,156 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
     // linux and the BSDs: same pure-POSIX shapes
 
-    #include <pthread.h>
-    #include <unistd.h>
-    #include <sched.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <sched.h>
 
     /**
  * @brief Stores a native POSIX socket descriptor.
  */
-    typedef int rocketnet_platform_socket_handle_t;
+typedef int rocketnet_platform_socket_handle_t;
 
     /** @brief Holds the platform socket and its allocator context. */
-    struct rocketnet_platform_socket_t
-    {
+struct rocketnet_platform_socket_t
+{
         /** @brief Allocator context used to free this socket. */
-        void * context;
+    void * context;
         /** @brief Blocking or non-blocking mode selected at creation. */
-        int type;
+    int type;
         /** @brief True when the socket was created for an IPv6 bind address. */
-        bool ipv6;
+    bool ipv6;
         /** @brief True once rocketnet_platform_socket_connect connected it to its one remote endpoint. */
-        bool connected;
+    bool connected;
         /** @brief Native socket descriptor owned by this object. */
-        rocketnet_platform_socket_handle_t handle;
+    rocketnet_platform_socket_handle_t handle;
         /** @brief Datagrams a failed send dropped; atomic, monotonic. */
-        uint64_t send_failures;
+    uint64_t send_failures;
         /** @brief Refused sends of a sendmsg_x replay; zero here; atomic, monotonic. */
-        uint64_t send_replay_failures;
-    };
+    uint64_t send_replay_failures;
+};
 
 struct sockaddr_storage;
 bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 
     /** @brief Holds a native thread and its allocator context. */
-    struct rocketnet_platform_thread_t
-    {
+struct rocketnet_platform_thread_t
+{
         /** @brief Allocator context used to free the thread handle. */
-        void * context;
+    void * context;
         /** @brief Native thread handle. */
-        pthread_t handle;
+    pthread_t handle;
         /** @brief Guards woken for thread_wait and thread_wake. */
-        pthread_mutex_t wake_mutex;
+    pthread_mutex_t wake_mutex;
         /** @brief Signalled by thread_wake; waited on by thread_wait. */
-        pthread_cond_t wake_cond;
+    pthread_cond_t wake_cond;
         /** @brief Set once by thread_wake; never cleared. */
-        bool woken;
-    };
+    bool woken;
+};
 
     /** @brief Stores a POSIX mutex and whether its initialization succeeded. */
-    struct rocketnet_platform_mutex_t
-    {
+struct rocketnet_platform_mutex_t
+{
         /** @brief True only after native mutex initialization succeeds. */
-        bool ok;
+    bool ok;
         /** @brief Native non-recursive mutex handle. */
-        pthread_mutex_t handle;
-    };
+    pthread_mutex_t handle;
+};
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
     // macos and ios
 
-    #include <pthread.h>
-    #include <unistd.h>
-    #include <mach/mach_types.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <mach/mach_types.h>
 
-    typedef int rocketnet_platform_socket_handle_t;
+typedef int rocketnet_platform_socket_handle_t;
 
-    struct rocketnet_platform_socket_t
-    {
-        void * context;
-        bool ipv6;
-        bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (first batch call probes support, macOS only)
-        bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
-        double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
-        rocketnet_platform_socket_handle_t handle;
-        uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
-        uint64_t send_replay_failures; // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
-        struct rocketnet_platform_send_errnos_t send_errnos; // every failed send call above, by call and errno
-    };
+struct rocketnet_platform_socket_t
+{
+    void * context;
+    bool ipv6;
+    bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (first batch call probes support, macOS only)
+    bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
+    double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
+    rocketnet_platform_socket_handle_t handle;
+    uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
+    uint64_t send_replay_failures; // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
+    struct rocketnet_platform_send_errnos_t send_errnos; // every failed send call above, by call and errno
+};
 
 struct sockaddr_storage;
 bool rocketnet_msgx_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 
-    struct rocketnet_platform_thread_t
-    {
-        void * context;
-        pthread_t handle;
-        mach_port_t wake_semaphore;     // a mach semaphore: thread_wait waits on it, thread_wake signals it
-        int woken;                      // set once by thread_wake (atomic store), never cleared
-    };
+struct rocketnet_platform_thread_t
+{
+    void * context;
+    pthread_t handle;
+    mach_port_t wake_semaphore;     // a mach semaphore: thread_wait waits on it, thread_wake signals it
+    int woken;                      // set once by thread_wake (atomic store), never cleared
+};
 
-    struct rocketnet_platform_mutex_t
-    {
-        bool ok;
-        pthread_mutex_t handle;
-    };
+struct rocketnet_platform_mutex_t
+{
+    bool ok;
+    pthread_mutex_t handle;
+};
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
     // windows
 
-    #if ROCKETNET_UNREAL_ENGINE
-    #include "Windows/AllowWindowsPlatformTypes.h"
-    #include "Windows/PreWindowsApi.h"
-    #endif // #if ROCKETNET_UNREAL_ENGINE
+#if ROCKETNET_UNREAL_ENGINE
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include "Windows/PreWindowsApi.h"
+#endif // #if ROCKETNET_UNREAL_ENGINE
 
-    #if !ROCKETNET_UNREAL_ENGINE
-    #define _WINSOCKAPI_
-    #include <windows.h>
-    #include <winsock2.h>
-    #else // #if !ROCKETNET_UNREAL_ENGINE
-    #include "Windows/MinWindows.h"
-    #endif // #if !ROCKETNET_UNREAL_ENGINE
+#if !ROCKETNET_UNREAL_ENGINE
+#define _WINSOCKAPI_
+#include <windows.h>
+#include <winsock2.h>
+#else // #if !ROCKETNET_UNREAL_ENGINE
+#include "Windows/MinWindows.h"
+#endif // #if !ROCKETNET_UNREAL_ENGINE
 
-    #if _WIN64
-    typedef uint64_t rocketnet_platform_socket_handle_t;
-    #else
-    typedef _W64 unsigned int rocketnet_platform_socket_handle_t;
-    #endif
-
-    struct rocketnet_platform_socket_t
-    {
-        void * context;
-        bool ipv6;
-        bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
-        rocketnet_platform_socket_handle_t handle;
-        uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
-        uint64_t send_replay_failures; // refused sends of a sendmsg_x replay; zero here; atomic, monotonic
-#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
-        uint64_t lifecycle_generation;
+#if _WIN64
+typedef uint64_t rocketnet_platform_socket_handle_t;
+#else
+typedef _W64 unsigned int rocketnet_platform_socket_handle_t;
 #endif
-    };
 
-    struct rocketnet_platform_thread_t
-    {
-        void * context;
-        HANDLE handle;
-#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
-        uint64_t lifecycle_generation;
+struct rocketnet_platform_socket_t
+{
+    void * context;
+    bool ipv6;
+    bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
+    rocketnet_platform_socket_handle_t handle;
+    uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
+    uint64_t send_replay_failures; // refused sends of a sendmsg_x replay; zero here; atomic, monotonic
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+    uint64_t lifecycle_generation;
 #endif
-    };
+};
 
-    struct rocketnet_platform_mutex_t
-    {
-        bool ok;
-        CRITICAL_SECTION handle;
-    };
+struct rocketnet_platform_thread_t
+{
+    void * context;
+    HANDLE handle;
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+    uint64_t lifecycle_generation;
+#endif
+};
 
-    #if ROCKETNET_UNREAL_ENGINE
-    #include "Windows/PostWindowsApi.h"
-    #include "Windows/HideWindowsPlatformTypes.h"
-    #endif // #if ROCKETNET_UNREAL_ENGINE
+struct rocketnet_platform_mutex_t
+{
+    bool ok;
+    CRITICAL_SECTION handle;
+};
+
+#if ROCKETNET_UNREAL_ENGINE
+#include "Windows/PostWindowsApi.h"
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif // #if ROCKETNET_UNREAL_ENGINE
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
@@ -1359,9 +1362,9 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
 
 #include <string.h>
 
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
 
-    #include <intrin.h>
+#include <intrin.h>
 
     /**
      * @brief Atomically adds an unsigned value and returns the previous value.
@@ -1370,10 +1373,10 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param add Amount added, including zero.
      * @return The value observed before the addition.
      */
-    inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
-    {
-        return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
-    }
+inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
+{
+    return (uint64_t) _InterlockedExchangeAdd64( (volatile long long *) value, (long long) add );
+}
 
     /**
      * @brief Atomically reads an unsigned 64-bit shared word.
@@ -1381,19 +1384,19 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param value Aligned, initialized shared word; must be non-NULL.
      * @return The value observed at read time. The read has relaxed ordering.
      */
-    inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
-    {
-    #if defined(_M_IX86)
+inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
+{
+#if defined( _M_IX86 )
         // 32-bit x86 has no single-instruction 64-bit load; CAS with the
         // observed value (a self-write) retries until it reads consistent.
-        long long observed = *(volatile long long *) value;
-        while ( _InterlockedCompareExchange64( (volatile long long *) value, observed, observed ) != observed )
-            observed = *(volatile long long *) value;
-        return (uint64_t) observed;
-    #else
-        return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
-    #endif
-    }
+    long long observed = *(volatile long long *) value;
+    while ( _InterlockedCompareExchange64( (volatile long long *) value, observed, observed ) != observed )
+        observed = *(volatile long long *) value;
+    return (uint64_t) observed;
+#else
+    return (uint64_t) _InterlockedCompareExchange64( (volatile long long *) value, 0, 0 );
+#endif
+}
 
     /**
      * @brief Atomically publishes an unsigned 64-bit value.
@@ -1402,17 +1405,17 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param store Value to publish.
      * @return None. The operation has relaxed ordering.
      */
-    inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
-    {
-    #if defined(_M_IX86)
+inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
+{
+#if defined( _M_IX86 )
         // 32-bit x86 has no _InterlockedExchange64; emulate with a CAS loop
-        long long expected = *(volatile long long *) value;
-        while ( _InterlockedCompareExchange64( (volatile long long *) value, (long long) store, expected ) != expected )
-            expected = *(volatile long long *) value;
-    #else // #if defined(_M_IX86)
-        _InterlockedExchange64( (volatile long long *) value, (long long) store );
-    #endif // #if defined(_M_IX86)
-    }
+    long long expected = *(volatile long long *) value;
+    while ( _InterlockedCompareExchange64( (volatile long long *) value, (long long) store, expected ) != expected )
+        expected = *(volatile long long *) value;
+#else // #if defined(_M_IX86)
+    _InterlockedExchange64( (volatile long long *) value, (long long) store );
+#endif // #if defined(_M_IX86)
+}
 
     /**
      * @brief Atomically publishes the bit pattern of a double value.
@@ -1421,12 +1424,12 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param store Value to publish.
      * @return None. The operation has relaxed ordering.
      */
-    inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
-    {
-        uint64_t bits;
-        memcpy( &bits, &store, 8 );
-        rocketnet_platform_atomic_store_u64( (volatile uint64_t *) value, bits );
-    }
+inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
+{
+    uint64_t bits;
+    memcpy( &bits, &store, 8 );
+    rocketnet_platform_atomic_store_u64( (volatile uint64_t *) value, bits );
+}
 
     // folds value = max(value, candidate) with a compare-exchange loop, so
     // concurrent folds from any number of threads leave the largest
@@ -1438,17 +1441,17 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param candidate Candidate high-water value.
      * @return None.
      */
-    inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
+inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
+{
+    long long observed = *(volatile long long *) value;
+    while ( (uint64_t) observed < candidate )
     {
-        long long observed = *(volatile long long *) value;
-        while ( (uint64_t) observed < candidate )
-        {
-            long long previous = _InterlockedCompareExchange64( (volatile long long *) value, (long long) candidate, observed );
-            if ( previous == observed )
-                break;
-            observed = previous;
-        }
+        long long previous = _InterlockedCompareExchange64( (volatile long long *) value, (long long) candidate, observed );
+        if ( previous == observed )
+            break;
+        observed = previous;
     }
+}
 
 #else // #if defined(_MSC_VER)
 
@@ -1458,10 +1461,10 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param add Amount added, including zero.
      * @return Value observed before the addition.
      */
-    inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
-    {
-        return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
-    }
+inline uint64_t rocketnet_platform_atomic_add_u64( volatile uint64_t * value, uint64_t add )
+{
+    return __atomic_fetch_add( value, add, __ATOMIC_RELAXED );
+}
 
     /**
      * @brief Atomically reads an unsigned 64-bit shared word.
@@ -1469,10 +1472,10 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param value Aligned, initialized shared word; non-NULL.
      * @return The value observed at read time. The read has relaxed ordering.
      */
-    inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
-    {
-        return __atomic_load_n( value, __ATOMIC_RELAXED );
-    }
+inline uint64_t rocketnet_platform_atomic_load_u64( volatile uint64_t * value )
+{
+    return __atomic_load_n( value, __ATOMIC_RELAXED );
+}
 
     /**
      * @brief Atomically publishes an unsigned 64-bit value.
@@ -1480,10 +1483,10 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param store Value to publish.
      * @return None. This operation has relaxed ordering.
      */
-    inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
-    {
-        __atomic_store_n( value, store, __ATOMIC_RELAXED );
-    }
+inline void rocketnet_platform_atomic_store_u64( volatile uint64_t * value, uint64_t store )
+{
+    __atomic_store_n( value, store, __ATOMIC_RELAXED );
+}
 
     /**
      * @brief Atomically publishes the bit pattern of a double.
@@ -1491,12 +1494,12 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param store Value to publish.
      * @return None. This operation has relaxed ordering.
      */
-    inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
-    {
-        uint64_t bits;
-        memcpy( &bits, &store, 8 );
-        __atomic_store_n( (volatile uint64_t *) value, bits, __ATOMIC_RELAXED );
-    }
+inline void rocketnet_platform_atomic_store_double( volatile double * value, double store )
+{
+    uint64_t bits;
+    memcpy( &bits, &store, 8 );
+    __atomic_store_n( (volatile uint64_t *) value, bits, __ATOMIC_RELAXED );
+}
 
     // folds value = max(value, candidate) with a compare-exchange loop, so
     // concurrent folds from any number of threads leave the largest
@@ -1507,16 +1510,16 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
      * @param candidate Candidate high-water value.
      * @return None.
      */
-    inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
+inline void rocketnet_platform_atomic_max_u64( volatile uint64_t * value, uint64_t candidate )
+{
+    uint64_t observed = __atomic_load_n( value, __ATOMIC_RELAXED );
+    while ( observed < candidate &&
+            !__atomic_compare_exchange_n( value, &observed, candidate, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
     {
-        uint64_t observed = __atomic_load_n( value, __ATOMIC_RELAXED );
-        while ( observed < candidate &&
-                !__atomic_compare_exchange_n( value, &observed, candidate, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
-        {
             // observed reloads on failure; the loop exits once it is at
             // least the candidate
-        }
     }
+}
 
 #endif // #if defined(_MSC_VER)
 
@@ -1532,8 +1535,10 @@ static inline bool rocketnet_platform_socket_handle_is_valid( rocketnet_platform
  */
 inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
 {
-#if defined(_MSC_VER)
-    while ( _InterlockedCompareExchange64( (volatile long long*) value, 1, 0 ) != 0 ) {}
+#if defined( _MSC_VER )
+    while ( _InterlockedCompareExchange64( (volatile long long *) value, 1, 0 ) != 0 )
+    {
+    }
 #else
     uint64_t expected = 0;
     while ( !__atomic_compare_exchange_n( value, &expected, 1, false, __ATOMIC_ACQUIRE, __ATOMIC_RELAXED ) )
@@ -1549,8 +1554,8 @@ inline void rocketnet_platform_spin_lock_u64( volatile uint64_t * value )
  */
 inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 {
-#if defined(_MSC_VER)
-    _InterlockedCompareExchange64( (volatile long long*) value, 0, 1 );
+#if defined( _MSC_VER )
+    _InterlockedCompareExchange64( (volatile long long *) value, 0, 1 );
 #else
     __atomic_store_n( value, 0, __ATOMIC_RELEASE );
 #endif
@@ -1565,7 +1570,7 @@ inline void rocketnet_platform_spin_unlock_u64( volatile uint64_t * value )
 //
 // ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined(__cplusplus)
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __cplusplus )
 
 #include "rocketnet_route.h"
 #include <limits.h>
@@ -1609,7 +1614,7 @@ bool rocketnet_platform_read_route_table(
     int sock,
     struct sockaddr_nl * kernel,
     rocketnet_vector_t<rocketnet_ifforward4_t> * route_table,
-    ssize_t (*receive)( int, struct msghdr *, int ) );
+    ssize_t ( *receive )( int, struct msghdr *, int ) );
 
 #endif // linux internal C++ route probe
 

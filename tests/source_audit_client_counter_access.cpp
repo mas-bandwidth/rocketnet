@@ -36,7 +36,7 @@ static bool client_cast_read_file( const char * relative, std::string & text )
     char buffer[4096];
     size_t got;
     text.clear();
-    while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
+    while ( ( got = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, got );
     fclose( file );
     return true;
@@ -234,7 +234,7 @@ static void client_cast_find_casts( const char * file, const std::string & code,
         if ( operand.empty() || names.find( operand ) == names.end() )
             continue;
         char line[512];
-        snprintf( line, sizeof(line), "%s:%d: cast of public client '%s' to struct %s",
+        snprintf( line, sizeof( line ), "%s:%d: cast of public client '%s' to struct %s",
                   file, client_cast_line_of( code, i ), operand.c_str(), type.c_str() );
         failures.push_back( line );
     }
@@ -267,7 +267,7 @@ static void test_tools_never_cast_public_client_to_internal()
         if ( found.size() != 2 )
         {
             char line[128];
-            snprintf( line, sizeof(line), "detector witness: expected 2 casts in the cast fixture, found %zu", found.size() );
+            snprintf( line, sizeof( line ), "detector witness: expected 2 casts in the cast fixture, found %zu", found.size() );
             failures.push_back( line );
         }
         found.clear();
@@ -277,7 +277,7 @@ static void test_tools_never_cast_public_client_to_internal()
     }
 
     static const char * const files[] = { "client.c", "server.c", "load.c", "soak.c" };
-    for ( size_t f = 0; f < sizeof(files) / sizeof(files[0]); f++ )
+    for ( size_t f = 0; f < sizeof( files ) / sizeof( files[0] ); f++ )
     {
         std::string text;
         if ( !client_cast_read_file( files[f], text ) )

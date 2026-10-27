@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 
 static uint64_t ack_cost_allocations;
 static void * ack_cost_malloc( void *, size_t bytes )
@@ -54,7 +54,7 @@ static void ack_span_cost_case( uint32_t count, int order )
     descriptor->serial = 77;
     uint64_t first = 0, position = 0;
     rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
-                                                          bytes, d, &first, &position ) == count );
+                                                            bytes, d, &first, &position ) == count );
     rocketnet_unit_check( first == 0 );
     for ( uint32_t i = 0; i < count; i++ )
     {
@@ -74,8 +74,8 @@ static void ack_span_cost_case( uint32_t count, int order )
     rn_window_ack_cost_reset();
     for ( uint32_t step = 0; step < count; step++ )
     {
-        const uint32_t part = order == 0 ? step : order == 1 ? count - 1 - step :
-                              ( step % 2 == 0 ? step / 2 : count - 1 - step / 2 );
+        const uint32_t part = order == 0 ? step : order == 1 ? count - 1 - step
+                                                             : ( step % 2 == 0 ? step / 2 : count - 1 - step / 2 );
         rocketnet_unit_check( !seen[part] );
         seen[part] = true;
         while ( expected_u < count && seen[expected_u] )
@@ -112,7 +112,7 @@ static void ack_span_cost_case( uint32_t count, int order )
     const uint32_t reused = rn_region_send_alloc_span( region, (int) bytes );
     rocketnet_unit_check( reused == d );
     rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
-                                                          bytes, reused, &first, &position ) == count );
+                                                            bytes, reused, &first, &position ) == count );
     rocketnet_unit_check( first == count );
     rocketnet_unit_check( rn_window_ack_on_ack( &ack, count + 2, 1001.0 ) == 1 );
     rocketnet_unit_check( descriptor->in_use && descriptor->fragments_acked == 0 );

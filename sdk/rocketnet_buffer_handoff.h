@@ -30,12 +30,12 @@
 // consumer: update processing them). The portable server's TX banks
 // (sdk/rocketnet_driver_builtin.cpp) are the same pattern.
 
-template<int NumBuffers> struct rocketnet_buffer_handoff_t
+template <int NumBuffers> struct rocketnet_buffer_handoff_t
 {
-    int free_index[size_t(NumBuffers)];
+    int free_index[size_t( NumBuffers )];
     int free_head;
     int free_count;
-    int ready_index[size_t(NumBuffers)];
+    int ready_index[size_t( NumBuffers )];
     int ready_head;
     int ready_count;
 
@@ -48,7 +48,7 @@ template<int NumBuffers> struct rocketnet_buffer_handoff_t
 
 // every buffer but the producer's first one starts free
 
-template<int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int producer )
+template <int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int producer )
 {
     static_assert( NumBuffers >= 3, "a producer buffer, a consumer buffer and one in between" );
     rocketnet_assert( producer >= 0 && producer < NumBuffers );
@@ -71,7 +71,7 @@ template<int NumBuffers> inline void rocketnet_buffer_handoff_init( rocketnet_bu
 // publish is owed. A max_ready of 1 is the triple buffer: the consumer always
 // takes everything published since its last take in one buffer. Mutex held.
 
-template<int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int producer, int max_ready )
+template <int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int producer, int max_ready )
 {
     rocketnet_assert( producer >= 0 && producer < NumBuffers );
     rocketnet_assert( max_ready >= 1 && max_ready < NumBuffers );
@@ -93,7 +93,7 @@ template<int NumBuffers> inline int rocketnet_buffer_handoff_publish( rocketnet_
 // RNBufferHandoff Take: the consumer takes the oldest ready buffer, or -1
 // when none is ready. Mutex held.
 
-template<int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
+template <int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
 {
     if ( handoff->ready_count == 0 )
         return -1;
@@ -106,7 +106,7 @@ template<int NumBuffers> inline int rocketnet_buffer_handoff_take( rocketnet_buf
 // RNBufferHandoff Release: the consumer returns a buffer it has finished with
 // to the free queue. Mutex held.
 
-template<int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int index )
+template <int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketnet_buffer_handoff_t<NumBuffers> * handoff, int index )
 {
     rocketnet_assert( index >= 0 && index < NumBuffers );
     rocketnet_assert( handoff->free_count < NumBuffers );
@@ -118,7 +118,7 @@ template<int NumBuffers> inline void rocketnet_buffer_handoff_release( rocketnet
 // of its exchange. True when the producer held back a publish: the caller
 // wakes the producer after dropping the mutex, never under it. Mutex held.
 
-template<int NumBuffers> inline bool rocketnet_buffer_handoff_owed( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
+template <int NumBuffers> inline bool rocketnet_buffer_handoff_owed( rocketnet_buffer_handoff_t<NumBuffers> * handoff )
 {
     const bool owed = handoff->owed;
     handoff->owed = false;
