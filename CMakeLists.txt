@@ -764,6 +764,14 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
         target_compile_definitions(test PRIVATE ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1)
     endif()
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_DEV AND TARGET rocketnet_test_hooks)
+        # The GSO worker-handoff seam (test_unit_gso_handoff.cpp) compiles into
+        # the test hook library only, through the same send-error hooks the
+        # development libraries carry, so neither the installed static library
+        # nor the shared libraries carry it.
+        target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+        target_compile_definitions(test PRIVATE ROCKETNET_SEND_ERROR_TEST_HOOKS=1)
+    endif()
     # The counter audit (test_unit_counter_classes.cpp) reads source files: the
     # tests that must name every counter, and the sdk files that count them.
     # Both lists reach it as compile definitions, relative to the source
