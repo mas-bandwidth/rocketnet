@@ -25,7 +25,7 @@
 #define RERUN "set ROCKETNET_SERVER_MAX_CLIENTS=%s&& \"%s\""
 #else
 #define RERUN "ROCKETNET_SERVER_MAX_CLIENTS=%s %s"
-#endif
+#endif // #if defined( _WIN32 )
 
 int main( int argc, char ** argv )
 {
@@ -33,7 +33,9 @@ int main( int argc, char ** argv )
 
     const char * environment = getenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
     if ( !environment )
+    {
         environment = "";
+    }
 
     const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
     if ( init_status != ROCKETNET_STATUS_OK )
@@ -48,40 +50,52 @@ int main( int argc, char ** argv )
     if ( server_config_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     config.transport = "loopback";
+
     if ( environment[0] == '\0' )
     {
         printf( "default max_clients: %d\n", config.max_clients );
         printf( "default max_timeout_seconds: %d\n", config.max_timeout_seconds );
     }
+
     config.max_clients = 16;
     config.max_timeout_seconds = 90;
 
     // create reads the environment, which overrides the struct
+
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
 
     int result = 1;
+
     if ( environment[0] == '\0' && server )
     {
         printf( "struct max_clients: %d\n", rocketnet_server_max_clients( server ) );
 
         // run again with the variable set: a good value, then one out of range
+
         const char * const values[2] = { "5", "99999" };
         int children = 0;
+
         for ( int i = 0; i < 2; i++ )
         {
             char command[512];
             snprintf( command, sizeof( command ), RERUN, values[i], argv[0] );
             children += system( command );
         }
+
         result = children == 0 ? 0 : 1;
     }
     else if ( strcmp( environment, "5" ) == 0 && server )
@@ -96,15 +110,22 @@ int main( int argc, char ** argv )
     }
 
     rn_cli_server_stop_and_destroy( server );
+
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
+
     if ( result != 0 )
+    {
         printf( "FAIL: max_clients is the default, then the struct, then the environment\n" );
+    }
     else if ( environment[0] == '\0' )
+    {
         printf( "PASS\n" );
+    }
+
     return result;
 }

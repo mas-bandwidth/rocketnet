@@ -26,13 +26,18 @@
 int main( int argc, char ** argv )
 {
     const char * port = getenv( "ROCKETNET_EXAMPLE_PORT" );
+
     for ( int i = 1; i + 1 < argc; i++ )
         if ( strcmp( argv[i], "--port" ) == 0 )
+        {
             port = argv[i + 1];
+        }
+
     char address[32];
     snprintf( address, sizeof( address ), "127.0.0.1:%d", port ? atoi( port ) : 40000 );
 
     // a key file left by an earlier run names keys this server does not use
+
     remove( KEY_FILE );
 
     const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
@@ -44,17 +49,23 @@ int main( int argc, char ** argv )
 
     // a deployment's server takes its own backend's public key; this one takes
     // the published development key, whose tokens the client mints
+
     const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t config;
     const enum rocketnet_status_t server_config_status = rocketnet_server_default_config( &config );
     if ( server_config_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     config.max_clients = 1;
@@ -63,45 +74,69 @@ int main( int argc, char ** argv )
     enum rocketnet_status_t server_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, address, NULL, &config, &server_status );
     if ( server && server_status == ROCKETNET_STATUS_OK )
+    {
         server_status = rocketnet_server_start( server );
+    }
+
     if ( !server || server_status != ROCKETNET_STATUS_OK )
     {
         // the example runner reads this line as a port already taken, and retries on another
+
         printf( "FAIL: server != NULL\n" );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
 
     // a backend learns each server's address and public key; here the key
     // file carries them to the client. No secret is in it
+
     char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     if ( !rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) ) )
     {
         printf( "FAIL: server ipv4 address\n" );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     rocketnet_server_public_key( server, server_public_key );
+
     FILE * keys = fopen( KEY_FILE, "w" );
     if ( !keys )
     {
         printf( "FAIL: could not write %s\n", KEY_FILE );
         rn_cli_server_stop_and_destroy( server );
+
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
+        {
             printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
         return 1;
     }
+
     fprintf( keys, "server_public " );
+
     for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
+    {
         fprintf( keys, "%02x", server_public_key[i] );
+    }
+
     fprintf( keys, "\nserver_ipv4 %s\n", served_address );
     fclose( keys );
 
@@ -116,6 +151,7 @@ int main( int argc, char ** argv )
         rocketnet_server_update( server, 1000.0 + rocketnet_time() - start );
 
         // one queue across every client, each message naming its sender: echo each one back
+
         const struct rocketnet_message_batch_t * batch;
         while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
         {
@@ -137,7 +173,9 @@ int main( int argc, char ** argv )
         rocketnet_server_send_packets( server );
 
         if ( rocketnet_server_num_connected_clients( server ) > 0 )
+        {
             had_client = 1;
+        }
         else if ( had_client )
         {
             printf( "server client disconnected (reason %s)\n", rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, 0 ) ) );
@@ -148,12 +186,14 @@ int main( int argc, char ** argv )
     }
 
     rn_cli_server_stop_and_destroy( server );
+
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
+
     printf( had_client && echoed ? "PASS\n" : "FAIL: a client connected and its message was echoed\n" );
     return had_client && echoed ? 0 : 1;
 }

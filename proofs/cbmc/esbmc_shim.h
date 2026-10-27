@@ -27,7 +27,6 @@
 #ifndef ROCKETNET_PROOFS_CBMC_ESBMC_SHIM_H
 #define ROCKETNET_PROOFS_CBMC_ESBMC_SHIM_H
 
-
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -36,7 +35,7 @@
 using std::isfinite;
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 void __ESBMC_assume( bool );
 void __ESBMC_assert( bool, const char * );
@@ -55,7 +54,7 @@ uint64_t rocketnet_esbmc_nondet_uint64( void );
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 #define __CPROVER__ 1
 
@@ -69,17 +68,20 @@ static inline bool rocketnet_esbmc_r_ok( const void * p, size_t n )
         return true;
     if ( p == NULL )
         return false;
+
     size_t obj = __ESBMC_POINTER_OBJECT( p );
     if ( obj == 0 )
         return false;
     if ( __ESBMC_is_dynamic[obj] && !__ESBMC_alloc[obj] )
         return false;
+
     long off = __ESBMC_POINTER_OFFSET( p );
     if ( off < 0 )
         return false;
     size_t sz = __ESBMC_is_dynamic[obj]
                     ? __ESBMC_alloc_size[obj]
                     : __ESBMC_get_object_size( p );
+
     size_t uoff = (size_t) off;
     return uoff <= sz && n <= sz - uoff;
 }
@@ -97,10 +99,12 @@ static inline bool rocketnet_esbmc_r_ok( const void * p, size_t n )
 static inline void rocketnet_esbmc_havoc_slice( void * p, size_t n )
 {
     unsigned char * bytes = (unsigned char *) p;
+
     for ( size_t i = 0; i < n; ++i )
+    {
         bytes[i] = rocketnet_esbmc_nondet_uchar();
+    }
 }
 #define __CPROVER_havoc_slice( p, n ) rocketnet_esbmc_havoc_slice( ( p ), (size_t) ( n ) )
-
 
 #endif // ROCKETNET_PROOFS_CBMC_ESBMC_SHIM_H

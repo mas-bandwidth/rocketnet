@@ -35,6 +35,7 @@ int main()
     printf( "backend private key base64 = %s\n\n", private_key_string );
 
     printf( "const uint8_t backend_public_key[] = { " );
+
     for ( int i = 0; i < (int) sizeof( public_key ); i++ )
     {
         printf( "0x%02x", public_key[i] );
@@ -49,6 +50,7 @@ int main()
     }
 
     printf( "const uint8_t backend_private_key[] = { " );
+
     for ( int i = 0; i < (int) sizeof( private_key ); i++ )
     {
         printf( "0x%02x", private_key[i] );

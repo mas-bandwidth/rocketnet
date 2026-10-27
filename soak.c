@@ -202,7 +202,7 @@
 
 #if defined( __linux__ ) && !defined( _GNU_SOURCE )
 #define _GNU_SOURCE     /* setns, for SOAK_CLIENT_NETNS */
-#endif
+#endif // #if defined( __linux__ ) && !defined( _GNU_SOURCE )
 
 #include "tests/native_shutdown.h"
 #include "rocketnet.h"
@@ -220,10 +220,10 @@
 #include <fcntl.h>
 #include <sched.h>
 #include <unistd.h>
-#endif
+#endif // #if defined( __linux__ )
 #if !defined( _WIN32 )
 #include <sys/resource.h>
-#endif
+#endif // #if !defined( _WIN32 )
 
 // Internal transport tools mint the binary development token directly.
 static int dev_token_binary( const char * address, uint64_t client_id, uint64_t timestamp, uint8_t * token, size_t token_bytes )
@@ -250,18 +250,23 @@ void interrupt_handler( int signal )
 static void generate_payload( uint8_t * payload_data, int payload_bytes )
 {
     const int start = payload_bytes % 256;
+
     for ( int i = 0; i < payload_bytes; i++ )
+    {
         payload_data[i] = (uint8_t) ( start + i );
+    }
 }
 
 static int verify_payload( const uint8_t * payload_data, int payload_bytes )
 {
     const int start = payload_bytes % 256;
+
     for ( int i = 0; i < payload_bytes; i++ )
     {
         if ( payload_data[i] != (uint8_t) ( start + i ) )
             return 0;
     }
+
     return 1;
 }
 
@@ -269,12 +274,15 @@ static int parse_positive_uint64( const char * arg, uint64_t * out )
 {
     if ( !arg || arg[0] < '0' || arg[0] > '9' )
         return 0;
+
     char * end = NULL;
+
     errno = 0;
     unsigned long long value = strtoull( arg, &end, 10 );
     if ( !end || *end != '\0' || errno != 0 || value == 0 )
         return 0;
     *out = (uint64_t) value;
+
     return 1;
 }
 
@@ -297,16 +305,21 @@ static const char * soak_disconnect_reason_name( int state )
 static void soak_record_disconnect( uint64_t * disconnect_counts, int state )
 {
     if ( state >= ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED && state <= ROCKETNET_CLIENT_STATE_DISCONNECTED )
+    {
         disconnect_counts[state - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED]++;
+    }
 }
 
 static void soak_accumulate_counters( uint64_t * totals, const struct rocketnet_counters_t * counters )
 {
     if ( !counters )
         return;
+
     const int n = rocketnet_num_counters();
     for ( int i = 0; i < n && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
+    {
         totals[i] += rocketnet_counter_value( counters, i );
+    }
 }
 
 // THE LINK IMPAIRMENT. Each end's link simulator setting, as the transport
@@ -341,11 +354,15 @@ static struct soak_link_t soak_client_link;
 static int soak_link_env_value( const char * name, int max_value, int * value )
 {
     char text[64];
+
     *value = 0;
+
     const int found = rocketnet_test_getenv( name, text, sizeof( text ) );
     if ( !found || text[0] == '\0' )
         return 1;
+
     long parsed = 0;
+
     for ( const char * cursor = text; *cursor != '\0'; cursor++ )
     {
         if ( *cursor < '0' || *cursor > '9' || parsed > max_value )
@@ -353,14 +370,18 @@ static int soak_link_env_value( const char * name, int max_value, int * value )
             fprintf( stderr, "soak: %s=\"%s\" refused: expected 0 .. %d\n", name, text, max_value );
             return 0;
         }
+
         parsed = parsed * 10 + ( *cursor - '0' );
     }
+
     if ( parsed > max_value )
     {
         fprintf( stderr, "soak: %s=\"%s\" refused: expected 0 .. %d\n", name, text, max_value );
         return 0;
     }
+
     *value = (int) parsed;
+
     return 1;
 }
 
@@ -387,6 +408,7 @@ static int soak_link_unread_name_set( void )
     const char * ends[] = { "SERVER", "CLIENT" };
     const char * fields[] = { "LOSS_PERCENT", "LATENCY_MS", "JITTER_MS", "DUPLICATE_PERCENT" };
     const char * replacements[] = { "PACKET_LOSS_PERCENT", "LATENCY_MS", "JITTER_MS", "DUPLICATE_PERCENT" };
+
     for ( int e = 0; e < 2; e++ )
     {
         for ( int f = 0; f < 4; f++ )
@@ -401,6 +423,7 @@ static int soak_link_unread_name_set( void )
             }
         }
     }
+
     return 0;
 }
 
@@ -442,15 +465,19 @@ static void soak_link_witness_receive( struct soak_link_witness_t * witness, int
     const int cycle = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     if ( payload_bytes < 1 || payload_bytes > cycle )
         return;
+
     if ( !witness->have_last )
     {
         witness->have_last = 1;
         witness->last_size = payload_bytes;
         return;
     }
+
     const int ahead = ( payload_bytes - witness->last_size + cycle ) % cycle;
     if ( ahead == 0 )
+    {
         witness->repeated++;
+    }
     else if ( ahead < cycle / 2 )
     {
         witness->missing += (uint64_t) ( ahead - 1 );
@@ -460,7 +487,9 @@ static void soak_link_witness_receive( struct soak_link_witness_t * witness, int
     {
         witness->late++;
         if ( witness->missing > 0 )
+        {
             witness->missing--;
+        }
     }
 }
 
@@ -486,6 +515,7 @@ static int soak_refusal_planted_by_duplicates( const char * counter_name )
 static int soak_check_counters( const char * name, const struct rocketnet_counters_t * counters )
 {
     // the refusals at an end are planted by the other end's duplicates
+
     const int duplicates_planted = strcmp( name, "server" ) == 0 ? soak_client_link.duplicate_percent != 0 : soak_server_link.duplicate_percent != 0;
     int violations = 0;
 
@@ -506,6 +536,7 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
                         (unsigned long long) rocketnet_counter_value( counters, i ) );
                 continue;
             }
+
             printf( "soak: REFUSAL on a clean run at %s: %s = %llu\n", name, rocketnet_counter_name( i ),
                     (unsigned long long) rocketnet_counter_value( counters, i ) );
             violations++;
@@ -531,24 +562,36 @@ static void soak_capture_sequences( struct rocketnet_client_transport_t * client
 {
     if ( !client || rocketnet_client_transport_state( client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         return;
+
     struct rocketnet_delivery_capture_t capture;
     memset( &capture, 0, sizeof( capture ) );
     rocketnet_client_transport_delivery_capture( client, &capture );
     if ( capture.connected )
     {
         if ( capture.highest_sent_sequence > sequences->client_highest_sent )
+        {
             sequences->client_highest_sent = capture.highest_sent_sequence;
+        }
+
         if ( capture.highest_received_sequence > sequences->client_highest_received )
+        {
             sequences->client_highest_received = capture.highest_received_sequence;
+        }
     }
+
     memset( &capture, 0, sizeof( capture ) );
     rocketnet_server_transport_delivery_capture( server, rocketnet_client_transport_client_index( client ), &capture );
     if ( capture.connected )
     {
         if ( capture.highest_sent_sequence > sequences->server_highest_sent )
+        {
             sequences->server_highest_sent = capture.highest_sent_sequence;
+        }
+
         if ( capture.highest_received_sequence > sequences->server_highest_received )
+        {
             sequences->server_highest_received = capture.highest_received_sequence;
+        }
     }
 }
 
@@ -574,26 +617,36 @@ static uint64_t soak_peak_resident_bytes( void )
 static int soak_flag_value( int argc, char ** argv, int * i, int * have, uint64_t max_value, uint64_t * value )
 {
     const char * flag = argv[*i];
+
     if ( *have )
     {
         fprintf( stderr, "soak: duplicate %s flag (" ROCKETNET_SOAK_USAGE ")\n", flag );
         return 0;
     }
+
     if ( *i + 1 >= argc )
     {
         fprintf( stderr, "soak: missing argument for %s (" ROCKETNET_SOAK_USAGE ")\n", flag );
         return 0;
     }
+
     ( *i )++;
     if ( !parse_positive_uint64( argv[*i], value ) || ( max_value && *value > max_value ) )
     {
         if ( max_value )
+        {
             fprintf( stderr, "soak: %s must be a positive integer at most %llu (" ROCKETNET_SOAK_USAGE ")\n", flag, (unsigned long long) max_value );
+        }
         else
+        {
             fprintf( stderr, "soak: %s must be a positive integer (" ROCKETNET_SOAK_USAGE ")\n", flag );
+        }
+
         return 0;
     }
+
     *have = 1;
+
     return 1;
 }
 
@@ -605,6 +658,7 @@ static int soak_counter_index( const char * counter_name )
         if ( strcmp( rocketnet_counter_name( i ), counter_name ) == 0 )
             return i;
     }
+
     return -1;
 }
 
@@ -612,11 +666,14 @@ static int soak_counter_index( const char * counter_name )
 static void soak_print_counters( const char * name, const struct rocketnet_counters_t * counters )
 {
     printf( " %s", name );
+
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
         const uint64_t value = rocketnet_counter_value( counters, i );
         if ( value )
+        {
             printf( " %s=%llu", rocketnet_counter_name( i ), (unsigned long long) value );
+        }
     }
 }
 
@@ -628,6 +685,7 @@ static uint64_t soak_unacked_span( const struct rocketnet_delivery_capture_t * c
 {
     if ( !capture->connected )
         return 0;
+
     const uint64_t acked = capture->largest_acked_sequence > sent_sequence_at_connect ? capture->largest_acked_sequence : sent_sequence_at_connect;
     return capture->highest_sent_sequence > acked ? capture->highest_sent_sequence - acked : 0;
 }
@@ -639,7 +697,10 @@ static uint64_t soak_rate_send_count( uint64_t owed, uint64_t sent, uint64_t una
 {
     uint64_t count = owed > sent ? owed - sent : 0;
     if ( count > ROCKETNET_SOAK_RATE_BURST )
+    {
         count = ROCKETNET_SOAK_RATE_BURST;
+    }
+
     const uint64_t room = unacked_span < ROCKETNET_SOAK_RATE_WINDOW ? ROCKETNET_SOAK_RATE_WINDOW - unacked_span : 0;
     return count < room ? count : room;
 }
@@ -684,7 +745,7 @@ static void soak_library_bytes_add( int64_t bytes )
     InterlockedExchangeAdd64( (volatile LONG64 *) &soak_library_bytes, (LONG64) bytes );
 #else
     __atomic_fetch_add( &soak_library_bytes, bytes, __ATOMIC_RELAXED );
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 // the bytes the library holds in blocks it takes from the OS itself, outside
@@ -706,18 +767,20 @@ static int64_t soak_library_bytes_read( void )
     const int64_t allocator_bytes = (int64_t) InterlockedCompareExchange64( (volatile LONG64 *) &soak_library_bytes, 0, 0 );
 #else
     const int64_t allocator_bytes = __atomic_load_n( &soak_library_bytes, __ATOMIC_RELAXED );
-#endif
+#endif // #if defined( _WIN32 )
     return allocator_bytes + soak_direct_bytes_read();
 }
 
 static void * soak_library_malloc( void * context, size_t bytes )
 {
     (void) context;
+
     uint8_t * block = (uint8_t *) malloc( bytes + SOAK_ALLOCATION_HEADER_BYTES );
     if ( !block )
         return NULL;
     memcpy( block, &bytes, sizeof( bytes ) );
     soak_library_bytes_add( (int64_t) bytes );
+
     return block + SOAK_ALLOCATION_HEADER_BYTES;
 }
 
@@ -726,6 +789,7 @@ static void soak_library_free( void * context, void * p )
     (void) context;
     if ( !p )
         return;
+
     uint8_t * block = (uint8_t *) p - SOAK_ALLOCATION_HEADER_BYTES;
     size_t bytes = 0;
     memcpy( &bytes, block, sizeof( bytes ) );
@@ -745,7 +809,7 @@ static void soak_print_os_threads( const char * sample_label )
     process_resources_walk_threads( &threads, &os_threads, sample_label );
 #else
     (void) sample_label;
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 // one "soak memory:" line: the memory count of *sample, the library's own
@@ -757,13 +821,17 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
 {
     int64_t rss = -1;
     int64_t private_dirty = -1;
+
     printf( "soak memory: %s t=%.0f %s=%lld library_bytes=%lld direct_bytes=%lld", phase, seconds, process_resources_name( PROCESS_RESOURCES_MEMORY ),
             (long long) sample->values[PROCESS_RESOURCES_MEMORY], (long long) soak_library_bytes_read(), (long long) soak_direct_bytes_read() );
+
     if ( process_resources_smaps( &rss, &private_dirty ) )
+    {
         printf( " smaps_rss=%lld private_dirty=%lld", (long long) rss, (long long) private_dirty );
+    }
 #if defined( _WIN32 )
     printf( " threads=%lld os_threads=%lld", (long long) sample->values[PROCESS_RESOURCES_THREADS], (long long) sample->values[PROCESS_RESOURCES_OS_THREADS] );
-#endif
+#endif // #if defined( _WIN32 )
     printf( "\n" );
     fflush( stdout );
 }
@@ -810,6 +878,7 @@ static void soak_send_interval_reset( struct soak_send_interval_t * send )
 static void soak_print_send( double seconds, const struct soak_send_interval_t * send, struct rocketnet_client_transport_t * client, int counter_send_deferred, int counter_send_ring_full )
 {
     const struct rocketnet_counters_t * counters = client ? rocketnet_client_transport_counters( client ) : NULL;
+
     printf( "soak send: t=%.0f staged_proxy_max=%llu deferred_run_max=%llu deferred_iterations=%llu unacked_span_max=%llu acked_packets=%llu "
             "refused_sends=%llu iteration_gap_max_ms=%.1f client_lifetime_send_deferred=%llu client_lifetime_send_ring_full=%llu library_bytes=%lld\n",
             seconds, (unsigned long long) send->staged_proxy_max, (unsigned long long) send->deferred_run_max,
@@ -825,6 +894,7 @@ int main( int argc, char ** argv )
 {
     // before anything is created: the allocator keeps the pages the warm-up
     // populates (tests/process_resources.h, THE WARM-UP)
+
     process_resources_keep_freed_pages();
 
     uint64_t max_iterations = 0;
@@ -847,17 +917,20 @@ int main( int argc, char ** argv )
                 fprintf( stderr, "soak: duplicate --seconds flag (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
+
             if ( i + 1 >= argc )
             {
                 fprintf( stderr, "soak: missing argument for --seconds (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
+
             i++;
             if ( !parse_positive_uint64( argv[i], &max_seconds ) )
             {
                 fprintf( stderr, "soak: --seconds S must be a positive integer (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
+
             have_seconds = 1;
         }
         else if ( strcmp( argv[i], "--assert-flat" ) == 0 )
@@ -867,6 +940,7 @@ int main( int argc, char ** argv )
                 fprintf( stderr, "soak: duplicate --assert-flat flag (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
+
             assert_flat = 1;
         }
         else if ( strncmp( argv[i], "--assert-flat=", 14 ) == 0 )
@@ -881,6 +955,7 @@ int main( int argc, char ** argv )
                 fprintf( stderr, "soak: duplicate --one-connection flag (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
+
             one_connection = 1;
         }
         else if ( strcmp( argv[i], "--rate" ) == 0 )
@@ -905,11 +980,13 @@ int main( int argc, char ** argv )
                 fprintf( stderr, "soak: unexpected second positional argument '%s' (" ROCKETNET_SOAK_USAGE ")\n", argv[i] );
                 return 2;
             }
+
             if ( !parse_positive_uint64( argv[i], &max_iterations ) )
             {
                 fprintf( stderr, "soak: iteration count must be a positive integer (" ROCKETNET_SOAK_USAGE ")\n" );
                 return 2;
             }
+
             have_iterations = 1;
         }
     }
@@ -930,9 +1007,12 @@ int main( int argc, char ** argv )
 
     // ROCKETNET_LOG_LEVEL, when set, keeps the level the library read from it
     // (an xdp cell's pre-flight names each unmet condition at warn)
+
     char log_level_env[256];
     if ( !rocketnet_test_getenv( "ROCKETNET_LOG_LEVEL", log_level_env, sizeof( log_level_env ) ) || log_level_env[0] == '\0' )
+    {
         rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    }
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -944,6 +1024,7 @@ int main( int argc, char ** argv )
 
     // every client is created from this config: the defaults and the
     // client's link simulator setting
+
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     client_config.simulated_latency_ms = soak_client_link.latency_ms;
@@ -961,7 +1042,9 @@ int main( int argc, char ** argv )
 
     char server_bind[64];
     if ( !rocketnet_test_getenv( "SOAK_SERVER_ADDRESS", server_bind, sizeof( server_bind ) ) || server_bind[0] == '\0' )
+    {
         snprintf( server_bind, sizeof( server_bind ), "%s", "127.0.0.1" );
+    }
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, server_bind, &server_config, sizeof( server_config ) );
     if ( !server )
@@ -974,6 +1057,7 @@ int main( int argc, char ** argv )
     // what the server was created with, read from its config (the library
     // has no call that reads a running transport's simulator setting back);
     // the duplicate refusals and the witness below are held to these
+
     soak_server_link.latency_ms = server_config.simulated_latency_ms;
     soak_server_link.jitter_ms = server_config.simulated_jitter_ms;
     soak_server_link.loss_percent = server_config.simulated_loss_percent;
@@ -986,20 +1070,26 @@ int main( int argc, char ** argv )
 
     char server_host[64];
     snprintf( server_host, sizeof( server_host ), "%s", server_bind );
+
     char * server_port_text = strchr( server_host, ':' );
     int server_port = rocketnet_server_transport_port( server );
     if ( server_port_text )
     {
         *server_port_text = '\0';
+
         if ( server_port <= 0 )
+        {
             server_port = (int) strtol( server_port_text + 1, NULL, 10 );
+        }
     }
+
     char server_address[80];
     snprintf( server_address, sizeof( server_address ), "%s:%d", server_host, server_port );
 
     char server_transport_name[64];
     snprintf( server_transport_name, sizeof( server_transport_name ), "%s", rocketnet_server_transport_io_name( server ) );
     printf( "soak transport: server %s\n", server_transport_name );
+
     char client_transport_name[64] = { 0 };
 
 #if defined( __linux__ )
@@ -1018,7 +1108,7 @@ int main( int argc, char ** argv )
             return 1;
         }
     }
-#endif
+#endif // #if defined( __linux__ )
 
     struct rocketnet_client_transport_t * client = NULL;
 
@@ -1051,18 +1141,23 @@ int main( int argc, char ** argv )
     memset( &resources_start, 0, sizeof( resources_start ) );
     memset( &resources_end, 0, sizeof( resources_end ) );
     memset( &resources_peak, 0, sizeof( resources_peak ) );
+
     int client_payload_size = 1;
     int server_payload_size = 1;
     struct soak_sequences_t sequences;
     memset( &sequences, 0, sizeof( sequences ) );
+
     struct soak_link_witness_t client_to_server;
     struct soak_link_witness_t server_to_client;
     memset( &client_to_server, 0, sizeof( client_to_server ) );
     memset( &server_to_client, 0, sizeof( server_to_client ) );
+
     uint64_t resident_baseline = 0;
     uint64_t asserts = 0;
+
     // the pacing, per connection: packets each way sent since the connect,
     // and each end's highest sent session sequence at the connect
+
     uint64_t connection_client_sent = 0;
     uint64_t connection_server_sent = 0;
     uint64_t client_sent_sequence_at_connect = 0;
@@ -1077,9 +1172,11 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     const int counter_send_ring_full = soak_counter_index( "SEND_RING_FULL" );
     struct soak_send_interval_t send_interval;
     memset( &send_interval, 0, sizeof( send_interval ) );
+
     const double start_time = rocketnet_time();
     double last_iteration_time = start_time;
     double last_report_time = start_time;
@@ -1099,7 +1196,10 @@ int main( int argc, char ** argv )
         {
             const double now = rocketnet_time();
             if ( now - last_iteration_time > send_interval.iteration_gap_max )
+            {
                 send_interval.iteration_gap_max = now - last_iteration_time;
+            }
+
             last_iteration_time = now;
         }
 
@@ -1131,21 +1231,29 @@ int main( int argc, char ** argv )
                     failures++;
                     break;
                 }
+
                 if ( !resources_started )
                 {
                     // the warm-up: every preallocated page resident before
                     // the post-warmup sample (tests/process_resources.h)
+
                     const int64_t touched = process_resources_touch_all();
                     if ( touched >= 0 )
+                    {
                         printf( "soak resources: touched %lld bytes before the post-warmup sample\n", (long long) touched );
+                    }
                     else
+                    {
                         printf( "soak resources: touch not available\n" );
+                    }
+
                     if ( !process_resources_read( &sample ) )
                     {
                         printf( "soak: failed to read the process resource counts\n" );
                         failures++;
                         break;
                     }
+
                     resources_started = 1;
                     resources_start = sample;
                     resources_peak = sample;
@@ -1154,11 +1262,17 @@ int main( int argc, char ** argv )
                     library_bytes_start = soak_library_bytes_read();
                     library_bytes_peak = library_bytes_start;
                 }
+
                 process_resources_peak( &resources_peak, &sample );
+
                 if ( soak_library_bytes_read() > library_bytes_peak )
+                {
                     library_bytes_peak = soak_library_bytes_read();
+                }
+
                 soak_print_memory( "between", rocketnet_time() - start_time, &sample );
             }
+
             uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
             if ( !dev_token_binary( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) )
             {
@@ -1173,7 +1287,7 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
-#endif
+#endif // #if defined( __linux__ )
             client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_time() );
 #if defined( __linux__ )
             if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
@@ -1182,19 +1296,23 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
-#endif
+#endif // #if defined( __linux__ )
             if ( !client )
             {
                 printf( "soak: failed to create the client transport\n" );
                 failures++;
                 break;
             }
+
             const char * granted = rocketnet_client_transport_io_name( client );
+
             if ( client_transport_name[0] == '\0' )
             {
                 snprintf( client_transport_name, sizeof( client_transport_name ), "%s", granted ? granted : "unknown" );
                 printf( "soak transport: client %s\n", client_transport_name );
+
                 // what every client is created with, read from its config
+
                 soak_client_link.latency_ms = client_config.simulated_latency_ms;
                 soak_client_link.jitter_ms = client_config.simulated_jitter_ms;
                 soak_client_link.loss_percent = client_config.simulated_loss_percent;
@@ -1214,6 +1332,7 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
+
             reconnect_time = rocketnet_time();
             connected = 0;
             send_interval.staged = 0;
@@ -1222,20 +1341,27 @@ int main( int argc, char ** argv )
 
         // a deferred hand-off in update means the I/O thread still holds the
         // other rings: the client sends nothing more this iteration
+
         const uint64_t deferred_before_update = counter_send_deferred >= 0 ? rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) : 0;
+
         rocketnet_client_transport_update( client, rocketnet_time() );
         rocketnet_server_transport_update( server, rocketnet_time() );
+
         const int client_ring_held = counter_send_deferred >= 0 && rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) != deferred_before_update;
+
         {
             const uint64_t * acked_packet_ids = NULL;
             send_interval.acked_packets += (uint64_t) rocketnet_client_transport_acked_packets( client, &acked_packet_ids );
         }
+
         if ( client_ring_held )
         {
             send_interval.deferred_iterations++;
             send_interval.deferred_run++;
             if ( send_interval.deferred_run > send_interval.deferred_run_max )
+            {
                 send_interval.deferred_run_max = send_interval.deferred_run;
+            }
         }
         else
         {
@@ -1272,6 +1398,7 @@ int main( int argc, char ** argv )
                 soak_link_witness_connect( &server_to_client );
                 connection_client_sent = 0;
                 connection_server_sent = 0;
+
                 struct rocketnet_delivery_capture_t capture;
                 memset( &capture, 0, sizeof( capture ) );
                 rocketnet_client_transport_delivery_capture( client, &capture );
@@ -1287,6 +1414,7 @@ int main( int argc, char ** argv )
 
             uint64_t client_send_count = client_ring_held ? 0 : 1;
             uint64_t server_send_count = 1;
+
             if ( rate )
             {
                 const uint64_t owed = (uint64_t) ( ( rocketnet_time() - connect_time ) * (double) rate );
@@ -1305,6 +1433,7 @@ int main( int argc, char ** argv )
             // holds whatever each direction sent
 
             const int client_index = rocketnet_client_transport_client_index( client );
+
             for ( uint64_t n = 0; n < client_send_count; n++ )
             {
                 if ( !soak_client_send( client, client_payload_size ) )
@@ -1312,28 +1441,41 @@ int main( int argc, char ** argv )
                     send_interval.refused_sends++;
                     break;
                 }
+
                 client_sent++;
                 connection_client_sent++;
                 send_interval.staged++;
                 if ( send_interval.staged > send_interval.staged_proxy_max )
+                {
                     send_interval.staged_proxy_max = send_interval.staged;
+                }
+
                 client_payload_size = client_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? client_payload_size + 1 : 1;
             }
+
             if ( client_send_count )
             {
                 const uint64_t deferred_before_send = counter_send_deferred >= 0 ? rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) : 0;
+
                 rocketnet_client_transport_send_packets( client );
                 if ( counter_send_deferred < 0 || rocketnet_counter_value( rocketnet_client_transport_counters( client ), counter_send_deferred ) == deferred_before_send )
+                {
                     send_interval.staged = 0;
+                }
             }
+
             {
                 struct rocketnet_delivery_capture_t client_capture;
                 memset( &client_capture, 0, sizeof( client_capture ) );
                 rocketnet_client_transport_delivery_capture( client, &client_capture );
+
                 const uint64_t unacked_span = soak_unacked_span( &client_capture, client_sent_sequence_at_connect );
                 if ( unacked_span > send_interval.unacked_span_max )
+                {
                     send_interval.unacked_span_max = unacked_span;
+                }
             }
+
             for ( uint64_t n = 0; n < server_send_count; n++ )
             {
                 if ( !soak_server_send( server, client_index, server_payload_size ) )
@@ -1342,6 +1484,7 @@ int main( int argc, char ** argv )
                 connection_server_sent++;
                 server_payload_size = server_payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? server_payload_size + 1 : 1;
             }
+
             rocketnet_server_transport_send_packets( server );
 
             const int num_payloads = rocketnet_server_transport_num_payloads( server );
@@ -1349,14 +1492,19 @@ int main( int argc, char ** argv )
             {
                 int payload_client_index, payload_bytes;
                 uint8_t * server_payload = rocketnet_server_transport_payload( server, i, &payload_client_index, &payload_bytes );
+
                 server_received++;
                 if ( payload_client_index == client_index )
+                {
                     soak_link_witness_receive( &client_to_server, payload_bytes );
+                }
+
                 if ( fault_verify_pending && payload_bytes > 0 )
                 {
                     server_payload[0] ^= 0xff;
                     fault_verify_pending = 0;
                 }
+
                 if ( verify_payload( server_payload, payload_bytes ) )
                 {
                     payloads_verified++;
@@ -1380,11 +1528,13 @@ int main( int argc, char ** argv )
             {
                 client_received++;
                 soak_link_witness_receive( &server_to_client, received_bytes );
+
                 if ( fault_verify_pending )
                 {
                     received[0] ^= 0xff;
                     fault_verify_pending = 0;
                 }
+
                 if ( verify_payload( received, received_bytes ) )
                 {
                     payloads_verified++;
@@ -1406,23 +1556,30 @@ int main( int argc, char ** argv )
             last_assert_time = rocketnet_time();
             asserts++;
             soak_capture_sequences( client, server, &sequences );
+
             int violations = soak_check_counters( "client", rocketnet_client_transport_counters( client ) );
             violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
+
             const uint64_t resident = soak_peak_resident_bytes();
+
             if ( asserts == 1 )
+            {
                 resident_baseline = resident;
+            }
             else if ( resident > resident_baseline + ROCKETNET_SOAK_RESIDENT_GROWTH_BYTES )
             {
                 printf( "soak: RESOURCE CHECK FAILED: peak resident %llu bytes, %llu at the first check\n",
                         (unsigned long long) resident, (unsigned long long) resident_baseline );
                 violations++;
             }
+
             if ( rate && ( client_sent == asserted_client_sent || server_sent == asserted_server_sent ) )
             {
                 printf( "soak: RATE STALLED: client_sent %llu, server_sent %llu, unchanged since the previous check\n",
                         (unsigned long long) client_sent, (unsigned long long) server_sent );
                 violations++;
             }
+
             asserted_client_sent = client_sent;
             asserted_server_sent = server_sent;
             printf( "soak assert: %.0f s, client_sent %llu, server_sent %llu, client_verified %llu, server_verified %llu, "
@@ -1436,6 +1593,7 @@ int main( int argc, char ** argv )
             soak_print_counters( "server", rocketnet_server_transport_counters( server ) );
             printf( "\n" );
             fflush( stdout );
+
             if ( violations )
             {
                 counter_violations += violations;
@@ -1446,6 +1604,7 @@ int main( int argc, char ** argv )
         if ( rocketnet_time() - last_report_time > 10.0 )
         {
             last_report_time = rocketnet_time();
+
             if ( resources_started )
             {
                 struct process_resources_t sample;
@@ -1455,13 +1614,19 @@ int main( int argc, char ** argv )
                     failures++;
                     break;
                 }
+
                 {
                     process_resources_peak( &resources_peak, &sample );
+
                     if ( resources_started && soak_library_bytes_read() > library_bytes_peak )
+                    {
                         library_bytes_peak = soak_library_bytes_read();
+                    }
+
                     soak_print_memory( client ? "live" : "between", rocketnet_time() - start_time, &sample );
                 }
             }
+
             soak_print_send( rocketnet_time() - start_time, &send_interval, client, counter_send_deferred, counter_send_ring_full );
             soak_send_interval_reset( &send_interval );
             printf( "soak: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
@@ -1490,6 +1655,7 @@ int main( int argc, char ** argv )
             client_state = rocketnet_client_transport_state( client );
             rocketnet_sleep( 0.001 );
         }
+
         if ( client_state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             connected = 1;
@@ -1510,11 +1676,13 @@ int main( int argc, char ** argv )
         printf( "soak: insufficient coverage: require a connection and verified payloads in both directions\n" );
         failures++;
     }
+
     if ( !quit && max_iterations && iteration < max_iterations && !deadline_reached )
     {
         printf( "soak: bounded run ended before its iteration target\n" );
         failures++;
     }
+
     if ( !quit && max_seconds && !deadline_reached && ( !max_iterations || iteration < max_iterations ) )
     {
         printf( "soak: bounded run ended before its duration target\n" );
@@ -1534,6 +1702,7 @@ int main( int argc, char ** argv )
             rocketnet_client_transport_disconnect( client );
             soak_record_disconnect( disconnect_counts, rocketnet_client_transport_state( client ) );
         }
+
         rocketnet_sleep( 0.05 );
         rocketnet_server_transport_update( server, rocketnet_time() );
         rocketnet_server_transport_send_packets( server );
@@ -1542,11 +1711,16 @@ int main( int argc, char ** argv )
         rn_native_client_transport_stop_and_destroy( client );
         client = NULL;
     }
+
     counter_violations += soak_check_counters( "server", rocketnet_server_transport_counters( server ) );
     if ( counter_violations )
+    {
         failures += (uint64_t) counter_violations;
+    }
     else
+    {
         printf( "soak: conservation ok (server and every client)\n" );
+    }
 
     // the link witness: what each direction lost and what each receiving end
     // refused as already received (every client's counters, and the
@@ -1557,8 +1731,10 @@ int main( int argc, char ** argv )
 
     uint64_t duplicates_refused_at_server = 0;
     uint64_t duplicates_refused_at_client = 0;
+
     {
         const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( server );
+
         for ( int i = 0; i < rocketnet_num_counters() && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
         {
             if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || !soak_refusal_planted_by_duplicates( rocketnet_counter_name( i ) ) )
@@ -1573,6 +1749,7 @@ int main( int argc, char ** argv )
     printf( "soak link witness: server_to_client missing=%llu late=%llu repeated=%llu duplicates_refused=%llu\n",
             (unsigned long long) server_to_client.missing, (unsigned long long) server_to_client.late,
             (unsigned long long) server_to_client.repeated, (unsigned long long) duplicates_refused_at_client );
+
     if ( assert_flat )
     {
         if ( soak_client_link.loss_percent != 0 && client_to_server.missing == 0 )
@@ -1580,16 +1757,19 @@ int main( int argc, char ** argv )
             printf( "soak: --assert-flat FAILED: link impairment not observed: client loss_percent=%d and client_to_server missing=0\n", soak_client_link.loss_percent );
             failures++;
         }
+
         if ( soak_server_link.loss_percent != 0 && server_to_client.missing == 0 )
         {
             printf( "soak: --assert-flat FAILED: link impairment not observed: server loss_percent=%d and server_to_client missing=0\n", soak_server_link.loss_percent );
             failures++;
         }
+
         if ( soak_client_link.duplicate_percent != 0 && duplicates_refused_at_server == 0 )
         {
             printf( "soak: --assert-flat FAILED: link impairment not observed: client duplicate_percent=%d and no already-received refusal at the server\n", soak_client_link.duplicate_percent );
             failures++;
         }
+
         if ( soak_server_link.duplicate_percent != 0 && duplicates_refused_at_client == 0 )
         {
             printf( "soak: --assert-flat FAILED: link impairment not observed: server duplicate_percent=%d and no already-received refusal at the client\n", soak_server_link.duplicate_percent );
@@ -1607,21 +1787,27 @@ int main( int argc, char ** argv )
         process_resources_peak( &resources_peak, &resources_end );
         library_bytes_end = soak_library_bytes_read();
         if ( library_bytes_end > library_bytes_peak )
+        {
             library_bytes_peak = library_bytes_end;
+        }
+
         soak_print_memory( "between", rocketnet_time() - start_time, &resources_end );
     }
 
     // the memory guard: library_bytes, the allocator's count and the direct
     // blocks, on every transport
+
     printf( "soak resources: memory guard library_bytes\n" );
 
     if ( resources_started && resources_ended )
     {
         const double seconds_since_start = rocketnet_time() - resources_start_time;
+
         for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
         {
             printf( "soak resources: %s start=%lld end=%lld peak=%lld\n", process_resources_name( i ),
                     (long long) resources_start.values[i], (long long) resources_end.values[i], (long long) resources_peak.values[i] );
+
             // the process's memory count is the OS's and the C runtime's as
             // much as the library's: printed, never asserted; the memory
             // flat rule holds the library's own bytes below on every
@@ -1633,20 +1819,28 @@ int main( int argc, char ** argv )
             // zones' residency (Malloc Small 1024K to 1152K, Malloc Large
             // 14.1M to 14.2M); a 60 s iocp soak on Windows grew
             // private_bytes 8192 with handles and threads flat.
+
             if ( i == PROCESS_RESOURCES_MEMORY )
                 continue;
+
             if ( assert_flat && !process_resources_flat( i, resources_start.values[i], resources_end.values[i], seconds_since_start ) )
             {
                 printf( "soak: --assert-flat FAILED: %s start=%lld end=%lld", process_resources_name( i ),
                         (long long) resources_start.values[i], (long long) resources_end.values[i] );
+
                 if ( i == PROCESS_RESOURCES_MEMORY )
+                {
                     printf( " (allowed growth %lld bytes over %.0f s)", (long long) process_resources_memory_allowance_bytes( seconds_since_start ), seconds_since_start );
+                }
+
                 printf( "\n" );
                 failures++;
             }
         }
+
         printf( "soak resources: library_bytes start=%lld end=%lld peak=%lld\n",
                 (long long) library_bytes_start, (long long) library_bytes_end, (long long) library_bytes_peak );
+
         if ( assert_flat && !process_resources_flat( PROCESS_RESOURCES_MEMORY, library_bytes_start, library_bytes_end, seconds_since_start ) )
         {
             printf( "soak: --assert-flat FAILED: library_bytes start=%lld end=%lld (allowed growth %lld bytes over %.0f s)\n",
@@ -1658,13 +1852,13 @@ int main( int argc, char ** argv )
     else
     {
         printf( "soak resources: none (the run ended inside the warm cycle)\n" );
+
         if ( assert_flat )
         {
             printf( "soak: --assert-flat FAILED: no post-warmup and end samples (the run ended inside the warm cycle)\n" );
             failures++;
         }
     }
-
 
     printf( "\nsoak finished: %llu iterations, %llu connects, %llu payloads verified, %llu failures\n",
             (unsigned long long) iteration, (unsigned long long) connects,
@@ -1690,29 +1884,39 @@ int main( int argc, char ** argv )
     printf( "soak summary: server_highest_sent_sequence %llu\n", (unsigned long long) sequences.server_highest_sent );
     printf( "soak summary: client_highest_received_sequence %llu\n", (unsigned long long) sequences.client_highest_received );
     printf( "soak summary: server_highest_received_sequence %llu\n", (unsigned long long) sequences.server_highest_received );
+
     if ( assert_every )
+    {
         printf( "soak summary: asserts %llu\n", (unsigned long long) asserts );
+    }
 
     for ( int s = ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED; s <= ROCKETNET_CLIENT_STATE_DISCONNECTED; s++ )
     {
         const uint64_t count = disconnect_counts[s - ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED];
         if ( count > 0 )
+        {
             printf( "soak summary: %s %llu\n", soak_disconnect_reason_name( s ), (unsigned long long) count );
+        }
     }
 
     const int num_counters = rocketnet_num_counters();
     for ( int i = 0; i < num_counters && i < ROCKETNET_SOAK_MAX_COUNTERS; i++ )
     {
         if ( client_counters[i] != 0 )
+        {
             printf( "soak summary: client_%s %llu\n", rocketnet_counter_name( i ), (unsigned long long) client_counters[i] );
+        }
     }
 
     const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( server );
+
     for ( int i = 0; i < num_counters; i++ )
     {
         const uint64_t value = rocketnet_counter_value( server_counters, i );
         if ( value != 0 )
+        {
             printf( "soak summary: server_%s %llu\n", rocketnet_counter_name( i ), (unsigned long long) value );
+        }
     }
 
     fflush( stdout );
@@ -1723,10 +1927,15 @@ int main( int argc, char ** argv )
 
 #if defined( __linux__ )
     if ( self_netns >= 0 )
+    {
         close( self_netns );
+    }
+
     if ( client_netns >= 0 )
+    {
         close( client_netns );
-#endif
+    }
+#endif // #if defined( __linux__ )
 
     rocketnet_term();
 

@@ -73,6 +73,7 @@ static inline enum split_start_step_t split_start_client_step( const struct spli
         return SPLIT_START_STEP_RUN;
     if ( startup->armed )
         return SPLIT_START_STEP_GO;
+
     return SPLIT_START_STEP_ARM;
 }
 
@@ -99,6 +100,7 @@ static inline enum split_start_verdict_t split_shard_start_update( const struct 
         return SPLIT_START_COMPLETE;
     if ( now >= start->deadline )
         return SPLIT_START_TIMED_OUT;
+
     return SPLIT_START_WAITING;
 }
 
@@ -112,6 +114,7 @@ static inline enum split_start_verdict_t split_server_start_update( double now, 
         return SPLIT_START_COMPLETE;
     if ( now - phase_start >= SPLIT_START_DEADLINE_S )
         return SPLIT_START_TIMED_OUT;
+
     return SPLIT_START_WAITING;
 }
 

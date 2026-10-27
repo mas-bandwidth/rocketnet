@@ -35,21 +35,31 @@ void control_disconnect_burst_each_end()
 
     // the client disconnects: the burst of type 6 packets goes out through
     // the tee; the server reads them and releases the slot
+
     rocketnet_channel_endpoint_disconnect( &h.client_endpoint, 0 );
+
     for ( int i = 0; i < 30; i++ )
+    {
         rocketnet_channel_harness_pump( &h, CONTROL_TICK );
+    }
+
     control_check( !rocketnet_client_slots_connected( h.server.client_slots, h.client_slot ), "server slot still connected after client disconnect" );
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     rocketnet_channel_harness_destroy( &h );
 
     // the server disconnects: the same burst the other way, and the client
     // reads the server's type 6
+
     control_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
     control_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
     rocketnet_channel_endpoint_disconnect( &h.server_endpoint, 0 );
+
     for ( int i = 0; i < 30; i++ )
+    {
         rocketnet_channel_harness_pump( &h, CONTROL_TICK );
+    }
+
     control_check( h.client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, "client still connected after server disconnect" );
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
     rocketnet_channel_harness_destroy( &h );
@@ -67,9 +77,12 @@ void control_standalone_ack_each_end()
     // the server side: the client writes more than the threshold of payload
     // packets and sends each; the server is updated (not pumped) so it sends
     // no payload back, and its ack debt reaches the threshold
+
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+
     // a SINGLE message: three data bytes and the trailing form byte, so the
     // capture's payload records are valid message payloads, not refusals
+
     uint8_t payload[4] = { 1, 2, 3, ROCKETNET_MESSAGE_FORM_SINGLE };
     const int sends = ROCKETNET_ACK_DEBT_THRESHOLD + 8;
     for ( int i = 0; i < sends; i++ )
@@ -78,7 +91,9 @@ void control_standalone_ack_each_end()
         control_check( size > 0, "write payload" );
         rocketnet_channel_endpoint_send_control( &h.client_endpoint, packet, size );
     }
-    // A payload becomes ACK-eligible only after message processing.
+
+    // A payload becomes ACK-eligible only after message processing
+
     control_check( rocketnet_message_server_update( h.message_server, h.now ) == ROCKETNET_UPDATE_OK, "message update" );
 
     const uint64_t client_sent_through = h.client.ack.highest_sequence;
@@ -102,21 +117,25 @@ void control_standalone_ack_each_end()
     // one ACK that the production server protocol accepts. Keep the simulated
     // clock inside the client's normal send-rate window so it selects the
     // standalone-ACK branch rather than the scheduled keep-alive branch.
+
     const uint64_t server_ack_accepted_before = h.server_counters.values[ROCKETNET_COUNTER_ACK_ACCEPTED];
     const uint64_t server_packets_received_before = h.server_counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
     const uint64_t server_sent_through_before = h.server.acks->endpoints[0].highest_sequence;
+
     for ( int i = 0; i < sends; i++ )
     {
         const int size = rocketnet_server_protocol_write_payload( &h.server, 0, payload, 4, h.now, packet );
         control_check( size > 0, "server write payload" );
         rocketnet_channel_endpoint_send_control( &h.server_endpoint, packet, size );
     }
+
     control_check( rocketnet_message_client_update( h.message_client, h.now ) == ROCKETNET_UPDATE_OK,
                    "client message update" );
     control_check( h.client.ack.ack_debt >= ROCKETNET_ACK_DEBT_THRESHOLD,
                    "client ACK debt did not reach threshold" );
     rocketnet_platform_atomic_store_double( &h.client.last_send_time, h.now );
     control_check( h.client.last_send_time == h.now, "client send-time fixture baseline" );
+
     int client_ack_bytes = 0;
     rocketnet_client_protocol_update( &h.client, h.now, packet, &client_ack_bytes );
     control_check( client_ack_bytes >= ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES,
@@ -142,20 +161,29 @@ void control_fragment_packets_each_end()
     // Keep the deterministic control capture for the pinned wire corpus while
     // the public API exercise below proves that both real endpoints deliver
     // the complete message to an application consumer.
+
     rocketnet_channel_harness_t h;
     control_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
     control_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
 
     uint8_t payload[3000];
+
     for ( int i = 0; i < 3000; i++ )
+    {
         payload[i] = (uint8_t) ( i * 7 );
+    }
+
     uint8_t packets[CONTROL_MAX_FRAGMENTS * ROCKETNET_SEND_BUDGET];
     int packet_bytes[CONTROL_MAX_FRAGMENTS];
+
     if ( !h.client.reassembly )
+    {
         h.client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 4 );
+    }
 
     const uint64_t server_reassembled_before = h.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED];
+
     const int client_count = rocketnet_client_protocol_write_fragments( &h.client, payload, 3000, h.now,
                                                                         packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
     control_check( client_count >= 2, "client write fragments" );
@@ -164,10 +192,12 @@ void control_fragment_packets_each_end()
         rocketnet_channel_endpoint_send_control( &h.client_endpoint, packets + (size_t) i * ROCKETNET_SEND_BUDGET, packet_bytes[i] );
         rocketnet_channel_endpoint_update( &h.server_endpoint, h.now );
     }
+
     control_check( h.server_counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == server_reassembled_before + 1,
                    "server reassembled one fragment payload" );
 
     const uint64_t client_reassembled_before = h.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED];
+
     const int server_count = rocketnet_server_protocol_write_fragments( &h.server, 0, payload, 3000, h.now,
                                                                         packets, packet_bytes, CONTROL_MAX_FRAGMENTS );
     control_check( server_count >= 2, "server write fragments" );
@@ -176,6 +206,7 @@ void control_fragment_packets_each_end()
         rocketnet_channel_endpoint_send_control( &h.server_endpoint, packets + (size_t) i * ROCKETNET_SEND_BUDGET, packet_bytes[i] );
         rocketnet_channel_endpoint_update( &h.client_endpoint, h.now );
     }
+
     control_check( h.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_REASSEMBLED] == client_reassembled_before + 1,
                    "client reassembled one fragment payload" );
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );
@@ -184,6 +215,7 @@ void control_fragment_packets_each_end()
         rocketnet_reassembly_set_destroy( h.client.reassembly );
         h.client.reassembly = NULL;
     }
+
     rocketnet_channel_harness_destroy( &h );
 
     extern void rocketnet_test_public_fragment_delivery();
@@ -203,16 +235,21 @@ void control_denied_when_server_full()
     // connect path assigns it, with no timeout so it holds the slot for the
     // whole case, as the connect path gives every slot it assigns a live
     // mapping behind it.
+
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 9, sizeof( user_data ) );
+
     for ( int i = 0; i < 4; i++ )
     {
         char filler_address_string[64];
         snprintf( filler_address_string, sizeof( filler_address_string ), "198.51.100.%d:5000", 20 + i );
+
         struct rocketnet_address_t filler_address;
         control_check( rocketnet_address_parse( &filler_address, filler_address_string ), "filler address" );
+
         const int mapping_index = rocketnet_encryption_map_add( h.server.encryption_map, &filler_address, h.now + h.server.handshake_deadline_seconds );
         control_check( mapping_index >= 0, "filler mapping add" );
+
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( h.server.encryption_map, mapping_index );
         mapping->client_id = (uint64_t) ( 1000 + i );
         memcpy( mapping->user_data, user_data, ROCKETNET_USER_DATA_BYTES );
@@ -228,9 +265,14 @@ void control_denied_when_server_full()
         mapping->control->client_index = slot;
         mapping->control->established = 1;
     }
+
     const uint64_t denied_before = h.server_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS];
+
     for ( int i = 0; i < 60 * 5; i++ )
+    {
         rocketnet_channel_harness_pump( &h, CONTROL_TICK );
+    }
+
     control_check( h.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED, "client not denied" );
     control_check( h.server_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] > denied_before, "no-slots counter did not rise" );
     control_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );

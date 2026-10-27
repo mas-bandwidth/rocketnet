@@ -25,10 +25,11 @@ int main( void )
     uint16_t k = nondet_ushort();
     __CPROVER_assume( k <= n );
 
-    /* Planted 1-byte OOB: (n - k) + 1 extends 1 byte past buf + n. */
+    // Planted 1-byte OOB: (n - k) + 1 extends 1 byte past buf + n.
     __CPROVER_assert( __CPROVER_r_ok( buf + k, (size_t) ( n - k ) + 1 ),
                       "planted 1-byte OOB past symbolic malloc(n) must fail" );
 
     free( buf );
+
     return 0;
 }

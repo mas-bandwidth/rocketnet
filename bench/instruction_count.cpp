@@ -40,14 +40,14 @@
 #if __has_include( <valgrind/cachegrind.h>)
 #include <valgrind/cachegrind.h>
 #define ROCKETNET_HAVE_CACHEGRIND_CLIENT_REQUESTS 1
-#endif
-#endif
+#endif // #if __has_include( <valgrind/cachegrind.h>)
+#endif // #if defined( __has_include )
 
 #ifndef ROCKETNET_HAVE_CACHEGRIND_CLIENT_REQUESTS
 #define ROCKETNET_HAVE_CACHEGRIND_CLIENT_REQUESTS 0
 #define CACHEGRIND_START_INSTRUMENTATION do {} while (0)
 #define CACHEGRIND_STOP_INSTRUMENTATION do {} while (0)
-#endif
+#endif // #ifndef ROCKETNET_HAVE_CACHEGRIND_CLIENT_REQUESTS
 
 #ifndef ROCKETNET_COMPILER_ID
 #if defined( __clang__ )
@@ -60,16 +60,16 @@
 #define ROCKETNET_COMPILER_ID "GNU-" ROCKETNET_STR(__GNUC__) "." ROCKETNET_STR(__GNUC_MINOR__) "." ROCKETNET_STR(__GNUC_PATCHLEVEL__)
 #else
 #define ROCKETNET_COMPILER_ID "Unknown"
-#endif
-#endif
+#endif // #if defined( __clang__ )
+#endif // #ifndef ROCKETNET_COMPILER_ID
 
 #ifndef ROCKETNET_BUILD_TYPE
 #if defined( NDEBUG )
 #define ROCKETNET_BUILD_TYPE "Release"
 #else
 #define ROCKETNET_BUILD_TYPE "Debug"
-#endif
-#endif
+#endif // #if defined( NDEBUG )
+#endif // #ifndef ROCKETNET_BUILD_TYPE
 
 #define CHECK( cond )                                                                     \
     do                                                                                  \
@@ -137,6 +137,7 @@ namespace
             memcpy( out + i, &v, 8 );
             i += 8;
         }
+
         if ( i < size )
         {
             uint64_t v = next_u64();
@@ -201,12 +202,14 @@ namespace
         CHECK( client != NULL );
 
         int client_index = -1;
+
         for ( int step = 0; step < 200; ++step )
         {
             g_sim_time += FIXED_DT;
             rocketnet_client_transport_update( client, g_sim_time );
             rocketnet_server_transport_update( server, g_sim_time );
             rocketnet_server_transport_send_packets( server );
+
             if ( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
             {
                 client_index = rocketnet_client_transport_client_index( client );
@@ -214,6 +217,7 @@ namespace
                     break;
             }
         }
+
         CHECK( client_index >= 0 && rocketnet_server_transport_is_client_connected( server, client_index ) );
 
         const int measured_frames = setup_only ? 0 : CLIENT_FRAME_UNITS;
@@ -223,9 +227,11 @@ namespace
         for ( int frame = -CLIENT_FRAME_WARMUP; frame < measured_frames; ++frame )
         {
             g_sim_time += FIXED_DT;
+
             for ( int i = 0; i < CLIENT_FRAME_PACKETS; ++i )
             {
                 rocketnet_packet_context_t context;
+
                 uint8_t * payload =
                     rocketnet_client_transport_start_packet( client, PAYLOAD_BYTES, &context );
                 CHECK( payload != NULL );
@@ -235,25 +241,33 @@ namespace
             }
 
             if ( frame >= 0 )
+            {
                 CACHEGRIND_START_INSTRUMENTATION;
+            }
 
             rocketnet_client_transport_send_packets( client );
             rocketnet_client_transport_update( client, g_sim_time );
 
             if ( frame >= 0 )
+            {
                 CACHEGRIND_STOP_INSTRUMENTATION;
+            }
 
             rocketnet_server_transport_update( server, g_sim_time );
+
             const int * reply_client_index = NULL;
             uint8_t * const * received_data = NULL;
             const int * received_bytes = NULL;
+
             const int num_payloads = rocketnet_server_transport_payloads(
                 server, &reply_client_index, &received_data, &received_bytes );
             CHECK( num_payloads == CLIENT_FRAME_PACKETS );
             for ( int i = 0; i < num_payloads; ++i )
             {
                 CHECK( received_bytes[i] == PAYLOAD_BYTES );
+
                 rocketnet_packet_context_t context;
+
                 uint8_t * payload = rocketnet_server_transport_start_packet(
                     server, reply_client_index[i], PAYLOAD_BYTES, &context );
                 CHECK( payload != NULL );
@@ -261,9 +275,11 @@ namespace
                 CHECK( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) >
                        PAYLOAD_BYTES );
             }
+
             rocketnet_server_transport_send_packets( server );
 
             rocketnet_client_transport_update( client, g_sim_time );
+
             int bytes = 0;
             while ( ( bytes = rocketnet_client_transport_receive_packet(
                           client, scratch, (int) sizeof( scratch ) ) ) > 0 )
@@ -304,9 +320,11 @@ namespace
         CHECK( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
         rocketnet_client_transport_t * clients[SERVER_TICK_CLIENTS] = {};
+
         for ( int c = 0; c < SERVER_TICK_CLIENTS; ++c )
         {
             uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+
             CHECK( rocketnet_write_test_connect_token(
                        "127.0.0.1:42001", (uint64_t) ( 2000 + c ), 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
@@ -324,13 +342,18 @@ namespace
         for ( int step = 0; step < 200; ++step )
         {
             g_sim_time += FIXED_DT;
+
             for ( int c = 0; c < SERVER_TICK_CLIENTS; ++c )
+            {
                 rocketnet_client_transport_update( clients[c], g_sim_time );
+            }
+
             rocketnet_server_transport_update( server, g_sim_time );
             rocketnet_server_transport_send_packets( server );
             if ( rocketnet_server_transport_num_connected_clients( server ) == SERVER_TICK_CLIENTS )
             {
                 bool all_connected = true;
+
                 for ( int c = 0; c < SERVER_TICK_CLIENTS; ++c )
                 {
                     if ( rocketnet_client_transport_state( clients[c] ) !=
@@ -340,10 +363,12 @@ namespace
                         break;
                     }
                 }
+
                 if ( all_connected )
                     break;
             }
         }
+
         CHECK( rocketnet_server_transport_num_connected_clients( server ) == SERVER_TICK_CLIENTS );
 
         const int measured_ticks = setup_only ? 0 : SERVER_TICK_UNITS;
@@ -353,11 +378,13 @@ namespace
         for ( int tick = -SERVER_TICK_WARMUP; tick < measured_ticks; ++tick )
         {
             g_sim_time += FIXED_DT;
+
             for ( int c = 0; c < SERVER_TICK_CLIENTS; ++c )
             {
                 for ( int p = 0; p < SERVER_TICK_PACKETS_PER_CLIENT; ++p )
                 {
                     rocketnet_packet_context_t context;
+
                     uint8_t * payload = rocketnet_client_transport_start_packet(
                         clients[c], PAYLOAD_BYTES, &context );
                     CHECK( payload != NULL );
@@ -365,22 +392,29 @@ namespace
                     CHECK( rocketnet_client_transport_finish_packet(
                                clients[c], &context, PAYLOAD_BYTES ) > PAYLOAD_BYTES );
                 }
+
                 rocketnet_client_transport_send_packets( clients[c] );
                 rocketnet_client_transport_update( clients[c], g_sim_time );
             }
 
             if ( tick >= 0 )
+            {
                 CACHEGRIND_START_INSTRUMENTATION;
+            }
 
             rocketnet_server_transport_update( server, g_sim_time );
+
             const int * reply_client_index = NULL;
             uint8_t * const * received_data = NULL;
             const int * received_bytes = NULL;
+
             const int num_payloads = rocketnet_server_transport_payloads(
                 server, &reply_client_index, &received_data, &received_bytes );
+
             for ( int i = 0; i < num_payloads; ++i )
             {
                 rocketnet_packet_context_t context;
+
                 uint8_t * payload = rocketnet_server_transport_start_packet(
                     server, reply_client_index[i], PAYLOAD_BYTES, &context );
                 CHECK( payload != NULL );
@@ -388,10 +422,13 @@ namespace
                 CHECK( rocketnet_server_transport_finish_packet( server, &context, PAYLOAD_BYTES ) >
                        PAYLOAD_BYTES );
             }
+
             rocketnet_server_transport_send_packets( server );
 
             if ( tick >= 0 )
+            {
                 CACHEGRIND_STOP_INSTRUMENTATION;
+            }
 
             CHECK( num_payloads == SERVER_TICK_CLIENTS * SERVER_TICK_PACKETS_PER_CLIENT );
             total_server_received += (uint64_t) num_payloads;
@@ -399,6 +436,7 @@ namespace
             for ( int c = 0; c < SERVER_TICK_CLIENTS; ++c )
             {
                 rocketnet_client_transport_update( clients[c], g_sim_time );
+
                 while ( rocketnet_client_transport_receive_packet(
                             clients[c], scratch, (int) sizeof( scratch ) ) > 0 )
                 {
@@ -411,7 +449,10 @@ namespace
                    ( SERVER_TICK_CLIENTS * SERVER_TICK_PACKETS_PER_CLIENT ) );
 
         for ( int c = 0; c < SERVER_TICK_CLIENTS; ++c )
+        {
             rn_native_client_transport_stop_and_destroy( clients[c] );
+        }
+
         rn_native_server_transport_stop_and_destroy( server );
         rocketnet_term();
 
@@ -431,6 +472,7 @@ int main( int argc, char ** argv )
         fprintf( stderr, "usage: %s <client_frame|server_tick> [setup]\n", argv[0] );
         return 2;
     }
+
     const bool setup_only = ( argc == 3 && strcmp( argv[2], "setup" ) == 0 );
     if ( argc == 3 && !setup_only )
     {
@@ -443,6 +485,7 @@ int main( int argc, char ** argv )
         run_client_frame( setup_only );
         return 0;
     }
+
     if ( strcmp( argv[1], "server_tick" ) == 0 )
     {
         run_server_tick( setup_only );
@@ -450,5 +493,6 @@ int main( int argc, char ** argv )
     }
 
     fprintf( stderr, "unknown region: %s\n", argv[1] );
+
     return 2;
 }

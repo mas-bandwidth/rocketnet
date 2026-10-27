@@ -28,6 +28,7 @@ typedef void ( *rn_cli_sleep_fn )( double seconds );
 static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped, rn_cli_step_fn step, rn_cli_now_fn now, rn_cli_sleep_fn sleep_fn, const char * what )
 {
     const double deadline = now() + 10.0;
+
     while ( !stopped( object ) )
     {
         if ( now() >= deadline )
@@ -35,8 +36,12 @@ static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped
             fprintf( stderr, "%s shutdown did not complete within 10 seconds\n", what );
             abort();
         }
+
         if ( step )
+        {
             step( object );
+        }
+
         sleep_fn( 0.001 );
     }
 }
@@ -50,6 +55,7 @@ static inline void rn_cli_client_step( void * object )
 {
     // Needed only by an explicitly step-driven client. During shutdown,
     // update progresses cleanup without reading or changing game time.
+
     rocketnet_client_update( (struct rocketnet_client_t *) object, 1000.0 );
 }
 

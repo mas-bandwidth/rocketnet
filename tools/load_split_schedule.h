@@ -13,9 +13,11 @@ static inline int split_offer_due( double offer_now, double traffic_end, double 
 {
     if ( offer_now >= traffic_end || offer_now < *next_due )
         return 0;
+
     const uint64_t skipped = (uint64_t) ( ( offer_now - *next_due ) / period );
     *missed_due_slots += skipped;
     *next_due += ( (double) skipped + 1.0 ) * period;
+
     return 1;
 }
 

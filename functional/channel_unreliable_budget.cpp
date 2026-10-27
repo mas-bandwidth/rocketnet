@@ -52,6 +52,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
 
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
     uint32_t seen = 0;
     rocketnet_channel_delivery_t delivery;
     while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
@@ -61,7 +62,9 @@ void unreliable_over_receive_budget_dropped_and_counted()
         unreliable_budget_check( !( seen & ( 1u << id ) ), "no duplicate" );
         seen |= 1u << id;
     }
+
     const uint64_t dropped = h.message_server->object.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL];
+
     unreliable_budget_check( seen == ( ( 1u << budget ) - 1 ), "exact receive budget delivered" );
     unreliable_budget_check( dropped == (uint64_t) ( count - budget ), "excess counted" );
 
@@ -70,6 +73,7 @@ void unreliable_over_receive_budget_dropped_and_counted()
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
         unreliable_budget_check( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ), "no later delivery" );
     }
+
     unreliable_budget_check( h.message_server->object.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == dropped, "drop count stable" );
     unreliable_budget_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "no allocations after create" );
     rocketnet_channel_harness_destroy( &h );
@@ -92,6 +96,7 @@ void reliable_delivered_when_unreliable_budget_full()
         unreliable_budget_payload( i, data );
         unreliable_budget_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, data, sizeof( data ) ) != 0, "send unreliable" );
     }
+
     for ( int i = 0; i < reliable_count; i++ )
     {
         uint8_t data[4];
@@ -101,6 +106,7 @@ void reliable_delivered_when_unreliable_budget_full()
 
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
     uint32_t unreliable_seen = 0;
     uint32_t reliable_seen = 0;
     rocketnet_channel_delivery_t delivery;
@@ -121,6 +127,7 @@ void reliable_delivered_when_unreliable_budget_full()
             reliable_seen |= 1u << reliable_id;
         }
     }
+
     unreliable_budget_check( unreliable_seen == ( ( 1u << budget ) - 1 ), "unreliable budget full" );
     unreliable_budget_check( reliable_seen == ( ( 1u << reliable_count ) - 1 ), "all reliable delivered" );
     unreliable_budget_check( h.message_server->object.counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_DELIVERY_FULL] == (uint64_t) ( unreliable_count - budget ), "excess unreliable counted" );
@@ -130,6 +137,7 @@ void reliable_delivered_when_unreliable_budget_full()
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
         unreliable_budget_check( !rocketnet_channel_harness_server_collect( &h, 0, &delivery ), "no later delivery" );
     }
+
     unreliable_budget_check( rocketnet_channel_allocator_calls == h.allocations_after_create, "no allocations after create" );
     rocketnet_channel_harness_destroy( &h );
 }

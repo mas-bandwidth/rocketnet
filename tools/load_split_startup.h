@@ -33,16 +33,19 @@ static inline int split_startup_receive( struct split_startup_t * startup, int k
         startup->arm_received = 1;
         return 1;
     }
+
     if ( kind == SPLIT_STARTUP_GO && startup->armed && !startup->go_received )
     {
         startup->go_received = 1;
         return 1;
     }
+
     if ( kind == SPLIT_STARTUP_RUN && startup->go && !startup->running )
     {
         startup->running = 1;
         return 1;
     }
+
     return 0;
 }
 
@@ -57,15 +60,20 @@ static inline int split_startup_due( const struct split_startup_t * startup, int
         return SPLIT_STARTUP_SEND_ACK;
     if ( startup->go_received && !startup->go )
         return SPLIT_STARTUP_SEND_GO_ACK;
+
     return SPLIT_STARTUP_SEND_NONE;
 }
 
 static inline void split_startup_sent( struct split_startup_t * startup, int send )
 {
     if ( send == SPLIT_STARTUP_SEND_ACK )
+    {
         startup->armed = 1;
+    }
     else if ( send == SPLIT_STARTUP_SEND_GO_ACK )
+    {
         startup->go = 1;
+    }
 }
 
 #endif // ROCKETNET_TOOLS_LOAD_SPLIT_STARTUP_H

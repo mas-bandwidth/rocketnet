@@ -68,6 +68,7 @@ struct windows_connreset_transport_t
 static void windows_connreset_clear_env()
 {
     // the case pins its own transports: an ambient pin must not override them
+
     _putenv_s( "ROCKETNET_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
@@ -83,7 +84,7 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
     windows_connreset_clear_env();
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_force_flags( transport->plain ? ( ROCKETNET_IOCP_DISABLE_USO | ROCKETNET_IOCP_DISABLE_URO ) : 0 );
-#endif
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
@@ -92,10 +93,11 @@ static struct rocketnet_server_transport_t * windows_connreset_server( const win
 
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( bind, sizeof( bind ), "%s:%d", windows_connreset_host( transport->ipv6 ), port );
+
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, bind, &config );
 #if ROCKETNET_DEV
     rocketnet_server_iocp_test_force_flags( 0 );
-#endif
+#endif // #if ROCKETNET_DEV
     windows_connreset_require( server != NULL );
     windows_connreset_require( strcmp( rocketnet_server_transport_io_name( server ), transport->transport ) == 0 );
     return server;
@@ -110,9 +112,11 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
 {
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     windows_connreset_require( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
+
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &config, rocketnet_platform_time() );
     windows_connreset_require( client != NULL );
     return client;
@@ -124,6 +128,7 @@ static int windows_connreset_record_payload( const uint8_t * payload, int bytes,
 {
     if ( bytes != WINDOWS_CONNRESET_PAYLOAD_BYTES )
         return -1;
+
     uint32_t sequence = 0, received_epoch = 0;
     memcpy( &sequence, payload, sizeof( sequence ) );
     memcpy( &received_epoch, payload + sizeof( sequence ), sizeof( received_epoch ) );
@@ -134,6 +139,7 @@ static int windows_connreset_record_payload( const uint8_t * payload, int bytes,
     if ( seen[sequence - 1] )
         return -1;
     seen[sequence - 1] = 1;
+
     return 1;
 }
 
@@ -164,6 +170,7 @@ static void windows_connreset_client_tick( struct rocketnet_client_transport_t *
                                            uint32_t epoch = 0, uint64_t expected = 0, uint8_t * seen = NULL )
 {
     rocketnet_client_transport_update( client, now );
+
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     int payload_bytes = 0;
     while ( ( payload_bytes = rocketnet_client_transport_receive_packet( client, payload, (int) sizeof( payload ) ) ) > 0 )
@@ -171,21 +178,29 @@ static void windows_connreset_client_tick( struct rocketnet_client_transport_t *
         const int accepted = seen ? windows_connreset_record_payload( payload, payload_bytes, epoch, expected, seen ) : 1;
         windows_connreset_require( accepted >= 0 );
         if ( received && accepted )
+        {
             ( *received )++;
+        }
     }
+
     if ( send && rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         memset( payload, 0, WINDOWS_CONNRESET_PAYLOAD_BYTES );
+
         if ( epoch )
         {
             windows_connreset_require( sent && *sent < WINDOWS_CONNRESET_MEASURED_PACKETS );
             sequence = (uint32_t) *sent + 1;
         }
+
         memcpy( payload, &sequence, sizeof( sequence ) );
         memcpy( payload + sizeof( sequence ), &epoch, sizeof( epoch ) );
         rocketnet_client_transport_send_packet( client, payload, WINDOWS_CONNRESET_PAYLOAD_BYTES );
+
         if ( sent )
+        {
             ( *sent )++;
+        }
     }
 }
 
@@ -205,6 +220,7 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
 {
     child->job = CreateJobObjectW( NULL, NULL );
     windows_connreset_require( child->job != NULL );
+
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits;
     memset( &limits, 0, sizeof( limits ) );
     limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -213,33 +229,44 @@ static void windows_connreset_child_start( windows_connreset_child_t * child, co
     wchar_t path[MAX_PATH];
     const DWORD length = GetModuleFileNameW( NULL, path, MAX_PATH );
     windows_connreset_require( length > 0 && length < MAX_PATH );
+
     wchar_t command[MAX_PATH + 64];
     _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_client", path );
 
     // the child is created inside the job (PROC_THREAD_ATTRIBUTE_JOB_LIST), so
     // there is no moment it exists outside it: created suspended and assigned
     // afterwards, a parent ended in between left it suspended forever
+
     SIZE_T attribute_bytes = 0;
     InitializeProcThreadAttributeList( NULL, 1, 0, &attribute_bytes );
     windows_connreset_require( attribute_bytes > 0 && attribute_bytes <= 256 );
     alignas( 16 ) uint8_t attribute_storage[256];
+
     LPPROC_THREAD_ATTRIBUTE_LIST attributes = (LPPROC_THREAD_ATTRIBUTE_LIST) attribute_storage;
     windows_connreset_require( InitializeProcThreadAttributeList( attributes, 1, 0, &attribute_bytes ) );
     windows_connreset_require( UpdateProcThreadAttribute( attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST, &child->job, sizeof( child->job ), NULL, NULL ) );
 
     windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, server_address ) == 0 );
+
     STARTUPINFOEXW startup;
     memset( &startup, 0, sizeof( startup ) );
     startup.StartupInfo.cb = sizeof( startup );
     startup.lpAttributeList = attributes;
+
     PROCESS_INFORMATION info;
     memset( &info, 0, sizeof( info ) );
+
     const BOOL created = CreateProcessW( path, command, NULL, NULL, FALSE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, NULL, NULL, &startup.StartupInfo, &info );
+
     _putenv_s( WINDOWS_CONNRESET_CHILD_ENV, "" );
     DeleteProcThreadAttributeList( attributes );
     windows_connreset_require( created );
+
     if ( after_create )
+    {
         after_create( info.dwProcessId );
+    }
+
     CloseHandle( info.hThread );
     child->process = info.hProcess;
 }
@@ -263,6 +290,7 @@ void windows_connreset_child_client()
     char server_address[256];
     if ( !rocketnet_test_getenv( WINDOWS_CONNRESET_CHILD_ENV, server_address, sizeof( server_address ) ) || server_address[0] == '\0' )
         return;
+
     struct rocketnet_client_transport_t * client = windows_connreset_client( server_address );
     const double start = rocketnet_platform_time();
     uint32_t sequence = 0;
@@ -271,6 +299,7 @@ void windows_connreset_child_client()
         windows_connreset_client_tick( client, rocketnet_platform_time(), sequence++, true, NULL, NULL );
         rocketnet_platform_sleep( WINDOWS_CONNRESET_TICK );
     }
+
     rn_native_client_transport_stop_and_destroy( client );
 }
 
@@ -290,6 +319,7 @@ void windows_connreset_child_parent()
     char server_address[256];
     if ( !rocketnet_test_getenv( WINDOWS_CONNRESET_PARENT_ENV, server_address, sizeof( server_address ) ) || server_address[0] == '\0' )
         return;
+
     windows_connreset_child_t child;
     windows_connreset_child_start( &child, server_address, windows_connreset_parent_ends );
 }
@@ -301,6 +331,7 @@ static HANDLE windows_connreset_open_own_image( DWORD id, const wchar_t * path )
     HANDLE process = OpenProcess( SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, id );
     if ( process == NULL )
         return NULL;
+
     wchar_t image[MAX_PATH];
     DWORD length = MAX_PATH;
     if ( !QueryFullProcessImageNameW( process, 0, image, &length ) || _wcsicmp( image, path ) != 0 )
@@ -308,6 +339,7 @@ static HANDLE windows_connreset_open_own_image( DWORD id, const wchar_t * path )
         CloseHandle( process );
         return NULL;
     }
+
     return process;
 }
 
@@ -318,6 +350,7 @@ void windows_connreset_child_dies_with_its_parent()
     wchar_t path[MAX_PATH];
     const DWORD length = GetModuleFileNameW( NULL, path, MAX_PATH );
     windows_connreset_require( length > 0 && length < MAX_PATH );
+
     wchar_t command[MAX_PATH + 64];
     _snwprintf_s( command, MAX_PATH + 64, _TRUNCATE, L"\"%s\" --run test_windows_connreset_child_parent", path );
 
@@ -325,6 +358,7 @@ void windows_connreset_child_dies_with_its_parent()
     memset( &inherit, 0, sizeof( inherit ) );
     inherit.nLength = sizeof( inherit );
     inherit.bInheritHandle = TRUE;
+
     HANDLE read_end = NULL;
     HANDLE write_end = NULL;
     windows_connreset_require( CreatePipe( &read_end, &write_end, &inherit, 0 ) );
@@ -332,7 +366,9 @@ void windows_connreset_child_dies_with_its_parent()
 
     // a closed port on loopback: the child client never connects, it only
     // has to exist
+
     windows_connreset_require( _putenv_s( WINDOWS_CONNRESET_PARENT_ENV, "127.0.0.1:9" ) == 0 );
+
     STARTUPINFOW startup;
     memset( &startup, 0, sizeof( startup ) );
     startup.cb = sizeof( startup );
@@ -340,9 +376,12 @@ void windows_connreset_child_dies_with_its_parent()
     startup.hStdInput = GetStdHandle( STD_INPUT_HANDLE );
     startup.hStdOutput = write_end;
     startup.hStdError = write_end;
+
     PROCESS_INFORMATION info;
     memset( &info, 0, sizeof( info ) );
+
     const BOOL created = CreateProcessW( path, command, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &startup, &info );
+
     _putenv_s( WINDOWS_CONNRESET_PARENT_ENV, "" );
     CloseHandle( write_end );
     windows_connreset_require( created );
@@ -352,7 +391,10 @@ void windows_connreset_child_dies_with_its_parent()
     size_t used = 0;
     DWORD read = 0;
     while ( used < sizeof( output ) - 1 && ReadFile( read_end, output + used, (DWORD) ( sizeof( output ) - 1 - used ), &read, NULL ) && read > 0 )
+    {
         used += read;
+    }
+
     output[used] = '\0';
     CloseHandle( read_end );
     windows_connreset_require( WaitForSingleObject( info.hProcess, 10000 ) == WAIT_OBJECT_0 );
@@ -360,15 +402,20 @@ void windows_connreset_child_dies_with_its_parent()
 
     const char * line = strstr( output, "windows_connreset_child_id " );
     windows_connreset_require( line != NULL );
+
     const DWORD child_id = (DWORD) strtoul( line + strlen( "windows_connreset_child_id " ), NULL, 10 );
     windows_connreset_require( child_id != 0 );
 
     HANDLE child = windows_connreset_open_own_image( child_id, path );
     if ( child == NULL )
         return;
+
     const DWORD waited = WaitForSingleObject( child, 5000 );
     if ( waited != WAIT_OBJECT_0 )
+    {
         TerminateProcess( child, 1 );
+    }
+
     CloseHandle( child );
     windows_connreset_require( waited == WAIT_OBJECT_0 );
 }
@@ -411,12 +458,14 @@ static int windows_connreset_live_slot( windows_connreset_session_t * session, i
 static void windows_connreset_tick( windows_connreset_session_t * session, int sends_per_client, int extra_dead_sends )
 {
     const double now = rocketnet_platform_time();
+
     session->sequence++;
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
         windows_connreset_client_tick( session->live[i], now, session->sequence, true,
                                        &session->client_sent[i], &session->client_received[i], session->payload_epoch,
                                        session->server_sent[i], session->payload_epoch ? session->client_seen[i] : NULL );
     rocketnet_server_transport_update( session->server, now );
+
     const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
     for ( int i = 0; i < num_payloads; i++ )
     {
@@ -426,6 +475,7 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
         const int slot = windows_connreset_live_slot( session, client_index );
         if ( slot < 0 )
             continue;
+
         if ( session->payload_epoch )
         {
             const int accepted = windows_connreset_record_payload( received_payload, payload_bytes, session->payload_epoch,
@@ -434,22 +484,30 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
             if ( !accepted )
                 continue;
         }
+
         session->server_received[slot]++;
         if ( session->measuring )
         {
             const double gap = now - session->last_receive[slot];
             if ( gap > session->max_gap )
+            {
                 session->max_gap = gap;
+            }
         }
+
         session->last_receive[slot] = now;
     }
+
     uint8_t payload[WINDOWS_CONNRESET_PAYLOAD_BYTES];
     memset( payload, 0x5a, sizeof( payload ) );
+
     for ( int client_index = 0; client_index < 8; client_index++ )
     {
         if ( !rocketnet_server_transport_is_client_connected( session->server, client_index ) )
             continue;
+
         const int slot = windows_connreset_live_slot( session, client_index );
+
         for ( int j = 0; j < sends_per_client; j++ )
         {
             const uint32_t sequence = slot >= 0 ? (uint32_t) session->server_sent[slot] + 1 : 0;
@@ -457,13 +515,20 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
             memcpy( payload, &sequence, sizeof( sequence ) );
             memcpy( payload + sizeof( sequence ), &session->payload_epoch, sizeof( session->payload_epoch ) );
             rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
+
             if ( slot >= 0 )
+            {
                 session->server_sent[slot]++;
+            }
         }
+
         if ( client_index == session->child_index )
             for ( int j = 0; j < extra_dead_sends; j++ )
+            {
                 rocketnet_server_transport_send_packet( session->server, client_index, payload, (int) sizeof( payload ) );
+            }
     }
+
     rocketnet_server_transport_send_packets( session->server );
 }
 
@@ -471,7 +536,9 @@ static void windows_connreset_sleep_to( double next )
 {
     const double now = rocketnet_platform_time();
     if ( next > now )
+    {
         rocketnet_platform_sleep( next - now );
+    }
 }
 
 static void windows_connreset_session_start( windows_connreset_session_t * session, const windows_connreset_transport_t * transport )
@@ -479,10 +546,12 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
     memset( session, 0, sizeof( *session ) );
     session->child_index = -1;
     session->server = windows_connreset_server( transport, 0, 8 );
+
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     windows_connreset_server_address( session->server, transport->ipv6, server_address, sizeof( server_address ) );
 
     windows_connreset_child_start( &session->child, server_address );
+
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         session->live[i] = windows_connreset_client( server_address );
@@ -490,28 +559,43 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
     }
 
     // all four connect, the child's slot is the one no live client holds
+
     const double start = rocketnet_platform_time();
     double next = start;
+
     for ( ;; )
     {
         windows_connreset_tick( session, 1, 0 );
+
         bool connected = rocketnet_server_transport_num_connected_clients( session->server ) == WINDOWS_CONNRESET_LIVE_CLIENTS + 1;
+
         for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
+        {
             connected = connected && rocketnet_client_transport_state( session->live[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED;
+        }
+
         if ( connected )
             break;
         windows_connreset_require( rocketnet_platform_time() - start < 10.0 );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
+
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
+    {
         session->live_index[i] = rocketnet_client_transport_client_index( session->live[i] );
+    }
+
     for ( int client_index = 0; client_index < 8; client_index++ )
         if ( rocketnet_server_transport_is_client_connected( session->server, client_index ) && windows_connreset_live_slot( session, client_index ) < 0 )
+        {
             session->child_index = client_index;
+        }
+
     windows_connreset_require( session->child_index >= 0 );
 
     // one second of traffic before the measurement starts
+
     const double warm = rocketnet_platform_time();
     while ( rocketnet_platform_time() - warm < 1.0 )
     {
@@ -519,19 +603,25 @@ static void windows_connreset_session_start( windows_connreset_session_t * sessi
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
+
     const double now = rocketnet_platform_time();
+
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         windows_connreset_require( session->server_received[i] > 0 );
         session->last_receive[i] = now;
     }
+
     session->measuring = true;
 }
 
 static void windows_connreset_session_finish( windows_connreset_session_t * session )
 {
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
+    {
         rn_native_client_transport_stop_and_destroy( session->live[i] );
+    }
+
     rn_native_server_transport_stop_and_destroy( session->server );
     windows_connreset_child_close( &session->child );
 }
@@ -540,6 +630,7 @@ static const char * windows_connreset_label( const windows_connreset_transport_t
 {
     if ( transport->plain )
         return transport->ipv6 ? "iocp (USO and URO off) ipv6" : "iocp (USO and URO off) ipv4";
+
     static char label[64];
     snprintf( label, sizeof( label ), "%s %s", transport->transport, transport->ipv6 ? "ipv6" : "ipv4" );
     return label;
@@ -560,15 +651,19 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     windows_connreset_session_start( &session, transport );
 
     windows_connreset_child_kill( &session.child );
+
     const double killed = rocketnet_platform_time();
     uint64_t client_received_at_kill[WINDOWS_CONNRESET_LIVE_CLIENTS];
     uint64_t server_received_at_kill[WINDOWS_CONNRESET_LIVE_CLIENTS];
+
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         client_received_at_kill[i] = session.client_received[i];
         server_received_at_kill[i] = session.server_received[i];
     }
+
     double next = killed;
+
     while ( rocketnet_server_transport_is_client_connected( session.server, session.child_index ) )
     {
         windows_connreset_tick( &session, WINDOWS_CONNRESET_PACKETS_PER_TICK, 0 );
@@ -576,7 +671,9 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
+
     const double timed_out = rocketnet_platform_time() - killed;
+
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         windows_connreset_require( rocketnet_client_transport_state( session.live[i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -584,6 +681,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
         windows_connreset_require( session.client_received[i] > client_received_at_kill[i] );
         windows_connreset_require( session.server_received[i] > server_received_at_kill[i] );
     }
+
     windows_connreset_require( rocketnet_server_transport_num_connected_clients( session.server ) == WINDOWS_CONNRESET_LIVE_CLIENTS );
     printf( "windows_connreset_hard_killed_client %s: dead client timed out after %.2f s, max receive gap so far %.1f ms\n",
             windows_connreset_label( transport ), timed_out, session.max_gap * 1000.0 );
@@ -594,8 +692,10 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
     fflush( stdout );
 
     // the slot is free: a fifth client connects within its handshake time
+
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     windows_connreset_server_address( session.server, transport->ipv6, server_address, sizeof( server_address ) );
+
     struct rocketnet_client_transport_t * fifth = windows_connreset_client( server_address );
     const double fifth_start = rocketnet_platform_time();
     while ( rocketnet_client_transport_state( fifth ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
@@ -607,6 +707,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
+
     const double fifth_connect = rocketnet_platform_time() - fifth_start;
     const uint64_t resets = rocketnet_platform_receive_resets() - resets_before;
 
@@ -616,6 +717,7 @@ static void windows_connreset_hard_killed_client( const windows_connreset_transp
 
     // Exact timeout boundaries are covered with simulated time in the unit tier.
     // the reports are off on every socket: the stack delivered none
+
     windows_connreset_require( resets == 0 );
 
     rn_native_client_transport_stop_and_destroy( fifth );
@@ -631,10 +733,12 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
     while ( rocketnet_platform_time() - start < seconds )
     {
         const double now = rocketnet_platform_time();
+
         for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
             windows_connreset_client_tick( session->live[i], now, 0, false, NULL, &session->client_received[i],
                                            session->payload_epoch, session->server_sent[i], session->payload_epoch ? session->client_seen[i] : NULL );
         rocketnet_server_transport_update( session->server, now );
+
         const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
         for ( int j = 0; j < num_payloads; j++ )
         {
@@ -649,19 +753,25 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
                                                             : 1;
                 windows_connreset_require( accepted >= 0 );
                 if ( accepted )
+                {
                     session->server_received[slot]++;
+                }
             }
         }
+
         rocketnet_server_transport_send_packets( session->server );
+
         if ( until_delivered )
         {
             bool delivered = true;
+
             for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
                 delivered = delivered && session->server_received[i] >= session->client_sent[i] &&
                             session->client_received[i] >= session->server_sent[i];
             if ( delivered )
                 break;
         }
+
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
@@ -674,6 +784,7 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
 static void windows_connreset_send_to_closed_port( const windows_connreset_transport_t * transport )
 {
     windows_connreset_check_accounting();
+
     const uint64_t resets_before = rocketnet_platform_receive_resets();
     windows_connreset_session_t session;
     windows_connreset_session_start( &session, transport );
@@ -683,9 +794,12 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     // identities distinguish every measured arrival from that older traffic.
     // Send counts describe issued payloads, not synchronous completion; the
     // bounded drain below waits for their distinct identities to be observed.
+
     session.payload_epoch = 1;
     session.measuring = true;
+
     const double restart = rocketnet_platform_time();
+
     for ( int i = 0; i < WINDOWS_CONNRESET_LIVE_CLIENTS; i++ )
     {
         session.last_receive[i] = restart;
@@ -694,11 +808,13 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
         session.server_received[i] = 0;
         session.server_sent[i] = 0;
     }
+
     int dead_sends = 0;
     double next = rocketnet_platform_time();
     while ( dead_sends < WINDOWS_CONNRESET_MEASURED_PACKETS * 10 )
     {
         // the per-tick send to every connected slot is one, plus nine extra
+
         windows_connreset_tick( &session, 1, 9 );
         dead_sends += 10;
         next += WINDOWS_CONNRESET_TICK;
@@ -706,8 +822,10 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
     }
 
     // stop sending; drain until every count settles
+
     session.measuring = false;
     windows_connreset_drain( &session, ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS, true );
+
     const uint64_t resets = rocketnet_platform_receive_resets() - resets_before;
 
     printf( "windows_connreset_send_to_closed_port %s: %d datagrams to the closed port, max receive gap %.1f ms (reference %.1f ms), reset statuses skipped %llu\n",
@@ -725,6 +843,7 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
         windows_connreset_require( session.server_received[i] == session.client_sent[i] );
         windows_connreset_require( session.client_received[i] == session.server_sent[i] );
     }
+
     windows_connreset_require( resets == 0 );
 
     windows_connreset_session_finish( &session );
@@ -737,20 +856,26 @@ static void windows_connreset_send_to_closed_port( const windows_connreset_trans
 static void windows_client_connreset_server_gone( bool ipv6 )
 {
     windows_connreset_clear_env();
+
     const uint64_t resets_before = rocketnet_platform_receive_resets();
 
     struct rocketnet_address_t reserve;
     windows_connreset_require( rocketnet_address_parse( &reserve, ipv6 ? "[::1]:0" : "127.0.0.1:0" ) );
+
     struct rocketnet_platform_socket_t * holder = rocketnet_platform_socket_create( NULL, &reserve, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
     windows_connreset_require( holder != NULL );
+
     const int port = reserve.port;
+
     rocketnet_platform_socket_destroy( holder );
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_connreset_host( ipv6 ), port );
+
     struct rocketnet_client_transport_t * client = windows_connreset_client( server_address );
 
     // one second of connection requests into the closed port
+
     double next = rocketnet_platform_time();
     const double start = next;
     while ( rocketnet_platform_time() - start < 1.0 )
@@ -779,13 +904,16 @@ static void windows_client_connreset_server_gone( bool ipv6 )
             memset( payload, 0x3c, sizeof( payload ) );
             rocketnet_server_transport_send_packet( server, 0, payload, (int) sizeof( payload ) );
         }
+
         rocketnet_server_transport_send_packets( server );
         windows_connreset_require( rocketnet_client_transport_state( client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
         windows_connreset_require( now - up < 5.0 );
         next += WINDOWS_CONNRESET_TICK;
         windows_connreset_sleep_to( next );
     }
+
     const uint64_t resets = rocketnet_platform_receive_resets() - resets_before;
+
     printf( "windows_client_connreset_server_gone %s: connected and exchanged in %.3f s after the server came up, reset statuses skipped %llu\n",
             ipv6 ? "ipv6" : "ipv4", rocketnet_platform_time() - up, (unsigned long long) resets );
     fflush( stdout );

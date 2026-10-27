@@ -66,6 +66,7 @@ static bool replay_file( const char * path )
 
     // one byte stays allocated for an empty file, so the harness always
     // receives a readable pointer, then the exact length it holds
+
     std::vector<uint8_t> buffer( length > 0 ? (size_t) length : 1 );
     if ( length > 0 && fread( buffer.data(), 1, (size_t) length, file ) != (size_t) length )
     {
@@ -77,6 +78,7 @@ static bool replay_file( const char * path )
     fclose( file );
 
     LLVMFuzzerTestOneInput( buffer.data(), (size_t) length );
+
     return true;
 }
 
@@ -95,21 +97,31 @@ int main( int argc, char ** argv )
         char iterations_text[32];
         char seed_text[32];
         if ( rocketnet_test_getenv( "FUZZ_ITERS", iterations_text, sizeof( iterations_text ) ) )
+        {
             iterations = atol( iterations_text );
+        }
+
         if ( rocketnet_test_getenv( "FUZZ_SEED", seed_text, sizeof( seed_text ) ) )
+        {
             seed = (unsigned int) strtoul( seed_text, NULL, 0 );
+        }
+
         static uint8_t buffer[4096];
+
         for ( long i = 0; i < iterations; ++i )
         {
             seed = seed * 1103515245u + 12345u;
+
             const size_t length = ( seed >> 8 ) % ( sizeof( buffer ) + 1 );
             for ( size_t j = 0; j < length; ++j )
             {
                 seed = seed * 1103515245u + 12345u;
                 buffer[j] = (uint8_t) ( seed >> 16 );
             }
+
             LLVMFuzzerTestOneInput( buffer, length );
         }
+
         printf( "random %ld inputs\n", iterations );
         return 0;
     }
@@ -121,5 +133,6 @@ int main( int argc, char ** argv )
     }
 
     printf( "replayed %d inputs\n", argc - 1 );
+
     return 0;
 }
