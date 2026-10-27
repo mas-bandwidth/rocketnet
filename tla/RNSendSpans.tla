@@ -56,9 +56,11 @@ VARIABLES
     ticketNext, \* region->span_ticket_next
     live,       \* descriptors with RN_SEND_FLAG_SPAN set
     order,      \* ghost: live descriptors in allocation order
-    exhausted   \* rn_region_exhaust has fired (sticky until Reset)
+    exhausted,  \* rn_region_exhaust has fired (sticky until Reset)
+    prv,        \* descriptor->span_prev: the previous live span, NONE at the oldest
+    nxt         \* descriptor->span_next: the next live span, NONE at the newest
 
-vars == <<head, tail, first, last, start, len, ticket, ticketNext, live, order, exhausted>>
+vars == <<head, tail, first, last, start, len, ticket, ticketNext, live, order, exhausted, prv, nxt>>
 
 \* rn_span_round16
 Round16(b) == ((b + 15) \div 16) * 16
@@ -88,6 +90,8 @@ Init ==
     /\ live = {}
     /\ order = <<>>
     /\ exhausted = FALSE
+    /\ prv = [d \in D |-> NONE]
+    /\ nxt = [d \in D |-> NONE]
 
 \* rn_region_send_alloc_span with room: rn_span_place then rn_span_link
 Alloc(l, d) ==
@@ -110,6 +114,9 @@ Alloc(l, d) ==
     /\ tail'  = IF e = SR THEN 0 ELSE e
     /\ live'  = live \cup {d}
     /\ order' = Append(order, d)
+    /\ prv'   = [prv EXCEPT ![d] = last]
+    /\ nxt'   = [x \in D |-> IF last # NONE /\ x = last THEN d
+                             ELSE IF x = d THEN NONE ELSE nxt[x]]
     /\ UNCHANGED exhausted
 
 \* rn_region_send_alloc_span without room: QUEUE_FULL or STORE_FULL, then
@@ -119,22 +126,24 @@ Exhaust(l) ==
     /\ \/ D \ live = {}
        \/ ~Place(Round16(l)).ok
     /\ exhausted' = TRUE
-    /\ UNCHANGED <<head, tail, first, last, start, len, ticket, ticketNext, live, order>>
+    /\ UNCHANGED <<head, tail, first, last, start, len, ticket, ticketNext, live, order, prv, nxt>>
 
 \* rn_span_unlink, from rn_region_send_free or the last fragment's
 \* rn_region_send_free_fragment; any live span, in any order.  The freed
-\* descriptor's ticket clears; when an edge span goes, the new edge is the
-\* live span with the smallest (or largest) remaining ticket.
+\* descriptor's ticket clears; the span is spliced out of the intrusive
+\* list, so when an edge span goes, the new edge is its link neighbour.
 Free(d) ==
     /\ d \in live
     /\ LET rest == live \ {d}
            ord2 == SelectSeq(order, LAMBDA x : x # d)
-           f2 == IF rest = {} THEN NONE
-                 ELSE CHOOSE x \in rest : \A y \in rest : ticket[x] <= ticket[y]
-           l2 == IF rest = {} THEN NONE
-                 ELSE CHOOSE x \in rest : \A y \in rest : ticket[y] <= ticket[x]
+           f2 == IF d = first THEN nxt[d] ELSE first
+           l2 == IF d = last THEN prv[d] ELSE last
        IN /\ first' = f2
           /\ last' = l2
+          /\ prv' = [x \in D |-> IF nxt[d] # NONE /\ x = nxt[d] THEN prv[d]
+                                 ELSE IF x = d THEN NONE ELSE prv[x]]
+          /\ nxt' = [x \in D |-> IF prv[d] # NONE /\ x = prv[d] THEN nxt[d]
+                                 ELSE IF x = d THEN NONE ELSE nxt[x]]
           /\ ticket' = [x \in D |-> IF x \in rest THEN (CHOOSE i \in 1..Len(ord2) : ord2[i] = x) ELSE 0]
           /\ ticketNext' = Len(ord2) + 1
           /\ IF f2 = NONE
@@ -160,6 +169,8 @@ Reset ==
     /\ live' = {}
     /\ order' = <<>>
     /\ exhausted' = FALSE
+    /\ prv' = [d \in D |-> NONE]
+    /\ nxt' = [d \in D |-> NONE]
 
 Next ==
     \/ \E l \in Lengths, d \in D : Alloc(l, d)
@@ -183,6 +194,8 @@ TypeOK ==
     /\ ticketNext \in Nat \ {0}
     /\ live \subseteq D
     /\ exhausted \in BOOLEAN
+    /\ prv \in [D -> D \cup {NONE}]
+    /\ nxt \in [D -> D \cup {NONE}]
 
 Bytes(d) == { (start[d] + i) % SR : i \in 0..(len[d] - 1) }
 
