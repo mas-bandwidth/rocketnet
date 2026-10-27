@@ -91,7 +91,7 @@ def prepare_consumer_source(root, shared_enabled, dev_enabled):
     return staged
 
 
-def check_exported_settings(installed, root, command, config, native_build_options, shared_enabled):
+def check_exported_settings(installed, root, command, config, native_build_options, shared_enabled, expected):
     """Fail when the package refuses its own major.minor line or hands the
     library's private build settings to a consumer's compile."""
     version_file = next(installed.rglob("RocketNetConfigVersion.cmake")).read_text()
@@ -151,10 +151,26 @@ def check_exported_settings(installed, root, command, config, native_build_optio
             for option in options.split(";"):
                 if option.startswith(FLOATING_POINT_OPTIONS):
                     failures.append(f"RocketNet::{linkage} hands the consumer {option}")
+            carried = {}
             for definition in definitions.split(";"):
-                if definition and not definition.endswith("-NOTFOUND") and \
-                        definition.split("=", 1)[0] not in CONSUMER_DEFINITIONS:
-                    failures.append(f"RocketNet::{linkage} hands the consumer -D{definition}")
+                if definition and not definition.endswith("-NOTFOUND"):
+                    name, _, value = definition.partition("=")
+                    carried[name] = value
+                    if name not in CONSUMER_DEFINITIONS:
+                        failures.append(f"RocketNet::{linkage} hands the consumer -D{definition}")
+            # The three definitions a consumer needs, each with the value the
+            # library was built with (ROCKETNET_SHARED only on the shared target).
+            wanted = dict(expected)
+            if linkage == "rocketnet_shared":
+                wanted["ROCKETNET_SHARED"] = None
+            for name, value in wanted.items():
+                if name not in carried:
+                    failures.append(f"RocketNet::{linkage} does not hand the consumer -D{name}")
+                elif value is not None and carried[name] != value:
+                    failures.append(f"RocketNet::{linkage} hands the consumer -D{name}={carried[name]}, "
+                                    f"the library was built with {value}")
+            if linkage == "rocketnet" and "ROCKETNET_SHARED" in carried:
+                failures.append("RocketNet::rocketnet hands the consumer -DROCKETNET_SHARED")
         run("cmake", "--build", build, "--config", config, *native_build_options)
         commands = build / "compile_commands.json"
         if commands.exists():
@@ -256,7 +272,9 @@ def main():
         # Installed DLL plus vcpkg's copied runtime dependency on Windows.
         env["PATH"] = str(installed / "bin") + os.pathsep + env.get("PATH", "")
         run("ctest", "--test-dir", consumer, "-C", args.config, "--output-on-failure", env=env)
-        check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled)
+        expected = {"ROCKETNET_DEV": "1" if cmake_bool(cache.get("ROCKETNET_DEV"), True) else "0",
+                    "ROCKETNET_MAX_CLIENTS": cache.get("ROCKETNET_MAX_CLIENTS", "1000")}
+        check_exported_settings(installed, root, command, args.config, native_build_options, shared_enabled, expected)
         if args.embedded:
             embedded = root / "embedded build"
             # Reuse generator/toolchain selection, replacing only producer-specific arguments.

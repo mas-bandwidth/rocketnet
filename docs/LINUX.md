@@ -45,7 +45,11 @@ directory to start `xdp`.
 
 `make` is the front door. It configures `build/` as **Release** and runs the
 child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
-or the caller's own `-j` overrides it (`Makefile`). CI's Release rows run
+or the caller's own `-j` overrides it (`Makefile`). It passes `-DROCKETNET_DEV`
+on every run (`ON` unless `make ROCKETNET_DEV=OFF` is given), so the build
+directory always matches the command, and it prints the configure's XDP and
+io_uring decisions (`XDP off: ...`, `liburing not found: ...`) instead of
+discarding them. CI's Release rows run
 `make` (`.github/workflows/ci.yml`, "Build (Release, through the Makefile)"):
 
 ```sh

@@ -504,7 +504,15 @@ target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 When linking the static archive (`librocketnet.a`) directly in a C project
 without CMake, link against the C++ standard library runtime (`-lstdc++` on
 Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
-`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
+`-lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`). Add `-lbpf -lxdp`
+only when the library was built with XDP and `-luring` only when it was built
+with io_uring (the configure prints `XDP off: ...` and `liburing not found: ...`
+when either is absent). Compile with the definitions the library was built with,
+because the header a game compiles must match its library: `-DROCKETNET_DEV=0`
+for a production archive (`-DROCKETNET_DEV=OFF`), and
+`-DROCKETNET_MAX_CLIENTS=<n>` when the library was built with a value other than
+the default. Without `-DROCKETNET_DEV=0` the header defines the development
+`ROCKETNET_VERSION`, which differs from `rocketnet_version()`.
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
