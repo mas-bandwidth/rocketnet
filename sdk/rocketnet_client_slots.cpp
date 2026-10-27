@@ -337,8 +337,12 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    int mapping_index,
                                    const uint8_t * user_data )
 {
+    // A null table is a refused test call. Returning here keeps that null from
+    // reaching the real assign, whose probe and index helpers dereference it.
+    if ( !slots )
+        return -1;
     uint64_t owner_generation = 1;
-    if ( slots && slots->free_stack_count > 0 )
+    if ( slots->free_stack_count > 0 )
     {
         const int client_index = slots->free_stack[slots->free_stack_count - 1];
         if ( client_index >= 0 && client_index < slots->max_clients &&
