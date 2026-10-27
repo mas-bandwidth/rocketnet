@@ -13,11 +13,21 @@ finding's ordinal among identical messages in that file. A finding keeps its
 identity when lines move, and a second copy of an identical finding is a new
 finding.
 
-A finding that is present now but not in its baseline fails the job. A
-baselined finding that is gone from the current run also fails the job: the
-baseline only shrinks, and a stale line is deleted in the same pull request
-that removes the finding. A translation unit the analyzer cannot parse fails
-the job too: a file that is not analyzed must never read as a clean file.
+A finding that is present now but not in its baseline fails the job, unless
+it is named in tools/tidy_dispositions.txt: one line per reviewed false
+positive, keyed by the same <tool> <file> <check> <hash> tuple the baselines
+use, with a mandatory reason and a link to its triage entry in
+docs/audits/2026-10-26-static-analysis-triage.md. Each disposition is
+reported by name. A disposition line without a reason (or without its
+triage link) fails the job, a disposition that duplicates a baseline entry
+fails the job, and a disposition whose site no longer produces the finding
+is stale and fails the job until its line is deleted. Dispositioned
+findings never move into a baseline: --generate excludes them, so the
+baselines only shrink. A baselined finding that is gone from the current
+run also fails the job: the baseline only shrinks, and a stale line is
+deleted in the same pull request that removes the finding. A translation
+unit the analyzer cannot parse fails the job too: a file that is not
+analyzed must never read as a clean file.
 
 clang-tidy is found as CLANG_TIDY, clang-tidy or clang-tidy-18; cppcheck as
 CPPCHECK or cppcheck. A missing tool prints a TOOL-MISSING line and fails.
@@ -44,6 +54,8 @@ COMPILE_DB = os.path.join(BUILD, "compile_commands.json")
 TIDY_DB_DIR = os.path.join(BUILD, "tidy")
 TIDY_BASELINE = os.path.join(ROOT, "tools", "tidy_baseline.txt")
 CPPCHECK_BASELINE = os.path.join(ROOT, "tools", "cppcheck_baseline.txt")
+DISPOSITIONS = os.path.join(ROOT, "tools", "tidy_dispositions.txt")
+TRIAGE_DOC = "docs/audits/2026-10-26-static-analysis-triage.md"
 
 TIDY_NAMES = ["clang-tidy", "clang-tidy-18"]
 CPPCHECK_ARGS = [
@@ -317,6 +329,56 @@ def run_parallel(function, items, jobs):
     return raw, errors
 
 
+def read_dispositions(path):
+    """Returns (dispositions, errors). dispositions maps the baseline-shaped
+    key '<tool>\\t<file>\\t<check>\\t<hash>' to (reason, triage_link). A line
+    without exactly six tab-separated fields, without a non-empty reason,
+    without a link to the triage document, with an unknown tool, or that
+    repeats a key is an error: a reviewed false positive must be named."""
+    if not os.path.exists(path):
+        return {}, ["no dispositions at %s" % relpath(path)]
+    dispositions = {}
+    errors = []
+    with open(path, "r", encoding="utf-8") as handle:
+        for number, line in enumerate(handle, 1):
+            line = line.rstrip("\n")
+            if not line.strip() or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) != 6:
+                errors.append("%s:%d: disposition must have 6 tab-separated "
+                              "fields <tool> <file> <check> <hash> <reason> "
+                              "<triage link>: %s" % (relpath(path), number, line))
+                continue
+            tool, rel, check, hashed, reason, link = [p.strip() for p in parts]
+            key = "\t".join((tool, rel, check, hashed))
+            if tool not in ("clang-tidy", "cppcheck") or not rel or not check or not hashed:
+                errors.append("%s:%d: malformed disposition key: %s"
+                              % (relpath(path), number, line))
+                continue
+            if not reason:
+                errors.append("%s:%d: disposition without a reason: %s"
+                              % (relpath(path), number, key.replace("\t", " ")))
+                continue
+            if not link or TRIAGE_DOC not in link:
+                errors.append("%s:%d: disposition without a link to %s: %s"
+                              % (relpath(path), number, TRIAGE_DOC,
+                                 key.replace("\t", " ")))
+                continue
+            if key in dispositions:
+                errors.append("%s:%d: duplicate disposition: %s"
+                              % (relpath(path), number, key.replace("\t", " ")))
+                continue
+            dispositions[key] = (reason, link)
+    return dispositions, errors
+
+
+def dispositions_for(tool, dispositions):
+    prefix = tool + "\t"
+    return {key: value for key, value in dispositions.items()
+            if key.startswith(prefix)}
+
+
 def read_baseline(path):
     if not os.path.exists(path):
         return None
@@ -351,25 +413,47 @@ def write_baseline(path, tool, findings):
             handle.write(line + "\n")
 
 
-def compare(tool, path, findings):
+def compare(tool, path, findings, dispositions=None, dispositions_path=None):
+    dispositions_path = dispositions_path or DISPOSITIONS
     baseline = read_baseline(path)
     if baseline is None:
         print("no baseline at %s; run with --generate" % relpath(path))
         return False
+    dispositions = dispositions or {}
     now = set(findings)
     new = sorted(now - baseline)
     gone = sorted(baseline - now)
-    print("%s: %d findings, baseline %d" % (tool, len(now), len(baseline)))
+    dispositioned = sorted(set(new) & set(dispositions))
+    undispositioned = sorted(set(new) - set(dispositions))
+    stale = sorted(set(dispositions) - now)
+    redundant = sorted((set(dispositions) & baseline) & now)
+    print("%s: %d findings, baseline %d, %d dispositioned" % (
+        tool, len(now), len(baseline), len(dispositioned)))
     print_counts(now)
-    if new:
-        print("NEW %s findings not in %s:" % (tool, relpath(path)))
-        for line in new:
+    for line in dispositioned:
+        reason, link = dispositions[line]
+        print("  = DISPOSITION %s -- %s (%s)" % (
+            line.replace("\t", " "), reason, link))
+    if undispositioned:
+        print("NEW %s findings not in %s and not dispositioned in %s:" % (
+            tool, relpath(path), relpath(dispositions_path)))
+        for line in undispositioned:
             print("  + " + line.replace("\t", " "))
+    if stale:
+        print("STALE %s dispositions whose site no longer produces the "
+              "finding; delete them from %s:" % (tool, relpath(dispositions_path)))
+        for line in stale:
+            print("  - " + line.replace("\t", " "))
+    if redundant:
+        print("DISPOSITIONS that duplicate %s; a dispositioned finding must "
+              "not also be baselined:" % relpath(path))
+        for line in redundant:
+            print("  ! " + line.replace("\t", " "))
     if gone:
         print("BASELINED %s findings that disappeared; delete them from %s:" % (tool, relpath(path)))
         for line in gone:
             print("  - " + line.replace("\t", " "))
-    return not new and not gone
+    return not undispositioned and not gone and not stale and not redundant
 
 
 def main():
@@ -381,7 +465,15 @@ def main():
                         help="files analyzed at once (default: min(8, cpus))")
     parser.add_argument("--tidy-baseline", default=TIDY_BASELINE)
     parser.add_argument("--cppcheck-baseline", default=CPPCHECK_BASELINE)
+    parser.add_argument("--dispositions", default=DISPOSITIONS)
     args = parser.parse_args()
+
+    dispositions, disposition_errors = read_dispositions(args.dispositions)
+    if disposition_errors:
+        print("INVALID dispositions in %s:" % relpath(args.dispositions))
+        for line in disposition_errors:
+            print("  ! " + line)
+        return 1
 
     tidy = find_tool("CLANG_TIDY", TIDY_NAMES)
     cppcheck = find_tool("CPPCHECK", ["cppcheck"])
@@ -429,16 +521,28 @@ def main():
         if errors:
             print("baselines NOT written: fix the analyzer errors first")
             return 1
-        write_baseline(args.tidy_baseline, "clang-tidy", tidy_findings)
-        write_baseline(args.cppcheck_baseline, "cppcheck", cppcheck_findings)
-        print("baseline %s: %d findings" % (relpath(args.tidy_baseline), len(tidy_findings)))
-        print_counts(tidy_findings)
-        print("baseline %s: %d findings" % (relpath(args.cppcheck_baseline), len(cppcheck_findings)))
-        print_counts(cppcheck_findings)
+        tidy_kept = [line for line in tidy_findings if line not in dispositions]
+        cppcheck_kept = [line for line in cppcheck_findings if line not in dispositions]
+        write_baseline(args.tidy_baseline, "clang-tidy", tidy_kept)
+        write_baseline(args.cppcheck_baseline, "cppcheck", cppcheck_kept)
+        print("baseline %s: %d findings (%d dispositioned excluded)" % (
+            relpath(args.tidy_baseline), len(tidy_kept),
+            len(tidy_findings) - len(tidy_kept)))
+        print_counts(tidy_kept)
+        print("baseline %s: %d findings (%d dispositioned excluded)" % (
+            relpath(args.cppcheck_baseline), len(cppcheck_kept),
+            len(cppcheck_findings) - len(cppcheck_kept)))
+        print_counts(cppcheck_kept)
         return 0
 
-    tidy_ok = compare("clang-tidy", args.tidy_baseline, tidy_findings)
-    cppcheck_ok = compare("cppcheck", args.cppcheck_baseline, cppcheck_findings)
+    tidy_ok = compare("clang-tidy", args.tidy_baseline, tidy_findings,
+                      dispositions_for("clang-tidy", dispositions),
+                      args.dispositions)
+    cppcheck_ok = compare("cppcheck", args.cppcheck_baseline, cppcheck_findings,
+                          dispositions_for("cppcheck", dispositions),
+                          args.dispositions)
+    print("dispositions: %d reviewed false positives named in %s" % (
+        len(dispositions), relpath(args.dispositions)))
     if errors or not tidy_ok or not cppcheck_ok:
         print("tidy gate FAILED")
         return 1
