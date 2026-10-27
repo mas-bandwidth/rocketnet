@@ -173,7 +173,11 @@ static void test_xdp_transport_receive_descriptor_refuses_bad_descriptors()
 
 // the server's UMEM: send frames in the first half, receive frames in the
 // second (sdk/rocketnet_server_socket_linux.cpp); only a receive frame goes
-// back to the fill ring, at its frame boundary
+// back to the fill ring, at its frame boundary.
+// ROCKETNET_XDP_NUM_FRAMES exists only when the XDP transport is compiled in
+// (sdk/rocketnet_constants.h). The frame codec above stays portable.
+
+#if ROCKETNET_XDP
 
 static void test_xdp_transport_refused_descriptor_not_refilled()
 {
@@ -203,6 +207,8 @@ static void test_xdp_transport_refused_descriptor_not_refilled()
 
     rocketnet_unit_check( !rocketnet_xdp_fill_return( receive_begin, receive_begin, receive_end, NULL ) );
 }
+
+#endif // #if ROCKETNET_XDP
 
 static void test_xdp_transport_pin_cpu_refuses_outside_the_set()
 {
@@ -280,7 +286,9 @@ static void test_xdp_transport_receive_drain_rotates_first_queue()
 REGISTER_UNIT_TEST( test_xdp_transport_receive_drain_rotates_first_queue );
 REGISTER_UNIT_TEST( test_xdp_transport_send_copy_refuses_bad_lengths );
 REGISTER_UNIT_TEST( test_xdp_transport_receive_descriptor_refuses_bad_descriptors );
+#if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_refused_descriptor_not_refilled );
+#endif
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );
