@@ -54,9 +54,9 @@ struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
-    uint32_t queue_head, queue_tail;    // FIFO of queued send descriptors (layer 6), RN_DESCRIPTOR_NONE when empty
+    uint32_t queue_head, queue_tail;    // cached first/last live descriptor of this channel's flat FIFO, ordered by enqueue_ticket over the send_descriptors array; RN_DESCRIPTOR_NONE when empty
     uint16_t queued[4];                 // live queued count per priority (holes are not counted)
-    uint32_t ready_prev, ready_next;    // this channel's link in the ready list (layer 6)
+    uint32_t ready_prev, ready_next;    // retired ready-list links: always RN_DESCRIPTOR_NONE; ready order is the flat ready_ticket sequence over the channel_send array
     uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
     uint32_t ready_generation;          // generation of the live queue head when this channel joined the ready list
 };
@@ -121,7 +121,7 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
     uint32_t chunk;                     // the first store chunk, chained for a block
     uint32_t bytes;
     uint32_t serial;                    // the receipt serial (7.4)
-    uint32_t next;                      // the channel or unreliable FIFO link while queued (layer 6 only; never the free pool's)
+    uint32_t next;                      // retired queue link: always RN_DESCRIPTOR_NONE while queued; flat channel/unreliable FIFOs order live descriptors by enqueue_ticket over this array
     uint32_t ordering;
     uint32_t sequencing;
     uint64_t first_number;              // the first message number, once numbered (6.2)
@@ -211,21 +211,23 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
-struct rn_resend_link_t                 // 16 bytes: resend FIFO links, indexed number % W (6.4)
+struct rn_resend_link_t                 // 16 bytes: flat resend sequence entry, indexed number % W (6.4)
 {
-    uint32_t prev;
-    uint32_t next;                      // successor slot, or RN_RESEND_NONE; external walkers follow next
+    uint32_t prev;                      // low 32 bits of this slot's flat resend sequence key; 0 with next == 0 when not in a resend sequence
+    uint32_t next;                      // high 31 bits of the sequence key in bits 0..30, chunk-class flag in bit 31; walkers order by the key, never by following this field
     uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
-    uint32_t owner_epoch;               // region->schedule_epoch when the slot was linked
+    uint32_t owner_epoch;               // region->schedule_epoch when the slot was sequenced
 };
 
 // Queue scheduling (tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
-// unique on the connection until the counter wraps. A hole keeps its link so
-// an interior cancel is O(1); compact rebuilds one chain in one O(length)
-// pass once holes pass the bound, or once per write pass, never per emitted
-// record. Resend capacity stays W: one slot is in at most one FIFO, unlink is
-// O(1), and an acked hole stays linked until a named unlink so a resend walk
-// still counts it.
+// unique on the connection until the counter wraps, and the flat descriptor
+// array ordered by that ticket is the channel and unreliable FIFO storage: a
+// hole is a ticketless entry an interior cancel leaves in place, and compact
+// restamps the live entries of one channel in one pass over its entries once
+// holes pass the bound, or once per write pass, never per emitted record.
+// Resend capacity stays W: one slot is in at most one resend sequence, its
+// order is its flat sequence key in rn_resend_link_t, and an acked hole stays
+// sequenced until a named removal so a resend walk still counts it.
 
 // ----------------------------------------------------------------
 //                        the region's layout

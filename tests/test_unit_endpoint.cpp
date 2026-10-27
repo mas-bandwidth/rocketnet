@@ -788,12 +788,30 @@ static void test_endpoint_unreliable_holes_match_oracle()
         serial[i] = rn_endpoint_finish( &endpoint, 16, 0 );
         check( serial[i] != 0 );
     }
+    // The flat unreliable walk: live descriptors in enqueue_ticket order.
     uint32_t seen = 0;
-    for ( uint32_t d = endpoint.unreliable_head; d != RN_DESCRIPTOR_NONE && seen < 4; d = endpoint.region->send_descriptors[d].next )
+    uint32_t after = 0;
+    while ( seen < 4 )
     {
-        index[seen] = d;
-        generation[seen] = endpoint.region->send_descriptors[d].generation;
-        check( endpoint.region->send_descriptors[d].serial == serial[seen] );
+        uint32_t best = RN_DESCRIPTOR_NONE;
+        uint32_t best_ticket = 0;
+        for ( uint32_t d = 0; d < endpoint.region->descriptors_fresh; d++ )
+        {
+            const rn_send_descriptor_t * descriptor = &endpoint.region->send_descriptors[d];
+            if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->enqueue_ticket <= after )
+                continue;
+            if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
+            {
+                best = d;
+                best_ticket = descriptor->enqueue_ticket;
+            }
+        }
+        if ( best == RN_DESCRIPTOR_NONE )
+            break;
+        after = best_ticket;
+        index[seen] = best;
+        generation[seen] = endpoint.region->send_descriptors[best].generation;
+        check( endpoint.region->send_descriptors[best].serial == serial[seen] );
         seen++;
     }
     check( seen == 4 );
@@ -808,8 +826,27 @@ static void test_endpoint_unreliable_holes_match_oracle()
     check( endpoint.unreliable_holes == 0 );
     uint32_t order[2];
     uint32_t n = 0;
-    for ( uint32_t d = endpoint.unreliable_head; d != RN_DESCRIPTOR_NONE && n < 2; d = endpoint.region->send_descriptors[d].next )
-        order[n++] = endpoint.region->send_descriptors[d].serial;
+    uint32_t after_order = 0;
+    while ( n < 2 )
+    {
+        uint32_t best = RN_DESCRIPTOR_NONE;
+        uint32_t best_ticket = 0;
+        for ( uint32_t d = 0; d < endpoint.region->descriptors_fresh; d++ )
+        {
+            const rn_send_descriptor_t * descriptor = &endpoint.region->send_descriptors[d];
+            if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->enqueue_ticket <= after_order )
+                continue;
+            if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
+            {
+                best = d;
+                best_ticket = descriptor->enqueue_ticket;
+            }
+        }
+        if ( best == RN_DESCRIPTOR_NONE )
+            break;
+        after_order = best_ticket;
+        order[n++] = endpoint.region->send_descriptors[best].serial;
+    }
     const uint32_t oracle[2] = { serial[0], serial[3] };
     check( n == 2 && order[0] == oracle[0] && order[1] == oracle[1] );
     rn_endpoint_tick( &endpoint, 1000.0 );
