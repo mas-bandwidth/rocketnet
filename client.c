@@ -17,6 +17,7 @@
 #include "tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_internal.h"
 #include "sdk/rocketnet_connect_token.h"
 #include "sdk/rocketnet_counters.h"
 #include "tests/live_verify.h"
@@ -572,10 +573,19 @@ static double quantile( const double * values, int count, double q )
 static long resident_kb( void );
 
 // section 7: every counter by name, message and transport counters summed.
+// The public client is not a message client: its connection is resolved
+// through rocketnet_client_message_client, NULL while disconnected or after a
+// refused connect, when there are no connection counters to read and only the
+// resident size is written.
 static void sample_counters( matrix_state_t * st, struct rocketnet_client_t * client, double seconds )
 {
     if ( !client ) return;
-    struct rocketnet_message_client_t * message_client = (struct rocketnet_message_client_t *) client;
+    struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( client );
+    if ( !message_client )
+    {
+        r_rss( st->res, st->o->label, seconds, resident_kb() * 4 );
+        return;
+    }
     const struct rocketnet_counters_t * message = rocketnet_message_client_counters( message_client );
     struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message_client );
     const struct rocketnet_counters_t * transport_counters = rocketnet_client_transport_counters( transport );
@@ -608,7 +618,13 @@ static int last_stream_channel( int mode )
 // and the last stream channel; the named counter must rise by exactly one.
 static void over_maximum( matrix_state_t * st, struct rocketnet_client_t * client, int window )
 {
-    struct rocketnet_message_client_t * message_client = (struct rocketnet_message_client_t *) client;
+    struct rocketnet_message_client_t * message_client = rocketnet_client_message_client( client );
+    if ( !message_client )
+    {
+        r_fail( st->res, st->o->label, window, 0, 0, 0, 0, "over-max-no-connection", 0, 0, "client", "-", "no connection to count against" );
+        st->fails++;
+        return;
+    }
     const struct rocketnet_counters_t * counters = rocketnet_message_client_counters( message_client );
     for ( int mode = 0; mode < ROCKETNET_LIVE_NUM_MODES; mode++ )
     {
