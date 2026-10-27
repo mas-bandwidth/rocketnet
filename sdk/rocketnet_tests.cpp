@@ -6695,18 +6695,11 @@ void rocketnet_test_transport_payload_capacity()
     // decrypted payloads were written to a scratch buffer and discarded,
     // with their sequences already spent, so a retransmit would be refused
     // as a replay. Silent, uncounted, unrecoverable, and only on the
-    // production transport. The arrays must cover a full drain.
-
-    rocketnet_check( ROCKETNET_MAX_PAYLOADS_PER_UPDATE >= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS );
-
-    // and the storage behind them must cover a full-size RECEIVED payload
-    // for every one of those slots. The receiver enforces the same rounded
-    // payload capacity as the sender; undersizing this storage would turn
-    // the same loss into an overrun instead
+    // production transport. One per-update receive bound sizes the process
+    // batch and the payload batch. Each stored payload is a full received
+    // payload: the slot width is the sender's payload capacity.
 
     rocketnet_check( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
-    rocketnet_check( (size_t) ROCKETNET_MAX_PAYLOADS_PER_UPDATE * ROCKETNET_RECEIVE_PAYLOAD_BYTES
-                     >= (size_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_RECEIVE_PAYLOAD_BYTES );
 }
 
 

@@ -22,7 +22,6 @@ HOOK_MACROS = (
     "ROCKETNET_ACK_COST_TEST_HOOKS",
     "ROCKETNET_ACK_STATS_TEST_HOOKS",
     "ROCKETNET_BLOCK_COST_TEST_HOOKS",
-    "ROCKETNET_FILTER_EPOCH_TEST_HOOKS",
     "ROCKETNET_LINK_SIMULATOR_TEST_HOOKS",
     "ROCKETNET_MESSAGE_COPY_TEST_HOOKS",
     "ROCKETNET_SECRET_WIPE_TEST_HOOKS",
@@ -32,7 +31,6 @@ HOOK_MACROS = (
     "ROCKETNET_RIO_OVERFLOW_TEST_HOOKS",
     "ROCKETNET_XDP_STAGING_TEST_HOOKS",
     "ROCKETNET_ENVIRONMENT_TEST_HOOKS",
-    "ROCKETNET_STATS_MANUAL_TEST_HOOKS",
     "ROCKETNET_SEND_ERROR_TEST_HOOKS",
     "ROCKETNET_LOOPBACK_TEST_HOOKS",
     "ROCKETNET_MSGX_TEST_HOOKS",
@@ -102,6 +100,10 @@ def check_sources(repo_root: Path) -> list[str]:
             problems.append(f"sdk/rocketnet_connection_reset.h missing production declaration {prod_fn}")
 
     doc_path = repo_root / "docs" / "TEST-SCAFFOLDING.md"
+    if doc_path.is_file():
+        for cited in sorted(set(re.findall(r"(?:sdk|tests|tools)/[A-Za-z0-9_./-]+\.(?:h|cpp|c|py|txt)", doc_path.read_text()))):
+            if not (repo_root / cited).exists():
+                problems.append(f"docs/TEST-SCAFFOLDING.md cites missing path: {cited}")
     if not doc_path.is_file():
         problems.append("docs/TEST-SCAFFOLDING.md is missing")
     else:

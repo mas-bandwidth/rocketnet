@@ -9,7 +9,7 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// The GSO transport transport (#97). See rocketnet_server_gso.h for the shape
+// The GSO transport (#97). See rocketnet_server_gso.h for the shape
 // and the framing; this file is the machinery.
 //
 // The receive side is the XDP transport's pattern on portable primitives: one
@@ -1538,7 +1538,7 @@ static void rocketnet_server_gso_receive_from_queue( rocketnet_server_gso_t * gs
     }
     rocketnet_server_gso_recv_buffer_t * buffer = queue->main_buffer;
     while ( queue->main_cursor < buffer->num_packets && budget-- > 0 &&
-            gso->process_packets.num_packets < ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS )
+            gso->process_packets.num_packets < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
     {
         const uint32_t source = queue->main_cursor++;
         const int index = gso->process_packets.num_packets++;
@@ -1558,7 +1558,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
         rocketnet_server_gso_queue_t * queue = &gso->queues[queue_index];
         gso->counter_receive_syscalls += queue->receive_syscalls.exchange( 0, std::memory_order_relaxed );
         rocketnet_server_gso_receive_from_queue( gso, queue,
-            ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS - gso->process_packets.num_packets );
+            ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE - gso->process_packets.num_packets );
     }
 }
 

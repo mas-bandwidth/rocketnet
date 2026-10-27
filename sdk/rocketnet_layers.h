@@ -91,7 +91,7 @@ bool rocketnet_get_thread_priority( void );
 /** @brief Address-family value for IPv6. */
 #define ROCKETNET_ADDRESS_IPV6                             2
 
-/** @brief Sets the storage capacity for a transport transport candidate list.
+/** @brief Sets the storage capacity for a transport candidate list.
  *
  * The value includes the terminating NUL byte; a configured string must fit
  * within this many bytes.
@@ -356,7 +356,7 @@ void rocketnet_client_transport_default_config( struct rocketnet_client_transpor
 // means invalid geometry, overflow, unknown/custom transport, or transport not built
 // for this platform. Query each candidate separately: "auto" and transport lists
 // are not concrete plans.
-/** @brief Measure SDK allocator bytes for one client transport transport.
+/** @brief Measure SDK allocator bytes for one client transport.
  * @param[in] config Numeric settings to measure, or NULL for defaults. Environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; `auto` and comma-separated candidate lists are not plans.
  * @return The planned SDK allocator bytes, including its alignment and ownership overhead, or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
@@ -400,7 +400,7 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create( void * 
  * @param config [in] Optional full config; NULL selects defaults.
  * @param time [in] Finite, monotonic time in seconds for the initial update clock.
  * @param status [out] Optional status destination; receives OK on success or the specific failure code on every failure.
- * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
+ * @return A caller-owned transport on success, or NULL. Failures report INVALID_ARGUMENT, NOT_INITIALIZED, CONFIG_ENV_INVALID, CONFIG_OUT_OF_RANGE, MEMORY_BUDGET_EXCEEDED, INVALID_TRANSPORT_LIST, INVALID_CONNECT_TOKEN, CONNECT_TOKEN_EXPIRED, TRANSPORT_LADDER_EXHAUSTED, OUT_OF_MEMORY, MUTEX_CREATE_FAILED, or THREAD_CREATE_FAILED. A transport whose open fails an allocation ends the create with OUT_OF_MEMORY and the ladder tries no later candidate (sdk/rocketnet_client_transport.cpp); nothing the create allocated stays live. Call rocketnet_init first and correct the reported cause before retrying.
  * @code
  * // token, context, config, time, and status are supplied by the game.
  * rocketnet_init( NULL, NULL, NULL );
@@ -820,7 +820,7 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
 // overlay, key validation, socket probe or budget refusal. Zero means invalid
 // geometry, overflow, unknown/custom transport, or transport not built for this platform.
 // Query each candidate separately: "auto" and transport lists are not concrete plans.
-/** @brief Measure SDK allocator bytes for one server transport transport.
+/** @brief Measure SDK allocator bytes for one server transport.
  * @param[in] config Numeric server settings to measure, or NULL for defaults. Environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; `auto` and candidate lists are not plans.
  * @return The planned request bytes (SDK allocator plus XDP UMEM or RIO registered storage where applicable), or 0 for invalid geometry, overflow, an unknown/custom transport, or a transport not built for this platform.
@@ -877,7 +877,7 @@ struct rocketnet_host_memory_estimate_t
     const char * exclusions[ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS];
 };
 
-/** @brief Estimate memory requests made by one server transport transport.
+/** @brief Estimate memory requests made by one server transport.
  * @param[in] config Numeric server settings, or NULL for defaults; environment overrides are not applied.
  * @param[in] transport One concrete built-in transport name; NULL or an unsupported transport makes the call fail.
  * @param[out] estimate Receives the estimate; NULL is counted misuse and returns false. On failure the struct remains zeroed.

@@ -48,6 +48,8 @@ Process-wide and platform-specific controls:
 
 | Variable | Meaning |
 | --- | --- |
+| `ROCKETNET_TEST_XDP_FAIL_AT_QUEUE` | Development libraries only (DEV=1): fail XDP queue creation at the named queue index. Production libraries do not recognize this variable. |
+| `ROCKETNET_TEST_GSO_PLAIN` | Read only inside `ROCKETNET_SEND_ERROR_TEST_HOOKS` at `sdk/rocketnet_server_gso_linux.cpp`: `1` forces the plain GSO send path. A build without that hook does not recognize this variable. |
 | `ROCKETNET_LOG_LEVEL` | Maximum emitted log level before initialization logs: 0 .. 5 (`ROCKETNET_LOG_LEVEL_NONE` .. `ROCKETNET_LOG_LEVEL_SPAM`). A value outside that range is ignored with a warning. |
 | `ROCKETNET_GATEWAY_ETHERNET_ADDRESS` | Linux XDP only: overrides gateway MAC discovery in `xx:xx:xx:xx:xx:xx` form. A malformed value refuses socket creation. |
 
