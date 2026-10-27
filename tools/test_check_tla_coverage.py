@@ -135,6 +135,96 @@ class CheckTlaCoverageTest(unittest.TestCase):
         self.assertIn("RNSendBudget: rn-send-budget is owed but "
                       "sdk/rocketnet_send_budget.h cites RNSendBudget.tla", out)
 
+    def test_planted_wrong_function_note_fails(self):
+        root = self.plant_basic_repo()
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": ("RNSendBudget models the send budget in "
+                     "sdk/rocketnet_send_budget.h "
+                     "(rocketnet_send_budget_missing): Init."),
+        })
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("rocketnet_send_budget_missing not defined", out)
+
+    def test_space_then_path_absent_name_fails(self):
+        root = self.plant_basic_repo()
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": ("RNSendBudget models the send budget: "
+                     "rocketnet_send_budget_missing "
+                     "(sdk/rocketnet_send_budget.h) and "
+                     "rocketnet_send_budget_init."),
+        })
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("rocketnet_send_budget_missing not defined in "
+                      "sdk/rocketnet_send_budget.h", out)
+
+    def test_space_then_path_other_file_passes(self):
+        root = self.plant_basic_repo()
+        (root / "sdk" / "other.h").write_text(
+            "void rocketnet_other_init(void);\n")
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": ("RNSendBudget models the send budget in "
+                     "sdk/rocketnet_send_budget.h "
+                     "(rocketnet_send_budget_init) with "
+                     "rocketnet_other_init (sdk/other.h): Init."),
+        })
+        code, out = run_check(root)
+        self.assertEqual(code, 0, out)
+
+    def test_citation_inside_named_symbol_passes(self):
+        root = self.plant_basic_repo()
+        (root / "sdk" / "rocketnet_driver.h").write_text(
+            "// rocketnet_send_budget_init "
+            "(sdk/rocketnet_send_budget.h:2)\n")
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": GOOD_NOTE,
+        })
+        code, out = run_check(root)
+        self.assertEqual(code, 0, out)
+
+    def test_citation_outside_named_symbol_fails(self):
+        root = self.plant_basic_repo()
+        (root / "sdk" / "rocketnet_send_budget.h").write_text(
+            "// tla/RNSendBudget.tla\n"
+            "void rocketnet_send_budget_init(void);\n"
+            "void rocketnet_other_init(void)\n{\n}\n")
+        (root / "sdk" / "rocketnet_driver.h").write_text(
+            "// rocketnet_send_budget_init "
+            "(sdk/rocketnet_send_budget.h:4)\n")
+        write_row(root, {
+            "machine": "rn-send-budget",
+            "code": "sdk/rocketnet_send_budget.h",
+            "module": "RNSendBudget",
+            "status": "current",
+            "owed_by": "-",
+            "note": GOOD_NOTE,
+        })
+        code, out = run_check(root)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("is inside rocketnet_other_init, not "
+                      "rocketnet_send_budget_init", out)
+
     def test_real_coverage_passes(self):
         code, out = run_check(REPO_ROOT, ["--all"])
         self.assertEqual(code, 0, out)

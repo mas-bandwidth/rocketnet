@@ -43,13 +43,13 @@ enum rocketnet_server_transport_io_flags_t
 // (NULL: not asked). rocketnet_server_transport_io_open and
 // rocketnet_client_transport_io_open write ROCKETNET_STATUS_OUT_OF_MEMORY there when
 // create returned NULL after an allocation on the calling thread was refused
-// (sdk/rocketnet_driver.cpp:126-130, :148 and :182): a rocketnet_malloc
+// (rocketnet_server_transport_io_open and rocketnet_client_transport_io_open in sdk/rocketnet_driver.cpp): a rocketnet_malloc
 // refusal, or a transport's own page buffer counted by
-// rocketnet_allocation_refused (sdk/rocketnet_server_socket_linux.cpp:1720,
-// sdk/rocketnet_server_rio_windows.cpp:508). Any other NULL leaves it OK and
+// rocketnet_allocation_refused (sdk/rocketnet_server_socket_linux.cpp,
+// sdk/rocketnet_server_rio_windows.cpp). Any other NULL leaves it OK and
 // is a refusal, and the transport ladder falls to the next candidate;
 // OUT_OF_MEMORY ends the ladder and the create
-// (sdk/rocketnet_server_transport.cpp:1299, sdk/rocketnet_client_transport.cpp:882).
+// (sdk/rocketnet_server_transport.cpp, sdk/rocketnet_client_transport.cpp).
 struct rocketnet_server_transport_io_config_t
 {
     const char * name;
