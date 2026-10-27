@@ -5,6 +5,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_allocator.h"
 #include "portable_crt.h"
 #include "suite_runner.h"
