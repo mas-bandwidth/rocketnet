@@ -6826,6 +6826,7 @@ static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stal
     return rocketnet_server_uring_create( NULL, address, 2 );
 }
 
+#if ROCKETNET_DEV
 void rocketnet_test_server_uring_probe()
 {
     // create discovers an ephemeral port and reports it back; the queue
@@ -6906,6 +6907,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_server_uring_destroy( rebound );
     rocketnet_check( rocketnet_server_uring_leaked_transports() == leaked_transports_before );
 }
+#endif // #if ROCKETNET_DEV
 
 // the wire exchange, the gso exchange's shape for this transport: a plain UDP
 // client sends tagged packets of every size the wire allows into the transport,
@@ -9179,10 +9181,15 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
 extern void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 );
 
 static void rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, false ); }
+#if ROCKETNET_DEV
 static void rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, true ); }
+#if ROCKETNET_DEV
 static void rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, false ); }
+#if ROCKETNET_DEV
 static void rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, true ); }
+#if ROCKETNET_DEV
 static void rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, false ); }
+#if ROCKETNET_DEV
 static void rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, true ); }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
@@ -9216,6 +9223,11 @@ static void wire_totals_client( struct rocketnet_client_transport_t * client, wi
     totals->bytes_sent = stats.bytes_sent;
     totals->bytes_received = stats.bytes_received;
 }
+#endif // #if ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
 
 static void wire_totals_server( struct rocketnet_server_transport_t * server, wire_totals_t * totals )
 {
@@ -10843,12 +10855,12 @@ extern void rocketnet_test_session_reconnect_isolation_rio();
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 {
-    { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
-    { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
-    { "test_real_environment_config_precedence_and_invalid", rocketnet_test_real_environment_config_precedence_and_invalid, NULL },
-    { "test_real_environment_client_step_driven", rocketnet_test_real_environment_client_step_driven, NULL },
-    { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
-    { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
+    { "test_real_environment_dev_session_sequence_start", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_real_environment_dev_session_sequence_start ), NULL },
+    { "test_real_environment_log_level_before_init", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_real_environment_log_level_before_init ), NULL },
+    { "test_real_environment_config_precedence_and_invalid", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_real_environment_config_precedence_and_invalid ), NULL },
+    { "test_real_environment_client_step_driven", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_real_environment_client_step_driven ), NULL },
+    { "test_real_environment_dev_simulator_number", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_real_environment_dev_simulator_number ), NULL },
+    { "test_real_environment_server_ipv4_address", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_real_environment_server_ipv4_address ), NULL },
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
@@ -10861,18 +10873,18 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
     { "test_fuzz_prefilter_seed_names_match_outcomes", test_fuzz_prefilter_seed_names_match_outcomes, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
-    { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
-    { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
-    { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
+    { "test_api_polish_dev_token_string", ROCKETNET_FUNCTIONAL_DEV_ONLY( test_api_polish_dev_token_string ), NULL },
+    { "test_dev_connect_token_timeout_is_the_named_constant", ROCKETNET_FUNCTIONAL_DEV_ONLY( test_dev_connect_token_timeout_is_the_named_constant ), NULL },
+    { "test_dev_token_minting_absent_in_release", ROCKETNET_FUNCTIONAL_DEV_ONLY( test_dev_token_minting_absent_in_release ), NULL },
 #if ROCKETNET_DEV
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
-    { "test_server_async_delivery_with_max_clients", rocketnet_test_server_async_delivery_with_max_clients, NULL },
-    { "test_server_receive_buffer_sized_from_max_clients", rocketnet_test_server_receive_buffer_sized_from_max_clients, NULL },
+    { "test_server_async_delivery_with_max_clients", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_async_delivery_with_max_clients ), NULL },
+    { "test_server_receive_buffer_sized_from_max_clients", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_receive_buffer_sized_from_max_clients ), NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_server_receive_1000_clients_256kbps_10hz", rocketnet_test_server_receive_1000_clients_256kbps_10hz, rocketnet_test_server_receive_low_tick_measurement_requested },
+    { "test_server_receive_1000_clients_256kbps_10hz", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_receive_1000_clients_256kbps_10hz ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_receive_low_tick_measurement_requested ) },
 #endif
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     // Windows keeps its sleep and its wake is a no-op, so only POSIX runs the wake cases
@@ -10881,30 +10893,30 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_portable_transport_posix_init_term_1000", rocketnet_test_posix_init_term_1000_portable, NULL },
-    { "test_gso_transport_posix_init_term_1000", rocketnet_test_posix_init_term_1000_gso, NULL },
-    { "test_io_uring_transport_posix_init_term_1000", rocketnet_test_posix_init_term_1000_io_uring, rocketnet_test_posix_io_uring_offered },
-    { "test_xdp_transport_posix_init_term_1000", rocketnet_test_posix_init_term_1000_xdp, rocketnet_test_posix_xdp_offered },
-    { "test_portable_transport_posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000_portable, NULL },
-    { "test_gso_transport_posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000_gso, NULL },
-    { "test_io_uring_transport_posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000_io_uring, rocketnet_test_posix_io_uring_offered },
-    { "test_xdp_transport_posix_server_create_destroy_1000", rocketnet_test_posix_server_create_destroy_1000_xdp, rocketnet_test_posix_xdp_offered },
-    { "test_portable_transport_posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000_portable, NULL },
-    { "test_gso_transport_posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000_gso, NULL },
-    { "test_io_uring_transport_posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000_io_uring, rocketnet_test_posix_io_uring_offered },
-    { "test_xdp_transport_posix_client_create_destroy_1000", rocketnet_test_posix_client_create_destroy_1000_xdp, rocketnet_test_posix_xdp_offered },
-    { "test_portable_transport_posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100_portable, NULL },
-    { "test_gso_transport_posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100_gso, NULL },
-    { "test_io_uring_transport_posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100_io_uring, rocketnet_test_posix_io_uring_offered },
-    { "test_xdp_transport_posix_server_restart_same_port_100", rocketnet_test_posix_server_restart_same_port_100_xdp, rocketnet_test_posix_xdp_offered },
-    { "test_portable_transport_posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000_portable, NULL },
-    { "test_gso_transport_posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000_gso, NULL },
-    { "test_io_uring_transport_posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000_io_uring, rocketnet_test_posix_io_uring_offered },
-    { "test_xdp_transport_posix_connect_disconnect_1000", rocketnet_test_posix_connect_disconnect_1000_xdp, rocketnet_test_posix_xdp_offered },
-    { "test_portable_transport_posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100_portable, NULL },
-    { "test_gso_transport_posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100_gso, NULL },
-    { "test_io_uring_transport_posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100_io_uring, rocketnet_test_posix_io_uring_offered },
-    { "test_xdp_transport_posix_destroy_under_traffic_100", rocketnet_test_posix_destroy_under_traffic_100_xdp, rocketnet_test_posix_xdp_offered },
+    { "test_portable_transport_posix_init_term_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_init_term_1000_portable ), NULL },
+    { "test_gso_transport_posix_init_term_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_init_term_1000_gso ), NULL },
+    { "test_io_uring_transport_posix_init_term_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_init_term_1000_io_uring ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_io_uring_offered ) },
+    { "test_xdp_transport_posix_init_term_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_init_term_1000_xdp ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_xdp_offered ) },
+    { "test_portable_transport_posix_server_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_create_destroy_1000_portable ), NULL },
+    { "test_gso_transport_posix_server_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_create_destroy_1000_gso ), NULL },
+    { "test_io_uring_transport_posix_server_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_create_destroy_1000_io_uring ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_io_uring_offered ) },
+    { "test_xdp_transport_posix_server_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_create_destroy_1000_xdp ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_xdp_offered ) },
+    { "test_portable_transport_posix_client_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_client_create_destroy_1000_portable ), NULL },
+    { "test_gso_transport_posix_client_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_client_create_destroy_1000_gso ), NULL },
+    { "test_io_uring_transport_posix_client_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_client_create_destroy_1000_io_uring ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_io_uring_offered ) },
+    { "test_xdp_transport_posix_client_create_destroy_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_client_create_destroy_1000_xdp ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_xdp_offered ) },
+    { "test_portable_transport_posix_server_restart_same_port_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_restart_same_port_100_portable ), NULL },
+    { "test_gso_transport_posix_server_restart_same_port_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_restart_same_port_100_gso ), NULL },
+    { "test_io_uring_transport_posix_server_restart_same_port_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_restart_same_port_100_io_uring ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_io_uring_offered ) },
+    { "test_xdp_transport_posix_server_restart_same_port_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_server_restart_same_port_100_xdp ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_xdp_offered ) },
+    { "test_portable_transport_posix_connect_disconnect_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_connect_disconnect_1000_portable ), NULL },
+    { "test_gso_transport_posix_connect_disconnect_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_connect_disconnect_1000_gso ), NULL },
+    { "test_io_uring_transport_posix_connect_disconnect_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_connect_disconnect_1000_io_uring ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_io_uring_offered ) },
+    { "test_xdp_transport_posix_connect_disconnect_1000", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_connect_disconnect_1000_xdp ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_xdp_offered ) },
+    { "test_portable_transport_posix_destroy_under_traffic_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_destroy_under_traffic_100_portable ), NULL },
+    { "test_gso_transport_posix_destroy_under_traffic_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_destroy_under_traffic_100_gso ), NULL },
+    { "test_io_uring_transport_posix_destroy_under_traffic_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_destroy_under_traffic_100_io_uring ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_io_uring_offered ) },
+    { "test_xdp_transport_posix_destroy_under_traffic_100", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_destroy_under_traffic_100_xdp ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_xdp_offered ) },
 #endif
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_posix_init_term_1000", rocketnet_test_posix_init_term_1000, NULL },
@@ -11002,11 +11014,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
-    { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
-    { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
-    { "test_posix_send_to_closed_port_xdp_ipv6_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
-    { "test_posix_client_server_gone_xdp_ipv4_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
-    { "test_posix_client_server_gone_xdp_ipv6_client_portable", rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_hard_killed_client_xdp_ipv6_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable ), rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable ), rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_send_to_closed_port_xdp_ipv6_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable ), rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_client_server_gone_xdp_ipv4_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable ), rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_client_server_gone_xdp_ipv6_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable ), rocketnet_test_xdp_veth_runs_here },
 #endif
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create, NULL },
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config, NULL },
@@ -11047,7 +11059,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
     { "test_gso_shutdown_send_interruptions", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_gso_shutdown_send_interruptions ), NULL },
     { "test_gso_transport_held_receive_view", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_gso_held_receive_view ), NULL },
-    { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
+    { "test_io_uring_transport_server_probe", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_uring_probe ), rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_dual_stack", rocketnet_test_server_uring_wire_dual_stack, rocketnet_server_uring_available },
@@ -11078,49 +11090,49 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_transport_all_skipped_uses_auto", rocketnet_test_transport_all_skipped_uses_auto, rocketnet_test_server_pin_allows_auto },
     { "test_config_env_aliases", rocketnet_test_config_env_aliases, NULL },
     { "test_client_transport_io", rocketnet_test_client_transport_io, rocketnet_test_client_pin_allows_auto },
-    { "test_lifecycle_transport", rocketnet_test_lifecycle_transport, NULL },
+    { "test_lifecycle_transport", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_lifecycle_transport ), NULL },
     { "test_loopback_transport_message_objects_from_t1000", rocketnet_test_message_objects_loopback_from_t1000, NULL },
-    { "test_harness_one_message_each_way_lossless", harness_one_message_each_way_lossless, NULL },
-    { "test_harness_one_message_each_way_lossy", harness_one_message_each_way_lossy, NULL },
-    { "test_harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control, NULL },
-    { "test_harness_no_allocation_after_create", harness_no_allocation_after_create, NULL },
-    { "test_harness_collect_preserves_other_channels", harness_collect_preserves_other_channels, NULL },
-    { "test_unreliable_receipts_over_lossy_link", unreliable_receipts_over_lossy_link, NULL },
-    { "test_promoted_receipts_over_lossy_reliable_blocks", promoted_receipts_over_lossy_reliable_blocks, NULL },
-    { "test_reliable_receipts_over_lossy_link", reliable_receipts_over_lossy_link, NULL },
-    { "test_state_stream_never_goes_backwards_over_lossy_link", state_stream_never_goes_backwards_over_lossy_link, NULL },
-    { "test_reliable_state_stream_over_lossy_link", reliable_state_stream_over_lossy_link, NULL },
-    { "test_reliable_sequenced_long_run_across_epochs", reliable_sequenced_long_run_across_epochs, NULL },
-    { "test_reliable_sequenced_held_record_released", reliable_sequenced_held_record_released, NULL },
-    { "test_large_unreliable_sequenced_uses_transport_fragments", large_unreliable_sequenced_uses_transport_fragments, NULL },
-    { "test_ordered_256k_chunked_stream_over_lossy_reordering_link", ordered_256k_chunked_stream_over_lossy_reordering_link, NULL },
-    { "test_ordered_small_and_large_interleaved", ordered_small_and_large_interleaved, NULL },
-    { "test_loopback_transport_config_mismatch", config_mismatch_over_loopback, NULL },
-    { "test_loopback_transport_config_equal_over_lossy", config_equal_over_lossy_loopback, NULL },
-    { "test_reliable_receive_full_ordered_gap_recovers", reliable_receive_full_ordered_gap_recovers, NULL },
-    { "test_reliable_receive_full_recovers_all_modes", reliable_receive_full_recovers_all_modes, NULL },
-    { "test_reliable_receive_full_partial_packet_recovers", reliable_receive_full_partial_packet_recovers, NULL },
-    { "test_reliable_receive_full_recovers_client_to_server", reliable_receive_full_recovers_client_to_server, NULL },
-    { "test_reliable_receive_full_recovers_server_to_client", reliable_receive_full_recovers_server_to_client, NULL },
-    { "test_reliable_mixed_sizes_over_lossy_link", reliable_mixed_sizes_over_lossy_link, NULL },
-    { "test_reliable_duplicate_after_gap_delivered_once", reliable_duplicate_after_gap_delivered_once, NULL },
-    { "test_unreliable_at_most_once_over_duplicating_link", unreliable_at_most_once_over_duplicating_link, NULL },
-    { "test_unreliable_dropped_while_reliable_waits_never_arrives", unreliable_dropped_while_reliable_waits_never_arrives, NULL },
-    { "test_unreliable_dropped_when_builder_out_of_budget_never_arrives", unreliable_dropped_when_builder_out_of_budget_never_arrives, NULL },
-    { "test_control_disconnect_burst_each_end", control_disconnect_burst_each_end, NULL },
-    { "test_control_standalone_ack_each_end", control_standalone_ack_each_end, NULL },
-    { "test_control_fragment_packets_each_end", control_fragment_packets_each_end, NULL },
-    { "test_control_denied_when_server_full", control_denied_when_server_full, NULL },
-    { "test_default_one_mib_messages_all_modes", default_one_mib_messages_all_modes, NULL },
-    { "test_unreliable_small_messages_pack_in_place", unreliable_small_messages_pack_in_place, NULL },
-    { "test_unreliable_over_receive_budget_dropped_and_counted", unreliable_over_receive_budget_dropped_and_counted, NULL },
-    { "test_reliable_delivered_when_unreliable_budget_full", reliable_delivered_when_unreliable_budget_full, NULL },
-    { "test_resend_timing_table_over_lossy_links", resend_timing_table_over_lossy_links, NULL },
-    { "test_block_resend_cost_over_long_path", block_resend_cost_over_long_path, NULL },
+    { "test_harness_one_message_each_way_lossless", ROCKETNET_FUNCTIONAL_DEV_ONLY( harness_one_message_each_way_lossless ), NULL },
+    { "test_harness_one_message_each_way_lossy", ROCKETNET_FUNCTIONAL_DEV_ONLY( harness_one_message_each_way_lossy ), NULL },
+    { "test_harness_lossy_100_percent_negative_control", ROCKETNET_FUNCTIONAL_DEV_ONLY( harness_lossy_100_percent_negative_control ), NULL },
+    { "test_harness_no_allocation_after_create", ROCKETNET_FUNCTIONAL_DEV_ONLY( harness_no_allocation_after_create ), NULL },
+    { "test_harness_collect_preserves_other_channels", ROCKETNET_FUNCTIONAL_DEV_ONLY( harness_collect_preserves_other_channels ), NULL },
+    { "test_unreliable_receipts_over_lossy_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( unreliable_receipts_over_lossy_link ), NULL },
+    { "test_promoted_receipts_over_lossy_reliable_blocks", ROCKETNET_FUNCTIONAL_DEV_ONLY( promoted_receipts_over_lossy_reliable_blocks ), NULL },
+    { "test_reliable_receipts_over_lossy_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_receipts_over_lossy_link ), NULL },
+    { "test_state_stream_never_goes_backwards_over_lossy_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( state_stream_never_goes_backwards_over_lossy_link ), NULL },
+    { "test_reliable_state_stream_over_lossy_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_state_stream_over_lossy_link ), NULL },
+    { "test_reliable_sequenced_long_run_across_epochs", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_sequenced_long_run_across_epochs ), NULL },
+    { "test_reliable_sequenced_held_record_released", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_sequenced_held_record_released ), NULL },
+    { "test_large_unreliable_sequenced_uses_transport_fragments", ROCKETNET_FUNCTIONAL_DEV_ONLY( large_unreliable_sequenced_uses_transport_fragments ), NULL },
+    { "test_ordered_256k_chunked_stream_over_lossy_reordering_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( ordered_256k_chunked_stream_over_lossy_reordering_link ), NULL },
+    { "test_ordered_small_and_large_interleaved", ROCKETNET_FUNCTIONAL_DEV_ONLY( ordered_small_and_large_interleaved ), NULL },
+    { "test_loopback_transport_config_mismatch", ROCKETNET_FUNCTIONAL_DEV_ONLY( config_mismatch_over_loopback ), NULL },
+    { "test_loopback_transport_config_equal_over_lossy", ROCKETNET_FUNCTIONAL_DEV_ONLY( config_equal_over_lossy_loopback ), NULL },
+    { "test_reliable_receive_full_ordered_gap_recovers", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_receive_full_ordered_gap_recovers ), NULL },
+    { "test_reliable_receive_full_recovers_all_modes", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_receive_full_recovers_all_modes ), NULL },
+    { "test_reliable_receive_full_partial_packet_recovers", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_receive_full_partial_packet_recovers ), NULL },
+    { "test_reliable_receive_full_recovers_client_to_server", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_receive_full_recovers_client_to_server ), NULL },
+    { "test_reliable_receive_full_recovers_server_to_client", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_receive_full_recovers_server_to_client ), NULL },
+    { "test_reliable_mixed_sizes_over_lossy_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_mixed_sizes_over_lossy_link ), NULL },
+    { "test_reliable_duplicate_after_gap_delivered_once", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_duplicate_after_gap_delivered_once ), NULL },
+    { "test_unreliable_at_most_once_over_duplicating_link", ROCKETNET_FUNCTIONAL_DEV_ONLY( unreliable_at_most_once_over_duplicating_link ), NULL },
+    { "test_unreliable_dropped_while_reliable_waits_never_arrives", ROCKETNET_FUNCTIONAL_DEV_ONLY( unreliable_dropped_while_reliable_waits_never_arrives ), NULL },
+    { "test_unreliable_dropped_when_builder_out_of_budget_never_arrives", ROCKETNET_FUNCTIONAL_DEV_ONLY( unreliable_dropped_when_builder_out_of_budget_never_arrives ), NULL },
+    { "test_control_disconnect_burst_each_end", ROCKETNET_FUNCTIONAL_DEV_ONLY( control_disconnect_burst_each_end ), NULL },
+    { "test_control_standalone_ack_each_end", ROCKETNET_FUNCTIONAL_DEV_ONLY( control_standalone_ack_each_end ), NULL },
+    { "test_control_fragment_packets_each_end", ROCKETNET_FUNCTIONAL_DEV_ONLY( control_fragment_packets_each_end ), NULL },
+    { "test_control_denied_when_server_full", ROCKETNET_FUNCTIONAL_DEV_ONLY( control_denied_when_server_full ), NULL },
+    { "test_default_one_mib_messages_all_modes", ROCKETNET_FUNCTIONAL_DEV_ONLY( default_one_mib_messages_all_modes ), NULL },
+    { "test_unreliable_small_messages_pack_in_place", ROCKETNET_FUNCTIONAL_DEV_ONLY( unreliable_small_messages_pack_in_place ), NULL },
+    { "test_unreliable_over_receive_budget_dropped_and_counted", ROCKETNET_FUNCTIONAL_DEV_ONLY( unreliable_over_receive_budget_dropped_and_counted ), NULL },
+    { "test_reliable_delivered_when_unreliable_budget_full", ROCKETNET_FUNCTIONAL_DEV_ONLY( reliable_delivered_when_unreliable_budget_full ), NULL },
+    { "test_resend_timing_table_over_lossy_links", ROCKETNET_FUNCTIONAL_DEV_ONLY( resend_timing_table_over_lossy_links ), NULL },
+    { "test_block_resend_cost_over_long_path", ROCKETNET_FUNCTIONAL_DEV_ONLY( block_resend_cost_over_long_path ), NULL },
     { "test_wire_totals_count_every_packet_and_byte", wire_totals_count_every_packet_and_byte, NULL },
     { "test_wire_totals_reset_per_connection_not_per_server", wire_totals_reset_per_connection_not_per_server, NULL },
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family, NULL },
-    { "test_loopback_transport_live_message_matrix", live_message_matrix_loopback, NULL },
+    { "test_loopback_transport_live_message_matrix", ROCKETNET_FUNCTIONAL_DEV_ONLY( live_message_matrix_loopback ), NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_portable_transport_windows_server_drops_oversize_datagram_ipv4", windows_server_drops_oversize_datagram_portable_ipv4, NULL },
     { "test_portable_transport_windows_server_drops_oversize_datagram_ipv6", windows_server_drops_oversize_datagram_portable_ipv6, NULL },
@@ -11179,8 +11191,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
-    { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
+    { "test_server_stats_creates_no_thread", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_server_stats_creates_no_thread ), NULL },
+    { "test_public_step_driven_client_connects_without_a_thread", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_public_step_driven_client_connects_without_a_thread ), NULL },
     { "test_session_reconnect_isolation_portable", rocketnet_test_session_reconnect_isolation_portable, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_session_reconnect_isolation_gso", rocketnet_test_session_reconnect_isolation_gso, NULL },
