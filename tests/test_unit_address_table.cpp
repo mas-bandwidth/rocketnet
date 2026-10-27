@@ -58,8 +58,7 @@ static bool socket_mode_is_dual_stack( socket_mode_t mode )
 // the native forms the table compares against. Index 0 is the native ipv4 an
 // accepted mapped source canonicalises to (STANDARD.md:336-338).
 
-static const char * k_native_forms[] =
-{
+static const char * k_native_forms[] = {
     "1.2.3.4:40000",        // 0: native ipv4, non-zero address and port
     "[2001:db8::1]:40000",  // 1: native ipv6
     "0.0.0.0:0",            // 2: the zero address, port 0
@@ -67,7 +66,7 @@ static const char * k_native_forms[] =
     "1.2.3.4:0"             // 4: same ipv4 as form 0, port 0 in the key
 };
 
-static const int k_native_form_count = (int) ( sizeof(k_native_forms) / sizeof(k_native_forms[0]) );
+static const int k_native_form_count = (int) ( sizeof( k_native_forms ) / sizeof( k_native_forms[0] ) );
 
 struct address_case_t
 {
@@ -79,43 +78,42 @@ struct address_case_t
     const char * cite;              // the rule this row pins, in one line
 };
 
-static const struct address_case_t k_cases[] =
-{
+static const struct address_case_t k_cases[] = {
     // native ipv4 passes through untouched on every mode (sdk/rocketnet_address.h:60-61).
-    { "1.2.3.4:40000",          SOCKET_V4_ONLY,    true,  "1.2.3.4:40000",        0,  "STANDARD.md:330-333; native ipv4 accepted" },
-    { "1.2.3.4:40000",          SOCKET_DUAL_STACK, true,  "1.2.3.4:40000",        0,  "STANDARD.md:330-333; native ipv4 accepted" },
-    { "1.2.3.4:40000",          SOCKET_V6_ONLY,    true,  "1.2.3.4:40000",        0,  "rocketnet_address.h:60-61; not mapped, unchanged" },
-    { "1.2.3.4:40000",          SOCKET_RAW,        true,  "1.2.3.4:40000",        0,  "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "1.2.3.4:40000", SOCKET_V4_ONLY, true, "1.2.3.4:40000", 0, "STANDARD.md:330-333; native ipv4 accepted" },
+    { "1.2.3.4:40000", SOCKET_DUAL_STACK, true, "1.2.3.4:40000", 0, "STANDARD.md:330-333; native ipv4 accepted" },
+    { "1.2.3.4:40000", SOCKET_V6_ONLY, true, "1.2.3.4:40000", 0, "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "1.2.3.4:40000", SOCKET_RAW, true, "1.2.3.4:40000", 0, "rocketnet_address.h:60-61; not mapped, unchanged" },
 
     // native ipv6 passes through untouched on every mode (sdk/rocketnet_address.h:60-61).
-    { "[2001:db8::1]:40000",    SOCKET_DUAL_STACK, true,  "[2001:db8::1]:40000",  1,  "rocketnet_address.h:60-61; not mapped, unchanged" },
-    { "[2001:db8::1]:40000",    SOCKET_V6_ONLY,    true,  "[2001:db8::1]:40000",  1,  "rocketnet_address.h:60-61; not mapped, unchanged" },
-    { "[2001:db8::1]:40000",    SOCKET_RAW,        true,  "[2001:db8::1]:40000",  1,  "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "[2001:db8::1]:40000", SOCKET_DUAL_STACK, true, "[2001:db8::1]:40000", 1, "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "[2001:db8::1]:40000", SOCKET_V6_ONLY, true, "[2001:db8::1]:40000", 1, "rocketnet_address.h:60-61; not mapped, unchanged" },
+    { "[2001:db8::1]:40000", SOCKET_RAW, true, "[2001:db8::1]:40000", 1, "rocketnet_address.h:60-61; not mapped, unchanged" },
 
     // the mapped source on a dual stack socket is canonicalised to native ipv4,
     // the same address an ipv4 socket sees (STANDARD.md:334-338).
-    { "[::ffff:1.2.3.4]:40000", SOCKET_DUAL_STACK, true,  "1.2.3.4:40000",        0,  "STANDARD.md:334-338; mapped accepted and canonicalised" },
+    { "[::ffff:1.2.3.4]:40000", SOCKET_DUAL_STACK, true, "1.2.3.4:40000", 0, "STANDARD.md:334-338; mapped accepted and canonicalised" },
 
     // the same mapped source where the real ipv6 header is seen is spoofed and
     // dropped (sdk/rocketnet_address.h:56-58; RFC 4291 2.5.5.2).
-    { "[::ffff:1.2.3.4]:40000", SOCKET_V6_ONLY,    false, NULL,                  -1,  "rocketnet_address.h:56-58; mapped dropped on v6-only" },
-    { "[::ffff:1.2.3.4]:40000", SOCKET_RAW,        false, NULL,                  -1,  "rocketnet_address.h:56-58; mapped dropped on raw" },
+    { "[::ffff:1.2.3.4]:40000", SOCKET_V6_ONLY, false, NULL, -1, "rocketnet_address.h:56-58; mapped dropped on v6-only" },
+    { "[::ffff:1.2.3.4]:40000", SOCKET_RAW, false, NULL, -1, "rocketnet_address.h:56-58; mapped dropped on raw" },
 
     // the zero address, port 0: a real ipv4/ipv6 address, not NONE, and equal
     // only to itself (sdk/rocketnet_address.cpp:202-237 compares type, port and bytes).
-    { "0.0.0.0:0",              SOCKET_V4_ONLY,    true,  "0.0.0.0",              2,  "STANDARD.md:386-392; zero ipv4 is an ipv4 endpoint" },
-    { "[::]:0",                 SOCKET_V6_ONLY,    true,  "::",                   3,  "STANDARD.md:386-392; zero ipv6 is an ipv6 endpoint" },
+    { "0.0.0.0:0", SOCKET_V4_ONLY, true, "0.0.0.0", 2, "STANDARD.md:386-392; zero ipv4 is an ipv4 endpoint" },
+    { "[::]:0", SOCKET_V6_ONLY, true, "::", 3, "STANDARD.md:386-392; zero ipv6 is an ipv6 endpoint" },
 
     // the port is part of the identity (STANDARD.md:342-351): same address,
     // port 0, is not the non-zero-port form. to_string omits a zero port.
-    { "1.2.3.4:0",              SOCKET_DUAL_STACK, true,  "1.2.3.4",              4,  "STANDARD.md:342-351; port is part of the key" },
+    { "1.2.3.4:0", SOCKET_DUAL_STACK, true, "1.2.3.4", 4, "STANDARD.md:342-351; port is part of the key" },
 
     // NONE is not a source and is not equal to itself or any other address
     // (sdk/rocketnet_address.cpp:207-211 returns false for a non-ipv4/ipv6 type).
-    { NULL,                     SOCKET_DUAL_STACK, true,  "NONE",                -1,  "rocketnet_address.cpp:207-211; NONE unequal to itself and all" }
+    { NULL, SOCKET_DUAL_STACK, true, "NONE", -1, "rocketnet_address.cpp:207-211; NONE unequal to itself and all" }
 };
 
-static const int k_case_count = (int) ( sizeof(k_cases) / sizeof(k_cases[0]) );
+static const int k_case_count = (int) ( sizeof( k_cases ) / sizeof( k_cases[0] ) );
 
 // a failing row prints its index and the rule it pins, then fails through the
 // registry check so the suite's ordinary failure path is the one that fires.
@@ -141,7 +139,7 @@ static void address_acceptance_table()
         const struct address_case_t * row = &k_cases[i];
 
         struct rocketnet_address_t from;
-        memset( &from, 0, sizeof(from) );
+        memset( &from, 0, sizeof( from ) );
         if ( row->source != NULL )
             check_row( rocketnet_address_parse( &from, row->source ), i, row->cite );
 
@@ -169,7 +167,7 @@ static void address_acceptance_table()
                 // NONE equals nothing, not even itself.
                 check_row( !rocketnet_address_equal( &from, &from ), i, row->cite );
                 struct rocketnet_address_t other;
-                memset( &other, 0, sizeof(other) );
+                memset( &other, 0, sizeof( other ) );
                 check_row( !rocketnet_address_equal( &from, &other ), i, row->cite );
             }
         }
@@ -200,7 +198,7 @@ static uint32_t property_next_u32()
 
 static void property_random_address( struct rocketnet_address_t * address )
 {
-    memset( address, 0, sizeof(*address) );
+    memset( address, 0, sizeof( *address ) );
 
     const uint32_t choice = property_next_u32() % 8u;
 
@@ -229,7 +227,7 @@ static void property_random_address( struct rocketnet_address_t * address )
 
 static void address_equality_property()
 {
-    property_rng_state = UINT64_C(0x9E3779B97F4A7C15);
+    property_rng_state = UINT64_C( 0x9E3779B97F4A7C15 );
 
     const int iterations = 10000;
     for ( int i = 0; i < iterations; ++i )

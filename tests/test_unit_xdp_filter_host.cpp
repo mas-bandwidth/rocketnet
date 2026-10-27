@@ -34,7 +34,7 @@
 #include "../sdk/rocketnet_wire.h"
 #include "../sdk/rocketnet_xdp_limits.h"
 
-#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
+#if defined( ROCKETNET_XDP_FILTER_HOST ) && ROCKETNET_XDP_FILTER_HOST
 
 #include "xdp_host/server_xdp_host.h"
 #include "../sdk/rocketnet.h"
@@ -278,7 +278,7 @@ struct xdp_host_config_t
 static void xdp_host_apply_config( const xdp_host_config_t & c )
 {
     struct rocketnet_server_xdp_config_t config;
-    memset( &config, 0, sizeof(config) );
+    memset( &config, 0, sizeof( config ) );
     if ( !c.any_ipv4 )
         memcpy( &config.public_address, xdp_host_server_ipv4, 4 );      // network order, as stored
     const uint8_t port_bytes[2] = { (uint8_t) ( c.port >> 8 ), (uint8_t) ( c.port & 0xff ) };
@@ -297,7 +297,7 @@ static void xdp_host_apply_config( const xdp_host_config_t & c )
 static struct rocketnet_server_xdp_replay_key_t xdp_host_client_key( int family, uint16_t port )
 {
     struct rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     if ( family == 4 )
     {
         address.type = ROCKETNET_ADDRESS_IPV4;
@@ -337,11 +337,11 @@ static const char * xdp_host_verdict_name( int verdict )
 {
     switch ( verdict )
     {
-        case 0: return "XDP_ABORTED";
-        case 1: return "XDP_DROP";
-        case 2: return "XDP_PASS";
-        case 3: return "XDP_TX";
-        case 4: return "XDP_REDIRECT";
+        case 0:  return "XDP_ABORTED";
+        case 1:  return "XDP_DROP";
+        case 2:  return "XDP_PASS";
+        case 3:  return "XDP_TX";
+        case 4:  return "XDP_REDIRECT";
         default: return "not an XDP verdict";
     }
 }
@@ -448,8 +448,12 @@ static void xdp_host_redirect_rows( int family, std::vector<xdp_host_row_t> & ro
 
     // one row per inbound type at its smallest accepted size
 
-    const struct { uint8_t type; int bytes; } inbound[] = { { 0, 710 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 }, { 9, 40 } };
-    for ( size_t i = 0; i < sizeof(inbound) / sizeof(inbound[0]); i++ )
+    const struct
+    {
+        uint8_t type;
+        int bytes;
+    } inbound[] = { { 0, 710 }, { 3, 50 }, { 4, 41 }, { 5, 34 }, { 6, 33 }, { 8, 33 }, { 9, 40 } };
+    for ( size_t i = 0; i < sizeof( inbound ) / sizeof( inbound[0] ); i++ )
     {
         xdp_host_row_t row = xdp_host_row( "an inbound type at its smallest size", family );
         row.label += " (type " + std::to_string( inbound[i].type ) + ")";
@@ -483,8 +487,8 @@ static void test_xdp_transport_host_ipv4_rocketnet_packet_redirects()
     {
         const char * test_name = rocketnet_unit_tests_name( i );
         rocketnet_unit_check( test_name != NULL );
-        const bool host_case = strncmp( test_name, host_prefix, sizeof(host_prefix) - 1 ) == 0;
-        const bool filter_case = strncmp( test_name, filter_prefix, sizeof(filter_prefix) - 1 ) == 0;
+        const bool host_case = strncmp( test_name, host_prefix, sizeof( host_prefix ) - 1 ) == 0;
+        const bool filter_case = strncmp( test_name, filter_prefix, sizeof( filter_prefix ) - 1 ) == 0;
         if ( ( host_case || filter_case ) &&
              strcmp( test_name, "test_xdp_transport_host_ipv4_rocketnet_packet_redirects" ) != 0 )
         {
@@ -851,8 +855,15 @@ static void test_xdp_transport_host_ipv6_short_header_drops()
 // RocketNet never sends extension headers, and in XDP mode no kernel socket
 // listens on the server's port.
 
-static const struct { int type; const char * name; } xdp_host_ipv6_extensions[] = {
-    { 0, "hop-by-hop options" }, { 43, "routing" }, { 60, "destination options" }, { 51, "authentication header" },
+static const struct
+{
+    int type;
+    const char * name;
+} xdp_host_ipv6_extensions[] = {
+    { 0, "hop-by-hop options" },
+    { 43, "routing" },
+    { 60, "destination options" },
+    { 51, "authentication header" },
 };
 
 static void test_xdp_transport_host_ipv6_extension_headers_to_our_port_drop()
@@ -1300,7 +1311,7 @@ static void test_xdp_transport_host_icmpv6_passes_uncounted()
     // every other next header that is not UDP and not an extension header
 
     const uint8_t others[] = { 6, 41, 59, 135, 255 };
-    for ( size_t i = 0; i < sizeof(others); i++ )
+    for ( size_t i = 0; i < sizeof( others ); i++ )
     {
         xdp_host_row_t row = xdp_host_row( "another next header", 6 );
         row.label += " (" + std::to_string( others[i] ) + ")";
@@ -1457,15 +1468,26 @@ static void test_xdp_transport_host_invalid_type_drops()
         // server-to-client types at their own exact sizes, reserved types,
         // and inbound types one byte off their size
 
-        const struct { uint8_t type; int bytes; const char * name; } refused[] = {
-            { 1, 34, "connection denied" }, { 2, 66, "connection challenge" }, { 7, 38, "connection cookie" },
-            { 10, 100, "reserved type 10" }, { 255, 100, "reserved type 255" },
-            { 0, 709, "connection request one byte short" }, { 0, 711, "connection request one byte long" },
-            { 3, 49, "connection response one byte short" }, { 3, 51, "connection response one byte long" },
-            { 4, 40, "keep-alive below its minimum" }, { 5, 33, "payload below its minimum" },
+        const struct
+        {
+            uint8_t type;
+            int bytes;
+            const char * name;
+        } refused[] = {
+            { 1, 34, "connection denied" },
+            { 2, 66, "connection challenge" },
+            { 7, 38, "connection cookie" },
+            { 10, 100, "reserved type 10" },
+            { 255, 100, "reserved type 255" },
+            { 0, 709, "connection request one byte short" },
+            { 0, 711, "connection request one byte long" },
+            { 3, 49, "connection response one byte short" },
+            { 3, 51, "connection response one byte long" },
+            { 4, 40, "keep-alive below its minimum" },
+            { 5, 33, "payload below its minimum" },
             { 9, 39, "payload fragment below its minimum" },
         };
-        for ( size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); i++ )
+        for ( size_t i = 0; i < sizeof( refused ) / sizeof( refused[0] ); i++ )
         {
             xdp_host_row_t row = xdp_host_row( refused[i].name, families[f] );
             row.frame.packet_type = refused[i].type;
@@ -1487,7 +1509,12 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 {
     const int ceiling = 1452;   // 1500 - 40 - 8
 
-    struct inbound_t { int type; int min_bytes; int max_bytes; };
+    struct inbound_t
+    {
+        int type;
+        int min_bytes;
+        int max_bytes;
+    };
     const inbound_t standard[] = {
         { 0, 710, 710 },        // connection request
         { 3, 50, 50 },          // connection response
@@ -1497,7 +1524,7 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
         { 8, 33, ceiling },     // ack
         { 9, 40, ceiling },     // payload fragment
     };
-    const int standard_rows = (int) ( sizeof(standard) / sizeof(standard[0]) );
+    const int standard_rows = (int) ( sizeof( standard ) / sizeof( standard[0] ) );
 
     int floor = ceiling;
     for ( int i = 0; i < standard_rows; i++ )
@@ -1629,14 +1656,17 @@ static void xdp_host_replay_rows( int family, std::vector<xdp_host_row_t> & rows
     rows.push_back( xdp_host_replay_row( "payload at the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, high_water, high_water ) );
     rows.push_back( xdp_host_replay_row( "payload one ahead of the high-water", family, ROCKETNET_CONNECTION_PAYLOAD_PACKET, high_water + 1, high_water ) );
 
-    const struct { uint8_t type; const char * label; } session[] =
+    const struct
     {
+        uint8_t type;
+        const char * label;
+    } session[] = {
         { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, "keep-alive a window behind the high-water" },
         { ROCKETNET_CONNECTION_ACK_PACKET, "ack a window behind the high-water" },
         { ROCKETNET_CONNECTION_DISCONNECT_PACKET, "disconnect a window behind the high-water" },
         { ROCKETNET_CONNECTION_FRAGMENT_PACKET, "fragment a window behind the high-water" },
     };
-    for ( size_t i = 0; i < sizeof(session) / sizeof(session[0]); i++ )
+    for ( size_t i = 0; i < sizeof( session ) / sizeof( session[0] ); i++ )
         rows.push_back( xdp_host_expect( xdp_host_replay_row( session[i].label, family, session[i].type, xdp_host_replay_behind( window ), high_water ),
                                          XDP_HOST_DROP, replayed ) );
 
@@ -1852,7 +1882,6 @@ static void test_xdp_transport_host_udp_length_drops()
         rocketnet_unit_check( payload_len == f.payload_bytes );
         rocketnet_unit_check( payload == frame.data() + frame.size() - f.pad_bytes - f.payload_bytes );
     }
-
 }
 
 #endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
@@ -1861,7 +1890,7 @@ static void test_xdp_transport_host_udp_length_drops()
 // same count when num_xdp_queues is zero or negative. The xdp branch of
 // rocketnet_builtin_server_memory_plan exists on Linux only.
 
-#if defined(ROCKETNET_XDP) && ROCKETNET_XDP
+#if defined( ROCKETNET_XDP ) && ROCKETNET_XDP
 
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_layers.h"
@@ -1887,7 +1916,7 @@ static void test_xdp_transport_queue_default_matches_memory_plan()
 
 #endif // #if ROCKETNET_XDP
 
-#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
+#if defined( ROCKETNET_XDP_FILTER_HOST ) && ROCKETNET_XDP_FILTER_HOST
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv4_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( test_xdp_transport_host_ipv6_rocketnet_packet_redirects );
 REGISTER_UNIT_TEST( test_xdp_transport_host_both_destinations_redirect_and_a_third_passes );
@@ -1944,6 +1973,6 @@ static void test_xdp_filter_host_udp_length_past_bounds_counts_too_large()
 REGISTER_UNIT_TEST( test_xdp_filter_host_udp_length_past_bounds_counts_too_large );
 #endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST
 
-#if defined(ROCKETNET_XDP) && ROCKETNET_XDP
+#if defined( ROCKETNET_XDP ) && ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_queue_default_matches_memory_plan );
 #endif // #if ROCKETNET_XDP

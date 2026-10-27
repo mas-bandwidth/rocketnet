@@ -104,7 +104,7 @@ static void server_receive_low_tick_clear_log()
     server_receive_low_tick_log_lock.clear( std::memory_order_release );
 }
 
-#if !defined(_WIN32) || ROCKETNET_DEV
+#if !defined( _WIN32 ) || ROCKETNET_DEV
 // the limit the warning names on this platform (sdk/rocketnet_platform.cpp,
 // rocketnet_server_receive_buffer_granted)
 static const char * server_receive_low_tick_limit_name()
@@ -136,7 +136,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_config.game_clock_epoch = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
-#if defined(_WIN32) && ROCKETNET_DEV
+#if defined( _WIN32 ) && ROCKETNET_DEV
     // Windows may grant this request in full. Inject only the warning decision
     // when that happens, while creating the real production server socket below.
     const int warning_grant_override = request / 2;
@@ -146,7 +146,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
 
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, 1000.0, &status );
-#if defined(_WIN32) && ROCKETNET_DEV
+#if defined( _WIN32 ) && ROCKETNET_DEV
     // A failed create can exit the test before the production helper consumes
     // the override; clear it before the fatal assertion either way.
     rocketnet_server_receive_buffer_warning_grant_override_for_testing( 0 );
@@ -161,7 +161,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, "socket receive buffer" ) != NULL );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected ) != NULL );
 
-#if defined(_WIN32) && ROCKETNET_DEV
+#if defined( _WIN32 ) && ROCKETNET_DEV
     const char * actual_grant_text = strstr( server_receive_low_tick_log, "actual grant " );
     server_receive_low_tick_require( actual_grant_text != NULL );
     actual_grant_text += strlen( "actual grant " );
@@ -173,19 +173,17 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     const bool warning_grant_override_used = actual_grant >= request;
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, "DEV test warning grant override" ) != NULL );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log,
-        warning_grant_override_used ? "bytes applied" : "bytes not needed" ) != NULL );
+                                             warning_grant_override_used ? "bytes applied" : "bytes not needed" ) != NULL );
     char override_text[64];
     const int warning_decision_grant = warning_grant_override_used ? warning_grant_override : actual_grant;
     snprintf( override_text, sizeof( override_text ), "granted %d of", warning_decision_grant );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, override_text ) != NULL );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, server_receive_low_tick_limit_name() ) != NULL );
     char expected_warning[384];
-    const char * warning_reason = warning_grant_override_used ?
-        "DEV test warning grant override; actual socket grant was reported above" :
-        "packets arriving between updates past the grant are dropped by the kernel";
+    const char * warning_reason = warning_grant_override_used ? "DEV test warning grant override; actual socket grant was reported above" : "packets arriving between updates past the grant are dropped by the kernel";
     snprintf( expected_warning, sizeof( expected_warning ),
-        "socket receive buffer granted %d of %d requested bytes; %s: raise %s",
-        warning_decision_grant, request, warning_reason, server_receive_low_tick_limit_name() );
+              "socket receive buffer granted %d of %d requested bytes; %s: raise %s",
+              warning_decision_grant, request, warning_reason, server_receive_low_tick_limit_name() );
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, expected_warning ) != NULL );
     printf( "server_receive_buffer_observed_log_begin\n%sserver_receive_buffer_observed_log_end\n",
             server_receive_low_tick_log );
@@ -195,14 +193,14 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     rocketnet_server_transport_update( server, 1000.0 );
     rn_native_server_transport_stop_and_destroy( server );
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
     // a real socket whose request no kernel grants in full: the grant that
     // comes back is short, and the warning names the limit to raise
     struct rocketnet_address_t address;
     server_receive_low_tick_require( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
     const int oversized_request = 2000000000;
     struct rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &address,
-        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, oversized_request );
+                                                                                    ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE, oversized_request );
     server_receive_low_tick_require( socket != NULL );
     const int granted = rocketnet_platform_socket_receive_buffer_bytes( socket );
     server_receive_low_tick_require( granted > 0 );
@@ -219,11 +217,11 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     server_receive_low_tick_require( strstr( server_receive_low_tick_log, granted_text ) != NULL );
 #endif
 
-#if defined(_WIN32) && ROCKETNET_DEV
+#if defined( _WIN32 ) && ROCKETNET_DEV
     printf( "server_receive_buffer_sized clients=%d request_bytes=%d actual_grant_bytes=%d warning_grant_override_bytes=%d warning_grant_override_used=%s limit=%s\n",
             server_receive_low_tick_server_clients, request, actual_grant, warning_grant_override,
             warning_grant_override_used ? "yes" : "no", server_receive_low_tick_limit_name() );
-#elif defined(_WIN32)
+#elif defined( _WIN32 )
     printf( "server_receive_buffer_sized clients=%d request_bytes=%d production_grant_report=observed\n",
             server_receive_low_tick_server_clients, request );
 #else
@@ -236,7 +234,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 }
 
-#if defined(__linux__)
+#if defined( __linux__ )
 
 #include <sys/resource.h>
 
@@ -268,7 +266,11 @@ static server_receive_low_tick_udp_row_t server_receive_low_tick_udp_row( uint16
         bool header = true;
         while ( fgets( line, sizeof( line ), f ) )
         {
-            if ( header ) { header = false; continue; }
+            if ( header )
+            {
+                header = false;
+                continue;
+            }
             char local[128], remote[128];
             unsigned int state = 0;
             unsigned long tx_queue = 0, rx_queue = 0;
@@ -279,9 +281,11 @@ static server_receive_low_tick_udp_row_t server_receive_low_tick_udp_row( uint16
                 continue;
             const size_t length = strlen( line );
             size_t end = length;
-            while ( end > 0 && ( line[end - 1] == '\n' || line[end - 1] == ' ' ) ) --end;
+            while ( end > 0 && ( line[end - 1] == '\n' || line[end - 1] == ' ' ) )
+                --end;
             size_t start = end;
-            while ( start > 0 && line[start - 1] != ' ' ) --start;
+            while ( start > 0 && line[start - 1] != ' ' )
+                --start;
             row.found = true;
             row.receive_queue_bytes += rx_queue;
             row.drops += strtoull( line + start, NULL, 10 );
@@ -310,7 +314,7 @@ bool rocketnet_test_server_receive_low_tick_measurement_requested()
 {
     char value[32];
     return rocketnet_test_getenv( "ROCKETNET_LOW_TICK_MEASURE", value, sizeof( value ) ) &&
-        ( value[0] == '1' || ( value[0] != '\0' && value[0] != '0' ) );
+           ( value[0] == '1' || ( value[0] != '\0' && value[0] != '0' ) );
 }
 
 static void server_receive_low_tick_write_u32( uint8_t * bytes, uint32_t value )
@@ -326,7 +330,7 @@ static uint32_t server_receive_low_tick_read_u32( const uint8_t * bytes )
     return ( (uint32_t) bytes[0] << 24 ) |
            ( (uint32_t) bytes[1] << 16 ) |
            ( (uint32_t) bytes[2] << 8 ) |
-             (uint32_t) bytes[3];
+           (uint32_t) bytes[3];
 }
 
 static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counters_t * counters )
@@ -340,8 +344,7 @@ static uint64_t server_receive_low_tick_refusals( const struct rocketnet_counter
 
 static uint64_t server_receive_low_tick_queue_overflows( const struct rocketnet_counters_t * counters )
 {
-    static const int queue_counters[] =
-    {
+    static const int queue_counters[] = {
         ROCKETNET_COUNTER_SEND_RING_FULL,
         ROCKETNET_COUNTER_ACKED_BATCH_FULL,
         ROCKETNET_COUNTER_CLIENT_ACKED_BATCH_FULL,
@@ -415,7 +418,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     client_config.game_clock_epoch = server_config.game_clock_epoch;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
 
-    std::vector<struct rocketnet_client_transport_t*> clients;
+    std::vector<struct rocketnet_client_transport_t *> clients;
     std::vector<uint32_t> client_packet_sequences;
     clients.reserve( max_clients );
     client_packet_sequences.resize( max_clients, 0 );
@@ -592,11 +595,11 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     }
     const uint64_t correctness_refusals = refusal_counters - socket_send_drops;
     const bool correctness_pass = before.found && after.found && clients_connected == max_clients &&
-        server_connected == max_clients && connection_state_failures == 0 && payloads_sent > 0 &&
-        payloads_received > 0 && payload_bytes_received > 0 && wire_packets > 0 && wire_bytes > 0 &&
-        payloads_checked == payloads_received && invalid_payload_lengths == 0 &&
-        invalid_payload_clients == 0 && invalid_payload_content == 0 &&
-        correctness_refusals == 0 && queue_overflow_counters == 0 && disconnect_counters == 0;
+                                  server_connected == max_clients && connection_state_failures == 0 && payloads_sent > 0 &&
+                                  payloads_received > 0 && payload_bytes_received > 0 && wire_packets > 0 && wire_bytes > 0 &&
+                                  payloads_checked == payloads_received && invalid_payload_lengths == 0 &&
+                                  invalid_payload_clients == 0 && invalid_payload_content == 0 &&
+                                  correctness_refusals == 0 && queue_overflow_counters == 0 && disconnect_counters == 0;
 
     // information, never a gate: the portable server has no performance
     // guarantee and the host's load and rmem_max decide the drop count

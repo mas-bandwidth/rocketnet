@@ -165,24 +165,24 @@ static std::vector<std::string> env_names_documented( const char * relative_path
     for ( int m = 0; m < 5; m++ )
     {
         const std::string & marker = markers[m];
-    for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
-    {
-        size_t begin = text.find( "ROCKETNET_", at );
-        size_t end = begin;
-        while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
-            end++;
+        for ( size_t at = text.find( marker ); at != std::string::npos; at = text.find( marker, at + 1 ) )
+        {
+            size_t begin = text.find( "ROCKETNET_", at );
+            size_t end = begin;
+            while ( end < text.size() && ( ( text[end] >= 'A' && text[end] <= 'Z' ) || ( text[end] >= '0' && text[end] <= '9' ) || text[end] == '_' ) )
+                end++;
         // docs/ENVIRONMENT.md names ROCKETNET_TEST_* seams. They are not public
         // config variables, so this harvest does not treat them as pass names.
-        if ( environment_doc && end > begin && text.compare( begin, strlen( "ROCKETNET_TEST_" ), "ROCKETNET_TEST_" ) == 0 )
-            continue;
+            if ( environment_doc && end > begin && text.compare( begin, strlen( "ROCKETNET_TEST_" ), "ROCKETNET_TEST_" ) == 0 )
+                continue;
         // Namespace prefixes are prose, not complete environment variable names.
-        if ( end > begin && text[end - 1] != '_' &&
+            if ( end > begin && text[end - 1] != '_' &&
 #if !ROCKETNET_DEV
-             text.substr( begin, end - begin ) != "ROCKETNET_CLIENT_STEP_DRIVEN" &&
+                 text.substr( begin, end - begin ) != "ROCKETNET_CLIENT_STEP_DRIVEN" &&
 #endif // #if !ROCKETNET_DEV
-             std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
-            names.push_back( text.substr( begin, end - begin ) );
-    }
+                 std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
+                names.push_back( text.substr( begin, end - begin ) );
+        }
     }
     return names;
 }
@@ -327,8 +327,7 @@ static std::string env_names_read_file( const char * relative_path )
 
 static void env_names_add_literal_reads( std::vector<std::string> & reads )
 {
-    const char * sources[] =
-    {
+    const char * sources[] = {
         "sdk/rocketnet.cpp",
         "sdk/rocketnet_api.cpp",
         "sdk/rocketnet_config.cpp",

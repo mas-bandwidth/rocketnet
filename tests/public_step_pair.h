@@ -67,8 +67,8 @@ static void public_step_token( uint16_t port, const uint8_t * server_public, con
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
-        PUBLIC_STEP_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     PUBLIC_STEP_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 }
 
 // The string token for a running server, sealed to the key the server made.
@@ -93,7 +93,7 @@ static void public_step_client_config( rocketnet_client_test_config_t * config )
 }
 
 static void public_step_pair_create( public_step_pair_t * pair, const public_step_identity_t * identity,
-                                     uint16_t fixed_port = 0, int (*thread_count)() = NULL )
+                                     uint16_t fixed_port = 0, int ( *thread_count )() = NULL )
 {
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;

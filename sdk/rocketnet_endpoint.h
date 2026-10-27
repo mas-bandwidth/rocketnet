@@ -67,30 +67,23 @@ struct rn_endpoint_config_t
     X( send_budget_enabled, int send_budget_enabled ) /* 0: this connection is uncapped (R6, docs/CHANNELS.md 11.5) */                                \
     X( unreliable_limit, uint32_t unreliable_limit ) /* the largest UNRELIABLE message: one record in one packet */                                   \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
-    X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */                  \
-    /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
+    X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */ /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \
     X( config_wait_start, double config_wait_start ) /* when this end began waiting for the remote endpoint's CONFIG, or -1 before its transport is connected */ \
     X( config_error, int config_error ) /* ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT once the remote endpoint's CONFIG is past reliable_timeout, else NONE */     \
-    X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */                                                             \
-    /* the start between start and finish (one at a time) */                                                                                          \
+    X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */ /* the start between start and finish (one at a time) */                                                                                          \
     X( pending_type, int pending_type ) /* -1 when no start is pending */                                                                             \
     X( pending_descriptor, uint32_t pending_descriptor ) /* UNRELIABLE: its send descriptor */                                                        \
-    X( pending_bytes, uint32_t pending_bytes )                                                                                                        \
-    /* the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla): */                                                             \
-    /* a fitting unreliable message written in the transport frame start took */                                                                      \
+    X( pending_bytes, uint32_t pending_bytes ) /* the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla): */ /* a fitting unreliable message written in the transport frame start took */                                                                      \
     X( pending_in_place, int pending_in_place ) /* 1 while the pending start is written in place */                                                   \
     X( pending_channel, int pending_channel ) /* its channel */                                                                                       \
     X( pending_header, int pending_header ) /* its header bytes in front of the data (0: the SINGLE form) */                                          \
     X( in_place_serial, uint32_t in_place_serial ) /* the finished in-place packet: its serial */                                                     \
     X( in_place_receipt, int in_place_receipt ) /* 1 when it carries a receipt (UNRELIABLE_WITH_ACK_RECEIPT) */                                       \
-    X( in_place_admitted, int in_place_admitted ) /* the wire bytes admitted to the budget (0: uncapped) */                                           \
-    /* the queued UNRELIABLE sends: the flat send-descriptor array ordered by enqueue_ticket */                                                                   \
+    X( in_place_admitted, int in_place_admitted ) /* the wire bytes admitted to the budget (0: uncapped) */ /* the queued UNRELIABLE sends: the flat send-descriptor array ordered by enqueue_ticket */                                                                   \
     X( unreliable_head, uint32_t unreliable_head )                                                                                                    \
     X( unreliable_tail, uint32_t unreliable_tail )                                                                                                    \
     X( unreliable_count, uint32_t unreliable_count )                                                                                                  \
-    X( unreliable_holes, uint32_t unreliable_holes ) /* cancelled unreliable descriptors still sequenced */                                             \
-    /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */                                                                        \
-    /* writes it, packet_sent or packet_failed ends it */                                                                                             \
+    X( unreliable_holes, uint32_t unreliable_holes ) /* cancelled unreliable descriptors still sequenced */ /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */ /* writes it, packet_sent or packet_failed ends it */                                                                                             \
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
     X( written, int written ) /* packets this update, in place and queued, against packets_per_update */                                          \
     X( packet_kind, int packet_kind ) /* RN_ENDPOINT_PACKET_* of the planned packet */                                                                \

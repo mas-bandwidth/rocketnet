@@ -24,7 +24,7 @@
 #include "rocketnet_pending_frames.h"
 #include "../sdk/rocketnet_constants.h"
 
-#if defined(__linux__) && defined(ROCKETNET_XDP) && ROCKETNET_XDP
+#if defined( __linux__ ) && defined( ROCKETNET_XDP ) && ROCKETNET_XDP
 #include "../sdk/rocketnet_xdp_socket_config.h"
 #endif
 
@@ -91,9 +91,12 @@ namespace
     bool flush( rocketnet_pending_frames_t<MODEL_FILL_FRAMES> * pending, fake_fill_ring_t * ring )
     {
         return pending->flush(
-            [&]( uint32_t count, uint32_t * index ) { return fake_reserve( ring, count, index ); },
-            [&]( uint32_t index, uint64_t frame ) { ring->addr[index & ( ring->size - 1 )] = frame; },
-            [&]( uint32_t count ) { ring->producer += count; } );
+            [&]( uint32_t count, uint32_t * index )
+            { return fake_reserve( ring, count, index ); },
+            [&]( uint32_t index, uint64_t frame )
+            { ring->addr[index & ( ring->size - 1 )] = frame; },
+            [&]( uint32_t count )
+            { ring->producer += count; } );
     }
 
     // the server's start: every receive frame on the fill ring
@@ -138,7 +141,7 @@ namespace
 
     uint32_t configured_model_fill_ring_size()
     {
-#if defined(__linux__) && defined(ROCKETNET_XDP) && ROCKETNET_XDP
+#if defined( __linux__ ) && defined( ROCKETNET_XDP ) && ROCKETNET_XDP
         struct xsk_umem_config config;
         rocketnet_xdp_umem_config( &config );
         rocketnet_unit_check( config.fill_size == ROCKETNET_XDP_FILL_RING_SIZE );

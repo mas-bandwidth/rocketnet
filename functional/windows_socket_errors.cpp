@@ -140,11 +140,11 @@ static void windows_socket_errors_sender_open( windows_socket_errors_sender_t * 
     sender->handle = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     windows_socket_errors_require( sender->handle != INVALID_SOCKET );
     int send_buffer = 4 * 1024 * 1024;
-    setsockopt( sender->handle, SOL_SOCKET, SO_SNDBUF, (const char*) &send_buffer, sizeof( send_buffer ) );
+    setsockopt( sender->handle, SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer, sizeof( send_buffer ) );
     memset( &sender->to, 0, sizeof( sender->to ) );
     if ( ipv6 )
     {
-        sockaddr_in6 * to = (sockaddr_in6*) &sender->to;
+        sockaddr_in6 * to = (sockaddr_in6 *) &sender->to;
         to->sin6_family = AF_INET6;
         to->sin6_addr = in6addr_loopback;
         to->sin6_port = htons( port );
@@ -152,7 +152,7 @@ static void windows_socket_errors_sender_open( windows_socket_errors_sender_t * 
     }
     else
     {
-        sockaddr_in * to = (sockaddr_in*) &sender->to;
+        sockaddr_in * to = (sockaddr_in *) &sender->to;
         to->sin_family = AF_INET;
         to->sin_addr.s_addr = htonl( INADDR_LOOPBACK );
         to->sin_port = htons( port );
@@ -163,8 +163,8 @@ static void windows_socket_errors_sender_open( windows_socket_errors_sender_t * 
 static void windows_socket_errors_sender_send( windows_socket_errors_sender_t * sender, const windows_socket_errors_datagram_t * datagram )
 {
     static const char nothing = 0;
-    const char * data = datagram->bytes.empty() ? &nothing : (const char*) &datagram->bytes[0];
-    const int result = sendto( sender->handle, data, (int) datagram->bytes.size(), 0, (const sockaddr*) &sender->to, sender->to_bytes );
+    const char * data = datagram->bytes.empty() ? &nothing : (const char *) &datagram->bytes[0];
+    const int result = sendto( sender->handle, data, (int) datagram->bytes.size(), 0, (const sockaddr *) &sender->to, sender->to_bytes );
     windows_socket_errors_require( result == (int) datagram->bytes.size() );
 }
 
@@ -305,7 +305,7 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
         uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
-        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t*) instance, counters );
+        rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, counters );
         // Size drops now also enter the server's public prefilter counters.
         // Keep this aggregate one event per datagram while retaining the
         // transport's legacy RECEIVE_DROPPED total for its direct readers.
@@ -316,7 +316,7 @@ static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_ses
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
     {
         uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
-        rocketnet_server_rio_counters( (rocketnet_server_rio_t*) instance, counters );
+        rocketnet_server_rio_counters( (rocketnet_server_rio_t *) instance, counters );
         // RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above;
         // failed completions are still transport-only drops.
         return counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
@@ -337,9 +337,9 @@ static int windows_socket_errors_pending( windows_socket_errors_session_t * sess
 {
     void * instance = rocketnet_server_transport_io_name_for_testing( session->server );
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
-        return rocketnet_server_iocp_pending( (rocketnet_server_iocp_t*) instance );
+        return rocketnet_server_iocp_pending( (rocketnet_server_iocp_t *) instance );
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
-        return rocketnet_server_rio_pending( (rocketnet_server_rio_t*) instance );
+        return rocketnet_server_rio_pending( (rocketnet_server_rio_t *) instance );
     return -1;
 }
 
@@ -433,7 +433,7 @@ static void windows_server_drops_runt_and_garbage( const windows_socket_errors_t
 }
 
 static void windows_server_counts_prefilter_size( const windows_socket_errors_transport_t * transport, const char * name,
-    const std::vector<windows_socket_errors_datagram_t> & datagrams, int counter )
+                                                  const std::vector<windows_socket_errors_datagram_t> & datagrams, int counter )
 {
     windows_socket_errors_session_t session;
     windows_socket_errors_session_start( &session, transport );
@@ -449,7 +449,7 @@ static void windows_server_counts_prefilter_size( const windows_socket_errors_tr
             break;
     }
     printf( "%s %s: sent %llu, prefilter size counter %llu\n", name, windows_socket_errors_label( transport ),
-        (unsigned long long) datagrams.size(), (unsigned long long) counted );
+            (unsigned long long) datagrams.size(), (unsigned long long) counted );
     fflush( stdout );
     windows_socket_errors_require( counted == datagrams.size() );
     windows_socket_errors_session_finish( &session );
@@ -461,7 +461,7 @@ static void windows_server_counts_oversize_as_prefilter_too_large_iocp_case()
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_oversize( datagrams );
     windows_server_counts_prefilter_size( &transport, "windows_server_counts_oversize_as_prefilter_too_large_iocp", datagrams,
-        ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+                                          ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
 }
 
 static void windows_server_counts_oversize_as_prefilter_too_large_rio_case()
@@ -470,7 +470,7 @@ static void windows_server_counts_oversize_as_prefilter_too_large_rio_case()
     std::vector<windows_socket_errors_datagram_t> datagrams;
     windows_socket_errors_oversize( datagrams );
     windows_server_counts_prefilter_size( &transport, "windows_server_counts_oversize_as_prefilter_too_large_rio", datagrams,
-        ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+                                          ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
 }
 
 static void windows_server_counts_runt_as_prefilter_too_short_rio_case()
@@ -483,7 +483,7 @@ static void windows_server_counts_runt_as_prefilter_too_short_rio_case()
     datagrams.push_back( empty );
     datagrams.push_back( one );
     windows_server_counts_prefilter_size( &transport, "windows_server_counts_runt_as_prefilter_too_short_rio", datagrams,
-        ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
+                                          ROCKETNET_COUNTER_PREFILTER_TOO_SHORT );
 }
 
 // the prefilter counters a client's refusal of a datagram from the server it

@@ -218,7 +218,7 @@ static uint32_t rocketnet_simulator_address_hash( const struct rocketnet_address
 {
     uint32_t hash = 2166136261u;
 
-    #define ROCKETNET_SIMULATOR_FOLD( byte )                    \
+#define ROCKETNET_SIMULATOR_FOLD( byte )                    \
         do {                                                    \
             hash ^= (uint32_t) (uint8_t) ( byte );              \
             hash *= 16777619u;                                  \
@@ -230,13 +230,13 @@ static uint32_t rocketnet_simulator_address_hash( const struct rocketnet_address
     {
         ROCKETNET_SIMULATOR_FOLD( address->port );
         ROCKETNET_SIMULATOR_FOLD( address->port >> 8 );
-        const uint8_t * bytes = (const uint8_t*) &address->data;
+        const uint8_t * bytes = (const uint8_t *) &address->data;
         const int count = ( address->type == ROCKETNET_ADDRESS_IPV4 ) ? 4 : 16;
         for ( int i = 0; i < count; i++ )
             ROCKETNET_SIMULATOR_FOLD( bytes[i] );
     }
 
-    #undef ROCKETNET_SIMULATOR_FOLD
+#undef ROCKETNET_SIMULATOR_FOLD
 
     hash ^= hash >> 15;
     hash *= 2246822519u;
@@ -283,10 +283,10 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
     const int occupancy_words = (int) ( ( (uint64_t) capacity + 63 ) / 64 );
     const int summary_words = ( occupancy_words + 63 ) / 64;
 
-    struct rocketnet_network_simulator_t * simulator = (struct rocketnet_network_simulator_t*) rocketnet_malloc( context, sizeof(struct rocketnet_network_simulator_t) );
+    struct rocketnet_network_simulator_t * simulator = (struct rocketnet_network_simulator_t *) rocketnet_malloc( context, sizeof( struct rocketnet_network_simulator_t ) );
     if ( !simulator )
         return NULL;
-    memset( simulator, 0, sizeof(*simulator) );
+    memset( simulator, 0, sizeof( *simulator ) );
 
     simulator->context = context;
     simulator->capacity = capacity;
@@ -299,17 +299,17 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
     simulator->config_pending = 0;
     simulator->created_active = 0;
 
-    simulator->used = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    simulator->delivery_time = (double*) rocketnet_malloc( context, sizeof(double) * (size_t) capacity );
-    simulator->from = (struct rocketnet_address_t*) rocketnet_malloc( context, sizeof(struct rocketnet_address_t) * (size_t) capacity );
-    simulator->to = (struct rocketnet_address_t*) rocketnet_malloc( context, sizeof(struct rocketnet_address_t) * (size_t) capacity );
-    simulator->packet_bytes = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    simulator->packet_data = (uint8_t*) rocketnet_malloc( context, (size_t) ROCKETNET_RECEIVE_CEILING * (size_t) capacity );
-    simulator->generation = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) capacity );
-    simulator->slot_index_shard = (int*) rocketnet_malloc( context, sizeof(int) * (size_t) capacity );
-    simulator->shard_occupancy = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) shard_count * (size_t) occupancy_words );
-    simulator->shard_summary = (uint64_t*) rocketnet_malloc( context, sizeof(uint64_t) * (size_t) shard_count * (size_t) summary_words );
-    simulator->shard_min_delivery_time = (double*) rocketnet_malloc( context, sizeof(double) * (size_t) shard_count );
+    simulator->used = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
+    simulator->delivery_time = (double *) rocketnet_malloc( context, sizeof( double ) * (size_t) capacity );
+    simulator->from = (struct rocketnet_address_t *) rocketnet_malloc( context, sizeof( struct rocketnet_address_t ) * (size_t) capacity );
+    simulator->to = (struct rocketnet_address_t *) rocketnet_malloc( context, sizeof( struct rocketnet_address_t ) * (size_t) capacity );
+    simulator->packet_bytes = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
+    simulator->packet_data = (uint8_t *) rocketnet_malloc( context, (size_t) ROCKETNET_RECEIVE_CEILING * (size_t) capacity );
+    simulator->generation = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) capacity );
+    simulator->slot_index_shard = (int *) rocketnet_malloc( context, sizeof( int ) * (size_t) capacity );
+    simulator->shard_occupancy = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) shard_count * (size_t) occupancy_words );
+    simulator->shard_summary = (uint64_t *) rocketnet_malloc( context, sizeof( uint64_t ) * (size_t) shard_count * (size_t) summary_words );
+    simulator->shard_min_delivery_time = (double *) rocketnet_malloc( context, sizeof( double ) * (size_t) shard_count );
 
     if ( !simulator->used || !simulator->delivery_time || !simulator->from || !simulator->to ||
          !simulator->packet_bytes || !simulator->packet_data || !simulator->generation ||
@@ -320,10 +320,10 @@ struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void 
         return NULL;
     }
 
-    memset( simulator->used, 0, sizeof(int) * (size_t) capacity );
-    memset( simulator->generation, 0, sizeof(uint64_t) * (size_t) capacity );
-    memset( simulator->shard_occupancy, 0, sizeof(uint64_t) * (size_t) shard_count * (size_t) occupancy_words );
-    memset( simulator->shard_summary, 0, sizeof(uint64_t) * (size_t) shard_count * (size_t) summary_words );
+    memset( simulator->used, 0, sizeof( int ) * (size_t) capacity );
+    memset( simulator->generation, 0, sizeof( uint64_t ) * (size_t) capacity );
+    memset( simulator->shard_occupancy, 0, sizeof( uint64_t ) * (size_t) shard_count * (size_t) occupancy_words );
+    memset( simulator->shard_summary, 0, sizeof( uint64_t ) * (size_t) shard_count * (size_t) summary_words );
 
     for ( int i = 0; i < capacity; i++ )
         simulator->slot_index_shard[i] = ROCKETNET_SIMULATOR_NO_SLOT;
@@ -438,7 +438,7 @@ void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator
     simulator->pending.duplicate_percent = duplicate_percent;
     simulator->config_pending = 1;
     rocketnet_platform_atomic_store_u64( &simulator->setting_word,
-        rocketnet_platform_atomic_load_u64( &simulator->setting_word ) | ROCKETNET_SIMULATOR_SETTING_PENDING );
+                                         rocketnet_platform_atomic_load_u64( &simulator->setting_word ) | ROCKETNET_SIMULATOR_SETTING_PENDING );
     rocketnet_platform_mutex_release( mutex );
 }
 
@@ -448,7 +448,7 @@ void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator
 // over the answer is read from the setting word and no lock is taken, so an
 // inactive simulator puts no mutex on the send path.
 bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator,
-                                                struct rocketnet_platform_mutex_t * mutex )
+                                               struct rocketnet_platform_mutex_t * mutex )
 {
     rocketnet_assert( simulator );
     rocketnet_assert( mutex );
@@ -498,7 +498,7 @@ bool rocketnet_network_simulator_patterns( struct rocketnet_network_simulator_t 
     simulator->reverse_window = reverse_window;
     if ( reverse_window >= 2 )
     {
-        simulator->window = (struct rocketnet_simulator_window_entry_t*) rocketnet_malloc( simulator->context, sizeof(struct rocketnet_simulator_window_entry_t) * (size_t) reverse_window );
+        simulator->window = (struct rocketnet_simulator_window_entry_t *) rocketnet_malloc( simulator->context, sizeof( struct rocketnet_simulator_window_entry_t ) * (size_t) reverse_window );
         if ( !simulator->window )
         {
             simulator->reverse_window = 0;
@@ -526,7 +526,7 @@ bool rocketnet_network_simulator_patterns_active( const struct rocketnet_network
 static int rocketnet_simulator_ctz64( uint64_t value )
 {
     rocketnet_assert( value != 0 );
-#if defined(_MSC_VER)
+#if defined( _MSC_VER )
     unsigned long index;
     _BitScanForward64( &index, value );
     return (int) index;
@@ -536,35 +536,35 @@ static int rocketnet_simulator_ctz64( uint64_t value )
 }
 
 static uint64_t * rocketnet_simulator_occupancy_word( struct rocketnet_network_simulator_t * simulator,
-                                                       int shard,
-                                                       int word )
+                                                      int shard,
+                                                      int word )
 {
     return &simulator->shard_occupancy[(size_t) shard * (size_t) simulator->occupancy_words + (size_t) word];
 }
 
 static const uint64_t * rocketnet_simulator_occupancy_word_const( const struct rocketnet_network_simulator_t * simulator,
-                                                                   int shard,
-                                                                   int word )
+                                                                  int shard,
+                                                                  int word )
 {
     return &simulator->shard_occupancy[(size_t) shard * (size_t) simulator->occupancy_words + (size_t) word];
 }
 
 static uint64_t * rocketnet_simulator_summary_word( struct rocketnet_network_simulator_t * simulator,
-                                                     int shard,
-                                                     int word )
+                                                    int shard,
+                                                    int word )
 {
     return &simulator->shard_summary[(size_t) shard * (size_t) simulator->summary_words + (size_t) word];
 }
 
 static const uint64_t * rocketnet_simulator_summary_word_const( const struct rocketnet_network_simulator_t * simulator,
-                                                                 int shard,
-                                                                 int word )
+                                                                int shard,
+                                                                int word )
 {
     return &simulator->shard_summary[(size_t) shard * (size_t) simulator->summary_words + (size_t) word];
 }
 
 static void rocketnet_simulator_record_membership_updates( struct rocketnet_network_simulator_t * simulator,
-                                                            uint64_t updates )
+                                                           uint64_t updates )
 {
     simulator->index_stats.membership_word_updates += updates;
     if ( updates > simulator->index_stats.max_membership_word_updates )
@@ -600,7 +600,7 @@ static void rocketnet_simulator_index_add( struct rocketnet_network_simulator_t 
 }
 
 static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator_t * simulator,
-                                               const struct rocketnet_network_simulator_slot_handle_t * handle )
+                                              const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
     if ( handle == NULL || handle->slot < 0 || handle->slot >= simulator->capacity ||
          !simulator->used[handle->slot] || simulator->generation[handle->slot] != handle->generation )
@@ -638,7 +638,7 @@ static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator
 }
 
 static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * simulator,
-                                         const struct rocketnet_network_simulator_slot_handle_t * handle )
+                                        const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
     if ( !rocketnet_simulator_index_remove( simulator, handle ) )
         return false;
@@ -806,12 +806,12 @@ static void rocketnet_simulator_audit_index( struct rocketnet_network_simulator_
         {
             if ( simulator->slot_index_shard[i] != ROCKETNET_SIMULATOR_NO_SLOT )
             {
-                snprintf( detail, sizeof(detail), "slot %d is free but still belongs to index shard %d", i, simulator->slot_index_shard[i] );
+                snprintf( detail, sizeof( detail ), "slot %d is free but still belongs to index shard %d", i, simulator->slot_index_shard[i] );
                 rocketnet_simulator_audit_failed( detail );
             }
             if ( i < simulator->free_hint )
             {
-                snprintf( detail, sizeof(detail), "slot %d is free but below the free hint %d -- send would skip it and take a higher slot", i, simulator->free_hint );
+                snprintf( detail, sizeof( detail ), "slot %d is free but below the free hint %d -- send would skip it and take a higher slot", i, simulator->free_hint );
                 rocketnet_simulator_audit_failed( detail );
             }
             continue;
@@ -824,18 +824,18 @@ static void rocketnet_simulator_audit_index( struct rocketnet_network_simulator_
         const uint64_t summary = *rocketnet_simulator_summary_word_const( simulator, shard, word >> 6 );
         if ( simulator->slot_index_shard[i] != shard || ( occupancy & bit ) == 0 )
         {
-            snprintf( detail, sizeof(detail), "slot %d holds a packet but its shard bitmap membership is missing", i );
+            snprintf( detail, sizeof( detail ), "slot %d holds a packet but its shard bitmap membership is missing", i );
             rocketnet_simulator_audit_failed( detail );
         }
         if ( ( summary & ( UINT64_C( 1 ) << ( word & 63 ) ) ) == 0 )
         {
-            snprintf( detail, sizeof(detail), "slot %d is occupied but occupancy word %d is absent from shard %d's summary", i, word, shard );
+            snprintf( detail, sizeof( detail ), "slot %d is occupied but occupancy word %d is absent from shard %d's summary", i, word, shard );
             rocketnet_simulator_audit_failed( detail );
         }
 
         if ( simulator->delivery_time[i] < simulator->shard_min_delivery_time[shard] )
         {
-            snprintf( detail, sizeof(detail), "shard %d claims a minimum delivery time later than slot %d actually holds -- due packets can be skipped", shard, i );
+            snprintf( detail, sizeof( detail ), "shard %d claims a minimum delivery time later than slot %d actually holds -- due packets can be skipped", shard, i );
             rocketnet_simulator_audit_failed( detail );
         }
     }
@@ -1029,7 +1029,7 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
         if ( slot != expected )
         {
             char detail[256];
-            snprintf( detail, sizeof(detail),
+            snprintf( detail, sizeof( detail ),
                       "the index chose slot %d where the reference scan chose slot %d at t=%.6f -- the wire is delivering a different packet sequence",
                       slot, expected, current_time );
             rocketnet_simulator_audit_failed( detail );
@@ -1053,8 +1053,8 @@ int rocketnet_network_simulator_receive( struct rocketnet_network_simulator_t * 
 }
 
 bool rocketnet_network_simulator_test_handle_for_slot( const struct rocketnet_network_simulator_t * simulator,
-                                                        int slot,
-                                                        struct rocketnet_network_simulator_slot_handle_t * handle )
+                                                       int slot,
+                                                       struct rocketnet_network_simulator_slot_handle_t * handle )
 {
     if ( !simulator || !handle || slot < 0 || slot >= simulator->capacity || !simulator->used[slot] )
         return false;
@@ -1064,7 +1064,7 @@ bool rocketnet_network_simulator_test_handle_for_slot( const struct rocketnet_ne
 }
 
 bool rocketnet_network_simulator_test_remove_handle( struct rocketnet_network_simulator_t * simulator,
-                                                      const struct rocketnet_network_simulator_slot_handle_t * handle )
+                                                     const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
     if ( !simulator )
         return false;
@@ -1072,7 +1072,7 @@ bool rocketnet_network_simulator_test_remove_handle( struct rocketnet_network_si
 }
 
 void rocketnet_network_simulator_test_index_stats( const struct rocketnet_network_simulator_t * simulator,
-                                                    struct rocketnet_network_simulator_index_stats_t * stats )
+                                                   struct rocketnet_network_simulator_index_stats_t * stats )
 {
     rocketnet_assert( simulator );
     rocketnet_assert( stats );

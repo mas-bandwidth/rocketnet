@@ -165,14 +165,14 @@ struct rocketnet_network_simulator_index_stats_t
 };
 
 bool rocketnet_network_simulator_test_handle_for_slot( const struct rocketnet_network_simulator_t * simulator,
-                                                        int slot,
-                                                        struct rocketnet_network_simulator_slot_handle_t * handle );
+                                                       int slot,
+                                                       struct rocketnet_network_simulator_slot_handle_t * handle );
 
 bool rocketnet_network_simulator_test_remove_handle( struct rocketnet_network_simulator_t * simulator,
-                                                      const struct rocketnet_network_simulator_slot_handle_t * handle );
+                                                     const struct rocketnet_network_simulator_slot_handle_t * handle );
 
 void rocketnet_network_simulator_test_index_stats( const struct rocketnet_network_simulator_t * simulator,
-                                                    struct rocketnet_network_simulator_index_stats_t * stats );
+                                                   struct rocketnet_network_simulator_index_stats_t * stats );
 
 void rocketnet_network_simulator_test_reset_index_stats( struct rocketnet_network_simulator_t * simulator );
 

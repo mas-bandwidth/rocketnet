@@ -11,7 +11,8 @@
 #include "rocketnet_internal.h"
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 void rocketnet_run_tests( void );

@@ -81,7 +81,7 @@ static void stop_capture()
 static void token_with_server_key( uint8_t * token, const uint8_t * server_key )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
@@ -131,7 +131,7 @@ static void dev_warning_server_config( rocketnet_server_transport_config_t * con
 {
     rocketnet_server_transport_dev_config( config );
     config->max_clients = ROCKETNET_MAX_CLIENTS;
-    snprintf( config->transport, sizeof(config->transport), "%s", "loopback" );
+    snprintf( config->transport, sizeof( config->transport ), "%s", "loopback" );
 }
 
 // Development creates a full-capacity server before checking the warning.

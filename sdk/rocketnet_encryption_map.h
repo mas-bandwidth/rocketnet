@@ -58,7 +58,7 @@ struct rocketnet_encryption_mapping_control_t
     ROCKETNET_ENCRYPTION_MAPPING_CONTROL_LAYOUT_FIELDS( ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE )
 #undef ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE
 };
-static_assert( sizeof(struct rocketnet_encryption_mapping_control_t) == 32, "timeout control stays compact" );
+static_assert( sizeof( struct rocketnet_encryption_mapping_control_t ) == 32, "timeout control stays compact" );
 
 /*
     The declaration manifest: the struct is declared from this list, so a

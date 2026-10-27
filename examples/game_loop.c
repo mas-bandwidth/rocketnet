@@ -26,7 +26,11 @@
 #define BINS            10000       // 0.1 us bins up to 1 ms, then one overflow bin
 #define MESSAGE_BYTES   12          // the frame it was queued in, and a position (two floats)
 
-struct latency_t { double sum; uint32_t count, min, max; };
+struct latency_t
+{
+    double sum;
+    uint32_t count, min, max;
+};
 
 static struct latency_t to_server, to_client;
 static uint32_t bins[BINS + 1], count;      // the client frame costs
@@ -73,10 +77,14 @@ int main( int argc, char ** argv )
     int num_clients = 32, seconds = 5, wrong_order = 0;
     for ( int i = 1; i < argc; i++ )
     {
-        if ( strcmp( argv[i], "--wrong-order" ) == 0 ) wrong_order = 1;
-        else if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc ) num_clients = atoi( argv[++i] );
-        else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc ) seconds = atoi( argv[++i] );
-        else seconds = 0;
+        if ( strcmp( argv[i], "--wrong-order" ) == 0 )
+            wrong_order = 1;
+        else if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc )
+            num_clients = atoi( argv[++i] );
+        else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
+            seconds = atoi( argv[++i] );
+        else
+            seconds = 0;
     }
     if ( num_clients < 1 || num_clients > ROCKETNET_MAX_CLIENTS || seconds < 1 || seconds > 3600 )
     {

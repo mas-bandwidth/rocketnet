@@ -30,7 +30,7 @@ struct plan_counting_allocator_t
 
 static void * plan_alloc( void * context, size_t bytes )
 {
-    plan_counting_allocator_t * state = (plan_counting_allocator_t*) context;
+    plan_counting_allocator_t * state = (plan_counting_allocator_t *) context;
     if ( state )
     {
         state->total_bytes += bytes;
@@ -39,25 +39,25 @@ static void * plan_alloc( void * context, size_t bytes )
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
-    uintptr_t address = ( ( (uintptr_t) base + sizeof(void*) + 63 ) & ~(uintptr_t)63 ) + 16;
-    memcpy( (void*) ( address - sizeof(void*) ), &base, sizeof(base) );
-    return (void*) address;
+    uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
+    memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    return (void *) address;
 }
 
 static void plan_free( void * context, void * pointer )
 {
-    plan_counting_allocator_t * state = (plan_counting_allocator_t*) context;
+    plan_counting_allocator_t * state = (plan_counting_allocator_t *) context;
     if ( state )
         state->live--;
     void * base = NULL;
-    memcpy( &base, (uint8_t*) pointer - sizeof(void*), sizeof(base) );
+    memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     free( base );
 }
 
 static void plan_make_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
@@ -86,7 +86,7 @@ static void test_client_memory_plan_non_step_driven()
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.transport, sizeof(config.transport), "%s", "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
     config.step_driven = 0;
 
     const uint64_t plan_bytes = rocketnet_client_transport_required_memory( &config, "portable" );
@@ -131,7 +131,7 @@ static void test_client_memory_plan_step_driven()
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    snprintf( config.transport, sizeof(config.transport), "%s", "portable" );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
     config.step_driven = 1;
 
     const uint64_t plan_bytes = rocketnet_client_transport_required_memory( &config, "portable" );

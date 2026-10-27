@@ -81,7 +81,7 @@ template <typename transport_t>
 struct rn_native_backend_wait_t
 {
     transport_t * transport;
-    bool (*stopped)( transport_t * );
+    bool ( *stopped )( transport_t * );
 };
 
 template <typename transport_t>
@@ -93,7 +93,7 @@ static int rn_native_backend_is_stopped( void * object )
 
 template <typename transport_t>
 static inline void rn_native_backend_stop_and_destroy( transport_t * transport,
-    void (*stop)( transport_t * ), bool (*stopped)( transport_t * ), void (*destroy)( transport_t * ) )
+                                                       void ( *stop )( transport_t * ), bool ( *stopped )( transport_t * ), void ( *destroy )( transport_t * ) )
 {
     if ( transport )
     {

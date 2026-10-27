@@ -124,7 +124,7 @@ uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config
 
 static void rn_message_count( rn_message_object_t * object, int counter, uint64_t amount = 1 )
 {
-    rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &object->counters.values[counter], amount );
+    rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &object->counters.values[counter], amount );
 }
 
 // ---------------------------------------------------------------
@@ -153,8 +153,7 @@ void rn_message_object_delivery_capture( struct rn_message_object_t * object, in
     const struct rn_ordered_t * ordered = &object->connections[index].ordered;
     capture->reliable_unacked = ordered->send.next >= ordered->send.U ? ordered->send.next - ordered->send.U : 0;
     capture->reliable_resend_queued = ordered->ack.resend_count;
-    capture->reliable_oldest_unacked_age_seconds = capture->reliable_unacked > 0 && ordered->ack.has_oldest ?
-                                                   object->time - ordered->ack.oldest_first_send : -1.0;
+    capture->reliable_oldest_unacked_age_seconds = capture->reliable_unacked > 0 && ordered->ack.has_oldest ? object->time - ordered->ack.oldest_first_send : -1.0;
     capture->srtt_seconds = ordered->ack.srtt;
     capture->resend_delay_seconds = ordered->ack.resend_delay;
     capture->window_stalled = ordered->send.stalled ? 1 : 0;
@@ -258,7 +257,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
     const size_t batch_begin = offsetof( rn_message_object_t, batch_connection );
     const size_t batch_end = offsetof( rn_message_object_t, send_next_connection );
     static_assert( offsetof( rn_message_object_t, batch_entry ) > offsetof( rn_message_object_t, batch_connection ) &&
-                   offsetof( rn_message_object_t, batch_entry ) < offsetof( rn_message_object_t, send_next_connection ),
+                       offsetof( rn_message_object_t, batch_entry ) < offsetof( rn_message_object_t, send_next_connection ),
                    "the batch arrays are one span of the object" );
     memset( block, 0, batch_begin );
     memset( block + batch_end, 0, (size_t) layout.arena - batch_end );
@@ -363,7 +362,7 @@ static void rn_message_flush_unreliable( rn_message_object_t * object, int index
     {
         if ( build->receipt_count )
             rn_window_ack_commit_receipt_packet( &connection->ordered.ack, build->context.packet_id,
-                                                build->receipt_serials, build->receipt_count, object->time );
+                                                 build->receipt_serials, build->receipt_count, object->time );
         if ( admitted )
             rocketnet_send_budget_settle( &connection->budget, admitted, wire_bytes );
     }
@@ -371,12 +370,14 @@ static void rn_message_flush_unreliable( rn_message_object_t * object, int index
     {
         if ( admitted )
             rocketnet_send_budget_settle( &connection->budget, admitted, 0 );    // tla/RNSendBudget.tla SendFailed: refund the whole charge
-        for ( int i = 0; i < records; ++i ) rn_message_count( object, failed_counter );
+        for ( int i = 0; i < records; ++i )
+            rn_message_count( object, failed_counter );
         for ( uint32_t i = 0; i < build->receipt_count; ++i )
             rn_window_ack_receipt_emit_loss( &connection->ordered.ack, build->receipt_serials[i] );
     }
-    if ( records > 0 ) connection->written++;
-    memset( build, 0, sizeof(*build) );
+    if ( records > 0 )
+        connection->written++;
+    memset( build, 0, sizeof( *build ) );
 }
 
 
@@ -527,7 +528,7 @@ void rn_message_object_kick( struct rn_message_object_t * object, int index, int
 // carries) when Observe bound or dropped the slot in this update, which
 // discards it (CHANNELS 10.2, 11.5).
 
-static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, uint64_t (*entry_connection)( void * transport, int k ), int k )
+static rn_message_connection_t * rn_message_admit( rn_message_object_t * object, const int * client_index, uint64_t ( *entry_connection )( void * transport, int k ), int k )
 {
     const int index = client_index ? client_index[k] : 0;
     if ( index < 0 || index >= object->num_connections )
@@ -784,8 +785,7 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
 {
     const bool unreliable = reliability == ROCKETNET_RELIABILITY_UNRELIABLE || reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
                             reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
-    return unreliable && object->link.max_payload_bytes ?
-        object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    return unreliable && object->link.max_payload_bytes ? object->link.max_payload_bytes( object->link.transport ) : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 }
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
@@ -889,8 +889,7 @@ uint8_t * rn_message_object_start( struct rn_message_object_t * object, int inde
         // Reserve a complete round for the rotating pass, including this
         // connection's reliable work. In-place writes may use surplus slots,
         // but application call order cannot consume another client's turn.
-        const int send_connections = object->link.send_connected_count ?
-            object->link.send_connected_count( object->link.transport ) : object->num_connections;
+        const int send_connections = object->link.send_connected_count ? object->link.send_connected_count( object->link.transport ) : object->num_connections;
         if ( header >= 0 && object->link.send_capacity_available &&
              object->link.send_capacity_available( object->link.transport ) <= send_connections )
             header = RN_ENDPOINT_IN_PLACE_QUEUED;
@@ -1041,7 +1040,8 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
             return 0;
         }
         uint32_t serial = ++connection->serial;
-        if ( !serial ) serial = ++connection->serial;
+        if ( !serial )
+            serial = ++connection->serial;
         if ( type == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
             build->receipt_serials[build->receipt_count++] = serial;
         rn_endpoint_abort( connection ); // clear the reservation; committed bytes stay in the frame
@@ -1622,9 +1622,7 @@ static struct rocketnet_message_server_t * rn_message_server_create( void * cont
         return NULL;
     }
 
-    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ?
-        rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status ) :
-        rocketnet_server_transport_create_current_ex( context, address, transport_config, status );
+    rocketnet_server_transport_t * transport = ( resolved_memory_budget && transport_config ) ? rocketnet_server_transport_create_resolved( context, address, transport_config, *resolved_memory_budget, status ) : rocketnet_server_transport_create_current_ex( context, address, transport_config, status );
     if ( !transport )
         return NULL;
 

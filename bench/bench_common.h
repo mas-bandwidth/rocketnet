@@ -163,7 +163,7 @@ static inline void bench_receive_refused_or_empty_except( const char * call, int
             return;
     }
     char detail[192];
-    snprintf( detail, sizeof(detail), "refused with errno %d (%s) -- this is not an empty queue, so every number below it would be a fiction",
+    snprintf( detail, sizeof( detail ), "refused with errno %d (%s) -- this is not an empty queue, so every number below it would be a fiction",
               error, strerror( error ) );
     bench_fatal( call, detail );
 }
@@ -220,7 +220,7 @@ static inline int bench_send_observe( struct bench_send_health_t * health, const
     if ( health->consecutive_refusals < BENCH_SEND_REFUSAL_LIMIT )
         return 0;
     char detail[224];
-    snprintf( detail, sizeof(detail),
+    snprintf( detail, sizeof( detail ),
               "%llu sends in a row refused with errno %d (%s) -- this host cannot do what this harness measures, and a silent spin here reports pps=0 as if the transport were merely slow",
               (unsigned long long) health->consecutive_refusals, error, strerror( error ) );
     bench_fatal( call, detail );
@@ -251,8 +251,10 @@ static inline int bench_send_batch_observe( struct bench_send_health_t * health,
         sent = accepted;
     }
     else
-        for ( int i = 0; i < accepted; ++i ) sent += bench_send_ok( health, call );
-    for ( int i = accepted; i < attempted; ++i ) sent += bench_send_refused( health, call, error );
+        for ( int i = 0; i < accepted; ++i )
+            sent += bench_send_ok( health, call );
+    for ( int i = accepted; i < attempted; ++i )
+        sent += bench_send_refused( health, call, error );
     return sent;
 }
 
@@ -263,7 +265,7 @@ static inline void bench_send_validate( const struct bench_send_health_t * healt
     if ( health->refused == health->back_pressure )
         return;
     char detail[224];
-    snprintf( detail, sizeof(detail),
+    snprintf( detail, sizeof( detail ),
               "refused=%llu back_pressure=%llu last_errno=%d (%s) -- non-back-pressure send failures invalidate this sample",
               (unsigned long long) health->refused, (unsigned long long) health->back_pressure,
               health->last_refusal_error, strerror( health->last_refusal_error ) );
@@ -301,7 +303,7 @@ struct bench_hist_t
 
 static inline void bench_hist_reset( struct bench_hist_t * hist )
 {
-    memset( hist, 0, sizeof(*hist) );
+    memset( hist, 0, sizeof( *hist ) );
 }
 
 static inline void bench_hist_add( struct bench_hist_t * hist, uint64_t ns, uint64_t count )
@@ -337,12 +339,12 @@ static inline uint64_t bench_hist_quantile( const struct bench_hist_t * hist, do
 
 static inline void bench_fill_packet( uint8_t * packet, int bytes, uint32_t flow, uint64_t sequence )
 {
-    packet[0] = (uint8_t) ( flow       );
-    packet[1] = (uint8_t) ( flow >> 8  );
+    packet[0] = (uint8_t) ( flow );
+    packet[1] = (uint8_t) ( flow >> 8 );
     packet[2] = (uint8_t) ( flow >> 16 );
     packet[3] = (uint8_t) ( flow >> 24 );
     for ( int i = 0; i < 8; i++ )
-        packet[4+i] = (uint8_t) ( sequence >> ( i * 8 ) );
+        packet[4 + i] = (uint8_t) ( sequence >> ( i * 8 ) );
     for ( int i = 12; i < bytes; i++ )
         packet[i] = (uint8_t) ( i + (int) flow );
 }
@@ -372,11 +374,11 @@ static inline uint64_t bench_fold_packet( const uint8_t * packet, int bytes )
 
 struct bench_windows_t
 {
-    double   warmup_seconds;
-    double   window_seconds;
-    int      num_windows;
+    double warmup_seconds;
+    double window_seconds;
+    int num_windows;
 
-    int      window_index;                          /* -1 during warm-up */
+    int window_index;                          /* -1 during warm-up */
     uint64_t window_start_ns;
     uint64_t packets;
     uint64_t bytes;
@@ -390,7 +392,7 @@ struct bench_windows_t
 
 static inline void bench_windows_init( struct bench_windows_t * w, double warmup_seconds, double window_seconds, int num_windows )
 {
-    memset( w, 0, sizeof(*w) );
+    memset( w, 0, sizeof( *w ) );
     w->warmup_seconds = warmup_seconds;
     w->window_seconds = window_seconds;
     w->num_windows = num_windows;
@@ -474,7 +476,10 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
     if ( w->window_index >= 0 )
         bench_window_emit( w, now );
     else
-        { printf( "WARMUP done secs=%.3f pkts=%llu\n", elapsed, (unsigned long long) w->packets ); fflush( stdout ); }
+    {
+        printf( "WARMUP done secs=%.3f pkts=%llu\n", elapsed, (unsigned long long) w->packets );
+        fflush( stdout );
+    }
 
     w->window_index++;
     if ( w->window_index >= w->num_windows )
@@ -503,8 +508,8 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
 
 struct bench_sender_options_t
 {
-    int      drop_half;
-    int      zero_copy;
+    int drop_half;
+    int zero_copy;
     uint64_t pace_pps;                              /* 0 = flat out */
 };
 
@@ -530,7 +535,7 @@ static inline int bench_parse_poll_usec( int argc, char ** argv, int first )
 static inline struct bench_sender_options_t bench_parse_sender_options( int argc, char ** argv, int first )
 {
     struct bench_sender_options_t options;
-    memset( &options, 0, sizeof(options) );
+    memset( &options, 0, sizeof( options ) );
     for ( int i = first; i < argc; i++ )
     {
         if ( strcmp( argv[i], "drop-half" ) == 0 )
@@ -563,19 +568,22 @@ static inline int bench_udp_socket( void )
 {
     int fd = socket( AF_INET, SOCK_DGRAM, 0 );
     if ( fd < 0 )
-        { perror( "socket" ); exit( 1 ); }
+    {
+        perror( "socket" );
+        exit( 1 );
+    }
     int size = 4 * 1024 * 1024;                     /* request big; kernel caps at r/wmem_max -- actual is reported */
-    setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size) );
-    setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof(size) );
+    setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &size, sizeof( size ) );
+    setsockopt( fd, SOL_SOCKET, SO_SNDBUF, &size, sizeof( size ) );
     return fd;
 }
 
 static inline void bench_report_buffers( int fd )
 {
     int rcv = 0, snd = 0;
-    socklen_t len = sizeof(rcv);
+    socklen_t len = sizeof( rcv );
     getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &rcv, &len );
-    len = sizeof(snd);
+    len = sizeof( snd );
     getsockopt( fd, SOL_SOCKET, SO_SNDBUF, &snd, &len );
     printf( "buffers: SO_RCVBUF=%d SO_SNDBUF=%d\n", rcv, snd );
     fflush( stdout );
@@ -584,7 +592,7 @@ static inline void bench_report_buffers( int fd )
 static inline struct sockaddr_in bench_address( const char * ip, int port )
 {
     struct sockaddr_in address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     address.sin_family = AF_INET;
     address.sin_port = htons( (uint16_t) port );
     if ( inet_pton( AF_INET, ip, &address.sin_addr ) != 1 )

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#if defined(ROCKETNET_PRODUCTION_LIFECYCLE_EXECUTABLE)
+#if defined( ROCKETNET_PRODUCTION_LIFECYCLE_EXECUTABLE )
 
 // A production-linked functional witness for the public client lifecycle.
 // It uses the normal portable I/O worker; no caller-owned operations, test
@@ -38,7 +38,7 @@ public:
     explicit production_environment_guard_t( const char * variable )
         : name( variable ), present( false )
     {
-#if defined(_WIN32)
+#if defined( _WIN32 )
         char * current = NULL;
         size_t bytes = 0;
         production_lifecycle_check( _dupenv_s( &current, &bytes, name.c_str() ) == 0 );
@@ -60,12 +60,15 @@ public:
 
     ~production_environment_guard_t()
     {
-        if ( present ) set( value.c_str() ); else clear();
+        if ( present )
+            set( value.c_str() );
+        else
+            clear();
     }
 
     void set( const char * current )
     {
-#if defined(_WIN32)
+#if defined( _WIN32 )
         production_lifecycle_check( _putenv_s( name.c_str(), current ) == 0 );
 #else
         production_lifecycle_check( setenv( name.c_str(), current, 1 ) == 0 );
@@ -74,7 +77,7 @@ public:
 
     void clear()
     {
-#if defined(_WIN32)
+#if defined( _WIN32 )
         production_lifecycle_check( _putenv_s( name.c_str(), "" ) == 0 );
 #else
         production_lifecycle_check( unsetenv( name.c_str() ) == 0 );
@@ -134,13 +137,13 @@ int main()
     const char * server_addresses[] = { server_address };
     uint8_t token_bytes[ROCKETNET_CONNECT_TOKEN_BYTES];
     production_lifecycle_check( rocketnet_write_production_connect_token(
-        backend_secret, server_public, protocol_id, server_addresses, 1,
-        0xC11E17ULL, 0, 1ULL << 40, 5, NULL,
-        token_bytes, sizeof( token_bytes ) ) == ROCKETNET_STATUS_OK );
+                                    backend_secret, server_public, protocol_id, server_addresses, 1,
+                                    0xC11E17ULL, 0, 1ULL << 40, 5, NULL,
+                                    token_bytes, sizeof( token_bytes ) ) == ROCKETNET_STATUS_OK );
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     production_lifecycle_check( rocketnet_base64_encode_data(
-        token_bytes, sizeof( token_bytes ), token, sizeof( token ) ) ==
-        ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+                                    token_bytes, sizeof( token_bytes ), token, sizeof( token ) ) ==
+                                ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 
     struct rocketnet_client_config_t client_config;
     production_lifecycle_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -249,21 +252,26 @@ static void test_public_step_driven_client_delivers_both_ways()
     public_step_pair_create( &pair, &identity );
     public_step_connect( &pair );
 
-    const uint8_t client_messages[2][4] = { {1,2,3,4}, {5,6,7,8} };
-    const uint8_t server_messages[2][4] = { {9,10,11,12}, {13,14,15,16} };
+    const uint8_t client_messages[2][4] = { { 1, 2, 3, 4 }, { 5, 6, 7, 8 } };
+    const uint8_t server_messages[2][4] = { { 9, 10, 11, 12 }, { 13, 14, 15, 16 } };
     for ( int i = 0; i < 2; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-        check( out != NULL ); memcpy( out, client_messages[i], 4 ); check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
+        check( out != NULL );
+        memcpy( out, client_messages[i], 4 );
+        check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
         out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
-        check( out != NULL ); memcpy( out, server_messages[i], 4 ); check( rocketnet_server_finish_message( pair.server, 4 ) != 0 );
+        check( out != NULL );
+        memcpy( out, server_messages[i], 4 );
+        check( rocketnet_server_finish_message( pair.server, 4 ) != 0 );
     }
 
     int at_server = 0, at_client = 0;
     for ( int step = 0; step < 400 && ( at_server < 2 || at_client < 2 ); step++ )
     {
         public_step_pump( &pair );
-        const uint8_t * data = NULL; int bytes = 0;
+        const uint8_t * data = NULL;
+        int bytes = 0;
         uint64_t sender = ~0ULL;
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
@@ -312,7 +320,9 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
-        check( out != NULL ); out[0] = (uint8_t) i; check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
+        check( out != NULL );
+        out[0] = (uint8_t) i;
+        check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
         public_step_pump( &pair );
         // every delivery is received before the next update (standard/MESSAGES.md m1.6)
         const struct rocketnet_message_batch_t * batch = NULL;
@@ -328,7 +338,9 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
                 delivered_bytes += (uint64_t) batch->bytes[m];
             }
         }
-        while ( rocketnet_client_receive_messages( pair.client ) != NULL ) {}
+        while ( rocketnet_client_receive_messages( pair.client ) != NULL )
+        {
+        }
     }
     check( delivered == 8 );
     check( delivered_bytes == 8 );
@@ -347,11 +359,11 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     check( server_stats.payloads_received > 0 );
     check( server_stats.connections_accepted == 1 );
     const uint64_t values[PUBLIC_STEP_NUM_COUNTERS] = { stats.packets_sent, stats.packets_received, stats.bytes_sent,
-        stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
-        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected,
-        server_stats.packets_sent, server_stats.packets_received, server_stats.bytes_sent,
-        server_stats.bytes_received, server_stats.payloads_received, server_stats.connections_accepted,
-        (uint64_t) delivered, delivered_bytes };
+                                                        stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
+                                                        stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected,
+                                                        server_stats.packets_sent, server_stats.packets_received, server_stats.bytes_sent,
+                                                        server_stats.bytes_received, server_stats.payloads_received, server_stats.connections_accepted,
+                                                        (uint64_t) delivered, delivered_bytes };
     memcpy( counters, values, sizeof( values ) );
     public_step_pair_destroy( &pair );
 }
@@ -413,8 +425,10 @@ static void test_public_step_driven_client_env_selects_the_mode()
     rocketnet_client_transport_default_config( &config );
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 0 );
-    if ( present ) check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
-    else check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
+    if ( present )
+        check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", saved ) == 0 );
+    else
+        check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
 REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );
 

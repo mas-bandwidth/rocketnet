@@ -26,7 +26,7 @@
 #define ROCKETNET_REPLAY_WINDOW_BITS ROCKETNET_HISTORY_PACKETS
 
 static_assert( ROCKETNET_REPLAY_WINDOW_BITS ==
-               64 * (int) ( sizeof( ((struct rocketnet_replay_protection_t*) 0)->window ) / sizeof(uint64_t) ),
+                   64 * (int) ( sizeof( ( (struct rocketnet_replay_protection_t *) 0 )->window ) / sizeof( uint64_t ) ),
                "the window constant must match the replay struct's storage" );
 
 // returns 1 when this sequence has already been received, or is too old to

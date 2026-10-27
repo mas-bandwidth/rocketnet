@@ -125,7 +125,11 @@ int main()
         {
             const double v = median_samples[i];
             int j = i - 1;
-            while ( j >= 0 && median_samples[j] > v ) { median_samples[j + 1] = median_samples[j]; j--; }
+            while ( j >= 0 && median_samples[j] > v )
+            {
+                median_samples[j + 1] = median_samples[j];
+                j--;
+            }
             median_samples[j + 1] = v;
         }
         const int bytes = rocketnet_ack_block_build( output, (int) sizeof( output ), &bench_shapes[shape].replay );

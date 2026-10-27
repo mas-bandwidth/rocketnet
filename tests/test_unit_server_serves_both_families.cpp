@@ -93,8 +93,8 @@ static void both_families_token( const both_families_identity_t * identity, uint
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
-        BOTH_FAMILIES_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     BOTH_FAMILIES_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 #endif
@@ -490,7 +490,7 @@ static void test_arrival_family_refuses_a_foreign_ipv6_address()
     const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
     const uint64_t before = test.counters.values[addr_counter];
     const int result = rocketnet_server_protocol_process_connection_request( &test.server, &from, request, sizeof( request ),
-                                                                              ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
+                                                                             ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
     check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( test.counters.values[addr_counter] == before + 1 );
     both_families_protocol_teardown( &test );
@@ -512,7 +512,7 @@ static void test_arrival_family_accepts_the_matching_ipv4_address()
     const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
     const uint64_t before = test.counters.values[addr_counter];
     const int result = rocketnet_server_protocol_process_connection_request( &test.server, &from, request, sizeof( request ),
-                                                                              ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
+                                                                             ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
     check( result != ROCKETNET_SERVER_PROCESS_IGNORED );
     check( test.counters.values[addr_counter] == before );
     both_families_protocol_teardown( &test );
@@ -540,7 +540,7 @@ static void test_loopback_transport_named_two_family_server_refuses_a_token()
     const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
     const uint64_t before = test.counters.values[addr_counter];
     const int result = rocketnet_server_protocol_process_connection_request( &test.server, &from, request, sizeof( request ),
-                                                                              ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
+                                                                             ROCKETNET_TEST_CREATE_TS, 1000.0, response, &response_bytes );
     check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( test.counters.values[addr_counter] == before + 1 );
     both_families_protocol_teardown( &test );

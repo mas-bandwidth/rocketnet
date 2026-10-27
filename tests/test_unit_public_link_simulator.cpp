@@ -379,7 +379,7 @@ static void public_link_wire_begin( struct public_link_wire_t * wire,
                                     const struct rocketnet_client_transport_config_t * config,
                                     uint64_t seed )
 {
-    memset( wire, 0, sizeof(*wire) );
+    memset( wire, 0, sizeof( *wire ) );
     wire->time = 1000.0;
     wire->simulator = rocketnet_network_simulator_create( NULL, 256, seed );
     check( wire->simulator != NULL );
@@ -412,11 +412,11 @@ static int public_link_wire_receive( struct public_link_wire_t * wire )
 static void public_link_simulator_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
-    signed_fields.expire_timestamp = UINT64_C(1) << 40;
+    signed_fields.expire_timestamp = UINT64_C( 1 ) << 40;
     signed_fields.timeout_seconds = 300;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
     signed_fields.ipv4_address[0] = 127;
@@ -434,7 +434,7 @@ static rocketnet_client_transport_t * public_link_simulator_client(
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_link_simulator_token( token );
     return rocketnet_client_transport_create_step_driven_current( transport, token, config, 1000.0,
-                                                           &rocketnet_fake_client_operations_base, transport );
+                                                                  &rocketnet_fake_client_operations_base, transport );
 }
 
 static void test_public_link_simulator_drops_at_loss()
@@ -554,7 +554,7 @@ static void test_public_link_simulator_same_seed_same_schedule()
     {
         a.time += 0.001;
         b.time += 0.001;
-        for (;;)
+        for ( ;; )
         {
             const int a_bytes = public_link_wire_receive( &a );
             const int b_bytes = public_link_wire_receive( &b );
@@ -640,41 +640,41 @@ REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 
 static void test_public_link_simulator_revision_1_prefixes()
 {
-    struct alignas(alignof(rocketnet_client_transport_config_t)) client_revision_1_t
+    struct alignas( alignof( rocketnet_client_transport_config_t ) ) client_revision_1_t
     {
         uint8_t bytes[ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR];
         uint8_t guard[16];
     } client;
-    memset( &client, 0xa5, sizeof(client) );
+    memset( &client, 0xa5, sizeof( client ) );
     check( rocketnet_client_transport_default_config_sized(
-        (rocketnet_client_transport_config_t *) client.bytes, sizeof(client.bytes) ) == 1 );
-    for ( size_t i = 0; i < sizeof(client.guard); i++ )
+               (rocketnet_client_transport_config_t *) client.bytes, sizeof( client.bytes ) ) == 1 );
+    for ( size_t i = 0; i < sizeof( client.guard ); i++ )
         check( client.guard[i] == 0xa5 );
     rocketnet_client_transport_config_t client_current;
     rocketnet_client_transport_default_config_current( &client_current );
-    snprintf( client_current.transport, sizeof(client_current.transport), "%s", "loopback" );
-    memcpy( client.bytes, &client_current, sizeof(client.bytes) );
+    snprintf( client_current.transport, sizeof( client_current.transport ), "%s", "loopback" );
+    memcpy( client.bytes, &client_current, sizeof( client.bytes ) );
 #if ROCKETNET_DEV
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_link_simulator_token( token );
     rocketnet_client_transport_t * client_transport = rocketnet_client_transport_create_sized(
         NULL, token, (const rocketnet_client_transport_config_t *) client.bytes,
-        sizeof(client.bytes), 1000.0 );
+        sizeof( client.bytes ), 1000.0 );
     check( client_transport != NULL );
     rn_test_client_transport_stop_and_destroy( client_transport );
-    for ( size_t i = 0; i < sizeof(client.guard); i++ )
+    for ( size_t i = 0; i < sizeof( client.guard ); i++ )
         check( client.guard[i] == 0xa5 );
 #endif // #if ROCKETNET_DEV
 
-    struct alignas(alignof(rocketnet_server_transport_config_t)) server_revision_1_t
+    struct alignas( alignof( rocketnet_server_transport_config_t ) ) server_revision_1_t
     {
         uint8_t bytes[ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1];
         uint8_t guard[16];
     } server;
-    memset( &server, 0x5a, sizeof(server) );
+    memset( &server, 0x5a, sizeof( server ) );
     check( rocketnet_server_transport_default_config_sized(
-        (rocketnet_server_transport_config_t *) server.bytes, sizeof(server.bytes) ) == 1 );
-    for ( size_t i = 0; i < sizeof(server.guard); i++ )
+               (rocketnet_server_transport_config_t *) server.bytes, sizeof( server.bytes ) ) == 1 );
+    for ( size_t i = 0; i < sizeof( server.guard ); i++ )
         check( server.guard[i] == 0x5a );
     rocketnet_server_transport_config_t server_current;
     rocketnet_server_transport_default_config_current( &server_current );
@@ -683,14 +683,14 @@ static void test_public_link_simulator_revision_1_prefixes()
     memset( server_current.backend_public_key, 0xAB, 32 );
     memset( server_current.server_public_key, 0xCD, 32 );
     memset( server_current.server_secret_key, 0xEF, 32 );
-    snprintf( server_current.transport, sizeof(server_current.transport), "%s", "loopback" );
-    memcpy( server.bytes, &server_current, sizeof(server.bytes) );
+    snprintf( server_current.transport, sizeof( server_current.transport ), "%s", "loopback" );
+    memcpy( server.bytes, &server_current, sizeof( server.bytes ) );
     rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_sized(
         NULL, "127.0.0.1:0", (const rocketnet_server_transport_config_t *) server.bytes,
-        sizeof(server.bytes) );
+        sizeof( server.bytes ) );
     check( server_transport != NULL );
     rn_test_server_transport_stop_and_destroy( server_transport );
-    for ( size_t i = 0; i < sizeof(server.guard); i++ )
+    for ( size_t i = 0; i < sizeof( server.guard ); i++ )
         check( server.guard[i] == 0x5a );
 }
 

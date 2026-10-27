@@ -11,8 +11,7 @@
 
 #include "rocketnet_wire.h"
 
-static const rn_standard_vector_t standard_security_and_conformance_table[] =
-{
+static const rn_standard_vector_t standard_security_and_conformance_table[] = {
     RN_STANDARD_VECTOR( "t19.amplification", "00c602072600024200033200042900012200" ),
 };
 
@@ -20,8 +19,7 @@ static int standard_security_and_conformance_generate( const char * id, uint8_t 
 {
     if ( strcmp( id, "t19.amplification" ) == 0 )
     {
-        static const uint16_t wires[6] =
-        {
+        static const uint16_t wires[6] = {
             ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
             ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES,
             ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES,
@@ -29,8 +27,7 @@ static int standard_security_and_conformance_generate( const char * id, uint8_t 
             ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES,
             ROCKETNET_CONNECTION_DENIED_WIRE_BYTES,
         };
-        static const uint8_t types[6] =
-        {
+        static const uint8_t types[6] = {
             ROCKETNET_CONNECTION_REQUEST_PACKET,
             ROCKETNET_CONNECTION_COOKIE_PACKET,
             ROCKETNET_CONNECTION_CHALLENGE_PACKET,

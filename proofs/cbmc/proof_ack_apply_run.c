@@ -141,7 +141,7 @@ int harness_ack_apply_run( void )
                           "an ACK clears the unacked identity" );
     }
 
-#if defined(ACK_NEGATIVE_CONTROL)
+#if defined( ACK_NEGATIVE_CONTROL )
     __CPROVER_assume( expected_new > 0 );
     __CPROVER_assert( g_ack_visit_count == 0,
                       "negative control reaches the production ACK operation" );

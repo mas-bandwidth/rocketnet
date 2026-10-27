@@ -63,7 +63,7 @@
 #include "rocketnet_read_write.h"
 #include "../tests/portable_crt.h"
 
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "sodium.h"
@@ -75,29 +75,30 @@
 #include <string.h>
 
 // the page-tracked restore (see "save and restore") is Linux only
-#if defined(__linux__)
+#if defined( __linux__ )
 #define ROCKETNET_FUZZ_PAGE_RESTORE 1
 #include <signal.h>
 #include <unistd.h>
 #include <sys/mman.h>
-#if defined(__has_feature)
-#if __has_feature(address_sanitizer)
+#if defined( __has_feature )
+#if __has_feature( address_sanitizer )
 #include <sanitizer/asan_interface.h>
 #define ROCKETNET_FUZZ_POISON( p, n ) __asan_poison_memory_region( ( p ), ( n ) )
 #endif
 #endif
-#if !defined(ROCKETNET_FUZZ_POISON) && defined(__SANITIZE_ADDRESS__)
+#if !defined( ROCKETNET_FUZZ_POISON ) && defined( __SANITIZE_ADDRESS__ )
 #include <sanitizer/asan_interface.h>
 #define ROCKETNET_FUZZ_POISON( p, n ) __asan_poison_memory_region( ( p ), ( n ) )
 #endif
-#if !defined(ROCKETNET_FUZZ_POISON)
+#if !defined( ROCKETNET_FUZZ_POISON )
 #define ROCKETNET_FUZZ_POISON( p, n ) ( (void) ( p ), (void) ( n ) )
 #endif
 #endif
 
 static inline void rocketnet_fuzz_pair_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -157,15 +158,14 @@ static inline uint32_t rocketnet_fuzz_random_uniform( const uint32_t upper_bound
 
 static inline void rocketnet_fuzz_random_buf( void * const buf, const size_t size )
 {
-    uint8_t * out = (uint8_t*) buf;
+    uint8_t * out = (uint8_t *) buf;
     for ( size_t i = 0; i < size; i++ )
         out[i] = (uint8_t) rocketnet_fuzz_random_next();
 }
 
 static inline int rocketnet_fuzz_random_close() { return 0; }
 
-static randombytes_implementation rocketnet_fuzz_random_implementation =
-{
+static randombytes_implementation rocketnet_fuzz_random_implementation = {
     rocketnet_fuzz_random_name, rocketnet_fuzz_random_u32, rocketnet_fuzz_random_stir,
     rocketnet_fuzz_random_uniform, rocketnet_fuzz_random_buf, rocketnet_fuzz_random_close
 };
@@ -191,7 +191,7 @@ static struct rocketnet_fuzz_block_t rocketnet_fuzz_blocks[ROCKETNET_FUZZ_MAX_BL
 static int rocketnet_fuzz_num_blocks = 0;
 static bool rocketnet_fuzz_states_saved = false;
 
-#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+#if defined( ROCKETNET_FUZZ_PAGE_RESTORE )
 static size_t rocketnet_fuzz_page_bytes = 0;
 
 // Every block owns whole pages, so the restore can write-protect a block's
@@ -211,7 +211,7 @@ static inline void * rocketnet_fuzz_block_alloc( size_t bytes )
     if ( posix_memalign( &p, page_bytes, rounded ) != 0 )
         return NULL;
     if ( rounded > bytes )
-        ROCKETNET_FUZZ_POISON( (uint8_t*) p + bytes, rounded - bytes );
+        ROCKETNET_FUZZ_POISON( (uint8_t *) p + bytes, rounded - bytes );
     return p;
 }
 #endif
@@ -219,7 +219,7 @@ static inline void * rocketnet_fuzz_block_alloc( size_t bytes )
 static inline void * rocketnet_fuzz_malloc( void *, size_t bytes )
 {
     rocketnet_fuzz_allocations++;
-#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+#if defined( ROCKETNET_FUZZ_PAGE_RESTORE )
     void * p = rocketnet_fuzz_block_alloc( bytes );
 #else
     void * p = malloc( bytes );
@@ -762,7 +762,7 @@ static inline void rocketnet_fuzz_restore_full( int which )
         memcpy( rocketnet_fuzz_blocks[i].p, rocketnet_fuzz_block_copies[which][i], rocketnet_fuzz_blocks[i].bytes );
 }
 
-#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+#if defined( ROCKETNET_FUZZ_PAGE_RESTORE )
 
 struct rocketnet_fuzz_page_t
 {
@@ -787,7 +787,7 @@ static inline size_t rocketnet_fuzz_block_pages( int block )
 
 static inline uint8_t * rocketnet_fuzz_page_address( struct rocketnet_fuzz_page_t page )
 {
-    return (uint8_t*) rocketnet_fuzz_blocks[page.block].p + (size_t) page.page * rocketnet_fuzz_page_bytes;
+    return (uint8_t *) rocketnet_fuzz_blocks[page.block].p + (size_t) page.page * rocketnet_fuzz_page_bytes;
 }
 
 static void rocketnet_fuzz_segv( int sig, siginfo_t * info, void * context )
@@ -807,7 +807,7 @@ static void rocketnet_fuzz_segv( int sig, siginfo_t * info, void * context )
         entry->block = i;
         entry->page = page;
         rocketnet_fuzz_num_dirty = rocketnet_fuzz_num_dirty + 1;
-        if ( mprotect( (void*) ( begin + (size_t) page * rocketnet_fuzz_page_bytes ), rocketnet_fuzz_page_bytes, PROT_READ | PROT_WRITE ) == 0 )
+        if ( mprotect( (void *) ( begin + (size_t) page * rocketnet_fuzz_page_bytes ), rocketnet_fuzz_page_bytes, PROT_READ | PROT_WRITE ) == 0 )
             return;
         break;
     }
@@ -840,18 +840,18 @@ static inline bool rocketnet_fuzz_protect_setup()
     size_t total = 0;
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
         total += rocketnet_fuzz_block_pages( i );
-    rocketnet_fuzz_dirty = (struct rocketnet_fuzz_page_t*) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
-    rocketnet_fuzz_differ = (struct rocketnet_fuzz_page_t*) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
+    rocketnet_fuzz_dirty = (struct rocketnet_fuzz_page_t *) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
+    rocketnet_fuzz_differ = (struct rocketnet_fuzz_page_t *) calloc( total, sizeof( struct rocketnet_fuzz_page_t ) );
     if ( !rocketnet_fuzz_dirty || !rocketnet_fuzz_differ )
         return false;
     for ( int i = 0; i < rocketnet_fuzz_num_blocks; i++ )
     {
         const size_t pages = rocketnet_fuzz_block_pages( i );
-        rocketnet_fuzz_page_marks[i] = (uint8_t*) calloc( pages, 1 );
+        rocketnet_fuzz_page_marks[i] = (uint8_t *) calloc( pages, 1 );
         if ( !rocketnet_fuzz_page_marks[i] )
             return false;
-        const uint8_t * a = (const uint8_t*) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CREATED][i];
-        const uint8_t * b = (const uint8_t*) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CONNECTED][i];
+        const uint8_t * a = (const uint8_t *) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CREATED][i];
+        const uint8_t * b = (const uint8_t *) rocketnet_fuzz_block_copies[ROCKETNET_FUZZ_STATE_CONNECTED][i];
         const size_t bytes = rocketnet_fuzz_blocks[i].bytes;
         for ( size_t k = 0; k < pages; k++ )
         {
@@ -895,7 +895,7 @@ static inline void rocketnet_fuzz_copy_page( struct rocketnet_fuzz_page_t page, 
     if ( from >= bytes )
         return;
     const size_t n = bytes - from < rocketnet_fuzz_page_bytes ? bytes - from : rocketnet_fuzz_page_bytes;
-    memcpy( (uint8_t*) rocketnet_fuzz_blocks[page.block].p + from, (const uint8_t*) rocketnet_fuzz_block_copies[which][page.block] + from, n );
+    memcpy( (uint8_t *) rocketnet_fuzz_blocks[page.block].p + from, (const uint8_t *) rocketnet_fuzz_block_copies[which][page.block] + from, n );
 }
 
 static inline void rocketnet_fuzz_restore_pages( int which )
@@ -931,7 +931,7 @@ static inline void rocketnet_fuzz_restore_pages( int which )
 
 static inline void rocketnet_fuzz_restore_blocks( int which )
 {
-#if defined(ROCKETNET_FUZZ_PAGE_RESTORE)
+#if defined( ROCKETNET_FUZZ_PAGE_RESTORE )
     if ( rocketnet_fuzz_protect_state == 0 )
         rocketnet_fuzz_protect_state = rocketnet_fuzz_protect_setup() ? 1 : -1;
     if ( rocketnet_fuzz_protect_state == 1 )
@@ -1014,7 +1014,7 @@ static inline void rocketnet_fuzz_pair_acquire( struct rocketnet_fuzz_pair_t * p
 
 static inline uint64_t rocketnet_fuzz_fnv( uint64_t hash, const void * data, size_t bytes )
 {
-    const uint8_t * p = (const uint8_t*) data;
+    const uint8_t * p = (const uint8_t *) data;
     for ( size_t i = 0; i < bytes; i++ )
     {
         hash ^= p[i];
@@ -1259,9 +1259,9 @@ static inline bool rocketnet_fuzz_seed_write( const char * dir, const char * nam
 // recording says its type is read -- the handshake types at their state --
 // and keeps the first wait whose replay raises `counter` past the replay of
 // the same seed without the record.
-typedef uint64_t ( * rocketnet_fuzz_run_t )( const uint8_t * data, size_t size );
+typedef uint64_t ( *rocketnet_fuzz_run_t )( const uint8_t * data, size_t size );
 
-static inline int rocketnet_fuzz_seed_place( uint8_t * out, rocketnet_fuzz_run_t run, const struct rocketnet_counters_t * ( * counters )( struct rocketnet_fuzz_pair_t * ),
+static inline int rocketnet_fuzz_seed_place( uint8_t * out, rocketnet_fuzz_run_t run, const struct rocketnet_counters_t * ( *counters )(struct rocketnet_fuzz_pair_t *),
                                              int counter, uint8_t selector, int wait_from, int wait_to,
                                              uint8_t mode, const uint8_t * a, int a_bytes, const uint8_t * b, int b_bytes )
 {
@@ -1288,8 +1288,7 @@ static inline const struct rocketnet_counters_t * rocketnet_fuzz_server_counters
     return &pair->transport->counters;
 }
 
-static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PACKET_TYPES] =
-{
+static const char * const rocketnet_fuzz_packet_type_names[ROCKETNET_FUZZ_NUM_PACKET_TYPES] = {
     "request", "denied", "challenge", "response", "keep_alive", "payload", "disconnect", "cookie", "ack", "fragment"
 };
 

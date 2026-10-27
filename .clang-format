@@ -12,6 +12,19 @@
 #   netcode.c + netcode.h: 747 / 11004 (6.8%; 1% target)
 #   next sdk/include + sdk/source, 65 files: 1489 / 28394 (5.2%; 3% target)
 #
+# Tuning against next at b4efefcad40c (its main, 2026-10-25): 1489 changed
+# lines before and 1489 after. 51 single-key alternatives were measured
+# (short functions, blocks, loops, enums and lambdas on one line, access
+# modifier and block-start blank lines, operand and escaped-newline alignment,
+# consecutive macro, declaration and bit-field alignment, array-of-struct
+# alignment, trailing comment spacing and alignment, binary operator breaks,
+# continuation indent, constructor initializers, goto labels, space before
+# parens and square brackets, template and angle spacing, braced list style,
+# MaxEmptyLinesToKeep 1 and 2, short case labels); none went below 1489, so
+# the keys below are the minimum clang-format 18 reaches. The blank-line keys
+# are set explicitly so that formatting never adds or removes a blank line a
+# person placed (up to four in a row).
+#
 # Residual differences clang-format 18 cannot express, one per line (a cost is
 # netcode/next changed lines with that key set instead):
 #   trailing whitespace is kept on lines (netcode.c:123); clang-format always strips it, no option keeps it
@@ -32,6 +45,9 @@
 #   some casts have no space after, `(uint32_t)INVALID_SOCKET` (netcode.c:653); SpaceAfterCStyleCast false costs 871/1625
 #   tight binary operators in expressions, `(uint64_t(1)<<bits)`, and lines mixing several kinds above (next_bitpacker.h:298); no option keeps operators tight
 #   macro parameter lists are hand-padded, `( stream, sequence, ack  )` (next_serialize.h:408); SkipMacroDefinitionBody skips the body only
+#   comment-only lines inside a #define body are joined onto the line above, dropping their backslashes; SkipMacroDefinitionBody does not cover comments, so such macros sit between clang-format off and on
+#   a #if or #elif condition continued over backslash lines is joined into one line (see above); these sit between clang-format off and on
+#   a directive's trailing // comment followed by a // comment line gains a backslash that splices the two; that directive sits between clang-format off and on
 Language: Cpp
 BasedOnStyle: LLVM
 IndentWidth: 4
@@ -67,6 +83,10 @@ EmptyLineAfterAccessModifier: Leave
 AlwaysBreakTemplateDeclarations: No
 Cpp11BracedListStyle: false
 MaxEmptyLinesToKeep: 4
+KeepEmptyLinesAtTheStartOfBlocks: true
+SeparateDefinitionBlocks: Leave
+InsertBraces: false
+RemoveBracesLLVM: false
 FixNamespaceComments: false
 ReflowComments: false
 SkipMacroDefinitionBody: true

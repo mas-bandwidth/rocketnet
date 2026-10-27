@@ -24,8 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char * reliability_names[8] =
-{
+static const char * reliability_names[8] = {
     "ROCKETNET_RELIABILITY_UNRELIABLE",
     "ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED",
     "ROCKETNET_RELIABILITY_RELIABLE",

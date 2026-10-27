@@ -10,7 +10,7 @@
 static const char base64_table_encode[65] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, char * output, size_t output_size )
-{   
+{
     rocketnet_assert( input );
     rocketnet_assert( output );
     rocketnet_assert( output_size > 0 );
@@ -51,15 +51,15 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
     if ( end - in )
     {
         *pos++ = base64_table_encode[in[0] >> 2];
-        if (end - in == 1)
+        if ( end - in == 1 )
         {
-            *pos++ = base64_table_encode[(in[0] & 0x03) << 4];
+            *pos++ = base64_table_encode[( in[0] & 0x03 ) << 4];
             *pos++ = '=';
         }
         else
         {
-            *pos++ = base64_table_encode[((in[0] & 0x03) << 4) | (in[1] >> 4)];
-            *pos++ = base64_table_encode[(in[1] & 0x0f) << 2];
+            *pos++ = base64_table_encode[( ( in[0] & 0x03 ) << 4 ) | ( in[1] >> 4 )];
+            *pos++ = base64_table_encode[( in[1] & 0x0f ) << 2];
         }
         *pos++ = '=';
     }
@@ -84,11 +84,16 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
 
 static int rocketnet_base64_char_value( char c )
 {
-    if ( c >= 'A' && c <= 'Z' ) return c - 'A';
-    if ( c >= 'a' && c <= 'z' ) return c - 'a' + 26;
-    if ( c >= '0' && c <= '9' ) return c - '0' + 52;
-    if ( c == '+' ) return 62;
-    if ( c == '/' ) return 63;
+    if ( c >= 'A' && c <= 'Z' )
+        return c - 'A';
+    if ( c >= 'a' && c <= 'z' )
+        return c - 'a' + 26;
+    if ( c >= '0' && c <= '9' )
+        return c - '0' + 52;
+    if ( c == '+' )
+        return 62;
+    if ( c == '/' )
+        return 63;
     return -1;
 }
 
@@ -168,7 +173,7 @@ int rocketnet_base64_encode_string( const char * input, char * output, size_t ou
     rocketnet_assert( output );
     rocketnet_assert( output_size > 0 );
 
-    return rocketnet_base64_encode_data( (const uint8_t *)( input ), strlen( input ), output, output_size );
+    return rocketnet_base64_encode_data( (const uint8_t *) ( input ), strlen( input ), output, output_size );
 }
 
 int rocketnet_base64_decode_string( const char * input, char * output, size_t output_size )
@@ -180,7 +185,7 @@ int rocketnet_base64_decode_string( const char * input, char * output, size_t ou
     if ( output_size < 2 )
         return 0;       // room for nothing but the terminator; decode_data requires a real buffer
 
-    int output_length = rocketnet_base64_decode_data( input, (uint8_t *)( output ), output_size - 1 );
+    int output_length = rocketnet_base64_decode_data( input, (uint8_t *) ( output ), output_size - 1 );
 
     output[output_length] = '\0';
 

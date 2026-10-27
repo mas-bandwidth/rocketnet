@@ -25,11 +25,11 @@ static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] 
 #include <time.h>
 #include <stdlib.h>
 #include <string.h>
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include <windows.h>
 #else
 #include <pthread.h>
-#if defined(__linux__)
+#if defined( __linux__ )
 #include <sys/mman.h>
 #endif
 #endif
@@ -60,7 +60,8 @@ static uint32_t read_u32( const uint8_t * p )
 #define MAX_TICKS 7200
 
 // MSVC deprecates fopen, so this uses fopen_s there
-static FILE * soak_fopen( const char * path, const char * mode ) {
+static FILE * soak_fopen( const char * path, const char * mode )
+{
 #if defined( _MSC_VER )
     FILE * file = NULL;
     return fopen_s( &file, path, mode ) == 0 ? file : NULL;
@@ -69,29 +70,43 @@ static FILE * soak_fopen( const char * path, const char * mode ) {
 #endif
 }
 
-struct soak_alloc_t { uint64_t live_allocs, live_bytes, peak_bytes, steady_allocs; bool steady; };
+struct soak_alloc_t
+{
+    uint64_t live_allocs, live_bytes, peak_bytes, steady_allocs;
+    bool steady;
+};
 static struct soak_alloc_t g_alloc;
 
 // Allocator callbacks also run on workers (including thread-shim cleanup).
 // This static lock allocates nothing and protects arena metadata and telemetry.
 // Backing allocation/release happens outside SDK calls and outside this lock.
-#if defined(_WIN32)
+#if defined( _WIN32 )
 static SRWLOCK g_alloc_mutex = SRWLOCK_INIT;
 static void soak_alloc_lock( void ) { AcquireSRWLockExclusive( &g_alloc_mutex ); }
 static void soak_alloc_unlock( void ) { ReleaseSRWLockExclusive( &g_alloc_mutex ); }
 #else
 static pthread_mutex_t g_alloc_mutex = PTHREAD_MUTEX_INITIALIZER;
-static void soak_alloc_lock( void ) { if ( pthread_mutex_lock( &g_alloc_mutex ) != 0 ) abort(); }
-static void soak_alloc_unlock( void ) { if ( pthread_mutex_unlock( &g_alloc_mutex ) != 0 ) abort(); }
+static void soak_alloc_lock( void )
+{
+    if ( pthread_mutex_lock( &g_alloc_mutex ) != 0 )
+        abort();
+}
+static void soak_alloc_unlock( void )
+{
+    if ( pthread_mutex_unlock( &g_alloc_mutex ) != 0 )
+        abort();
+}
 #endif
 
-static void soak_alloc_set_steady( bool steady ) {
+static void soak_alloc_set_steady( bool steady )
+{
     soak_alloc_lock();
     g_alloc.steady = steady;
     soak_alloc_unlock();
 }
 
-static struct soak_alloc_t soak_alloc_read( void ) {
+static struct soak_alloc_t soak_alloc_read( void )
+{
     struct soak_alloc_t copy;
     soak_alloc_lock();
     copy = g_alloc;
@@ -108,10 +123,22 @@ static struct soak_alloc_t soak_alloc_read( void ) {
 // overflowing it is an allocator invariant failure, never a silently lost block.
 #define SOAK_ARENA_CLASSES 1024
 #define SOAK_ARENA_FREE_CAPACITY ((size_t)MAX_SOAK_CLIENTS * 64)
-struct soak_arena_block_t { size_t bytes; unsigned bucket, live; };
-struct soak_arena_class_t { size_t stride; };
-struct soak_arena_free_entry_t { size_t offset; unsigned bucket; };
-static struct {
+struct soak_arena_block_t
+{
+    size_t bytes;
+    unsigned bucket, live;
+};
+struct soak_arena_class_t
+{
+    size_t stride;
+};
+struct soak_arena_free_entry_t
+{
+    size_t offset;
+    unsigned bucket;
+};
+static struct
+{
     void * allocation;
     uint8_t * base;
     size_t bytes, used;
@@ -120,58 +147,84 @@ static struct {
     struct soak_arena_free_entry_t * free_entries;
 } g_arena;
 
-static bool soak_arena_create( size_t bytes ) {
-    const size_t class_bytes = sizeof(struct soak_arena_class_t) * SOAK_ARENA_CLASSES;
-    const size_t free_bytes = sizeof(struct soak_arena_free_entry_t) * SOAK_ARENA_FREE_CAPACITY;
+static bool soak_arena_create( size_t bytes )
+{
+    const size_t class_bytes = sizeof( struct soak_arena_class_t ) * SOAK_ARENA_CLASSES;
+    const size_t free_bytes = sizeof( struct soak_arena_free_entry_t ) * SOAK_ARENA_FREE_CAPACITY;
     if ( bytes > SIZE_MAX - 63 || class_bytes > SIZE_MAX - free_bytes ||
-         class_bytes + free_bytes > SIZE_MAX - 63 || sizeof(struct soak_arena_block_t) > 64 ) return false;
-    const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t)63;
-    if ( metadata_bytes > bytes ) return false;
-#if defined(__linux__)
+         class_bytes + free_bytes > SIZE_MAX - 63 || sizeof( struct soak_arena_block_t ) > 64 )
+        return false;
+    const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t) 63;
+    if ( metadata_bytes > bytes )
+        return false;
+#if defined( __linux__ )
     // Reserve the bounded virtual arena without eagerly committing every page.
     // Used SDK records fault in pages naturally; capacity is not a RAM claim.
-    g_arena.allocation = mmap(NULL, bytes + 63, PROT_READ | PROT_WRITE,
-                              MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (g_arena.allocation == MAP_FAILED) { g_arena.allocation = NULL; return false; }
+    g_arena.allocation = mmap( NULL, bytes + 63, PROT_READ | PROT_WRITE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0 );
+    if ( g_arena.allocation == MAP_FAILED )
+    {
+        g_arena.allocation = NULL;
+        return false;
+    }
 #else
-    g_arena.allocation = malloc(bytes + 63);
-    if (!g_arena.allocation) return false;
+    g_arena.allocation = malloc( bytes + 63 );
+    if ( !g_arena.allocation )
+        return false;
 #endif
-    g_arena.base = (uint8_t *) (((uintptr_t)g_arena.allocation + 63) & ~(uintptr_t)63);
+    g_arena.base = (uint8_t *) ( ( (uintptr_t) g_arena.allocation + 63 ) & ~(uintptr_t) 63 );
     g_arena.bytes = bytes;
     g_arena.metadata_bytes = metadata_bytes;
     g_arena.used = metadata_bytes;
-    g_arena.classes = (struct soak_arena_class_t *)g_arena.base;
-    g_arena.free_entries = (struct soak_arena_free_entry_t *)(g_arena.base + class_bytes);
-    memset(g_arena.base, 0, metadata_bytes);
+    g_arena.classes = (struct soak_arena_class_t *) g_arena.base;
+    g_arena.free_entries = (struct soak_arena_free_entry_t *) ( g_arena.base + class_bytes );
+    memset( g_arena.base, 0, metadata_bytes );
     return true;
 }
 
-static void * soak_malloc( void * ctx, size_t bytes ) {
+static void * soak_malloc( void * ctx, size_t bytes )
+{
     (void) ctx;
-    if (bytes > SIZE_MAX - 127) return NULL;
-    const size_t stride = ((bytes ? bytes : 1) + 127) & ~(size_t)63;
+    if ( bytes > SIZE_MAX - 127 )
+        return NULL;
+    const size_t stride = ( ( bytes ? bytes : 1 ) + 127 ) & ~(size_t) 63;
     soak_alloc_lock();
-    unsigned bucket = (unsigned)((stride >> 6) * UINT64_C(11400714819323198485)) & (SOAK_ARENA_CLASSES - 1);
+    unsigned bucket = (unsigned) ( ( stride >> 6 ) * UINT64_C( 11400714819323198485 ) ) & ( SOAK_ARENA_CLASSES - 1 );
     unsigned probes = 0;
-    while (g_arena.classes[bucket].stride && g_arena.classes[bucket].stride != stride && ++probes < SOAK_ARENA_CLASSES)
-        bucket = (bucket + 1) & (SOAK_ARENA_CLASSES - 1);
-    if (probes == SOAK_ARENA_CLASSES) { soak_alloc_unlock(); return NULL; }
+    while ( g_arena.classes[bucket].stride && g_arena.classes[bucket].stride != stride && ++probes < SOAK_ARENA_CLASSES )
+        bucket = ( bucket + 1 ) & ( SOAK_ARENA_CLASSES - 1 );
+    if ( probes == SOAK_ARENA_CLASSES )
+    {
+        soak_alloc_unlock();
+        return NULL;
+    }
     struct soak_arena_class_t * cls = &g_arena.classes[bucket];
     size_t free_index = SIZE_MAX;
-    for (size_t i = g_arena.free_count; i > 0; i--) {
-        if (g_arena.free_entries[i - 1].bucket == bucket) { free_index = i - 1; break; }
+    for ( size_t i = g_arena.free_count; i > 0; i-- )
+    {
+        if ( g_arena.free_entries[i - 1].bucket == bucket )
+        {
+            free_index = i - 1;
+            break;
+        }
     }
     struct soak_arena_block_t * block = NULL;
-    if (free_index != SIZE_MAX) {
-        block = (struct soak_arena_block_t *)(g_arena.base + g_arena.free_entries[free_index].offset);
-        if (free_index + 1 < g_arena.free_count)
-            memmove(&g_arena.free_entries[free_index], &g_arena.free_entries[free_index + 1],
-                    (g_arena.free_count - free_index - 1) * sizeof(g_arena.free_entries[0]));
+    if ( free_index != SIZE_MAX )
+    {
+        block = (struct soak_arena_block_t *) ( g_arena.base + g_arena.free_entries[free_index].offset );
+        if ( free_index + 1 < g_arena.free_count )
+            memmove( &g_arena.free_entries[free_index], &g_arena.free_entries[free_index + 1],
+                     ( g_arena.free_count - free_index - 1 ) * sizeof( g_arena.free_entries[0] ) );
         g_arena.free_count--;
-    } else {
-        if (stride > g_arena.bytes - g_arena.used) { soak_alloc_unlock(); return NULL; }
-        block = (struct soak_arena_block_t *)(g_arena.base + g_arena.used);
+    }
+    else
+    {
+        if ( stride > g_arena.bytes - g_arena.used )
+        {
+            soak_alloc_unlock();
+            return NULL;
+        }
+        block = (struct soak_arena_block_t *) ( g_arena.base + g_arena.used );
         g_arena.used += stride;
         cls->stride = stride;
     }
@@ -179,108 +232,131 @@ static void * soak_malloc( void * ctx, size_t bytes ) {
     block->bucket = bucket;
     block->live = 1;
     g_alloc.live_allocs++;
-    g_alloc.live_bytes += (uint64_t)bytes;
-    if (g_alloc.live_bytes > g_alloc.peak_bytes) g_alloc.peak_bytes = g_alloc.live_bytes;
-    if (g_alloc.steady) g_alloc.steady_allocs++;
+    g_alloc.live_bytes += (uint64_t) bytes;
+    if ( g_alloc.live_bytes > g_alloc.peak_bytes )
+        g_alloc.peak_bytes = g_alloc.live_bytes;
+    if ( g_alloc.steady )
+        g_alloc.steady_allocs++;
     soak_alloc_unlock();
-    return (uint8_t *)block + 64;
+    return (uint8_t *) block + 64;
 }
 
-static void soak_free( void * ctx, void * p ) {
+static void soak_free( void * ctx, void * p )
+{
     (void) ctx;
-    if (!p) return;
+    if ( !p )
+        return;
     soak_alloc_lock();
-    const uintptr_t address = (uintptr_t)p;
-    const uintptr_t base = (uintptr_t)g_arena.base;
-    if (address < base + 64 || address - base >= g_arena.used || ((address - base) & 63)) abort();
-    struct soak_arena_block_t * block = (struct soak_arena_block_t *)((uint8_t *)p - 64);
-    if (!block->live || block->bucket >= SOAK_ARENA_CLASSES) abort();
+    const uintptr_t address = (uintptr_t) p;
+    const uintptr_t base = (uintptr_t) g_arena.base;
+    if ( address < base + 64 || address - base >= g_arena.used || ( ( address - base ) & 63 ) )
+        abort();
+    struct soak_arena_block_t * block = (struct soak_arena_block_t *) ( (uint8_t *) p - 64 );
+    if ( !block->live || block->bucket >= SOAK_ARENA_CLASSES )
+        abort();
     g_alloc.live_allocs--;
     g_alloc.live_bytes -= block->bytes;
     block->live = 0;
-    if (g_arena.free_count == SOAK_ARENA_FREE_CAPACITY) {
-        fprintf(stderr, "FAIL: soak arena free sequence capacity %zu exceeded\n", SOAK_ARENA_FREE_CAPACITY);
-        fflush(stderr);
+    if ( g_arena.free_count == SOAK_ARENA_FREE_CAPACITY )
+    {
+        fprintf( stderr, "FAIL: soak arena free sequence capacity %zu exceeded\n", SOAK_ARENA_FREE_CAPACITY );
+        fflush( stderr );
         abort();
     }
-    g_arena.free_entries[g_arena.free_count].offset = (size_t)((uint8_t *)block - g_arena.base);
+    g_arena.free_entries[g_arena.free_count].offset = (size_t) ( (uint8_t *) block - g_arena.base );
     g_arena.free_entries[g_arena.free_count].bucket = block->bucket;
     g_arena.free_count++;
     soak_alloc_unlock();
 }
 
-static int soak_arena_release( void ) {
+static int soak_arena_release( void )
+{
     int ok = 1;
-    if (g_arena.allocation) {
-#if defined(__linux__)
-        if (munmap(g_arena.allocation, g_arena.bytes + 63) != 0) ok = 0;
+    if ( g_arena.allocation )
+    {
+#if defined( __linux__ )
+        if ( munmap( g_arena.allocation, g_arena.bytes + 63 ) != 0 )
+            ok = 0;
 #else
-        free(g_arena.allocation);
+        free( g_arena.allocation );
 #endif
     }
-    memset(&g_arena, 0, sizeof(g_arena));
+    memset( &g_arena, 0, sizeof( g_arena ) );
     return ok;
 }
 
-#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+#if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
 // The development-only allocator oracle makes exhaustion cheap and
 // deterministic: metadata plus two 64-byte blocks. It proves aligned admission,
 // explicit exhaustion, LIFO class reuse, accounting, and reset without adding a
 // production API or changing the real soak path.
-static int soak_arena_self_test( void ) {
-    const size_t class_bytes = sizeof(struct soak_arena_class_t) * SOAK_ARENA_CLASSES;
-    const size_t free_bytes = sizeof(struct soak_arena_free_entry_t) * SOAK_ARENA_FREE_CAPACITY;
-    const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t)63;
+static int soak_arena_self_test( void )
+{
+    const size_t class_bytes = sizeof( struct soak_arena_class_t ) * SOAK_ARENA_CLASSES;
+    const size_t free_bytes = sizeof( struct soak_arena_free_entry_t ) * SOAK_ARENA_FREE_CAPACITY;
+    const size_t metadata_bytes = ( class_bytes + free_bytes + 63 ) & ~(size_t) 63;
     const size_t arena_bytes = metadata_bytes + 256;
-    memset(&g_alloc, 0, sizeof(g_alloc));
-    if (!soak_arena_create(arena_bytes)) return 1;
-    void * first = soak_malloc(NULL, 1);
-    void * second = soak_malloc(NULL, 1);
-    if (!first || !second || soak_malloc(NULL, 1) != NULL ||
-        ((uintptr_t)first & 63) != 0 || ((uintptr_t)second & 63) != 0 ||
-        g_arena.used != arena_bytes) return 1;
+    memset( &g_alloc, 0, sizeof( g_alloc ) );
+    if ( !soak_arena_create( arena_bytes ) )
+        return 1;
+    void * first = soak_malloc( NULL, 1 );
+    void * second = soak_malloc( NULL, 1 );
+    if ( !first || !second || soak_malloc( NULL, 1 ) != NULL ||
+         ( (uintptr_t) first & 63 ) != 0 || ( (uintptr_t) second & 63 ) != 0 ||
+         g_arena.used != arena_bytes )
+        return 1;
     // Two same-class blocks freed in order come back last-freed first: a FIFO
     // free sequence would hand back first here and fail.
-    soak_free(NULL, first);
-    soak_free(NULL, second);
-    if (g_arena.free_count != 2) return 1;
-    void * reused_last = soak_malloc(NULL, 1);
-    void * reused_first = soak_malloc(NULL, 1);
-    if (reused_last != second || reused_first != first || g_arena.free_count != 0 ||
-        g_arena.used != arena_bytes) return 1;
-    soak_free(NULL, reused_last);
-    soak_free(NULL, reused_first);
+    soak_free( NULL, first );
+    soak_free( NULL, second );
+    if ( g_arena.free_count != 2 )
+        return 1;
+    void * reused_last = soak_malloc( NULL, 1 );
+    void * reused_first = soak_malloc( NULL, 1 );
+    if ( reused_last != second || reused_first != first || g_arena.free_count != 0 ||
+         g_arena.used != arena_bytes )
+        return 1;
+    soak_free( NULL, reused_last );
+    soak_free( NULL, reused_first );
     const struct soak_alloc_t before_reset = soak_alloc_read();
-    if (before_reset.live_allocs != 0 || before_reset.live_bytes != 0 ||
-        g_arena.free_count != 2 || !soak_arena_release()) return 1;
+    if ( before_reset.live_allocs != 0 || before_reset.live_bytes != 0 ||
+         g_arena.free_count != 2 || !soak_arena_release() )
+        return 1;
 
-    memset(&g_alloc, 0, sizeof(g_alloc));
-    if (!soak_arena_create(arena_bytes) || g_arena.used != metadata_bytes) return 1;
-    first = soak_malloc(NULL, 1);
-    if (!first || (size_t)((uint8_t *)first - g_arena.base) != metadata_bytes + 64 ||
-        g_arena.used != metadata_bytes + 128) return 1;
-    soak_free(NULL, first);
-    if (!soak_arena_release()) return 1;
-    memset(&g_alloc, 0, sizeof(g_alloc));
-    printf("allocator self-test: aligned exhaustion reuse accounting reset\nPASS\n");
+    memset( &g_alloc, 0, sizeof( g_alloc ) );
+    if ( !soak_arena_create( arena_bytes ) || g_arena.used != metadata_bytes )
+        return 1;
+    first = soak_malloc( NULL, 1 );
+    if ( !first || (size_t) ( (uint8_t *) first - g_arena.base ) != metadata_bytes + 64 ||
+         g_arena.used != metadata_bytes + 128 )
+        return 1;
+    soak_free( NULL, first );
+    if ( !soak_arena_release() )
+        return 1;
+    memset( &g_alloc, 0, sizeof( g_alloc ) );
+    printf( "allocator self-test: aligned exhaustion reuse accounting reset\nPASS\n" );
     return 0;
 }
 #endif
 
-struct soak_stream_t {
+struct soak_stream_t
+{
     uint32_t tx_seq[2], rx_ordered_seq, rx_sequenced_max, acked_events;
     bool rx_has_sequenced;
 };
 
-static uint8_t soak_byte( uint64_t seed, uint64_t client_idx, uint32_t kind, uint32_t seq, int i ) {
+static uint8_t soak_byte( uint64_t seed, uint64_t client_idx, uint32_t kind, uint32_t seq, int i )
+{
     uint64_t x = seed ^ ( client_idx * UINT64_C( 0x9e3779b185ebca87 ) ) ^
                  ( (uint64_t) kind << 40 ) ^ ( (uint64_t) seq << 16 ) ^ (uint64_t) i;
     return (uint8_t) ( ( x ^ ( x >> 17 ) ^ ( x >> 33 ) ) & 0xffu );
 }
 
-static void soak_write_msg( uint8_t * out, int len, uint64_t seed, uint64_t client_idx, uint32_t kind, uint32_t seq ) {
+static void soak_write_msg( uint8_t * out, int len, uint64_t seed, uint64_t client_idx, uint32_t kind, uint32_t seq )
+{
     uint32_t hash = 2166136261u;
-    for ( int i = 16; i < len; i++ ) {
+    for ( int i = 16; i < len; i++ )
+    {
         out[i] = soak_byte( seed, client_idx, kind, seq, i );
         hash = ( hash ^ out[i] ) * 16777619u;
     }
@@ -292,35 +368,49 @@ static void soak_write_msg( uint8_t * out, int len, uint64_t seed, uint64_t clie
 }
 
 static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64_t want_client,
-                            int ch, struct soak_stream_t * rx, uint64_t * corrupt, uint64_t * gaps ) {
-    if ( len < 16 ) { (*corrupt)++; printf( "FAIL: short message client=%" PRIu64 " seq=0\n", want_client ); return false; }
+                            int ch, struct soak_stream_t * rx, uint64_t * corrupt, uint64_t * gaps )
+{
+    if ( len < 16 )
+    {
+        ( *corrupt )++;
+        printf( "FAIL: short message client=%" PRIu64 " seq=0\n", want_client );
+        return false;
+    }
     const uint32_t hdr[4] = { read_u32( data ), read_u32( data + 4 ), read_u32( data + 8 ), read_u32( data + 12 ) };
     uint32_t client_id = hdr[0], kind = hdr[1] & 0xffu, seq = hdr[2], want_hash = hdr[3];
     int msg_len = (int) ( hdr[1] >> 8 );
     uint32_t hash = 2166136261u;
-    for ( int i = 16; i < len; i++ ) {
-        if ( data[i] != soak_byte( seed, client_id, kind, seq, i ) ) {
-            (*corrupt)++;
+    for ( int i = 16; i < len; i++ )
+    {
+        if ( data[i] != soak_byte( seed, client_id, kind, seq, i ) )
+        {
+            ( *corrupt )++;
             printf( "FAIL: corrupt body client=%u seq=%u byte=%d\n", client_id, seq, i );
             return false;
         }
         hash = ( hash ^ data[i] ) * 16777619u;
     }
-    if ( client_id != (uint32_t) want_client || ch != (int) kind || msg_len != len || hash != want_hash ) {
-        (*corrupt)++;
+    if ( client_id != (uint32_t) want_client || ch != (int) kind || msg_len != len || hash != want_hash )
+    {
+        ( *corrupt )++;
         printf( "FAIL: header/checksum mismatch client=%u seq=%u\n", client_id, seq );
         return false;
     }
-    if ( kind == 1 ) {
-        if ( seq != rx->rx_ordered_seq ) {
-            (*gaps)++;
+    if ( kind == 1 )
+    {
+        if ( seq != rx->rx_ordered_seq )
+        {
+            ( *gaps )++;
             printf( "FAIL: reliable-ordered gap client=%u expected=%u seq=%u\n", client_id, rx->rx_ordered_seq, seq );
             return false;
         }
         rx->rx_ordered_seq = seq + 1;
-    } else {
-        if ( rx->rx_has_sequenced && seq <= rx->rx_sequenced_max ) {
-            (*gaps)++;
+    }
+    else
+    {
+        if ( rx->rx_has_sequenced && seq <= rx->rx_sequenced_max )
+        {
+            ( *gaps )++;
             printf( "FAIL: unreliable-sequenced backwards client=%u prev=%u seq=%u\n", client_id, rx->rx_sequenced_max, seq );
             return false;
         }
@@ -332,14 +422,17 @@ static bool soak_check_msg( const uint8_t * data, int len, uint64_t seed, uint64
 
 // the peak resident set so far, in bytes: VmHWM from /proc/self/status on
 // Linux, 0 elsewhere (the shutdown check below then has nothing to compare)
-static uint64_t soak_peak_rss_bytes( void ) {
+static uint64_t soak_peak_rss_bytes( void )
+{
     uint64_t kb = 0;
 #if defined( __linux__ )
     FILE * f = soak_fopen( "/proc/self/status", "r" );
     char line[256];
-    if ( f ) {
+    if ( f )
+    {
         while ( fgets( line, sizeof( line ), f ) )
-            if ( strncmp( line, "VmHWM:", 6 ) == 0 ) kb = (uint64_t) strtoull( line + 6, NULL, 10 );
+            if ( strncmp( line, "VmHWM:", 6 ) == 0 )
+                kb = (uint64_t) strtoull( line + 6, NULL, 10 );
         fclose( f );
     }
 #endif
@@ -348,7 +441,8 @@ static uint64_t soak_peak_rss_bytes( void ) {
 
 // The lifecycle's cost, timed by phase: create, start, connect, and the
 // shutdown, which must never need more memory than the run did.
-struct soak_lifecycle_t {
+struct soak_lifecycle_t
+{
     double server_create_ms, server_start_ms, clients_create_ms;
     double clients_destroy_ms, server_stop_ms, server_destroy_ms;
     uint64_t running_peak_rss, shutdown_peak_rss;
@@ -357,14 +451,26 @@ struct soak_lifecycle_t {
 static struct soak_lifecycle_t g_life;
 
 // every client stopped and destroyed, then the server stopped, then destroyed
-static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients, struct rocketnet_server_t * server ) {
+static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients, struct rocketnet_server_t * server )
+{
     g_life.running_peak_rss = soak_peak_rss_bytes();
     double t0 = rocketnet_time();
-    if ( clients ) for ( int c = 0; c < num_clients; c++ ) if ( clients[c] ) { rn_cli_client_stop_and_destroy( clients[c] ); clients[c] = NULL; }
+    if ( clients )
+        for ( int c = 0; c < num_clients; c++ )
+            if ( clients[c] )
+            {
+                rn_cli_client_stop_and_destroy( clients[c] );
+                clients[c] = NULL;
+            }
     double t1 = rocketnet_time();
-    if ( server ) { rocketnet_server_stop( server ); rn_cli_server_wait_stopped( server ); }
+    if ( server )
+    {
+        rocketnet_server_stop( server );
+        rn_cli_server_wait_stopped( server );
+    }
     double t2 = rocketnet_time();
-    if ( server ) rocketnet_server_destroy( server );
+    if ( server )
+        rocketnet_server_destroy( server );
     double t3 = rocketnet_time();
     g_life.clients_destroy_ms = ( t1 - t0 ) * 1000.0;
     g_life.server_stop_ms = ( t2 - t1 ) * 1000.0;
@@ -377,46 +483,72 @@ static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients
     fflush( stdout );
 }
 
-static int cmp_double( const void * a, const void * b ) {
+static int cmp_double( const void * a, const void * b )
+{
     double da = *(const double *) a, db = *(const double *) b;
     return ( da > db ) - ( da < db );
 }
 
-int main( int argc, char ** argv ) {
+int main( int argc, char ** argv )
+{
     int num_clients = 1000, seconds = 3, exit_code = 1;
     uint64_t seed = 1, arena_mib = 0;
     const char * transport_name = "loopback";
     const char * out_path = "soak-results.tsv";
     bool pause_start = false, self_test_corrupt = false, inited = false;
-#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
+#if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
     bool allocator_self_test = false;
 #endif
-    for ( int i = 1; i < argc; i++ ) {
-        if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc ) num_clients = atoi( argv[++i] );
-        else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc ) seconds = atoi( argv[++i] );
-        else if ( strcmp( argv[i], "--arena-mib" ) == 0 && i + 1 < argc ) arena_mib = (uint64_t)strtoull(argv[++i], NULL, 10);
-        else if ( strcmp( argv[i], "--seed" ) == 0 && i + 1 < argc ) seed = (uint64_t) strtoull( argv[++i], NULL, 10 );
-        else if ( strcmp( argv[i], "--transport" ) == 0 && i + 1 < argc ) transport_name = argv[++i];
-        else if ( strcmp( argv[i], "--out" ) == 0 && i + 1 < argc ) out_path = argv[++i];
-        else if ( strcmp( argv[i], "--pause" ) == 0 ) pause_start = true;
-        else if ( strcmp( argv[i], "--self-test-corrupt" ) == 0 ) self_test_corrupt = true;
-#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
-        else if ( strcmp( argv[i], "--allocator-self-test" ) == 0 ) allocator_self_test = true;
+    for ( int i = 1; i < argc; i++ )
+    {
+        if ( strcmp( argv[i], "--clients" ) == 0 && i + 1 < argc )
+            num_clients = atoi( argv[++i] );
+        else if ( strcmp( argv[i], "--seconds" ) == 0 && i + 1 < argc )
+            seconds = atoi( argv[++i] );
+        else if ( strcmp( argv[i], "--arena-mib" ) == 0 && i + 1 < argc )
+            arena_mib = (uint64_t) strtoull( argv[++i], NULL, 10 );
+        else if ( strcmp( argv[i], "--seed" ) == 0 && i + 1 < argc )
+            seed = (uint64_t) strtoull( argv[++i], NULL, 10 );
+        else if ( strcmp( argv[i], "--transport" ) == 0 && i + 1 < argc )
+            transport_name = argv[++i];
+        else if ( strcmp( argv[i], "--out" ) == 0 && i + 1 < argc )
+            out_path = argv[++i];
+        else if ( strcmp( argv[i], "--pause" ) == 0 )
+            pause_start = true;
+        else if ( strcmp( argv[i], "--self-test-corrupt" ) == 0 )
+            self_test_corrupt = true;
+#if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
+        else if ( strcmp( argv[i], "--allocator-self-test" ) == 0 )
+            allocator_self_test = true;
 #endif
-        else { printf( "FAIL: unknown argument %s\n", argv[i] ); return 1; }
+        else
+        {
+            printf( "FAIL: unknown argument %s\n", argv[i] );
+            return 1;
+        }
     }
-#if defined(ROCKETNET_DEV) && ROCKETNET_DEV
-    if ( allocator_self_test ) return soak_arena_self_test();
+#if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
+    if ( allocator_self_test )
+        return soak_arena_self_test();
 #endif
-    if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds * 60 > MAX_TICKS ) return 1;
-    if ( pause_start ) {
+    if ( num_clients < 1 || num_clients > MAX_SOAK_CLIENTS || seconds < 1 || seconds * 60 > MAX_TICKS )
+        return 1;
+    if ( pause_start )
+    {
         int pid = 0, ch = 0;
         char line[64];
         FILE * f = soak_fopen( "/proc/self/stat", "r" );
-        if ( f ) { if ( fgets( line, sizeof( line ), f ) ) pid = (int) strtol( line, NULL, 10 ); fclose( f ); }
+        if ( f )
+        {
+            if ( fgets( line, sizeof( line ), f ) )
+                pid = (int) strtol( line, NULL, 10 );
+            fclose( f );
+        }
         printf( "PAUSED pid=%d (press Enter to start)\n", pid );
         fflush( stdout );
-        while ( ( ch = getchar() ) != 10 && ch != EOF ) {}
+        while ( ( ch = getchar() ) != 10 && ch != EOF )
+        {
+        }
     }
     struct soak_stream_t * c2s = (struct soak_stream_t *) calloc( (size_t) num_clients, sizeof( *c2s ) );
     struct soak_stream_t * s2c = (struct soak_stream_t *) calloc( (size_t) num_clients, sizeof( *s2c ) );
@@ -426,11 +558,12 @@ int main( int argc, char ** argv ) {
     struct rocketnet_server_t * server = NULL;
     int * index_client = NULL;
     CHECK( c2s && s2c && clients && srv_us && cli_us );
-    if (!arena_mib) arena_mib = 2048 + (uint64_t)num_clients * 128;
-    CHECK(arena_mib <= SIZE_MAX / (1024 * 1024));
-    CHECK(soak_arena_create((size_t)arena_mib * 1024 * 1024));
-    printf("allocator: preallocated arena bytes=%" PRIu64 " metadata_bytes=%" PRIu64 " free_entries=%" PRIu64 " (capacity, not resident bytes)\n",
-           (uint64_t)g_arena.bytes, (uint64_t)g_arena.metadata_bytes, (uint64_t)SOAK_ARENA_FREE_CAPACITY);
+    if ( !arena_mib )
+        arena_mib = 2048 + (uint64_t) num_clients * 128;
+    CHECK( arena_mib <= SIZE_MAX / ( 1024 * 1024 ) );
+    CHECK( soak_arena_create( (size_t) arena_mib * 1024 * 1024 ) );
+    printf( "allocator: preallocated arena bytes=%" PRIu64 " metadata_bytes=%" PRIu64 " free_entries=%" PRIu64 " (capacity, not resident bytes)\n",
+            (uint64_t) g_arena.bytes, (uint64_t) g_arena.metadata_bytes, (uint64_t) SOAK_ARENA_FREE_CAPACITY );
     CHECK( rocketnet_init( NULL, soak_malloc, soak_free ) == ROCKETNET_STATUS_OK );
     inited = true;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
@@ -441,14 +574,17 @@ int main( int argc, char ** argv ) {
     s_cfg.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( s_cfg.backend_public_key, dev_backend_public_key, sizeof( s_cfg.backend_public_key ) );
     CHECK( rocketnet_client_default_config( &c_cfg ) == ROCKETNET_STATUS_OK );
-    s_cfg.max_clients = num_clients; s_cfg.transport = c_cfg.transport = transport_name;
-    s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000; s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
+    s_cfg.max_clients = num_clients;
+    s_cfg.transport = c_cfg.transport = transport_name;
+    s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000;
+    s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.max_fragmented_messages = c_cfg.max_fragmented_messages = 2;
     s_cfg.reliable_messages_in_flight = c_cfg.reliable_messages_in_flight = s_cfg.send_queue_messages = c_cfg.send_queue_messages = 64;
     s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_messages_per_update = c_cfg.unreliable_messages_per_update = s_cfg.max_message_receipts = c_cfg.max_message_receipts = 64;
     s_cfg.receive_message_buffer_bytes = c_cfg.receive_message_buffer_bytes = s_cfg.send_message_buffer_bytes = c_cfg.send_message_buffer_bytes = 32768;
     s_cfg.sequenced_messages_held = c_cfg.sequenced_messages_held = 8;
-    s_cfg.message_resend_delay_min_ms = c_cfg.message_resend_delay_min_ms = s_cfg.message_resend_delay_initial_ms = c_cfg.message_resend_delay_initial_ms = 200; s_cfg.message_resend_delay_max_ms = c_cfg.message_resend_delay_max_ms = 500;
+    s_cfg.message_resend_delay_min_ms = c_cfg.message_resend_delay_min_ms = s_cfg.message_resend_delay_initial_ms = c_cfg.message_resend_delay_initial_ms = 200;
+    s_cfg.message_resend_delay_max_ms = c_cfg.message_resend_delay_max_ms = 500;
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     double phase_start = rocketnet_time();
     server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &s_cfg, &create_status );
@@ -456,7 +592,8 @@ int main( int argc, char ** argv ) {
     // the development network simulator: lose 1% of every packet both ways
     if ( server )
         rocketnet_server_network_simulator( server, 0, 0, 1, 0 );
-    if ( !server ) printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
+    if ( !server )
+        printf( "create refused: %s\n", rocketnet_status_name( create_status ) );
     phase_start = rocketnet_time();
     const enum rocketnet_status_t start_status = server ? rocketnet_server_start( server ) : ROCKETNET_STATUS_OK;
     g_life.server_start_ms = ( rocketnet_time() - phase_start ) * 1000.0;
@@ -471,7 +608,8 @@ int main( int argc, char ** argv ) {
     CHECK( rocketnet_server_ipv4_address( server, addr, sizeof( addr ) ) );
     rocketnet_server_public_key( server, server_public_key );
     phase_start = rocketnet_time();
-    for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ ) {
+    for ( uint64_t c = 0; c < (uint64_t) num_clients; c++ )
+    {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         const time_t token_time = time( NULL );
         CHECK( token_time != (time_t) -1 );
@@ -480,7 +618,8 @@ int main( int argc, char ** argv ) {
         clients[c] = rocketnet_client_create( NULL, &c_cfg, &create_status_2 );
         if ( clients[c] )
             rocketnet_client_network_simulator( clients[c], 0, 0, 1, 0 );
-        if ( !clients[c] ) printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
+        if ( !clients[c] )
+            printf( "create refused: %s\n", rocketnet_status_name( create_status_2 ) );
         if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
             rn_cli_client_stop_and_destroy( clients[c] );
@@ -496,15 +635,20 @@ int main( int argc, char ** argv ) {
     double sim_time = 1000.0;
     const double connect_started = rocketnet_time();
     const double connect_sim_start = sim_time;
-    while ( rocketnet_time() - connect_started < 10.0 ) {
+    while ( rocketnet_time() - connect_started < 10.0 )
+    {
         int all_conn = ( rocketnet_server_num_connected_clients( server ) == num_clients );
         for ( int c = 0; all_conn && c < num_clients; c++ )
-            if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED ) all_conn = 0;
-        if ( all_conn ) break;
+            if ( rocketnet_client_state( clients[c] ) != ROCKETNET_CLIENT_STATE_CONNECTED )
+                all_conn = 0;
+        if ( all_conn )
+            break;
         sim_time = connect_sim_start + ( rocketnet_time() - connect_started );
-        for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
+        for ( int base = 0; base < num_clients; base += BATCH_CLIENTS )
+        {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
-            for ( int c = base; c < end; c++ ) {
+            for ( int c = base; c < end; c++ )
+            {
                 rocketnet_client_update( clients[c], sim_time );
                 rocketnet_client_send_packets( clients[c] ); // send last so this frame's messages leave this frame
             }
@@ -526,33 +670,44 @@ int main( int argc, char ** argv ) {
     const int soak_ticks = seconds * 60, drain_ticks = 90, stride = num_clients > 25 ? ( num_clients / 25 ) : 1;
     uint64_t sent_rel = 0, recv_rel = 0, sent_seq = 0, recv_seq = 0, corrupt = 0, gaps = 0;
     bool injected = false;
-    for ( int tick = 0; tick < soak_ticks + drain_ticks; tick++ ) {
+    for ( int tick = 0; tick < soak_ticks + drain_ticks; tick++ )
+    {
         sim_time += 1.0 / 60.0;
         double tick_cli_us = 0.0, tick_srv_us = 0.0;
-        for ( int base = 0; base < num_clients; base += BATCH_CLIENTS ) {
+        for ( int base = 0; base < num_clients; base += BATCH_CLIENTS )
+        {
             int end = base + BATCH_CLIENTS < num_clients ? base + BATCH_CLIENTS : num_clients;
             double t0 = rocketnet_time();
-            for ( int c = base; c < end; c++ ) {
+            for ( int c = base; c < end; c++ )
+            {
                 // (1) update pumps the transport and takes in what arrived
                 rocketnet_client_update( clients[c], sim_time );
                 // (2) receive every received message, in batches from the one
                 // queue: each entry names its channel, and the next batch
                 // call or update releases the batch
                 const struct rocketnet_message_batch_t * batch = NULL;
-                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL ) {
-                    for ( int m = 0; m < batch->num_messages; m++ ) {
+                while ( ( batch = rocketnet_client_receive_messages( clients[c] ) ) != NULL )
+                {
+                    for ( int m = 0; m < batch->num_messages; m++ )
+                    {
                         const int ch = batch->channel[m];
                         bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &s2c[c], &corrupt, &gaps );
                         CHECK( ok );
-                        if ( ch == 1 ) recv_rel++; else recv_seq++;
+                        if ( ch == 1 )
+                            recv_rel++;
+                        else
+                            recv_seq++;
                     }
                 }
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_client_receipts( clients[c], recs, 16 );
                 CHECK( nrec <= 16 );
-                for ( int r = 0; r < nrec && r < 16; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) c2s[c].acked_events++;
+                for ( int r = 0; r < nrec && r < 16; r++ )
+                    if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                        c2s[c].acked_events++;
                 // (3) simulate & (4) queue this frame's outgoing messages
-                if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
+                if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) )
+                {
                     // replaceable sequenced: skip this tick when there is no room
                     if ( rocketnet_client_can_send_message( clients[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 ) )
                     {
@@ -564,7 +719,8 @@ int main( int argc, char ** argv ) {
                             sent_seq++;
                         }
                     }
-                    if ( ( tick % 6 ) == 0 ) {
+                    if ( ( tick % 6 ) == 0 )
+                    {
                         // reliable: skip this tick when there is no room; the sequence advances only on a successful finish
                         if ( rocketnet_client_can_send_message( clients[c], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 ) )
                         {
@@ -572,7 +728,11 @@ int main( int argc, char ** argv ) {
                             if ( p1 )
                             {
                                 soak_write_msg( p1, 96, seed, (uint64_t) c, 1, c2s[c].tx_seq[1]++ );
-                                if ( self_test_corrupt && !injected ) { p1[32] ^= 0xffu; injected = true; }
+                                if ( self_test_corrupt && !injected )
+                                {
+                                    p1[32] ^= 0xffu;
+                                    injected = true;
+                                }
                                 CHECK( rocketnet_client_finish_message( clients[c], 96 ) != 0 );
                                 sent_rel++;
                             }
@@ -589,24 +749,33 @@ int main( int argc, char ** argv ) {
             // (2) server receive, in batches from the one queue across every
             // client: each entry names its sender and its channel
             const struct rocketnet_message_batch_t * batch = NULL;
-            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL ) {
-                for ( int m = 0; m < batch->num_messages; m++ ) {
+            while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+            {
+                for ( int m = 0; m < batch->num_messages; m++ )
+                {
                     CHECK( batch->client_index[m] >= 0 && batch->client_index[m] < num_clients );
                     const int c = index_client[batch->client_index[m]];
                     const int ch = batch->channel[m];
                     bool ok = soak_check_msg( batch->data[m], batch->bytes[m], seed, (uint64_t) c, ch, &c2s[c], &corrupt, &gaps );
                     CHECK( ok );
-                    if ( ch == 1 ) recv_rel++; else recv_seq++;
+                    if ( ch == 1 )
+                        recv_rel++;
+                    else
+                        recv_seq++;
                 }
             }
-            for ( int c = base; c < end; c++ ) {
+            for ( int c = base; c < end; c++ )
+            {
                 const int client_idx = rocketnet_client_index( clients[c] );
                 struct rocketnet_receipt_t recs[16];
                 int nrec = rocketnet_server_receipts( server, client_idx, recs, 16 );
                 CHECK( nrec <= 16 );
-                for ( int r = 0; r < nrec && r < 16; r++ ) if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED ) s2c[c].acked_events++;
+                for ( int r = 0; r < nrec && r < 16; r++ )
+                    if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+                        s2c[c].acked_events++;
                 // (3) simulate & (4) server queue outgoing messages
-                if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) ) {
+                if ( tick < soak_ticks && ( ( c + tick ) % stride == 0 ) )
+                {
                     if ( rocketnet_server_can_send_message( server, client_idx, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 ) )
                     {
                         uint8_t * p0 = rocketnet_server_start_message( server, (uint64_t) client_idx, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 48 );
@@ -617,7 +786,8 @@ int main( int argc, char ** argv ) {
                             sent_seq++;
                         }
                     }
-                    if ( ( tick % 6 ) == 0 ) {
+                    if ( ( tick % 6 ) == 0 )
+                    {
                         if ( rocketnet_server_can_send_message( server, client_idx, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 ) )
                         {
                             uint8_t * p1 = rocketnet_server_start_message( server, (uint64_t) client_idx, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 96 );
@@ -635,15 +805,21 @@ int main( int argc, char ** argv ) {
             rocketnet_server_send_packets( server );
             tick_srv_us += ( rocketnet_time() - s0 ) * 1e6;
         }
-        if ( tick < soak_ticks ) { cli_us[tick] = tick_cli_us; srv_us[tick] = tick_srv_us; }
+        if ( tick < soak_ticks )
+        {
+            cli_us[tick] = tick_cli_us;
+            srv_us[tick] = tick_srv_us;
+        }
         // the drain frames let real time pass, so what the worker threads
         // still hold arrives (a few clients run the soak frames in well
         // under a millisecond)
-        else rocketnet_sleep( 0.001 );
+        else
+            rocketnet_sleep( 0.001 );
     }
     soak_alloc_set_steady( false );
     uint64_t acked_total = 0;
-    for ( int c = 0; c < num_clients; c++ ) {
+    for ( int c = 0; c < num_clients; c++ )
+    {
         acked_total += c2s[c].acked_events + s2c[c].acked_events;
         CHECK( c2s[c].rx_ordered_seq == c2s[c].tx_seq[1] && s2c[c].rx_ordered_seq == s2c[c].tx_seq[1] );
     }
@@ -666,8 +842,10 @@ int main( int argc, char ** argv ) {
     const double shutdown_started = rocketnet_time();
     const double shutdown_sim_start = sim_time;
     int disconnected = 0, next_disconnect = 0, batch_left = 1;
-    while ( rocketnet_time() - shutdown_started < 10.0 ) {
-        if ( batch_left && next_disconnect < num_clients ) {
+    while ( rocketnet_time() - shutdown_started < 10.0 )
+    {
+        if ( batch_left && next_disconnect < num_clients )
+        {
             const int end = next_disconnect + DISCONNECT_BATCH_CLIENTS < num_clients ? next_disconnect + DISCONNECT_BATCH_CLIENTS : num_clients;
             for ( int c = next_disconnect; c < end; c++ )
                 rocketnet_client_disconnect( clients[c] );
@@ -676,11 +854,14 @@ int main( int argc, char ** argv ) {
         disconnected = 1;
         batch_left = 1;
         sim_time = shutdown_sim_start + ( rocketnet_time() - shutdown_started );
-        for ( int c = 0; c < num_clients; c++ ) {
+        for ( int c = 0; c < num_clients; c++ )
+        {
             rocketnet_client_update( clients[c], sim_time );
-            if ( c >= next_disconnect || !rocketnet_client_disconnected( clients[c] ) ) {
+            if ( c >= next_disconnect || !rocketnet_client_disconnected( clients[c] ) )
+            {
                 disconnected = 0;
-                if ( c < next_disconnect ) batch_left = 0;
+                if ( c < next_disconnect )
+                    batch_left = 0;
             }
         }
         // Local completion does not prove that the server received a burst.
@@ -693,8 +874,10 @@ int main( int argc, char ** argv ) {
     }
     CHECK( disconnected );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
-    soak_shutdown( clients, num_clients, server ); server = NULL;
-    const enum rocketnet_status_t term_status = rocketnet_term(); inited = false;
+    soak_shutdown( clients, num_clients, server );
+    server = NULL;
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    inited = false;
     CHECK( term_status == ROCKETNET_STATUS_OK );
     // destroy never needs more memory than the run did (Linux: VmHWM)
     CHECK( g_life.shutdown_peak_rss <= g_life.running_peak_rss );
@@ -727,19 +910,30 @@ int main( int argc, char ** argv ) {
     exit_code = 0;
 
 cleanup:
-    if ( !g_life.shut_down ) soak_shutdown( clients, num_clients, server );
-    if ( inited && rocketnet_term() != ROCKETNET_STATUS_OK ) exit_code = 1;
-    const struct soak_alloc_t final_allocations = soak_alloc_read();
-    if (final_allocations.live_allocs || final_allocations.live_bytes) {
-        printf("FAIL: arena still has live SDK allocations\n");
+    if ( !g_life.shut_down )
+        soak_shutdown( clients, num_clients, server );
+    if ( inited && rocketnet_term() != ROCKETNET_STATUS_OK )
         exit_code = 1;
-    } else if (g_arena.allocation) {
-        const double release_started = rocketnet_time();
-        const uint64_t high_water_bytes = (uint64_t)g_arena.used;
-        if (!soak_arena_release()) exit_code = 1;
-        printf("allocator: backing_release_ms=%.3f high_water_bytes=%" PRIu64 "\n", (rocketnet_time() - release_started) * 1000.0, high_water_bytes);
+    const struct soak_alloc_t final_allocations = soak_alloc_read();
+    if ( final_allocations.live_allocs || final_allocations.live_bytes )
+    {
+        printf( "FAIL: arena still has live SDK allocations\n" );
+        exit_code = 1;
     }
-    free( index_client ); free( clients ); free( c2s ); free( s2c ); free( srv_us ); free( cli_us );
+    else if ( g_arena.allocation )
+    {
+        const double release_started = rocketnet_time();
+        const uint64_t high_water_bytes = (uint64_t) g_arena.used;
+        if ( !soak_arena_release() )
+            exit_code = 1;
+        printf( "allocator: backing_release_ms=%.3f high_water_bytes=%" PRIu64 "\n", ( rocketnet_time() - release_started ) * 1000.0, high_water_bytes );
+    }
+    free( index_client );
+    free( clients );
+    free( c2s );
+    free( s2c );
+    free( srv_us );
+    free( cli_us );
     // PASS after the cleanup, so it stays the last line
     if ( exit_code == 0 )
         printf( "PASS\n" );

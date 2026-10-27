@@ -163,7 +163,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_packets( struct rocketnet_server_gso_t * gso );
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 // development library only. force_create_flags ORs flags (the DISABLE set)
 // into every following create. fail_receives makes the next count recvmmsg
 // calls on any worker answer -1 with error without reaching the kernel;

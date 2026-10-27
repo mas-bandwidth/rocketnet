@@ -24,18 +24,18 @@
 
 struct msghdr_x
 {
-    void *          msg_name;
-    socklen_t       msg_namelen;
-    struct iovec *  msg_iov;
-    int             msg_iovlen;
-    void *          msg_control;
-    socklen_t       msg_controllen;
-    int             msg_flags;
-    size_t          msg_datalen;
+    void * msg_name;
+    socklen_t msg_namelen;
+    struct iovec * msg_iov;
+    int msg_iovlen;
+    void * msg_control;
+    socklen_t msg_controllen;
+    int msg_flags;
+    size_t msg_datalen;
 };
 
-typedef ssize_t (*sendmsg_x_fn)( int s, const struct msghdr_x * msgp, u_int cnt, int flags );
-typedef ssize_t (*recvmsg_x_fn)( int s, struct msghdr_x * msgp, u_int cnt, int flags );
+typedef ssize_t ( *sendmsg_x_fn )( int s, const struct msghdr_x * msgp, u_int cnt, int flags );
+typedef ssize_t ( *recvmsg_x_fn )( int s, struct msghdr_x * msgp, u_int cnt, int flags );
 
 static sendmsg_x_fn msgx_send;
 static recvmsg_x_fn msgx_recv;
@@ -55,8 +55,11 @@ static void run_receiver( int port, double warmup, double window, int windows, i
 {
     int fd = bench_udp_socket();
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
-    if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) < 0 )
-        { perror( "bind" ); exit( 1 ); }
+    if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) < 0 )
+    {
+        perror( "bind" );
+        exit( 1 );
+    }
     fcntl( fd, F_SETFL, O_NONBLOCK );
     bench_report_buffers( fd );
 
@@ -72,13 +75,13 @@ static void run_receiver( int port, double warmup, double window, int windows, i
     {
         /* one recvmsg_x per batch: the whole point of the candidate */
 
-        memset( msg, 0, sizeof(msg) );
+        memset( msg, 0, sizeof( msg ) );
         for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
         {
             iov[i].iov_base = payload[i];
             iov[i].iov_len = BENCH_MAX_PACKET;
             msg[i].msg_name = &from[i];
-            msg[i].msg_namelen = sizeof(from[i]);
+            msg[i].msg_namelen = sizeof( from[i] );
             msg[i].msg_iov = &iov[i];
             msg[i].msg_iovlen = 1;
         }
@@ -130,7 +133,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     struct msghdr_x msg[BENCH_BATCH_SIZE];
 
     struct bench_send_health_t health;
-    memset( &health, 0, sizeof(health) );
+    memset( &health, 0, sizeof( health ) );
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -142,7 +145,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     for ( ;; )
     {
-        int size = bench_sizes[ batch_index % BENCH_NUM_SIZES ];
+        int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
         batch_index++;
 
@@ -154,7 +157,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             /* the server-pump send shape: per-message msg_name on an
                unconnected socket, one sendmsg_x per batch */
 
-            memset( msg, 0, sizeof(msg) );
+            memset( msg, 0, sizeof( msg ) );
             for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
             {
                 bench_fill_packet( payload[i], size, flow, sequence++ );
@@ -162,7 +165,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 iov[i].iov_base = payload[i];
                 iov[i].iov_len = (size_t) size;
                 msg[i].msg_name = &to;
-                msg[i].msg_namelen = sizeof(to);
+                msg[i].msg_namelen = sizeof( to );
                 msg[i].msg_iov = &iov[i];
                 msg[i].msg_iovlen = 1;
             }
@@ -170,11 +173,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             ssize_t result = msgx_send( fd, msg, BENCH_BATCH_SIZE, 0 );
             const int error = errno;
             syscalls++;
-            if ( bench_fault( "send-short" ) ) result = 1;
-            if ( bench_fault( "send-zero" ) ) result = 0;
+            if ( bench_fault( "send-short" ) )
+                result = 1;
+            if ( bench_fault( "send-zero" ) )
+                result = 0;
             sent += bench_send_batch_observe( &health, "sendmsg_x",
-                                             result >= 0 ? (int) result : 0, BENCH_BATCH_SIZE,
-                                             result < 0 ? error : EIO );
+                                              result >= 0 ? (int) result : 0, BENCH_BATCH_SIZE,
+                                              result < 0 ? error : EIO );
         }
     }
 

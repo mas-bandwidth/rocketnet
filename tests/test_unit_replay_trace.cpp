@@ -67,7 +67,7 @@ struct replay_window_ref_t
         cleared_words = cleared_words_;
         gate_before_advance = gate_before_advance_;
         highest = 0;
-        memset( window, 0, sizeof(window) );
+        memset( window, 0, sizeof( window ) );
         received.clear();
         processed.clear();
         connected = 0;
@@ -176,15 +176,33 @@ struct replay_window_ref_t
 static int g_replay_trace_steps = 0;
 
 static const uint64_t k_trace_alphabet[] = { 1, 2, 3, 300, 4096, 4097, 4397 };
-static const int k_trace_alphabet_count = (int) ( sizeof(k_trace_alphabet) / sizeof(k_trace_alphabet[0]) );
+static const int k_trace_alphabet_count = (int) ( sizeof( k_trace_alphabet ) / sizeof( k_trace_alphabet[0] ) );
 
 // sequences that probe every branch, plus the dynamic floor/high-water
 // neighbours, compared against the code after each step.
-static const uint64_t k_trace_probes[] =
-{
-    1, 2, 3, 4, 5, 6, 299, 300, 301, 4095, 4096, 4097, 4098, 4395, 4396, 4397, 4398, 8191, 8192, 8193,
+static const uint64_t k_trace_probes[] = {
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    299,
+    300,
+    301,
+    4095,
+    4096,
+    4097,
+    4098,
+    4395,
+    4396,
+    4397,
+    4398,
+    8191,
+    8192,
+    8193,
 };
-static const int k_trace_probe_count = (int) ( sizeof(k_trace_probes) / sizeof(k_trace_probes[0]) );
+static const int k_trace_probe_count = (int) ( sizeof( k_trace_probes ) / sizeof( k_trace_probes[0] ) );
 
 static void replay_trace_compare( const replay_window_ref_t & model, const struct rocketnet_replay_protection_t & real )
 {
@@ -263,7 +281,7 @@ static void test_replay_window_model_trace()
     model.reset( /* ClearedWords */ k_model_words, /* GateBeforeAdvance */ 0 );
 
     struct rocketnet_replay_protection_t real;
-    memset( &real, 0, sizeof(real) );
+    memset( &real, 0, sizeof( real ) );
 
     g_replay_trace_steps = 0;
     replay_trace_dfs( model, real, 0 );
@@ -289,7 +307,7 @@ static void test_replay_window_model_trace()
 static void test_replay_long_skip_clears_the_whole_window()
 {
     struct rocketnet_replay_protection_t replay;
-    memset( &replay, 0, sizeof(replay) );
+    memset( &replay, 0, sizeof( replay ) );
 
     // the reversed witness, scaled to the real width: advance(2), advance(300),
     // advance(4397) -- the skip 300 -> 4397 is 4097, at least one window.
@@ -304,7 +322,7 @@ static void test_replay_long_skip_clears_the_whole_window()
     // the card's own shape at full width: fill 1..W, jump to 3W. every
     // sequence 2W+257 .. 3W-1 is new and must not read as received.
     struct rocketnet_replay_protection_t full;
-    memset( &full, 0, sizeof(full) );
+    memset( &full, 0, sizeof( full ) );
     for ( uint64_t s = 1; s <= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS; s++ )
         rocketnet_replay_advance( &full, s );
     rocketnet_replay_advance( &full, 3ULL * ROCKETNET_REPLAY_WINDOW_BITS );
@@ -320,9 +338,9 @@ static void test_replay_long_skip_clears_the_whole_window()
 static void test_slotless_packet_never_moves_the_session_window()
 {
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
+    memset( &server, 0, sizeof( server ) );
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );

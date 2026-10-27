@@ -11,15 +11,15 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
-    #include <sched.h>
-    #include <time.h>
+#include <sched.h>
+#include <time.h>
 
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 
-    #include <mach/mach_time.h>
-    #include <mach/mach.h>
-    #include <mach/thread_policy.h>
-    #include <mach/thread_act.h>
+#include <mach/mach_time.h>
+#include <mach/mach.h>
+#include <mach/thread_policy.h>
+#include <mach/thread_act.h>
 
 #endif
 
@@ -46,7 +46,7 @@ static void rocketnet_frame_sync_platform_wait_until( struct rocketnet_frame_syn
 {
     (void) frame_sync;
     struct timespec ts;
-#if defined(__OpenBSD__)
+#if defined( __OpenBSD__ )
     // openbsd has no clock_nanosleep. sleep the remaining interval relative
     // to a fresh read of the same clock; the spin guard above this call
     // already absorbs an early wake, and a late one is the scheduler's to
@@ -190,7 +190,7 @@ static void rocketnet_frame_sync_elevate_priority( struct rocketnet_frame_sync_t
     frame_sync->waiter_thread = pthread_self();
     pthread_getschedparam( pthread_self(), &frame_sync->waiter_previous_policy, &frame_sync->waiter_previous_param );
     struct sched_param param;
-    memset( &param, 0, sizeof(param) );
+    memset( &param, 0, sizeof( param ) );
     param.sched_priority = 80;
     const int error = pthread_setschedparam( pthread_self(), SCHED_FIFO, &param );
     if ( error != 0 )
@@ -326,7 +326,7 @@ uint64_t rocketnet_frame_sync_guard_ns( double guard_ewma_ns, uint64_t guard_cap
 void rocketnet_frame_sync_adapt_guard( double * guard_ewma_ns, uint64_t oversleep_ns, uint64_t guard_cap_ns )
 {
     rocketnet_assert( guard_ewma_ns );
-    double next = 0.9 * (*guard_ewma_ns) + 0.1 * (double) oversleep_ns;
+    double next = 0.9 * ( *guard_ewma_ns ) + 0.1 * (double) oversleep_ns;
     if ( next > (double) guard_cap_ns )
     {
         next = (double) guard_cap_ns;
@@ -410,7 +410,7 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
     rocketnet_frame_sync_platform_init();
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_LINUX && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_BSD
 
-    struct rocketnet_frame_sync_t * frame_sync = (struct rocketnet_frame_sync_t*) rocketnet_malloc( context, sizeof( struct rocketnet_frame_sync_t ) );
+    struct rocketnet_frame_sync_t * frame_sync = (struct rocketnet_frame_sync_t *) rocketnet_malloc( context, sizeof( struct rocketnet_frame_sync_t ) );
     if ( !frame_sync )
     {
         if ( status )
@@ -444,9 +444,9 @@ struct rocketnet_frame_sync_t * rocketnet_frame_sync_create_ex( void * context, 
         rocketnet_free( context, frame_sync );
         return NULL;
     }
-#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
     frame_sync->lifecycle_timer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER,
-        (uintptr_t) frame_sync->waitable_timer, "frame sync waitable timer" );
+                                                                             (uintptr_t) frame_sync->waitable_timer, "frame sync waitable timer" );
 #endif
 #elif ROCKETNET_DEV
     if ( !rocketnet_platform_priority_calls_current()->create_waitable_timer( CREATE_WAITABLE_TIMER_HIGH_RESOLUTION ) )
@@ -478,9 +478,10 @@ void rocketnet_frame_sync_destroy( struct rocketnet_frame_sync_t * frame_sync )
     }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
     if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) frame_sync->waitable_timer,
-                                                  frame_sync->lifecycle_timer_generation ) ) return;
+                                                 frame_sync->lifecycle_timer_generation ) )
+        return;
     const BOOL closed = CloseHandle( frame_sync->waitable_timer );
     rocketnet_lifecycle_track_close_end( frame_sync->lifecycle_timer_generation, closed != 0 );
 #else
@@ -524,7 +525,9 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
 
             rocketnet_frame_sync_adapt_guard( &frame_sync->guard_ewma_ns, woke - sleep_until, frame_sync->guard_cap_ns );
         }
-        while ( rocketnet_frame_sync_now_ns() < frame_sync->deadline_ns ) { }
+        while ( rocketnet_frame_sync_now_ns() < frame_sync->deadline_ns )
+        {
+        }
     }
     else
     {

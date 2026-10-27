@@ -19,7 +19,7 @@
 static void stats_ack_run( struct rocketnet_ack_endpoint_t * endpoint, uint64_t low, uint64_t high, double time )
 {
     struct rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = high;
     block.first_range_length = (uint32_t) ( high - low + 1 );
     static uint64_t acked_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
@@ -91,7 +91,7 @@ static int g_stats_comparisons;
 
 static void stats_check_reference( const struct rocketnet_ack_endpoint_t * endpoint )
 {
-    memcpy( (void*) &g_stats_reference, (const void*) endpoint, sizeof(g_stats_reference) );
+    memcpy( (void *) &g_stats_reference, (const void *) endpoint, sizeof( g_stats_reference ) );
     rocketnet_ack_endpoint_update_stats( &g_stats_reference );
     g_stats_comparisons++;
 
@@ -288,9 +288,9 @@ struct stats_window_test_bucket_t
 
 static const double stats_window_test_step = 0.125;
 
-static int stats_window_test_fill( struct stats_window_test_bucket_t (&buckets)[STATS_WINDOW_TEST_BUCKETS], uint64_t * frame )
+static int stats_window_test_fill( struct stats_window_test_bucket_t ( &buckets )[STATS_WINDOW_TEST_BUCKETS], uint64_t * frame )
 {
-    memset( buckets, 0, sizeof(buckets) );
+    memset( buckets, 0, sizeof( buckets ) );
     int index = STATS_WINDOW_TEST_BUCKETS - 1;
     for ( int k = 0; k < STATS_WINDOW_TEST_BUCKETS; k++ )
     {

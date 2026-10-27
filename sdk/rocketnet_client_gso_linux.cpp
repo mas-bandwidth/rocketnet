@@ -42,7 +42,7 @@ static int rocketnet_client_gso_kernel_sendmmsg( void *, int socket, struct mmsg
 static int rocketnet_client_gso_kernel_segment_probe( void *, int socket )
 {
     int zero = 0;
-    return setsockopt( socket, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof(zero) );
+    return setsockopt( socket, IPPROTO_UDP, UDP_SEGMENT, &zero, sizeof( zero ) );
 }
 
 static int rocketnet_client_gso_kernel_recvmmsg( void *, int socket, struct mmsghdr * messages, unsigned int num_messages )
@@ -53,17 +53,16 @@ static int rocketnet_client_gso_kernel_recvmmsg( void *, int socket, struct mmsg
 static int rocketnet_client_gso_kernel_gro_enable( void *, int socket )
 {
     int one = 1;
-    return setsockopt( socket, IPPROTO_UDP, UDP_GRO, &one, sizeof(one) );
+    return setsockopt( socket, IPPROTO_UDP, UDP_GRO, &one, sizeof( one ) );
 }
 
 // the context is the platform socket: its family decides the dual stack rule
 static bool rocketnet_client_gso_kernel_read_address( void * context, const struct sockaddr_storage * storage, rocketnet_address_t * from )
 {
-    return rocketnet_platform_mmsg_read_sockaddr( (rocketnet_platform_socket_t*) context, storage, from );
+    return rocketnet_platform_mmsg_read_sockaddr( (rocketnet_platform_socket_t *) context, storage, from );
 }
 
-const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls =
-{
+const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls = {
     rocketnet_client_gso_kernel_sendmmsg,
     rocketnet_client_gso_kernel_segment_probe,
     rocketnet_client_gso_kernel_recvmmsg,
@@ -71,11 +70,11 @@ const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls =
     rocketnet_client_gso_kernel_read_address,
 };
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
-std::atomic<bool> rocketnet_client_gso_test_disable_segment{false};
-std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent{0};
-std::atomic<bool> rocketnet_client_gso_test_disable_gro{false};
-std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches{0};
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+std::atomic<bool> rocketnet_client_gso_test_disable_segment{ false };
+std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent{ 0 };
+std::atomic<bool> rocketnet_client_gso_test_disable_gro{ false };
+std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches{ 0 };
 #endif
 
 bool rocketnet_client_gso_init( rocketnet_client_gso_t * gso, const rocketnet_client_gso_syscalls_t * syscalls, void * syscall_context, int socket, bool probe_segment )
@@ -117,33 +116,33 @@ static int rocketnet_client_gso_build( rocketnet_client_gso_t * gso, const rocke
     int packet = first;
     while ( packet < num_packets )
     {
-        const int run = gso->segment ?
-            rocketnet_coalesce_send_run( &gso->run_packet_bytes[packet], &gso->run_to[packet], num_packets - packet,
-                                         ROCKETNET_CLIENT_GSO_MAX_SEGMENTS, ROCKETNET_CLIENT_GSO_MAX_SUPER_BYTES ) : 1;
+        const int run = gso->segment ? rocketnet_coalesce_send_run( &gso->run_packet_bytes[packet], &gso->run_to[packet], num_packets - packet,
+                                                                    ROCKETNET_CLIENT_GSO_MAX_SEGMENTS, ROCKETNET_CLIENT_GSO_MAX_SUPER_BYTES )
+                                     : 1;
         rocketnet_assert( run >= 1 );
 
         // a connected socket names no destination (rocketnet_platform_sendto)
         struct msghdr * header = &gso->messages[num_messages].msg_hdr;
-        memset( &gso->messages[num_messages], 0, sizeof(gso->messages[num_messages]) );
+        memset( &gso->messages[num_messages], 0, sizeof( gso->messages[num_messages] ) );
         header->msg_iov = &gso->packet_iovecs[packet];
         header->msg_iovlen = (size_t) run;
         for ( int i = packet; i < packet + run; i++ )
         {
-            gso->packet_iovecs[i].iov_base = const_cast<uint8_t*>( sends[i].packet_data ); // the send only reads it
+            gso->packet_iovecs[i].iov_base = const_cast<uint8_t *>( sends[i].packet_data ); // the send only reads it
             gso->packet_iovecs[i].iov_len = (size_t) sends[i].packet_bytes;
         }
 
         if ( run > 1 )
         {
-            memset( &gso->controls[num_messages], 0, sizeof(gso->controls[num_messages]) );
+            memset( &gso->controls[num_messages], 0, sizeof( gso->controls[num_messages] ) );
             header->msg_control = gso->controls[num_messages].bytes;
-            header->msg_controllen = CMSG_SPACE( sizeof(uint16_t) );
+            header->msg_controllen = CMSG_SPACE( sizeof( uint16_t ) );
             struct cmsghdr * cmsg = CMSG_FIRSTHDR( header );
             cmsg->cmsg_level = IPPROTO_UDP;
             cmsg->cmsg_type = UDP_SEGMENT;
-            cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+            cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
             const uint16_t stride = (uint16_t) gso->run_packet_bytes[packet];
-            memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
+            memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
         }
 
         gso->message_first_packet[num_messages] = packet;
@@ -182,7 +181,7 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
                 if ( gso->message_num_packets[i] > 1 )
                 {
                     gso->segment_messages_sent++;
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
                     rocketnet_client_gso_test_segment_messages_sent.fetch_add( 1, std::memory_order_relaxed );
 #endif
                 }
@@ -256,7 +255,7 @@ int rocketnet_client_gso_gro_segment_bytes( const struct msghdr * header, int me
         *faults += 1;
         return message_bytes;
     }
-    struct msghdr * walk = const_cast<struct msghdr*>( header ); // CMSG_NXTHDR only reads it
+    struct msghdr * walk = const_cast<struct msghdr *>( header ); // CMSG_NXTHDR only reads it
     for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( walk ); cmsg != NULL; cmsg = CMSG_NXTHDR( walk, cmsg ) )
     {
         if ( cmsg->cmsg_len < sizeof( struct cmsghdr ) )
@@ -309,15 +308,15 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
             break;
 
         struct msghdr * header = &gso->receive_message.msg_hdr;
-        memset( &gso->receive_message, 0, sizeof(gso->receive_message) );
+        memset( &gso->receive_message, 0, sizeof( gso->receive_message ) );
         gso->receive_iovec.iov_base = gso->coalesce_buffer;
-        gso->receive_iovec.iov_len = sizeof(gso->coalesce_buffer);
+        gso->receive_iovec.iov_len = sizeof( gso->coalesce_buffer );
         header->msg_name = &gso->receive_name;
-        header->msg_namelen = sizeof(gso->receive_name);
+        header->msg_namelen = sizeof( gso->receive_name );
         header->msg_iov = &gso->receive_iovec;
         header->msg_iovlen = 1;
         header->msg_control = gso->receive_control.bytes;
-        header->msg_controllen = sizeof(gso->receive_control.bytes);
+        header->msg_controllen = sizeof( gso->receive_control.bytes );
 
         errno = 0;
         const int result = gso->syscalls->recvmmsg( gso->syscall_context, gso->socket, &gso->receive_message, 1 );
@@ -356,7 +355,7 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         if ( num_segments > 1 )
         {
             gso->gro_batches++;
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
             rocketnet_client_gso_test_gro_batches.fetch_add( 1, std::memory_order_relaxed );
 #endif
         }
@@ -406,7 +405,7 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     // dual stack as the portable client is: the platform socket binds the
     // family of bind and converts addresses on an ipv6 socket
     client->socket = rocketnet_platform_socket_create_with_pump( context, bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
-        ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->name );
+                                                                 ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->name );
     if ( !client->socket )
     {
         client->~rocketnet_client_gso_io_t();
@@ -424,14 +423,14 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     }
 
     bool probe_segment = true;
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
     if ( rocketnet_client_gso_test_disable_segment.load( std::memory_order_relaxed ) )
         probe_segment = false;
 #endif
     const bool segment = rocketnet_client_gso_init( &client->gso, &rocketnet_client_gso_kernel_syscalls, client->socket, client->socket->handle, probe_segment );
 
     bool probe_gro = true;
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
     if ( rocketnet_client_gso_test_disable_gro.load( std::memory_order_relaxed ) )
         probe_gro = false;
 #endif
@@ -444,7 +443,7 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
 // the I/O thread before closing the transport, so the wake goes, then the socket.
 static void rocketnet_client_gso_destroy( void * transport )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( !client )
         return;
     void * context = client->context;
@@ -456,13 +455,13 @@ static void rocketnet_client_gso_destroy( void * transport )
 
 static void rocketnet_client_gso_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     rocketnet_platform_socket_send_packet( client->socket, to, data, bytes );
 }
 
 static int rocketnet_client_gso_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     return rocketnet_platform_socket_receive_packet( client->socket, from, data, capacity );
 }
 
@@ -472,7 +471,7 @@ static int rocketnet_client_gso_receive( void * transport, rocketnet_address_t *
 // platform's sendmmsg batch, which names each destination.
 static void rocketnet_client_gso_send_batch_operation( void * transport, const rocketnet_platform_send_t * sends, int num_packets )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( !client->socket->connected )
     {
         rocketnet_platform_socket_send_packets_mmsg( client->socket, sends, num_packets );
@@ -489,7 +488,7 @@ static void rocketnet_client_gso_send_batch_operation( void * transport, const r
 // the I/O model.
 static int rocketnet_client_gso_receive_batch_operation( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     if ( client->gso.gro )
         return rocketnet_client_gso_receive_batch( &client->gso, from, packet_data, packet_stride, packet_bytes, max_packets );
     return rocketnet_platform_socket_receive_packets_mmsg( client->socket, from, packet_data, packet_stride, packet_bytes, max_packets );
@@ -498,13 +497,13 @@ static int rocketnet_client_gso_receive_batch_operation( void * transport, rocke
 // RNClientIo IoWait / waitReadable and the wake (docs/CLIENT-IO.md The wake)
 static bool rocketnet_client_gso_wait( void * transport, bool readable, double timeout_seconds )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     return rocketnet_platform_wake_wait( client->wake, readable, timeout_seconds );
 }
 
 static void rocketnet_client_gso_wake( void * transport )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     rocketnet_platform_wake_set( client->wake );
 }
 
@@ -512,7 +511,7 @@ static void rocketnet_client_gso_wake( void * transport )
 // unconnected batch)
 static uint64_t rocketnet_client_gso_send_failures( void * transport )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     return client->gso.packet_send_failures.load( std::memory_order_relaxed ) + rocketnet_platform_socket_send_failures( client->socket );
 }
 
@@ -520,12 +519,11 @@ static uint64_t rocketnet_client_gso_send_failures( void * transport )
 // kernel drops datagrams from any other source (TRANSPORT.md t11)
 static bool rocketnet_client_gso_connect( void * transport, const rocketnet_address_t * server_address )
 {
-    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t*) transport;
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
     return rocketnet_platform_socket_connect( client->socket, server_address );
 }
 
-const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations =
-{
+const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations = {
     rocketnet_client_gso_create, rocketnet_client_gso_destroy, rocketnet_client_gso_send, rocketnet_client_gso_receive,
     rocketnet_client_gso_send_batch_operation, rocketnet_client_gso_receive_batch_operation, rocketnet_client_gso_wait, rocketnet_client_gso_wake,
     rocketnet_client_gso_send_failures, rocketnet_client_gso_connect

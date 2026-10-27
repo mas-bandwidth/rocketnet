@@ -23,11 +23,13 @@ static const enum rocketnet_reliability_t modes[NUM_MODES] = {
     ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
     ROCKETNET_RELIABILITY_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
     ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
-    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT };
+    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT
+};
 
 static const char * const names[NUM_MODES] = {
     "unreliable", "unreliable_sequenced", "reliable", "reliable_ordered",
-    "reliable_sequenced", "unreliable_receipt", "reliable_receipt", "reliable_ordered_receipt" };
+    "reliable_sequenced", "unreliable_receipt", "reliable_receipt", "reliable_ordered_receipt"
+};
 
 struct mode_t
 {
@@ -158,7 +160,9 @@ int main( void )
                     s->order[s->arrived++] = number;
             }
         }
-        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL ) {}
+        while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
+        {
+        }
 
         const int slot = rocketnet_client_index( client );
         struct rocketnet_receipt_t receipts[32];
@@ -237,12 +241,18 @@ int main( void )
                 sequenced ? last - s->arrived : NUM_MESSAGES - s->arrived + s->duplicates, s->duplicates, s->acked, s->lost );
 
         int ok = s->duplicates == 0;
-        if ( m == 0 || m == 5 ) ok &= s->arrived == NUM_MESSAGES - 1 && !s->seen[1];      // unreliable: the dropped one is gone
-        if ( sequenced ) ok &= s->increasing && s->arrived > 0;                            // sequenced: never older than the last
-        if ( m == 4 ) ok &= last == NUM_MESSAGES;                                          // reliable sequenced: the newest arrives
-        if ( m == 2 || m == 3 || m == 6 || m == 7 ) ok &= s->arrived == NUM_MESSAGES;      // reliable: every one arrives
-        if ( m == 3 || m == 7 ) ok &= s->in_order;                                         // ordered: in the order sent
-        if ( m >= 5 ) ok &= s->acked + s->lost == NUM_MESSAGES && s->acked == s->arrived;  // receipts: one per message
+        if ( m == 0 || m == 5 )
+            ok &= s->arrived == NUM_MESSAGES - 1 && !s->seen[1];      // unreliable: the dropped one is gone
+        if ( sequenced )
+            ok &= s->increasing && s->arrived > 0;                            // sequenced: never older than the last
+        if ( m == 4 )
+            ok &= last == NUM_MESSAGES;                                          // reliable sequenced: the newest arrives
+        if ( m == 2 || m == 3 || m == 6 || m == 7 )
+            ok &= s->arrived == NUM_MESSAGES;      // reliable: every one arrives
+        if ( m == 3 || m == 7 )
+            ok &= s->in_order;                                         // ordered: in the order sent
+        if ( m >= 5 )
+            ok &= s->acked + s->lost == NUM_MESSAGES && s->acked == s->arrived;  // receipts: one per message
         if ( !ok )
         {
             printf( "FAIL: %s\n", names[m] );

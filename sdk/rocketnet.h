@@ -44,30 +44,30 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-    #define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-2"
+#define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-2"
 
     /// The major component of the SDK version.
 
-    #define ROCKETNET_VERSION_MAJOR                                    1
+#define ROCKETNET_VERSION_MAJOR                                    1
 
     /// The minor component of the SDK version.
 
-    #define ROCKETNET_VERSION_MINOR                                    0
+#define ROCKETNET_VERSION_MINOR                                    0
 
     /// The patch component of the SDK version.
 
-    #define ROCKETNET_VERSION_PATCH                                    0
+#define ROCKETNET_VERSION_PATCH                                    0
 
 #else // !ROCKETNET_DEV
 
     /// The SDK version as text: "dev" in a development build.
-    #define ROCKETNET_VERSION_FULL                                 "dev"
+#define ROCKETNET_VERSION_FULL                                 "dev"
     /// The major component of the SDK version: 255 in a development build.
-    #define ROCKETNET_VERSION_MAJOR                                  255
+#define ROCKETNET_VERSION_MAJOR                                  255
     /// The minor component of the SDK version: 255 in a development build.
-    #define ROCKETNET_VERSION_MINOR                                  255
+#define ROCKETNET_VERSION_MINOR                                  255
     /// The patch component of the SDK version: 255 in a development build.
-    #define ROCKETNET_VERSION_PATCH                                  255
+#define ROCKETNET_VERSION_PATCH                                  255
 
 #endif // !ROCKETNET_DEV
 
@@ -82,15 +82,15 @@
 /// define nothing. ROCKETNET_BUILDING_DLL is for library builds.
 
 #if defined( _WIN32 ) && defined( ROCKETNET_BUILDING_DLL )
-    #define ROCKETNET_EXPORT __declspec(dllexport)
+#define ROCKETNET_EXPORT __declspec(dllexport)
 #elif defined( _WIN32 ) && defined( ROCKETNET_SHARED )
-    #define ROCKETNET_EXPORT __declspec(dllimport)
+#define ROCKETNET_EXPORT __declspec(dllimport)
 #elif ( defined( ROCKETNET_SHARED ) || defined( ROCKETNET_BUILDING_DLL ) ) && ( defined( __GNUC__ ) || defined( __clang__ ) )
-    #define ROCKETNET_EXPORT __attribute__((visibility("default")))
+#define ROCKETNET_EXPORT __attribute__((visibility("default")))
 #else
     /// Marks each library function for export or import. Empty in a static
     /// build.
-    #define ROCKETNET_EXPORT
+#define ROCKETNET_EXPORT
 #endif
 
 
@@ -192,7 +192,8 @@
 #define ROCKETNET_SEND_KBPS_UNLIMITED                      0x7fffffff
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 /// Status-returning calls use these values. OK is zero and the only success;
@@ -202,28 +203,28 @@ enum rocketnet_status_t
 {
     /// Success.
 
-    ROCKETNET_STATUS_OK                                 =  0,
+    ROCKETNET_STATUS_OK = 0,
 
     /// rocketnet_init came after the library was initialized, or while it is
     /// initializing or terminating. Nothing changed; call rocketnet_term
     /// first to initialize again.
 
-    ROCKETNET_STATUS_ALREADY_INITIALIZED                = -1,
+    ROCKETNET_STATUS_ALREADY_INITIALIZED = -1,
 
     /// A call that needs rocketnet_init came before it, or a term found nothing
     /// to terminate. Call rocketnet_init first.
 
-    ROCKETNET_STATUS_NOT_INITIALIZED                    = -2,
+    ROCKETNET_STATUS_NOT_INITIALIZED = -2,
 
     /// Term, or init with a new allocator, refused. The library still holds
     /// allocations. Destroy every client and server, then retry.
 
-    ROCKETNET_STATUS_LIVE_ALLOCATIONS                   = -3,
+    ROCKETNET_STATUS_LIVE_ALLOCATIONS = -3,
 
     /// Init refused: the platform's socket layer did not start. The library
     /// stays uninitialized. Correct the platform setup before retrying.
 
-    ROCKETNET_STATUS_PLATFORM_INIT_FAILED               = -4,
+    ROCKETNET_STATUS_PLATFORM_INIT_FAILED = -4,
 
     /// The crypto library failed. Init returns it when the library did not
     /// start, and the library stays uninitialized. Server create and
@@ -231,50 +232,50 @@ enum rocketnet_status_t
     /// not be made; nothing is created. Retrying will not help unless the
     /// cause is corrected.
 
-    ROCKETNET_STATUS_CRYPTO_INIT_FAILED                 = -5,
+    ROCKETNET_STATUS_CRYPTO_INIT_FAILED = -5,
 
     /// An argument, or a combination of arguments, is NULL, out of range, or
     /// inconsistent with another. Nothing changed. Correct the argument.
 
-    ROCKETNET_STATUS_INVALID_ARGUMENT                   = -6,
+    ROCKETNET_STATUS_INVALID_ARGUMENT = -6,
 
     /// Create refused: an environment override did not parse. The log names
     /// the variable. Correct or unset it.
 
-    ROCKETNET_STATUS_CONFIG_ENV_INVALID                 = -7,
+    ROCKETNET_STATUS_CONFIG_ENV_INVALID = -7,
 
     /// Create refused: a config field, from the struct or the environment, is
     /// out of its supported range or inconsistent with another field. The log
     /// names the field and the rule it broke. Correct the value.
 
-    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE                = -8,
+    ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE = -8,
 
     /// Create refused: the reassembly memory the config asks for is past this
     /// build's limit. Lower max_fragmented_messages, or on a server
     /// max_clients.
 
-    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED             = -9,
+    ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED = -9,
 
     /// Start refused. The server config's backend_public_key is all zeros.
     /// Set it, or set ROCKETNET_SERVER_BACKEND_PUBLIC_KEY.
 
-    ROCKETNET_STATUS_MISSING_KEYS                       = -10,
+    ROCKETNET_STATUS_MISSING_KEYS = -10,
 
     /// The protocol id is 0. Server start refuses a server config with
     /// protocol_id 0. Set the title's nonzero protocol id.
 
-    ROCKETNET_STATUS_INVALID_PROTOCOL_ID                = -11,
+    ROCKETNET_STATUS_INVALID_PROTOCOL_ID = -11,
 
     /// Start refused. A production build (ROCKETNET_DEV=0) was given the
     /// published development backend or server key. Supply production keys.
 
-    ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION             = -12,
+    ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION = -12,
 
     /// An address string did not parse or cannot be used. Pass "a.b.c.d:port"
     /// for IPv4 or "[v6]:port" for IPv6, within
     /// ROCKETNET_MAX_ADDRESS_STRING_BYTES.
 
-    ROCKETNET_STATUS_INVALID_ADDRESS                    = -13,
+    ROCKETNET_STATUS_INVALID_ADDRESS = -13,
 
     /// Create refused: the transport candidate list did not parse. The list
     /// is refused only for an unknown name, an empty element, or "auto"
@@ -282,103 +283,103 @@ enum rocketnet_status_t
     /// on this platform falls back to auto with a warning. The log names
     /// the problem, and an unknown name is logged with the valid names.
 
-    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = -14,
+    ROCKETNET_STATUS_INVALID_TRANSPORT_LIST = -14,
 
     /// The connect token fails the client's pre-send checks. It did not parse,
     /// or is not for this protocol. Obtain a new token from the backend.
 
-    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN              = -15,
+    ROCKETNET_STATUS_INVALID_CONNECT_TOKEN = -15,
 
     /// The connect token expired before the first packet was sent. Obtain a
     /// fresh token before connecting.
 
-    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED              = -16,
+    ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED = -16,
 
     /// Start refused: the server address has port 0, an ephemeral port, and no
     /// listed transport can report the port it was granted. Give the server a
     /// real port, or list a transport that can.
 
-    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED    = -17,
+    ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED = -17,
 
     /// Every transport in the candidate list refused to start, including any
     /// over the ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES or
     /// ROCKETNET_SERVER_MEMORY_BUDGET_BYTES budget. Set the log level to
     /// ROCKETNET_LOG_LEVEL_WARN to see why each one refused.
 
-    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED         = -18,
+    ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED = -18,
 
     /// An allocation the operation needs failed. Nothing it allocated stays
     /// live. Free memory or lower the config's sizes, then retry.
 
-    ROCKETNET_STATUS_OUT_OF_MEMORY                      = -19,
+    ROCKETNET_STATUS_OUT_OF_MEMORY = -19,
 
     /// Connect or start refused: the platform refused a mutex. Retry after
     /// freeing system resources.
 
-    ROCKETNET_STATUS_MUTEX_CREATE_FAILED                = -20,
+    ROCKETNET_STATUS_MUTEX_CREATE_FAILED = -20,
 
     /// Connect or start refused: the platform refused a thread. Retry after
     /// freeing system resources.
 
-    ROCKETNET_STATUS_THREAD_CREATE_FAILED               = -21,
+    ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
     /// Connect or start refused: the platform refused a timer. Retry after
     /// freeing system resources.
 
-    ROCKETNET_STATUS_TIMER_CREATE_FAILED                = -22,
+    ROCKETNET_STATUS_TIMER_CREATE_FAILED = -22,
 
     /// Connect refused: an attempt is active, or an earlier attempt's worker
     /// still owns its storage. Call rocketnet_client_disconnect, then connect
     /// again once rocketnet_client_disconnected returns true.
 
-    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED            = -23,
+    ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED = -23,
 
     /// Start refused, nothing changed. The server is running, or a stop has
     /// not finished. Call rocketnet_server_stop, then start again once
     /// rocketnet_server_stopped returns true.
 
-    ROCKETNET_STATUS_SERVER_NOT_STOPPED                 = -24,
+    ROCKETNET_STATUS_SERVER_NOT_STOPPED = -24,
 
     /// A destination id has the reserved ROCKETNET_FLOW_ID_BIT set. No call
     /// returns it: rocketnet_server_start_message returns NULL and logs this
     /// name. Use a client index.
 
-    ROCKETNET_STATUS_FLOW_ID_RESERVED                   = -25,
+    ROCKETNET_STATUS_FLOW_ID_RESERVED = -25,
 
     /// Start refused: every transport that opened cannot serve both named
     /// address families on this machine. Serve one family, or list a
     /// transport that serves both.
 
-    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED     = -26,
+    ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED = -26,
 
     /// A config's config_bytes is 0 or too small. Fill the config with its
     /// default_config call first.
 
-    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED             = -27,
+    ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED = -27,
 
     /// A transport the candidate list names is compiled out of this build:
     /// the xdp server transport in a Linux build configured with
     /// ROCKETNET_XDP=OFF, or without a clang that has the BPF target, libbpf
     /// or libxdp. List a transport this build has, or rebuild with it.
 
-    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT                = -28,
+    ROCKETNET_STATUS_TRANSPORT_NOT_BUILT = -28,
 
     /// Create refused. A production build (ROCKETNET_DEV=0) was given the
     /// published test packet filter. Set your own packet_filter.
 
-    ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION   = -29,
+    ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION = -29,
 
     /// Connect refused. A production build (ROCKETNET_DEV=0) was given a
     /// connect token sealed to the published development server key. Use a
     /// token from the production backend.
 
-    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30,
+    ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION = -30,
 
     /// Connect refused. The connect token names a server address with port 0,
     /// where no server can be reached. Mint the token with the server's bound
     /// port.
 
-    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO            = -31
+    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO = -31
 };
 
 
@@ -389,27 +390,27 @@ enum rocketnet_log_level_t
     /// As the maximum level, only lines logged at NONE are emitted. Quiet mode
     /// suppresses every line.
 
-    ROCKETNET_LOG_LEVEL_NONE                            = 0,
+    ROCKETNET_LOG_LEVEL_NONE = 0,
 
     /// Errors, the least verbose emitted level.
 
-    ROCKETNET_LOG_LEVEL_ERROR                           = 1,
+    ROCKETNET_LOG_LEVEL_ERROR = 1,
 
     /// Warnings.
 
-    ROCKETNET_LOG_LEVEL_WARN                            = 2,
+    ROCKETNET_LOG_LEVEL_WARN = 2,
 
     /// Information.
 
-    ROCKETNET_LOG_LEVEL_INFO                            = 3,
+    ROCKETNET_LOG_LEVEL_INFO = 3,
 
     /// Debugging.
 
-    ROCKETNET_LOG_LEVEL_DEBUG                           = 4,
+    ROCKETNET_LOG_LEVEL_DEBUG = 4,
 
     /// The most verbose level.
 
-    ROCKETNET_LOG_LEVEL_SPAM                            = 5
+    ROCKETNET_LOG_LEVEL_SPAM = 5
 };
 
 
@@ -419,15 +420,15 @@ enum rocketnet_address_type_t
 {
     /// No address family.
 
-    ROCKETNET_ADDRESS_NONE                              = 0,
+    ROCKETNET_ADDRESS_NONE = 0,
 
     /// IPv4.
 
-    ROCKETNET_ADDRESS_IPV4                              = 1,
+    ROCKETNET_ADDRESS_IPV4 = 1,
 
     /// IPv6.
 
-    ROCKETNET_ADDRESS_IPV6                              = 2
+    ROCKETNET_ADDRESS_IPV6 = 2
 };
 
 
@@ -440,40 +441,40 @@ enum rocketnet_reliability_t
     /// Sent once without a delivery guarantee, order, or receipt.
     /// Delivered at most once; a lost packet loses the message.
 
-    ROCKETNET_RELIABILITY_UNRELIABLE                            = 0,
+    ROCKETNET_RELIABILITY_UNRELIABLE = 0,
 
     /// Sent once without a delivery guarantee. The receiver delivers only
     /// newer messages on the channel and drops older messages.
 
-    ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED                  = 1,
+    ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED = 1,
 
     /// Resent until acknowledged.
     /// Delivered once without channel ordering.
 
-    ROCKETNET_RELIABILITY_RELIABLE                              = 2,
+    ROCKETNET_RELIABILITY_RELIABLE = 2,
 
     /// Resent until acknowledged.
     /// Delivered once in channel order.
     /// The receiver holds later messages until earlier ones arrive.
 
-    ROCKETNET_RELIABILITY_RELIABLE_ORDERED                      = 3,
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED = 3,
 
     /// Resent until acknowledged. The receiver delivers only the
     /// newest message on the channel and can drop a stale one.
 
-    ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED                    = 4,
+    ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED = 4,
 
     /// As UNRELIABLE, with a receipt. ACKED or LOSS.
 
-    ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT           = 5,
+    ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT = 5,
 
     /// As RELIABLE, with an ACKED receipt.
 
-    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT             = 6,
+    ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT = 6,
 
     /// As RELIABLE_ORDERED, with an ACKED receipt.
 
-    ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT     = 7
+    ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT = 7
 };
 
 /// A receipt's outcome, the status field of struct rocketnet_receipt_t.
@@ -483,16 +484,16 @@ enum rocketnet_receipt_status_t
 {
     /// The message was not acknowledged, and it is not resent.
 
-    ROCKETNET_RECEIPT_STATUS_LOSS                               = -1,
+    ROCKETNET_RECEIPT_STATUS_LOSS = -1,
 
     /// A zero-filled receipt. No outcome has been written.
 
-    ROCKETNET_RECEIPT_STATUS_NONE                               =  0,
+    ROCKETNET_RECEIPT_STATUS_NONE = 0,
 
     /// The receiver acknowledged the message. This does not mean its
     /// application read it.
 
-    ROCKETNET_RECEIPT_STATUS_ACKED                              =  1
+    ROCKETNET_RECEIPT_STATUS_ACKED = 1
 };
 
 /// Why a server slot's connection ended, returned by
@@ -503,33 +504,33 @@ enum rocketnet_disconnect_reason_t
 {
     /// No connection has ended, or the connection is up.
 
-    ROCKETNET_DISCONNECT_REASON_NONE                            =  0,
+    ROCKETNET_DISCONNECT_REASON_NONE = 0,
 
     /// The two ends' configs differ in a field that must match on both ends.
 
-    ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH                 = -1,
+    ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH = -1,
 
     /// The client sent what the protocol forbids.
 
-    ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION              = -2,
+    ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION = -2,
 
     /// A reliable message went unacknowledged past reliable_message_timeout_ms.
 
-    ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT              = -3,
+    ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT = -3,
 
     /// The connection's message memory had no room for a message it must not
     /// drop.
 
-    ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED        = -4,
+    ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED = -4,
 
     /// The server disconnected the client, stopped, or was destroyed.
 
-    ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED             = -5,
+    ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED = -5,
 
     /// A message from this client was still in the receive queue at update.
     /// See rocketnet_server_update.
 
-    ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED            = -6
+    ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED = -6
 };
 
 
@@ -542,76 +543,76 @@ enum rocketnet_client_state_t
     /// A message was still in the receive queue at update. See
     /// rocketnet_client_update.
 
-    ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED             = -13,
+    ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED = -13,
 
     /// The connection's message memory had no room for a message it must not
     /// drop.
 
-    ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED         = -12,
+    ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED = -12,
 
     /// The two ends' configs differ in a field that must match on both ends.
 
-    ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH                  = -11,
+    ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH = -11,
 
     /// The server sent what the protocol forbids.
 
-    ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION               = -10,
+    ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION = -10,
 
     /// A reliable message went unacknowledged past reliable_message_timeout_ms.
 
-    ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT               = -9,
+    ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT = -9,
 
     /// The server disconnected the client, stopped, or was destroyed.
 
-    ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED              = -8,
+    ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED = -8,
 
     /// The connect token expired before the server accepted the client.
 
-    ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED            = -7,
+    ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED = -7,
 
     /// The connect token was refused before the first packet was sent.
 
-    ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN            = -6,
+    ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN = -6,
 
     /// A connection heard nothing from the server for the token's timeout.
 
-    ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT             = -5,
+    ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT = -5,
 
     /// The server did not answer the third handshake leg in time.
 
-    ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT    = -4,
+    ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT = -4,
 
     /// The server did not answer the connection request in time.
 
-    ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT     = -3,
+    ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT = -3,
 
     /// The server did not answer the cookie request in time.
 
-    ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT         = -2,
+    ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT = -2,
 
     /// The server refused the client.
 
-    ROCKETNET_CLIENT_STATE_CONNECTION_DENIED                = -1,
+    ROCKETNET_CLIENT_STATE_CONNECTION_DENIED = -1,
 
     /// After create, and after rocketnet_client_disconnect.
 
-    ROCKETNET_CLIENT_STATE_DISCONNECTED                     =  0,
+    ROCKETNET_CLIENT_STATE_DISCONNECTED = 0,
 
     /// Handshake, first leg.
 
-    ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE                =  1,
+    ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE = 1,
 
     /// Handshake, second leg.
 
-    ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST       =  2,
+    ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST = 2,
 
     /// Handshake, third leg.
 
-    ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE      =  3,
+    ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE = 3,
 
     /// Connected. Messages flow both ways.
 
-    ROCKETNET_CLIENT_STATE_CONNECTED                        =  4
+    ROCKETNET_CLIENT_STATE_CONNECTED = 4
 };
 
 
@@ -872,8 +873,8 @@ struct rocketnet_server_client_stats_t
 #pragma clang diagnostic ignored "-Wc++98-compat"
 #endif
 static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enum rocketnet_log_level_t ) == sizeof( int ) &&
-               sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
-               sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
+                   sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
+                   sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
                "RocketNet's public enums are the size of int: build without -fshort-enums" );
 #if defined( __clang__ )
 #pragma clang diagnostic pop
@@ -885,8 +886,8 @@ static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enu
 #pragma clang diagnostic ignored "-Wpre-c11-compat"
 #endif
 _Static_assert( sizeof( enum rocketnet_status_t ) == sizeof( int ) && sizeof( enum rocketnet_log_level_t ) == sizeof( int ) &&
-                sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
-                sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
+                    sizeof( enum rocketnet_reliability_t ) == sizeof( int ) && sizeof( enum rocketnet_receipt_status_t ) == sizeof( int ) &&
+                    sizeof( enum rocketnet_disconnect_reason_t ) == sizeof( int ) && sizeof( enum rocketnet_client_state_t ) == sizeof( int ),
                 "RocketNet's public enums are the size of int: build without -fshort-enums" );
 #if defined( __clang__ )
 #pragma clang diagnostic pop
@@ -948,7 +949,7 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// the system allocator.
 /// @return ROCKETNET_STATUS_OK, or one of the failures above.
 
-ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_init( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
 
 /// Terminates the library after every client and server is destroyed. Do not
 /// call while other library calls are running. A refusal logs one error.
@@ -971,7 +972,7 @@ ROCKETNET_EXPORT const char * rocketnet_status_name( enum rocketnet_status_t sta
 /// plus its source line. The strings are borrowed. The callback runs on the
 /// thread that fires the assert.
 
-typedef void (*rocketnet_assert_function_t)( const char * condition, const char * function, const char * file, int line );
+typedef void ( *rocketnet_assert_function_t )( const char * condition, const char * function, const char * file, int line );
 
 /// Installs the callback for failed library asserts. NULL restores the
 /// default, which logs and traps. The callback runs only in debug builds with
@@ -1028,7 +1029,7 @@ ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level
 /// NUL-terminated and length excludes the NUL. The message is at most 1023
 /// bytes and is valid only until the callback returns.
 
-typedef void (*rocketnet_log_function_t)( void * context, enum rocketnet_log_level_t level, const char * message, size_t length );
+typedef void ( *rocketnet_log_function_t )( void * context, enum rocketnet_log_level_t level, const char * message, size_t length );
 
 /// Installs the log callback and its context. NULL restores the default sink,
 /// which prints to stdout, and clears the context. An in-flight call may still
@@ -1158,7 +1159,7 @@ struct rocketnet_client_config_t
     /// runs on the caller thread during update, disconnect and destroy. Do not
     /// call client functions from it. Default is NULL.
 
-    void (*state_change_callback)( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
+    void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
     /// ROCKETNET_CLIENT_PACKET_FILTER is the title packet filter. It must match
     /// the server's value. Default is the published test packet filter, which
@@ -1270,7 +1271,6 @@ struct rocketnet_client_config_t
     /// Range is 1000 .. 600000. Default is 10000.
 
     int reliable_message_timeout_ms;
-
 };
 
 /// The server config starts without a backend public key or protocol id.
@@ -1671,15 +1671,15 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 /// @return ROCKETNET_STATUS_OK, or one of the failures above.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
-                                                                            const char * server_address_ipv6,
-                                                                            const uint8_t * server_public_key,
-                                                                            int expire_seconds,
-                                                                            int timeout_seconds,
-                                                                            uint64_t client_id,
-                                                                            uint64_t protocol_id,
-                                                                            uint64_t unix_timestamp,
-                                                                            const uint8_t * user_data,
-                                                                            char * connect_token );
+                                                                             const char * server_address_ipv6,
+                                                                             const uint8_t * server_public_key,
+                                                                             int expire_seconds,
+                                                                             int timeout_seconds,
+                                                                             uint64_t client_id,
+                                                                             uint64_t protocol_id,
+                                                                             uint64_t unix_timestamp,
+                                                                             const uint8_t * user_data,
+                                                                             char * connect_token );
 
 /// Simulates latency, jitter, packet loss and duplication on outgoing packets.
 /// latency_ms and jitter_ms range from 0 to 60000.

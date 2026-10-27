@@ -119,7 +119,7 @@ struct rocketnet_received_packet_record_t
     uint32_t stats_word;                   // one word of the fixed block-aggregate storage
 };
 
-static_assert( sizeof(rocketnet_received_packet_record_t) == 24,
+static_assert( sizeof( rocketnet_received_packet_record_t ) == 24,
                "received block metadata reuses the former link storage" );
 
 // The sent ring's shadow bitmaps: one bit per slot, held (written) and
@@ -154,8 +154,8 @@ struct rocketnet_ack_stats_received_t
     uint32_t pad;
 };
 
-static_assert( sizeof(rocketnet_ack_stats_sent_t) == 24, "stats sent projection size" );
-static_assert( sizeof(rocketnet_ack_stats_received_t) == 24, "stats received projection size" );
+static_assert( sizeof( rocketnet_ack_stats_sent_t ) == 24, "stats sent projection size" );
+static_assert( sizeof( rocketnet_ack_stats_received_t ) == 24, "stats received projection size" );
 
 struct rocketnet_ack_stats_history_t
 {
@@ -178,14 +178,30 @@ template <unsigned Words> struct rocketnet_stats_epoch_bits_t
     uint64_t epoch;
     uint64_t tags[Words];
     uint64_t bits[Words];
-    void initialize() { epoch = 1; for (unsigned i = 0; i < Words; ++i) tags[i] = 0; }
-    void invalidate() { if (epoch == UINT64_MAX) initialize(); else ++epoch; }
-    uint64_t word(int i) const { return tags[i] == epoch ? bits[i] : 0; }
-    bool test(int i) const { return (word(i / 64) & (1ull << (i % 64))) != 0; }
-    void set(int i) {
+    void initialize()
+    {
+        epoch = 1;
+        for ( unsigned i = 0; i < Words; ++i )
+            tags[i] = 0;
+    }
+    void invalidate()
+    {
+        if ( epoch == UINT64_MAX )
+            initialize();
+        else
+            ++epoch;
+    }
+    uint64_t word( int i ) const { return tags[i] == epoch ? bits[i] : 0; }
+    bool test( int i ) const { return ( word( i / 64 ) & ( 1ull << ( i % 64 ) ) ) != 0; }
+    void set( int i )
+    {
         const int w = i / 64;
-        if (tags[w] != epoch) { bits[w] = 0; tags[w] = epoch; }
-        bits[w] |= 1ull << (i % 64);
+        if ( tags[w] != epoch )
+        {
+            bits[w] = 0;
+            tags[w] = epoch;
+        }
+        bits[w] |= 1ull << ( i % 64 );
     }
 };
 
@@ -194,8 +210,18 @@ struct rocketnet_ack_stats_validity_t
     rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent;
     rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received;
     rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt;
-    void initialize() { sent.initialize(); received.initialize(); rtt.initialize(); }
-    void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
+    void initialize()
+    {
+        sent.initialize();
+        received.initialize();
+        rtt.initialize();
+    }
+    void invalidate()
+    {
+        sent.invalidate();
+        received.invalidate();
+        rtt.invalidate();
+    }
 };
 
 #endif // #if ROCKETNET_DEV
@@ -311,7 +337,6 @@ struct rocketnet_ack_endpoint_t
     // the history entry it names (an empty or non-positive entry reads as
     // ROCKETNET_ACK_RTT_NONE); node 1 is the minimum. A sample is O(log n).
     float stats_rtt_min_tree[ROCKETNET_RTT_HISTORY_SIZE];
-
 };
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
@@ -443,10 +468,10 @@ struct rocketnet_ack_stats_result_t
 };
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
-                                        rocketnet_ack_stats_result_t * result,
-                                        const uint64_t * sent_written = NULL,
-                                        const uint64_t * received_written = NULL,
-                                        const rocketnet_ack_stats_validity_t * validity = NULL );
+                                          rocketnet_ack_stats_result_t * result,
+                                          const uint64_t * sent_written = NULL,
+                                          const uint64_t * received_written = NULL,
+                                          const rocketnet_ack_stats_validity_t * validity = NULL );
 
 #endif // #if ROCKETNET_DEV
 

@@ -26,15 +26,16 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_SEND_BUDGET,
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SEND_BUDGET == ROCKETNET_RECEIVE_CEILING,
                          "a sender's largest packet is one every receiver accepts" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ==
-                         ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 * 8,
+                             ( ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_ACK_BLOCK_MIN_BYTES ) / 8 * 8,
                          "the payload capacity is the send budget less the overhead and the minimum ack block, rounded down to eight" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES ==
-                         ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
+                             ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,
                          "the receive payload bound matches the sender capacity" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES == ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1,
                          "the SINGLE message is the payload capacity less its form byte" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
-                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_MAX_PACKET_BYTES == 1514,
+                                 ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_MAX_PACKET_BYTES ==
+                             1514,
                          "one maximum IPv6 packet is exactly one 1500-MTU Ethernet frame" );
 
 #define ROCKETNET_FRAME_SIZE                                              2048
@@ -74,7 +75,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_SIZE >= 16 + ROCKETNET_RECEIVE_CEILING,
 #define ROCKETNET_XDP_SEND_BATCH_SIZE                                       32
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE >= ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES +
-                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
+                                                         ROCKETNET_UDP_HEADER_BYTES + ROCKETNET_RECEIVE_CEILING,
                          "an XDP frame holds ethernet, the larger IP header, UDP and a full receive-ceiling packet" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_FRAME_SIZE == 4096,
                          "the XDP UMEM frame the transport registers is 4096 bytes" );

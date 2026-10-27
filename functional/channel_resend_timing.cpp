@@ -165,12 +165,12 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     static double sends_at[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
     static int sends[RESEND_TIMING_MESSAGES];
     static double resend_ceiling_ms[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
-    memset( seen, 0, sizeof(seen) );
-    memset( sends, 0, sizeof(sends) );
+    memset( seen, 0, sizeof( seen ) );
+    memset( sends, 0, sizeof( sends ) );
 
     uint8_t payload[RESEND_TIMING_BYTES];
     uint8_t state[32];
-    memset( state, 0x5A, sizeof(state) );
+    memset( state, 0x5A, sizeof( state ) );
 
     const double tick_ms = tick * 1000.0;
     double resend_delay_bound_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
@@ -188,12 +188,12 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         {
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
                 payload[i] = (uint8_t) ( sent * 13 + i );
-            memcpy( payload, &sent, sizeof(sent) );
+            memcpy( payload, &sent, sizeof( sent ) );
             resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, payload, RESEND_TIMING_BYTES ) != 0 );
             send_time[sent] = h.now;
             sent++;
         }
-        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
+        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof( state ) );
 
         const double previous_resend_delay_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
         up = rocketnet_channel_harness_pump( &h, tick );
@@ -230,7 +230,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         {
             resend_timing_check( delivery.bytes == RESEND_TIMING_BYTES );
             int index = -1;
-            memcpy( &index, delivery.data, sizeof(index) );
+            memcpy( &index, delivery.data, sizeof( index ) );
             resend_timing_check( index >= 0 && index < sent && !seen[index] );
             seen[index] = 1;
             const double message_ms = ( h.now - send_time[index] ) * 1000.0;
@@ -441,7 +441,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     static double small_latency_ms[BLOCK_COST_SMALL_MAX];
     uint8_t small[RESEND_TIMING_BYTES];
     uint8_t state[32];
-    memset( state, 0x5A, sizeof(state) );
+    memset( state, 0x5A, sizeof( state ) );
 
     const uint64_t resent_before = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];
     const int64_t wire_before = h.wire_bytes_to_server;
@@ -465,11 +465,11 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
         {
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
                 small[i] = (uint8_t) ( small_sent * 13 + i );
-            memcpy( small, &small_sent, sizeof(small_sent) );
+            memcpy( small, &small_sent, sizeof( small_sent ) );
             resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, small, RESEND_TIMING_BYTES ) != 0 );
             small_send_time[small_sent++] = h.now;
         }
-        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
+        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof( state ) );
 
         up = rocketnet_channel_harness_pump( &h, tick );
         if ( with_small && small_sent > 0 )
@@ -483,7 +483,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
             if ( delivery.bytes == RESEND_TIMING_BYTES )
             {
                 int index = -1;
-                memcpy( &index, delivery.data, sizeof(index) );
+                memcpy( &index, delivery.data, sizeof( index ) );
                 resend_timing_check( index >= 0 && index < small_sent );
                 small_latency_ms[small_delivered++] = ( h.now - small_send_time[index] ) * 1000.0;
                 continue;

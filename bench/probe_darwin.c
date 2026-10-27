@@ -49,24 +49,24 @@
 
 struct msghdr_x
 {
-    void *          msg_name;
-    socklen_t       msg_namelen;
-    struct iovec *  msg_iov;
-    int             msg_iovlen;
-    void *          msg_control;
-    socklen_t       msg_controllen;
-    int             msg_flags;
-    size_t          msg_datalen;
+    void * msg_name;
+    socklen_t msg_namelen;
+    struct iovec * msg_iov;
+    int msg_iovlen;
+    void * msg_control;
+    socklen_t msg_controllen;
+    int msg_flags;
+    size_t msg_datalen;
 };
 
-typedef ssize_t (*sendmsg_x_fn)( int s, const struct msghdr_x * msgp, u_int cnt, int flags );
-typedef ssize_t (*recvmsg_x_fn)( int s, struct msghdr_x * msgp, u_int cnt, int flags );
+typedef ssize_t ( *sendmsg_x_fn )( int s, const struct msghdr_x * msgp, u_int cnt, int flags );
+typedef ssize_t ( *recvmsg_x_fn )( int s, struct msghdr_x * msgp, u_int cnt, int flags );
 
 /* the weak link half of the probe: if the export vanishes in a future
    macOS, these resolve to NULL instead of failing the load */
 
-extern ssize_t sendmsg_x( int s, const struct msghdr_x * msgp, u_int cnt, int flags ) __attribute__((weak_import));
-extern ssize_t recvmsg_x( int s, struct msghdr_x * msgp, u_int cnt, int flags ) __attribute__((weak_import));
+extern ssize_t sendmsg_x( int s, const struct msghdr_x * msgp, u_int cnt, int flags ) __attribute__( ( weak_import ) );
+extern ssize_t recvmsg_x( int s, struct msghdr_x * msgp, u_int cnt, int flags ) __attribute__( ( weak_import ) );
 
 #define PROBE_BATCH 8
 #define PROBE_PACKET_BYTES 64
@@ -77,14 +77,17 @@ static int udp_socket_nonblocking( int port_out_fd_bound_port[1] )
     if ( fd < 0 )
         return -1;
     struct sockaddr_in address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
     address.sin_port = 0;
-    if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) < 0 )
-        { close( fd ); return -1; }
-    socklen_t len = sizeof(address);
-    getsockname( fd, (struct sockaddr*) &address, &len );
+    if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) < 0 )
+    {
+        close( fd );
+        return -1;
+    }
+    socklen_t len = sizeof( address );
+    getsockname( fd, (struct sockaddr *) &address, &len );
     if ( port_out_fd_bound_port )
         port_out_fd_bound_port[0] = (int) ntohs( address.sin_port );
     fcntl( fd, F_SETFL, O_NONBLOCK );
@@ -94,7 +97,7 @@ static int udp_socket_nonblocking( int port_out_fd_bound_port[1] )
 static struct sockaddr_in loopback_address( int port )
 {
     struct sockaddr_in address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl( INADDR_LOOPBACK );
     address.sin_port = htons( (uint16_t) port );
@@ -109,9 +112,9 @@ static void probe_msg_x( void )
     recvmsg_x_fn dlsym_recv = (recvmsg_x_fn) dlsym( RTLD_DEFAULT, "recvmsg_x" );
 
     printf( "weak link: sendmsg_x=%s recvmsg_x=%s\n", &sendmsg_x != NULL ? "present" : "NULL",
-                                                      &recvmsg_x != NULL ? "present" : "NULL" );
+            &recvmsg_x != NULL ? "present" : "NULL" );
     printf( "dlsym:     sendmsg_x=%s recvmsg_x=%s\n", dlsym_send ? "present" : "NULL",
-                                                      dlsym_recv ? "present" : "NULL" );
+            dlsym_recv ? "present" : "NULL" );
 
     if ( !dlsym_send || !dlsym_recv )
     {
@@ -124,7 +127,10 @@ static void probe_msg_x( void )
     int send_port = 0;
     int send_fd = udp_socket_nonblocking( &send_port );
     if ( recv_fd < 0 || send_fd < 0 )
-        { printf( "probe socket setup failed: %s\n\n", strerror( errno ) ); return; }
+    {
+        printf( "probe socket setup failed: %s\n\n", strerror( errno ) );
+        return;
+    }
 
     struct sockaddr_in to = loopback_address( recv_port );
 
@@ -135,14 +141,14 @@ static void probe_msg_x( void )
     uint8_t send_payload[PROBE_BATCH][PROBE_PACKET_BYTES];
     struct iovec send_iov[PROBE_BATCH];
     struct msghdr_x send_msg[PROBE_BATCH];
-    memset( send_msg, 0, sizeof(send_msg) );
+    memset( send_msg, 0, sizeof( send_msg ) );
     for ( int i = 0; i < PROBE_BATCH; i++ )
     {
         memset( send_payload[i], (int) 'a' + i, PROBE_PACKET_BYTES );
         send_iov[i].iov_base = send_payload[i];
         send_iov[i].iov_len = PROBE_PACKET_BYTES;
         send_msg[i].msg_name = &to;
-        send_msg[i].msg_namelen = sizeof(to);
+        send_msg[i].msg_namelen = sizeof( to );
         send_msg[i].msg_iov = &send_iov[i];
         send_msg[i].msg_iovlen = 1;
     }
@@ -156,9 +162,9 @@ static void probe_msg_x( void )
        shape 1 is refused */
 
     int connected_fd = udp_socket_nonblocking( NULL );
-    connect( connected_fd, (struct sockaddr*) &to, sizeof(to) );
+    connect( connected_fd, (struct sockaddr *) &to, sizeof( to ) );
     struct msghdr_x connected_msg[PROBE_BATCH];
-    memcpy( connected_msg, send_msg, sizeof(connected_msg) );
+    memcpy( connected_msg, send_msg, sizeof( connected_msg ) );
     for ( int i = 0; i < PROBE_BATCH; i++ )
     {
         connected_msg[i].msg_name = NULL;
@@ -180,14 +186,14 @@ static void probe_msg_x( void )
     uint8_t recv_payload[PROBE_BATCH][PROBE_PACKET_BYTES * 2];
     struct iovec recv_iov[PROBE_BATCH];
     struct msghdr_x recv_msg[PROBE_BATCH];
-    memset( recv_msg, 0, sizeof(recv_msg) );
-    memset( from, 0, sizeof(from) );
+    memset( recv_msg, 0, sizeof( recv_msg ) );
+    memset( from, 0, sizeof( from ) );
     for ( int i = 0; i < PROBE_BATCH; i++ )
     {
         recv_iov[i].iov_base = recv_payload[i];
-        recv_iov[i].iov_len = sizeof(recv_payload[i]);
+        recv_iov[i].iov_len = sizeof( recv_payload[i] );
         recv_msg[i].msg_name = &from[i];
-        recv_msg[i].msg_namelen = sizeof(from[i]);
+        recv_msg[i].msg_namelen = sizeof( from[i] );
         recv_msg[i].msg_iov = &recv_iov[i];
         recv_msg[i].msg_iovlen = 1;
     }
@@ -209,7 +215,10 @@ static void probe_msg_x( void )
         int intact = 1;
         for ( int j = 0; j < PROBE_PACKET_BYTES; j++ )
             if ( recv_payload[i][j] != (uint8_t) ( 'a' + i ) )
-                { intact = 0; break; }
+            {
+                intact = 0;
+                break;
+            }
         if ( intact )
             payload_ok++;
     }
@@ -223,7 +232,9 @@ static void probe_msg_x( void )
        probe read those leftovers back and taught the lesson */
 
     uint8_t sink[256];
-    while ( recv( recv_fd, sink, sizeof(sink), 0 ) > 0 ) { }
+    while ( recv( recv_fd, sink, sizeof( sink ), 0 ) > 0 )
+    {
+    }
 
     errno = 0;
     ssize_t empty = dlsym_recv( recv_fd, recv_msg, PROBE_BATCH, 0 );
@@ -234,10 +245,10 @@ static void probe_msg_x( void )
        the 3 without blocking? */
 
     for ( int i = 0; i < 3; i++ )
-        sendto( send_fd, send_payload[i], PROBE_PACKET_BYTES, 0, (struct sockaddr*) &to, sizeof(to) );
+        sendto( send_fd, send_payload[i], PROBE_PACKET_BYTES, 0, (struct sockaddr *) &to, sizeof( to ) );
     usleep( 50000 );
     for ( int i = 0; i < PROBE_BATCH; i++ )
-        recv_msg[i].msg_namelen = sizeof(from[i]);
+        recv_msg[i].msg_namelen = sizeof( from[i] );
     errno = 0;
     ssize_t partial = dlsym_recv( recv_fd, recv_msg, PROBE_BATCH, 0 );
     printf( "recvmsg_x partial (3 queued, %d asked):        received=%zd errno=%d (%s)\n",
@@ -272,7 +283,7 @@ static void probe_reuseport( void )
     {
         workers[i] = socket( AF_INET, SOCK_DGRAM, 0 );
         int yes = 1;
-        if ( setsockopt( workers[i], SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(yes) ) != 0 )
+        if ( setsockopt( workers[i], SOL_SOCKET, SO_REUSEPORT, &yes, sizeof( yes ) ) != 0 )
         {
             printf( "SO_REUSEPORT refused on socket %d: errno=%d (%s)\n", i, errno, strerror( errno ) );
             for ( int j = 0; j <= i; j++ )
@@ -280,7 +291,7 @@ static void probe_reuseport( void )
             return;
         }
         struct sockaddr_in address = loopback_address( port );
-        if ( bind( workers[i], (struct sockaddr*) &address, sizeof(address) ) < 0 )
+        if ( bind( workers[i], (struct sockaddr *) &address, sizeof( address ) ) < 0 )
         {
             printf( "bind refused on reuseport socket %d: errno=%d (%s)\n", i, errno, strerror( errno ) );
             for ( int j = 0; j <= i; j++ )
@@ -289,8 +300,8 @@ static void probe_reuseport( void )
         }
         if ( port == 0 )
         {
-            socklen_t len = sizeof(address);
-            getsockname( workers[i], (struct sockaddr*) &address, &len );
+            socklen_t len = sizeof( address );
+            getsockname( workers[i], (struct sockaddr *) &address, &len );
             port = (int) ntohs( address.sin_port );
         }
         fcntl( workers[i], F_SETFL, O_NONBLOCK );
@@ -298,14 +309,14 @@ static void probe_reuseport( void )
 
     struct sockaddr_in to = loopback_address( port );
     uint8_t packet[32];
-    memset( packet, 0xab, sizeof(packet) );
+    memset( packet, 0xab, sizeof( packet ) );
 
     for ( int s = 0; s < REUSEPORT_SENDERS; s++ )
     {
         int fd = udp_socket_nonblocking( NULL );
         for ( int p = 0; p < REUSEPORT_PACKETS_PER_SENDER; p++ )
         {
-            if ( sendto( fd, packet, sizeof(packet), 0, (struct sockaddr*) &to, sizeof(to) ) < 0 )
+            if ( sendto( fd, packet, sizeof( packet ), 0, (struct sockaddr *) &to, sizeof( to ) ) < 0 )
                 usleep( 1000 );
         }
         close( fd );
@@ -319,7 +330,7 @@ static void probe_reuseport( void )
     {
         counts[i] = 0;
         uint8_t sink[64];
-        while ( recv( workers[i], sink, sizeof(sink), 0 ) > 0 )
+        while ( recv( workers[i], sink, sizeof( sink ), 0 ) > 0 )
             counts[i]++;
         total += counts[i];
         close( workers[i] );
@@ -338,7 +349,10 @@ static void probe_kqueue( void )
 
     int kq = kqueue();
     if ( kq < 0 )
-        { printf( "kqueue() failed: errno=%d (%s)\n\n", errno, strerror( errno ) ); return; }
+    {
+        printf( "kqueue() failed: errno=%d (%s)\n\n", errno, strerror( errno ) );
+        return;
+    }
 
     int port = 0;
     int fd = udp_socket_nonblocking( &port );
@@ -347,17 +361,19 @@ static void probe_kqueue( void )
     struct kevent change;
     EV_SET( &change, fd, EVFILT_READ, EV_ADD, 0, 0, NULL );
     if ( kevent( kq, &change, 1, NULL, 0, NULL ) < 0 )
-        { printf( "kevent EV_ADD failed: errno=%d (%s)\n\n", errno, strerror( errno ) );
-          close( sender );
-          close( fd );
-          close( kq );
-          return; }
+    {
+        printf( "kevent EV_ADD failed: errno=%d (%s)\n\n", errno, strerror( errno ) );
+        close( sender );
+        close( fd );
+        close( kq );
+        return;
+    }
 
     struct sockaddr_in to = loopback_address( port );
     uint8_t packet[100];
-    memset( packet, 0xcd, sizeof(packet) );
+    memset( packet, 0xcd, sizeof( packet ) );
     for ( int i = 0; i < 3; i++ )
-        sendto( sender, packet, sizeof(packet), 0, (struct sockaddr*) &to, sizeof(to) );
+        sendto( sender, packet, sizeof( packet ), 0, (struct sockaddr *) &to, sizeof( to ) );
     usleep( 50000 );
 
     struct kevent event;
@@ -377,10 +393,10 @@ static void probe_buffers( void )
     printf( "== socket buffer reality ==\n" );
 
     int64_t maxsockbuf = 0;
-    size_t len = sizeof(maxsockbuf);
+    size_t len = sizeof( maxsockbuf );
     sysctlbyname( "kern.ipc.maxsockbuf", &maxsockbuf, &len, NULL, 0 );
     int32_t recvspace = 0;
-    len = sizeof(recvspace);
+    len = sizeof( recvspace );
     sysctlbyname( "net.inet.udp.recvspace", &recvspace, &len, NULL, 0 );
     printf( "kern.ipc.maxsockbuf=%lld net.inet.udp.recvspace=%d\n", (long long) maxsockbuf, recvspace );
 
@@ -389,9 +405,9 @@ static void probe_buffers( void )
     for ( int i = 0; i < 3; i++ )
     {
         int request = requests[i];
-        int rcv_result = setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &request, sizeof(request) );
+        int rcv_result = setsockopt( fd, SOL_SOCKET, SO_RCVBUF, &request, sizeof( request ) );
         int granted = 0;
-        socklen_t glen = sizeof(granted);
+        socklen_t glen = sizeof( granted );
         getsockopt( fd, SOL_SOCKET, SO_RCVBUF, &granted, &glen );
         printf( "SO_RCVBUF request %d: setsockopt=%s granted=%d\n", request, rcv_result == 0 ? "ok" : strerror( errno ), granted );
     }
@@ -404,16 +420,16 @@ int main( void )
     printf( "rocketnet darwin probe (#100)\n" );
 
     char osversion[64] = "?";
-    size_t len = sizeof(osversion);
+    size_t len = sizeof( osversion );
     sysctlbyname( "kern.osversion", osversion, &len, NULL, 0 );
     char machine[64] = "?";
-    len = sizeof(machine);
+    len = sizeof( machine );
     sysctlbyname( "hw.machine", machine, &len, NULL, 0 );
     char model[64] = "?";
-    len = sizeof(model);
+    len = sizeof( model );
     sysctlbyname( "hw.model", model, &len, NULL, 0 );
     int ncpu = 0;
-    len = sizeof(ncpu);
+    len = sizeof( ncpu );
     sysctlbyname( "hw.ncpu", &ncpu, &len, NULL, 0 );
     printf( "host: %s %s ncpu=%d osversion=%s\n\n", model, machine, ncpu, osversion );
 

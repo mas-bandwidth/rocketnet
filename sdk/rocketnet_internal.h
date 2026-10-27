@@ -33,7 +33,7 @@
 
 #ifdef __cplusplus
 #define ROCKETNET_STATIC_ASSERT( condition, message )  static_assert( condition, message )
-#elif defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L
+#elif defined( __STDC_VERSION__ ) && __STDC_VERSION__ >= 201112L
 #define ROCKETNET_STATIC_ASSERT( condition, message )  _Static_assert( condition, message )
 #else
 #define ROCKETNET_STATIC_ASSERT_JOIN_( a, b ) a##b
@@ -55,9 +55,9 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MAX_PACKET_BYTES == ROCKETNET_RECEIVE_PACKET_
       ROCKETNET_POWER_OF_TWO_SMEAR_( ROCKETNET_POWER_OF_TWO_SMEAR_( (n) - 1, 1 ), 2 ), 4 ), 8 ), 16 ) + 1 )
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_POWER_OF_TWO_AT_LEAST( 1 ) == 1 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 2 ) == 2 &&
-                         ROCKETNET_POWER_OF_TWO_AT_LEAST( 3 ) == 4 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 2000 ) == 2048 &&
-                         ROCKETNET_POWER_OF_TWO_AT_LEAST( 2048 ) == 2048 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 4000 ) == 4096 &&
-                         ROCKETNET_POWER_OF_TWO_AT_LEAST( 20000 ) == 32768 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 262144 ) == 262144,
+                             ROCKETNET_POWER_OF_TWO_AT_LEAST( 3 ) == 4 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 2000 ) == 2048 &&
+                             ROCKETNET_POWER_OF_TWO_AT_LEAST( 2048 ) == 2048 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 4000 ) == 4096 &&
+                             ROCKETNET_POWER_OF_TWO_AT_LEAST( 20000 ) == 32768 && ROCKETNET_POWER_OF_TWO_AT_LEAST( 262144 ) == 262144,
                          "ROCKETNET_POWER_OF_TWO_AT_LEAST rounds up to a power of two" );
 
 // -----------------------------------------
@@ -69,14 +69,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_POWER_OF_TWO_AT_LEAST( 1 ) == 1 && ROCKETNET_
 // The public calls return the same code as enum rocketnet_status_t.
 
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 // rocketnet_init with the exact status code in status, when not NULL, on
 // every return path. It returns true on success. A failure logs one error
 // line. context goes to init's own allocations, platform discovery among
 // them. NULL for both allocator functions is the system allocator.
-bool rocketnet_init_ex( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ), int * status );
+bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
 
 /**
  * @brief Terminates the library and returns why termination did or did not occur.
@@ -97,7 +98,7 @@ int rocketnet_term_ex( void );
 // ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a NULL function,
 // ALREADY_INITIALIZED after init or during the transition, or
 // LIVE_ALLOCATIONS with outstanding allocations. A refusal logs one line.
-int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) );
+int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
 
 // The connection a public client holds (NULL while DISCONNECTED) and the
 // running message server a public server holds (NULL while stopped), for
@@ -149,96 +150,89 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 #define ROCKETNET_PLATFORM_BSD                                         5
 #define ROCKETNET_PLATFORM_MAX                                         6
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #define NOMINMAX
 #endif
 
-#if defined(_WIN32)
-    #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
-#elif defined(__APPLE__)
-    #include "TargetConditionals.h"
-    #if TARGET_OS_IPHONE
-        #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_IOS
-    #else
-        #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_MAC
-    #endif
-#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+#if defined( _WIN32 )
+#define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_WINDOWS
+#elif defined( __APPLE__ )
+#include "TargetConditionals.h"
+#if TARGET_OS_IPHONE
+#define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_IOS
+#else
+#define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_MAC
+#endif
+#elif defined( __FreeBSD__ ) || defined( __OpenBSD__ ) || defined( __NetBSD__ )
     // the BSDs verified per #81 ("Free, open. Net."): one platform bucket,
     // pure POSIX, portable transport only -- the linux bucket keeps netlink,
     // GSO and XDP, none of which exist here.
-    #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_BSD
+#define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_BSD
 #else
-    #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_LINUX
+#define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_LINUX
 #endif
 
 #define ROCKETNET_PLATFORM_HAS_IPV6 1
 
 
-#if !defined(ROCKETNET_UNREAL_ENGINE)
+#if !defined( ROCKETNET_UNREAL_ENGINE )
 #define ROCKETNET_UNREAL_ENGINE 0
 #endif // #if !defined(ROCKETNET_UNREAL_ENGINE)
 
-#if !defined(ROCKETNET_SPIKE_TRACKING)
+#if !defined( ROCKETNET_SPIKE_TRACKING )
 #define ROCKETNET_SPIKE_TRACKING 0
 #endif // #if !defined(ROCKETNET_SPIKE_TRACKING)
 
-#if !defined(ROCKETNET_ENABLE_MEMORY_CHECKS)
+#if !defined( ROCKETNET_ENABLE_MEMORY_CHECKS )
 #define ROCKETNET_ENABLE_MEMORY_CHECKS 0
 #endif // #if !defined(ROCKETNET_ENABLE_MEMORY_CHECKS)
 
-#if !defined ( ROCKETNET_LITTLE_ENDIAN ) && !defined( ROCKETNET_BIG_ENDIAN )
+#if !defined( ROCKETNET_LITTLE_ENDIAN ) && !defined( ROCKETNET_BIG_ENDIAN )
 
-  #ifdef __BYTE_ORDER__
-    #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-      #define ROCKETNET_LITTLE_ENDIAN 1
-    #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
-      #define ROCKETNET_BIG_ENDIAN 1
-    #else
-      #error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
-    #endif // __BYTE_ORDER__
+#ifdef __BYTE_ORDER__
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+#define ROCKETNET_LITTLE_ENDIAN 1
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define ROCKETNET_BIG_ENDIAN 1
+#else
+#error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
+#endif // __BYTE_ORDER__
 
   // Detect with GLIBC's endian.h
-  #elif defined(__GLIBC__)
-    #include <endian.h>
-    #if (__BYTE_ORDER == __LITTLE_ENDIAN)
-      #define ROCKETNET_LITTLE_ENDIAN 1
-    #elif (__BYTE_ORDER == __BIG_ENDIAN)
-      #define ROCKETNET_BIG_ENDIAN 1
-    #else
-      #error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
-    #endif // __BYTE_ORDER
+#elif defined( __GLIBC__ )
+#include <endian.h>
+#if ( __BYTE_ORDER == __LITTLE_ENDIAN )
+#define ROCKETNET_LITTLE_ENDIAN 1
+#elif ( __BYTE_ORDER == __BIG_ENDIAN )
+#define ROCKETNET_BIG_ENDIAN 1
+#else
+#error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
+#endif // __BYTE_ORDER
 
   // Detect with _LITTLE_ENDIAN and _BIG_ENDIAN macro
-  #elif defined(_LITTLE_ENDIAN) && !defined(_BIG_ENDIAN)
-    #define ROCKETNET_LITTLE_ENDIAN 1
-  #elif defined(_BIG_ENDIAN) && !defined(_LITTLE_ENDIAN)
-    #define ROCKETNET_BIG_ENDIAN 1
+#elif defined( _LITTLE_ENDIAN ) && !defined( _BIG_ENDIAN )
+#define ROCKETNET_LITTLE_ENDIAN 1
+#elif defined( _BIG_ENDIAN ) && !defined( _LITTLE_ENDIAN )
+#define ROCKETNET_BIG_ENDIAN 1
 
   // Detect with architecture macros
-  #elif    defined(__sparc)     || defined(__sparc__)                           \
-        || defined(_POWER)      || defined(__powerpc__)                         \
-        || defined(__ppc__)     || defined(__hpux)      || defined(__hppa)      \
-        || defined(_MIPSEB)     || defined(_POWER)      || defined(__s390__)
-    #define ROCKETNET_BIG_ENDIAN 1
-  #elif    defined(__i386__)    || defined(__alpha__)   || defined(__ia64)      \
-        || defined(__ia64__)    || defined(_M_IX86)     || defined(_M_IA64)     \
-        || defined(_M_ALPHA)    || defined(__amd64)     || defined(__amd64__)   \
-        || defined(_M_AMD64)    || defined(__x86_64)    || defined(__x86_64__)  \
-        || defined(_M_X64)      || defined(__bfin__)
-    #define ROCKETNET_LITTLE_ENDIAN 1
-  #elif defined(_MSC_VER) && ( defined(_M_ARM) || defined(_M_ARM64) )
-    #define ROCKETNET_LITTLE_ENDIAN 1
-  #else
-    #error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
-  #endif
+#elif defined( __sparc ) || defined( __sparc__ ) || defined( _POWER ) || defined( __powerpc__ ) || defined( __ppc__ ) || defined( __hpux ) || defined( __hppa ) || defined( _MIPSEB ) || defined( _POWER ) || defined( __s390__ )
+#define ROCKETNET_BIG_ENDIAN 1
+#elif defined( __i386__ ) || defined( __alpha__ ) || defined( __ia64 ) || defined( __ia64__ ) || defined( _M_IX86 ) || defined( _M_IA64 ) || defined( _M_ALPHA ) || defined( __amd64 ) || defined( __amd64__ ) || defined( _M_AMD64 ) || defined( __x86_64 ) || defined( __x86_64__ ) || defined( _M_X64 ) || defined( __bfin__ )
+#define ROCKETNET_LITTLE_ENDIAN 1
+#elif defined( _MSC_VER ) && ( defined( _M_ARM ) || defined( _M_ARM64 ) )
+#define ROCKETNET_LITTLE_ENDIAN 1
+#else
+#error Unknown machine endianess detected. Please define ROCKETNET_LITTLE_ENDIAN or ROCKETNET_BIG_ENDIAN.
+#endif
 
 #endif
 
-#if !defined(ROCKETNET_BIG_ENDIAN)
+#if !defined( ROCKETNET_BIG_ENDIAN )
 #define ROCKETNET_BIG_ENDIAN 0
 #endif // #if !defined(ROCKETNET_BIG_ENDIAN)
 
-#if !defined(ROCKETNET_LITTLE_ENDIAN)
+#if !defined( ROCKETNET_LITTLE_ENDIAN )
 #define ROCKETNET_LITTLE_ENDIAN 0
 #endif // #if !defined(ROCKETNET_LITTLE_ENDIAN)
 
@@ -258,26 +252,26 @@ typedef __int64 int64_t;
 #define snprintf c99_snprintf
 #define vsnprintf c99_vsnprintf
 
-__inline int c99_vsnprintf(char *outBuf, size_t size, const char *format, va_list ap)
+__inline int c99_vsnprintf( char * outBuf, size_t size, const char * format, va_list ap )
 {
     int count = -1;
 
-    if (size != 0)
-        count = _vsnprintf_s(outBuf, size, _TRUNCATE, format, ap);
-    if (count == -1)
-        count = _vscprintf(format, ap);
+    if ( size != 0 )
+        count = _vsnprintf_s( outBuf, size, _TRUNCATE, format, ap );
+    if ( count == -1 )
+        count = _vscprintf( format, ap );
 
     return count;
 }
 
-__inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
+__inline int c99_snprintf( char * outBuf, size_t size, const char * format, ... )
 {
     int count;
     va_list ap;
 
-    va_start(ap, format);
-    count = c99_vsnprintf(outBuf, size, format, ap);
-    va_end(ap);
+    va_start( ap, format );
+    count = c99_vsnprintf( outBuf, size, format, ap );
+    va_end( ap );
 
     return count;
 }
@@ -285,20 +279,20 @@ __inline int c99_snprintf(char *outBuf, size_t size, const char *format, ...)
 #endif
 
 #ifndef ROCKETNET_ASSERTS
-    #ifdef NDEBUG
-        #define ROCKETNET_ASSERTS 0
-    #else
-        #define ROCKETNET_ASSERTS 1
-    #endif
+#ifdef NDEBUG
+#define ROCKETNET_ASSERTS 0
+#else
+#define ROCKETNET_ASSERTS 1
+#endif
 #endif
 
 // The process-wide assert callback the rocketnet_assert macro calls. It is internal
 // and never exported: a caller installs a callback with rocketnet_assert_function,
 // the only way in, and NULL there restores the default.
 #if defined( __GNUC__ ) || defined( __clang__ )
-    #define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
+#define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
 #else
-    #define ROCKETNET_INTERNAL
+#define ROCKETNET_INTERNAL
 #endif
 
 extern ROCKETNET_INTERNAL rocketnet_assert_function_t rn_assert_function;
@@ -414,7 +408,7 @@ inline void rocketnet_endian_fix( uint64_t * value )
 #else // #ifdef __GNUC__
     *value = ( *value & 0x00000000FFFFFFFF ) << 32 | ( *value & 0xFFFFFFFF00000000 ) >> 32;
     *value = ( *value & 0x0000FFFF0000FFFF ) << 16 | ( *value & 0xFFFF0000FFFF0000 ) >> 16;
-    *value = ( *value & 0x00FF00FF00FF00FF ) << 8  | ( *value & 0xFF00FF00FF00FF00 ) >> 8;
+    *value = ( *value & 0x00FF00FF00FF00FF ) << 8 | ( *value & 0xFF00FF00FF00FF00 ) >> 8;
 #endif // #ifdef __GNUC__
 #else // #if ROCKETNET_BIG_ENDIAN
     (void) value;
@@ -600,13 +594,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS.
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
-    INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 )   /* WIRE */                            \
-    INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 )   /* WIRE, power of two */              \
-    INT_FIELD( receive_message_buffer_bytes,    1048576,   4096, 1 << 20,                0 )   /* WIRE, multiple of 16 */            \
-    INT_FIELD( max_message_bytes,     1048576,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 )   /* WIRE, <= receive_message_buffer_bytes */     \
+    INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 ) /* WIRE */                            \
+    INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 ) /* WIRE, power of two */              \
+    INT_FIELD( receive_message_buffer_bytes,    1048576,   4096, 1 << 20,                0 ) /* WIRE, multiple of 16 */            \
+    INT_FIELD( max_message_bytes,     1048576,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 ) /* WIRE, <= receive_message_buffer_bytes */     \
     INT_FIELD( send_message_buffer_bytes,     4194304,  12288, 1 << 28,                0 )                                         \
     INT_FIELD( send_queue_messages,      1024,     16, 1 << 20,                0 )                                         \
-    INT_FIELD( packets_in_flight,        1024,     64, 1 << 20,                0 )   /* >= reliable_messages_in_flight */  \
+    INT_FIELD( packets_in_flight,        1024,     64, 1 << 20,                0 ) /* >= reliable_messages_in_flight */  \
     INT_FIELD( packets_per_update,    256,      1, 1024,                   0 )                                         \
     INT_FIELD( unreliable_messages_per_update,    1024,      1, 1 << 16,                0 )   /* per connection per update */       \
     INT_FIELD( sequenced_messages_held,            16,      0, 4096,                   0 )                                         \

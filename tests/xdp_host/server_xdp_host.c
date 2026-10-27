@@ -42,10 +42,10 @@ static int server_xdp_host_replay_count;
 
 static struct rocketnet_server_xdp_replay_value_t * server_xdp_host_replay_find( const void * key )
 {
-    const struct rocketnet_server_xdp_replay_key_t * k = (const struct rocketnet_server_xdp_replay_key_t*) key;
+    const struct rocketnet_server_xdp_replay_key_t * k = (const struct rocketnet_server_xdp_replay_key_t *) key;
     for ( int i = 0; i < server_xdp_host_replay_count; i++ )
     {
-        if ( __builtin_memcmp( &server_xdp_host_replay_keys[i], k, sizeof(struct rocketnet_server_xdp_replay_key_t) ) == 0 )
+        if ( __builtin_memcmp( &server_xdp_host_replay_keys[i], k, sizeof( struct rocketnet_server_xdp_replay_key_t ) ) == 0 )
             return &server_xdp_host_replay_values[i];
     }
     return NULL;
@@ -61,15 +61,15 @@ static struct rocketnet_server_xdp_replay_value_t * server_xdp_host_replay_find(
 
 static void * bpf_map_lookup_elem( void * map, const void * key )
 {
-    if ( map == (void*) &server_xdp_replay_map )
-        return (void*) server_xdp_host_replay_find( key );
-    const __u32 index = *(const __u32*) key;
+    if ( map == (void *) &server_xdp_replay_map )
+        return (void *) server_xdp_host_replay_find( key );
+    const __u32 index = *(const __u32 *) key;
     if ( index != 0 )
         return NULL;
-    if ( map == (void*) &server_xdp_config_map )
-        return server_xdp_host_config_lookup_fails ? NULL : (void*) &server_xdp_host_config;
-    if ( map == (void*) &server_xdp_stats_map )
-        return (void*) &server_xdp_host_stats;
+    if ( map == (void *) &server_xdp_config_map )
+        return server_xdp_host_config_lookup_fails ? NULL : (void *) &server_xdp_host_config;
+    if ( map == (void *) &server_xdp_stats_map )
+        return (void *) &server_xdp_host_stats;
     return NULL;
 }
 
@@ -99,27 +99,27 @@ static long bpf_redirect_map( void * map, __u64 key, __u64 flags )
     server_xdp_host_redirects++;
     server_xdp_host_redirect_key = key;
     const __u32 index = (__u32) key;
-    if ( map != (void*) &server_xdp_socket_map || index >= ROCKETNET_XDP_MAX_QUEUES || !server_xdp_host_slots[index] )
+    if ( map != (void *) &server_xdp_socket_map || index >= ROCKETNET_XDP_MAX_QUEUES || !server_xdp_host_slots[index] )
         return (long) ( flags & SERVER_XDP_HOST_ACTION_MASK );
     return XDP_REDIRECT;
 }
 
 void rocketnet_xdp_host_reset( void )
 {
-    __builtin_memset( &server_xdp_host_config, 0, sizeof(server_xdp_host_config) );
-    __builtin_memset( &server_xdp_host_stats, 0, sizeof(server_xdp_host_stats) );
-    __builtin_memset( server_xdp_host_slots, 0, sizeof(server_xdp_host_slots) );
+    __builtin_memset( &server_xdp_host_config, 0, sizeof( server_xdp_host_config ) );
+    __builtin_memset( &server_xdp_host_stats, 0, sizeof( server_xdp_host_stats ) );
+    __builtin_memset( server_xdp_host_slots, 0, sizeof( server_xdp_host_slots ) );
     server_xdp_host_config_lookup_fails = 0;
     server_xdp_host_redirects = 0;
     server_xdp_host_redirect_key = 0;
-    __builtin_memset( server_xdp_host_replay_keys, 0, sizeof(server_xdp_host_replay_keys) );
-    __builtin_memset( server_xdp_host_replay_values, 0, sizeof(server_xdp_host_replay_values) );
+    __builtin_memset( server_xdp_host_replay_keys, 0, sizeof( server_xdp_host_replay_keys ) );
+    __builtin_memset( server_xdp_host_replay_values, 0, sizeof( server_xdp_host_replay_values ) );
     server_xdp_host_replay_count = 0;
 }
 
 void rocketnet_xdp_host_set_config( const struct rocketnet_server_xdp_config_t * config )
 {
-    __builtin_memcpy( &server_xdp_host_config, config, sizeof(server_xdp_host_config) );
+    __builtin_memcpy( &server_xdp_host_config, config, sizeof( server_xdp_host_config ) );
 }
 
 void rocketnet_xdp_host_set_config_lookup_fails( int fails )
@@ -145,7 +145,7 @@ void rocketnet_xdp_host_set_replay_entry( const struct rocketnet_server_xdp_repl
     // table ignores a new key
     if ( server_xdp_host_replay_count >= ROCKETNET_XDP_REPLAY_MAX_ENTRIES )
         return;
-    __builtin_memcpy( &server_xdp_host_replay_keys[server_xdp_host_replay_count], key, sizeof(struct rocketnet_server_xdp_replay_key_t) );
+    __builtin_memcpy( &server_xdp_host_replay_keys[server_xdp_host_replay_count], key, sizeof( struct rocketnet_server_xdp_replay_key_t ) );
     struct rocketnet_server_xdp_replay_value_t * value = &server_xdp_host_replay_values[server_xdp_host_replay_count];
     value->high_water = high_water;
     value->pad = 0;
@@ -165,12 +165,12 @@ int rocketnet_xdp_host_run( const uint8_t * frame, int frame_bytes, uint32_t rx_
 {
     if ( frame == NULL || frame_bytes < 1 )
         return -1;
-    unsigned char * copy = (unsigned char*) malloc( (__SIZE_TYPE__) frame_bytes );
+    unsigned char * copy = (unsigned char *) malloc( (__SIZE_TYPE__) frame_bytes );
     if ( copy == NULL )
         return -1;
     __builtin_memcpy( copy, frame, (__SIZE_TYPE__) frame_bytes );
     struct xdp_md ctx;
-    __builtin_memset( &ctx, 0, sizeof(ctx) );
+    __builtin_memset( &ctx, 0, sizeof( ctx ) );
     ctx.data = (unsigned long) copy;
     ctx.data_end = (unsigned long) ( copy + frame_bytes );
     ctx.rx_queue_index = rx_queue_index;

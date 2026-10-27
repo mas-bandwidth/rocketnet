@@ -15,7 +15,8 @@
 
 // The SDK's C tools use these internal token helpers as well as its C++ code.
 #ifdef __cplusplus
-extern "C" {
+extern "C"
+{
 #endif
 
 // The connect token, per TRANSPORT.md t6. All layouts are packed little-endian at

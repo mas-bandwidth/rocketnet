@@ -23,7 +23,7 @@
 #include "../sdk/rocketnet_xdp_frame.h"
 
 // the AF_XDP code is Linux only, so its tests are built there only
-#if defined(__linux__)
+#if defined( __linux__ )
 
 static const uint8_t bounds_server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t bounds_gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
@@ -44,8 +44,8 @@ static int bounds_send( uint8_t * frame, const uint8_t * staged, size_t packet_b
 
 static void test_xdp_transport_send_copy_refuses_bad_lengths()
 {
-    uint8_t * frame = (uint8_t*) malloc( ROCKETNET_XDP_FRAME_SIZE );
-    uint8_t * staged = (uint8_t*) malloc( ROCKETNET_XDP_FRAME_SIZE );
+    uint8_t * frame = (uint8_t *) malloc( ROCKETNET_XDP_FRAME_SIZE );
+    uint8_t * staged = (uint8_t *) malloc( ROCKETNET_XDP_FRAME_SIZE );
     rocketnet_unit_check( frame && staged );
     memset( frame, 0, ROCKETNET_XDP_FRAME_SIZE );
     memset( staged, 0xA5, ROCKETNET_XDP_FRAME_SIZE );
@@ -125,13 +125,13 @@ static void bounds_write_frame( uint8_t * umem, uint64_t addr, int payload_bytes
 
 static void test_xdp_transport_receive_descriptor_refuses_bad_descriptors()
 {
-    uint8_t * umem = (uint8_t*) malloc( BOUNDS_UMEM_BYTES );
-    uint8_t * slot = (uint8_t*) malloc( ROCKETNET_XDP_FRAME_SIZE );
+    uint8_t * umem = (uint8_t *) malloc( BOUNDS_UMEM_BYTES );
+    uint8_t * slot = (uint8_t *) malloc( ROCKETNET_XDP_FRAME_SIZE );
     rocketnet_unit_check( umem && slot );
     memset( umem, 0, BOUNDS_UMEM_BYTES );
 
     struct rocketnet_xdp_receive_drops_t drops;
-    memset( &drops, 0, sizeof(drops) );
+    memset( &drops, 0, sizeof( drops ) );
 
     const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV4 );
 

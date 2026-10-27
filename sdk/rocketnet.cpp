@@ -37,17 +37,17 @@ static void default_assert_function( const char * condition, const char * functi
 {
     rocketnet_error( "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
     fflush( stdout );
-    #if defined(_MSC_VER)
-        __debugbreak();
-    #elif defined(__clang__)
-        __builtin_debugtrap();
-    #elif defined(__GNUC__)
-        __builtin_trap();
-    #elif defined(linux) || defined(__linux) || defined(__linux__) || defined(__APPLE__)
-        raise(SIGTRAP);
-    #else
-        #error "asserts not supported on this platform!"
-    #endif
+#if defined( _MSC_VER )
+    __debugbreak();
+#elif defined( __clang__ )
+    __builtin_debugtrap();
+#elif defined( __GNUC__ )
+    __builtin_trap();
+#elif defined( linux ) || defined( __linux ) || defined( __linux__ ) || defined( __APPLE__ )
+    raise( SIGTRAP );
+#else
+#error "asserts not supported on this platform!"
+#endif
 }
 
 rocketnet_assert_function_t rn_assert_function = default_assert_function;
@@ -70,7 +70,7 @@ static std::atomic<bool> log_quiet{ false };
 
 void rocketnet_quiet( bool flag )
 {
-   log_quiet.store( flag, std::memory_order_relaxed );
+    log_quiet.store( flag, std::memory_order_relaxed );
 }
 
 static std::atomic<int> log_level{ ROCKETNET_LOG_LEVEL_INFO };
@@ -179,38 +179,38 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
     memcpy( &value, &status, sizeof( value ) );
     switch ( value )
     {
-        case ROCKETNET_STATUS_OK:                              return "OK";
-        case ROCKETNET_STATUS_ALREADY_INITIALIZED:             return "ALREADY_INITIALIZED";
-        case ROCKETNET_STATUS_NOT_INITIALIZED:                 return "NOT_INITIALIZED";
-        case ROCKETNET_STATUS_LIVE_ALLOCATIONS:                return "LIVE_ALLOCATIONS";
-        case ROCKETNET_STATUS_PLATFORM_INIT_FAILED:            return "PLATFORM_INIT_FAILED";
-        case ROCKETNET_STATUS_CRYPTO_INIT_FAILED:              return "CRYPTO_INIT_FAILED";
-        case ROCKETNET_STATUS_INVALID_ARGUMENT:                return "INVALID_ARGUMENT";
-        case ROCKETNET_STATUS_CONFIG_ENV_INVALID:              return "CONFIG_ENV_INVALID";
-        case ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE:             return "CONFIG_OUT_OF_RANGE";
-        case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:          return "MEMORY_BUDGET_EXCEEDED";
-        case ROCKETNET_STATUS_MISSING_KEYS:                    return "MISSING_KEYS";
-        case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:             return "INVALID_PROTOCOL_ID";
-        case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:          return "DEV_KEYS_IN_PRODUCTION";
-        case ROCKETNET_STATUS_INVALID_ADDRESS:                 return "INVALID_ADDRESS";
-        case ROCKETNET_STATUS_INVALID_TRANSPORT_LIST:          return "INVALID_TRANSPORT_LIST";
-        case ROCKETNET_STATUS_INVALID_CONNECT_TOKEN:           return "INVALID_CONNECT_TOKEN";
-        case ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED:           return "CONNECT_TOKEN_EXPIRED";
-        case ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED: return "TRANSPORT_PORT_ZERO_UNSUPPORTED";
-        case ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED:      return "TRANSPORT_LADDER_EXHAUSTED";
-        case ROCKETNET_STATUS_OUT_OF_MEMORY:                   return "OUT_OF_MEMORY";
-        case ROCKETNET_STATUS_MUTEX_CREATE_FAILED:             return "MUTEX_CREATE_FAILED";
-        case ROCKETNET_STATUS_THREAD_CREATE_FAILED:            return "THREAD_CREATE_FAILED";
-        case ROCKETNET_STATUS_TIMER_CREATE_FAILED:             return "TIMER_CREATE_FAILED";
-        case ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED:         return "CLIENT_NOT_DISCONNECTED";
-        case ROCKETNET_STATUS_SERVER_NOT_STOPPED:              return "SERVER_NOT_STOPPED";
-        case ROCKETNET_STATUS_FLOW_ID_RESERVED:                return "FLOW_ID_RESERVED";
-        case ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED:  return "TRANSPORT_FAMILIES_UNSUPPORTED";
-        case ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED:          return "CONFIG_NOT_INITIALIZED";
-        case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:             return "TRANSPORT_NOT_BUILT";
+        case ROCKETNET_STATUS_OK:                               return "OK";
+        case ROCKETNET_STATUS_ALREADY_INITIALIZED:              return "ALREADY_INITIALIZED";
+        case ROCKETNET_STATUS_NOT_INITIALIZED:                  return "NOT_INITIALIZED";
+        case ROCKETNET_STATUS_LIVE_ALLOCATIONS:                 return "LIVE_ALLOCATIONS";
+        case ROCKETNET_STATUS_PLATFORM_INIT_FAILED:             return "PLATFORM_INIT_FAILED";
+        case ROCKETNET_STATUS_CRYPTO_INIT_FAILED:               return "CRYPTO_INIT_FAILED";
+        case ROCKETNET_STATUS_INVALID_ARGUMENT:                 return "INVALID_ARGUMENT";
+        case ROCKETNET_STATUS_CONFIG_ENV_INVALID:               return "CONFIG_ENV_INVALID";
+        case ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE:              return "CONFIG_OUT_OF_RANGE";
+        case ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED:           return "MEMORY_BUDGET_EXCEEDED";
+        case ROCKETNET_STATUS_MISSING_KEYS:                     return "MISSING_KEYS";
+        case ROCKETNET_STATUS_INVALID_PROTOCOL_ID:              return "INVALID_PROTOCOL_ID";
+        case ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION:           return "DEV_KEYS_IN_PRODUCTION";
+        case ROCKETNET_STATUS_INVALID_ADDRESS:                  return "INVALID_ADDRESS";
+        case ROCKETNET_STATUS_INVALID_TRANSPORT_LIST:           return "INVALID_TRANSPORT_LIST";
+        case ROCKETNET_STATUS_INVALID_CONNECT_TOKEN:            return "INVALID_CONNECT_TOKEN";
+        case ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED:            return "CONNECT_TOKEN_EXPIRED";
+        case ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED:  return "TRANSPORT_PORT_ZERO_UNSUPPORTED";
+        case ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED:       return "TRANSPORT_LADDER_EXHAUSTED";
+        case ROCKETNET_STATUS_OUT_OF_MEMORY:                    return "OUT_OF_MEMORY";
+        case ROCKETNET_STATUS_MUTEX_CREATE_FAILED:              return "MUTEX_CREATE_FAILED";
+        case ROCKETNET_STATUS_THREAD_CREATE_FAILED:             return "THREAD_CREATE_FAILED";
+        case ROCKETNET_STATUS_TIMER_CREATE_FAILED:              return "TIMER_CREATE_FAILED";
+        case ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED:          return "CLIENT_NOT_DISCONNECTED";
+        case ROCKETNET_STATUS_SERVER_NOT_STOPPED:               return "SERVER_NOT_STOPPED";
+        case ROCKETNET_STATUS_FLOW_ID_RESERVED:                 return "FLOW_ID_RESERVED";
+        case ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED:   return "TRANSPORT_FAMILIES_UNSUPPORTED";
+        case ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED:           return "CONFIG_NOT_INITIALIZED";
+        case ROCKETNET_STATUS_TRANSPORT_NOT_BUILT:              return "TRANSPORT_NOT_BUILT";
         case ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION: return "TEST_PACKET_FILTER_IN_PRODUCTION";
-        case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION: return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
-        case ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO:        return "CONNECT_TOKEN_PORT_ZERO";
+        case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION:  return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
+        case ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO:          return "CONNECT_TOKEN_PORT_ZERO";
         default:
             break;
     }
@@ -253,7 +253,8 @@ void rocketnet_log_function( rocketnet_log_function_t callback, void * context )
 // relaxed atomics read before vsnprintf), format once into the 1024-byte
 // buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
 // vsnprintf), then dispatch to the installed callback or the default sink.
-ROCKETNET_PRINTF_FORMAT( 2, 0 ) static void rocketnet_log_v( int level, const char * format, va_list args )
+ROCKETNET_PRINTF_FORMAT( 2, 0 )
+static void rocketnet_log_v( int level, const char * format, va_list args )
 {
     if ( log_quiet.load( std::memory_order_relaxed ) )
         return;
@@ -263,8 +264,7 @@ ROCKETNET_PRINTF_FORMAT( 2, 0 ) static void rocketnet_log_v( int level, const ch
 
     char buffer[1024];
     int n = vsnprintf( buffer, sizeof( buffer ), format, args );
-    size_t length = ( n < 0 ) ? 0 :
-                    ( (size_t) n < sizeof( buffer ) ? (size_t) n : sizeof( buffer ) - 1 );
+    size_t length = ( n < 0 ) ? 0 : ( (size_t) n < sizeof( buffer ) ? (size_t) n : sizeof( buffer ) - 1 );
 
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
     rocketnet_log_function_t cb = rocketnet_log_callback;
@@ -351,7 +351,7 @@ void rocketnet_default_free_function( void * context, void * p )
     free( p );
 }
 
-static void * (*rocketnet_malloc_function)( void * context, size_t bytes ) = rocketnet_default_malloc_function;
+static void * ( *rocketnet_malloc_function )( void * context, size_t bytes ) = rocketnet_default_malloc_function;
 
 // the allocations rocketnet_malloc has refused on this thread, ever: a size
 // past the header overhead or a NULL from the installed allocator. A transport
@@ -370,7 +370,7 @@ void rocketnet_allocation_refused()
 {
     ++rocketnet_allocation_refusals_on_this_thread;
 }
-static void (*rocketnet_free_function)( void * context, void * p ) = rocketnet_default_free_function;
+static void ( *rocketnet_free_function )( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;
 static size_t rocketnet_allocations = 0; // includes allocator callbacks in flight
@@ -402,12 +402,12 @@ struct rocketnet_allocation_header_t
 {
     void * base;
     void * context;
-    void (*free_function)( void *, void * );
+    void ( *free_function )( void *, void * );
 };
 
 uint64_t rocketnet_allocation_overhead()
 {
-    return sizeof(rocketnet_allocation_header_t) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+    return sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
 // Installs the allocator pair with the lifecycle lock held. NULL for both is
@@ -415,7 +415,7 @@ uint64_t rocketnet_allocation_overhead()
 // init or during the transition is ALREADY_INITIALIZED, and a change with
 // outstanding allocations is LIVE_ALLOCATIONS. The pair already installed is
 // accepted as it is.
-static int rn_allocator_install_locked( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+static int rn_allocator_install_locked( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     if ( ( malloc_function == NULL ) != ( free_function == NULL ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -435,7 +435,7 @@ static int rn_allocator_install_locked( void * (*malloc_function)( void * contex
     return ROCKETNET_STATUS_OK;
 }
 
-int rocketnet_allocator_ex( void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: the test seam under
     // rocketnet_init's allocator arguments. It refuses a NULL callback.
@@ -462,8 +462,8 @@ void * rocketnet_malloc( void * context, size_t bytes )
         ++rocketnet_allocation_refusals_on_this_thread;
         return NULL;
     }
-    void * (*allocate)( void *, size_t );
-    void (*release)( void *, void * );
+    void * ( *allocate )( void *, size_t );
+    void ( *release )( void *, void * );
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
         allocate = rocketnet_malloc_function;
@@ -478,11 +478,11 @@ void * rocketnet_malloc( void * context, size_t bytes )
         --rocketnet_allocations;
         return NULL;
     }
-    const uintptr_t aligned = ( (uintptr_t) base + overhead ) & ~(uintptr_t)( alignment - 1 );
-    auto * header = new ( (void*) ( aligned - sizeof(rocketnet_allocation_header_t) ) )
+    const uintptr_t aligned = ( (uintptr_t) base + overhead ) & ~(uintptr_t) ( alignment - 1 );
+    auto * header = new ( (void *) ( aligned - sizeof( rocketnet_allocation_header_t ) ) )
         rocketnet_allocation_header_t{ base, context, release };
     (void) header;
-    return (void*) aligned;
+    return (void *) aligned;
 }
 
 void rocketnet_free( void * context, void * p )
@@ -490,7 +490,7 @@ void rocketnet_free( void * context, void * p )
     (void) context; // allocation ownership is captured at allocation time
     if ( !p )
         return;
-    auto * header = (rocketnet_allocation_header_t*) ( (uint8_t*) p - sizeof(rocketnet_allocation_header_t) );
+    auto * header = (rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
     const rocketnet_allocation_header_t allocation = *header;
     header->~rocketnet_allocation_header_t();
     allocation.free_function( allocation.context, allocation.base );
@@ -561,37 +561,37 @@ const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t b
 uint64_t rocketnet_protocol_version_hash( int major, int minor )
 {
     char text[64];
-    snprintf( text, sizeof(text), "%d.%d", major, minor );
+    snprintf( text, sizeof( text ), "%d.%d", major, minor );
     return rocketnet_hash_string( text );
 }
 
 float rocketnet_random_float()
 {
     uint32_t uint32_value;
-    randombytes_buf( &uint32_value, sizeof(uint32_value) );
-    uint64_t uint64_value = uint64_t(uint32_value);
-    double double_value = double(uint64_value) / 0xFFFFFFFF;
-    return float(double_value);
+    randombytes_buf( &uint32_value, sizeof( uint32_value ) );
+    uint64_t uint64_value = uint64_t( uint32_value );
+    double double_value = double( uint64_value ) / 0xFFFFFFFF;
+    return float( double_value );
 }
 
 uint8_t rocketnet_random_uint8()
 {
     uint8_t value;
-    randombytes_buf( &value, sizeof(value) );
+    randombytes_buf( &value, sizeof( value ) );
     return value;
 }
 
 uint32_t rocketnet_random_uint32()
 {
     uint32_t value;
-    randombytes_buf( &value, sizeof(value) );
+    randombytes_buf( &value, sizeof( value ) );
     return value;
 }
 
 uint64_t rocketnet_random_uint64()
 {
     uint64_t value;
-    randombytes_buf( &value, sizeof(value) );
+    randombytes_buf( &value, sizeof( value ) );
     return value;
 }
 
@@ -629,11 +629,11 @@ const char * rocketnet_platform_name( int platform_id )
 {
     switch ( platform_id )
     {
-        case ROCKETNET_PLATFORM_WINDOWS:       return "windows";
-        case ROCKETNET_PLATFORM_MAC:           return "mac";
-        case ROCKETNET_PLATFORM_LINUX:         return "linux";
-        case ROCKETNET_PLATFORM_IOS:           return "ios";
-        case ROCKETNET_PLATFORM_BSD:           return "bsd";
+        case ROCKETNET_PLATFORM_WINDOWS: return "windows";
+        case ROCKETNET_PLATFORM_MAC:     return "mac";
+        case ROCKETNET_PLATFORM_LINUX:   return "linux";
+        case ROCKETNET_PLATFORM_IOS:     return "ios";
+        case ROCKETNET_PLATFORM_BSD:     return "bsd";
         default:
             break;
     }
@@ -655,14 +655,14 @@ const char * rocketnet_connection_name( int connection_type )
 
 void * rocketnet_global_context = NULL;
 
-enum rocketnet_status_t rocketnet_init( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ) )
+enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_OK;
     (void) rocketnet_init_ex( context, malloc_function, free_function, &status );
     return (enum rocketnet_status_t) status;
 }
 
-bool rocketnet_init_ex( void * context, void * (*malloc_function)( void * context, size_t bytes ), void (*free_function)( void * context, void * p ), int * status )
+bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status )
 {
     // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: a partial allocator pair is
     // INVALID_ARGUMENT, re-entry and the transition are ALREADY_INITIALIZED,
@@ -771,7 +771,7 @@ int rocketnet_term_ex()
     // The caller must quiesce all library calls before term, and the private
     // bundled copy belongs to this SDK. A system libsodium may be shared with
     // the application, so never close its process-global RNG here.
-#if defined(ROCKETNET_BUNDLED_SODIUM) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     // sodium_init is one-time, so a later empty init/term cycle has no open
     // RNG descriptor and randombytes_close returns -1 for that valid case.
     // The strict process resource gate detects a real close failure.
@@ -790,11 +790,11 @@ int rocketnet_term_ex()
 
 uint64_t rocketnet_next_packet_lease_id()
 {
-    static std::atomic<uint64_t> next{1};
-    uint64_t ticket = next.load(std::memory_order_relaxed);
+    static std::atomic<uint64_t> next{ 1 };
+    uint64_t ticket = next.load( std::memory_order_relaxed );
     while ( ticket != UINT64_MAX )
     {
-        if ( next.compare_exchange_weak(ticket, ticket + 1, std::memory_order_relaxed) )
+        if ( next.compare_exchange_weak( ticket, ticket + 1, std::memory_order_relaxed ) )
             return ticket;
     }
     return 0;

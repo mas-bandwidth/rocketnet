@@ -23,7 +23,9 @@ static void frame( struct rocketnet_server_t * server, struct rocketnet_client_t
     rocketnet_client_update( client, now );
 
     const struct rocketnet_message_batch_t * batch;
-    while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL ) {}
+    while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
+    {
+    }
     while ( ( batch = rocketnet_server_receive_messages( server ) ) != NULL )
     {
         for ( int i = 0; i < batch->num_messages; i++ )
@@ -202,8 +204,10 @@ int main( void )
     printf( "server client %d disconnect reason %s\n", client_index, rocketnet_disconnect_reason_name( rocketnet_server_disconnect_reason( server, client_index ) ) );
 
     const int result = client_stats.bytes_sent > 0 && client_stats.rtt_ms >= 0.0 && slot_stats.bytes_sent > 0 && slot_stats.rtt_ms >= 0.0 &&
-                       server_stats.connections_accepted >= 1 &&
-                       rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED ? 0 : 1;
+                               server_stats.connections_accepted >= 1 &&
+                               rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED
+                           ? 0
+                           : 1;
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
     const enum rocketnet_status_t term_status = rocketnet_term();

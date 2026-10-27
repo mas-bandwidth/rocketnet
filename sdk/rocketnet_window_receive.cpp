@@ -12,7 +12,7 @@ static int rn_window_duplicate( rn_window_receive_t * receive )
 {
     if ( receive->region->counters )
         rocketnet_platform_atomic_add_u64(
-            (volatile uint64_t*) &receive->region->counters->values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE], 1 );
+            (volatile uint64_t *) &receive->region->counters->values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE], 1 );
     return RN_WINDOW_RECEIVE_DUPLICATE;
 }
 
@@ -42,8 +42,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     const uint32_t wire = record->number & ROCKETNET_MESSAGE_U24_MASK;
     const uint32_t reference = (uint32_t) receive->R & ROCKETNET_MESSAGE_U24_MASK;
     const uint32_t unsigned_delta = ( wire - reference ) & ROCKETNET_MESSAGE_U24_MASK;
-    const int32_t delta = unsigned_delta >= ( 1u << 23 ) ?
-        (int32_t) unsigned_delta - ( 1 << 24 ) : (int32_t) unsigned_delta;
+    const int32_t delta = unsigned_delta >= ( 1u << 23 ) ? (int32_t) unsigned_delta - ( 1 << 24 ) : (int32_t) unsigned_delta;
 
     // A negative signed half-range difference is behind R, including when
     // R is zero. No unsigned subtraction can turn it into a huge fresh n.
@@ -88,7 +87,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     // CHANNELS R7, RNWindow Advance: inspect only bits R actually passes.
     // Clearing one frees that ring position for the number W above it, while
     // the live descriptor remains protected until release(number).
-    for (;;)
+    for ( ;; )
     {
         const uint32_t floor_index = (uint32_t) ( receive->R & ( W - 1 ) );
         const uint64_t floor_bit = 1ULL << ( floor_index & 63 );

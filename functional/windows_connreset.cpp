@@ -122,13 +122,17 @@ static struct rocketnet_client_transport_t * windows_connreset_client( const cha
 // -1 for malformed, duplicate, or not-yet-issued measured traffic.
 static int windows_connreset_record_payload( const uint8_t * payload, int bytes, uint32_t epoch, uint64_t expected, uint8_t * seen )
 {
-    if ( bytes != WINDOWS_CONNRESET_PAYLOAD_BYTES ) return -1;
+    if ( bytes != WINDOWS_CONNRESET_PAYLOAD_BYTES )
+        return -1;
     uint32_t sequence = 0, received_epoch = 0;
     memcpy( &sequence, payload, sizeof( sequence ) );
     memcpy( &received_epoch, payload + sizeof( sequence ), sizeof( received_epoch ) );
-    if ( received_epoch == 0 ) return 0;
-    if ( received_epoch != epoch || sequence == 0 || sequence > expected || sequence > WINDOWS_CONNRESET_MEASURED_PACKETS ) return -1;
-    if ( seen[sequence - 1] ) return -1;
+    if ( received_epoch == 0 )
+        return 0;
+    if ( received_epoch != epoch || sequence == 0 || sequence > expected || sequence > WINDOWS_CONNRESET_MEASURED_PACKETS )
+        return -1;
+    if ( seen[sequence - 1] )
+        return -1;
     seen[sequence - 1] = 1;
     return 1;
 }
@@ -157,7 +161,7 @@ static void windows_connreset_check_accounting()
 }
 
 static void windows_connreset_client_tick( struct rocketnet_client_transport_t * client, double now, uint32_t sequence, bool send, uint64_t * sent, uint64_t * received,
-                                          uint32_t epoch = 0, uint64_t expected = 0, uint8_t * seen = NULL )
+                                           uint32_t epoch = 0, uint64_t expected = 0, uint8_t * seen = NULL )
 {
     rocketnet_client_transport_update( client, now );
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
@@ -427,7 +431,8 @@ static void windows_connreset_tick( windows_connreset_session_t * session, int s
             const int accepted = windows_connreset_record_payload( received_payload, payload_bytes, session->payload_epoch,
                                                                    session->client_sent[slot], session->server_seen[slot] );
             windows_connreset_require( accepted >= 0 );
-            if ( !accepted ) continue;
+            if ( !accepted )
+                continue;
         }
         session->server_received[slot]++;
         if ( session->measuring )
@@ -640,9 +645,11 @@ static void windows_connreset_drain( windows_connreset_session_t * session, doub
             if ( slot >= 0 )
             {
                 const int accepted = session->payload_epoch ? windows_connreset_record_payload( payload, payload_bytes, session->payload_epoch,
-                                     session->client_sent[slot], session->server_seen[slot] ) : 1;
+                                                                                                session->client_sent[slot], session->server_seen[slot] )
+                                                            : 1;
                 windows_connreset_require( accepted >= 0 );
-                if ( accepted ) session->server_received[slot]++;
+                if ( accepted )
+                    session->server_received[slot]++;
             }
         }
         rocketnet_server_transport_send_packets( session->server );

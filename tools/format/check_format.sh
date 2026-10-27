@@ -2,8 +2,9 @@
 # check_format.sh: run clang-format 18 (--dry-run -Werror) over rocketnet
 # sources and report unformatted files. With file arguments it checks only
 # those files; with none it checks every tracked C/C++ source except the
-# vendored trees (sodium/, tests/xdp_host/linux/, tests/xdp_host/bpf/) and
-# generated files. A generated file is one whose first 20 lines hold a comment
+# vendored trees (sodium/, tests/xdp_host/linux/, tests/xdp_host/bpf/), the
+# checker's own fixtures (tools/format/testdata/, whose dirty.c is unformatted
+# on purpose) and generated files. A generated file is one whose first 20 lines hold a comment
 # line starting with "Generated" (or "@generated", "auto-generated"); today
 # that is sdk/rocketnet_test_vectors.h.
 set -eu
@@ -17,7 +18,7 @@ fi
 
 if [ $# -eq 0 ]; then
     list="$(git ls-files -- '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.inc' \
-        | grep -vE '^(sodium|tests/xdp_host/linux|tests/xdp_host/bpf)/' || true)"
+        | grep -vE '^(sodium|tests/xdp_host/linux|tests/xdp_host/bpf|tools/format/testdata)/' || true)"
     IFS='
 '
     for f in $list; do

@@ -200,9 +200,9 @@ struct rocketnet_dst_check_state_t
 };
 
 static inline void rocketnet_dst_check_init( struct rocketnet_dst_check_state_t * st,
-                                            uint64_t seed, uint64_t step )
+                                             uint64_t seed, uint64_t step )
 {
-    memset( st, 0, sizeof(*st) );
+    memset( st, 0, sizeof( *st ) );
     st->seed = seed;
     st->step = step;
 }
@@ -213,8 +213,8 @@ static inline void rocketnet_dst_check_fail( struct rocketnet_dst_check_state_t 
     if ( st->failed )
         return;
     st->failed = 1;
-    snprintf( st->check, sizeof(st->check), "%s", name );
-    snprintf( st->detail, sizeof(st->detail), "%s", what );
+    snprintf( st->check, sizeof( st->check ), "%s", name );
+    snprintf( st->detail, sizeof( st->detail ), "%s", what );
 }
 
 // The core prints the line; a unit case that wants the fire stays silent.
@@ -250,7 +250,7 @@ static inline int rocketnet_dst_check_lap( struct rocketnet_dst_check_state_t * 
     if ( i < base || i - base < ROCKETNET_DST_CHECK_SEQ_BITS )
         return 0;
     char what[192];
-    snprintf( what, sizeof(what), "table=%s seq=%u base=%u lap=%u",
+    snprintf( what, sizeof( what ), "table=%s seq=%u base=%u lap=%u",
               table, i, base, ( i - base ) / ROCKETNET_DST_CHECK_SEQ_BITS );
     rocketnet_dst_check_fail( st, "dst_lap", what );
     return 1;
@@ -288,8 +288,8 @@ static inline void rocketnet_dst_check_reliable_resolve( struct rocketnet_dst_ch
         const uint32_t at = s->reliable_base % ROCKETNET_DST_CHECK_SEQ_BITS;
         if ( !( s->reliable_delivered[at / 8] & (uint8_t) ( 1u << ( at % 8 ) ) ) )
             break;
-        s->reliable_sent[at / 8] &= (uint8_t) ~( 1u << ( at % 8 ) );
-        s->reliable_delivered[at / 8] &= (uint8_t) ~( 1u << ( at % 8 ) );
+        s->reliable_sent[at / 8] &= ( uint8_t ) ~( 1u << ( at % 8 ) );
+        s->reliable_delivered[at / 8] &= ( uint8_t ) ~( 1u << ( at % 8 ) );
         s->sent_size_set[at] = 0;
         s->sent_size[at] = 0;
         s->reliable_base++;
@@ -302,7 +302,7 @@ static inline struct rocketnet_dst_check_stream_t * rocketnet_dst_check_stream(
 {
     struct rocketnet_dst_check_stream_t * s = &st->stream[rocketnet_dst_check_stream_index( session, channel, type )];
     if ( s->seen && s->identity != identity )
-        memset( s, 0, sizeof(*s) );
+        memset( s, 0, sizeof( *s ) );
     if ( !s->seen )
     {
         s->seen = 1;
@@ -321,7 +321,7 @@ static inline struct rocketnet_dst_check_sequenced_channel_t * rocketnet_dst_che
         return NULL;
     struct rocketnet_dst_check_sequenced_channel_t * c = &st->sequenced[session * 9 + channel];
     if ( c->seen && c->identity != identity )
-        memset( c, 0, sizeof(*c) );
+        memset( c, 0, sizeof( *c ) );
     if ( !c->seen )
     {
         c->seen = 1;
@@ -412,7 +412,7 @@ static inline int rocketnet_dst_check_ordered( struct rocketnet_dst_check_state_
     if ( seq != s->ordered_expect )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d expected=%u got=%u",
+        snprintf( what, sizeof( what ), "stream=%d expected=%u got=%u",
                   stream, s->ordered_expect, seq );
         rocketnet_dst_check_fail( st, "ordered_in_order", what );
         return 1;
@@ -432,7 +432,7 @@ static inline int rocketnet_dst_check_reliable_once( struct rocketnet_dst_check_
     if ( rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u generation=%u delivered twice",
+        snprintf( what, sizeof( what ), "stream=%d seq=%u generation=%u delivered twice",
                   stream, seq, s->generation );
         rocketnet_dst_check_fail( st, "reliable_once", what );
         return 1;
@@ -440,7 +440,7 @@ static inline int rocketnet_dst_check_reliable_once( struct rocketnet_dst_check_
     if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, seq, "reliable_sent" ) )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u was never sent", stream, seq );
+        snprintf( what, sizeof( what ), "stream=%d seq=%u was never sent", stream, seq );
         rocketnet_dst_check_fail( st, "reliable_once", what );
         return 1;
     }
@@ -461,7 +461,7 @@ static inline int rocketnet_dst_check_sequenced( struct rocketnet_dst_check_stat
     if ( s->sequenced_seen && seq <= s->sequenced_last )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d last=%u got=%u",
+        snprintf( what, sizeof( what ), "stream=%d last=%u got=%u",
                   stream, s->sequenced_last, seq );
         rocketnet_dst_check_fail( st, "sequenced_forward", what );
         return 1;
@@ -479,10 +479,10 @@ static inline int rocketnet_dst_check_sequenced_epoch( struct rocketnet_dst_chec
     (void) time;
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
     if ( s->sequenced_seen && !( epoch > s->sequenced_epoch ||
-                                ( epoch == s->sequenced_epoch && seq > s->sequenced_last ) ) )
+                                 ( epoch == s->sequenced_epoch && seq > s->sequenced_last ) ) )
     {
         char what[200];
-        snprintf( what, sizeof(what), "stream=%d epoch=%u/%u seq=%u/%u",
+        snprintf( what, sizeof( what ), "stream=%d epoch=%u/%u seq=%u/%u",
                   stream, s->sequenced_epoch, epoch, s->sequenced_last, seq );
         rocketnet_dst_check_fail( st, "sequenced_forward", what );
         return 1;
@@ -503,7 +503,7 @@ static inline int rocketnet_dst_check_unreliable_once( struct rocketnet_dst_chec
     if ( rocketnet_dst_check_bit( st, s->unreliable_delivered, 0, seq, "unreliable_delivered" ) )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u delivered twice", stream, seq );
+        snprintf( what, sizeof( what ), "stream=%d seq=%u delivered twice", stream, seq );
         rocketnet_dst_check_fail( st, "unreliable_once", what );
         return 1;
     }
@@ -531,7 +531,7 @@ static inline int rocketnet_dst_check_acked( struct rocketnet_dst_check_state_t 
     if ( !rocketnet_dst_check_bit( st, s->opened, 0, seq, "opened" ) )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u acked but not opened", stream, seq );
+        snprintf( what, sizeof( what ), "stream=%d seq=%u acked but not opened", stream, seq );
         rocketnet_dst_check_fail( st, "acked_means_opened", what );
         return 1;
     }
@@ -562,7 +562,7 @@ static inline int rocketnet_dst_check_stale_session_payload( struct rocketnet_ds
     if ( generation != s->expected_generation || incarnation != s->expected_incarnation )
     {
         char what[200];
-        snprintf( what, sizeof(what), "stream=%d generation=%u/%u incarnation=%d/%d",
+        snprintf( what, sizeof( what ), "stream=%d generation=%u/%u incarnation=%d/%d",
                   stream, generation, s->expected_generation, incarnation, s->expected_incarnation );
         rocketnet_dst_check_fail( st, "stale_session_payload", what );
         return 1;
@@ -588,7 +588,7 @@ static inline int rocketnet_dst_check_liveness_delivered( struct rocketnet_dst_c
         if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
         {
             char what[160];
-            snprintf( what, sizeof(what), "stream=%d seq=%u undelivered at the liveness bound",
+            snprintf( what, sizeof( what ), "stream=%d seq=%u undelivered at the liveness bound",
                       stream, seq );
             rocketnet_dst_check_fail( st, "liveness_delivered", what );
             return 1;
@@ -611,7 +611,7 @@ static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_
     if ( s->sent_size_set[at] && ( bytes < 0 || s->sent_size[at] != (uint32_t) bytes ) )  // a negative delivery is itself a mismatch
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u sent=%u got=%d bytes",
+        snprintf( what, sizeof( what ), "stream=%d seq=%u sent=%u got=%d bytes",
                   stream, seq, (unsigned) s->sent_size[at], bytes );
         rocketnet_dst_check_fail( st, "whole_message", what );
         return 1;
@@ -634,7 +634,7 @@ static inline int rocketnet_dst_check_ordered_unchanged( struct rocketnet_dst_ch
     if ( seq != s->unchanged_expect )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d expected=%u got=%u",
+        snprintf( what, sizeof( what ), "stream=%d expected=%u got=%u",
                   stream, s->unchanged_expect, seq );
         rocketnet_dst_check_fail( st, "ordered_unchanged_by_sequenced", what );
         return 1;
@@ -657,7 +657,7 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
     if ( s->ordered_has_last && seq <= s->ordered_last )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d last=%u got=%u", stream, s->ordered_last, seq );
+        snprintf( what, sizeof( what ), "stream=%d last=%u got=%u", stream, s->ordered_last, seq );
         rocketnet_dst_check_fail( st, "ordered_in_order", what );
         return 1;
     }
@@ -668,7 +668,7 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
         if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, earlier, "reliable_delivered" ) )
         {
             char what[200];
-            snprintf( what, sizeof(what), "stream=%d seq=%u delivered before %u", stream, seq, earlier );
+            snprintf( what, sizeof( what ), "stream=%d seq=%u delivered before %u", stream, seq, earlier );
             rocketnet_dst_check_fail( st, "ordered_in_order", what );
             return 1;
         }
@@ -685,7 +685,7 @@ static inline int rocketnet_dst_check_unchanged_runtime( struct rocketnet_dst_ch
     if ( s->unchanged_seen && seq <= s->unchanged_last )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d last=%u got=%u", stream, s->unchanged_last, seq );
+        snprintf( what, sizeof( what ), "stream=%d last=%u got=%u", stream, s->unchanged_last, seq );
         rocketnet_dst_check_fail( st, "ordered_unchanged_by_sequenced", what );
         return 1;
     }
@@ -784,7 +784,7 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
     if ( rocketnet_dst_check_bit( st, s->receipt_seen, 0, seq, "receipt_seen" ) )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u two receipt outcomes", stream, seq );
+        snprintf( what, sizeof( what ), "stream=%d seq=%u two receipt outcomes", stream, seq );
         rocketnet_dst_check_fail( st, "receipt_one_outcome", what );
         return 1;
     }
@@ -803,7 +803,7 @@ static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_
     if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
     {
         char what[160];
-        snprintf( what, sizeof(what), "stream=%d seq=%u a receipt without a delivery", stream, seq );
+        snprintf( what, sizeof( what ), "stream=%d seq=%u a receipt without a delivery", stream, seq );
         rocketnet_dst_check_fail( st, "receipt_acked_delivered", what );
         return 1;
     }
@@ -828,7 +828,7 @@ static inline void rocketnet_dst_check_slot( struct rocketnet_dst_check_state_t 
             if ( st->slot_client_id[other] == client_id && client_id != 0 )
             {
                 char what[200];
-                snprintf( what, sizeof(what), "slot=%d and slot=%d hold client_id=%llu",
+                snprintf( what, sizeof( what ), "slot=%d and slot=%d hold client_id=%llu",
                           slot, other, (unsigned long long) client_id );
                 rocketnet_dst_check_fail( st, "one_session_per_slot", what );
                 return;
@@ -841,7 +841,7 @@ static inline void rocketnet_dst_check_slot( struct rocketnet_dst_check_state_t 
                 if ( st->admitted_client_id[i] == client_id )
                 {
                     char what[200];
-                    snprintf( what, sizeof(what), "client_id=%llu admitted twice",
+                    snprintf( what, sizeof( what ), "client_id=%llu admitted twice",
                               (unsigned long long) client_id );
                     rocketnet_dst_check_fail( st, "token_admits_once", what );
                     return;
@@ -872,7 +872,7 @@ static inline void rocketnet_dst_check_client_state( struct rocketnet_dst_check_
     if ( terminal && !terminal_explained )
     {
         char what[160];
-        snprintf( what, sizeof(what), "client=%d terminal state=%d", client, state );
+        snprintf( what, sizeof( what ), "client=%d terminal state=%d", client, state );
         rocketnet_dst_check_fail( st, "client_terminal", what );
     }
     st->client_state[client] = state;
@@ -888,7 +888,7 @@ static inline void rocketnet_dst_check_generation( struct rocketnet_dst_check_st
     if ( generation <= st->generation_high[client] )
     {
         char what[160];
-        snprintf( what, sizeof(what), "client=%d generation=%llu after %llu",
+        snprintf( what, sizeof( what ), "client=%d generation=%llu after %llu",
                   client, (unsigned long long) generation, (unsigned long long) st->generation_high[client] );
         rocketnet_dst_check_fail( st, "fresh_generation", what );
     }
@@ -912,7 +912,7 @@ static inline void rocketnet_dst_check_replay( struct rocketnet_dst_check_state_
     if ( highest_opened < st->replay_high[session] )
     {
         char what[160];
-        snprintf( what, sizeof(what), "session=%d highest=%llu after %llu", session,
+        snprintf( what, sizeof( what ), "session=%d highest=%llu after %llu", session,
                   (unsigned long long) highest_opened, (unsigned long long) st->replay_high[session] );
         rocketnet_dst_check_fail( st, "replay_monotone", what );
     }
@@ -928,7 +928,7 @@ static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_chec
     if ( !live && sent_or_received )
     {
         char what[160];
-        snprintf( what, sizeof(what), "endpoint=%d crashed but sent or received", endpoint );
+        snprintf( what, sizeof( what ), "endpoint=%d crashed but sent or received", endpoint );
         rocketnet_dst_check_fail( st, "crashed_silent", what );
     }
 }
@@ -947,7 +947,7 @@ static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t
     if ( delta > bound || delta < -bound )
     {
         char what[160];
-        snprintf( what, sizeof(what), "endpoint=%d clock offset=%.6f bound=%.6f", endpoint, delta, bound );
+        snprintf( what, sizeof( what ), "endpoint=%d clock offset=%.6f bound=%.6f", endpoint, delta, bound );
         rocketnet_dst_check_fail( st, "skew_bounded", what );
     }
 }
@@ -961,7 +961,7 @@ static inline void rocketnet_dst_check_liveness_connected( struct rocketnet_dst_
     if ( live && !connected )
     {
         char what[160];
-        snprintf( what, sizeof(what), "client=%d live but not connected", client );
+        snprintf( what, sizeof( what ), "client=%d live but not connected", client );
         rocketnet_dst_check_fail( st, "liveness_connected", what );
     }
 }
@@ -1042,7 +1042,7 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                              !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, seq, "reliable_delivered" ) )
                         {
                             char what[160];
-                            snprintf( what, sizeof(what), "stream=%d seq=%u settled=%u last=%u at=%llu id=%llu",
+                            snprintf( what, sizeof( what ), "stream=%d seq=%u settled=%u last=%u at=%llu id=%llu",
                                       rocketnet_dst_check_stream_index( session, channel, type ), seq,
                                       s->settled_seq, s->last_sent_seq, (unsigned long long) s->last_sent_step,
                                       (unsigned long long) s->identity );
@@ -1072,7 +1072,7 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     if ( !served && !in_flight )
                     {
                         char what[220];
-                        snprintf( what, sizeof(what),
+                        snprintf( what, sizeof( what ),
                                   "stream=%d quiet_start=%u newest=%u sent_count=%u cross_newest=%u quiet_required=%u",
                                   rocketnet_dst_check_stream_index( session, channel, type ), s->quiet_start_seq,
                                   rocketnet_dst_check_type4_newest( s ), s->reliable_sent_count,
@@ -1095,10 +1095,10 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
     // end is "server" or "clients" (dst_harness.h:1264-1265), and the report
     // is one counter name and two u64 (sdk/rocketnet_counters.cpp:137)
     char report[240];
-    if ( !rocketnet_counters_conserved( counters, report, sizeof(report) ) )
+    if ( !rocketnet_counters_conserved( counters, report, sizeof( report ) ) )
     {
         char what[256];
-        snprintf( what, sizeof(what), "%s: %s", end, report );
+        snprintf( what, sizeof( what ), "%s: %s", end, report );
         rocketnet_dst_check_fail( st, "conservation", what );
     }
 }
@@ -1149,7 +1149,7 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
         if ( !explained )
         {
             char what[256];
-            snprintf( what, sizeof(what), "%s: %s = %llu", end,
+            snprintf( what, sizeof( what ), "%s: %s = %llu", end,
                       rocketnet_counter_name( i ), (unsigned long long) value );
             rocketnet_dst_check_fail( st, "unexplained_refusal", what );
             return;
@@ -1163,7 +1163,7 @@ static inline void rocketnet_dst_check_leak( struct rocketnet_dst_check_state_t 
     if ( st->allocation_balance != 0 )
     {
         char what[160];
-        snprintf( what, sizeof(what), "%u harness allocations not freed", st->allocation_balance );
+        snprintf( what, sizeof( what ), "%u harness allocations not freed", st->allocation_balance );
         rocketnet_dst_check_fail( st, "leak", what );
     }
 }
@@ -1185,7 +1185,7 @@ static inline void rocketnet_dst_check_ack_id( struct rocketnet_dst_check_state_
     if ( packet_id != 0 && !st->issued_set[at] )
     {
         char what[160];
-        snprintf( what, sizeof(what), "packet_id=%llu acked but never issued",
+        snprintf( what, sizeof( what ), "packet_id=%llu acked but never issued",
                   (unsigned long long) packet_id );
         rocketnet_dst_check_fail( st, "acked_means_opened", what );
     }

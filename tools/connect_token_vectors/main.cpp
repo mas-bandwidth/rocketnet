@@ -30,7 +30,7 @@
 #include "rocketnet_test_vectors.h"
 
 // Match the header to the sodium implementation linked into the SDK.
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../../sodium/sodium.h"
@@ -71,74 +71,89 @@ static void ctv_fill_user_data( int pattern, uint8_t * user_data )
     {
         switch ( pattern )
         {
-            case 0:  user_data[i] = 0;                                                  break;
-            case 1:  user_data[i] = (uint8_t) i;                                        break;
-            case 2:  user_data[i] = 0xff;                                               break;
-            default: user_data[i] = (uint8_t) text[ i % ( (int) sizeof(text) - 1 ) ];   break;
+            case 0:  user_data[i] = 0; break;
+            case 1:  user_data[i] = (uint8_t) i; break;
+            case 2:  user_data[i] = 0xff; break;
+            default: user_data[i] = (uint8_t) text[i % ( (int) sizeof( text ) - 1 )]; break;
         }
     }
 }
 
-static const struct ctv_input_t ctv_inputs[] =
-{
+static const struct ctv_input_t ctv_inputs[] = {
     // the appendix's token inputs, ipv4 127.0.0.1:40000, empty user data
     {
         "ipv4_appendix_inputs",
-        ROCKETNET_TEST_CLIENT_ID, ROCKETNET_TEST_PROTOCOL_ID,
-        ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_TIMEOUT,
+        ROCKETNET_TEST_CLIENT_ID,
+        ROCKETNET_TEST_PROTOCOL_ID,
+        ROCKETNET_TEST_CREATE_TS,
+        ROCKETNET_TEST_EXPIRE_TS,
+        ROCKETNET_TEST_TIMEOUT,
         ROCKETNET_ADDRESS_FLAG_IPV4,
         { 127, 0, 0, 1, 0x40, 0x9c },
         { 0 },
         0,
-        rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
+        rocketnet_test_token_c2s_key,
+        rocketnet_test_token_s2c_key,
         rocketnet_test_token_vector_ephemeral_secret[0],
     },
     // ipv6 [::1]:50000, counting user data
     {
         "ipv6_loopback_counting_user_data",
-        1ULL, 0xfedcba9876543210ULL,
-        0ULL, 300ULL, 5,
+        1ULL,
+        0xfedcba9876543210ULL,
+        0ULL,
+        300ULL,
+        5,
         ROCKETNET_ADDRESS_FLAG_IPV6,
         { 0 },
-        { 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 1,0, 0x50, 0xc3 },
+        { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0x50, 0xc3 },
         1,
-        rocketnet_test_handshake_c2s_key, rocketnet_test_handshake_s2c_key,
+        rocketnet_test_handshake_c2s_key,
+        rocketnet_test_handshake_s2c_key,
         rocketnet_test_token_vector_ephemeral_secret[1],
     },
     // both families, 10.0.0.1:1 and [2001:db8::1]:65535, all-ones user data,
     // a negative timeout, which both ends refuse, to pin the int32 encoding
     {
         "dual_stack_negative_timeout",
-        0x8000000000000001ULL, 0x0000000000000001ULL,
-        1756166400ULL, 1756170000ULL, -1,
+        0x8000000000000001ULL,
+        0x0000000000000001ULL,
+        1756166400ULL,
+        1756170000ULL,
+        -1,
         ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6,
         { 10, 0, 0, 1, 0x01, 0x00 },
-        { 0x01,0x20, 0xb8,0x0d, 0,0, 0,0, 0,0, 0,0, 0,0, 1,0, 0xff, 0xff },
+        { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0xff, 0xff },
         2,
-        rocketnet_test_session_c2s_key, rocketnet_test_session_s2c_key,
+        rocketnet_test_session_c2s_key,
+        rocketnet_test_session_s2c_key,
         rocketnet_test_token_vector_ephemeral_secret[2],
     },
     // extremes: every integer at its top, text user data, the token keys swapped
     {
         "extreme_values_text_user_data",
-        0xffffffffffffffffULL, 0ULL,
-        0x7fffffffffffffffULL, 0xffffffffffffffffULL, 0x7fffffff,
+        0xffffffffffffffffULL,
+        0ULL,
+        0x7fffffffffffffffULL,
+        0xffffffffffffffffULL,
+        0x7fffffff,
         ROCKETNET_ADDRESS_FLAG_IPV4,
         { 255, 255, 255, 255, 0xff, 0xff },
         { 0 },
         3,
-        rocketnet_test_token_s2c_key, rocketnet_test_token_c2s_key,
+        rocketnet_test_token_s2c_key,
+        rocketnet_test_token_c2s_key,
         rocketnet_test_token_vector_ephemeral_secret[3],
     },
 };
 
-static const int ctv_input_count = (int) ( sizeof(ctv_inputs) / sizeof(ctv_inputs[0]) );
+static const int ctv_input_count = (int) ( sizeof( ctv_inputs ) / sizeof( ctv_inputs[0] ) );
 
 static void ctv_fields( const struct ctv_input_t * input,
                         struct rocketnet_signed_connect_data_t * signed_fields,
                         struct rocketnet_connect_token_private_t * private_fields )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = input->protocol_id;
     signed_fields->create_timestamp = input->create_timestamp;
@@ -149,7 +164,7 @@ static void ctv_fields( const struct ctv_input_t * input,
     memcpy( signed_fields->ipv6_address, input->ipv6_address, 18 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = input->client_id;
     private_fields->protocol_id = input->protocol_id;
     private_fields->expire_timestamp = input->expire_timestamp;
@@ -237,7 +252,7 @@ static bool ctv_generate_json( std::string & out )
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         if ( ctv_mint( input, token ) != 1 )
         {
-            sodium_memzero( backend_seed, sizeof(backend_seed) );
+            sodium_memzero( backend_seed, sizeof( backend_seed ) );
             out.clear();
             return false;
         }
@@ -265,11 +280,11 @@ static bool ctv_generate_json( std::string & out )
 
     out += "  ]\n";
     out += "}\n";
-    sodium_memzero( backend_seed, sizeof(backend_seed) );
+    sodium_memzero( backend_seed, sizeof( backend_seed ) );
     return true;
 }
 
-#if !defined(ROCKETNET_CONNECT_TOKEN_VECTORS_NO_MAIN)
+#if !defined( ROCKETNET_CONNECT_TOKEN_VECTORS_NO_MAIN )
 
 // ---------------------------------------------------------------------------
 // the tool: write the generated file to the one path given, atomically
@@ -318,7 +333,7 @@ int main( int argc, char ** argv )
         fprintf( stderr, "error: writing %s failed\n", temp.c_str() );
         return 1;
     }
-#if defined(_WIN32)
+#if defined( _WIN32 )
     // The Windows CRT rename refuses to replace an existing destination.
     const std::wstring wide_temp = rocketnet_test_wide_path( temp );
     const std::wstring wide_path = rocketnet_test_wide_path( path );

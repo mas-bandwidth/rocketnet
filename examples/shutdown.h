@@ -20,10 +20,10 @@
 // brings no clock, sleep, socket or thread into a caller that does not pass
 // them: a unit test that includes tests/native_shutdown.h gets this helper's
 // declaration, not a real-time wait of its own.
-typedef int (*rn_cli_stopped_fn)( void * object );
-typedef void (*rn_cli_step_fn)( void * object );
-typedef double (*rn_cli_now_fn)( void );
-typedef void (*rn_cli_sleep_fn)( double seconds );
+typedef int ( *rn_cli_stopped_fn )( void * object );
+typedef void ( *rn_cli_step_fn )( void * object );
+typedef double ( *rn_cli_now_fn )( void );
+typedef void ( *rn_cli_sleep_fn )( double seconds );
 
 static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped, rn_cli_step_fn step, rn_cli_now_fn now, rn_cli_sleep_fn sleep_fn, const char * what )
 {

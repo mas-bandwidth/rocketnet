@@ -86,12 +86,12 @@ static void check_bits_match_ring( struct rocketnet_ack_endpoint_t * ep )
 static void test_sequence_burn_sender_walk_is_harmless()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
-        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
 
-    uint64_t * acked = (uint64_t*) rocketnet_malloc( NULL, N * sizeof(uint64_t) );
+    uint64_t * acked = (uint64_t *) rocketnet_malloc( NULL, N * sizeof( uint64_t ) );
     rocketnet_unit_check( acked );
 
     for ( uint64_t s = 1; s <= 5; s++ )
@@ -105,7 +105,7 @@ static void test_sequence_burn_sender_walk_is_harmless()
     // the receiver opened 1..5 and 7..12 (6 never arrived), so its block has
     // a one-sequence gap at 6: a run 7..12, then a run 1..5
     struct rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = 12;
     block.first_range_length = 6;
     block.num_ranges = 1;
@@ -125,7 +125,9 @@ static void test_sequence_burn_sender_walk_is_harmless()
 
     // a second identical block visits nothing: nothing is resent or re-walked
     g_ack_visit_count = 0;
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     rocketnet_ack_endpoint_process_block( ep, &block, 3100.0, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 0 );
     rocketnet_unit_check( unknown == 0 );
@@ -168,7 +170,7 @@ static int seq_claimed( const struct rocketnet_ack_block_t * b, uint64_t seq )
 static void test_sequence_burn_receiver_block_skips_unopened()
 {
     struct rocketnet_replay_protection_t replay;
-    memset( &replay, 0, sizeof(replay) );
+    memset( &replay, 0, sizeof( replay ) );
     for ( uint64_t s = 1; s <= 3; s++ )
         rocketnet_replay_advance( &replay, s );
     // burned sequence 4: start_packet spent it, the packet never arrived
@@ -216,8 +218,16 @@ REGISTER_UNIT_TEST( test_sequence_burn_receiver_block_skips_unopened );
 #define BURN_SMALL_BYTES 32
 #define BURN_ARENA_REQUEST ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 600 )
 
-enum sequence_burn_side_t { BURN_SIDE_SERVER = 0, BURN_SIDE_CLIENT = 1 };
-enum sequence_burn_kind_t { BURN_KIND_RING = 0, BURN_KIND_ARENA = 1 };
+enum sequence_burn_side_t
+{
+    BURN_SIDE_SERVER = 0,
+    BURN_SIDE_CLIENT = 1
+};
+enum sequence_burn_kind_t
+{
+    BURN_KIND_RING = 0,
+    BURN_KIND_ARENA = 1
+};
 
 static double sequence_burn_clock = 1000.0;
 static double sequence_burn_time_callback( void * ) { return sequence_burn_clock; }
@@ -733,7 +743,7 @@ struct sequence_burn_message_measures_t
 static int sequence_burn_seam_side;
 static int sequence_burn_seam_armed;
 static int sequence_burn_seam_refused;
-static uint8_t * (*sequence_burn_seam_next)( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
+static uint8_t * ( *sequence_burn_seam_next )( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context );
 
 static uint8_t * sequence_burn_seam_start( void * transport, int client_index, int request_bytes, struct rocketnet_packet_context_t * context )
 {
@@ -743,9 +753,7 @@ static uint8_t * sequence_burn_seam_start( void * transport, int client_index, i
         for ( ;; )
         {
             struct rocketnet_packet_context_t fill;
-            uint8_t * frame = sequence_burn_seam_side == BURN_SIDE_SERVER ?
-                rocketnet_server_transport_start_packet( (struct rocketnet_server_transport_t *) transport, client_index, BURN_SMALL_BYTES, &fill ) :
-                rocketnet_client_transport_start_packet( (struct rocketnet_client_transport_t *) transport, BURN_SMALL_BYTES, &fill );
+            uint8_t * frame = sequence_burn_seam_side == BURN_SIDE_SERVER ? rocketnet_server_transport_start_packet( (struct rocketnet_server_transport_t *) transport, client_index, BURN_SMALL_BYTES, &fill ) : rocketnet_client_transport_start_packet( (struct rocketnet_client_transport_t *) transport, BURN_SMALL_BYTES, &fill );
             if ( !frame )
                 break;
             if ( sequence_burn_seam_side == BURN_SIDE_SERVER )
@@ -891,7 +899,8 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
     rocketnet_unit_check( sequence_burn_message_pair_setup( &pair ) );
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                   rocketnet_message_server_client_connected( pair.server, 0 ) ); i++ )
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
         sequence_burn_message_step( &pair, side, -1, false, NULL );
     rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
     rocketnet_unit_check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -910,9 +919,7 @@ static void sequence_burn_message_run( int side, bool burn, struct sequence_burn
 
     sender->link.start_packet = sequence_burn_seam_next;
 
-    const struct rocketnet_counters_t * transport = side == BURN_SIDE_SERVER ?
-        rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) ) :
-        rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );
+    const struct rocketnet_counters_t * transport = side == BURN_SIDE_SERVER ? rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) ) : rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );
     m->layer_refused = sequence_burn_seam_refused;
     m->ring_full = transport->values[ROCKETNET_COUNTER_SEND_RING_FULL];
     m->resent = sender->counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];

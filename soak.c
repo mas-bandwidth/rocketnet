@@ -200,7 +200,7 @@
     LOAD_CLIENT_NETNS do: the xdp cell of scripts/soak-per-transport.
 */
 
-#if defined(__linux__) && !defined(_GNU_SOURCE)
+#if defined( __linux__ ) && !defined( _GNU_SOURCE )
 #define _GNU_SOURCE     /* setns, for SOAK_CLIENT_NETNS */
 #endif
 
@@ -216,7 +216,7 @@
 #include <stdlib.h>
 #include <signal.h>
 #include "tests/process_resources.h"
-#if defined(__linux__)
+#if defined( __linux__ )
 #include <fcntl.h>
 #include <sched.h>
 #include <unistd.h>
@@ -243,7 +243,8 @@ static volatile sig_atomic_t quit;
 
 void interrupt_handler( int signal )
 {
-    (void) signal; quit = 1;
+    (void) signal;
+    quit = 1;
 }
 
 static void generate_payload( uint8_t * payload_data, int payload_bytes )
@@ -281,15 +282,15 @@ static const char * soak_disconnect_reason_name( int state )
 {
     switch ( state )
     {
-        case ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED:          return "ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED";
-        case ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN:          return "ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT:           return "ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT:  return "ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT:   return "ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT";
-        case ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT:       return "ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT";
-        case ROCKETNET_CLIENT_STATE_CONNECTION_DENIED:              return "ROCKETNET_CLIENT_STATE_CONNECTION_DENIED";
-        case ROCKETNET_CLIENT_STATE_DISCONNECTED:                   return "ROCKETNET_CLIENT_STATE_DISCONNECTED";
-        default:                                                    return "ROCKETNET_CLIENT_STATE_UNKNOWN";
+        case ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED:         return "ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED";
+        case ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN:         return "ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT:          return "ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT: return "ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT:  return "ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT:      return "ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT";
+        case ROCKETNET_CLIENT_STATE_CONNECTION_DENIED:             return "ROCKETNET_CLIENT_STATE_CONNECTION_DENIED";
+        case ROCKETNET_CLIENT_STATE_DISCONNECTED:                  return "ROCKETNET_CLIENT_STATE_DISCONNECTED";
+        default:                                                   return "ROCKETNET_CLIENT_STATE_UNKNOWN";
     }
 }
 
@@ -472,7 +473,7 @@ static int soak_refusal_planted_by_duplicates( const char * counter_name )
 {
     const char suffix[] = "_ALREADY_RECEIVED";
     const size_t length = strlen( counter_name );
-    const size_t suffix_length = sizeof(suffix) - 1;
+    const size_t suffix_length = sizeof( suffix ) - 1;
     return length > suffix_length && strcmp( counter_name + length - suffix_length, suffix ) == 0;
 }
 
@@ -489,7 +490,7 @@ static int soak_check_counters( const char * name, const struct rocketnet_counte
     int violations = 0;
 
     char report[256];
-    if ( !rocketnet_counters_conserved( counters, report, sizeof(report) ) )
+    if ( !rocketnet_counters_conserved( counters, report, sizeof( report ) ) )
     {
         printf( "soak: CONSERVATION FAILED at %s: %s\n", name, report );
         violations++;
@@ -679,7 +680,7 @@ static volatile int64_t soak_library_bytes;
 
 static void soak_library_bytes_add( int64_t bytes )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     InterlockedExchangeAdd64( (volatile LONG64 *) &soak_library_bytes, (LONG64) bytes );
 #else
     __atomic_fetch_add( &soak_library_bytes, bytes, __ATOMIC_RELAXED );
@@ -701,7 +702,7 @@ static int64_t soak_direct_bytes_read( void )
 // rule holds every byte the library holds on every transport
 static int64_t soak_library_bytes_read( void )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const int64_t allocator_bytes = (int64_t) InterlockedCompareExchange64( (volatile LONG64 *) &soak_library_bytes, 0, 0 );
 #else
     const int64_t allocator_bytes = __atomic_load_n( &soak_library_bytes, __ATOMIC_RELAXED );
@@ -738,7 +739,7 @@ static void soak_library_free( void * context, void * p )
 
 static void soak_print_os_threads( const char * sample_label )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     int64_t threads = 0;
     int64_t os_threads = 0;
     process_resources_walk_threads( &threads, &os_threads, sample_label );
@@ -760,7 +761,7 @@ static void soak_print_memory( const char * phase, double seconds, const struct 
             (long long) sample->values[PROCESS_RESOURCES_MEMORY], (long long) soak_library_bytes_read(), (long long) soak_direct_bytes_read() );
     if ( process_resources_smaps( &rss, &private_dirty ) )
         printf( " smaps_rss=%lld private_dirty=%lld", (long long) rss, (long long) private_dirty );
-#if defined(_WIN32)
+#if defined( _WIN32 )
     printf( " threads=%lld os_threads=%lld", (long long) sample->values[PROCESS_RESOURCES_THREADS], (long long) sample->values[PROCESS_RESOURCES_OS_THREADS] );
 #endif
     printf( "\n" );
@@ -994,14 +995,14 @@ int main( int argc, char ** argv )
             server_port = (int) strtol( server_port_text + 1, NULL, 10 );
     }
     char server_address[80];
-    snprintf( server_address, sizeof(server_address), "%s:%d", server_host, server_port );
+    snprintf( server_address, sizeof( server_address ), "%s:%d", server_host, server_port );
 
     char server_transport_name[64];
     snprintf( server_transport_name, sizeof( server_transport_name ), "%s", rocketnet_server_transport_io_name( server ) );
     printf( "soak transport: server %s\n", server_transport_name );
     char client_transport_name[64] = { 0 };
 
-#if defined(__linux__)
+#if defined( __linux__ )
     int self_netns = -1;
     int client_netns = -1;
     char client_netns_path[256];
@@ -1165,7 +1166,7 @@ int main( int argc, char ** argv )
                 failures++;
                 break;
             }
-#if defined(__linux__)
+#if defined( __linux__ )
             if ( client_netns >= 0 && setns( client_netns, CLONE_NEWNET ) != 0 )
             {
                 printf( "soak: setns into %s failed: %s\n", client_netns_path, strerror( errno ) );
@@ -1174,7 +1175,7 @@ int main( int argc, char ** argv )
             }
 #endif
             client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_time() );
-#if defined(__linux__)
+#if defined( __linux__ )
             if ( client_netns >= 0 && setns( self_netns, CLONE_NEWNET ) != 0 )
             {
                 printf( "soak: setns back to the server namespace failed: %s\n", strerror( errno ) );
@@ -1357,9 +1358,15 @@ int main( int argc, char ** argv )
                     fault_verify_pending = 0;
                 }
                 if ( verify_payload( server_payload, payload_bytes ) )
-                    { payloads_verified++; server_verified++; }
+                {
+                    payloads_verified++;
+                    server_verified++;
+                }
                 else
-                    { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", payload_bytes ); failures++; }
+                {
+                    printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", payload_bytes );
+                    failures++;
+                }
             }
 
             // sized by the default configured maximum -- the clients here
@@ -1369,7 +1376,7 @@ int main( int argc, char ** argv )
 
             static uint8_t received[ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES];
             int received_bytes;
-            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof(received) ) ) > 0 )
+            while ( ( received_bytes = rocketnet_client_transport_receive_packet( client, received, sizeof( received ) ) ) > 0 )
             {
                 client_received++;
                 soak_link_witness_receive( &server_to_client, received_bytes );
@@ -1379,9 +1386,15 @@ int main( int argc, char ** argv )
                     fault_verify_pending = 0;
                 }
                 if ( verify_payload( received, received_bytes ) )
-                    { payloads_verified++; client_verified++; }
+                {
+                    payloads_verified++;
+                    client_verified++;
+                }
                 else
-                    { printf( "PAYLOAD VERIFY FAILED at client (%d bytes)\n", received_bytes ); failures++; }
+                {
+                    printf( "PAYLOAD VERIFY FAILED at client (%d bytes)\n", received_bytes );
+                    failures++;
+                }
             }
         }
 
@@ -1708,7 +1721,7 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_update( server, rocketnet_time() );
     rn_native_server_transport_stop_and_destroy( server );
 
-#if defined(__linux__)
+#if defined( __linux__ )
     if ( self_netns >= 0 )
         close( self_netns );
     if ( client_netns >= 0 )

@@ -22,29 +22,29 @@
 #include <stdlib.h>
 
 // the AF_XDP code is Linux only, so its tests are built there only
-#if defined(__linux__)
+#if defined( __linux__ )
 
 static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
 static const uint8_t golden_payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
 static const uint8_t golden_ipv4[] = {
-    0x02,0x00,0x00,0x00,0x00,0x02, 0x02,0x00,0x00,0x00,0x00,0x01,
-    0x08,0x00,
-    0x45,0x00,0x00,0x20,0x00,0x00,0x40,0x00,0x40,0x11,0xb7,0x5e,
-    0xc0,0xa8,0x01,0x0a,0xc0,0xa8,0x01,0x14,
-    0x9c,0x40,0x9c,0x41,0x00,0x0c,0x00,0x00,
-    0xde,0xad,0xbe,0xef
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x00,
+    0x45, 0x00, 0x00, 0x20, 0x00, 0x00, 0x40, 0x00, 0x40, 0x11, 0xb7, 0x5e,
+    0xc0, 0xa8, 0x01, 0x0a, 0xc0, 0xa8, 0x01, 0x14,
+    0x9c, 0x40, 0x9c, 0x41, 0x00, 0x0c, 0x00, 0x00,
+    0xde, 0xad, 0xbe, 0xef
 };
 static const uint8_t golden_ipv6[] = {
-    0x02,0x00,0x00,0x00,0x00,0x02, 0x02,0x00,0x00,0x00,0x00,0x01,
-    0x86,0xdd,
-    0x60,0x00,0x00,0x00,0x00,0x0c,0x11,0x40,
-    0x20,0x01,0x0d,0xb8,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x01,
-    0x20,0x01,0x0d,0xb8,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x02,
-    0x9c,0x40,0x9c,0x41,0x00,0x0c,0xce,0x41,
-    0xde,0xad,0xbe,0xef
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x86, 0xdd,
+    0x60, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x11, 0x40,
+    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
+    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
+    0x9c, 0x40, 0x9c, 0x41, 0x00, 0x0c, 0xce, 0x41,
+    0xde, 0xad, 0xbe, 0xef
 };
 
 static void test_ipv4_frame_matches_golden()
@@ -54,14 +54,14 @@ static void test_ipv4_frame_matches_golden()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "192.168.1.20:40001" ) );
 
     uint8_t frame[128];
-    memset( frame, 0, sizeof(frame) );
+    memset( frame, 0, sizeof( frame ) );
     const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV4 );
     rocketnet_unit_check( header_bytes == 42 );
-    memcpy( frame + header_bytes, golden_payload, sizeof(golden_payload) );
+    memcpy( frame + header_bytes, golden_payload, sizeof( golden_payload ) );
 
-    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, (int) sizeof(golden_payload) );
+    int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, (int) sizeof( golden_payload ) );
     rocketnet_unit_check( len == 46 );
-    rocketnet_unit_check( memcmp( frame, golden_ipv4, sizeof(golden_ipv4) ) == 0 );
+    rocketnet_unit_check( memcmp( frame, golden_ipv4, sizeof( golden_ipv4 ) ) == 0 );
 }
 
 static void test_ipv6_frame_matches_golden()
@@ -71,14 +71,14 @@ static void test_ipv6_frame_matches_golden()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[128];
-    memset( frame, 0, sizeof(frame) );
+    memset( frame, 0, sizeof( frame ) );
     const int header_bytes = rocketnet_xdp_frame_header_bytes( ROCKETNET_ADDRESS_IPV6 );
     rocketnet_unit_check( header_bytes == 62 );
-    memcpy( frame + header_bytes, golden_payload, sizeof(golden_payload) );
+    memcpy( frame + header_bytes, golden_payload, sizeof( golden_payload ) );
 
-    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, (int) sizeof(golden_payload) );
+    int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, (int) sizeof( golden_payload ) );
     rocketnet_unit_check( len == 66 );
-    rocketnet_unit_check( memcmp( frame, golden_ipv6, sizeof(golden_ipv6) ) == 0 );
+    rocketnet_unit_check( memcmp( frame, golden_ipv6, sizeof( golden_ipv6 ) ) == 0 );
 }
 
 // an independent ones'-complement fold, for the second checksum check.
@@ -111,20 +111,25 @@ static void test_ipv6_udp_checksum_verifies()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[128];
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame + 62, golden_payload, sizeof(golden_payload) );
-    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, (int) sizeof(golden_payload) );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 62, golden_payload, sizeof( golden_payload ) );
+    int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, (int) sizeof( golden_payload ) );
     rocketnet_unit_check( len == 66 );
 
     // pseudo-header: source (16), destination (16), UDP length (32), three
     // zero bytes, next header 17.
     uint8_t pseudo[40];
     memcpy( pseudo, frame + 22, 32 );
-    pseudo[32] = 0; pseudo[33] = 0; pseudo[34] = 0; pseudo[35] = 0x0c;
-    pseudo[36] = 0; pseudo[37] = 0; pseudo[38] = 0; pseudo[39] = 0x11;
+    pseudo[32] = 0;
+    pseudo[33] = 0;
+    pseudo[34] = 0;
+    pseudo[35] = 0x0c;
+    pseudo[36] = 0;
+    pseudo[37] = 0;
+    pseudo[38] = 0;
+    pseudo[39] = 0x11;
 
-    uint32_t sum = sum_words( pseudo, sizeof(pseudo) )
-                 + sum_words( frame + 54, 8 + sizeof(golden_payload) );
+    uint32_t sum = sum_words( pseudo, sizeof( pseudo ) ) + sum_words( frame + 54, 8 + sizeof( golden_payload ) );
     rocketnet_unit_check( fold16( sum ) == 0xFFFF );
 }
 
@@ -135,8 +140,8 @@ static void test_ipv6_udp_checksum_verifies()
 static void test_ipv6_checksum_zero_is_sent_as_ffff()
 {
     uint8_t src[16], dst[16];
-    memset( src, 0, sizeof(src) );
-    memset( dst, 0, sizeof(dst) );
+    memset( src, 0, sizeof( src ) );
+    memset( dst, 0, sizeof( dst ) );
     uint8_t udp[8] = { 0xFF, 0xDE, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00 };
     uint16_t csum = rocketnet_xdp_frame_ipv6_udp_checksum( src, dst, 8, udp, 0 );
     rocketnet_unit_check( csum == 0xFFFF );
@@ -149,11 +154,11 @@ static void test_ipv6_max_payload_is_1452_and_fits_1514()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[2048];
-    memset( frame, 0xAB, sizeof(frame) );
+    memset( frame, 0xAB, sizeof( frame ) );
     const int payload = ROCKETNET_MAX_PACKET_BYTES;
     rocketnet_unit_check( payload == 1452 );
     memcpy( frame + 62, frame + 1000, 0 ); // no-op; payload stays as placed
-    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, payload );
+    int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, payload );
     rocketnet_unit_check( len == 14 + 40 + 8 + payload );
     rocketnet_unit_check( len == 1514 );
 }
@@ -165,17 +170,17 @@ static void test_ipv6_payload_over_budget_is_refused()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[2048];
-    int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, ROCKETNET_MAX_PACKET_BYTES + 1 );
+    int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, ROCKETNET_MAX_PACKET_BYTES + 1 );
     rocketnet_unit_check( len == 0 );
 
     rocketnet_address_t s4, d4;
     rocketnet_unit_check( rocketnet_address_parse( &s4, "192.168.1.10:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &d4, "192.168.1.20:40001" ) );
-    len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &s4, &d4, ROCKETNET_RECEIVE_PACKET_BYTES + 1 );
+    len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &s4, &d4, ROCKETNET_RECEIVE_PACKET_BYTES + 1 );
     rocketnet_unit_check( len == 0 );
 
     // a family mismatch between the two addresses is refused too.
-    len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &d4, 4 );
+    len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &d4, 4 );
     rocketnet_unit_check( len == 0 );
 }
 
@@ -189,9 +194,9 @@ static void test_parse_round_trips_both_families()
 
     uint8_t frame[256];
 
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame + 42, golden_payload, sizeof(golden_payload) );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src4, &dst4, (int) sizeof(golden_payload) ) == 46 );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 42, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src4, &dst4, (int) sizeof( golden_payload ) ) == 46 );
     rocketnet_address_t from;
     const uint8_t * payload;
     int payload_bytes;
@@ -202,9 +207,9 @@ static void test_parse_round_trips_both_families()
     rocketnet_unit_check( from.data.ipv4[2] == 1 && from.data.ipv4[3] == 10 );
     rocketnet_unit_check( payload_bytes == 4 && memcmp( payload, golden_payload, 4 ) == 0 );
 
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame + 62, golden_payload, sizeof(golden_payload) );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src6, &dst6, (int) sizeof(golden_payload) ) == 66 );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 62, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src6, &dst6, (int) sizeof( golden_payload ) ) == 66 );
     rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, 66, &from, &payload, &payload_bytes ) );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 );
     rocketnet_unit_check( from.port == 40000 );
@@ -220,9 +225,9 @@ static void test_parse_refuses_extension_headers()
     rocketnet_unit_check( rocketnet_address_parse( &dst6, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[128];
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame + 62, golden_payload, sizeof(golden_payload) );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src6, &dst6, (int) sizeof(golden_payload) ) == 66 );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 62, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src6, &dst6, (int) sizeof( golden_payload ) ) == 66 );
 
     rocketnet_address_t from;
     const uint8_t * payload;
@@ -237,16 +242,17 @@ static void test_parse_refuses_extension_headers()
     rocketnet_address_t src4, dst4;
     rocketnet_unit_check( rocketnet_address_parse( &src4, "192.168.1.10:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &dst4, "192.168.1.20:40001" ) );
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame + 42, golden_payload, sizeof(golden_payload) );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src4, &dst4, (int) sizeof(golden_payload) ) == 46 );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 42, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src4, &dst4, (int) sizeof( golden_payload ) ) == 46 );
     frame[14] = 0x46;
     rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, 46, &from, &payload, &payload_bytes ) );
 
     // a non-IP ethertype is refused.
-    memset( frame, 0, sizeof(frame) );
-    frame[12] = 0x08; frame[13] = 0x06; // ARP
-    rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof(frame), &from, &payload, &payload_bytes ) );
+    memset( frame, 0, sizeof( frame ) );
+    frame[12] = 0x08;
+    frame[13] = 0x06; // ARP
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof( frame ), &from, &payload, &payload_bytes ) );
 }
 
 static void test_parse_refuses_truncated_ipv6_frames()
@@ -259,7 +265,7 @@ static void test_parse_refuses_truncated_ipv6_frames()
     int payload_bytes;
     for ( size_t len = 42; len <= 61; ++len )
     {
-        uint8_t * buf = (uint8_t*) malloc( len );
+        uint8_t * buf = (uint8_t *) malloc( len );
         rocketnet_unit_check( buf != NULL );
         memcpy( buf, golden_ipv6, len );
         rocketnet_unit_check( !rocketnet_xdp_frame_parse( buf, len, &from, &payload, &payload_bytes ) );
@@ -385,10 +391,10 @@ static void test_xdp_transport_reply_mac_follows_the_client()
     rocketnet_address_t src;
     rocketnet_unit_check( rocketnet_address_parse( &src, "192.168.1.10:40000" ) );
     uint8_t frame[128];
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame + 42, golden_payload, sizeof(golden_payload) );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame + 42, golden_payload, sizeof( golden_payload ) );
     mac = rocketnet_xdp_reply_mac( table, &client, NULL, &refused );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, mac, &src, &client, (int) sizeof(golden_payload) ) == 46 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, mac, &src, &client, (int) sizeof( golden_payload ) ) == 46 );
     rocketnet_unit_check( memcmp( frame, client_mac, 6 ) == 0 );
     rocketnet_unit_check( memcmp( frame + 6, server_mac, 6 ) == 0 );
 }
@@ -403,15 +409,15 @@ static void test_xdp_transport_reply_mac_follows_the_client()
 // 0xabcde (Linux sets one by default), the golden addresses, ports and payload
 
 static const uint8_t flow_label_ipv6[] = {
-    0x02,0x00,0x00,0x00,0x00,0x01, 0x02,0x00,0x00,0x00,0x00,0x02,
-    0x86,0xdd,
-    0x60,0x0a,0xbc,0xde,0x00,0x0c,0x11,0x40,
-    0x20,0x01,0x0d,0xb8,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x07,
-    0x20,0x01,0x0d,0xb8,0x00,0x00,0x00,0x00,
-    0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x10,
-    0xc3,0x50,0x9c,0x40,0x00,0x0c,0x00,0x00,
-    0xde,0xad,0xbe,0xef
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x01, 0x02, 0x00, 0x00, 0x00, 0x00, 0x02,
+    0x86, 0xdd,
+    0x60, 0x0a, 0xbc, 0xde, 0x00, 0x0c, 0x11, 0x40,
+    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07,
+    0x20, 0x01, 0x0d, 0xb8, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
+    0xc3, 0x50, 0x9c, 0x40, 0x00, 0x0c, 0x00, 0x00,
+    0xde, 0xad, 0xbe, 0xef
 };
 
 static void test_xdp_transport_frame_parse_ipv6_udp()
@@ -420,7 +426,7 @@ static void test_xdp_transport_frame_parse_ipv6_udp()
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
 
-    rocketnet_unit_check( rocketnet_xdp_frame_parse( flow_label_ipv6, sizeof(flow_label_ipv6), &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( flow_label_ipv6, sizeof( flow_label_ipv6 ), &from, &payload, &payload_bytes ) );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 );
     rocketnet_unit_check( from.port == 50000 );
     rocketnet_unit_check( from.data.ipv6[0] == 0x2001 && from.data.ipv6[1] == 0x0db8 );
@@ -430,16 +436,16 @@ static void test_xdp_transport_frame_parse_ipv6_udp()
     rocketnet_unit_check( payload_bytes == 4 && memcmp( payload, golden_payload, 4 ) == 0 );
 
     // the same frame with a traffic class set parses the same
-    uint8_t frame[sizeof(flow_label_ipv6)];
-    memcpy( frame, flow_label_ipv6, sizeof(frame) );
+    uint8_t frame[sizeof( flow_label_ipv6 )];
+    memcpy( frame, flow_label_ipv6, sizeof( frame ) );
     frame[14] = 0x6b;
     frame[15] = 0x8a;
-    rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, sizeof(frame), &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( frame, sizeof( frame ), &from, &payload, &payload_bytes ) );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 && from.port == 50000 && from.data.ipv6[7] == 7 );
 
     // a version nibble that is not 6 is refused
     frame[14] = 0x4b;
-    rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof(frame), &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse( frame, sizeof( frame ), &from, &payload, &payload_bytes ) );
 }
 
 // The known vector: the golden IPv6 frame above (2001:db8::1 port 40000 to
@@ -455,17 +461,17 @@ static void test_xdp_transport_frame_build_ipv6_checksum_vector()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "[2001:db8::2]:40001" ) );
 
     uint8_t frame[128];
-    memset( frame, 0xA5, sizeof(frame) );
-    memcpy( frame + 62, golden_payload, sizeof(golden_payload) );
+    memset( frame, 0xA5, sizeof( frame ) );
+    memcpy( frame + 62, golden_payload, sizeof( golden_payload ) );
 
-    const int len = rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, (int) sizeof(golden_payload) );
+    const int len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, (int) sizeof( golden_payload ) );
     rocketnet_unit_check( len == 66 );
     rocketnet_unit_check( frame[60] == 0xce && frame[61] == 0x41 );
-    rocketnet_unit_check( memcmp( frame, golden_ipv6, sizeof(golden_ipv6) ) == 0 );
+    rocketnet_unit_check( memcmp( frame, golden_ipv6, sizeof( golden_ipv6 ) ) == 0 );
 
     // built again over itself (the field now holds 0xce41): the same bytes
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, (int) sizeof(golden_payload) ) == 66 );
-    rocketnet_unit_check( memcmp( frame, golden_ipv6, sizeof(golden_ipv6) ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, (int) sizeof( golden_payload ) ) == 66 );
+    rocketnet_unit_check( memcmp( frame, golden_ipv6, sizeof( golden_ipv6 ) ) == 0 );
 }
 
 // The userspace receive: an IPv6 frame whose next header is an extension
@@ -477,17 +483,17 @@ static void test_xdp_transport_receive_ipv6_extension_dropped_counted()
     static const uint8_t extensions[6] = { 0, 43, 44, 60, 51, 50 };
 
     struct rocketnet_xdp_receive_drops_t drops;
-    memset( &drops, 0, sizeof(drops) );
+    memset( &drops, 0, sizeof( drops ) );
 
     for ( int i = 0; i < 6; i++ )
     {
         uint8_t frame[128];
-        memset( frame, 0, sizeof(frame) );
-        memcpy( frame, flow_label_ipv6, sizeof(flow_label_ipv6) );
+        memset( frame, 0, sizeof( frame ) );
+        memcpy( frame, flow_label_ipv6, sizeof( flow_label_ipv6 ) );
         frame[20] = extensions[i];
 
         rocketnet_address_t from;
-        memset( &from, 0x5A, sizeof(from) );
+        memset( &from, 0x5A, sizeof( from ) );
         const uint8_t * payload = NULL;
         int payload_bytes = -1;
         rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame, 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES, ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
@@ -500,8 +506,8 @@ static void test_xdp_transport_receive_ipv6_extension_dropped_counted()
     // a next header that is neither UDP nor an extension (ICMPv6) is dropped
     // as malformed, not as an extension
     uint8_t frame[128];
-    memset( frame, 0, sizeof(frame) );
-    memcpy( frame, flow_label_ipv6, sizeof(flow_label_ipv6) );
+    memset( frame, 0, sizeof( frame ) );
+    memcpy( frame, flow_label_ipv6, sizeof( flow_label_ipv6 ) );
     frame[20] = 58;
     rocketnet_address_t from;
     const uint8_t * payload = NULL;
@@ -520,34 +526,34 @@ static void test_xdp_transport_frame_ipv4_unchanged()
     rocketnet_unit_check( rocketnet_address_parse( &dst, "192.168.1.20:40001" ) );
 
     uint8_t frame[256];
-    memset( frame, 0xA5, sizeof(frame) );
-    memcpy( frame + 42, golden_payload, sizeof(golden_payload) );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, (int) sizeof(golden_payload) ) == 46 );
-    rocketnet_unit_check( memcmp( frame, golden_ipv4, sizeof(golden_ipv4) ) == 0 );
+    memset( frame, 0xA5, sizeof( frame ) );
+    memcpy( frame + 42, golden_payload, sizeof( golden_payload ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, (int) sizeof( golden_payload ) ) == 46 );
+    rocketnet_unit_check( memcmp( frame, golden_ipv4, sizeof( golden_ipv4 ) ) == 0 );
 
     rocketnet_address_t from;
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
-    rocketnet_unit_check( rocketnet_xdp_frame_parse( golden_ipv4, sizeof(golden_ipv4), &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_parse( golden_ipv4, sizeof( golden_ipv4 ), &from, &payload, &payload_bytes ) );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 && from.port == 40000 );
     rocketnet_unit_check( from.data.ipv4[0] == 192 && from.data.ipv4[1] == 168 && from.data.ipv4[2] == 1 && from.data.ipv4[3] == 10 );
     rocketnet_unit_check( payload == golden_ipv4 + 42 && payload_bytes == 4 );
 
     // the IPv4 parse still takes only ihl 5 and UDP
-    uint8_t copy[sizeof(golden_ipv4)];
-    memcpy( copy, golden_ipv4, sizeof(copy) );
+    uint8_t copy[sizeof( golden_ipv4 )];
+    memcpy( copy, golden_ipv4, sizeof( copy ) );
     copy[14] = 0x46;
-    rocketnet_unit_check( !rocketnet_xdp_frame_parse( copy, sizeof(copy), &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse( copy, sizeof( copy ), &from, &payload, &payload_bytes ) );
     copy[14] = 0x45;
     copy[23] = 6;
-    rocketnet_unit_check( !rocketnet_xdp_frame_parse( copy, sizeof(copy), &from, &payload, &payload_bytes ) );
+    rocketnet_unit_check( !rocketnet_xdp_frame_parse( copy, sizeof( copy ), &from, &payload, &payload_bytes ) );
 
     // the receive takes a server-sized IPv4 packet at offset 42
     const int packet = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 16;
-    memset( frame, 0, sizeof(frame) );
-    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof(frame), server_mac, gateway_mac, &src, &dst, packet ) == 42 + packet );
+    memset( frame, 0, sizeof( frame ) );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, packet ) == 42 + packet );
     struct rocketnet_xdp_receive_drops_t drops;
-    memset( &drops, 0, sizeof(drops) );
+    memset( &drops, 0, sizeof( drops ) );
     rocketnet_unit_check( rocketnet_xdp_frame_receive( frame, (size_t) ( 42 + packet ), ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( payload == frame + 42 && payload_bytes == packet );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 && from.port == 40000 );
@@ -569,7 +575,7 @@ static void test_xdp_transport_receive_dispatches_both_families_counted()
 
     const int packet = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES + 16;
     struct rocketnet_xdp_receive_drops_t drops;
-    memset( &drops, 0, sizeof(drops) );
+    memset( &drops, 0, sizeof( drops ) );
     rocketnet_address_t from;
     const uint8_t * payload = NULL;
     int payload_bytes = 0;
@@ -577,10 +583,10 @@ static void test_xdp_transport_receive_dispatches_both_families_counted()
     // IPv6, served: taken at offset 62, the from-address IPv6
 
     uint8_t frame6[256];
-    memset( frame6, 0, sizeof(frame6) );
+    memset( frame6, 0, sizeof( frame6 ) );
     for ( int i = 0; i < packet; i++ )
         frame6[62 + i] = (uint8_t) ( i * 3 + 1 );
-    const int len6 = rocketnet_xdp_frame_build( frame6, sizeof(frame6), server_mac, gateway_mac, &src6, &dst6, packet );
+    const int len6 = rocketnet_xdp_frame_build( frame6, sizeof( frame6 ), server_mac, gateway_mac, &src6, &dst6, packet );
     rocketnet_unit_check( len6 == 62 + packet );
     rocketnet_unit_check( rocketnet_xdp_frame_receive( frame6, (size_t) len6, ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV6 && from.port == 40000 && from.data.ipv6[7] == 1 );
@@ -589,8 +595,8 @@ static void test_xdp_transport_receive_dispatches_both_families_counted()
     // IPv4, served: taken at offset 42
 
     uint8_t frame4[256];
-    memset( frame4, 0, sizeof(frame4) );
-    const int len4 = rocketnet_xdp_frame_build( frame4, sizeof(frame4), server_mac, gateway_mac, &src4, &dst4, packet );
+    memset( frame4, 0, sizeof( frame4 ) );
+    const int len4 = rocketnet_xdp_frame_build( frame4, sizeof( frame4 ), server_mac, gateway_mac, &src4, &dst4, packet );
     rocketnet_unit_check( len4 == 42 + packet );
     rocketnet_unit_check( rocketnet_xdp_frame_receive( frame4, (size_t) len4, ROCKETNET_ADDRESS_IPV4, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( from.type == ROCKETNET_ADDRESS_IPV4 && payload == frame4 + 42 && payload_bytes == packet );
@@ -615,8 +621,8 @@ static void test_xdp_transport_receive_dispatches_both_families_counted()
     rocketnet_unit_check( !rocketnet_xdp_frame_receive( frame6, (size_t) ( 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES ), ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( drops.malformed == 3 );
     uint8_t smallest6[256];
-    memset( smallest6, 0, sizeof(smallest6) );
-    const int smallest_len6 = rocketnet_xdp_frame_build( smallest6, sizeof(smallest6), server_mac, gateway_mac, &src6, &dst6, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    memset( smallest6, 0, sizeof( smallest6 ) );
+    const int smallest_len6 = rocketnet_xdp_frame_build( smallest6, sizeof( smallest6 ), server_mac, gateway_mac, &src6, &dst6, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     rocketnet_unit_check( smallest_len6 == 62 + ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
     rocketnet_unit_check( rocketnet_xdp_frame_receive( smallest6, (size_t) smallest_len6, ROCKETNET_ADDRESS_IPV6, &from, &payload, &payload_bytes, &drops ) );
     rocketnet_unit_check( payload_bytes == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
@@ -660,13 +666,13 @@ static void test_xdp_transport_mac_address_parse_is_strict()
 
     uint8_t mac[6];
 
-    memset( mac, 0xAA, sizeof(mac) );
+    memset( mac, 0xAA, sizeof( mac ) );
     rocketnet_unit_check( rocketnet_xdp_parse_mac_address( "02:42:ac:11:00:02\n", mac ) );
-    rocketnet_unit_check( memcmp( mac, expected, sizeof(expected) ) == 0 );
+    rocketnet_unit_check( memcmp( mac, expected, sizeof( expected ) ) == 0 );
 
-    memset( mac, 0xAA, sizeof(mac) );
+    memset( mac, 0xAA, sizeof( mac ) );
     rocketnet_unit_check( rocketnet_xdp_parse_mac_address( "02.42.ac.11.00.02", mac ) );
-    rocketnet_unit_check( memcmp( mac, expected, sizeof(expected) ) == 0 );
+    rocketnet_unit_check( memcmp( mac, expected, sizeof( expected ) ) == 0 );
 
     static const char * const refused[] = {
         "",
@@ -677,11 +683,11 @@ static void test_xdp_transport_mac_address_parse_is_strict()
         "02:42:ac:11:00:020"
     };
 
-    for ( size_t i = 0; i < sizeof(refused) / sizeof(refused[0]); ++i )
+    for ( size_t i = 0; i < sizeof( refused ) / sizeof( refused[0] ); ++i )
     {
-        memcpy( mac, untouched, sizeof(untouched) );
+        memcpy( mac, untouched, sizeof( untouched ) );
         rocketnet_unit_check( !rocketnet_xdp_parse_mac_address( refused[i], mac ) );
-        rocketnet_unit_check( memcmp( mac, untouched, sizeof(untouched) ) == 0 );
+        rocketnet_unit_check( memcmp( mac, untouched, sizeof( untouched ) ) == 0 );
     }
 }
 

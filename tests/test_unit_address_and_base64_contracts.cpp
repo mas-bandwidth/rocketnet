@@ -51,30 +51,29 @@ struct base64_decode_case_t
     const char * what;      // the case, for a failing line
 };
 
-static const struct base64_decode_case_t k_decode_cases[] =
-{
-    { "",       8, "empty input" },
-    { "AAAA",   8, "valid whole group" },
-    { "AA==",   8, "valid two-pad group" },
-    { "AAA=",   8, "valid one-pad group" },
-    { "!!!!",   8, "all-invalid characters" },
-    { "AA*A",   8, "one invalid character" },
-    { "AAA",    8, "mis-padded length, not a multiple of four" },
-    { "AA=",    8, "mis-padded length, one pad and short" },
-    { "A===",   8, "too many pad characters" },
-    { "AAAA",   2, "over-long for the output buffer" },
+static const struct base64_decode_case_t k_decode_cases[] = {
+    { "", 8, "empty input" },
+    { "AAAA", 8, "valid whole group" },
+    { "AA==", 8, "valid two-pad group" },
+    { "AAA=", 8, "valid one-pad group" },
+    { "!!!!", 8, "all-invalid characters" },
+    { "AA*A", 8, "one invalid character" },
+    { "AAA", 8, "mis-padded length, not a multiple of four" },
+    { "AA=", 8, "mis-padded length, one pad and short" },
+    { "A===", 8, "too many pad characters" },
+    { "AAAA", 2, "over-long for the output buffer" },
 };
 
 static void test_base64_decode_data_never_returns_negative()
 {
-    const int count = (int) ( sizeof(k_decode_cases) / sizeof(k_decode_cases[0]) );
+    const int count = (int) ( sizeof( k_decode_cases ) / sizeof( k_decode_cases[0] ) );
     for ( int i = 0; i < count; ++i )
     {
         uint8_t output[16];
-        memset( output, 0xEE, sizeof(output) );
+        memset( output, 0xEE, sizeof( output ) );
         const int result = rocketnet_base64_decode_data( k_decode_cases[i].input,
-                                                          output,
-                                                          k_decode_cases[i].output_size );
+                                                         output,
+                                                         k_decode_cases[i].output_size );
         if ( result < 0 )
         {
             printf( "base64 decode case %d (%s) returned %d, negative\n",
@@ -99,9 +98,9 @@ static void test_base64_decode_data_never_returns_negative()
 static void test_base64_encode_refuses_length_over_int_max()
 {
     uint8_t input[16];
-    memset( input, 0x5A, sizeof(input) );
+    memset( input, 0x5A, sizeof( input ) );
     char output[16];
-    memset( output, 0x7E, sizeof(output) );
+    memset( output, 0x7E, sizeof( output ) );
 
     const size_t input_length = (size_t) 3 * ( (size_t) 1 << 29 );     // encodes to 2^31 characters
 
@@ -119,7 +118,7 @@ static void test_base64_encode_refuses_length_over_int_max()
 static void test_address_ipv6_with_port_fits_the_buffer()
 {
     struct rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     address.type = ROCKETNET_ADDRESS_IPV6;
     for ( int i = 0; i < 8; ++i )
         address.data.ipv6[i] = 0xFFFF;
@@ -157,7 +156,7 @@ static void test_address_load_ipv4_round_trips()
     memcpy( &port_big_endian, port_bytes, 2 );
 
     struct rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     rocketnet_address_load_ipv4( &address, ipv4, port_big_endian );
 
     rocketnet_unit_check( address.type == ROCKETNET_ADDRESS_IPV4 );
@@ -172,7 +171,7 @@ static void test_address_load_ipv4_round_trips()
     rocketnet_unit_check( rocketnet_address_equal( &address, &parsed ) );
 
     const uint32_t round_trip = rocketnet_address_ipv4( &address );
-    const uint8_t * round_trip_bytes = (const uint8_t*) &round_trip;
+    const uint8_t * round_trip_bytes = (const uint8_t *) &round_trip;
     rocketnet_unit_check( round_trip_bytes[0] == 203 );
     rocketnet_unit_check( round_trip_bytes[1] == 0 );
     rocketnet_unit_check( round_trip_bytes[2] == 113 );
@@ -202,7 +201,7 @@ static void test_address_to_string_without_port_each_type()
     rocketnet_unit_check( strcmp( ipv6_text, "2001:db8::1" ) == 0 );
 
     struct rocketnet_address_t none;
-    memset( &none, 0, sizeof(none) );
+    memset( &none, 0, sizeof( none ) );
     const char * none_text = rocketnet_address_to_string_without_port( &none, buffer );
     rocketnet_unit_check( none_text == buffer );
     rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
@@ -224,32 +223,31 @@ struct address_to_string_case_t
     const char * without_port;      // expected rocketnet_address_to_string_without_port
 };
 
-static const struct address_to_string_case_t k_address_to_string_cases[] =
-{
-    { "203.0.113.10:40000",                            0,     "203.0.113.10:40000",                              "203.0.113.10" },
-    { "203.0.113.10",                                  0,     "203.0.113.10",                                    "203.0.113.10" },
-    { "255.255.255.255:65535",                         0,     "255.255.255.255:65535",                           "255.255.255.255" },
-    { "0.0.0.0:1",                                     0,     "0.0.0.0:1",                                       "0.0.0.0" },
-    { "[2001:db8::1]:40000",                           0,     "[2001:db8::1]:40000",                             "2001:db8::1" },
-    { "2001:db8::1",                                   0,     "2001:db8::1",                                     "2001:db8::1" },
-    { "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", 0,   "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
-    { "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",       0,     "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",         "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
-    { "[::ffff:192.0.2.1]:40000",                      0,     "[::ffff:192.0.2.1]:40000",                        "::ffff:192.0.2.1" },
-    { "::ffff:192.0.2.1",                              0,     "::ffff:192.0.2.1",                                "::ffff:192.0.2.1" },
-    { "[::1]:1",                                       0,     "[::1]:1",                                         "::1" },
-    { NULL,                                            0,     "NONE",                                            "NONE" },
-    { NULL,                                            40000, "NONE",                                            "NONE" },
+static const struct address_to_string_case_t k_address_to_string_cases[] = {
+    { "203.0.113.10:40000", 0, "203.0.113.10:40000", "203.0.113.10" },
+    { "203.0.113.10", 0, "203.0.113.10", "203.0.113.10" },
+    { "255.255.255.255:65535", 0, "255.255.255.255:65535", "255.255.255.255" },
+    { "0.0.0.0:1", 0, "0.0.0.0:1", "0.0.0.0" },
+    { "[2001:db8::1]:40000", 0, "[2001:db8::1]:40000", "2001:db8::1" },
+    { "2001:db8::1", 0, "2001:db8::1", "2001:db8::1" },
+    { "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", 0, "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 0, "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "[::ffff:192.0.2.1]:40000", 0, "[::ffff:192.0.2.1]:40000", "::ffff:192.0.2.1" },
+    { "::ffff:192.0.2.1", 0, "::ffff:192.0.2.1", "::ffff:192.0.2.1" },
+    { "[::1]:1", 0, "[::1]:1", "::1" },
+    { NULL, 0, "NONE", "NONE" },
+    { NULL, 40000, "NONE", "NONE" },
 };
 
 static void test_address_to_string_forms_pinned()
 {
-    const int count = (int) ( sizeof(k_address_to_string_cases) / sizeof(k_address_to_string_cases[0]) );
+    const int count = (int) ( sizeof( k_address_to_string_cases ) / sizeof( k_address_to_string_cases[0] ) );
     for ( int i = 0; i < count; ++i )
     {
         const struct address_to_string_case_t & c = k_address_to_string_cases[i];
 
         struct rocketnet_address_t address;
-        memset( &address, 0, sizeof(address) );
+        memset( &address, 0, sizeof( address ) );
         if ( c.input )
         {
             rocketnet_unit_check( rocketnet_address_parse( &address, c.input ) );
@@ -261,7 +259,7 @@ static void test_address_to_string_forms_pinned()
 
         char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
 
-        memset( buffer, 'x', sizeof(buffer) );
+        memset( buffer, 'x', sizeof( buffer ) );
         const char * with_port = rocketnet_address_to_string( &address, buffer );
         if ( with_port != buffer || strcmp( with_port, c.with_port ) != 0 )
         {
@@ -271,7 +269,7 @@ static void test_address_to_string_forms_pinned()
         rocketnet_unit_check( with_port == buffer );
         rocketnet_unit_check( strcmp( with_port, c.with_port ) == 0 );
 
-        memset( buffer, 'x', sizeof(buffer) );
+        memset( buffer, 'x', sizeof( buffer ) );
         const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
         if ( without_port != buffer || strcmp( without_port, c.without_port ) != 0 )
         {
@@ -292,13 +290,13 @@ static void test_address_to_string_forms_pinned()
 static void test_address_anonymize_leaves_other_types_untouched()
 {
     struct rocketnet_address_t none;
-    memset( &none, 0, sizeof(none) );
+    memset( &none, 0, sizeof( none ) );
     none.type = ROCKETNET_ADDRESS_NONE;
-    memset( &none.data, 0xA5, sizeof(none.data) );
+    memset( &none.data, 0xA5, sizeof( none.data ) );
     none.port = 7;
     rocketnet_address_anonymize( &none );
-    const uint8_t * none_bytes = (const uint8_t*) &none.data;
-    for ( size_t i = 0; i < sizeof(none.data); ++i )
+    const uint8_t * none_bytes = (const uint8_t *) &none.data;
+    for ( size_t i = 0; i < sizeof( none.data ); ++i )
     {
         if ( none_bytes[i] != 0xA5 )
         {
@@ -384,10 +382,14 @@ static void test_wycheproof_files_load_and_count()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
-        if ( tests[i].result == "valid" ) chacha_valid++;
-        else if ( tests[i].result == "invalid" ) chacha_invalid++;
-        else if ( tests[i].result == "acceptable" ) chacha_acceptable++;
-        else rocketnet_unit_check( 0 );
+        if ( tests[i].result == "valid" )
+            chacha_valid++;
+        else if ( tests[i].result == "invalid" )
+            chacha_invalid++;
+        else if ( tests[i].result == "acceptable" )
+            chacha_acceptable++;
+        else
+            rocketnet_unit_check( 0 );
         std::vector<uint8_t> bytes;
         for ( int f = 0; f < 6; f++ )
         {
@@ -407,10 +409,14 @@ static void test_wycheproof_files_load_and_count()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
-        if ( tests[i].result == "valid" ) x25519_valid++;
-        else if ( tests[i].result == "invalid" ) x25519_invalid++;
-        else if ( tests[i].result == "acceptable" ) x25519_acceptable++;
-        else rocketnet_unit_check( 0 );
+        if ( tests[i].result == "valid" )
+            x25519_valid++;
+        else if ( tests[i].result == "invalid" )
+            x25519_invalid++;
+        else if ( tests[i].result == "acceptable" )
+            x25519_acceptable++;
+        else
+            rocketnet_unit_check( 0 );
         std::vector<uint8_t> bytes;
         for ( int f = 0; f < 3; f++ )
         {
@@ -430,10 +436,14 @@ static void test_wycheproof_files_load_and_count()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
-        if ( tests[i].result == "valid" ) ed25519_valid++;
-        else if ( tests[i].result == "invalid" ) ed25519_invalid++;
-        else if ( tests[i].result == "acceptable" ) ed25519_acceptable++;
-        else rocketnet_unit_check( 0 );
+        if ( tests[i].result == "valid" )
+            ed25519_valid++;
+        else if ( tests[i].result == "invalid" )
+            ed25519_invalid++;
+        else if ( tests[i].result == "acceptable" )
+            ed25519_acceptable++;
+        else
+            rocketnet_unit_check( 0 );
         std::vector<uint8_t> bytes;
         std::map<std::string, std::string>::const_iterator msg = tests[i].fields.find( "msg" );
         std::map<std::string, std::string>::const_iterator sig = tests[i].fields.find( "sig" );

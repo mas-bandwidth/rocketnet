@@ -39,7 +39,7 @@ static void token_timeout_fields( struct rocketnet_signed_connect_data_t * signe
                                   struct rocketnet_connect_token_private_t * private_fields,
                                   int32_t timeout_seconds )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -50,7 +50,7 @@ static void token_timeout_fields( struct rocketnet_signed_connect_data_t * signe
     memcpy( signed_fields->ipv4_address, server_address, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -71,7 +71,7 @@ static void test_client_refuses_token_timeout_zero_or_negative()
     for ( size_t i = 0; i < sizeof( token_timeout_refused_values ) / sizeof( token_timeout_refused_values[0] ); i++ )
     {
         struct rocketnet_counters_t counters;
-        memset( &counters, 0, sizeof(counters) );
+        memset( &counters, 0, sizeof( counters ) );
         static struct rocketnet_client_protocol_t client;
         rocketnet_client_protocol_init( &client, &counters );
 
@@ -95,7 +95,7 @@ static void test_client_refuses_token_timeout_zero_or_negative()
     // the control: the same token with a positive timeout begins an attempt
     {
         struct rocketnet_counters_t counters;
-        memset( &counters, 0, sizeof(counters) );
+        memset( &counters, 0, sizeof( counters ) );
         static struct rocketnet_client_protocol_t client;
         rocketnet_client_protocol_init( &client, &counters );
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -111,8 +111,8 @@ static void test_server_refuses_token_timeout_zero_or_negative()
     {
         static struct rocketnet_server_protocol_t server;
         static struct rocketnet_counters_t counters;
-        memset( &server, 0, sizeof(server) );
-        memset( &counters, 0, sizeof(counters) );
+        memset( &server, 0, sizeof( server ) );
+        memset( &counters, 0, sizeof( counters ) );
         server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
         const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
         memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );

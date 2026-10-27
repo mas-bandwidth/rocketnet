@@ -45,8 +45,7 @@ struct counters_row_t
     int family;                 // the RECEIVED counter this outcome sums into, or ROCKETNET_COUNTER_NONE
 };
 
-static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] =
-{
+static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] = {
 #define ROCKETNET_COUNTER_TEST_ROW( name, klass, family ) { #name, ROCKETNET_COUNTER_CLASS_##klass, ROCKETNET_COUNTER_##family },
     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_TEST_ROW )
 #undef ROCKETNET_COUNTER_TEST_ROW
@@ -56,8 +55,7 @@ static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] =
 // never move. A counter appended since BASE is listed after, in the order it
 // was appended.
 
-static const char * const counters_base_names[] =
-{
+static const char * const counters_base_names[] = {
     "PACKETS_RECEIVED",
     "PREFILTER_TOO_SHORT",
     "PREFILTER_TOO_LARGE",
@@ -275,8 +273,7 @@ static const char * const counters_base_names[] =
     "MESSAGE_RECEIPT_LOSS",
 };
 
-static const char * const counters_appended_names[] =
-{
+static const char * const counters_appended_names[] = {
     "CONNECTION_RESPONSE_INTERNAL_ERROR",
     "SEND_HISTORY_LOST",
     "MESSAGE_BAD_CHANNEL",
@@ -349,7 +346,7 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_num_counters() == ROCKETNET_NUM_COUNTERS );
 
     int per_class[ROCKETNET_NUM_COUNTER_CLASSES];
-    memset( per_class, 0, sizeof(per_class) );
+    memset( per_class, 0, sizeof( per_class ) );
 
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
@@ -466,34 +463,34 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
 
     // a fresh block is balanced, and says nothing
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     snprintf( report, sizeof( report ), "%s", "not written" );
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 1 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
     check( report[0] == '\0' );
 
     // one request refused for its size: the arrival and the one outcome
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED]++;
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE]++;
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 1 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
     check( rocketnet_counters_conserved( &counters, NULL, 0 ) == 1 );
 
     // the outcome removed: the request family is named, with both sums
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE]--;
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 0 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
     check( strcmp( report, "CONNECTION_REQUEST_RECEIVED received=1 outcomes=0" ) == 0 );
     check( rocketnet_counters_conserved( &counters, NULL, 0 ) == 0 );
 
     // an extra outcome is as unbalanced as a missing one
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE] += 2;
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 0 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
     check( strcmp( report, "CONNECTION_REQUEST_RECEIVED received=1 outcomes=2" ) == 0 );
 
     // side counters are outside every family: they move without unbalancing
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     counters.values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE] += 5;
     counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] += 3;
     counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT] += 7;
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 1 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
 
     // every family in the list: balanced with one outcome, and unbalanced,
     // naming exactly that family, when the outcome is taken away
@@ -506,16 +503,16 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
         const int outcome = counters_first_outcome( received );
         check( outcome >= 0 );
 
-        memset( &counters, 0, sizeof(counters) );
+        memset( &counters, 0, sizeof( counters ) );
         counters_balanced_family( &counters, received, outcome );
-        if ( !rocketnet_counters_conserved( &counters, report, sizeof(report) ) )
+        if ( !rocketnet_counters_conserved( &counters, report, sizeof( report ) ) )
             printf( "family %s does not balance with one outcome: %s\n", counters_rows[received].name, report );
-        check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 1 );
+        check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
 
         counters.values[outcome]--;
-        check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 0 );
+        check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
         char expected[256];
-        snprintf( expected, sizeof(expected), "%s received=1 outcomes=0", counters_rows[received].name );
+        snprintf( expected, sizeof( expected ), "%s received=1 outcomes=0", counters_rows[received].name );
         if ( strcmp( report, expected ) != 0 )
             printf( "family %s reported as: %s\n", counters_rows[received].name, report );
         check( strcmp( report, expected ) == 0 );
@@ -523,30 +520,30 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
     check( families == 15 );               // seven at the server, eight at the client
 
     // two families unbalanced: the one whose RECEIVED counter comes first
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     counters.values[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] = 2;
     counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED] = 1;
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 0 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
     check( strcmp( report, "CONNECTION_RESPONSE_RECEIVED received=1 outcomes=0" ) == 0 );
     counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING] = 1;
-    check( rocketnet_counters_conserved( &counters, report, sizeof(report) ) == 0 );
+    check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
     check( strcmp( report, "PAYLOAD_RECEIVED received=2 outcomes=0" ) == 0 );
 
     // a short report buffer is cut, never overrun, and stays terminated
     char tiny[10];
-    memset( tiny, 'x', sizeof(tiny) );
-    check( rocketnet_counters_conserved( &counters, tiny, sizeof(tiny) ) == 0 );
-    check( memchr( tiny, '\0', sizeof(tiny) ) != NULL );
+    memset( tiny, 'x', sizeof( tiny ) );
+    check( rocketnet_counters_conserved( &counters, tiny, sizeof( tiny ) ) == 0 );
+    check( memchr( tiny, '\0', sizeof( tiny ) ) != NULL );
     check( strncmp( tiny, "PAYLOAD_RE", 9 ) == 0 );
 
     // a NULL block is not conserved
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     counters_expected_null_asserts = 0;
     rocketnet_assert_function( counters_expected_null_assert );
 #endif
-    check( rocketnet_counters_conserved( NULL, report, sizeof(report) ) == 0 );
+    check( rocketnet_counters_conserved( NULL, report, sizeof( report ) ) == 0 );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
     check( counters_expected_null_asserts == 1 );
@@ -562,7 +559,7 @@ REGISTER_UNIT_TEST( test_counters_conservation_reports_the_first_unbalanced_fami
 static void test_counters_expect_fails_on_an_unnamed_move()
 {
     struct rocketnet_counters_t before;
-    memset( &before, 0, sizeof(before) );
+    memset( &before, 0, sizeof( before ) );
     before.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] = 4;
 
     struct rocketnet_counters_t after = before;
@@ -576,7 +573,7 @@ static void test_counters_expect_fails_on_an_unnamed_move()
     check( rocketnet_counters_expect_core( &before, &after,
                                            { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                              { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } },
-                                           report, sizeof(report) ) );
+                                           report, sizeof( report ) ) );
     check( report[0] == '\0' );
 
     // a third counter moved: false, and the report names that counter
@@ -584,7 +581,7 @@ static void test_counters_expect_fails_on_an_unnamed_move()
     check( !rocketnet_counters_expect_core( &before, &after,
                                             { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                               { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } },
-                                            report, sizeof(report) ) );
+                                            report, sizeof( report ) ) );
     check( strstr( report, "CONNECTION_REQUEST_NO_SLOTS" ) != NULL );
     check( strstr( report, "unnamed move" ) != NULL );
 
@@ -600,7 +597,7 @@ static void test_counters_expect_fails_on_an_unnamed_move()
     check( !rocketnet_counters_expect_core( &before, &after,
                                             { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 2 },
                                               { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } },
-                                            report, sizeof(report) ) );
+                                            report, sizeof( report ) ) );
     check( strstr( report, "wrong delta" ) != NULL );
 
     // a named counter that did not move at all fails, and a named delta of
@@ -609,24 +606,23 @@ static void test_counters_expect_fails_on_an_unnamed_move()
                                             { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                               { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 },
                                               { ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, 1 } },
-                                            report, sizeof(report) ) );
+                                            report, sizeof( report ) ) );
     check( strstr( report, "KEEP_ALIVE_RECEIVED" ) != NULL );
     check( rocketnet_counters_expect_core( &before, &after,
                                            { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                              { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 },
                                              { ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, 0 } },
-                                           report, sizeof(report) ) );
+                                           report, sizeof( report ) ) );
 
     // nothing moved and nothing named
-    check( rocketnet_counters_expect_core( &before, &before, {}, report, sizeof(report) ) );
+    check( rocketnet_counters_expect_core( &before, &before, {}, report, sizeof( report ) ) );
     check( rocketnet_counters_expect_core( &before, &before, {}, NULL, 0 ) );
 
     // the asserting form passes on the exact move
-    rocketnet_counters_expect( &before, &after, { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
-                                                  { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } } );
+    rocketnet_counters_expect( &before, &after, { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 }, { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } } );
 
     struct rocketnet_counters_t balanced;
-    memset( &balanced, 0, sizeof(balanced) );
+    memset( &balanced, 0, sizeof( balanced ) );
     rocketnet_counters_assert_conserved( &balanced );
 }
 
@@ -661,7 +657,10 @@ REGISTER_UNIT_TEST( test_connection_internal_error_counter_witnesses_are_registe
 
 static void counter_value_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
 }
 
 static void test_counter_value_null_and_out_of_range()
@@ -673,7 +672,7 @@ static void test_counter_value_null_and_out_of_range()
     check( rocketnet_api_misuse_count() == before + 1 );
 
     struct rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
     counters.values[3] = 42;
     check( rocketnet_counter_value( &counters, -1 ) == 0 );
     check( rocketnet_counter_value( &counters, ROCKETNET_NUM_COUNTERS ) == 0 );

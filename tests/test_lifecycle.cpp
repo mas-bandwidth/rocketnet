@@ -48,18 +48,18 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 #endif
 
 
-#define check(c) do { if (!(c)) { fprintf(stderr, "lifecycle check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
+#define check( c ) do { if (!(c)) { fprintf(stderr, "lifecycle check failed: %s:%d: %s\n", __FILE__, __LINE__, #c); exit(1); } } while (0)
 
 struct allocator_state
 {
-    std::atomic<int> live{0};
-    std::atomic<int> calls{0};
-    std::atomic<int> fail_at{0};
+    std::atomic<int> live{ 0 };
+    std::atomic<int> calls{ 0 };
+    std::atomic<int> fail_at{ 0 };
 };
 
 static void * allocate( void * context, size_t bytes )
 {
-    auto & state = *(allocator_state*) context;
+    auto & state = *(allocator_state *) context;
     const int call = ++state.calls;
     if ( state.fail_at == call )
         return NULL;
@@ -67,25 +67,25 @@ static void * allocate( void * context, size_t bytes )
     if ( !base )
         return NULL;
     // Valid fundamental alignment, deliberately not cache-line alignment.
-    static_assert( alignof(max_align_t) <= 16, "test allocator needs a wider alignment offset" );
-    uintptr_t address = ( ( (uintptr_t) base + sizeof(void*) + 63 ) & ~(uintptr_t)63 ) + 16;
-    memcpy( (void*) ( address - sizeof(void*) ), &base, sizeof(base) );
-    memset( (void*) address, 0xA5, bytes );
+    static_assert( alignof( max_align_t ) <= 16, "test allocator needs a wider alignment offset" );
+    uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
+    memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    memset( (void *) address, 0xA5, bytes );
     ++state.live;
-    return (void*) address;
+    return (void *) address;
 }
 
 static void release( void * context, void * pointer )
 {
-    auto & state = *(allocator_state*) context;
+    auto & state = *(allocator_state *) context;
     void * base = NULL;
-    memcpy( &base, (uint8_t*) pointer - sizeof(void*), sizeof(base) );
+    memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     check( --state.live >= 0 );
     free( base );
 }
 
 static void * refuse_allocation( void *, size_t ) { return NULL; }
-static void refuse_free( void *, void * ) { check(false); }
+static void refuse_free( void *, void * ) { check( false ); }
 static void thread_body( void * ) {}
 
 // The platform thread and shim share one custom-allocator-backed record.
@@ -101,63 +101,67 @@ struct ack_writer
 
 static void ack_thread( void * data )
 {
-    auto * writer = (ack_writer*) data;
-    while ( !writer->go->load(std::memory_order_acquire) ) {}
+    auto * writer = (ack_writer *) data;
+    while ( !writer->go->load( std::memory_order_acquire ) )
+    {
+    }
     writer->accepted = rocketnet_ack_endpoint_record_sent( writer->endpoint, writer->sequence, 100, writer->sequence, 1, 0, 10.0 );
 }
 
 static void check_ack_retention( allocator_state & state )
 {
-    auto * endpoint = (rocketnet_ack_endpoint_t*) rocketnet_malloc( &state, sizeof(rocketnet_ack_endpoint_t) );
+    auto * endpoint = (rocketnet_ack_endpoint_t *) rocketnet_malloc( &state, sizeof( rocketnet_ack_endpoint_t ) );
     check( endpoint );
     rocketnet_ack_endpoint_reset( endpoint );
     const uint64_t depth = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    uint64_t * ids = (uint64_t*) rocketnet_malloc(&state, depth * sizeof(uint64_t));
-    check(ids);
+    uint64_t * ids = (uint64_t *) rocketnet_malloc( &state, depth * sizeof( uint64_t ) );
+    check( ids );
     // Identical, fast, slow and irregular caller time. No return traffic until
     // the complete retained burst has arrived, then one ACK describes it all.
     for ( int cadence = 0; cadence < 4; ++cadence )
     {
-        rocketnet_ack_endpoint_reset(endpoint);
+        rocketnet_ack_endpoint_reset( endpoint );
         rocketnet_replay_protection_t replay{};
         double last_time = 0.0;
         for ( uint64_t sequence = 1; sequence <= depth; ++sequence )
         {
-            last_time += cadence == 0 ? 0.0 : cadence == 1 ? 0.000001 :
-                         cadence == 2 ? 0.1 : (sequence % 7 == 0 ? 0.3 : 0.0001);
-            check(rocketnet_ack_endpoint_record_sent(endpoint, sequence, 100, sequence, 1, 0, last_time));
-            rocketnet_replay_advance(&replay, sequence);
+            last_time += cadence == 0 ? 0.0 : cadence == 1 ? 0.000001
+                                          : cadence == 2   ? 0.1
+                                                           : ( sequence % 7 == 0 ? 0.3 : 0.0001 );
+            check( rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, last_time ) );
+            rocketnet_replay_advance( &replay, sequence );
         }
         uint8_t data[ROCKETNET_ACK_BLOCK_MAX_BYTES];
         rocketnet_ack_block_t block{};
-        int bytes = rocketnet_ack_block_build(data, sizeof(data), &replay);
-        check(rocketnet_ack_block_read(&block, data, bytes, depth) == bytes);
-        check(block.first_range_length == depth);
+        int bytes = rocketnet_ack_block_build( data, sizeof( data ), &replay );
+        check( rocketnet_ack_block_read( &block, data, bytes, depth ) == bytes );
+        check( block.first_range_length == depth );
         int count = 0;
         uint64_t unknown = 0, full = 0;
-        check(rocketnet_ack_endpoint_process_block(endpoint, &block, last_time + 2.0,
-              ids, (int)depth, &count, &unknown, &full) == (int)depth);
-        check(count == (int)depth && unknown == 0 && full == 0);
-        for ( uint64_t i = 0; i < depth; ++i ) check(ids[i] == depth - i);
-        check(rocketnet_ack_endpoint_process_block(endpoint, &block, last_time + 3.0,
-              ids, (int)depth, &count, &unknown, &full) == 0);
+        check( rocketnet_ack_endpoint_process_block( endpoint, &block, last_time + 2.0,
+                                                     ids, (int) depth, &count, &unknown, &full ) == (int) depth );
+        check( count == (int) depth && unknown == 0 && full == 0 );
+        for ( uint64_t i = 0; i < depth; ++i )
+            check( ids[i] == depth - i );
+        check( rocketnet_ack_endpoint_process_block( endpoint, &block, last_time + 3.0,
+                                                     ids, (int) depth, &count, &unknown, &full ) == 0 );
     }
-    rocketnet_free(&state, ids);
+    rocketnet_free( &state, ids );
 
-    rocketnet_ack_endpoint_reset(endpoint);
+    rocketnet_ack_endpoint_reset( endpoint );
     for ( uint64_t sequence = 1; sequence <= depth; ++sequence )
-        check(rocketnet_ack_endpoint_record_sent(endpoint, sequence, 100, sequence, 1, 0, 10.0));
+        check( rocketnet_ack_endpoint_record_sent( endpoint, sequence, 100, sequence, 1, 0, 10.0 ) );
     const uint64_t next = depth + 1;
     // Overflow is advisory, not a refusal or time-based wait. The newer
     // sequence is recorded immediately even with zero elapsed time.
-    check(!rocketnet_ack_endpoint_record_sent(endpoint, next, 100, next, 1, 0, 10.0));
-    check(endpoint->sent[1].sequence == next && endpoint->sent[1].packet_id == next);
-    check(!rocketnet_ack_endpoint_record_sent(endpoint, 1, 100, 1, 1, 0, 12.0));
-    check(endpoint->sent[1].sequence == next);
+    check( !rocketnet_ack_endpoint_record_sent( endpoint, next, 100, next, 1, 0, 10.0 ) );
+    check( endpoint->sent[1].sequence == next && endpoint->sent[1].packet_id == next );
+    check( !rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 1, 1, 0, 12.0 ) );
+    check( endpoint->sent[1].sequence == next );
 
     rocketnet_ack_endpoint_reset( endpoint );
-    std::atomic<bool> go{false};
-    ack_writer writers[2] = {{ endpoint, &go, 1, false }, { endpoint, &go, next, false }};
+    std::atomic<bool> go{ false };
+    ack_writer writers[2] = { { endpoint, &go, 1, false }, { endpoint, &go, next, false } };
     auto * first = rocketnet_platform_thread_create( &state, ack_thread, &writers[0] );
     auto * second = rocketnet_platform_thread_create( &state, ack_thread, &writers[1] );
     check( first && second );
@@ -183,16 +187,18 @@ struct lease_consumer
     bool consumed;
 };
 
-static void lease_thread(void * data)
+static void lease_thread( void * data )
 {
-    auto * consumer = (lease_consumer*)data;
-    while (!consumer->go->load(std::memory_order_acquire)) {}
+    auto * consumer = (lease_consumer *) data;
+    while ( !consumer->go->load( std::memory_order_acquire ) )
+    {
+    }
     rocketnet_packet_context_t trusted{};
     uint64_t backend = 0;
-    consumer->consumed = consumer->leases->take(consumer->context, trusted, backend);
+    consumer->consumed = consumer->leases->take( consumer->context, trusted, backend );
 }
 
-static void check_packet_leases(allocator_state & state)
+static void check_packet_leases( allocator_state & state )
 {
     rocketnet_packet_leases_t<8> leases{}, other{};
     uint8_t frame[128]{};
@@ -203,14 +209,14 @@ static void check_packet_leases(allocator_state & state)
     context.client_index = 2;
     context.payload_index = 32;
     context.payload_capacity = 64;
-    check(leases.insert(context));
+    check( leases.insert( context ) );
     rocketnet_packet_context_t original = context, trusted{};
     uint64_t backend = 0;
-    check(!other.take(context, trusted, backend));
-    for (int field = 0; field < 6; ++field)
+    check( !other.take( context, trusted, backend ) );
+    for ( int field = 0; field < 6; ++field )
     {
         auto changed = original;
-        switch(field)
+        switch ( field )
         {
             case 0: changed.frame++; break;
             case 1: changed.packet_id++; break;
@@ -219,101 +225,122 @@ static void check_packet_leases(allocator_state & state)
             case 4: changed.payload_index = -1; break;
             case 5: changed.payload_capacity = INT32_MAX; break;
         }
-        check(!leases.take(changed, trusted, backend));
+        check( !leases.take( changed, trusted, backend ) );
     }
-    std::atomic<bool> go{false};
-    lease_consumer consumers[2] = {{&leases, original, &go, false}, {&leases, original, &go, false}};
-    auto * first = rocketnet_platform_thread_create(&state, lease_thread, &consumers[0]);
-    auto * second = rocketnet_platform_thread_create(&state, lease_thread, &consumers[1]);
-    check(first && second);
-    go.store(true, std::memory_order_release);
-    rocketnet_platform_thread_join(first);
-    rocketnet_platform_thread_join(second);
-    rocketnet_platform_thread_destroy(first);
-    rocketnet_platform_thread_destroy(second);
-    check(consumers[0].consumed != consumers[1].consumed);
-    check(!leases.take(original, trusted, backend));
+    std::atomic<bool> go{ false };
+    lease_consumer consumers[2] = { { &leases, original, &go, false }, { &leases, original, &go, false } };
+    auto * first = rocketnet_platform_thread_create( &state, lease_thread, &consumers[0] );
+    auto * second = rocketnet_platform_thread_create( &state, lease_thread, &consumers[1] );
+    check( first && second );
+    go.store( true, std::memory_order_release );
+    rocketnet_platform_thread_join( first );
+    rocketnet_platform_thread_join( second );
+    rocketnet_platform_thread_destroy( first );
+    rocketnet_platform_thread_destroy( second );
+    check( consumers[0].consumed != consumers[1].consumed );
+    check( !leases.take( original, trusted, backend ) );
     // Backends may hand an aborted frame out again in the same fill.
     context = original;
     context.packet_id = 88;
-    check(leases.insert(context) && context.packet_id != original.packet_id);
-    check(!leases.take(original, trusted, backend));
-    check(leases.take(context, trusted, backend) && backend == 88);
+    check( leases.insert( context ) && context.packet_id != original.packet_id );
+    check( !leases.take( original, trusted, backend ) );
+    check( leases.take( context, trusted, backend ) && backend == 88 );
     leases.reset();
-    check(!leases.take(context, trusted, backend));
+    check( !leases.take( context, trusted, backend ) );
     context = original;
     context.packet_id = 99;
-    check(leases.insert(context));
-    check(!leases.take(original, trusted, backend));
-    check(leases.take(context, trusted, backend) && backend == 99);
+    check( leases.insert( context ) );
+    check( !leases.take( original, trusted, backend ) );
+    check( leases.take( context, trusted, backend ) && backend == 99 );
     // Capacity is explicit and exhaustion leaves the caller's metadata alone.
     leases.reset();
-    for (int i = 0; i < 4; ++i) { context = original; check(leases.insert(context)); }
+    for ( int i = 0; i < 4; ++i )
+    {
+        context = original;
+        check( leases.insert( context ) );
+    }
     context = original;
-    check(!leases.insert(context) && context.packet_id == original.packet_id);
+    check( !leases.insert( context ) && context.packet_id == original.packet_id );
 }
 
 static void check_stats_cadence()
 {
-    struct bucket { double time; uint64_t frame; uint64_t packets; };
-    for (int updates : {16, 256, 2000, 10000})
+    struct bucket
+    {
+        double time;
+        uint64_t frame;
+        uint64_t packets;
+    };
+    for ( int updates : { 16, 256, 2000, 10000 } )
     {
         bucket buckets[256]{};
         int index = 0;
-        for (int i = 0; i < updates; ++i)
+        for ( int i = 0; i < updates; ++i )
         {
-            index = rocketnet_stats_window_advance(buckets, index, (uint64_t)i + 1, 0.9 * i / updates);
+            index = rocketnet_stats_window_advance( buckets, index, (uint64_t) i + 1, 0.9 * i / updates );
             buckets[index].packets++;
         }
         uint64_t total = 0;
-        for (const auto & b : buckets) if (b.frame && b.time + 1.0 >= 0.9) total += b.packets;
-        check(total == (uint64_t)updates);
-        for (int i = 0; i < 10000; ++i)
+        for ( const auto & b : buckets )
+            if ( b.frame && b.time + 1.0 >= 0.9 )
+                total += b.packets;
+        check( total == (uint64_t) updates );
+        for ( int i = 0; i < 10000; ++i )
         {
-            index = rocketnet_stats_window_advance(buckets, index, (uint64_t)updates + (uint64_t)i + 1, 0.9);
+            index = rocketnet_stats_window_advance( buckets, index, (uint64_t) updates + (uint64_t) i + 1, 0.9 );
             buckets[index].packets++;
         }
         total = 0;
-        for (const auto & b : buckets) if (b.frame && b.time + 1.0 >= 0.9) total += b.packets;
-        check(total == (uint64_t)updates + 10000);
-        index = rocketnet_stats_window_advance(buckets, index, 20001, 3.0);
+        for ( const auto & b : buckets )
+            if ( b.frame && b.time + 1.0 >= 0.9 )
+                total += b.packets;
+        check( total == (uint64_t) updates + 10000 );
+        index = rocketnet_stats_window_advance( buckets, index, 20001, 3.0 );
         total = 0;
-        for (const auto & b : buckets) if (b.frame && b.time + 1.0 >= 3.0) total += b.packets;
-        check(total == 0);
+        for ( const auto & b : buckets )
+            if ( b.frame && b.time + 1.0 >= 3.0 )
+                total += b.packets;
+        check( total == 0 );
     }
 }
 
 static void check_frame_conservation()
 {
     rocketnet_pending_frames_t<8> pending;
-    uint64_t first[] = {11, 12, 13, 14};
-    uint64_t second[] = {15, 16, 17, 18};
-    check(pending.append(first, 4));
+    uint64_t first[] = { 11, 12, 13, 14 };
+    uint64_t second[] = { 15, 16, 17, 18 };
+    check( pending.append( first, 4 ) );
     uint64_t submitted[8]{};
     int written = 0, published = 0;
-    auto write = [&](uint32_t index, uint64_t frame) {
-        check(index < 8 && !submitted[index]);
+    auto write = [&]( uint32_t index, uint64_t frame )
+    {
+        check( index < 8 && !submitted[index] );
         submitted[index] = frame;
         ++written;
     };
-    auto submit = [&](uint32_t count) { check(written == (int)count); published += (int)count; };
+    auto submit = [&]( uint32_t count )
+    { check(written == (int)count); published += (int)count; };
     // the refusing reserve reads its zero through a volatile, so the optimiser
     // cannot prove flush's code after the refusal unreachable (MSVC C4702)
     volatile uint32_t refused = 0;
-    for (int i = 0; i < 10; ++i)
-        check(!pending.flush([&](uint32_t, uint32_t *) { return (uint32_t) refused; }, write, submit));
-    check(pending.count == 4 && written == 0 && published == 0);
-    check(pending.append(second, 4) && pending.available() == 0);
-    check(!pending.append(first, 1) && pending.count == 8);
-    check(pending.flush([](uint32_t count, uint32_t * index) { *index = 0; return count; }, write, submit));
-    check(pending.count == 0 && published == 8);
-    for (int i = 0; i < 8; ++i) check(submitted[i] == (uint64_t)(11 + i));
+    for ( int i = 0; i < 10; ++i )
+        check( !pending.flush( [&]( uint32_t, uint32_t * )
+                               { return (uint32_t) refused; }, write, submit ) );
+    check( pending.count == 4 && written == 0 && published == 0 );
+    check( pending.append( second, 4 ) && pending.available() == 0 );
+    check( !pending.append( first, 1 ) && pending.count == 8 );
+    check( pending.flush( []( uint32_t count, uint32_t * index )
+                          { *index = 0; return count; }, write, submit ) );
+    check( pending.count == 0 && published == 8 );
+    for ( int i = 0; i < 8; ++i )
+        check( submitted[i] == (uint64_t) ( 11 + i ) );
     // an empty buffer must not reserve: count the calls, rather than fail
     // inside the lambda, so flush's code after the reserve stays reachable
     int empty_reserves = 0;
-    check(pending.flush([&](uint32_t, uint32_t *) { ++empty_reserves; return (uint32_t) refused; }, write, submit));
-    check(empty_reserves == 0);
-    check(published == 8); // no frame submitted twice after successful retry
+    check( pending.flush( [&]( uint32_t, uint32_t * )
+                          { ++empty_reserves; return (uint32_t) refused; }, write, submit ) );
+    check( empty_reserves == 0 );
+    check( published == 8 ); // no frame submitted twice after successful retry
 }
 
 static void check_send_handoff()
@@ -324,81 +351,83 @@ static void check_send_handoff()
     int packets[2][100] = {};
     int copied[2] = {};
     int first = queue.acquire();
-    check(first >= 0 && queue.front() == -1);
-    for (int i = 0; i < 100; ++i) packets[first][i] = i + 1;
+    check( first >= 0 && queue.front() == -1 );
+    for ( int i = 0; i < 100; ++i )
+        packets[first][i] = i + 1;
     queue.publish();
     int second = queue.acquire();
-    check(second >= 0 && second != first);
-    for (int i = 0; i < 100; ++i) packets[second][i] = i + 101;
+    check( second >= 0 && second != first );
+    for ( int i = 0; i < 100; ++i )
+        packets[second][i] = i + 101;
     copied[first] = 32;
     // rocketnet_send_handoff_t::publish keeps the producer generation while
     // the worker owns the other one, so the second flush queues nothing and
     // the producer keeps the same storage, never a queued buffer.
-    check(!queue.publish());
-    for (int i = 0; i < 10000; ++i)
-        check(queue.acquire() == second && queue.front() == first && queue.count == 1);
+    check( !queue.publish() );
+    for ( int i = 0; i < 10000; ++i )
+        check( queue.acquire() == second && queue.front() == first && queue.count == 1 );
     int expected = 33;
-    while (queue.front() >= 0)
+    while ( queue.front() >= 0 )
     {
         const int index = queue.front();
         // A worker can pause between any of its 32-packet batches. A producer
         // cannot reset either queued buffer, however often it asks for storage.
-        for (int batch = 0; batch < 32 && copied[index] < 100; ++batch)
-            check(packets[index][copied[index]++] == expected++);
-        if (copied[index] == 100)
+        for ( int batch = 0; batch < 32 && copied[index] < 100; ++batch )
+            check( packets[index][copied[index]++] == expected++ );
+        if ( copied[index] == 100 )
         {
             queue.retire();
-            if (index == first)
+            if ( index == first )
             {
                 // rocketnet_server_transport_send_packets retries XDP
                 // publication on every call; that next flush publishes the
                 // retained generation once the first is retired.
-                check(queue.front() == -1 && queue.acquire() == second);
-                check(queue.publish());
-                check(queue.front() == second);
-                check(queue.acquire() == first);
-                memset(packets[first], 0, sizeof(packets[first]));
+                check( queue.front() == -1 && queue.acquire() == second );
+                check( queue.publish() );
+                check( queue.front() == second );
+                check( queue.acquire() == first );
+                memset( packets[first], 0, sizeof( packets[first] ) );
             }
         }
     }
-    check(expected == 201 && copied[first] == 100 && copied[second] == 100);
+    check( expected == 201 && copied[first] == 100 && copied[second] == 100 );
     // Exercise repeated wrap/reuse with the next producer always reserved.
-    for (int i = 0; i < 10000; ++i)
+    for ( int i = 0; i < 10000; ++i )
     {
         int filling = queue.acquire();
-        check(filling >= 0);
+        check( filling >= 0 );
         queue.publish();
-        check(queue.front() == filling);
+        check( queue.front() == filling );
         queue.retire();
     }
 }
 
-static void check_memory_geometry(allocator_state & state)
+static void check_memory_geometry( allocator_state & state )
 {
     uint64_t total = UINT64_MAX - 3;
-    check(!rocketnet_memory_add(total, 2, 2) && total == UINT64_MAX - 3);
-    check(rocketnet_memory_add(total, 1, 3) && total == UINT64_MAX);
-    const uint64_t small_geometry_bytes = rocketnet_reassembly_memory_required(4, 8, 16384, 32);
-    const uint64_t large_geometry_bytes = rocketnet_reassembly_memory_required(1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000);
-    check(small_geometry_bytes > 32 * 16384 && large_geometry_bytes > UINT64_C(100) * 1024 * 1024 * 1024);
-    check(!rocketnet_reassembly_memory_required(-1, 8, 16384, 32));
+    check( !rocketnet_memory_add( total, 2, 2 ) && total == UINT64_MAX - 3 );
+    check( rocketnet_memory_add( total, 1, 3 ) && total == UINT64_MAX );
+    const uint64_t small_geometry_bytes = rocketnet_reassembly_memory_required( 4, 8, 16384, 32 );
+    const uint64_t large_geometry_bytes = rocketnet_reassembly_memory_required( 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000 );
+    check( small_geometry_bytes > 32 * 16384 && large_geometry_bytes > UINT64_C( 100 ) * 1024 * 1024 * 1024 );
+    check( !rocketnet_reassembly_memory_required( -1, 8, 16384, 32 ) );
     const int before = state.calls;
-    if (large_geometry_bytes > (uint64_t)ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024)
+    if ( large_geometry_bytes > (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024 )
     {
-        check(!rocketnet_reassembly_set_create(&state, 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000));
-        check(state.calls == before); // refused before any allocation
+        check( !rocketnet_reassembly_set_create( &state, 1000, 256, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 256000 ) );
+        check( state.calls == before ); // refused before any allocation
     }
 #if ROCKETNET_XDP
-    check(!rocketnet_xdp_umem_bytes(0));
-    check(rocketnet_xdp_umem_bytes(7) == (uint64_t)7 * ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE);
-    check(!rocketnet_server_socket_memory_required(0));
-    check(rocketnet_server_socket_memory_required(7) > rocketnet_xdp_umem_bytes(7));
+    check( !rocketnet_xdp_umem_bytes( 0 ) );
+    check( rocketnet_xdp_umem_bytes( 7 ) == (uint64_t) 7 * ROCKETNET_XDP_UMEM_FRAMES * ROCKETNET_XDP_FRAME_SIZE );
+    check( !rocketnet_server_socket_memory_required( 0 ) );
+    check( rocketnet_server_socket_memory_required( 7 ) > rocketnet_xdp_umem_bytes( 7 ) );
     // Twenty-two queues exceed 4 GiB at the current UMEM geometry (192 MiB
     // per queue). This plans the allocation size without allocating it.
-    check(rocketnet_xdp_umem_bytes(22) > UINT32_MAX);
-    check(rocketnet_server_socket_memory_required(22) > UINT32_MAX);
-    check(rocketnet_server_socket_memory_required(1024) > rocketnet_server_socket_memory_required(7));
-    check(state.calls == before);
+    check( rocketnet_xdp_umem_bytes( 22 ) > UINT32_MAX );
+    check( rocketnet_server_socket_memory_required( 22 ) > UINT32_MAX );
+    check( rocketnet_server_socket_memory_required( 1024 ) > rocketnet_server_socket_memory_required( 7 ) );
+    check( state.calls == before );
 #endif
 }
 
@@ -406,7 +435,7 @@ template <typename T, typename CreateFn, typename DestroyFn>
 static int sweep_component_create( allocator_state & state, CreateFn create_fn, DestroyFn destroy_fn, bool hold_live_check = true )
 {
     const int baseline = state.live;
-    for ( int n = 1; ; ++n )
+    for ( int n = 1;; ++n )
     {
         check( n <= 64 );
         const int start_calls = state.calls;
@@ -440,9 +469,11 @@ static void check_token_history_create_sweep( allocator_state & state )
     // independent response-binding table, and ten for the claim table, whose
     // two extra arrays hold generation-tagged chronological handles.
     check( sweep_component_create<rocketnet_used_token_history_t>(
-        state,
-        [&]() { return rocketnet_used_token_history_create( &state, 16 ); },
-        []( rocketnet_used_token_history_t * h ) { rocketnet_used_token_history_destroy( h ); } ) == 19 );
+               state,
+               [&]()
+               { return rocketnet_used_token_history_create( &state, 16 ); },
+               []( rocketnet_used_token_history_t * h )
+               { rocketnet_used_token_history_destroy( h ); } ) == 19 );
     check( state.live == baseline );
     printf( "token history allocation sweep OK: 19 allocations\n" );
 }
@@ -453,27 +484,35 @@ static void check_component_create_sweeps( allocator_state & state )
 
     // 1. rocketnet_encryption_map_create: 7 allocations (fail N=1..7, succeed N=8).
     check( sweep_component_create<rocketnet_encryption_map_t>(
-        state,
-        [&]() { return rocketnet_encryption_map_create( &state, 16 ); },
-        []( rocketnet_encryption_map_t * m ) { rocketnet_encryption_map_destroy( m ); } ) == 7 );
+               state,
+               [&]()
+               { return rocketnet_encryption_map_create( &state, 16 ); },
+               []( rocketnet_encryption_map_t * m )
+               { rocketnet_encryption_map_destroy( m ); } ) == 7 );
 
     // 4. rocketnet_client_slots_create: 9 allocations (fail N=1..9, succeed N=10).
     check( sweep_component_create<rocketnet_client_slots_t>(
-        state,
-        [&]() { return rocketnet_client_slots_create( &state, 16 ); },
-        []( rocketnet_client_slots_t * s ) { rocketnet_client_slots_destroy( s ); } ) == 9 );
+               state,
+               [&]()
+               { return rocketnet_client_slots_create( &state, 16 ); },
+               []( rocketnet_client_slots_t * s )
+               { rocketnet_client_slots_destroy( s ); } ) == 9 );
 
     // 5. rocketnet_reassembly_set_create: 4 allocations (fail N=1..4, succeed N=5).
     check( sweep_component_create<rocketnet_reassembly_set_t>(
-        state,
-        [&]() { return rocketnet_reassembly_set_create( &state, 4, 8, 16384, 32 ); },
-        []( rocketnet_reassembly_set_t * r ) { rocketnet_reassembly_set_destroy( r ); } ) == 4 );
+               state,
+               [&]()
+               { return rocketnet_reassembly_set_create( &state, 4, 8, 16384, 32 ); },
+               []( rocketnet_reassembly_set_t * r )
+               { rocketnet_reassembly_set_destroy( r ); } ) == 4 );
 
     // 6. rocketnet_send_arena_create: 2 allocations (fail N=1..2, succeed N=3).
     check( sweep_component_create<rocketnet_send_arena_t>(
-        state,
-        [&]() { return rocketnet_send_arena_create( &state, 16, 1280 ); },
-        []( rocketnet_send_arena_t * a ) { rocketnet_send_arena_destroy( a ); } ) == 2 );
+               state,
+               [&]()
+               { return rocketnet_send_arena_create( &state, 16, 1280 ); },
+               []( rocketnet_send_arena_t * a )
+               { rocketnet_send_arena_destroy( a ); } ) == 2 );
 
     // 7. rocketnet_server_acks_create: 4 allocations (fail N=1..4, succeed N=5).
     {
@@ -482,17 +521,21 @@ static void check_component_create_sweeps( allocator_state & state )
         check( state.calls == before && state.live == baseline );
     }
     check( sweep_component_create<rocketnet_server_acks_t>(
-        state,
-        [&]() { return rocketnet_server_acks_create( &state, 16 ); },
-        []( rocketnet_server_acks_t * a ) { rocketnet_server_acks_destroy( a ); } ) == 4 );
+               state,
+               [&]()
+               { return rocketnet_server_acks_create( &state, 16 ); },
+               []( rocketnet_server_acks_t * a )
+               { rocketnet_server_acks_destroy( a ); } ) == 4 );
 
     // 8. rocketnet_network_simulator_create: 12 allocations (fail N=1..12, succeed N=13).
     // A production build (ROCKETNET_DEV=0) has no simulator (sdk/rocketnet_test_seams.h).
 #if ROCKETNET_TEST_SEAMS
     check( sweep_component_create<rocketnet_network_simulator_t>(
-        state,
-        [&]() { return rocketnet_network_simulator_create( &state, 64, 1 ); },
-        []( rocketnet_network_simulator_t * s ) { rocketnet_network_simulator_destroy( s ); } ) == 12 );
+               state,
+               [&]()
+               { return rocketnet_network_simulator_create( &state, 64, 1 ); },
+               []( rocketnet_network_simulator_t * s )
+               { rocketnet_network_simulator_destroy( s ); } ) == 12 );
 #endif // #if ROCKETNET_TEST_SEAMS
 
     // 9. rn_arena_create (sdk/rocketnet_allocator.h): 1 allocation (fail N=1, succeed N=2).
@@ -510,31 +553,35 @@ static void check_component_create_sweeps( allocator_state & state )
         check( state.calls == before && state.live == baseline );
     }
     check( sweep_component_create<rn_arena_t>(
-        state,
-        [&]() { return rn_arena_create( &state, NULL, 1, &counters ); },
-        []( rn_arena_t * a ) { rn_arena_destroy( a ); } ) == 1 );
+               state,
+               [&]()
+               { return rn_arena_create( &state, NULL, 1, &counters ); },
+               []( rn_arena_t * a )
+               { rn_arena_destroy( a ); } ) == 1 );
     check( sweep_component_create<rn_arena_t>(
-        state,
-        [&]() { return rn_arena_create( &state, &msg_config, 2, &counters ); },
-        [&]( rn_arena_t * a ) {
-            const int before = state.calls;
-            state.fail_at = before + 1;
-            for ( int i = 0; i < rn_arena_num_regions( a ); ++i )
-            {
-                rn_region_t * r = rn_arena_region( a, i );
-                check( r != NULL );
-                rn_region_carve( r );
-                uint32_t d = rn_region_send_alloc( r, 256 );
-                check( d != RN_DESCRIPTOR_NONE );
-                rn_region_send_free( r, d );
-                uint32_t c = rn_send_store_alloc( &r->store, 512 );
-                check( c != RN_CHUNK_NONE );
-                check( rn_send_store_free_checked( &r->store, c ) );
-            }
-            state.fail_at = 0;
-            check( state.calls == before );
-            rn_arena_destroy( a );
-        } ) == 1 );
+               state,
+               [&]()
+               { return rn_arena_create( &state, &msg_config, 2, &counters ); },
+               [&]( rn_arena_t * a )
+               {
+                   const int before = state.calls;
+                   state.fail_at = before + 1;
+                   for ( int i = 0; i < rn_arena_num_regions( a ); ++i )
+                   {
+                       rn_region_t * r = rn_arena_region( a, i );
+                       check( r != NULL );
+                       rn_region_carve( r );
+                       uint32_t d = rn_region_send_alloc( r, 256 );
+                       check( d != RN_DESCRIPTOR_NONE );
+                       rn_region_send_free( r, d );
+                       uint32_t c = rn_send_store_alloc( &r->store, 512 );
+                       check( c != RN_CHUNK_NONE );
+                       check( rn_send_store_free_checked( &r->store, c ) );
+                   }
+                   state.fail_at = 0;
+                   check( state.calls == before );
+                   rn_arena_destroy( a );
+               } ) == 1 );
 
     // 10. rocketnet_frame_sync_create: 1 allocation (fail N=1, succeed N=2).
     {
@@ -545,19 +592,23 @@ static void check_component_create_sweeps( allocator_state & state )
         check( state.calls == before && state.live == baseline );
     }
     check( sweep_component_create<rocketnet_frame_sync_t>(
-        state,
-        [&]() { return rocketnet_frame_sync_create( &state, 60.0 ); },
-        []( rocketnet_frame_sync_t * f ) { rocketnet_frame_sync_destroy( f ); } ) == 1 );
+               state,
+               [&]()
+               { return rocketnet_frame_sync_create( &state, 60.0 ); },
+               []( rocketnet_frame_sync_t * f )
+               { rocketnet_frame_sync_destroy( f ); } ) == 1 );
 
     // 11. The platform thread and its shim share an allocator-backed record.
     check( sweep_component_create<rocketnet_platform_thread_t>(
-        state,
-        [&]() { return rocketnet_platform_thread_create( &state, thread_body, NULL ); },
-        []( rocketnet_platform_thread_t * t ) {
-            rocketnet_platform_thread_join( t );
-            rocketnet_platform_thread_destroy( t );
-        },
-        false ) == expected_platform_thread_allocations );
+               state,
+               [&]()
+               { return rocketnet_platform_thread_create( &state, thread_body, NULL ); },
+               []( rocketnet_platform_thread_t * t )
+               {
+                   rocketnet_platform_thread_join( t );
+                   rocketnet_platform_thread_destroy( t );
+               },
+               false ) == expected_platform_thread_allocations );
 
     check( state.live == baseline );
 }
@@ -575,8 +626,8 @@ static void write_valid_token( uint8_t * token, uint64_t create, uint64_t expire
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = 1;
     signed_fields.create_timestamp = create;
@@ -660,7 +711,7 @@ static void check_server_memory_budget( allocator_state & state )
     check( plan > 0 );
 
     char budget[64];
-    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan - 1 ) );
+    snprintf( budget, sizeof( budget ), "%llu", (unsigned long long) ( plan - 1 ) );
     setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", budget, 1 );
     const int calls_before = state.calls;
     const int live_before = state.live;
@@ -669,7 +720,7 @@ static void check_server_memory_budget( allocator_state & state )
     check( state.live == live_before );
     unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
 
-    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan + 1 ) );
+    snprintf( budget, sizeof( budget ), "%llu", (unsigned long long) ( plan + 1 ) );
     setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", budget, 1 );
     rocketnet_server_transport_t * server = rocketnet_server_transport_create( &state, "127.0.0.1:0", &config );
     check( server != NULL );
@@ -692,7 +743,7 @@ static void check_client_memory_budget( allocator_state & state )
     make_valid_token( token );
 
     char budget[64];
-    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan - 1 ) );
+    snprintf( budget, sizeof( budget ), "%llu", (unsigned long long) ( plan - 1 ) );
     setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", budget, 1 );
     const int calls_before = state.calls;
     const int live_before = state.live;
@@ -701,7 +752,7 @@ static void check_client_memory_budget( allocator_state & state )
     check( state.live == live_before );
     unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
 
-    snprintf( budget, sizeof(budget), "%llu", (unsigned long long) ( plan + 1 ) );
+    snprintf( budget, sizeof( budget ), "%llu", (unsigned long long) ( plan + 1 ) );
     setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", budget, 1 );
     rocketnet_client_transport_t * client = rocketnet_client_transport_create( &state, token, &config, 0.0 );
     check( client != NULL );
@@ -719,22 +770,22 @@ int main()
     allocator_state token_history_state;
     check_token_history_create_sweep( token_history_state );
     rocketnet_server_transport_config_t memory_config;
-    rocketnet_server_transport_default_config(&memory_config);
-    check(rocketnet_server_transport_required_memory(NULL, "portable") > 0);
-    const uint64_t default_memory = rocketnet_server_transport_required_memory(&memory_config, "portable");
-    check(default_memory > 0);
-    check(rocketnet_server_transport_required_memory(&memory_config, "auto") == 0);
-    check(rocketnet_server_transport_required_memory(&memory_config, "custom") == 0);
-    check(rocketnet_server_transport_required_memory(&memory_config, NULL) == 0);
+    rocketnet_server_transport_default_config( &memory_config );
+    check( rocketnet_server_transport_required_memory( NULL, "portable" ) > 0 );
+    const uint64_t default_memory = rocketnet_server_transport_required_memory( &memory_config, "portable" );
+    check( default_memory > 0 );
+    check( rocketnet_server_transport_required_memory( &memory_config, "auto" ) == 0 );
+    check( rocketnet_server_transport_required_memory( &memory_config, "custom" ) == 0 );
+    check( rocketnet_server_transport_required_memory( &memory_config, NULL ) == 0 );
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS + 1;
-    check(rocketnet_server_transport_required_memory(&memory_config, "portable") == 0);
+    check( rocketnet_server_transport_required_memory( &memory_config, "portable" ) == 0 );
     memory_config.max_clients = ROCKETNET_MAX_CLIENTS;
     memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS;
     // The whole-host estimate is a plan too: it allocates nothing before init.
     rocketnet_host_memory_estimate_t host_estimate;
-    check(rocketnet_server_transport_host_memory_estimate(NULL, "portable", &host_estimate));
-    check(host_estimate.total_bytes >= rocketnet_server_transport_required_memory(NULL, "portable"));
-    check(rocketnet_server_transport_host_memory_estimate(&memory_config, "portable", &host_estimate));
+    check( rocketnet_server_transport_host_memory_estimate( NULL, "portable", &host_estimate ) );
+    check( host_estimate.total_bytes >= rocketnet_server_transport_required_memory( NULL, "portable" ) );
+    check( rocketnet_server_transport_host_memory_estimate( &memory_config, "portable", &host_estimate ) );
 
     // The client transport's plan: defaults plan a nonzero size, the same config
     // plans the same size again, unknown/NULL/auto transports and an overflowing
@@ -743,22 +794,22 @@ int main()
     // create-time counting-allocator match needs a live socket, so it is left
     // to bench/transport_memory.cpp.
     rocketnet_client_transport_config_t client_memory_config;
-    rocketnet_client_transport_default_config(&client_memory_config);
-    check(rocketnet_client_transport_required_memory(NULL, "portable") > 0);
-    const uint64_t client_default_memory = rocketnet_client_transport_required_memory(&client_memory_config, "portable");
-    check(client_default_memory > 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "auto") == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "custom") == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, NULL) == 0);
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == client_default_memory);
+    rocketnet_client_transport_default_config( &client_memory_config );
+    check( rocketnet_client_transport_required_memory( NULL, "portable" ) > 0 );
+    const uint64_t client_default_memory = rocketnet_client_transport_required_memory( &client_memory_config, "portable" );
+    check( client_default_memory > 0 );
+    check( rocketnet_client_transport_required_memory( &client_memory_config, "auto" ) == 0 );
+    check( rocketnet_client_transport_required_memory( &client_memory_config, "custom" ) == 0 );
+    check( rocketnet_client_transport_required_memory( &client_memory_config, NULL ) == 0 );
+    check( rocketnet_client_transport_required_memory( &client_memory_config, "portable" ) == client_default_memory );
     client_memory_config.max_fragmented_messages = ROCKETNET_MAX_FRAGMENTS + 1;
-    check(rocketnet_client_transport_required_memory(&client_memory_config, "portable") == 0);
+    check( rocketnet_client_transport_required_memory( &client_memory_config, "portable" ) == 0 );
     client_memory_config.max_fragmented_messages = 0;
     check( state.calls == 0 );
     for ( size_t size = 0; size < 256; ++size )
     {
         void * p = rocketnet_malloc( &state, size );
-        check( p && (uintptr_t)p % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
+        check( p && (uintptr_t) p % ROCKETNET_ALLOCATION_ALIGNMENT == 0 );
         memset( p, 0, size );
         rocketnet_free( &state, p );
     }
@@ -782,7 +833,7 @@ int main()
     check_stats_cadence();
     check_frame_conservation();
     check_send_handoff();
-    check_memory_geometry(state);
+    check_memory_geometry( state );
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
     check_client_memory_budget( state );

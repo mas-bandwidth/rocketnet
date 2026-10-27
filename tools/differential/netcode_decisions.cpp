@@ -74,7 +74,7 @@ static struct case_row_t g_cases[CASE_COUNT];
 // default is a valid token; the switch applies the case's mutation.
 static void differential_case_for_id( int case_id, struct differential_case_t * c )
 {
-    memset( c, 0, sizeof(*c) );
+    memset( c, 0, sizeof( *c ) );
     c->create_offset = -10;
     c->expire_offset = 300;
     c->timeout_seconds = 10;
@@ -160,22 +160,31 @@ enum
     FIELD_COUNT
 };
 
-static const char * const g_field_names[FIELD_COUNT] =
-    { "version", "protocol", "create", "expire", "timeout", "address", "server-key", "sealed", "signed-pad", "signature", "clear" };
+static const char * const g_field_names[FIELD_COUNT] = { "version", "protocol", "create", "expire", "timeout", "address", "server-key", "sealed", "signed-pad", "signature", "clear" };
 static const int g_field_comparable[FIELD_COUNT] = { 1, 1, 0, 1, 0, 0, 0, 1, 0, 1, 1 };
 
 static int token_field( int offset )
 {
-    if ( offset < ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID ) return FIELD_VERSION;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_CREATE ) return FIELD_PROTOCOL;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_EXPIRE ) return FIELD_CREATE;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_TIMEOUT ) return FIELD_EXPIRE;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS ) return FIELD_TIMEOUT;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_SERVER_KEY ) return FIELD_ADDRESS;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) return FIELD_SERVER_KEY;
-    if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES ) return FIELD_SEALED;
-    if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES ) return FIELD_SIGNED_PAD;
-    if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES ) return FIELD_SIGNATURE;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID )
+        return FIELD_VERSION;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_CREATE )
+        return FIELD_PROTOCOL;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_EXPIRE )
+        return FIELD_CREATE;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_TIMEOUT )
+        return FIELD_EXPIRE;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS )
+        return FIELD_TIMEOUT;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_SERVER_KEY )
+        return FIELD_ADDRESS;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK )
+        return FIELD_SERVER_KEY;
+    if ( offset < ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES )
+        return FIELD_SEALED;
+    if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES )
+        return FIELD_SIGNED_PAD;
+    if ( offset < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES )
+        return FIELD_SIGNATURE;
     return FIELD_CLEAR;
 }
 
@@ -200,8 +209,8 @@ static int corpus_build_base()
 {
     struct rocketnet_signed_connect_data_t sf;
     struct rocketnet_connect_token_private_t pf;
-    memset( &sf, 0, sizeof(sf) );
-    memset( &pf, 0, sizeof(pf) );
+    memset( &sf, 0, sizeof( sf ) );
+    memset( &pf, 0, sizeof( pf ) );
     sf.version = ROCKETNET_WIRE_VERSION;
     sf.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     sf.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -223,15 +232,15 @@ static int corpus_build_base()
 
 static int corpus_read( const char * path, struct corpus_case_t * c )
 {
-    memset( c, 0, sizeof(*c) );
+    memset( c, 0, sizeof( *c ) );
     const char * slash = strrchr( path, '/' );
-    snprintf( c->name, sizeof(c->name), "%s", slash ? slash + 1 : path );
+    snprintf( c->name, sizeof( c->name ), "%s", slash ? slash + 1 : path );
 
     FILE * f = fopen( path, "rb" );
     if ( !f )
         return 0;
     uint8_t data[4096];
-    const size_t size = fread( data, 1, sizeof(data), f );
+    const size_t size = fread( data, 1, sizeof( data ), f );
     fclose( f );
     if ( size < 2 )
         return 0;
@@ -250,11 +259,11 @@ static int corpus_read( const char * path, struct corpus_case_t * c )
         return 1;
     }
 
-    memcpy( c->token, g_corpus_base, sizeof(c->token) );
+    memcpy( c->token, g_corpus_base, sizeof( c->token ) );
     for ( size_t offset = 0; offset + 3 <= body_size; offset += 3 )
     {
-        const int position = (int) ( ( (size_t) body[offset] | ( (size_t) body[offset+1] << 8 ) ) % ROCKETNET_CONNECT_TOKEN_BYTES );
-        c->token[position] ^= body[offset+2];
+        const int position = (int) ( ( (size_t) body[offset] | ( (size_t) body[offset + 1] << 8 ) ) % ROCKETNET_CONNECT_TOKEN_BYTES );
+        c->token[position] ^= body[offset + 2];
     }
     for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_BYTES; i++ )
     {
@@ -277,9 +286,9 @@ static void corpus_describe( const struct corpus_case_t * c, char * out, size_t 
 {
     char fields[160] = "";
     if ( c->raw )
-        snprintf( fields, sizeof(fields), "raw" );
+        snprintf( fields, sizeof( fields ), "raw" );
     else if ( !c->touched )
-        snprintf( fields, sizeof(fields), "untouched" );
+        snprintf( fields, sizeof( fields ), "untouched" );
     else
     {
         for ( int field = 0; field < FIELD_COUNT; field++ )
@@ -287,7 +296,7 @@ static void corpus_describe( const struct corpus_case_t * c, char * out, size_t 
             if ( !( c->touched & ( 1u << field ) ) )
                 continue;
             const size_t used = strlen( fields );
-            snprintf( fields + used, sizeof(fields) - used, "%s%s", used ? "+" : "", g_field_names[field] );
+            snprintf( fields + used, sizeof( fields ) - used, "%s%s", used ? "+" : "", g_field_names[field] );
         }
     }
     snprintf( out, out_size, "%s,clock%+lldm", fields, (long long) ( c->clock_offset / 60 ) );
@@ -296,7 +305,7 @@ static void corpus_describe( const struct corpus_case_t * c, char * out, size_t 
 static struct decision_t rocketnet_decide_corpus( const struct corpus_case_t * c )
 {
     struct decision_t d;
-    memset( &d, 0, sizeof(d) );
+    memset( &d, 0, sizeof( d ) );
     const uint64_t now = (uint64_t) ( (int64_t) ROCKETNET_TEST_CREATE_TS + c->clock_offset );
 
     struct rocketnet_server_protocol_t server;
@@ -389,7 +398,7 @@ static int netcode_decide_corpus( const struct corpus_case_t * c, char * reason,
                 case FIELD_EXPIRE:    request[NC_REQUEST_EXPIRE + ( i - ROCKETNET_SIGNED_OFFSET_EXPIRE )] ^= c->delta[i]; break;
                 case FIELD_SEALED:    request[NC_REQUEST_PRIVATE + ( i - ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK )] ^= c->delta[i]; break;
                 case FIELD_SIGNATURE: request[NC_REQUEST_MAC + ( i - ROCKETNET_SIGNED_CONNECT_DATA_BYTES ) % NETCODE_MAC_BYTES] ^= c->delta[i]; break;
-                default: break;     // not comparable; the caller never asks
+                default:              break;     // not comparable; the caller never asks
             }
         }
     }
@@ -419,7 +428,7 @@ static void corpus_read_reference( const char * path )
     if ( !f )
         return;
     char line[512];
-    while ( fgets( line, sizeof(line), f ) && g_corpus_reference_count < 256 )
+    while ( fgets( line, sizeof( line ), f ) && g_corpus_reference_count < 256 )
     {
         if ( line[0] == '#' || line[0] == '\n' || line[0] == '\r' )
             continue;
@@ -433,12 +442,12 @@ static void corpus_read_reference( const char * path )
         struct corpus_reference_t * r = &g_corpus_reference[g_corpus_reference_count++];
         {
             size_t len = strlen( line );
-            if ( len >= sizeof(r->name) )
-                len = sizeof(r->name) - 1;
+            if ( len >= sizeof( r->name ) )
+                len = sizeof( r->name ) - 1;
             memcpy( r->name, line, len );
             r->name[len] = 0;
         }
-        snprintf( r->decision, sizeof(r->decision), "%s", decision );
+        snprintf( r->decision, sizeof( r->decision ), "%s", decision );
     }
     fclose( f );
 }
@@ -472,13 +481,13 @@ static int run_corpus( const char * reference_path, int count, const char ** pat
         }
 
         char fields[192];
-        corpus_describe( &c, fields, sizeof(fields) );
+        corpus_describe( &c, fields, sizeof( fields ) );
         const struct decision_t rn = rocketnet_decide_corpus( &c );
         char rocketnet[72];
         if ( rn.accept )
             strcpy( rocketnet, "accept" );
         else
-            snprintf( rocketnet, sizeof(rocketnet), "refuse:%s", rn.reason );
+            snprintf( rocketnet, sizeof( rocketnet ), "refuse:%s", rn.reason );
 
         if ( !corpus_comparable( &c ) )
         {
@@ -490,7 +499,7 @@ static int run_corpus( const char * reference_path, int count, const char ** pat
         const char * netcode = reference;
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
         static char live[64];
-        netcode_decide_corpus( &c, live, sizeof(live) );
+        netcode_decide_corpus( &c, live, sizeof( live ) );
         if ( reference && strcmp( reference, live ) != 0 )
             fprintf( stderr, "live netcode disagrees with the corpus reference on %s (%s, reference %s)\n", c.name, live, reference );
         netcode = live;
@@ -521,22 +530,26 @@ static int parse_case_table( const char * path )
 
     char line[512];
     int n = 0;
-    while ( fgets( line, sizeof(line), f ) )
+    while ( fgets( line, sizeof( line ), f ) )
     {
         if ( line[0] == '#' || line[0] == '\n' || line[0] == '\r' )
             continue;
         char * nl = strchr( line, '\n' );
-        if ( nl ) *nl = 0;
+        if ( nl )
+            *nl = 0;
         nl = strchr( line, '\r' );
-        if ( nl ) *nl = 0;
+        if ( nl )
+            *nl = 0;
 
         char * id = line;
         char * t1 = strchr( id, '\t' );
-        if ( !t1 ) continue;
+        if ( !t1 )
+            continue;
         *t1++ = 0;
         char * description = t1;
         char * t2 = strchr( description, '\t' );
-        if ( !t2 ) continue;
+        if ( !t2 )
+            continue;
         *t2++ = 0;
         char * reference = t2;
 
@@ -556,9 +569,9 @@ static void free_case_table()
 {
     for ( int i = 0; i < CASE_COUNT; i++ )
     {
-        free( (void*) g_cases[i].id );
-        free( (void*) g_cases[i].description );
-        free( (void*) g_cases[i].netcode_reference );
+        free( (void *) g_cases[i].id );
+        free( (void *) g_cases[i].description );
+        free( (void *) g_cases[i].netcode_reference );
         g_cases[i].id = NULL;
         g_cases[i].description = NULL;
         g_cases[i].netcode_reference = NULL;
@@ -608,7 +621,7 @@ int main( int argc, const char ** argv )
         const char * netcode = g_cases[i].netcode_reference;
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
         char live_reason[64];
-        if ( netcode_decide_case_live( &c, now, live_reason, sizeof(live_reason) ) >= 0 )
+        if ( netcode_decide_case_live( &c, now, live_reason, sizeof( live_reason ) ) >= 0 )
         {
             if ( strcmp( live_reason, g_cases[i].netcode_reference ) != 0 )
                 fprintf( stderr, "live netcode disagrees with the reference column on %s\n", g_cases[i].id );
@@ -620,7 +633,7 @@ int main( int argc, const char ** argv )
         if ( rn.accept )
             strcpy( rocketnet, "accept" );
         else
-            snprintf( rocketnet, sizeof(rocketnet), "refuse:%s", rn.reason );
+            snprintf( rocketnet, sizeof( rocketnet ), "refuse:%s", rn.reason );
 
         printf( "%s\t%s\t%s\t%s\n", g_cases[i].id, netcode, rocketnet,
                 verdict( &rn, netcode ) );

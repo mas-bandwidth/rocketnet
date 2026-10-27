@@ -89,12 +89,12 @@ static int fake_gso_stride( const struct msghdr * header )
 {
     if ( !header->msg_control )
         return 0;
-    for ( const struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg; cmsg = CMSG_NXTHDR( const_cast<struct msghdr*>( header ), const_cast<struct cmsghdr*>( cmsg ) ) )
+    for ( const struct cmsghdr * cmsg = CMSG_FIRSTHDR( header ); cmsg; cmsg = CMSG_NXTHDR( const_cast<struct msghdr *>( header ), const_cast<struct cmsghdr *>( cmsg ) ) )
     {
         if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_SEGMENT )
         {
             uint16_t stride;
-            memcpy( &stride, CMSG_DATA( cmsg ), sizeof(stride) );
+            memcpy( &stride, CMSG_DATA( cmsg ), sizeof( stride ) );
             return stride;
         }
     }
@@ -103,7 +103,7 @@ static int fake_gso_stride( const struct msghdr * header )
 
 static int fake_gso_sendmmsg( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages )
 {
-    fake_gso_socket_t * fake = (fake_gso_socket_t*) context;
+    fake_gso_socket_t * fake = (fake_gso_socket_t *) context;
     rocketnet_unit_check( socket == 7 );
     fake->sendmmsg_calls++;
 
@@ -129,9 +129,9 @@ static int fake_gso_sendmmsg( void * context, int socket, struct mmsghdr * messa
         {
             const struct iovec * iov = &header->msg_iov[i];
             record->packet_bytes[i] = (int) iov->iov_len;
-            record->first_byte[i] = ( (const uint8_t*) iov->iov_base )[0];
+            record->first_byte[i] = ( (const uint8_t *) iov->iov_base )[0];
             rocketnet_unit_check( fake->num_packets < FAKE_GSO_MAX_PACKETS );
-            rocketnet_unit_check( iov->iov_len <= sizeof(fake->packet_data[0]) );
+            rocketnet_unit_check( iov->iov_len <= sizeof( fake->packet_data[0] ) );
             memcpy( fake->packet_data[fake->num_packets++], iov->iov_base, iov->iov_len );
         }
     }
@@ -140,7 +140,7 @@ static int fake_gso_sendmmsg( void * context, int socket, struct mmsghdr * messa
 
 static int fake_gso_segment_probe( void * context, int socket )
 {
-    fake_gso_socket_t * fake = (fake_gso_socket_t*) context;
+    fake_gso_socket_t * fake = (fake_gso_socket_t *) context;
     rocketnet_unit_check( socket == 7 );
     fake->probe_calls++;
     return fake->probe_result;
@@ -148,7 +148,7 @@ static int fake_gso_segment_probe( void * context, int socket )
 
 static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages )
 {
-    fake_gso_socket_t * fake = (fake_gso_socket_t*) context;
+    fake_gso_socket_t * fake = (fake_gso_socket_t *) context;
     rocketnet_unit_check( socket == 7 );
     rocketnet_unit_check( num_messages == 1 );
     fake->recvmmsg_calls++;
@@ -162,21 +162,21 @@ static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messa
 
     rocketnet_unit_check( header->msg_iovlen == 1 );
     rocketnet_unit_check( header->msg_iov[0].iov_len >= (size_t) receive->bytes );
-    uint8_t * data = (uint8_t*) header->msg_iov[0].iov_base;
+    uint8_t * data = (uint8_t *) header->msg_iov[0].iov_base;
     for ( int i = 0; i < receive->bytes; i++ )
         data[i] = (uint8_t) ( receive->tag + ( receive->stride > 0 ? i / receive->stride : 0 ) );
     messages[0].msg_len = (unsigned int) receive->bytes;
 
     // the source: the one server, 127.0.0.1:40000
     rocketnet_unit_check( header->msg_name != NULL );
-    rocketnet_unit_check( header->msg_namelen >= sizeof(struct sockaddr_in) );
+    rocketnet_unit_check( header->msg_namelen >= sizeof( struct sockaddr_in ) );
     struct sockaddr_in name;
-    memset( &name, 0, sizeof(name) );
+    memset( &name, 0, sizeof( name ) );
     name.sin_family = AF_INET;
     name.sin_port = htons( 40000 );
     name.sin_addr.s_addr = htonl( 0x7F000001 );
-    memcpy( header->msg_name, &name, sizeof(name) );
-    header->msg_namelen = sizeof(name);
+    memcpy( header->msg_name, &name, sizeof( name ) );
+    header->msg_namelen = sizeof( name );
 
     header->msg_flags = 0;
     if ( receive->control == FAKE_GSO_CONTROL_NONE )
@@ -191,24 +191,24 @@ static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messa
     else
     {
         rocketnet_unit_check( header->msg_control != NULL );
-        rocketnet_unit_check( header->msg_controllen >= CMSG_SPACE( sizeof(int) ) );
+        rocketnet_unit_check( header->msg_controllen >= CMSG_SPACE( sizeof( int ) ) );
         memset( header->msg_control, 0, header->msg_controllen );
         struct cmsghdr * cmsg = CMSG_FIRSTHDR( header );
         cmsg->cmsg_level = IPPROTO_UDP;
         cmsg->cmsg_type = UDP_GRO;
         if ( receive->control == FAKE_GSO_CONTROL_GRO )
         {
-            cmsg->cmsg_len = CMSG_LEN( sizeof(int) );
+            cmsg->cmsg_len = CMSG_LEN( sizeof( int ) );
             const int stride = receive->stride;
-            memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
-            header->msg_controllen = CMSG_SPACE( sizeof(int) );
+            memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
+            header->msg_controllen = CMSG_SPACE( sizeof( int ) );
         }
         else
         {
-            cmsg->cmsg_len = CMSG_LEN( sizeof(uint16_t) );
+            cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
             const uint16_t stride = (uint16_t) receive->stride;
-            memcpy( CMSG_DATA( cmsg ), &stride, sizeof(stride) );
-            header->msg_controllen = CMSG_SPACE( sizeof(uint16_t) );
+            memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
+            header->msg_controllen = CMSG_SPACE( sizeof( uint16_t ) );
         }
     }
     return 1;
@@ -216,7 +216,7 @@ static int fake_gso_recvmmsg( void * context, int socket, struct mmsghdr * messa
 
 static int fake_gso_gro_enable( void * context, int socket )
 {
-    fake_gso_socket_t * fake = (fake_gso_socket_t*) context;
+    fake_gso_socket_t * fake = (fake_gso_socket_t *) context;
     rocketnet_unit_check( socket == 7 );
     fake->gro_calls++;
     return fake->gro_result;
@@ -225,8 +225,8 @@ static int fake_gso_gro_enable( void * context, int socket )
 static bool fake_gso_read_address( void *, const struct sockaddr_storage * storage, rocketnet_address_t * from )
 {
     rocketnet_unit_check( storage->ss_family == AF_INET );
-    const struct sockaddr_in * name = (const struct sockaddr_in*) storage;
-    memset( from, 0, sizeof(*from) );
+    const struct sockaddr_in * name = (const struct sockaddr_in *) storage;
+    memset( from, 0, sizeof( *from ) );
     from->type = ROCKETNET_ADDRESS_IPV4;
     const uint32_t host = ntohl( name->sin_addr.s_addr );
     from->data.ipv4[0] = (uint8_t) ( host >> 24 );
@@ -237,8 +237,7 @@ static bool fake_gso_read_address( void *, const struct sockaddr_storage * stora
     return true;
 }
 
-static const rocketnet_client_gso_syscalls_t fake_gso_syscalls =
-{
+static const rocketnet_client_gso_syscalls_t fake_gso_syscalls = {
     fake_gso_sendmmsg, fake_gso_segment_probe, fake_gso_recvmmsg, fake_gso_gro_enable, fake_gso_read_address
 };
 
@@ -253,7 +252,7 @@ struct fake_gso_batch_t
 
 static void fake_gso_batch( fake_gso_batch_t * batch, const int * packet_bytes, int num_packets, int tag )
 {
-    memset( &batch->server, 0, sizeof(batch->server) );
+    memset( &batch->server, 0, sizeof( batch->server ) );
     batch->server.type = ROCKETNET_ADDRESS_IPV4;
     batch->server.data.ipv4[0] = 127;
     batch->server.data.ipv4[3] = 1;
@@ -273,7 +272,7 @@ static fake_gso_batch_t test_batch;
 
 static void test_client_gso_send_runs_segment_by_stride()
 {
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     rocketnet_unit_check( test_socket.probe_calls == 1 );
 
@@ -323,7 +322,7 @@ static void test_client_gso_send_runs_segment_by_stride()
 
     // a batch past one sendmmsg call: 70 of 100 leave as a 64-datagram
     // call (one run of 64 segments) and a 6-datagram call
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     int many_bytes[70];
     for ( int i = 0; i < 70; i++ )
         many_bytes[i] = 100;
@@ -338,7 +337,7 @@ static void test_client_gso_send_runs_segment_by_stride()
     rocketnet_unit_check( test_socket.messages[1].first_byte[0] == 64 );
 
     // a refused probe is the plain tier: one datagram per message, one call
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     test_socket.probe_result = -1;
     rocketnet_unit_check( !rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     fake_gso_batch( &test_batch, packet_bytes, 3, 0 );
@@ -357,7 +356,7 @@ static void test_client_gso_send_falls_back_on_live_refusal()
 {
     // the kernel accepts the probe but refuses a live segmented send, one
     // message at a time: a plain message, then a run of three that is refused
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     test_socket.max_messages_per_call = 1;
     test_socket.refuse_segment_errno = EINVAL;
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
@@ -389,7 +388,7 @@ static void test_client_gso_send_falls_back_on_live_refusal()
     rocketnet_unit_check( test_gso.packet_send_failures.load() == 0 );
 
     // the tier stays plain: the next equal-sized batch carries no UDP_SEGMENT
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     const int again_bytes[] = { 300, 300 };
     fake_gso_batch( &test_batch, again_bytes, 2, 30 );
     rocketnet_client_gso_send_batch( &test_gso, test_batch.sends, 2 );
@@ -402,7 +401,7 @@ static void test_client_gso_send_falls_back_on_live_refusal()
     const int refusals[] = { EIO, EOPNOTSUPP };
     for ( int r = 0; r < 2; r++ )
     {
-        memset( &test_socket, 0, sizeof(test_socket) );
+        memset( &test_socket, 0, sizeof( test_socket ) );
         test_socket.refuse_segment_errno = refusals[r];
         rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
         fake_gso_batch( &test_batch, again_bytes, 2, 40 );
@@ -417,7 +416,7 @@ static void test_client_gso_send_falls_back_on_live_refusal()
 
     // any other refusal is send weather, not a tier: EAGAIN drops the unsent
     // run, counted, and the tier stays segmented
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     test_socket.refuse_segment_errno = EAGAIN;
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     fake_gso_batch( &test_batch, again_bytes, 2, 50 );
@@ -463,8 +462,8 @@ static void check_gso_receive_slot( int i, int bytes, int value )
 
 static void test_client_gso_receive_splits_gro_by_stride()
 {
-    memset( &test_socket, 0, sizeof(test_socket) );
-    memset( test_receive_bytes, 0, sizeof(test_receive_bytes) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
     rocketnet_unit_check( test_socket.gro_calls == 1 );
@@ -496,7 +495,7 @@ static void test_client_gso_receive_splits_gro_by_stride()
 
     // a receive buffer with room for four takes the first four of ten 300-byte
     // datagrams and drops the other six, counted
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     fake_gso_queue_receive( 3000, 300, 50, FAKE_GSO_CONTROL_GRO );
     rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 4 );
     for ( int i = 0; i < 4; i++ )
@@ -507,14 +506,14 @@ static void test_client_gso_receive_splits_gro_by_stride()
     rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 0 );
 
     // a refused UDP_GRO probe is the plain tier
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     test_socket.gro_result = -1;
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     rocketnet_unit_check( !rocketnet_client_gso_init_receive( &test_gso, true ) );
     rocketnet_unit_check( test_socket.gro_calls == 1 );
 
     // probe_gro false asks nothing
-    memset( &test_socket, 0, sizeof(test_socket) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     rocketnet_unit_check( !rocketnet_client_gso_init_receive( &test_gso, false ) );
     rocketnet_unit_check( test_socket.gro_calls == 0 );
@@ -523,8 +522,8 @@ REGISTER_UNIT_TEST( test_client_gso_receive_splits_gro_by_stride );
 
 static void test_client_gso_receive_gro_fault_is_counted()
 {
-    memset( &test_socket, 0, sizeof(test_socket) );
-    memset( test_receive_bytes, 0, sizeof(test_receive_bytes) );
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    memset( test_receive_bytes, 0, sizeof( test_receive_bytes ) );
     rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
     rocketnet_unit_check( rocketnet_client_gso_init_receive( &test_gso, true ) );
 

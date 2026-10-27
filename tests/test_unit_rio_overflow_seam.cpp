@@ -12,11 +12,11 @@
 
 #define check rocketnet_unit_check
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 
 // Implemented only by the isolated test-instrumented RIO transport copy.
 bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * packet_counts,
-                                                  int * repost_calls, int * pending_receives, int * guard_hit );
+                                                 int * repost_calls, int * pending_receives, int * guard_hit );
 bool rocketnet_server_rio_test_worker_handoff();
 
 static void test_rio_transport_overflow_seam()

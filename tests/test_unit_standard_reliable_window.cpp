@@ -23,16 +23,14 @@ struct m5_vector_case_t
     uint32_t wire;
 };
 
-static const m5_vector_case_t m5_vector_cases[] =
-{
+static const m5_vector_case_t m5_vector_cases[] = {
     { "m5.reconstruct-at-wrap", 16777215u, 0u },
     { "m5.reconstruct-at-half-range", 8388608u, 0u },
     { "m5.reconstruct-duplicate", 100u, 99u },
     { "m5.reconstruct-stale-copy-at-depth", 7668421u, 0u },
 };
 
-static const rn_standard_vector_t m5_vector_table[] =
-{
+static const rn_standard_vector_t m5_vector_table[] = {
     RN_STANDARD_VECTOR( "m5.reconstruct-at-wrap", "000000000100000000" ),
     RN_STANDARD_VECTOR( "m5.reconstruct-at-half-range", "01" ),
     RN_STANDARD_VECTOR( "m5.reconstruct-duplicate", "01" ),

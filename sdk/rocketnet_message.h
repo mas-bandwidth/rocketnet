@@ -158,7 +158,7 @@ int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, co
 
 int rocketnet_message_writer_add_in_place( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
-#if defined(ROCKETNET_MESSAGE_COPY_TEST_HOOKS)
+#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
 // Test builds only (the unit suite's library, never the release library): the
 // payload copies writer_add has made, from a send store into a frame -- the
 // message-to-packet copy a fitting unreliable send never makes.

@@ -101,7 +101,7 @@ void large_unreliable_sequenced_uses_transport_fragments()
     rocketnet_message_config_t default_config;
     rocketnet_message_default_config( &default_config );
     sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
-                                                                 (int) default_config.max_message_bytes + 1 ) == NULL,
+                                                                (int) default_config.max_message_bytes + 1 ) == NULL,
                                 "configured message maximum refused before enqueue" );
 
     // Five seconds of the test clock at 60 updates a second.

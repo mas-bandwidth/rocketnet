@@ -13,7 +13,7 @@
 #include <string.h>
 #include <string>
 
-#if defined(__linux__)
+#if defined( __linux__ )
 #include <dirent.h>
 #endif
 
@@ -93,7 +93,7 @@ struct process_thread_transport_guard_t
 // platform has no such count, and the thread case then pins nothing there.
 static int no_worker_thread_count()
 {
-#if defined(__linux__)
+#if defined( __linux__ )
     DIR * dir = opendir( "/proc/self/task" );
     if ( !dir )
         return -1;
@@ -113,7 +113,7 @@ static int no_worker_thread_count()
 
 static int public_step_thread_count()
 {
-#if defined(__linux__)
+#if defined( __linux__ )
     DIR * dir = opendir( "/proc/self/task" );
     if ( !dir )
         return -1;

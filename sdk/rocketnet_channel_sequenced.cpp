@@ -86,7 +86,7 @@ static void rn_sequenced_release_in_turn( rn_channels_t * channels, rn_channel_r
 static void rn_sequenced_count( rn_channels_t * channels, int counter )
 {
     if ( channels->region->counters )
-        rocketnet_platform_atomic_add_u64( (volatile uint64_t*) &channels->region->counters->values[counter], 1 );
+        rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &channels->region->counters->values[counter], 1 );
 }
 
 static bool rn_sequenced_room( rn_channels_t * channels, bool reliable )
@@ -105,7 +105,7 @@ static bool rn_sequenced_room( rn_channels_t * channels, bool reliable )
 }
 
 static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t channel, const uint8_t * data, int bytes,
-                                               int code, uint32_t descriptor )
+                                              int code, uint32_t descriptor )
 {
     rn_delivery_t * delivery = &channels->region->deliveries[channels->deliveries++];
     memset( delivery, 0, sizeof( *delivery ) );
@@ -143,15 +143,14 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
 
     // the fragment's own ring span lies inside the ring (code 2's check, unified)
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
-                                      ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) ) )
+                                     ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) ) )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
     const bool last = index + 1 == count;
-    const uint64_t end = base < 0 ? UINT64_MAX : (uint64_t) base * 16 + (uint64_t) ( count - 1 ) * F +
-        ( last ? ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) : 16 );
+    const uint64_t end = base < 0 ? UINT64_MAX : (uint64_t) base * 16 + (uint64_t) ( count - 1 ) * F + ( last ? ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) : 16 );
     if ( base < 0 || end > region->ring_bytes )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
@@ -219,7 +218,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
          !rn_channels_deliver_sequenced( channels, record->channel, record->ordering, record->sequencing ) )
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     *out = *rn_sequenced_delivery( channels, record->channel, region->receive_ring + (uint64_t) base * 16,
-                                    (int) total, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, first_slot );
+                                   (int) total, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, first_slot );
     *hold = RN_DESCRIPTOR_NONE;
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
@@ -348,7 +347,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         const uint32_t gap = ( ordering - held_ordering ) & ROCKETNET_MESSAGE_U24_MASK;
         const uint32_t sequence_gap = ( sequencing - held_sequencing ) & ROCKETNET_MESSAGE_U24_MASK;
         const bool continuation = reliable && record->block && held_reliable && gap == 0 && sequence_gap == 0 &&
-            region->receive_descriptors[held_slot].block_count > 0;
+                                  region->receive_descriptors[held_slot].block_count > 0;
         if ( gap >= ( 1u << 23 ) || ( gap == 0 && ( sequence_gap >= ( 1u << 23 ) || ( sequence_gap == 0 && !continuation ) ) ) )
         {
             if ( reliable )
@@ -422,8 +421,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     if ( slot == RN_DESCRIPTOR_NONE )
         return false;
     const bool reliable = rn_sequenced_reliable_hold( slot );
-    rn_receive_descriptor_t * descriptor = reliable ?
-        &channels->region->receive_descriptors[slot & ~RN_SEQUENCED_RELIABLE_HOLD] : NULL;
+    rn_receive_descriptor_t * descriptor = reliable ? &channels->region->receive_descriptors[slot & ~RN_SEQUENCED_RELIABLE_HOLD] : NULL;
     rn_sequenced_hold_t * hold = reliable ? NULL : &channels->region->sequenced_messages_held[slot];
     const uint32_t ordering = reliable ? descriptor->ordering : hold->ordering;
     const uint32_t sequencing = reliable ? descriptor->sequencing : hold->sequencing;
