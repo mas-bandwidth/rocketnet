@@ -118,8 +118,9 @@ static void test_platform_init_failed_reached()
 {
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
 
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
-    fake = *rocketnet_platform_priority_calls_real();
+    fake = *saved;
     fake.platform_start = refuse_platform_start;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
@@ -127,7 +128,7 @@ static void test_platform_init_failed_reached()
     check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_PLATFORM_INIT_FAILED );
 
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    rocketnet_platform_set_priority_calls_for_testing( saved );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_platform_init_failed_reached );
@@ -138,8 +139,9 @@ static void test_timer_create_failed_reached()
     refuse_waitable_timer_calls = 0;
     memset( refuse_waitable_timer_flags, 0, sizeof( refuse_waitable_timer_flags ) );
 
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
-    fake = *rocketnet_platform_priority_calls_real();
+    fake = *saved;
     fake.create_waitable_timer = refuse_waitable_timer;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
@@ -153,7 +155,7 @@ static void test_timer_create_failed_reached()
     check( refuse_waitable_timer_calls == 2 );
     check( refuse_waitable_timer_flags[1] == 0x00000002u );
 
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    rocketnet_platform_set_priority_calls_for_testing( saved );
 }
 REGISTER_UNIT_TEST( test_timer_create_failed_reached );
 
@@ -177,15 +179,16 @@ static void test_client_mutex_create_failed_reached()
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
-    fake = *rocketnet_platform_priority_calls_real();
+    fake = *saved;
     fake.mutex_init = refuse_mutex;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
     const enum rocketnet_status_t status = rocketnet_client_connect( client, token );
     check( status == ROCKETNET_STATUS_MUTEX_CREATE_FAILED );
 
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    rocketnet_platform_set_priority_calls_for_testing( saved );
 
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
