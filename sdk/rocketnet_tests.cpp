@@ -7165,26 +7165,15 @@ void rocketnet_test_frame_sync_guard()
     rocketnet_check( ewma < 200000.0 );
 }
 
-void rocketnet_test_frame_sync_lifecycle()
+// the frame-rate refusals return before any allocation or timer. A create
+// that succeeds creates the real Windows high-resolution waitable timer, so
+// the successful create, its first stats and its destroy are the functional
+// case test_frame_sync_lifecycle (functional/platform_primitives.cpp).
+void rocketnet_test_frame_sync_create_refuses_invalid_rates()
 {
     rocketnet_check( rocketnet_frame_sync_create( NULL, 0.0 ) == NULL );
     rocketnet_check( rocketnet_frame_sync_create( NULL, -60.0 ) == NULL );
     rocketnet_check( rocketnet_frame_sync_create( NULL, 1000000.0 ) == NULL );
-
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
-    rocketnet_check( frame_sync );
-
-    struct rocketnet_frame_sync_stats_t stats;
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 0 );
-    rocketnet_check( stats.dropped_frames == 0 );
-    rocketnet_check( stats.priority_held == 0 );                    // taken at the first wait, not before
-    rocketnet_check( stats.spinning == 0 );
-    rocketnet_check( stats.wakeup_error_seconds == 0.0 );
-    rocketnet_check( stats.guard_seconds > 0.0 );
-    rocketnet_check( stats.guard_seconds <= ( 1.0 / 60.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
-
-    rocketnet_frame_sync_destroy( frame_sync );
 }
 
 #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
@@ -14727,7 +14716,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] =
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },
-    { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle },
+    { "test_frame_sync_create_refuses_invalid_rates", rocketnet_test_frame_sync_create_refuses_invalid_rates },
 #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS )
     { "test_frame_sync_timebase_before_create", rocketnet_test_frame_sync_timebase_before_create },
 #endif

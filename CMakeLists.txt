@@ -1129,6 +1129,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(WIN32)
         target_compile_definitions(functional PRIVATE ROCKETNET_WINDOWS_LIFECYCLE_TRACK=1)
     endif()
+    # the bundled-RNG descriptor case runs only on the pinned vendor sodium
+    if(ROCKETNET_USE_SYSTEM_SODIUM)
+        target_compile_definitions(functional PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
+    endif()
     set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
     target_compile_features(functional PRIVATE cxx_std_11)
     add_dependencies(functional test)

@@ -24,6 +24,11 @@
 #include <chrono>
 #include <string>
 
+#if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#include <libproc.h>
+#include <unistd.h>
+#endif
+
 static void rocketnet_platform_primitives_check_handler( const char * condition, const char * function, const char * file, int line )
 {
     printf( "check failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
@@ -138,6 +143,224 @@ void rocketnet_test_frame_sync_wait()
 #endif
 #endif
 }
+
+// The successful create, first stats and destroy of a frame sync. Moved from
+// the unit suite's frame sync lifecycle case: a create that succeeds creates
+// the real Windows high-resolution waitable timer, and destroy closes it. The
+// frame-rate refusals that return before any timer stay unit coverage
+// (test_frame_sync_create_refuses_invalid_rates).
+void rocketnet_test_frame_sync_lifecycle()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_track_begin();
+    rocketnet_lifecycle_resources_t before_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
+#endif
+
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
+    rocketnet_check( frame_sync );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const HANDLE timer_handle = frame_sync->waitable_timer;
+    rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
+    rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
+#endif
+
+    struct rocketnet_frame_sync_stats_t stats;
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == 0 );
+    rocketnet_check( stats.dropped_frames == 0 );
+    rocketnet_check( stats.priority_held == 0 );                    // taken at the first wait, not before
+    rocketnet_check( stats.spinning == 0 );
+    rocketnet_check( stats.wakeup_error_seconds == 0.0 );
+    rocketnet_check( stats.guard_seconds > 0.0 );
+    rocketnet_check( stats.guard_seconds <= ( 1.0 / 60.0 ) / ROCKETNET_FRAME_SYNC_GUARD_CAP_DIVISOR + 1e-9 );
+
+    rocketnet_frame_sync_destroy( frame_sync );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_resources_t after_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
+    rocketnet_check( after_resources.errors == 0 );
+    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( after_resources.live_count == before_resources.live_count );
+    rocketnet_lifecycle_track_end();
+#endif
+#endif
+}
+
+// The structured create's success exit. Moved from the unit lifecycle case
+// test_lifecycle_ex_reports_every_status: a create that succeeds creates the
+// real Windows high-resolution waitable timer. The library runs on a counting
+// allocator given in context, as there, so the one frame sync allocation is
+// seen to be released by destroy and nothing is left at term.
+
+struct rocketnet_frame_sync_create_ex_allocator_t
+{
+    int live;
+    int calls;
+};
+
+static rocketnet_frame_sync_create_ex_allocator_t rocketnet_frame_sync_create_ex_allocator;
+
+static void * rocketnet_frame_sync_create_ex_malloc( void * context, size_t bytes )
+{
+    rocketnet_frame_sync_create_ex_allocator_t * state = (rocketnet_frame_sync_create_ex_allocator_t *) context;
+    rocketnet_check( state == &rocketnet_frame_sync_create_ex_allocator );
+    ++state->calls;
+    void * p = malloc( bytes );
+    if ( p )
+        ++state->live;
+    return p;
+}
+
+static void rocketnet_frame_sync_create_ex_free( void * context, void * pointer )
+{
+    if ( !pointer )
+        return;
+    rocketnet_frame_sync_create_ex_allocator_t * state = (rocketnet_frame_sync_create_ex_allocator_t *) context;
+    rocketnet_check( state == &rocketnet_frame_sync_create_ex_allocator );
+    rocketnet_check( state->live > 0 );
+    --state->live;
+    free( pointer );
+}
+
+void rocketnet_test_frame_sync_create_ex_success_status()
+{
+    memset( &rocketnet_frame_sync_create_ex_allocator, 0, sizeof( rocketnet_frame_sync_create_ex_allocator ) );
+    rocketnet_frame_sync_create_ex_allocator_t * state = &rocketnet_frame_sync_create_ex_allocator;
+
+    // the worker starts the process initialized; restart it on the counting
+    // allocator with that allocator's state as context
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    int status = -1;
+    rocketnet_check( rocketnet_init_ex( state, rocketnet_frame_sync_create_ex_malloc, rocketnet_frame_sync_create_ex_free, &status ) );
+    rocketnet_check( status == ROCKETNET_STATUS_OK );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_track_begin();
+    rocketnet_lifecycle_resources_t before_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
+#endif
+
+    const int live_before = state->live;
+    const int calls_before = state->calls;
+
+    // frame sync success
+    status = -1;
+    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( state, 60.0, &status );
+    rocketnet_check( frame_sync != NULL );
+    rocketnet_check( status == ROCKETNET_STATUS_OK );
+    rocketnet_check( state->calls == calls_before + 1 );
+    rocketnet_check( state->live == live_before + 1 );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    const HANDLE timer_handle = frame_sync->waitable_timer;
+    rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
+    rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
+#endif
+
+    rocketnet_frame_sync_destroy( frame_sync );
+    rocketnet_check( state->live == live_before );
+
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
+#if defined(ROCKETNET_WINDOWS_LIFECYCLE_TRACK)
+    rocketnet_lifecycle_resources_t after_resources;
+    rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
+    rocketnet_check( after_resources.errors == 0 );
+    rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
+    rocketnet_check( after_resources.live_count == before_resources.live_count );
+    rocketnet_lifecycle_track_end();
+#endif
+#endif
+
+    // a clean term is OK and leaves no allocation behind
+    rocketnet_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    rocketnet_check( state->live == 0 );
+
+    // the default allocator again, for the worker's own term
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+#if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
+
+// The bundled RNG's descriptor lifecycle on macOS. Moved from the unit suite
+// (tests/test_unit_rng_lifecycle.cpp): it reads the live process's open
+// descriptors through proc_pidinfo across real init, random, keygen and term
+// cycles, which is OS state. The system-sodium case, which installs a fake RNG
+// and reads nothing from the OS, stays a unit case.
+
+static long rng_lifecycle_fd_count()
+{
+    const int bytes = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, NULL, 0);
+    if (bytes <= 0) return -1;
+    void * entries = malloc((size_t)bytes);
+    if (!entries) return -1;
+    const int used = proc_pidinfo(getpid(), PROC_PIDLISTFDS, 0, entries, bytes);
+    free(entries);
+    return used < 0 ? -1 : (long)(used / (int)PROC_PIDLISTFD_SIZE);
+}
+
+void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
+{
+    // The functional worker begins initialized. Establish the uninitialized
+    // baseline after the first completed term, then exercise several distinct
+    // cycles.
+    rocketnet_check(rocketnet_term() == ROCKETNET_STATUS_OK);
+    const long baseline = rng_lifecycle_fd_count();
+    rocketnet_check(baseline >= 0);
+
+    // sodium_init is one-time. Subsequent empty cycles must neither reopen
+    // the RNG descriptor nor retain any other descriptor at termination.
+    for (int cycle = 0; cycle < 3; ++cycle)
+    {
+        rocketnet_check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
+        rocketnet_check(rng_lifecycle_fd_count() == baseline);
+        rocketnet_check(rocketnet_term() == ROCKETNET_STATUS_OK);
+        rocketnet_check(rng_lifecycle_fd_count() == baseline);
+    }
+
+    for (int cycle = 0; cycle < 3; ++cycle)
+    {
+        rocketnet_check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
+        uint8_t random_data[32];
+        rocketnet_random_bytes(random_data, sizeof(random_data));
+        uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+        uint8_t secret_key[32];     // an X25519 server secret, present in production builds too
+        rocketnet_check(rocketnet_generate_server_keypair(public_key, secret_key) == ROCKETNET_STATUS_OK);
+        // The old bug kept /dev/urandom open across term. If the first term
+        // failed to close it, baseline already includes that descriptor and
+        // this active-cycle assertion fails rather than masking the leak.
+        rocketnet_check(rng_lifecycle_fd_count() == baseline + 1);
+
+        if (cycle == 1)
+        {
+            rocketnet_client_config_t config;
+            rocketnet_check(rocketnet_client_default_config(&config) == ROCKETNET_STATUS_OK);
+            config.max_fragmented_messages = 1;
+            rocketnet_status_t status = ROCKETNET_STATUS_OK;
+            rocketnet_client_t * client = rocketnet_client_create(NULL, &config, &status);
+            rocketnet_check(client != NULL && status == ROCKETNET_STATUS_OK);
+            const long with_client = rng_lifecycle_fd_count();
+            rocketnet_check(with_client >= 0);
+            rocketnet_check(rocketnet_term() == ROCKETNET_STATUS_LIVE_ALLOCATIONS);
+            rocketnet_check(rng_lifecycle_fd_count() == with_client);
+            rocketnet_client_destroy(client);
+        }
+
+        rocketnet_check(rocketnet_term() == ROCKETNET_STATUS_OK);
+        rocketnet_check(rng_lifecycle_fd_count() == baseline);
+    }
+    // Restore the worker's initialized state for its ordinary final term.
+    rocketnet_check(rocketnet_init(NULL, NULL, NULL) == ROCKETNET_STATUS_OK);
+}
+
+#endif // #if defined(__APPLE__) && !defined(ROCKETNET_USE_SYSTEM_SODIUM)
 
 #if ROCKETNET_DEV
 
