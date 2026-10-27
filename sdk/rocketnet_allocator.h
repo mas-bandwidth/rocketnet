@@ -396,7 +396,7 @@ struct rn_region_t
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t span_ticket_next;          // the next span allocation ticket; live spans order by ticket, not by a linked list
-    uint32_t schedule_epoch;            // bumped on every carve, never 0; names the connection that owns queue entries
+    uint32_t schedule_epoch;            // 1 after every carve; names this connection's queue entries
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 and RN_ENQUEUE_HOLE are never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;

@@ -538,8 +538,9 @@ void rn_region_carve( rn_region_t * region )
     // nothing taken, no descriptor written. A take initializes its descriptor
     // whole, preserving its generation tag and any live stack slot it holds.
     // Clear schedule tickets on the descriptors this connection took before
-    // the fresh range is forgotten. Generation stays, so the next take still
-    // bumps it; schedule_epoch below makes a stale (generation, old epoch) miss.
+    // the fresh range is forgotten. A later take off the free stack still
+    // bumps generation. A carve restarts the epoch at 1 and drops the links,
+    // so a reused slot's queue bookkeeping matches a slot carved once.
     for ( uint32_t i = 0; i < region->descriptors_fresh; i++ )
     {
         region->send_descriptors[i].enqueue_ticket = 0;
@@ -586,9 +587,7 @@ void rn_region_carve( rn_region_t * region )
     region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     region->send_room_armed = 1;
 
-    region->schedule_epoch++;
-    if ( region->schedule_epoch == 0 )
-        region->schedule_epoch = 1;
+    region->schedule_epoch = 1;
     region->schedule_ticket_next = 1;
 
     region->carves++;

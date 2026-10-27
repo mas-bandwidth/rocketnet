@@ -98,8 +98,10 @@ is delivered or the connection reaches its timeout.
 
 Reliable resend, the per-channel descriptor FIFO, ready-channel membership, and
 the unreliable endpoint FIFO name an entry by descriptor generation and the
-connection's schedule epoch (`tla/RNChannelQueues.tla`). ACK, cancel, and
-expiry remove only that generation. A resend slot is in at most one FIFO;
+connection's schedule epoch (`tla/RNChannelQueues.tla`). A carve restarts that
+epoch at 1 and clears tickets, flags, and resend links, so a reused slot matches
+a slot carved once. Inside the connection, freeing a descriptor bumps its
+generation, and ACK, cancel, and expiry remove only the named generation. A resend slot is in at most one FIFO;
 capacity is W, unlink is O(1), and an acked resend hole stays linked so a walk
 still counts it. A channel or unreliable cancel of an interior entry marks a
 hole in O(1). Holes compact in one pass when more than 64 are outstanding, or
