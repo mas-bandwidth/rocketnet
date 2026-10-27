@@ -59,7 +59,6 @@ set(ROCKETNET_TEST_HOOK_MACROS
     ROCKETNET_ACK_COST_TEST_HOOKS
     ROCKETNET_ACK_STATS_TEST_HOOKS
     ROCKETNET_BLOCK_COST_TEST_HOOKS
-    ROCKETNET_FILTER_EPOCH_TEST_HOOKS
     ROCKETNET_LINK_SIMULATOR_TEST_HOOKS
     ROCKETNET_MESSAGE_COPY_TEST_HOOKS
     ROCKETNET_SECRET_WIPE_TEST_HOOKS
@@ -69,7 +68,6 @@ set(ROCKETNET_TEST_HOOK_MACROS
     ROCKETNET_RIO_OVERFLOW_TEST_HOOKS
     ROCKETNET_XDP_STAGING_TEST_HOOKS
     ROCKETNET_ENVIRONMENT_TEST_HOOKS
-    ROCKETNET_STATS_MANUAL_TEST_HOOKS
     ROCKETNET_SEND_ERROR_TEST_HOOKS
     ROCKETNET_LOOPBACK_TEST_HOOKS
     ROCKETNET_MSGX_TEST_HOOKS
@@ -402,7 +400,7 @@ if(ROCKETNET_BUILD_TESTS AND ROCKETNET_DEV)
     # ROCKETNET_TEST_SEAMS (sdk/rocketnet_test_seams.h) is PUBLIC so the suite's
     # own sources see the seams this library carries.
     target_compile_definitions(rocketnet_test_hooks PUBLIC ROCKETNET_TEST_SEAMS=1 ROCKETNET_ENVIRONMENT_TEST_HOOKS=1)
-    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
+    target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_ACK_VISIT_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1 ROCKETNET_PORTABLE_TX_TEST_HOOKS=1)
     set(rocketnet_test_hook_targets rocketnet_test_hooks)
 endif()
 add_library(RocketNet::rocketnet ALIAS rocketnet)
@@ -705,14 +703,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_xdp_frame.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES})
-        set(ROCKETNET_DEV0_REFUSALS_SHIM "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_dev0_refusals_shim.h")
-        file(GENERATE OUTPUT "${ROCKETNET_DEV0_REFUSALS_SHIM}" CONTENT
-"inline void rocketnet_development_values_refused_test_enable( int enabled ) { (void)enabled; }\n")
-        if(MSVC AND NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-            set_property(SOURCE tests/test_unit_production_refusals.cpp APPEND PROPERTY COMPILE_OPTIONS "/FI${ROCKETNET_DEV0_REFUSALS_SHIM}")
-        else()
-            set_property(SOURCE tests/test_unit_production_refusals.cpp APPEND PROPERTY COMPILE_OPTIONS "-include" "${ROCKETNET_DEV0_REFUSALS_SHIM}")
-        endif()
     endif()
     # test_unit_driver_loopback.cpp compiles sdk/rocketnet_server_transport.cpp
     # into the suite, so its object goes first on the link line. lld-link loads
@@ -750,7 +740,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(ROCKETNET_DEV)
         target_compile_definitions(rocketnet_test_hooks PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_BLOCK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
         target_compile_definitions(test PRIVATE ROCKETNET_ACK_COST_TEST_HOOKS=1 ROCKETNET_BLOCK_COST_TEST_HOOKS=1 ROCKETNET_LOOPBACK_TEST_HOOKS=1)
-        target_compile_definitions(test PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_FILTER_EPOCH_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
+        target_compile_definitions(test PRIVATE ROCKETNET_ACK_STATS_TEST_HOOKS=1 ROCKETNET_XDP_STAGING_TEST_HOOKS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_MESSAGE_COPY_TEST_HOOKS=1 ROCKETNET_SECRET_WIPE_TEST_HOOKS=1 ROCKETNET_URING_REAP_TEST_HOOKS=1 ROCKETNET_RECEIVE_TEST_HOOKS=1)
     endif()
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
@@ -874,7 +864,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # production build), the link simulator's development switch, and the
         # server's ack stats worker stepped inline (no OS thread), as in test_wide
         target_compile_definitions(${rocketnet_stress_target} PRIVATE ROCKETNET_MAX_CHANNELS=${rocketnet_stress_channels}
-            ROCKETNET_TEST_SEAMS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1 ROCKETNET_STATS_MANUAL_TEST_HOOKS=1
+            ROCKETNET_TEST_SEAMS=1 ROCKETNET_LINK_SIMULATOR_TEST_HOOKS=1
             $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
         target_include_directories(${rocketnet_stress_target} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/sdk"

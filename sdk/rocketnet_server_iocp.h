@@ -116,7 +116,6 @@ void rocketnet_server_iocp_test_force_flags( int flags );
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 // TX tests can hold worker service or the short publication mutex separately.
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
-void rocketnet_server_iocp_test_hold_tx_publication( rocketnet_server_iocp_t * iocp, bool hold );
 int rocketnet_server_iocp_test_ready_tx_banks( rocketnet_server_iocp_t * iocp );
 // Published banks are fully serviced; outstanding kernel sends are separate.
 bool rocketnet_server_iocp_test_tx_idle( rocketnet_server_iocp_t * iocp );

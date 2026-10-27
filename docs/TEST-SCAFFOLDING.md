@@ -15,33 +15,31 @@ This document records the complete inventory of development and test-only scaffo
 
 ## 1. Compiler Definitions and Preprocessor Guard Inventory (`sdk/rocketnet_test_seams.h`)
 
-Every test-scaffolding macro in the repository is normalized in `sdk/rocketnet_test_seams.h`. When `ROCKETNET_DEV=0`, enabling any of the 24 macros below triggers an immediate `#error "<MACRO> requires ROCKETNET_DEV=1"` in `sdk/rocketnet_test_seams.h` and a `message(FATAL_ERROR ...)` at CMake configure time:
+Every test-scaffolding macro in the repository is normalized in `sdk/rocketnet_test_seams.h`. When `ROCKETNET_DEV=0`, enabling any of the 22 macros below triggers an immediate `#error "<MACRO> requires ROCKETNET_DEV=1"` in `sdk/rocketnet_test_seams.h` and a `message(FATAL_ERROR ...)` at CMake configure time:
 
 | Macro | Default | Scope / Targets (`ROCKETNET_DEV=1` only) | Implementation Files & Guarded Declarations / State / Branches |
 | --- | --- | --- | --- |
-| `ROCKETNET_TEST_SEAMS` | `0` | `rocketnet_test_hooks`, `test`, `test_wide`, `test_channels_1024`, `test_channels_10k` | Enables internal unit-test seams across `sdk/rocketnet.cpp`, `sdk/rocketnet_client_io.cpp`, `sdk/rocketnet_client_slots.h`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_driver_loopback.cpp`, `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_tests.cpp`. |
-| `ROCKETNET_ACK_VISIT_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test`, `test_wide` | `sdk/rocketnet_ack.h`, `sdk/rocketnet_ack.cpp`: `extern uint64_t g_ack_visit_count` and per-span increment in `rocketnet_ack_apply`. |
-| `ROCKETNET_ACK_COST_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_ack.h`, `sdk/rocketnet_ack.cpp`: `rocketnet_ack_span_cost_reset_for_test`, `rocketnet_ack_span_cost_last_words_scanned_for_test`, `rocketnet_ack_span_cost_total_words_scanned_for_test`, and word-scan counters in `rocketnet_ack_apply`. |
-| `ROCKETNET_ACK_STATS_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_ack.h`, `sdk/rocketnet_ack.cpp`: `rocketnet_ack_clear_pending_stats_for_test`, `rocketnet_ack_pending_stats_for_test`. |
-| `ROCKETNET_BLOCK_COST_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_reliable_message.h`, `sdk/rocketnet_reliable_message.cpp`: `rn_block_write_ready_scan_reset_for_test`, `rn_block_write_ready_last_slots_scanned_for_test`, `rn_block_write_ready_total_slots_scanned_for_test`. |
-| `ROCKETNET_FILTER_EPOCH_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_filter_epochs.h`, `sdk/rocketnet_filter_epochs.cpp`: `rocketnet_filter_epochs_check_invariants_for_test`. |
-| `ROCKETNET_LINK_SIMULATOR_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test`, `test_wide`, `test_channels_1024`, `test_channels_10k` | `sdk/rocketnet.cpp`, `sdk/rocketnet_layers.h`: `rocketnet_link_simulator_set_development_for_test`. |
-| `ROCKETNET_MESSAGE_COPY_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_message.h`, `sdk/rocketnet_message.cpp`: `rn_message_payload_copy_count` and increment on unreliable payload copy. |
-| `ROCKETNET_SECRET_WIPE_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_secret_wipe.h`, `sdk/rocketnet_secret_wipe.cpp`: `rocketnet_secret_wipe_calls_for_test`, `rocketnet_secret_wipe_bytes_for_test`, `rocketnet_secret_wipe_reset_for_test`. |
-| `ROCKETNET_URING_REAP_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_server_uring_linux.h`, `sdk/rocketnet_server_uring_linux.cpp`: fake CQE source, reap budget, and multishot rearm test hooks (`*_for_test`). |
-| `ROCKETNET_RECEIVE_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_portable_rx.h`, `sdk/rocketnet_platform.cpp`: `rocketnet_portable_rx_test_*` and `rocketnet_platform_socket_set_receive_hook`. |
-| `ROCKETNET_PORTABLE_TX_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_portable_tx.h`, `sdk/rocketnet_platform.cpp`: `rocketnet_portable_tx_test_*` and `g_portable_tx_test_*` fault hooks. |
-| `ROCKETNET_RIO_OVERFLOW_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` (Windows `DEV=1`) | `sdk/rocketnet_server_rio_windows.h`, `sdk/rocketnet_server_rio_windows.cpp`: `rocketnet_server_rio_overflow_seam_*_for_test`. |
-| `ROCKETNET_XDP_STAGING_TEST_HOOKS` | `0` | `test` | `sdk/rocketnet_xdp_tx_staging.h`: `rocketnet_xdp_tx_staging_check_invariants_for_test`. |
-| `ROCKETNET_ENVIRONMENT_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test_wide` | `sdk/rocketnet_config_env.h`, `sdk/rocketnet_config_env.cpp`: in-memory environment table (`rocketnet_test_env_*_for_test`). |
-| `ROCKETNET_STATS_MANUAL_TEST_HOOKS` | `0` | `test_channels_1024`, `test_channels_10k` | `sdk/rocketnet_layers.h`, `sdk/rocketnet_server_transport.cpp`: `rocketnet_server_transport_set_manual_stats_worker_for_test`, `rocketnet_server_transport_step_stats_for_test`. |
-| `ROCKETNET_SEND_ERROR_TEST_HOOKS` | `0` | `rocketnet_dev`, `rocketnet_shared_dev`, `functional` | `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`: `rocketnet_platform_socket_send_error_hook_t`, `rocketnet_platform_socket_set_send_error_hook_for_test`. |
-| `ROCKETNET_LOOPBACK_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_driver_loopback.h`, `sdk/rocketnet_driver_loopback.cpp`: `rocketnet_driver_loopback_drop_next_send_for_test`, `rocketnet_driver_loopback_clear_for_test`. |
-| `ROCKETNET_MSGX_TEST_HOOKS` | `0` | `tests/test_msgx.cpp` (macOS) | `sdk/rocketnet_server_msgx_darwin.cpp`, `sdk/rocketnet_client_msgx_darwin.cpp`: Darwin `sendmsg_x` / `recvmsg_x` fault and clamp hooks. |
-| `ROCKETNET_WINDOWS_LIFECYCLE_TRACK` | `0` | `rocketnet_dev`, `functional` (Windows) | `sdk/rocketnet_windows_lifecycle_ledger.h`, `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_server_iocp_windows.cpp`, `sdk/rocketnet_server_rio_windows.cpp`: Windows handle/thread/socket lifecycle ledger. |
-| `ROCKETNET_IOCP_TESTS` | `0` | `test_iocp` (Windows) | `sdk/rocketnet_server_iocp_windows.h`, `sdk/rocketnet_server_iocp_windows.cpp`: IOCP fault-injection counters and hooks (`rocketnet_server_iocp_test_*`). |
-| `ROCKETNET_RIO_TESTS` | `0` | `test_iocp` (Windows) | `sdk/rocketnet_server_rio_windows.h`, `sdk/rocketnet_server_rio_windows.cpp`: RIO fault-injection counters and hooks (`rocketnet_server_rio_test_*`). |
-| `ROCKETNET_XDP_TESTS` | `0` | `test_xdp` (Linux) | `sdk/rocketnet_server_socket_linux.h`, `sdk/rocketnet_server_socket_linux.cpp`, `sdk/rocketnet_gateway_netlink_linux.cpp`: XDP/netlink test hooks (`rocketnet_xdp_test_*`). |
+| `ROCKETNET_TEST_SEAMS` | `1` when `ROCKETNET_DEV=1`, `0` when `ROCKETNET_DEV=0` (see `sdk/rocketnet_test_seams.h`) | `rocketnet_test_hooks`, `test`, `test_wide`, `test_channels_1024`, `test_channels_10k` | `sdk/rocketnet_api.cpp`, `sdk/rocketnet_client_protocol.cpp`, `sdk/rocketnet_client_slots.h`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`: internal unit-test seams. |
+| `ROCKETNET_ACK_VISIT_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test`, `test_wide` | `sdk/rocketnet_ack.cpp`: ACK visit counters. |
+| `ROCKETNET_ACK_COST_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_allocator.h`, `sdk/rocketnet_window_ack.h`, `sdk/rocketnet_window_ack.cpp`: ACK span-cost counters. |
+| `ROCKETNET_ACK_STATS_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_client_transport.cpp`: ACK pending-stats witnesses. |
+| `ROCKETNET_BLOCK_COST_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_channel.h`, `sdk/rocketnet_channel_reliable.cpp`: reliable-block scan-cost counters. |
+| `ROCKETNET_LINK_SIMULATOR_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test`, `test_wide`, `test_channels_1024`, `test_channels_10k` | `sdk/rocketnet_api.cpp`, `sdk/rocketnet_config.cpp`, `sdk/rocketnet_config.h`: link-simulator test switch. |
+| `ROCKETNET_MESSAGE_COPY_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_message.h`, `sdk/rocketnet_message.cpp`: payload-copy counters. |
+| `ROCKETNET_SECRET_WIPE_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_config.cpp`, `sdk/rocketnet_connect_token.cpp`: secret-wipe witnesses. |
+| `ROCKETNET_URING_REAP_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_server_uring.h`, `sdk/rocketnet_server_uring_linux.cpp`: io_uring reap test hooks. |
+| `ROCKETNET_RECEIVE_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`: receive hooks. |
+| `ROCKETNET_PORTABLE_TX_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_driver_builtin.cpp`: portable transmit fault hooks. |
+| `ROCKETNET_RIO_OVERFLOW_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` (Windows `DEV=1`) | `sdk/rocketnet_server_rio_windows.cpp`: RIO completion-overflow seam. |
+| `ROCKETNET_XDP_STAGING_TEST_HOOKS` | `0` | `test` | `sdk/rocketnet_server_transport.cpp`: XDP transmit-staging invariant checks. |
+| `ROCKETNET_ENVIRONMENT_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test_wide` | `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`: in-memory environment table for tests. |
+| `ROCKETNET_SEND_ERROR_TEST_HOOKS` | `0` | `rocketnet_dev`, `rocketnet_shared_dev`, `functional` | `sdk/rocketnet_platform.h`, `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_client_gso.h`, `sdk/rocketnet_server_gso.h`: send-error hooks. |
+| `ROCKETNET_LOOPBACK_TEST_HOOKS` | `0` | `rocketnet_test_hooks`, `test` | `sdk/rocketnet_driver_loopback.h`, `sdk/rocketnet_driver_loopback.cpp`: loopback fault hooks. |
+| `ROCKETNET_MSGX_TEST_HOOKS` | `0` | `tests/test_msgx.cpp` (macOS) | `sdk/rocketnet_platform.cpp`: Darwin `sendmsg_x` / `recvmsg_x` fault and clamp hooks. |
+| `ROCKETNET_WINDOWS_LIFECYCLE_TRACK` | `0` | `rocketnet_dev`, `functional` (Windows) | `sdk/rocketnet_platform.cpp`, `sdk/rocketnet_server_iocp_windows.cpp`, `sdk/rocketnet_server_rio_windows.cpp`: Windows handle/thread/socket lifecycle tracking. |
+| `ROCKETNET_IOCP_TESTS` | `0` | `test_iocp` (Windows) | `sdk/rocketnet_server_iocp.h`, `sdk/rocketnet_server_iocp_windows.cpp`: IOCP fault-injection counters and hooks. |
+| `ROCKETNET_RIO_TESTS` | `0` | `test_iocp` (Windows) | `sdk/rocketnet_server_rio.h`, `sdk/rocketnet_server_rio_windows.cpp`: RIO fault-injection counters and hooks. |
+| `ROCKETNET_XDP_TESTS` | `0` | `test_xdp` (Linux) | `sdk/rocketnet_server_socket_linux.cpp`, `sdk/rocketnet_gateway_netlink_linux.cpp`: XDP/netlink test hooks. |
 | `ROCKETNET_TEST_CLOCK_WRAP` | `0` | `tests/test_unit_endpoint.cpp` (Linux `DEV=1`) | `tests/test_unit_endpoint.cpp`: GNU ld `--wrap=rocketnet_platform_time` clock-read counter wrapper. |
 
 ---
@@ -71,7 +69,7 @@ Every test-scaffolding macro in the repository is normalized in `sdk/rocketnet_t
      - `struct rocketnet_reset_member_t`, `ROCKETNET_RESET_MEMBER`, `rocketnet_reset_align_up`, and `rocketnet_reset_inventory_matches` (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_connection_reset.cpp`).
      - `rocketnet_client_connection_reset_inventory_matches_for_test`, `rocketnet_client_transport_connection_reset_inventory_matches_for_test`, `rocketnet_server_connection_reset_inventory_matches_for_test` (`sdk/rocketnet_connection_reset.h`, `sdk/rocketnet_connection_reset.cpp`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`).
 
-3. **Client and Server Transports, Link Simulator, and Session Seams (`sdk/rocketnet.cpp`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_client_io.cpp`, `sdk/rocketnet_client_slots.h`, `sdk/rocketnet_network_simulator.h`, `sdk/rocketnet_network_simulator.cpp`)**:
+3. **Client and Server Transports, Link Simulator, and Session Seams (`sdk/rocketnet.cpp`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`, `sdk/rocketnet_client_slots.h`, `sdk/rocketnet_network_simulator.h`, `sdk/rocketnet_network_simulator.cpp`)**:
    - **Guard `#if ROCKETNET_DEV`**:
      - In-memory link simulator (`rocketnet_network_simulator_*` in `sdk/rocketnet_network_simulator.cpp` and `sdk/rocketnet.cpp`).
      - `rocketnet_dev_session_sequence_start` (`sdk/rocketnet_layers.h`, `sdk/rocketnet_client_transport.cpp`, `sdk/rocketnet_server_transport.cpp`).
@@ -79,21 +77,19 @@ Every test-scaffolding macro in the repository is normalized in `sdk/rocketnet_t
      - Step-driven client transport (`rocketnet_client_create_step_driven_at_timestamp`, `rocketnet_client_create_testing`, `rocketnet_client_step_context_t`, `ROCKETNET_CLIENT_STEP_DRIVEN`).
      - `rocketnet_client_slot_handle_t` generation-checked slot helpers (`sdk/rocketnet_client_slots.h`).
    - **Guard `#if ROCKETNET_TEST_SEAMS` (requires `ROCKETNET_DEV=1`)**:
-     - `rocketnet_development_values_refused_test_enable` (`sdk/rocketnet.cpp`).
      - `rocketnet_client_transport_set_memory_plan_seam_for_test`, `rocketnet_client_transport_clear_memory_plan_seam_for_test` (`sdk/rocketnet_client_transport.cpp`).
      - `rocketnet_server_transport_set_writer_fault_for_test`, `rocketnet_server_transport_force_send_batch_refusal_for_test` (`sdk/rocketnet_server_transport.cpp`).
-     - `rocketnet_client_io_set_Hooks_for_test` (`sdk/rocketnet_client_io.cpp`).
 
 ### 2.2 Platform-Specific Scaffolding (Linux, macOS, Windows)
 
-1. **Linux (`sdk/rocketnet_server_uring_linux.*`, `sdk/rocketnet_server_socket_linux.*`, `sdk/rocketnet_gateway_netlink_linux.cpp`, `sdk/rocketnet_xdp_tx_staging.h`)**:
+1. **Linux (`sdk/rocketnet_server_uring_linux.cpp`, `sdk/rocketnet_server_socket_linux.cpp`, `sdk/rocketnet_gateway_netlink_linux.cpp`)**:
    - `ROCKETNET_URING_REAP_TEST_HOOKS`: fake io_uring CQE source and multishot rearm counters.
    - `ROCKETNET_XDP_TESTS`: AF_XDP socket/UMEM/netlink fault injection in `test_xdp` (compiled with `rocketnet_dev` definitions).
    - `ROCKETNET_XDP_STAGING_TEST_HOOKS`: TX staging invariant checker in `test`.
    - `ROCKETNET_TEST_CLOCK_WRAP`: linker `--wrap=rocketnet_platform_time` in `test` (`DEV=1` only).
-2. **macOS (`sdk/rocketnet_server_msgx_darwin.cpp`, `sdk/rocketnet_client_msgx_darwin.cpp`)**:
+2. **macOS (`sdk/rocketnet_platform.cpp`)**:
    - `ROCKETNET_MSGX_TEST_HOOKS`: `sendmsg_x` / `recvmsg_x` batch and `EMSGSIZE` fault hooks in `test_msgx` (linked against `rocketnet_dev`).
-3. **Windows (`sdk/rocketnet_server_iocp_windows.*`, `sdk/rocketnet_server_rio_windows.*`, `sdk/rocketnet_windows_lifecycle_ledger.h`)**:
+3. **Windows (`sdk/rocketnet_server_iocp_windows.cpp`, `sdk/rocketnet_server_rio_windows.cpp`)**:
    - `ROCKETNET_IOCP_TESTS` and `ROCKETNET_RIO_TESTS`: IOCP and RIO fault hooks in `test_iocp` (compiled with `rocketnet_dev` definitions; in `DEV=0`, `test_windows_transports_production` links the production `rocketnet` library with zero test macros).
    - `ROCKETNET_RIO_OVERFLOW_TEST_HOOKS`: fake RIO completion overflow seam in `rocketnet_test_hooks` (`DEV=1` only).
    - `ROCKETNET_WINDOWS_LIFECYCLE_TRACK`: Windows handle/socket/thread lifecycle ledger in `rocketnet_dev` and `functional`.
@@ -108,7 +104,7 @@ Every test-scaffolding macro in the repository is normalized in `sdk/rocketnet_t
 | `rocketnet_shared` (shared + import lib) | `ROCKETNET_DEV=1`, exports match `tools/exports.txt` | `ROCKETNET_DEV=0`, exports match `tools/exports.txt`, zero test scaffolding |
 | `rocketnet_test_hooks` | Built (`STATIC EXCLUDE_FROM_ALL`) with `ROCKETNET_TEST_SEAMS=1` and unit `*_TEST_HOOKS=1` | **Not built** (target does not exist) |
 | `rocketnet_test_support` | Links `PUBLIC rocketnet_test_hooks` | Links `PUBLIC rocketnet` (production static library) |
-| `test` (`./bin/test`) | Runs full unit + seam + simulator suites against `rocketnet_test_hooks` | Runs all 150 production-compatible `tests/test_unit_*.cpp` suites (613 unit cases) directly against production `rocketnet` |
+| `test` (`./bin/test`) | Runs full unit + seam + simulator suites against `rocketnet_test_hooks` | Runs the production-compatible `tests/test_unit_*.cpp` suites directly against production `rocketnet` |
 | `test_lifecycle`, `test_production_client_lifecycle`, `test_platform_primitives`, `test_transport`, `test_windows_transports_production` | Link `rocketnet` | Link production `rocketnet` (`DEV=0`) and verify real socket/transport lifecycle |
 | `rocketnet_dev`, `rocketnet_shared_dev`, `functional`, `test_wide`, `test_channels_1024`, `test_channels_10k`, `test_xdp`, `test_msgx`, `test_iocp` | Built with `ROCKETNET_DEV=1` (`rocketnet_dev`) | Built with `ROCKETNET_DEV=1` (`rocketnet_dev`, never installed) when `ROCKETNET_BUILD_DEV_LIBRARIES=ON` |
 
@@ -133,10 +129,10 @@ py -3 tools\check_test_scaffolding_boundary.py --build build-dev0 --shared bin\R
 ```
 
 What `tools/check_test_scaffolding_boundary.py` verifies:
-1. **Header and Source Audit**: `sdk/rocketnet.h` exposes no test-scaffolding token; `sdk/rocketnet_test_seams.h` guards all 24 test-hook macros with `#if !ROCKETNET_DEV` `#error`; `sdk/rocketnet_connect_token.h` and `sdk/rocketnet_connection_reset.h` guard all deterministic token and reset-inventory scaffolding under `#if ROCKETNET_DEV`.
+1. **Header and Source Audit**: `sdk/rocketnet.h` exposes no test-scaffolding token; `sdk/rocketnet_test_seams.h` guards all 22 test-hook macros with `#if !ROCKETNET_DEV` `#error`; `sdk/rocketnet_connect_token.h` and `sdk/rocketnet_connection_reset.h` guard all deterministic token and reset-inventory scaffolding under `#if ROCKETNET_DEV`.
 2. **Build-Tree Audit**: `build-dev0` is configured with `ROCKETNET_DEV=OFF`, produces no `rocketnet_test_hooks` archive, and compiles `rocketnet`, `rocketnet_shared`, `rocketnet_test_support`, and `test` without any `ROCKETNET_TEST_SEAMS` or `*_TEST_HOOKS` macro.
 3. **Artifact Symbol and Byte Audit (`tools/check_exports.py`)**: `rocketnet` static archive, `rocketnet_shared` shared library, and Windows `rocketnet_import.lib` match `tools/exports.txt`, keep the static crypto namespace private, and contain zero development/test symbols, zero `_for_test` witnesses, zero deterministic token or reset-inventory symbols, and zero development secret key bytes.
 4. **Negative Controls (`--red-controls`)**:
-   - Compiler negative controls verify that enabling `ROCKETNET_TEST_SEAMS=1` or any of the 23 specialized test-hook macros with `ROCKETNET_DEV=0` fails compilation with `<MACRO> requires ROCKETNET_DEV=1`.
+   - Compiler negative controls verify that enabling `ROCKETNET_TEST_SEAMS=1` or any of the 21 specialized test-hook macros with `ROCKETNET_DEV=0` fails compilation with `<MACRO> requires ROCKETNET_DEV=1`.
    - Symbol negative controls verify that referencing `rocketnet_write_connect_token_deterministic`, `rocketnet_reset_inventory_matches`, or `rocketnet_*_connection_reset_inventory_matches_for_test` with `ROCKETNET_DEV=0` fails compilation.
    - CMake negative controls verify that configuring with `-DROCKETNET_DEV=OFF` and `-DROCKETNET_TEST_SEAMS=1` or `-DCMAKE_CXX_FLAGS=-DROCKETNET_ACK_VISIT_TEST_HOOKS=1` fails at configure time.

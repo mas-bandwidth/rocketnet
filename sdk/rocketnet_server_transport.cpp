@@ -68,7 +68,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIV
 #include <pthread.h>
 #endif
 
-// The transport transport is selected at RUNTIME (#106): one build carries
+// The transport is selected at RUNTIME (#106): one build carries
 // every transport its platform has, and create walks the config's ordered
 // candidate list -- config->transport, overridden by ROCKETNET_SERVER_TRANSPORT --
 // left to right, first grant wins. On linux that is the runtime ladder:

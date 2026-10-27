@@ -785,20 +785,10 @@ bool rocketnet_public_link_simulator_development( void )
 #endif
 }
 
-#if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
-static bool rocketnet_development_values_refused_test_hook = false;
-void rocketnet_development_values_refused_test_enable( int enabled )
-{
-    rocketnet_development_values_refused_test_hook = enabled != 0;
-}
-#endif // #if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
-
 bool rocketnet_development_values_refused( void )
 {
 #if ROCKETNET_DEV
     return false;
-#elif ROCKETNET_TEST_SEAMS
-    return rocketnet_development_values_refused_test_hook;
 #else
     return true;
 #endif

@@ -656,10 +656,6 @@ size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size
 
 // -------------------------------------------------------------
 
-int rocketnet_signed_packets[256];
-
-int rocketnet_encrypted_packets[256];
-
 const char * rocketnet_platform_name( int platform_id )
 {
     switch ( platform_id )

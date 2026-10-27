@@ -9,7 +9,7 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// The GSO transport transport (#97). See rocketnet_server_gso.h for the shape
+// The GSO transport (#97). See rocketnet_server_gso.h for the shape
 // and the framing; this file is the machinery.
 //
 // The receive side is the XDP transport's pattern on portable primitives: one

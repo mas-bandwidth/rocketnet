@@ -1610,12 +1610,6 @@ void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool ho
             rocketnet_platform_sleep( 0.001 );
 }
 
-void rocketnet_server_iocp_test_hold_tx_publication( rocketnet_server_iocp_t * iocp, bool hold )
-{
-    if ( hold ) rocketnet_platform_mutex_acquire( &iocp->send_mutex );
-    else rocketnet_platform_mutex_release( &iocp->send_mutex );
-}
-
 bool rocketnet_server_iocp_test_tx_idle( rocketnet_server_iocp_t * iocp )
 {
     // Idle: the producer is published (nothing staged) and every published
