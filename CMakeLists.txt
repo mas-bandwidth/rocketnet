@@ -1161,7 +1161,129 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         # (functional/rocketnet_functional_tests.cpp,
         # rocketnet_functional_production_exclusions_hold).
         set(ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES
-            )
+            # the process environment's development values: the development
+            # session sequence and link simulator, and config read before
+            # init with the development keys (functional/environment_wiring.cpp)
+            test_real_environment_dev_session_sequence_start
+            test_real_environment_log_level_before_init
+            test_real_environment_config_precedence_and_invalid
+            test_real_environment_client_step_driven
+            test_real_environment_dev_simulator_number
+            test_real_environment_server_ipv4_address
+            # the development token API itself (rocketnet_create_dev_connect_token)
+            test_api_polish_dev_token_string
+            test_dev_connect_token_timeout_is_the_named_constant
+            test_dev_token_minting_absent_in_release
+            test_public_client_server_queries
+            test_public_client_reads_server_disconnected
+            test_two_address_token_connects_over_ipv4
+            # the development token and keys in a source outside the
+            # production build (functional/server_receive_backlog.cpp,
+            # lifecycle_driver.cpp, process_thread_counts.cpp)
+            test_server_async_delivery_with_max_clients
+            test_server_receive_buffer_sized_from_max_clients
+            test_lifecycle_transport
+            test_server_stats_creates_no_thread
+            test_public_step_driven_client_connects_without_a_thread
+            # the IPv6 availability seam and the development backend secret
+            test_client_ipv4_without_ipv6_stack
+            # the development link simulator (functional/channel_harness.h,
+            # functional/live_matrix.cpp)
+            test_harness_one_message_each_way_lossless
+            test_harness_one_message_each_way_lossy
+            test_harness_lossy_100_percent_negative_control
+            test_harness_no_allocation_after_create
+            test_harness_collect_preserves_other_channels
+            test_unreliable_receipts_over_lossy_link
+            test_promoted_receipts_over_lossy_reliable_blocks
+            test_reliable_receipts_over_lossy_link
+            test_state_stream_never_goes_backwards_over_lossy_link
+            test_reliable_state_stream_over_lossy_link
+            test_reliable_sequenced_long_run_across_epochs
+            test_reliable_sequenced_held_record_released
+            test_large_unreliable_sequenced_uses_transport_fragments
+            test_ordered_256k_chunked_stream_over_lossy_reordering_link
+            test_ordered_small_and_large_interleaved
+            test_loopback_transport_config_mismatch
+            test_loopback_transport_config_equal_over_lossy
+            test_reliable_receive_full_ordered_gap_recovers
+            test_reliable_receive_full_recovers_all_modes
+            test_reliable_receive_full_partial_packet_recovers
+            test_reliable_receive_full_recovers_client_to_server
+            test_reliable_receive_full_recovers_server_to_client
+            test_reliable_mixed_sizes_over_lossy_link
+            test_reliable_duplicate_after_gap_delivered_once
+            test_unreliable_at_most_once_over_duplicating_link
+            test_unreliable_dropped_while_reliable_waits_never_arrives
+            test_unreliable_dropped_when_builder_out_of_budget_never_arrives
+            test_control_disconnect_burst_each_end
+            test_control_standalone_ack_each_end
+            test_control_fragment_packets_each_end
+            test_control_denied_when_server_full
+            test_default_one_mib_messages_all_modes
+            test_unreliable_small_messages_pack_in_place
+            test_unreliable_over_receive_budget_dropped_and_counted
+            test_reliable_delivered_when_unreliable_budget_full
+            test_resend_timing_table_over_lossy_links
+            test_block_resend_cost_over_long_path
+            test_loopback_transport_live_message_matrix)
+        if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+            list(APPEND ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES
+                # the development token in functional/server_receive_low_tick.cpp
+                test_server_receive_1000_clients_256kbps_10hz
+                # the development token in functional/posix_lifecycle_stress.cpp
+                test_portable_transport_posix_init_term_1000
+                test_gso_transport_posix_init_term_1000
+                test_io_uring_transport_posix_init_term_1000
+                test_portable_transport_posix_server_create_destroy_1000
+                test_gso_transport_posix_server_create_destroy_1000
+                test_io_uring_transport_posix_server_create_destroy_1000
+                test_portable_transport_posix_client_create_destroy_1000
+                test_gso_transport_posix_client_create_destroy_1000
+                test_io_uring_transport_posix_client_create_destroy_1000
+                test_portable_transport_posix_server_restart_same_port_100
+                test_gso_transport_posix_server_restart_same_port_100
+                test_io_uring_transport_posix_server_restart_same_port_100
+                test_portable_transport_posix_connect_disconnect_1000
+                test_gso_transport_posix_connect_disconnect_1000
+                test_io_uring_transport_posix_connect_disconnect_1000
+                test_portable_transport_posix_destroy_under_traffic_100
+                test_gso_transport_posix_destroy_under_traffic_100
+                test_io_uring_transport_posix_destroy_under_traffic_100
+                test_xdp_transport_posix_init_term_1000
+                test_xdp_transport_posix_server_create_destroy_1000
+                test_xdp_transport_posix_client_create_destroy_1000
+                test_xdp_transport_posix_server_restart_same_port_100
+                test_xdp_transport_posix_connect_disconnect_1000
+                test_xdp_transport_posix_destroy_under_traffic_100
+                # the gso and io_uring fault and test seams (ROCKETNET_SEND_ERROR_TEST_HOOKS,
+                # rocketnet_client_gso_test_*, rocketnet_server_gso_test_*,
+                # rocketnet_server_uring_test_*)
+                test_gso_transport_linux_sendmmsg_errors
+                test_gso_transport_linux_recvmmsg_errors
+                test_io_uring_transport_linux_receive_cqe_errors
+                test_io_uring_transport_linux_send_cqe_errors
+                test_gso_client_transport_wire_ipv4
+                test_gso_client_transport_wire_ipv6
+                test_gso_client_transport_wire_plain
+                test_gso_client_transport_wire_gro
+                test_gso_shutdown_send_interruptions
+                test_gso_transport_held_receive_view
+                test_io_uring_transport_server_probe)
+            if(ROCKETNET_XDP)
+                list(APPEND ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES
+                    # the xdp cells: the development token and the receive seam
+                    # (functional/posix_hard_killed_client.cpp, ROCKETNET_SEND_ERROR_TEST_HOOKS)
+                    test_xdp_transport_linux_receive_weather_ipv4
+                    test_xdp_transport_linux_receive_weather_ipv6
+                    test_posix_hard_killed_client_xdp_ipv4_client_portable
+                    test_posix_hard_killed_client_xdp_ipv6_client_portable
+                    test_posix_send_to_closed_port_xdp_ipv4_client_portable
+                    test_posix_send_to_closed_port_xdp_ipv6_client_portable
+                    test_posix_client_server_gone_xdp_ipv4_client_portable
+                    test_posix_client_server_gone_xdp_ipv6_client_portable)
+            endif()
+        endif()
         list(JOIN ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED_CASES " " ROCKETNET_FUNCTIONAL_PRODUCTION_EXCLUDED)
         add_executable(functional_production ${ROCKETNET_FUNCTIONAL_PRODUCTION_SOURCES})
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
