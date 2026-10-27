@@ -12,24 +12,38 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 
 ## The table
 
-| Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label |
-| --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 |
-| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | Linux, X64 |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 |
-| [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 |
-| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macOS, ARM64 |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | macOS, ARM64 |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | macOS, ARM64 |
-| [macOS 27](MACOS.md) | x86_64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | macOS, ARM64 |
-| [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | Windows, X64 |
-| [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | Windows, X64 |
-| [Windows 11](WINDOWS.md) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | Windows, X64 |
-| Linux | arm64 | none | none | unsupported | - | - |
-| Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - |
+| Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite (auto ladder |
+| Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite (auto ladder |
+| [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 | subset: Functional: lifecycle binary; Functional: native driver contract; Transport family matrix |
+| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
+| Ubuntu 24.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
+| Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macOS, ARM64 | - |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | macOS, ARM64 | - |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | macOS, ARM64 | - |
+| [macOS 27](MACOS.md) | x86_64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | macOS, ARM64 | - |
+| [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | Windows, X64 | - |
+| [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | Windows, X64 | - |
+| [Windows 11](WINDOWS.md) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | Windows, X64 | - |
+| Linux | arm64 | none | none | unsupported | - | - | - |
+| Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - | - |
+
+The last column says which functional coverage each supported row runs on
+every commit. `full: <step>` names the step that runs the whole functional
+suite. `subset: <step>; <step>` names the steps that run the platform-specific
+subset, and the rest of the suite for that row runs in the nightly tier. The
+Windows 11 row is a subset: the whole functional suite takes about 223 s on
+the Windows runner, which is over the two-minute per-commit law and the
+three-minute job bound, so per commit the Windows runner runs the build, the
+unit suite, the lifecycle binary, the native driver contract and the transport
+family matrix, and the whole suite runs nightly in `nightly.yml` (the Debug
+leg under the default and IOCP transports, the Release ASan leg under the
+default, IOCP and RIO transports). The s390x row is a subset for the same
+reason in kind: per commit it runs the wire and sodium checks under qemu-user,
+and the socket-crossing suite runs in the nightly full-system guest.
 
 clang-cl x64 is built and tested nightly: the `windows-toolchains` job in
 `nightly.yml` builds the static and shared libraries, `test.exe` and
@@ -125,5 +139,9 @@ python3 tools/check_platform_policy.py
 
 The checker is standard-library Python. It parses the markdown table, then for
 every supported or nightly row reads the named workflow file and checks that
-the listed operating-system and architecture tokens occur in it. It does not
+the listed operating-system and architecture tokens occur in it. For every
+supported row it also requires the per-commit functional column to name, as
+`full` or `subset`, steps whose names occur in a job of that workflow that
+holds the row's runner tokens; a supported row with no such declaration fails.
+It does not
 parse YAML; the workflow files are searched as text.
