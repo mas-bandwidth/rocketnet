@@ -276,9 +276,11 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_INVALID_ADDRESS                    = -13,
 
-    /// Create refused: the transport candidate list did not parse, or holds
-    /// no usable candidate. The log names the problem, and an unknown name is
-    /// logged with the valid names.
+    /// Create refused: the transport candidate list did not parse. The list
+    /// is refused only for an unknown name, an empty element, or "auto"
+    /// inside a list. A list whose every name is skipped for this endpoint
+    /// on this platform falls back to auto with a warning. The log names
+    /// the problem, and an unknown name is logged with the valid names.
 
     ROCKETNET_STATUS_INVALID_TRANSPORT_LIST             = -14,
 
@@ -1110,17 +1112,19 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// portable,iocp,rio on Windows. Production servers try
 /// xdp,gso,io_uring,portable on Linux; msgx,portable on macOS; and
 /// iocp,rio,portable on Windows, keeping native server transports first.
-/// io_uring requires build support. macOS clients try msgx,portable; other
-/// clients try portable. Loopback is selected by name, never by auto. An
+/// io_uring requires build support. Linux clients try gso,portable; macOS
+/// clients try msgx,portable; and Windows clients try iocp,portable.
+/// Loopback is selected by name, never by auto. An
 /// explicit server pin of "portable" is available in either build.
 /// A known name that this build does not offer for this endpoint on this
-/// platform (gso on a client or on macOS, for example) is skipped with a log.
+/// platform (xdp on a client, for example) is skipped with a log.
 /// A list with at least one name that is not skipped is a strict pin: only
 /// those transports are tried, and if all of them refuse, connect or start
 /// fails. A list whose every name is skipped falls back to this endpoint's
 /// auto order with a warning, so one fleet-wide list deploys unchanged to
 /// mixed machines.
-/// Unknown names refuse the list and report valid names.
+/// Unknown names, empty elements and "auto" inside a list refuse the
+/// list; an unknown name reports the valid names.
 ///
 /// Fields marked "must match on both ends" are checked during connection. A
 /// mismatch ends the connection with CONFIG_MISMATCH. Create checks field
