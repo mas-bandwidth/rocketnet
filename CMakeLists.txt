@@ -1102,6 +1102,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         functional/shared_library_tokens.cpp
         functional/process_thread_counts.cpp
         functional/session_reconnect_isolation.cpp
+        functional/destroy_early_keep.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
