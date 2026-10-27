@@ -163,10 +163,6 @@ bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * uring );
 // Requires stopped completion. Frees synchronously.
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 
-uint64_t rocketnet_server_uring_leaked_bytes();
-
-uint64_t rocketnet_server_uring_leaked_transports();
-
 // Test seam: hold completion pending until test_resume_stop releases it.
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );

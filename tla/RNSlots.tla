@@ -183,7 +183,7 @@ Kick(s) ==
 \* The application ends a slot between updates (rocketnet_server_disconnect_client
 \* and rocketnet_server_disconnect_all_clients, sdk/rocketnet_api.cpp). A slot
 \* the message layer holds Connected goes through Kick's path
-\* (rn_message_object_kick, sdk/rocketnet_message_server.cpp:373): the message
+\* (rn_message_object_kick, sdk/rocketnet_message_server.cpp): the message
 \* layer cancels a start pending on the slot, marks it ended with reason NONE
 \* and the transport's disconnect runs through the link; ResetFree resets it at
 \* the next update. A slot only the transport holds is disconnected at the
@@ -331,7 +331,7 @@ ExhaustionOnlyLeadsToDisconnect ==
          st'.state[s] = "Disconnected" /\ st'.reason[s] = "MESSAGE_MEMORY_EXHAUSTED"]_vars
 \* Between updates the message layer reports a slot connected
 \* (rocketnet_server_client_connected) and accepts a start on it
-\* (rn_message_object_start, sdk/rocketnet_message_server.cpp:616) from one
+\* (rn_message_object_start, sdk/rocketnet_message_server.cpp) from one
 \* field, the connection state Connected; a slot the transport has ended
 \* (owner 0) is neither.
 ReportedConnected(s) == st.state[s] = "Connected"

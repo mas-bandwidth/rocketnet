@@ -13,7 +13,7 @@ as far as it drives the client. `tla/MCClientConnection.tla` and
 ## What the model covers
 
 **States** are the standard's numbers (STANDARD.md, _Client State Machine_;
-`sdk/rocketnet.h:398-409`): -7 token expired, -5 connection timed out, -4 response
+`sdk/rocketnet.h`): -7 token expired, -5 connection timed out, -4 response
 timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disconnected,
 1 requesting cookie, 2 sending connection request, 3 sending connection response,
 4 connected. -6 (invalid token) is decided before anything is sent and is not modelled.
@@ -75,13 +75,13 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `ConnectedMeansHandshake` | never connected without a completed handshake: state 4 holds a cookie, this attempt's committed keys, the index from a keep-alive, and no ephemeral |
-| `StepsForwardOrFails` | the machine climbs one rung at a time or fails; 1 is entered only by a connect (S:2042-2045) |
+| `StepsForwardOrFails` | the machine climbs one rung at a time or fails; 1 is entered only by a connect (STANDARD.md, ClientConnection StepsForwardOrFails) |
 | `DisconnectIsTerminal` | a disconnect is terminal until the application reconnects: the only way out of a non-positive state is a fresh attempt |
 | `AcceptedUnderLiveKeys` | no packet is accepted outside the live session's keys: an accepted session packet opened under the held keys in state 3 or 4 |
 | `AtMostOneLiveSession` | the client accepts under at most one key pair, which is this attempt's; a slot the server holds for this attempt is under those keys or the client has thrown its keys away |
-| `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (S:2074-2077) |
+| `TimeoutPairing` | a timeout from waiting state N lands in -(N+1) (STANDARD.md, ClientConnection TimeoutPairing) |
 | `TimeoutHonoured`, `DeadlineHonoured` | the idle timeout and the total deadline fire when due |
-| `NoSendOnArrival` | no receive sends (S:2178-2182) |
+| `NoSendOnArrival` | no receive sends (STANDARD.md, ClientConnection NoSendOnArrival) |
 | `OnlyAuthenticatedRefreshes` | the client trusts only the server: in states 1 and 2 of one attempt nothing restarts the receive clock; a cookie's salt is in the clear, so only the challenge and the session packets after it reset it (TRANSPORT.md t11 rule 8, t11.1) |
 | `FreshAttemptFromFailure` | a connect from a failure state (-7..-1) is a fresh attempt: a new attempt index (the fresh salt, ephemeral and keys) and nothing of the earlier attempt carried, no keys, cookie, client index, reassembly or replay window, and fresh timers |
 | `TypeOK` | types, including both links' |
@@ -422,9 +422,9 @@ acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
 
 The one packet either end sends without re-sending is the disconnect: ten copies
 (`DisconnectCopies` here), then the sender's state is gone
-(`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp:1309-1336`;
-`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp:1656-1676`).
-If every copy is lost the receiver waits for its idle timeout, which S:2918-2924 states as
+(`rocketnet_client_protocol_disconnect`, `sdk/rocketnet_client_protocol.cpp`;
+`rocketnet_server_protocol_disconnect_client`, `sdk/rocketnet_server_protocol.cpp`).
+If every copy is lost the receiver waits for its idle timeout, which STANDARD.md states as
 the design ("losing all ten costs only a receiver that waits for the timeout"). In this
 model that is `CrashedServerTimesOut` (`L-crash`): the client reaches -5. It is a
 bounded wait, not a packet nobody will send again, and it is not reported as a defect.

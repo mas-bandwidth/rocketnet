@@ -305,6 +305,9 @@ jobs:
             echo "LEAN functional $case"
             ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
               ./bin/functional --run "$case"
+            echo "LEAN functional_production $case"
+            ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
+              ./bin/functional_production --run "$case"
           done
 
       - name: Check the floating-point floor on every compiler invocation
@@ -426,6 +429,35 @@ jobs:
           grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
           if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-pinned.log; then
             echo "io_uring functional rows skipped on a Linux runner" >&2
+            exit 1
+          fi
+
+      # functional_production links the production (ROCKETNET_DEV=OFF)
+      # library, so it exists only on the Release rows; it runs the same
+      # auto ladder and the same pinned-portable pass as the DEV suite.
+      - name: Run functional_production suite (auto ladder, production library)
+        if: contains(matrix.leg, 'b') && matrix.build_type == 'Release'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/functional_production | tee functional-production-auto.log
+          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-production-auto.log; then
+            echo "io_uring functional_production rows skipped on a Linux runner" >&2
+            exit 1
+          fi
+
+      - name: Run functional_production suite (portable rung pinned by env)
+        if: contains(matrix.leg, 'b') && matrix.build_type == 'Release'
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          ./bin/functional_production | tee functional-production-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
+          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-production-pinned.log; then
+            echo "io_uring functional_production rows skipped on a Linux runner" >&2
             exit 1
           fi
 
@@ -1045,6 +1077,22 @@ jobs:
         run: |
           ./bin/Release/test_transport.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run functional_production suite (auto ladder, production library)
+        if: matrix.leg == 'b'
+        shell: bash
+        run: ./bin/Release/functional_production.exe
+
+      - name: Run functional_production suite (portable rung pinned by env)
+        if: matrix.leg == 'b'
+        shell: bash
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -euo pipefail
+          ./bin/Release/functional_production.exe | tee functional-production-pinned.log
+          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard

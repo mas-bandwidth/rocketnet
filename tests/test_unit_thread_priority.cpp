@@ -124,17 +124,20 @@ static void priority_log_capture( void * context, enum rocketnet_log_level_t lev
 }
 
 static enum rocketnet_log_level_t priority_saved_level;
+static const rocketnet_platform_priority_calls_t * priority_fake_saved;
 
 static void priority_fake_install( bool fail )
 {
     priority_fake_real = rocketnet_platform_priority_calls_real();
+    // the worker's table (its fake platform start) is restored at the end
+    priority_fake_saved = rocketnet_platform_priority_calls_current();
     priority_fake_table.set_sched = priority_fake_set_sched;
     priority_fake_table.set_thread_priority = priority_fake_set_thread_priority;
     priority_fake_table.time_begin_period = priority_fake_time_begin_period;
     priority_fake_table.time_end_period = priority_fake_time_end_period;
     priority_fake_table.timer_frequency = priority_fake_timer_frequency;
     priority_fake_table.mutex_init = rocketnet_platform_priority_calls_real()->mutex_init;
-    priority_fake_table.platform_start = rocketnet_platform_priority_calls_real()->platform_start;
+    priority_fake_table.platform_start = priority_fake_saved->platform_start;
     priority_fake_table.create_waitable_timer = rocketnet_platform_priority_calls_real()->create_waitable_timer;
     priority_fake_count = 0;
     priority_fake_fail = fail;
@@ -151,7 +154,7 @@ static void priority_fake_install( bool fail )
 // restores the real table, the switch and the log sink at the end of each case
 static void priority_fake_restore()
 {
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    rocketnet_platform_set_priority_calls_for_testing( priority_fake_saved );
     rocketnet_thread_priority( true );
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( priority_saved_level );
