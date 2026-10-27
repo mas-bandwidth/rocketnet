@@ -7821,7 +7821,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_functional_write_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, connect_token, NULL, NULL, NULL, 0, 0 );
+    struct rocketnet_message_client_t * client = rocketnet_message_client_create( NULL, connect_token, rocketnet_functional_client_config(), NULL, NULL, 0, 0 );
     rocketnet_check( client );
 
     // the game's clock: 1000.0 at the first update, then real seconds on top
