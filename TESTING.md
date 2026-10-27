@@ -218,3 +218,35 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |
 | Holistic review: six independent whole-system reviewers | planned for the final deliverable |
 | complete | 0% |
+
+## Production functional executable (functional_production)
+
+`./bin/functional_production` is the second functional executable. It links
+the production library (`rocketnet`, `ROCKETNET_DEV=OFF`), never
+`rocketnet_dev`, and is built only in a production build; CI runs it on the
+Linux, macOS and Windows Release rows, both through the auto ladder and
+with the portable rung pinned by env
+(`ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable`),
+the same two passes as the DEV functional suite. It runs the portable
+transport on every OS and each native transport the OS builds (gso and
+io_uring on Linux, msgx on macOS, iocp and rio on Windows), including
+`test_session_reconnect_isolation_portable` and
+`test_transport_ring_exhaustion`.
+
+Excluded from `functional_production` because the case needs development
+scaffolding (the stated list in `CMakeLists.txt`; no case, bound, timeout
+or assertion in the DEV suite is removed or weakened):
+
+- `functional/channel_*.cpp` — in-memory network simulator/lossy link cases
+- `functional/environment_wiring.cpp` — development env/simulator cases
+- `functional/shared_library_tokens.cpp` — development-token minting cases
+- `functional/process_thread_counts.cpp` — development server secret
+- `functional/posix_hard_killed_client.cpp` — platform test seams
+- `test_client_ipv4_without_ipv6_stack` — ipv6 test seam
+- `test_server_handshake_deadline_from_config` — internal client protocol test filter
+- `test_public_client_server_queries`, `test_public_client_reads_server_disconnected`,
+  `test_two_address_token_connects_over_ipv4` — published development keys
+
+Every other functional case runs in `functional_production` through
+test-owned production keys minted with the production token writer, so the
+shipped library's real transports execute there.
