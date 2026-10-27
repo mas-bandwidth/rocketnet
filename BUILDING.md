@@ -502,9 +502,14 @@ target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 ```
 
 When linking the static archive (`librocketnet.a`) directly in a C project
-without CMake, link against the C++ standard library runtime (`-lstdc++` on
-Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
-`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
+without CMake, compile with `-DROCKETNET_DEV=0` for a production archive (and
+`-DROCKETNET_MAX_CLIENTS=<n>` when the library was built with a non-default
+value) so `rocketnet.h` matches the archive, and link against the C++ standard
+library runtime (`-lstdc++` on Linux, `-lc++` on macOS) and the required
+platform libraries (on Linux: `-lbpf -lxdp -luring -lstdc++ -lpthread -lm`,
+where `-lbpf -lxdp` apply only when the library was built with XDP and
+`-luring` applies only when the library was built with `io_uring`; on macOS:
+`-lc++ -lpthread -lm`).
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
@@ -515,8 +520,10 @@ The package accepts a request for any earlier or equal version of the same major
 version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
 finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
-only compile definitions they carry are `ROCKETNET_DEV`, the value the library
-was built with, and `ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
+only compile definitions they carry are `ROCKETNET_DEV` and
+`ROCKETNET_MAX_CLIENTS`, the values the library was built with, and
+`ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py`
+checks all three.
 The Unix shared-library soname follows the major version.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
