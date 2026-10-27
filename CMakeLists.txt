@@ -620,11 +620,12 @@ if(ROCKETNET_BUILD_TESTS)
         set(ROCKETNET_DEV0_TEST_SUPPORT_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/generated/rocketnet_dev0_test_support.cpp")
         file(GENERATE OUTPUT "${ROCKETNET_DEV0_TEST_SUPPORT_SOURCE}" CONTENT
 "#include <stddef.h>
+#include <stdio.h>
 #include \"rocketnet.h\"
 int rocketnet_unit_test_count() { return 0; }
 const char * rocketnet_unit_test_name( int index ) { (void)index; return 0; }
 void rocketnet_unit_prepare() {}
-int rocketnet_unit_run_named( const char * name ) { (void)name; return 2; }
+int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
 const char * rocketnet_channels_test_resolve( const char * name ) { return name; }
