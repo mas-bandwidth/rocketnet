@@ -47,7 +47,7 @@ Init ==
 Enqueue ==
     /\ Len(queue) < MaxQ
     /\ ticketNext < TicketLimit
-    /\ nextId <= MaxQ * 3
+    /\ nextId <= MaxQ + 1
     /\ LET pair == Take
            rec == Rec(nextId, 1, pair[1])
        IN /\ queue' = Append(queue, rec)
@@ -96,7 +96,7 @@ StaleCancel ==
 
 EnqueueUnreliable ==
     /\ Len(unreliable) < MaxQ
-    /\ nextId <= MaxQ * 3
+    /\ nextId <= MaxQ + 1
     /\ unreliable' = Append(unreliable, [id |-> nextId, gen |-> 1, epoch |-> epoch, hole |-> FALSE])
     /\ nextId' = nextId + 1
     /\ UNCHANGED <<epoch, ticketNext, queue, ready, resend, holes, staleRemoved>>
@@ -191,7 +191,7 @@ StaleSpec == Init /\ [][Next]_vars
 TypeOK ==
     /\ epoch \in 1..2
     /\ ticketNext \in 1..TicketLimit
-    /\ nextId \in 1..(MaxQ * 3 + 1)
+    /\ nextId \in 1..(MaxQ + 2)
     /\ Len(queue) <= MaxQ
     /\ Len(unreliable) <= MaxQ
     /\ Len(resend) <= MaxQ
