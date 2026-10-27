@@ -334,7 +334,27 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
 | Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
 | The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| complete | 50% | 38% | 38% |
+| Mutation audit finding 6: the keyed filter value is compared under AddressSanitizer against a direct eight-byte SipHash reference | ❌ | — | — |
+| Mutation audit finding 7: received-bandwidth high time after receive-tail eviction matches the reference recompute | ❌ | ❌ | ❌ |
+| Mutation audit finding 8: overwriting a zero RTT sample keeps the RTT count and minimum exact | ❌ | ❌ | ❌ |
+| Mutation audit finding 9: acknowledging the packet exactly at the loss-eligible top keeps packet loss exact | ❌ | ❌ | ❌ |
+| Mutation audit finding 10: an empty ACK block reconciles the newest sequence's bitmap bits | ❌ | ❌ | ❌ |
+| Mutation audit finding 11: the reference recompute's received-bandwidth span matches a direct min/max-time calculation | ❌ | ❌ | ❌ |
+| Mutation audit finding 12: the ack allocation-size helper returns zero for zero clients | ❌ | ❌ | ❌ |
+| Mutation audit finding 13: the server delivered-capacity helper returns zero for zero slots | ❌ | ❌ | ❌ |
+| Mutation audit finding 14: maximum-sized non-final fragments are size-checked before the final fragment arrives | ❌ | ❌ | ❌ |
+| Mutation audit finding 15: the send-arena allocation helper returns zero for a zero dimension | ❌ | ❌ | ❌ |
+| Mutation audit finding 16: the arena ownership check refuses the one-past-end pointer | ❌ | ❌ | ❌ |
+| Mutation audit finding 17: opening a packet with a mismatched ephemeral key returns a negative error both ways | ❌ | ❌ | ❌ |
+| Mutation audit finding 18: an ACK finds a packet sitting in its home hash slot | ❌ | ❌ | ❌ |
+| Mutation audit finding 19: reference-head advancement in normal reclaim and forced eviction keeps ref_tail - ref_head exact | ❌ | ❌ | ❌ |
+| Mutation audit finding 20: a reset ACK map starts with an empty packet and reference map | ❌ | ❌ | ❌ |
+| Mutation audit finding 21: development resend-gap diagnostics report each class's count and gap bounds exactly | ❌ | ❌ | ❌ |
+| Mutation audit finding 22: the batch-ACK entry refuses a null packet-id array with a positive count | ❌ | ❌ | ❌ |
+| Mutation audit finding 23: a reused receive descriptor starts with no fragment-block state | ❌ | ❌ | ❌ |
+| Mutation audit finding 24: duplicate and out-of-window ACKs report no newly matched ACK | ❌ | ❌ | ❌ |
+| Mutation audit finding 25: releasing the oldest number clears a stalled reliable send window, releasing another does not | ❌ | ❌ | ❌ |
+| complete | 35% | 22% | 22% |
 
 [Source data](docs/roadmap.sexp)
 
