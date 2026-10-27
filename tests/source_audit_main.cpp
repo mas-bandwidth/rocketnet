@@ -29,7 +29,8 @@ static const char * const source_audit_cases[] =
     "test_counters_every_outcome_in_at_most_one_family",
     "test_tools_never_cast_public_client_to_internal",
     "test_xdp_transport_host_every_counter_has_a_case",
-    "test_example_send_safety_every_example_and_snippet"
+    "test_example_send_safety_every_example_and_snippet",
+    "test_sequence_buffers_manifest_matches_source"
 };
 
 // The unit suite runs every case in its own worker process, with the
