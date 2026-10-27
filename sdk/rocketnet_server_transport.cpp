@@ -68,7 +68,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIV
 #include <pthread.h>
 #endif
 
-// The transport transport is selected at RUNTIME (#106): one build carries
+// The transport is selected at RUNTIME (#106): one build carries
 // every transport its platform has, and create walks the config's ordered
 // candidate list -- config->transport, overridden by ROCKETNET_SERVER_TRANSPORT --
 // left to right, first grant wins. On linux that is the runtime ladder:
@@ -192,17 +192,17 @@ struct rocketnet_server_wire_totals_t
     uint64_t bytes_received;
 };
 
-// the payload batch from the last update -- capacity ROCKETNET_MAX_PAYLOADS_PER_UPDATE
+// the payload batch from the last update -- capacity ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
 // covers a full drain. the public surface iterates by index and never sees this layout.
 
 struct rocketnet_server_payloads_t
 {
     int num_payloads;
-    int client_index[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    uint64_t connection_id[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    uint64_t sequence[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];     // P9b: the connection each entry was received for
-    uint8_t * payload_data[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
-    int payload_bytes[ROCKETNET_MAX_PAYLOADS_PER_UPDATE];
+    int client_index[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
+    uint64_t connection_id[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
+    uint64_t sequence[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];     // P9b: the connection each entry was received for
+    uint8_t * payload_data[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
+    int payload_bytes[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
 };
 
 // One server disconnect burst waiting to be sealed: everything the sealed
@@ -331,7 +331,7 @@ struct rocketnet_server_transport_t
     // +8: serialize's BitReader loads 8-byte windows at byte granularity, so
     // any buffer a ReadStream is bound over must extend at least 8 bytes past
     // the end of its data -- this is the last member, so the slack is real.
-    uint8_t payload_storage[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES*ROCKETNET_MAX_PAYLOADS_PER_UPDATE + 8];
+    uint8_t payload_storage[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES*ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE + 8];
 };
 
 static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet_server_transport_t * server_transport, int max_seals, bool shutdown );
@@ -1892,7 +1892,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // reached only from a connected slot (STANDARD.md _Fragmentation_).
     // the delivered mirror sizes to the server's completion bound: the
     // receive path drains one global array of up to
-    // ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS packets per update with no
+    // ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE packets per update with no
     // per-client share, and a slot clears at completion, so one client
     // completes more payloads in an update than it has slots. half the
     // drain plus the payloads begun in an earlier update (at most
@@ -2241,7 +2241,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
         // the packet opens into the next free payload slot; with the batch
         // full it opens on the stack and its payload is not delivered
-        const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE;
+        const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
         uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
         uint8_t * opened = payload_slot_free ?
             server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
@@ -2305,7 +2305,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
         if ( reassembly->completed_bytes > 0 )
         {
-            if ( server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE )
+            if ( server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
             {
                 const int index = server_transport->payloads.num_payloads;
                 server_transport->payloads.client_index[index] = payload_client_index;
@@ -2398,7 +2398,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
             // the packet opens into the next free payload slot; with the batch
             // full it opens on the stack and its payload is not delivered
-            const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE;
+            const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
             uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
             uint8_t * opened = payload_slot_free ?
                 server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
@@ -2455,7 +2455,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
             if ( reassembly->completed_bytes > 0 )
             {
-                if ( server_transport->payloads.num_payloads < ROCKETNET_MAX_PAYLOADS_PER_UPDATE )
+                if ( server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
                 {
                     const int index = server_transport->payloads.num_payloads;
                     server_transport->payloads.client_index[index] = payload_client_index;

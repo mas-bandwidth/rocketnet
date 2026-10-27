@@ -341,11 +341,13 @@ fallback path uses it as a polling receive worker while sends stay on the frame
 thread. The client transport memory plan includes the SDK allocations for that
 thread, its socket and wake object, but excludes the operating system's thread
 stack reserve and kernel socket queues.
-The server does not fall back to computing these stats synchronously on the
-frame thread. After a successful start, stop requests worker shutdown;
-`rocketnet_server_stopped` remains false until both transport I/O and the stats
-worker have exited. Destroy normally follows completion and synchronously joins
-the worker before freeing its storage; called early, it logs and counts the
+Server stats are computed in update: `rocketnet_server_update_stats` runs on
+the caller's thread inside the server update (`sdk/rocketnet_server_transport.cpp`)
+and publishes per-second numbers from the stats frames. There is no stats
+worker thread. After a successful start, stop requests transport shutdown;
+`rocketnet_server_stopped` remains false until transport I/O has exited.
+Destroy normally follows completion and synchronously joins the transport
+worker before freeing its storage; called early, it logs and counts the
 misuse, requests shutdown and updates a bounded number of times without
 sleeping, then joins and frees once complete, or logs and keeps the object if
 the worker has not exited.

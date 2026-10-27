@@ -1450,7 +1450,7 @@ static void test_rio_completion_queue_full()
     wait_until( "RIO burst exposed", [&]() {
         rocketnet_server_rio_receive_packets(rio);
         const int n = rocketnet_server_rio_process_packets(rio)->num_packets;
-        CHECK(n <= ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS);
+        CHECK(n <= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE);
         exposed += (uint64_t) n;
         return n == 0 && exposed > 0 && exposed == rio_counter(rio, ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED) - received;
     } );
