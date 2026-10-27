@@ -8,12 +8,11 @@
 // inside the timed loop: every replay window and the output buffer are
 // built before timing. See ack_block_build_cost.md.
 //
-// Built by hand against a Release build, after `make` (or the equivalent
-// cmake build) has produced build/librocketnet_dev.a / librocketnet.a:
+// Built as a CMake tool target in a Release build:
 //
-//   c++ -O2 -std=c++11 -Isdk bench/ack_block_build_cost.cpp build/librocketnet_dev.a -lsodium -lpthread -framework CoreFoundation -framework SystemConfiguration -o /tmp/ack_block_build_cost
-//   /tmp/ack_block_build_cost
-// (drop the two -framework flags on Linux)
+//   cmake -B build -DCMAKE_BUILD_TYPE=Release
+//   cmake --build build --target ack_block_build_cost
+//   ./bin/ack_block_build_cost
 
 #include "rocketnet_ack.h"
 #include "rocketnet_replay.h"

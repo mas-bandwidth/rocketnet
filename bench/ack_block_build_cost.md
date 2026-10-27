@@ -14,36 +14,29 @@ across the 4096-bit boundary (largest 4223, floor 128), and a largest below
 
 ## Reproduce
 
-After a Release build (`make`, or the equivalent cmake build):
+Built as a CMake tool target in a Release build:
 
 ```sh
-c++ -O2 -std=c++11 -Isdk bench/ack_block_build_cost.cpp build/librocketnet_dev.a -lsodium -lpthread -framework CoreFoundation -framework SystemConfiguration -o /tmp/ack_block_build_cost
-/tmp/ack_block_build_cost
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target ack_block_build_cost
+./bin/ack_block_build_cost
 ```
 
-Drop the two `-framework` flags on Linux.
+## Results — Linux and macOS Release measured 2026-10-27
 
-## Results — macOS measured 2026-10-27, Linux and Windows not run
+- **Linux bench (`amd-1` / `b1`)**: AMD Ryzen 7 255 (x86_64), Linux 7.0.0-38-generic, GCC 15.2.0, Release (`-DCMAKE_BUILD_TYPE=Release`).
+- **macOS bench (`mini-m5`)**: Apple M5 Pro (arm64), Darwin 27.2.0, Apple clang 21.0.0, Release (`-DCMAKE_BUILD_TYPE=Release`).
 
-Host: `studio.local`, Apple M3 Ultra (arm64), macOS Darwin 27.2.0,
-Apple clang 21.0.0, Release. One bounded bench run per code state, no
-parallel load. "Before" is the base bit-by-bit builder; "after" is the
-word-level builder at head. The output checksum was identical before and
-after (4475265), as the equivalence case requires byte-identical blocks.
+One bounded bench run per code state under `benchslot` with no parallel load. "Before" is the base bit-by-bit builder; "After" is the word-level builder at head. The output checksum was identical before and after (`4475265`) on both hosts, as the equivalence case requires byte-identical blocks.
 
-| Shape | Before (ns/build) | After (ns/build) | Linux | Windows |
-| --- | ---: | ---: | --- | --- |
-| sparse_loss | 2761.2 | 469.4 | NOT RUN | NOT RUN |
-| dense_loss | 1154.1 | 871.1 | NOT RUN | NOT RUN |
-| alternating | 544.2 | 775.8 | NOT RUN | NOT RUN |
-| full_window | 2422.2 | 248.6 | NOT RUN | NOT RUN |
-| empty_window | 1.6 | 2.0 | NOT RUN | NOT RUN |
-| wrapped_window | 1189.0 | 817.1 | NOT RUN | NOT RUN |
-| largest_below_4096 | 1170.1 | 817.9 | NOT RUN | NOT RUN |
+| Shape | Linux Before (ns/build) | Linux After (ns/build) | macOS Before (ns/build) | macOS After (ns/build) | Bytes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| sparse_loss | 2224.989 | 527.256 | 1636.194 | 449.573 | 331 |
+| dense_loss | 1085.460 | 1051.096 | 877.396 | 814.712 | 1027 |
+| alternating | 564.517 | 1027.041 | 408.517 | 727.285 | 1027 |
+| full_window | 2154.254 | 104.841 | 1287.190 | 235.510 | 7 |
+| empty_window | 2.262 | 2.863 | 1.512 | 1.727 | 7 |
+| wrapped_window | 850.178 | 1034.934 | 843.642 | 761.671 | 1027 |
+| largest_below_4096 | 837.512 | 1040.806 | 821.092 | 752.148 | 1027 |
 
-The word scan is fastest where runs are long (full window about 9.7x,
-sparse loss about 5.9x) and slower on the alternating window (about 0.7x),
-where every run and gap is one bit and per-range emission dominates; the
-empty window differs by about 0.4 ns in absolute terms. Linux and Windows
-numbers were not run in this card and are named here as gaps, not
-estimated.
+The word scan is fastest where runs are long (`full_window` is 20.5x faster on Linux and 5.5x faster on macOS; `sparse_loss` is 4.2x faster on Linux and 3.6x faster on macOS) and slower on the pathological `alternating` window where every run and gap is one bit and per-range emission (`max_ranges` = 255) dominates.
