@@ -143,7 +143,7 @@ static const struct rocketnet_functional_keys_t * rocketnet_functional_key_set()
 void rocketnet_functional_server_config( struct rocketnet_server_transport_config_t * config )
 {
     const struct rocketnet_functional_keys_t * keys = rocketnet_functional_key_set();
-    rocketnet_server_transport_default_config( config );
+    rocketnet_server_transport_default_config_current( config );
     config->protocol_id = rocketnet_functional_protocol_id;
     memcpy( config->packet_filter, rocketnet_functional_packet_filter, sizeof( config->packet_filter ) );
     memcpy( config->backend_public_key, keys->backend_public, 32 );
@@ -159,8 +159,10 @@ void rocketnet_functional_client_default_config( struct rocketnet_client_transpo
 
 const struct rocketnet_client_transport_config_t * rocketnet_functional_client_config()
 {
+    // the whole current struct, as a NULL config gives the development build
     static struct rocketnet_client_transport_config_t config;
-    rocketnet_functional_client_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
+    memcpy( config.packet_filter, rocketnet_functional_packet_filter, sizeof( config.packet_filter ) );
     return &config;
 }
 
