@@ -660,7 +660,9 @@ sequenced within it, independently of every other channel, and a channel at or
 past the config's `num_channels` refuses them. UNRELIABLE, RELIABLE and the
 other two receipt types ignore it, since they are neither ordered nor sequenced:
 any channel is accepted for them, never refused, and they travel with no
-channel (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
+channel (`rn_message_send_channel` in `sdk/rocketnet_message_server.cpp`,
+which `rn_message_object_start` calls to map the channel before reserving
+the message).
 
 A send the connection's region has no room for ends the connection: the
 server disconnects that client with
