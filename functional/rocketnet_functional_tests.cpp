@@ -6818,6 +6818,7 @@ void rocketnet_test_server_gso_held_receive_view()
 
 #include "rocketnet_server_uring.h"
 
+#if ROCKETNET_DEV
 #if defined( __GNUC__ ) || defined( __clang__ )
 __attribute__((noinline))
 #endif
@@ -6825,6 +6826,7 @@ static struct rocketnet_server_uring_t * rocketnet_test_server_uring_create_stal
 {
     return rocketnet_server_uring_create( NULL, address, 2 );
 }
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 void rocketnet_test_server_uring_probe()
