@@ -61,6 +61,7 @@ static inline bool better_match( const rocketnet_ifforward4_t * a, const rocketn
     if ( !b || ( ip & b->forward_mask ) != ( b->forward_dest & b->forward_mask ) )
         return true;
     // The implementation compares masks numerically; contiguous prefixes sort by length.
+
     if ( a->forward_mask != b->forward_mask )
         return a->forward_mask > b->forward_mask;
     return a->forward_metric < b->forward_metric;
@@ -112,11 +113,14 @@ static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketne
     rocketnet_ifforward4_t result = {};
     const unsigned prefix = route_entry->rtm_dst_len;
     result.forward_mask = prefix == 0 ? 0 : ( 0xffffffffu << ( 32 - prefix ) );
+
     uint32_t table = route_entry->rtm_table;
     bool has_destination = prefix == 0;
+
     // RTM_PAYLOAD: the length check above keeps this at least zero, and a
     // length past INT_MAX goes negative, which RTA_OK refuses and the
     // remaining != 0 check below rejects.
+
     int remaining = (int) ( msg_ptr->nlmsg_len - NLMSG_SPACE( sizeof( rtmsg ) ) );
     for ( const struct rtattr * attribute = (const struct rtattr *) ( (const uint8_t *) route_entry + NLMSG_ALIGN( sizeof( rtmsg ) ) );
           RTA_OK( attribute, remaining ); attribute = rocketnet_route_attribute_next( attribute, &remaining ) )
@@ -148,10 +152,12 @@ static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketne
                 break;
         }
     }
+
     if ( remaining != 0 || table != RT_TABLE_MAIN || !result.if_index || !has_destination )
         return false;
     *out = result;
+
     return true;
 }
-#endif
-#endif // ROCKETNET_SDK_ROCKETNET_ROUTE_H
+#endif // #if defined( __linux__ )
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_ROUTE_H

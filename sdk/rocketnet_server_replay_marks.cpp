@@ -146,6 +146,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
 
         // A refused forget for an old mapping must be retried before the
         // current mapping replaces its seen or marked identity.
+
         if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
             continue;
 
@@ -154,6 +155,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         // session in the slot), is marked even at zero, so the commit before
         // its first keep-alive leaves overwrites any older session's entry
         // for the address, whether or not that session's forget has landed.
+
         const bool first_seen = !slot->seen;
         const bool mark_owed = slot->mark_owed != 0;
 
@@ -169,11 +171,13 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         // tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the
         // sink cannot queue leaves the cache where it was and the slot owes
         // it, so the next walk takes it again (MarkOwedUntilApplied)
+
         if ( !sink->mark( sink->context, address, high_water ) )
         {
             slot->mark_owed = 1;
             continue;
         }
+
         slot->mark_owed = 0;
         slot->has_mark = 1;
         slot->marked_value = high_water;
@@ -228,6 +232,7 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
             rocketnet_encryption_map_destroy( map );
         return false;
     }
+
     rocketnet_address_t address;
     const bool parsed = rocketnet_address_parse( &address, "198.51.100.91:4091" );
     uint8_t user[ROCKETNET_USER_DATA_BYTES] = {};
@@ -240,8 +245,10 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
         entry->control->client_index = index;
         entry->replay_session.highest_opened = 0xA5A5;
     }
+
     int forgets = 0;
     rocketnet_server_replay_sink_t sink = { &forgets, rocketnet_replay_witness_forget, rocketnet_replay_witness_mark };
+
     if ( index == 0 )
     {
         rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
@@ -249,11 +256,13 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
         rocketnet_encryption_map_remove_current( map, mapping );
         rocketnet_server_replay_marks_walk( marks, slots, map, &sink );
     }
+
     const uint8_t zero[sizeof( rocketnet_server_replay_slot_mark_t )] = {};
     const bool clean = index == 0 && forgets == 1 && memcmp( &marks->slots[0], zero, sizeof( zero ) ) == 0;
     rocketnet_server_replay_marks_destroy( marks );
     rocketnet_client_slots_destroy( slots );
     rocketnet_encryption_map_destroy( map );
+
     return clean;
 }
 #endif // #if ROCKETNET_TEST_SEAMS

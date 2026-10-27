@@ -71,10 +71,10 @@
 // server_send_kbps (sdk/rocketnet.h), not limits: only the config table reads them
 #ifndef ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS
 #define ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS                  1000        // client to server
-#endif
+#endif // #ifndef ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS
 #ifndef ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS
 #define ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS       10000       // server to each client slot
-#endif
+#endif // #ifndef ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS
 
 #define ROCKETNET_SEND_BUDGET_MIN_KBPS                      1
 // the largest capped budget: every int below ROCKETNET_SEND_KBPS_UNLIMITED,
@@ -205,6 +205,7 @@ inline bool rocketnet_send_budget_init( struct rocketnet_send_budget_t * budget,
     budget->depth = rocketnet_send_budget_depth_bytes( kbps );
     budget->tokens = budget->depth;
     budget->last_time = now;
+
     return true;
 }
 
@@ -219,6 +220,7 @@ inline void rocketnet_send_budget_refill( struct rocketnet_send_budget_t * budge
         return;
     const double elapsed = now - budget->last_time;
     budget->last_time = now;
+
     double tokens = budget->tokens + budget->bytes_per_second * elapsed;
     if ( tokens > budget->depth )
         tokens = budget->depth;
@@ -251,6 +253,7 @@ inline bool rocketnet_send_budget_set_kbps( struct rocketnet_send_budget_t * bud
             budget->refusals++;
         return false;
     }
+
     rocketnet_send_budget_refill( budget, now );
     budget->kbps = kbps;
     budget->bytes_per_second = rocketnet_send_budget_bytes_per_second( kbps );
@@ -279,6 +282,7 @@ inline bool rocketnet_send_budget_spend( struct rocketnet_send_budget_t * budget
         return false;
     budget->tokens -= (double) wire_bytes;
     budget->bytes_spent += (uint64_t) wire_bytes;
+
     return true;
 }
 
@@ -307,6 +311,7 @@ inline int rocketnet_send_budget_admit( struct rocketnet_send_budget_t * budget,
         budget->order_refusals++;
         return ROCKETNET_SEND_BUDGET_WAIT;                 // only the reliable ranks sit above another
     }
+
     budget->rank_reached = rank;
 
     if ( send_class != ROCKETNET_SEND_CLASS_UNRELIABLE )
@@ -316,6 +321,7 @@ inline int rocketnet_send_budget_admit( struct rocketnet_send_budget_t * budget,
             budget->reliable_waiting = 1;
             return ROCKETNET_SEND_BUDGET_WAIT;
         }
+
         return ROCKETNET_SEND_BUDGET_SEND;
     }
 
@@ -325,6 +331,7 @@ inline int rocketnet_send_budget_admit( struct rocketnet_send_budget_t * budget,
         budget->unreliable_dropped_bytes += (uint64_t) wire_bytes;
         return ROCKETNET_SEND_BUDGET_DROP;
     }
+
     return ROCKETNET_SEND_BUDGET_SEND;
 }
 
@@ -341,13 +348,15 @@ inline bool rocketnet_send_budget_settle( struct rocketnet_send_budget_t * budge
             budget->refusals++;
         return false;
     }
+
     const int refund = admitted_wire_bytes - actual_wire_bytes;
     double tokens = budget->tokens + (double) refund;
     if ( tokens > budget->depth )
         tokens = budget->depth;
     budget->tokens = tokens;
     budget->bytes_spent -= (uint64_t) refund;
+
     return true;
 }
 
-#endif // ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H

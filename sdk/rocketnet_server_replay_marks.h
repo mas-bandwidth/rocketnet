@@ -66,4 +66,4 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
                                          struct rocketnet_encryption_map_t * map,
                                          const struct rocketnet_server_replay_sink_t * sink );
 
-#endif // ROCKETNET_SDK_ROCKETNET_SERVER_REPLAY_MARKS_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_REPLAY_MARKS_H

@@ -83,4 +83,4 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 // after abort, or a modified or wrong-owner context is a different refusal
 // and still asserts in a debug build.
 
-#endif // ROCKETNET_SDK_ROCKETNET_SERVER_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_H
