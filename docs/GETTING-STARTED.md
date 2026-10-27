@@ -37,16 +37,29 @@ lists the production settings. Most examples link the development library,
 Initialize the library once, fill a server config from its defaults, give it
 the protocol id and the backend public key, then create and start the server.
 From [examples/client_server_server.c](../examples/client_server_server.c),
-lines 43 to 61:
+lines 38 to 76:
 
 ```c
-rocketnet_init( NULL, NULL, NULL );
+const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
+if ( init_status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: init: %s\n", rocketnet_status_name( init_status ) );
+    return 1;
+}
 
 // a deployment's server takes its own backend's public key; this one takes
 // the published development key, whose tokens the client mints
 const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
 struct rocketnet_server_config_t config;
-rocketnet_server_default_config( &config );
+const enum rocketnet_status_t server_config_status = rocketnet_server_default_config( &config );
+if ( server_config_status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+    return 1;
+}
 config.protocol_id = EXAMPLE_PROTOCOL_ID;
 memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
 config.max_clients = 1;
@@ -60,6 +73,10 @@ if ( !server || server_status != ROCKETNET_STATUS_OK )
 {
     // the example runner reads this line as a port already taken, and retries on another
     printf( "FAIL: server != NULL\n" );
+    rn_cli_server_stop_and_destroy( server );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
     return 1;
 }
 ```
@@ -77,28 +94,49 @@ token names the server, carries the keys and is the credential. In a
 development build a program can mint its own token from the server's address
 and public key. From
 [examples/client_server_client.c](../examples/client_server_client.c), lines
-76 to 98:
+84 to 117:
 
 ```c
 char connect_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
 const enum rocketnet_status_t token_status = rocketnet_create_dev_connect_token( address, NULL, server_public_key, 30, 5, 0x0123456789abcdefull, protocol_id, (uint64_t) time( NULL ), NULL, connect_token );
 if ( token_status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
     return 1;
+}
 
 struct rocketnet_client_config_t config;
-rocketnet_client_default_config( &config );
+const enum rocketnet_status_t client_config_status = rocketnet_client_default_config( &config );
+if ( client_config_status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+    return 1;
+}
 config.transport = "portable";
 config.state_change_callback = state_changed;
 enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
 struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &client_status );
 if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
+    rn_cli_client_stop_and_destroy( client );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
     return 1;
+}
 ```
 
 The server reads its address and public key with
 `rocketnet_server_ipv4_address` and `rocketnet_server_public_key`
 ([examples/client_server_server.c](../examples/client_server_server.c), lines
-67 to 68); the example passes them to the client process in a file that holds
+80 to 91); the example passes them to the client process in a file that holds
 no secret.
 
 Production tokens come from the game's backend, never from the client. The
@@ -122,7 +160,7 @@ Each endpoint runs the same five steps once per frame, in this order:
 
 The server's frame, from
 [examples/client_server_server.c](../examples/client_server_server.c), lines
-90 to 110. It has one receive queue across every client, and each message names
+116 to 136. It has one receive queue across every client, and each message names
 the client that sent it:
 
 ```c
@@ -152,7 +190,7 @@ rocketnet_server_send_packets( server );
 
 The client's frame, from
 [examples/client_server_client.c](../examples/client_server_client.c), lines
-103 to 125, with the canonical non-`NULL` `start_message` guard around
+123 to 145, with the canonical non-`NULL` `start_message` guard around
 `finish_message`:
 
 ```c
@@ -188,7 +226,7 @@ What each step requires:
   every call that takes a time, finite and never decreasing; update reads no
   clock of its own (connect token expiry reads the wall clock). These examples pass elapsed time from
   `1000.0`; [examples/game_loop.c](../examples/game_loop.c) runs a 60 Hz fixed
-  step and passes `1000.0 + frame * FRAME_DT` (line 143).
+  step and passes `1000.0 + frame * FRAME_DT` (line 191).
 - **Receive until `NULL`.** One update can deliver more than one batch, and
   every message must be taken before the next update: a message left in the
   queue ends that connection with `MESSAGE_NOT_RECEIVED`, because its sender
@@ -215,7 +253,7 @@ What each step requires:
 
 [examples/game_loop.c](../examples/game_loop.c) is the whole loop at scale: a
 server and up to 1000 clients over `loopback`, the steps numbered (1) to (5)
-on lines 166 to 203, and `--wrong-order` to show the frame of latency an early
+on lines 200 to 237, and `--wrong-order` to show the frame of latency an early
 send costs. [USAGE.md, "Frame loop"](../USAGE.md#frame-loop),
 ["Sending messages"](../USAGE.md#sending-messages),
 ["Receiving messages"](../USAGE.md#receiving-messages) and
@@ -237,7 +275,7 @@ common split:
 The channel is the ordering scope. Ordered and sequenced modes hold order only
 within their channel, so a lost chat message holds back later chat on its
 channel and never the positions on another. From
-[examples/channels.c](../examples/channels.c), lines 124 to 152, with the
+[examples/channels.c](../examples/channels.c), lines 160 to 186, with the
 canonical non-`NULL` `start_message` guards:
 
 ```c
@@ -284,24 +322,28 @@ keeps its frame loop running and polls once per frame. A client that is still
 being updated by the game keeps calling update while it polls. The examples
 wait in a loop at exit, with a failure bound; from
 [examples/shutdown.h](../examples/shutdown.h), which every example includes,
-lines 12 to 27 and 43 to 53:
+lines 26 to 40 and 59 to 76:
 
 ```c
-static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client )
+static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped, rn_cli_step_fn step, rn_cli_now_fn now, rn_cli_sleep_fn sleep_fn, const char * what )
 {
-    const double deadline = rocketnet_time() + 10.0;
-    while ( !rocketnet_client_disconnected( client ) )
+    const double deadline = now() + 10.0;
+    while ( !stopped( object ) )
     {
-        if ( rocketnet_time() >= deadline )
+        if ( now() >= deadline )
         {
-            fprintf( stderr, "client shutdown did not complete within 10 seconds\n" );
+            fprintf( stderr, "%s shutdown did not complete within 10 seconds\n", what );
             abort();
         }
-        // Needed only by an explicitly step-driven client. During shutdown,
-        // update progresses cleanup without reading or changing game time.
-        rocketnet_client_update( client, 1000.0 );
-        rocketnet_sleep( 0.001 );
+        if ( step )
+            step( object );
+        sleep_fn( 0.001 );
     }
+}
+
+static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client )
+{
+    rn_cli_bounded_wait( client, rn_cli_client_is_disconnected, rn_cli_client_step, rocketnet_time, rocketnet_sleep, "client" );
 }
 ```
 
@@ -310,18 +352,16 @@ static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * c
 {
     if ( !client )
         return;
-    if ( client )
-    {
-        rocketnet_client_disconnect( client );
-        rn_cli_client_wait_disconnected( client );
-    }
+    rocketnet_client_disconnect( client );
+    rn_cli_client_wait_disconnected( client );
     rocketnet_client_destroy( client );
 }
 ```
 
 The server is the same with `rocketnet_server_stop`,
-`rocketnet_server_stopped` and `rocketnet_server_destroy` (lines 29 to 41 and
-55 to 65). Destroy every client and server, then call `rocketnet_term`. Keep
+`rocketnet_server_stopped` and `rocketnet_server_destroy` (lines 64 to 67 and
+78 to 85). Destroy every client and server, then call `rocketnet_term` and
+check that it returns `ROCKETNET_STATUS_OK`. Keep
 each object, its allocator and callback contexts alive until its destroy
 returns. [USAGE.md, "Connection lifecycle"](../USAGE.md#connection-lifecycle)
 has the per-frame form a game uses and the states a connection ends in.
@@ -441,8 +481,8 @@ secret key never leaves the server object and is wiped by
 `rocketnet_server_destroy`. After `rocketnet_server_start` succeeds, the server
 exports its bound UDP address and 32-byte X25519 public key
 (`rocketnet_server_public_key`) so the backend can seal tokens to it. From
-[examples/backend_server.c](../examples/backend_server.c), lines 75 to 86 and
-90 to 105:
+[examples/backend_server.c](../examples/backend_server.c), lines 88 to 100 and
+105 to 130:
 
 ```c
 enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -452,6 +492,10 @@ if ( server && status == ROCKETNET_STATUS_OK )
 if ( !server || status != ROCKETNET_STATUS_OK )
 {
     printf( "FAIL: server start: %s\n", rocketnet_status_name( status ) );
+    rn_cli_server_stop_and_destroy( server );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
     return 1;
 }
 printf( "backend_server: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" : "production", rocketnet_server_transport_name( server ) );
@@ -461,12 +505,26 @@ printf( "backend_server: mode=%s transport=%s\n", ROCKETNET_DEV ? "development" 
 char served_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
 uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
 char server_public_key_base64[4 * ( ( ROCKETNET_SERVER_PUBLIC_KEY_BYTES + 2 ) / 3 ) + 1];
-rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) );
+if ( !rocketnet_server_ipv4_address( server, served_address, sizeof( served_address ) ) )
+{
+    printf( "FAIL: server ipv4 address\n" );
+    rn_cli_server_stop_and_destroy( server );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+    return 1;
+}
 rocketnet_server_public_key( server, server_public_key );
 write_base64( server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES, server_public_key_base64 );
 FILE * env = fopen( ENV_FILE, "w" );
 if ( !env )
+{
+    rn_cli_server_stop_and_destroy( server );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
     return 1;
+}
 fprintf( env, "ROCKETNET_BACKEND_SERVER_ADDRESSES=%s\nROCKETNET_BACKEND_SERVER_PUBLIC_KEY=%s\n", served_address, server_public_key_base64 );
 fclose( env );
 ```
@@ -534,12 +592,20 @@ The minted 768-byte connect token (`ROCKETNET_CONNECT_TOKEN_BYTES`, encoded as
   `signed_connect_data` signed by `ROCKETNET_BACKEND_PRIVATE_KEY`.
 
 Pass the opaque base64 token to `rocketnet_client_connect`. From
-[examples/backend_client.c](../examples/backend_client.c), lines 44 to 68:
+[examples/backend_client.c](../examples/backend_client.c), lines 49 to 86:
 
 ```c
 const uint8_t packet_filter[ROCKETNET_PACKET_FILTER_BYTES] = EXAMPLE_BACKEND_PACKET_FILTER;
 struct rocketnet_client_config_t config;
-rocketnet_client_default_config( &config );
+const enum rocketnet_status_t client_config_status = rocketnet_client_default_config( &config );
+if ( client_config_status != ROCKETNET_STATUS_OK )
+{
+    printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+    return 1;
+}
 config.transport = "portable";
 memcpy( config.packet_filter, packet_filter, sizeof( packet_filter ) );
 config.state_change_callback = state_changed;

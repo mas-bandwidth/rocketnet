@@ -56,10 +56,15 @@ after the recorded run.
 - No existing harness proves every production stale-generation transition or
   every live-slot overwrite refusal named by the completion brief. A result
   may not infer those properties from a different caller's memory-safety pass.
-- The workflow files checked for tool presence but did not pin an exact tool or
-  container digest. The run receipt therefore hashes the actual host binaries
-  and names this limitation; it does not call an unpinned installation a
-  reproducible container identity.
+- Tool versions are pinned in `TOOL-VERSIONS` (CBMC 6.6.0, CaDiCaL 2.1.3,
+  ESBMC 8.5.0); both workflows compare the installed `--version` output
+  against it and fail with TOOL-MISSING on a mismatch. No container digest
+  is pinned, so a run receipt still hashes the actual host binaries.
+- HOLD: `replay-near-4096` remains HOLD at the full bound (partition
+  `nw_multi_first_word` timed out; see `full-bounds-partition-results.md`).
+  It is scheduled nightly via `nightly` in nightly-proofs.yml, with its
+  unwind derived from ROCKETNET_HISTORY_PACKETS, and is not a per-commit
+  gate until that HOLD clears.
 
 ## Soundness rules
 

@@ -11,44 +11,41 @@
 
 // Native functional/benchmark cleanup. Explicitly bounded waiting belongs to
 // the harness, never to stop/stopped. Preserve the suite's outer watchdog.
+// Every wait below is the one shared bounded wait in examples/shutdown.h
+// (rn_cli_bounded_wait, 10 second bound); this header supplies each native
+// type's completion query and step, and passes the harness clock and sleep
+// in at those call sites.
+static inline int rn_native_client_transport_is_stopped( void * object )
+{
+    return rocketnet_client_transport_stopped( (struct rocketnet_client_transport_t *) object );
+}
+
+static inline void rn_native_client_transport_step( void * object )
+{
+    rocketnet_client_transport_update( (struct rocketnet_client_transport_t *) object, 1000.0 );
+}
+
+static inline int rn_native_server_transport_is_stopped( void * object )
+{
+    return rocketnet_server_transport_stopped( (struct rocketnet_server_transport_t *) object );
+}
+
 static inline void rn_native_client_transport_wait_stopped( struct rocketnet_client_transport_t * client )
 {
-    const double deadline = rocketnet_time() + 10.0;
-    while ( !rocketnet_client_transport_stopped( client ) )
-    {
-        if ( rocketnet_time() >= deadline )
-        {
-            fprintf( stderr, "client transport shutdown did not complete within 10 seconds\n" );
-            abort();
-        }
-        rocketnet_client_transport_update( client, 1000.0 );
-        rocketnet_sleep( 0.001 );
-    }
+    rn_cli_bounded_wait( client, rn_native_client_transport_is_stopped, rn_native_client_transport_step, rocketnet_time, rocketnet_sleep, "client transport" );
 }
 
 static inline void rn_native_server_transport_wait_stopped( struct rocketnet_server_transport_t * server )
 {
-    const double deadline = rocketnet_time() + 10.0;
-    while ( !rocketnet_server_transport_stopped( server ) )
-    {
-        if ( rocketnet_time() >= deadline )
-        {
-            fprintf( stderr, "server transport shutdown did not complete within 10 seconds\n" );
-            abort();
-        }
-        rocketnet_sleep( 0.001 );
-    }
+    rn_cli_bounded_wait( server, rn_native_server_transport_is_stopped, NULL, rocketnet_time, rocketnet_sleep, "server transport" );
 }
 
 static inline void rn_native_client_transport_stop_and_destroy( struct rocketnet_client_transport_t * client )
 {
     if ( !client )
         return;
-    if ( client )
-    {
-        rocketnet_client_transport_stop( client );
-        rn_native_client_transport_wait_stopped( client );
-    }
+    rocketnet_client_transport_stop( client );
+    rn_native_client_transport_wait_stopped( client );
     rocketnet_client_transport_destroy( client );
 }
 
@@ -56,26 +53,19 @@ static inline void rn_native_server_transport_stop_and_destroy( struct rocketnet
 {
     if ( !server )
         return;
-    if ( server )
-    {
-        rocketnet_server_transport_stop( server );
-        rn_native_server_transport_wait_stopped( server );
-    }
+    rocketnet_server_transport_stop( server );
+    rn_native_server_transport_wait_stopped( server );
     rocketnet_server_transport_destroy( server );
 }
 #ifdef __cplusplus
+static inline int rn_native_server_io_is_stopped( void * object )
+{
+    return rocketnet_server_transport_io_stopped( (rocketnet_server_transport_io_t *) object );
+}
+
 static inline void rn_native_server_io_wait_stopped( rocketnet_server_transport_io_t * server )
 {
-    const double deadline = rocketnet_time() + 10.0;
-    while ( !rocketnet_server_transport_io_stopped( server ) )
-    {
-        if ( rocketnet_time() >= deadline )
-        {
-            fprintf( stderr, "server driver shutdown did not complete within 10 seconds\n" );
-            abort();
-        }
-        rocketnet_sleep( 0.001 );
-    }
+    rn_cli_bounded_wait( server, rn_native_server_io_is_stopped, NULL, rocketnet_time, rocketnet_sleep, "server driver" );
 }
 
 static inline void rn_native_server_io_stop_and_close( rocketnet_server_transport_io_t * server )
@@ -86,22 +76,28 @@ static inline void rn_native_server_io_stop_and_close( rocketnet_server_transpor
 }
 
 template <typename transport_t>
+struct rn_native_backend_wait_t
+{
+    transport_t * transport;
+    bool (*stopped)( transport_t * );
+};
+
+template <typename transport_t>
+static int rn_native_backend_is_stopped( void * object )
+{
+    rn_native_backend_wait_t<transport_t> * wait = (rn_native_backend_wait_t<transport_t> *) object;
+    return wait->stopped( wait->transport );
+}
+
+template <typename transport_t>
 static inline void rn_native_backend_stop_and_destroy( transport_t * transport,
     void (*stop)( transport_t * ), bool (*stopped)( transport_t * ), void (*destroy)( transport_t * ) )
 {
     if ( transport )
     {
         stop( transport );
-        const double deadline = rocketnet_time() + 10.0;
-        while ( !stopped( transport ) )
-        {
-            if ( rocketnet_time() >= deadline )
-            {
-                fprintf( stderr, "backend shutdown did not complete within 10 seconds\n" );
-                abort();
-            }
-            rocketnet_sleep( 0.001 );
-        }
+        rn_native_backend_wait_t<transport_t> wait = { transport, stopped };
+        rn_cli_bounded_wait( &wait, rn_native_backend_is_stopped<transport_t>, NULL, rocketnet_time, rocketnet_sleep, "backend" );
     }
     destroy( transport );
 }
@@ -111,12 +107,9 @@ static inline void rn_native_message_client_stop_and_destroy( struct rocketnet_m
 {
     if ( !message )
         return;
-    if ( message )
-    {
-        struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message );
-        rocketnet_client_transport_stop( transport );
-        rn_native_client_transport_wait_stopped( transport );
-    }
+    struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message );
+    rocketnet_client_transport_stop( transport );
+    rn_native_client_transport_wait_stopped( transport );
     rocketnet_message_client_destroy( message );
 }
 
@@ -124,12 +117,9 @@ static inline void rn_native_message_server_stop_and_destroy( struct rocketnet_m
 {
     if ( !message )
         return;
-    if ( message )
-    {
-        struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( message );
-        rocketnet_server_transport_stop( transport );
-        rn_native_server_transport_wait_stopped( transport );
-    }
+    struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( message );
+    rocketnet_server_transport_stop( transport );
+    rn_native_server_transport_wait_stopped( transport );
     rocketnet_message_server_destroy( message );
 }
 

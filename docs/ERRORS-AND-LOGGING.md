@@ -429,15 +429,18 @@ Understanding the difference between `rocketnet_*_can_send_message` and
 `rocketnet_*_start_message` is critical for avoiding self-inflicted
 disconnects under load:
 
-1. **Why calling `start_message` blindly on a full reliable queue or arena disconnects the session**:
+1. **Why calling `start_message` blindly on a full send region disconnects the session**:
    - Each connection operates inside a fixed, pre-allocated connection region
      (`connection_bytes`, [`docs/LOAD.md`](LOAD.md)).
-   - If a connected caller calls `rocketnet_client_start_message` or
-     `rocketnet_server_start_message` when the connection's send descriptor
-     pool (`send_queue_messages`), send store (`send_message_buffer_bytes`),
-     reliable sliding window (`reliable_messages_in_flight`), or sent-packet
-     ring (`packets_in_flight`) cannot accommodate the message (for example,
-     when reliable messages accumulate faster than ACKs arrive or `send_kbps` /
+   - Any send (reliable, or unreliable that finds no room in the send region)
+     that finds no message memory ends the connection with
+     `MESSAGE_MEMORY_EXHAUSTED` and returns `NULL`: if a connected caller calls
+     `rocketnet_client_start_message` or `rocketnet_server_start_message` when
+     the connection's send descriptor pool (`send_queue_messages`), send store
+     (`send_message_buffer_bytes`), reliable sliding window
+     (`reliable_messages_in_flight`), or sent-packet ring
+     (`packets_in_flight`) cannot accommodate the message (for example, when
+     messages accumulate faster than ACKs arrive or `send_kbps` /
      `per_client_send_kbps` paces them out), the message layer treats region
      exhaustion on an attempted `start_message` as fatal to that connection
      (`tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
