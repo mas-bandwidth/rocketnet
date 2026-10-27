@@ -28,8 +28,10 @@
 //   - region->sent_index   : 2P entries of 16 bytes (open-addressed packet_id -> entry)
 //   - region->sent_refs    : 16P u32 entries (ring of referenced message numbers)
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
-//   - region->resend_fifo  : W entries of 8 bytes (intrusive prev/next links in 0..W-1),
-//                            shared by the two resend FIFOs: a number is in at most one
+//   - region->resend_fifo  : W entries of 16 bytes (prev/next plus generation and owner epoch),
+//                            shared by the two resend FIFOs: a number is in at most one.
+//                            Capacity is W. Unlink is O(1). An acked hole stays linked until a
+//                            named unlink, so a walk still counts it (tla/RNChannelQueues.tla).
 //
 // Each sent packet gets a fresh transport sequence `packet_id`, including
 // every resend. An ack of `packet_id` therefore measures the exact send that
@@ -175,6 +177,12 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 // RN_RESEND_NONE. rn_ordered_write parks new numbers behind the never-sent
 // ones already waiting, ahead of every number that was sent.
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
+
+// Removes number from its resend FIFO only when the link still names generation
+// and the region's current schedule epoch. Does not free the descriptor and
+// does not mark the number acked. False leaves the FIFO unchanged
+// (tla/RNChannelQueues.tla Ack, StaleCancel).
+bool rn_window_ack_cancel_resend( rn_window_ack_t * ack, uint64_t number, uint32_t generation );
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;

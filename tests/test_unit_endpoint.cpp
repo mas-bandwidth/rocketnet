@@ -758,3 +758,78 @@ REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
+
+// Interior cancel and a stale epoch become holes. Expire frees only those
+// generations and the receipt trace matches the oracle. Time is the argument.
+static void test_endpoint_unreliable_holes_match_oracle()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 0;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+    rn_endpoint_begin_update( &endpoint );
+
+    uint32_t index[4];
+    uint32_t serial[4];
+    uint32_t generation[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        uint8_t * data = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 16, endpoint_config.max_payload_bytes );
+        check( data != NULL );
+        memset( data, (uint8_t) ( 0x10 + i ), 16 );
+        serial[i] = rn_endpoint_finish( &endpoint, 16, 0 );
+        check( serial[i] != 0 );
+    }
+    uint32_t seen = 0;
+    for ( uint32_t d = endpoint.unreliable_head; d != RN_DESCRIPTOR_NONE && seen < 4; d = endpoint.region->send_descriptors[d].next )
+    {
+        index[seen] = d;
+        generation[seen] = endpoint.region->send_descriptors[d].generation;
+        check( endpoint.region->send_descriptors[d].serial == serial[seen] );
+        seen++;
+    }
+    check( seen == 4 );
+    const uint32_t epoch = endpoint.region->schedule_epoch;
+    check( rn_endpoint_cancel_unreliable( &endpoint, index[1], generation[1] + 1, epoch ) == false );
+    check( endpoint.unreliable_count == 4 );
+    check( rn_endpoint_cancel_unreliable( &endpoint, index[1], generation[1], epoch ) == true );
+    check( endpoint.unreliable_count == 3 );
+    endpoint.region->send_descriptors[index[2]].queue_epoch = 0;
+    rn_endpoint_expire_unreliable( &endpoint );
+    check( endpoint.unreliable_count == 2 );
+    check( endpoint.unreliable_holes == 0 );
+    uint32_t order[2];
+    uint32_t n = 0;
+    for ( uint32_t d = endpoint.unreliable_head; d != RN_DESCRIPTOR_NONE && n < 2; d = endpoint.region->send_descriptors[d].next )
+        order[n++] = endpoint.region->send_descriptors[d].serial;
+    const uint32_t oracle[2] = { serial[0], serial[3] };
+    check( n == 2 && order[0] == oracle[0] && order[1] == oracle[1] );
+    rn_endpoint_tick( &endpoint, 1000.0 );
+    rocketnet_message_receipt_t receipts[8];
+    const int got = rn_endpoint_take_receipts( &endpoint, receipts, 8 );
+    check( got == 2 );
+    check( receipts[0].serial == serial[1] || receipts[1].serial == serial[1] );
+    check( receipts[0].serial == serial[2] || receipts[1].serial == serial[2] );
+    check( receipts[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    check( receipts[1].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+    uint8_t * again = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16, endpoint_config.max_payload_bytes );
+    check( again != NULL );
+    const uint32_t reused = endpoint.pending_descriptor;
+    const uint32_t reused_generation = endpoint.region->send_descriptors[reused].generation;
+    if ( reused == index[1] )
+        check( reused_generation != generation[1] );
+    check( rn_endpoint_finish( &endpoint, 16, 0 ) != 0 );
+    check( rn_endpoint_cancel_unreliable( &endpoint, reused, reused_generation + 1, epoch ) == false );
+    check( endpoint.unreliable_count == 3 );
+    rn_arena_destroy( arena );
+}
+
+REGISTER_UNIT_TEST( test_endpoint_unreliable_holes_match_oracle );
