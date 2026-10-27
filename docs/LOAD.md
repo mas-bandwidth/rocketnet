@@ -208,8 +208,8 @@ development figures were 3,238,578,316 and 22,890,053. Generation, owner epoch,
 enqueue ticket and the hole bound of 64 stayed. The non-development column was
 not re-measured: `tests/test_unit_light_profile.cpp` is not linked when
 `ROCKETNET_DEV=OFF`. On Windows x64 with MSVC, the
-server/client figures are 1,591,206,044 / 22,968,879 bytes in development builds
-and 1,584,809,680 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`.
+server/client figures are 1,603,276,694 / 22,967,743 bytes in development builds
+and 1,596,895,498 / 22,182,883 bytes with `ROCKETNET_DEV=OFF`.
 These are configuration calculations and planned allocator peaks, not
 measured wire usage. The summary reports each endpoint's
 `rocketnet_*_required_memory` figure. Those figures exclude the memory the
