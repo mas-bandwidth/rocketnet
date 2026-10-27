@@ -972,21 +972,6 @@ static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring
 
 // ---------------------------------------------------------------------------
 
-// bytes left allocated by destroys that gave up waiting, and how many did
-
-static std::atomic<uint64_t> rocketnet_server_uring_leaked_bytes_total{0};
-static std::atomic<uint64_t> rocketnet_server_uring_leaked_transports_total{0};
-
-uint64_t rocketnet_server_uring_leaked_bytes()
-{
-    return rocketnet_server_uring_leaked_bytes_total.load();
-}
-
-uint64_t rocketnet_server_uring_leaked_transports()
-{
-    return rocketnet_server_uring_leaked_transports_total.load();
-}
-
 static void rocketnet_server_uring_abort_create( rocketnet_server_uring_t * uring )
 {
     rocketnet_server_uring_stop( uring );
@@ -1501,7 +1486,7 @@ void rocketnet_server_uring_counters( struct rocketnet_server_uring_t * uring, u
 }
 
 // the builtin transport's receive_drops hook: the size
-// drops (:636-638, :653-655), split at the receive ceiling; main thread, where the
+// drops (rocketnet_server_uring_receive_cqe), split at the receive ceiling; main thread, where the
 // CQEs are reaped
 
 void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uring, uint64_t * too_short, uint64_t * too_large )
@@ -1887,16 +1872,6 @@ bool rocketnet_server_uring_stopped( struct rocketnet_server_uring_t * ) { retur
 void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
 {
     (void) uring;
-}
-
-uint64_t rocketnet_server_uring_leaked_bytes()
-{
-    return 0;
-}
-
-uint64_t rocketnet_server_uring_leaked_transports()
-{
-    return 0;
 }
 
 #if ROCKETNET_TEST_SEAMS

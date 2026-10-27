@@ -3,11 +3,11 @@
 > STANDARD.md citations in this file are to the retired draft, kept at commit 96da6fb36107.
 
 `tla/ReplayWindow.tla` is `struct rocketnet_replay_protection_t`
-(`sdk/rocketnet_encryption_map.h:31-35`) and the two operations in
+(`sdk/rocketnet_encryption_map.h`) and the two operations in
 `sdk/rocketnet_replay.cpp` that own it, `rocketnet_replay_already_received` and
 `rocketnet_replay_advance`, together with the one reader that speaks for it on the
-wire, `rocketnet_ack_block_build` (`sdk/rocketnet_ack.cpp:54-137`), and the server
-call site that drives it (`sdk/rocketnet_server_protocol.cpp:901-972`). It has no
+wire, `rocketnet_ack_block_build` (`sdk/rocketnet_ack.cpp`), and the server
+call site that drives it (`rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`). It has no
 link under it: the window never sends, and what reaches it is a sequence that opened.
 `tla/MCReplayWindow.tla` and `tla/MCReplayWindow.cfg` are the small instance. Every
 TLC run is a row in `tla/RUNS.tsv`.
@@ -15,14 +15,13 @@ TLC run is a row in `tla/RUNS.tsv`.
 The model exists for two fix cards, `rnfix-replay-long-skip-clears-window-r2` (F1,
 rocketnet#189, High) and `rnfix-replay-advanced-after-connect-check-r2` (OV-34, Low).
 Each card's rule is an invariant, and each has a reversed witness: the committed
-instance set to what the code does today, which TLC rejects with a trace that replays
-against the code by hand. Both are recorded under "What TLC found". This PR changes
-no C++.
+instance set to the defective order the code no longer uses, which TLC rejects with a trace
+that replays against the code by hand. Both are recorded under "What TLC found".
 
 ## What the model covers
 
-**State the window owns** (`sdk/rocketnet_encryption_map.h:31-35`; a new mapping is
-zeroed at `sdk/rocketnet_encryption_map.cpp:140` and its slot is `-1` at `:141`):
+**State the window owns** (`sdk/rocketnet_encryption_map.h`; a new mapping is
+zeroed in `rocketnet_encryption_map_create` (`sdk/rocketnet_encryption_map.cpp`), its slot `-1` on creation):
 
 | Variable | Code | Meaning |
 |---|---|---|
@@ -32,35 +31,35 @@ zeroed at `sdk/rocketnet_encryption_map.cpp:140` and its slot is `-1` at `:141`)
 | `processed` | (ghost) | those of them a slot processed rather than ignored: what the ack block may truthfully speak for |
 | `connected` | `client_index != -1` on the mapping | the mapping holds a slot |
 
-`W == Words * WordBits` is `ROCKETNET_REPLAY_WINDOW_BITS` (`sdk/rocketnet_replay.h:26`,
+`W == Words * WordBits` is `ROCKETNET_REPLAY_WINDOW_BITS` (`sdk/rocketnet_replay.h`,
 `ROCKETNET_HISTORY_PACKETS`, 4096 by default and up to 32768, always a multiple of
-64: `sdk/rocketnet_history.h:7-14`). The retained range is `Floor..highest` with
+64: `sdk/rocketnet_history.h`). The retained range is `Floor..highest` with
 `Floor = highest - W + 1` once `highest >= W`, never below 1: `already_received`
-refuses `s <= highest - W` as too old (`sdk/rocketnet_replay.cpp:35-37`) and the ack
-builder's floor is `largest - W + 1` (`sdk/rocketnet_ack.cpp:70-72`); the two agree.
+refuses `s <= highest - W` as too old (`sdk/rocketnet_replay.cpp`) and the ack
+builder's floor is `largest - W + 1` (`sdk/rocketnet_ack.cpp`); the two agree.
 
 **Operators**, each cited to the function it models:
 
 | Operator | Code | What |
 |---|---|---|
-| `AlreadyReceived(s)` | `rocketnet_replay_already_received`, `sdk/rocketnet_replay.cpp:27-40` | above `highest`: no; at or below `highest - W`: yes (too old, refused either way); inside: the ring bit |
-| `Advance(s)` | `rocketnet_replay_advance`, `sdk/rocketnet_replay.cpp:42-70` | above `highest`: clear what the advance skips past, then move the mark; always: set the bit for `s` |
-| `Cleared(s)` | the two branches at `:54-65` | a skip shorter than `W` clears each skipped sequence's bit (`:63-64`); a skip of `W` or more clears words `0..ClearedWords-1` (`:56-59`) |
-| `AckReports(s)` | `rocketnet_ack_block_build`, `sdk/rocketnet_ack.cpp:48-52, 87, 102, 114` | the block walks from `largest = highest` down to the floor reading the same ring bit, so `s` is reported received exactly when it is in range and its bit is set |
+| `AlreadyReceived(s)` | `rocketnet_replay_already_received`, `sdk/rocketnet_replay.cpp` | above `highest`: no; at or below `highest - W`: yes (too old, refused either way); inside: the ring bit |
+| `Advance(s)` | `rocketnet_replay_advance`, `sdk/rocketnet_replay.cpp` | above `highest`: clear what the advance skips past, then move the mark; always: set the bit for `s` |
+| `Cleared(s)` | `rocketnet_replay_advance` in `sdk/rocketnet_replay.cpp` | a skip shorter than `W` clears each skipped sequence's bit (`rocketnet_replay_clear_range`); a skip of `W` or more clears words `0..ClearedWords-1` (the whole ring when `ClearedWords = Words`) |
+| `AckReports(s)` | `rocketnet_ack_block_build`, `sdk/rocketnet_ack.cpp` | the block walks from `largest = highest` down to the floor reading the same ring bit, so `s` is reported received exactly when it is in range and its bit is set |
 
 **Actions**, one per operation and per outside event:
 
 | Action | Code | What |
 |---|---|---|
-| `Receive(s)` | `sdk/rocketnet_server_protocol.cpp:901-972` | a session packet with sequence `s` arrives and opens. The check at `:901` refuses a duplicate or a too-old sequence before the open, so an opened packet is never one the window refuses. With `GateBeforeAdvance = TRUE` (the rule) a packet on a mapping without a slot leaves the window alone; with `FALSE` (today, `:962` then `:967`) it advances the window and is then ignored |
-| `Connect` | `sdk/rocketnet_server_protocol.cpp:710-713` | the connection response opens and the mapping takes a slot; once |
+| `Receive(s)` | `sdk/rocketnet_server_protocol.cpp` | a session packet with sequence `s` arrives and opens. The check in `rocketnet_replay_already_received` refuses a duplicate or a too-old sequence before the open, so an opened packet is never one the window refuses. With `GateBeforeAdvance = TRUE` (the rule, and the code: `rocketnet_server_process_sealed_packet` checks the slot before the AEAD open and before `rocketnet_replay_advance`) a packet on a mapping without a slot leaves the window alone; with `FALSE` (the reversed witness) it advances the window and is then ignored |
+| `Connect` | `sdk/rocketnet_server_protocol.cpp` | the connection response opens and the mapping takes a slot; once |
 
 The client is the same pair on a window that is always connected
-(`sdk/rocketnet_client_protocol.cpp:689` and `:713`); `Receive` with `connected`
+(`rocketnet_client_open_session_packet` in `sdk/rocketnet_client_protocol.cpp`); `Receive` with `connected`
 covers it. The model is `replay_session` only. The handshake window (`replay_handshake`)
 is the same struct, but handshake packets are exempt from replay marking and only raise
-its `highest_opened` (`sdk/rocketnet_server_protocol.cpp:883-889` and `:949-950`;
-`sdk/rocketnet_client_protocol.cpp:511-512`): `advance` never runs on it, no ack block
+its `highest_opened` (`rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`;
+`rocketnet_client_process_challenge` in `sdk/rocketnet_client_protocol.cpp`): `rocketnet_replay_advance` never runs on it, no ack block
 is built from it, and nothing here speaks for it.
 
 **Constants:**
@@ -68,9 +67,9 @@ is built from it, and nothing here speaks for it.
 | Constant | Code | Committed | Witness |
 |---|---|---|---|
 | `Words`, `WordBits` | `ROCKETNET_HISTORY_PACKETS / 64` words of 64 bits | 6 words of 2 bits, `W = 12` | same |
-| `ClearedWords` | the words the long-skip branch clears | `6` (all: the rule) | `4` (`window[0..3]`: today's code) |
+| `ClearedWords` | the words the long-skip branch clears | `6` (all: the rule, and the code) | `4` (`window[0..3]`: the defective variant) |
 | `MaxSeq` | the highest sequence explored | `36`, three windows | same |
-| `GateBeforeAdvance` | the server checks the slot before advancing | `TRUE` (the rule) | `FALSE` (today's code) |
+| `GateBeforeAdvance` | the server checks the slot before advancing | `TRUE` (the rule, and the code) | `FALSE` (the reversed witness) |
 
 ## The rules
 
@@ -85,7 +84,7 @@ is no liveness property here; the connection models above it carry those.
 | `AckReportsOnlyReceived` | F1's second half (`sdk/rocketnet_ack.cpp` builds the block from the same window) | the ack block names only sequences that opened |
 | `ReceivedIsRefused` | STANDARD.md _Replay Protection_: "within the window accept a sequence only once" | everything that opened is refused thereafter |
 | `BelowFloorIsRefused` | STANDARD.md _Replay window sizing_: "an undersized window discards old legitimate packets; it never accepts a replay" | below the floor everything is refused |
-| `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp:94` | the high-water mark is itself marked |
+| `HighestIsReceived` | the assert at `sdk/rocketnet_ack.cpp` | the high-water mark is itself marked |
 | `NoAdvanceBeforeConnect` | STANDARD.md _Reading packets_, the slot gate before the mark (OV-34; the standard's rule, its PR pending) | the session window of a mapping without a slot never moves |
 | `AckReportsOnlyProcessed` | the harm behind OV-34, named by the STANDARD change | the ack block names only packets a slot processed |
 | `NoOpenBeforeConnect` | TRANSPORT.md t10 step 12, the slot gate before decryption (asr pass 1 F4, approved 2026-10-21) | no AEAD open is attempted for a session packet, genuine (`Receive`) or forged (`Forge`), on a mapping without a slot |
@@ -100,10 +99,10 @@ own witness run.
 - Sequence reconstruction from 32 wire bits (`rocketnet_reconstruct_sequence`); the
   model receives 64-bit sequences up to `MaxSeq`.
 - The open itself. A `Receive(s)` is a packet that opened; a forgery that does not open
-  never reaches `advance` (`sdk/rocketnet_server_protocol.cpp:917-922`) and is not
+  never reaches `advance` (`sdk/rocketnet_server_protocol.cpp`) and is not
   modelled. Who can produce a packet that opens under the session keys of a mapping
   without a slot is a question for the security model; here the event is simply
-  possible, as the code's comment at `:964-965` allows ("a lost-response race or an
+  possible, as the code's comment in `rocketnet_server_process_sealed_packet` allows ("a lost-response race or an
   injection").
 - The ack block's truncation (`max_ranges`, the `0xFFFF` run and gap caps): it loses
   only the oldest information, which the next block restates.
@@ -124,8 +123,8 @@ java -cp /path/to/tla2tools.jar tlc2.TLC -workers 4 -cleanup -config MCReplayWin
 `GateBeforeAdvance = TRUE`, `GateBeforeOpen = TRUE`), checking every invariant above and `Monotone`. It finishes
 in a few seconds: 958,503 states, 53,249 distinct, depth 16.
 
-The reversed witnesses are the same file with one constant changed to what the code
-does today and `INVARIANTS` cut to the one rule under test, so TLC names that rule:
+The reversed witnesses are the same file with one constant changed to the defective
+order the code no longer uses and `INVARIANTS` cut to the one rule under test, so TLC names that rule:
 
 | Run | Edit | `INVARIANTS` | Expected |
 |---|---|---|---|
@@ -163,10 +162,13 @@ the one invariant.)
 ## What TLC found
 
 Both counterexamples were replayed by hand through `sdk/rocketnet_replay.cpp` and
-`sdk/rocketnet_server_protocol.cpp` at main `3ad4179`. Both are real: the code does what
-the trace says. The F1 fix clears the whole ring; OV-34 belongs to its separate fix card.
+`sdk/rocketnet_server_protocol.cpp` at main `3ad4179`. Both were real at that measurement:
+the code then did what the trace says. The code now clears the whole ring in
+`rocketnet_replay_advance` and gates before the open and the advance in
+`rocketnet_server_process_sealed_packet`, so both traces are now reversed witnesses
+of orders the code no longer uses.
 
-### 1. F1: a long skip leaves stale bits that read as received (real, `sdk/rocketnet_replay.cpp:54-60`)
+### 1. F1: a long skip leaves stale bits that read as received (reversed witness, `rocketnet_replay_advance` in `sdk/rocketnet_replay.cpp`)
 
 `w-longskip-window`, `ClearedWords = 4` of 6 (`W = 12`). With four workers TLC prints one
 of several equivalent short traces (which small sequences open before the jump varies;
@@ -189,24 +191,24 @@ state (`AlreadyReceived(20)` is `TRUE`: a genuine packet 20 is refused) and so d
 
 Against the code, at the default `W = 4096` (64 words), from a zeroed struct:
 
-1. `rocketnet_replay_advance(r, 2)`: `skipped = 2 < 4096`, the loop at `:63-64` clears
-   bit 1, `:69` sets bit 2, `highest_opened = 2`.
+1. `rocketnet_replay_advance(r, 2)`: `skipped = 2 < 4096`, `rocketnet_replay_clear_range` clears
+   bit 1, `rocketnet_replay_set_bit` sets bit 2, `highest_opened = 2`.
 2. `rocketnet_replay_advance(r, 300)`: `skipped = 298`, clears bits `3..299`, sets bit
    300 (word 4), `highest_opened = 300`.
-3. `rocketnet_replay_advance(r, 4397)`: `skipped = 4097 >= 4096`, so `:56-59` zero
-   `window[0..3]` (bits `0..255`) and nothing else; `:69` sets bit `4397 % 4096 = 301`;
+3. `rocketnet_replay_advance(r, 4397)`: `skipped = 4097 >= 4096`, so the defective variant zeroes
+   `window[0..3]` (bits `0..255`) and nothing else; `rocketnet_replay_set_bit` sets bit `4397 % 4096 = 301`;
    `highest_opened = 4397`. Bit 300 is still set.
 4. `rocketnet_replay_already_received(r, 4396)`: `4396 <= 4397`, `4396 > 4397 - 4096 =
-   301`, so `:39` returns bit `4396 % 4096 = 300`: **1**. A genuine packet 4396 is
+   301`, so `rocketnet_replay_bit` returns bit `4396 % 4096 = 300`: **1**. A genuine packet 4396 is
    refused as already received.
 5. `rocketnet_ack_block_build` on the same struct: `largest = 4397`, `floor = 302`, the
-   first-run loop at `:87-93` reads bit 301 (set) then bit 300 (set) then bit 299
+   first-run loop in `rocketnet_ack_block_build` reads bit 301 (set) then bit 300 (set) then bit 299
    (clear), so `first_range_length = 2`: the sender is told 4396 and 4397 arrived.
 
 The card's own test (fill `1..W`, advance to `3W`) is the same shape at full width:
 after the jump every bit `256..4095` is stale, so every sequence `2W + 257 .. 3W - 1`
 reads as received and the block reports a run of 3840 packets of which one arrived. The
-existing `rocketnet_test_replay_protection` (`sdk/rocketnet_tests.cpp:3503-3511`) says
+existing `rocketnet_test_replay_protection` (`sdk/rocketnet_tests.cpp`) says
 "a far-ahead advance clears the whole window" but probes only sequences 1, 2 and
 `W + 1`, all in word 0, so it passes today; that is why the fix card asks for a test
 written in terms of `ROCKETNET_REPLAY_WINDOW_BITS` that reaches past word 3.
@@ -215,18 +217,20 @@ The code now clears the whole ring in `sdk/rocketnet_replay.cpp`'s
 `rocketnet_replay_advance` — `memset( replay->window, 0, sizeof( replay->window ) )`
 in the long-skip branch — which is `ClearedWords = Words` in the model, the committed run.
 
-### 2. OV-34: the server advances the session window before the slot check (real, `sdk/rocketnet_server_protocol.cpp:962` before `:967`)
+### 2. OV-34: the server advances the session window before the slot check (reversed witness, `rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`)
 
 `w-gate`, `GateBeforeAdvance = FALSE`. TLC's trace is two states: from `Init`
 (`connected = FALSE`), `Receive(1)` advances the window to `highest = 1`,
 `received = {1}`, and `NoAdvanceBeforeConnect` is violated.
 
-Against the code at `sdk/rocketnet_server_protocol.cpp`: a session packet for a mapping
-with `client_index == -1` passes the already-received check at `:901` (the window is
-empty), opens at `:914` (it carries the session keys), reaches
-`rocketnet_replay_advance( replay, sequence )` at `:962`, which sets bit 1 and moves
-`highest_opened` to 1, and only then hits `if ( mapping->client_index == -1 )` at `:967`
-and is ignored. The window moved before connect, exactly as the card says.
+Against the defective variant at `sdk/rocketnet_server_protocol.cpp`: a session packet for a mapping
+with `client_index == -1` passes `rocketnet_replay_already_received` (the window is
+empty), opens (it carries the session keys), reaches
+`rocketnet_replay_advance( replay, sequence )`, which sets bit 1 and moves
+`highest_opened` to 1, and only then hits the slot check
+and is ignored. The window moved before connect, exactly as the witness says.
+The code today checks the slot in `rocketnet_server_process_sealed_packet` before
+the AEAD open and before `rocketnet_replay_advance`, so this order is not its order.
 
 Why the order matters, in this model's terms: a sequence marked on a pending mapping is
 reported by this end's next ack block as received although the packet was never
@@ -236,7 +240,7 @@ nothing processed and `AckReportsOnlyProcessed` is violated. With the current or
 other invariant still holds (the window stays truthful about what opened), so the defect
 is not in the window but in what the window is then made to say.
 
-The rule is the standard's. The code's comment at `:957-960` follows the reading order
+The rule is the standard's. The defective code's comment follows the reading order
 STANDARD.md gave before this model: _Reading packets_ marked every opened session packet
 and _Processing session packets at the server_ then ignored the slotless one. The owner
 ruled that the standard changes first when correctness requires it, and it does here:
