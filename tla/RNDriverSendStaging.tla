@@ -27,6 +27,17 @@
 (* outstanding at a time: every commit through the seam runs on the main  *)
 (* thread.  update's unconditional counter bump is a bare generation      *)
 (* tick here; it stages no frame and strands none.                        *)
+(*                                                                         *)
+(* Packet leases are a separate graph, attached only at transport idle.   *)
+(* start_packet records one lease at the current epoch. update,           *)
+(* send_packets and stop reset that epoch and leave the caller holding    *)
+(* the old context. finish of the current epoch releases it. finish of    *)
+(* an older epoch is caller misuse: the good spec records the refusal,    *)
+(* and FinishRecordsRefusal = FALSE drops it silently. That silent drop   *)
+(* is the reversed witness, and TLC must reject it. Lease actions run     *)
+(* only from the initial transport and XDP state, and those actions run   *)
+(* only while the lease is still initial, so the two graphs do not        *)
+(* multiply.                                                               *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
@@ -34,13 +45,16 @@ CONSTANTS MaxFrames,                \* the abstract frames are 1..MaxFrames
           MaxStaged,                \* the staging capacity, in frames
           MaxBurst,                 \* the most frames one disconnect seals
           DisconnectAdvancesStaged, \* commit through disconnect advances staged
-          XdpBuffers                \* ROCKETNET_XDP_NUM_BUFFERS: physical XDP send buffers
+          XdpBuffers,               \* ROCKETNET_XDP_NUM_BUFFERS: physical XDP send buffers
+          FinishRecordsRefusal      \* finish after reset records the refusal
 
 ASSUME MaxFrames \in Nat \ {0} /\ MaxStaged \in 1..MaxFrames
 ASSUME MaxBurst \in 1..MaxFrames /\ DisconnectAdvancesStaged \in BOOLEAN
 ASSUME XdpBuffers \in Nat /\ XdpBuffers >= 2
+ASSUME FinishRecordsRefusal \in BOOLEAN
 
 Frames == 1..MaxFrames
+MaxLeaseGen == 1                \* one epoch bump; the model does not wrap onto a held generation
 
 VARIABLES staged,     \* the staged counter: frames committed, ever
           flushed,    \* the flushed counter: frames flushed, ever
@@ -52,14 +66,21 @@ VARIABLES staged,     \* the staged counter: frames committed, ever
           ranSend,    \* the last action was send_packets
           xdpQueue, xdpFilling, xdpStaged, xdpDirty, xdpRefused,
           xdpRanFlush, xdpReadyBeforeFlush, xdpCountersDiffer,
-          tick        \* update's generation tick
+          tick,       \* update's generation tick
+          open,       \* a lease is current at gen
+          held,       \* the caller still holds a context
+          gen,        \* the lease epoch
+          heldGen,    \* the epoch of the held context
+          refused,    \* a finish after reset was recorded
+          silent      \* a finish after reset was dropped
 
 transportVars == <<staged, flushed, buffer, sent, dropped, reserved, discOwed,
           ranSend, tick>>
 
 xdpVars == <<xdpQueue, xdpFilling, xdpStaged, xdpDirty, xdpRefused,
              xdpRanFlush, xdpReadyBeforeFlush, xdpCountersDiffer>>
-vars == <<transportVars, xdpVars>>
+leaseVars == <<open, held, gen, heldGen, refused, silent>>
+vars == <<transportVars, xdpVars, leaseVars>>
 
 Fresh == Frames \ (buffer \cup sent \cup dropped \cup {reserved})
 
@@ -158,7 +179,66 @@ XdpInit ==
     /\ xdpReadyBeforeFlush = FALSE
     /\ xdpCountersDiffer = FALSE
 
-Init == TransportInit /\ XdpInit
+LeaseAtInit ==
+    /\ open = FALSE
+    /\ held = FALSE
+    /\ gen = 0
+    /\ heldGen = 0
+    /\ refused = FALSE
+    /\ silent = FALSE
+
+LeaseInit == LeaseAtInit
+
+\* The transport and XDP valuation Init gives them. Lease actions run only
+\* here, so a lease step cannot fork the staged-send graph.
+TransportIdle ==
+    /\ staged = 0 /\ flushed = 0 /\ buffer = {} /\ sent = {} /\ dropped = {}
+    /\ reserved = 0 /\ discOwed = {} /\ ranSend = FALSE /\ tick = 0
+    /\ xdpQueue = 0 /\ xdpFilling = TRUE /\ xdpStaged = FALSE
+    /\ xdpDirty = FALSE /\ xdpRefused = FALSE /\ xdpRanFlush = FALSE
+    /\ xdpReadyBeforeFlush = FALSE /\ xdpCountersDiffer = FALSE
+
+\* rocketnet_server_transport_start_packet: one current lease, held by the caller
+StartPacket ==
+    /\ TransportIdle
+    /\ ~open
+    /\ ~held
+    /\ open' = TRUE
+    /\ held' = TRUE
+    /\ heldGen' = gen
+    /\ UNCHANGED <<gen, refused, silent>>
+
+\* update, send_packets and stop: bump the epoch. The caller may still hold
+\* the context. The entry is retired, not kept.
+ResetLeases ==
+    /\ TransportIdle
+    /\ gen < MaxLeaseGen
+    /\ gen' = gen + 1
+    /\ open' = FALSE
+    /\ UNCHANGED <<held, heldGen, refused, silent>>
+
+\* rocketnet_server_transport_finish_packet. The current epoch releases the
+\* lease. An older epoch is misuse: record it, or, in the reversed witness,
+\* drop it with no record.
+FinishPacket ==
+    /\ TransportIdle
+    /\ held
+    /\ IF heldGen = gen
+       THEN /\ open' = FALSE
+            /\ held' = FALSE
+            /\ UNCHANGED <<gen, heldGen, refused, silent>>
+       ELSE /\ open' = FALSE
+            /\ held' = FALSE
+            /\ UNCHANGED <<gen, heldGen>>
+            /\ IF FinishRecordsRefusal
+               THEN /\ refused' = TRUE
+                    /\ UNCHANGED silent
+               ELSE /\ silent' = TRUE
+                    /\ UNCHANGED refused
+
+LeaseNext == StartPacket \/ ResetLeases \/ FinishPacket
+
+Init == TransportInit /\ XdpInit /\ LeaseInit
 
 XdpStart ==
     /\ IF xdpFilling
@@ -208,21 +288,26 @@ TransportNext ==
     \/ DisconnectClient
 
 Next ==
-    \/ /\ TransportNext /\ UNCHANGED xdpVars
-    \/ /\ (XdpStart \/ Publish \/ WorkerRetire) /\ UNCHANGED transportVars
+    \/ /\ TransportNext /\ LeaseAtInit /\ UNCHANGED xdpVars /\ UNCHANGED leaseVars
+    \/ /\ (XdpStart \/ Publish \/ WorkerRetire) /\ LeaseAtInit
+          /\ UNCHANGED transportVars /\ UNCHANGED leaseVars
+    \/ /\ LeaseNext /\ UNCHANGED transportVars /\ UNCHANGED xdpVars
 
 NextBrokenRefuses ==
-    \/ /\ TransportNext /\ UNCHANGED xdpVars
-    \/ /\ (XdpStart \/ PublishBrokenRefuses \/ WorkerRetire)
-          /\ UNCHANGED transportVars
+    \/ /\ TransportNext /\ LeaseAtInit /\ UNCHANGED xdpVars /\ UNCHANGED leaseVars
+    \/ /\ (XdpStart \/ PublishBrokenRefuses \/ WorkerRetire) /\ LeaseAtInit
+          /\ UNCHANGED transportVars /\ UNCHANGED leaseVars
+    \/ /\ LeaseNext /\ UNCHANGED transportVars /\ UNCHANGED xdpVars
 
 Spec == Init /\ [][Next]_vars
 SpecBrokenRefuses == Init /\ [][NextBrokenRefuses]_vars
 
-\* StagedFramesEventuallySent is checked under weak fairness of send_packets
-SpecFair == Spec /\ WF_vars(SendPackets /\ UNCHANGED xdpVars)
-                 /\ WF_vars(Publish /\ UNCHANGED transportVars)
-                 /\ WF_vars(WorkerRetire /\ UNCHANGED transportVars)
+\* StagedFramesEventuallySent is checked under weak fairness of send_packets.
+\* Fairness is the real Next step, including the lease still at init: a
+\* recorded refusal parks the lease off init and must not be asked to flush.
+SpecFair == Spec /\ WF_vars(SendPackets /\ LeaseAtInit /\ UNCHANGED xdpVars /\ UNCHANGED leaseVars)
+                 /\ WF_vars(Publish /\ LeaseAtInit /\ UNCHANGED transportVars /\ UNCHANGED leaseVars)
+                 /\ WF_vars(WorkerRetire /\ LeaseAtInit /\ UNCHANGED transportVars /\ UNCHANGED leaseVars)
 
 -----------------------------------------------------------------------------
 
@@ -248,6 +333,12 @@ TypeOK ==
     /\ discOwed \subseteq Frames
     /\ ranSend \in BOOLEAN
     /\ tick \in 0..1
+    /\ open \in BOOLEAN
+    /\ held \in BOOLEAN
+    /\ gen \in 0..MaxLeaseGen
+    /\ heldGen \in 0..MaxLeaseGen
+    /\ refused \in BOOLEAN
+    /\ silent \in BOOLEAN
 
 \* every frame committed by disconnect_client leaves by the next send_packets
 StagedDisconnectFlushed ==
@@ -264,5 +355,9 @@ DiscOwedTracked ==
 \* every frame staged is flushed out under weak fairness of send_packets
 StagedFramesEventuallySent ==
     \A f \in Frames : (f \in buffer) ~> (f \in sent)
+
+\* a finish after reset is recorded. silent is the reversed witness, the
+\* finish that returns as if nothing was owed.
+FinishAfterResetRecorded == silent = FALSE
 
 =============================================================================

@@ -7,6 +7,8 @@
 (* .cfg restores the defect and must fail.                                *)
 (* MCRNDriverSendStagingBrokenRefusesSend.cfg publishes the XDP producer  *)
 (* itself when no replacement is free and violates NoRefusedSend.         *)
+(* MCRNDriverSendStagingBrokenFinishAfterReset.cfg drops a finish after   *)
+(* the lease epoch resets and violates FinishAfterResetRecorded.          *)
 (* README-RNDriverSendStaging.md gives the traces TLC printed and the     *)
 (* check against the code by hand.                                        *)
 (***************************************************************************)

@@ -26,4 +26,18 @@ MCBothFamilies  == {"ipv4", "ipv6"}
 MCIpv4Reachable == {"ipv4"}
 MCCommitEarly   == TRUE
 
+(***************************************************************************)
+(* Reachability.  A probe, not a rule: the client is connected and its     *)
+(* application has been handed a payload.  cPayloadDelivered is the ghost  *)
+(* ClientRecvPayloadWitness records, and SpecReach is the spec that adds   *)
+(* that step; the MCClientConnectionReach*.cfg cases run SpecReach under   *)
+(* the S-environment constants and check NotReached, so TLC must violate   *)
+(* it.  A violation proves those constants can carry an attempt to         *)
+(* connected and deliver a payload, which the plain Spec cannot reach      *)
+(* through a cookie that restarts no clock.  Spec leaves the ghost FALSE,  *)
+(* so the other cases are unchanged.                                       *)
+(***************************************************************************)
+ReachConnected == cstate = 4 /\ cPayloadDelivered
+NotReached     == ~ReachConnected
+
 =============================================================================
