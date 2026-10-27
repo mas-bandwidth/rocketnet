@@ -192,6 +192,14 @@ struct rocketnet_client_transport_io_operations_t
     // a transport with no socket of its own to connect (loopback: one
     // in-process router shared by every endpoint).
     bool ( *connect )( void * transport, const rocketnet_address_t * server_address );
+    // optional; the reading thread, once, after its last receive or wait on
+    // the transport, with no other thread using it. Closes the transport's
+    // operating-system handles (socket, wake, completion port) and frees
+    // nothing: destroy, on the caller's thread, frees the memory later and
+    // closes nothing more. The family race closes its losing family here
+    // (sdk/rocketnet_client_transport.cpp, tla/RNClientRace.tla). NULL for a
+    // transport with nothing to close before destroy.
+    void ( *close )( void * transport );
 };
 
 struct rocketnet_transport_backend_t

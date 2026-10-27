@@ -441,6 +441,19 @@ struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump(
 void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
 
 /**
+ * @brief Closes a socket's native handle and keeps its memory.
+ *
+ * Call on the one thread still using the socket, after its last send,
+ * receive and wake use. Only socket_destroy may follow; it closes nothing
+ * more and frees the memory, so the memory goes on the thread that owns it.
+ * A second close does nothing.
+ * @param socket Caller-owned socket; must be non-NULL.
+ * @return True when the handle is closed; false only when the Windows
+ * lifecycle tracker refused the close, and destroy then keeps the memory.
+ */
+bool rocketnet_platform_socket_close( struct rocketnet_platform_socket_t * socket );
+
+/**
  * @brief Sends one UDP datagram.
  *
  * @param socket Live socket returned by socket_create; must be non-NULL.
@@ -860,6 +873,17 @@ uint64_t rocketnet_platform_wake_allocation_bytes( void );
  * @return None.
  */
 void rocketnet_platform_wake_destroy( struct rocketnet_platform_wake_t * wake );
+/**
+ * @brief Closes a wake object's native handles and keeps its memory.
+ *
+ * Call on the one thread still waiting on the wake, after its last wait and
+ * set, and before closing its socket. Only wake_destroy may follow; it closes
+ * nothing more and frees the memory. A second close does nothing.
+ * @param wake Caller-owned wake; must be non-NULL.
+ * @return True when the handles are closed; false only when the Windows
+ * lifecycle tracker refused a close, and destroy then keeps the memory.
+ */
+bool rocketnet_platform_wake_close( struct rocketnet_platform_wake_t * wake );
 /**
  * @brief Waits for a wake signal, optional socket readability, or timeout.
  *
