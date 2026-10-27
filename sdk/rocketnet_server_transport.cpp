@@ -1557,7 +1557,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         // implementation must warn on every start that uses them.
         rocketnet_warn( "development keys are public and not for production" );
 #if ROCKETNET_DEV
-#else // !ROCKETNET_DEV \
+// clang-format off
+#else // !ROCKETNET_DEV
+// clang-format on
         // A production build (ROCKETNET_DEV=0) must refuse the published development keys outright.
         if ( status )
             *status = ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION;
