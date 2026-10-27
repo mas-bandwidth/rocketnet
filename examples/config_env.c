@@ -35,11 +35,24 @@ int main( int argc, char ** argv )
     if ( !environment )
         environment = "";
 
-    rocketnet_init( NULL, NULL, NULL );
+    const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
+    if ( init_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: init: %s\n", rocketnet_status_name( init_status ) );
+        return 1;
+    }
 
     const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t config;
-    rocketnet_server_default_config( &config );
+    const enum rocketnet_status_t server_config_status = rocketnet_server_default_config( &config );
+    if ( server_config_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     config.transport = "loopback";
@@ -83,7 +96,12 @@ int main( int argc, char ** argv )
     }
 
     rn_cli_server_stop_and_destroy( server );
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     if ( result != 0 )
         printf( "FAIL: max_clients is the default, then the struct, then the environment\n" );
     else if ( environment[0] == '\0' )
