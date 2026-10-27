@@ -56,6 +56,7 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+#include <inttypes.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -554,15 +555,15 @@ static bool windows_ledger_result( const char * case_name, const windows_cell_t 
     printf( "%s [%s] SDK identities %s: %u -> %u live%s", case_name, cell->name, phase,
             expected->live_count, actual->live_count, same ? "" : " FAIL" );
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
-        printf( ", %s created +%llu closed +%llu", kinds[kind],
-                (unsigned long long) ( actual->created[kind] - expected->created[kind] ),
-                (unsigned long long) ( actual->closed[kind] - expected->closed[kind] ) );
+        printf( ", %s created +%" PRIu64 " closed +%" PRIu64, kinds[kind],
+                actual->created[kind] - expected->created[kind],
+                actual->closed[kind] - expected->closed[kind] );
     printf( "\n" );
     if ( !same )
     {
         for ( unsigned i = 0; i < actual->live_count; ++i )
-            printf( "  SDK live kind=%s raw=0x%llx generation=%llu site=%s\n", kinds[actual->live[i].kind],
-                    (unsigned long long) actual->live[i].raw, (unsigned long long) actual->live[i].generation,
+            printf( "  SDK live kind=%s raw=0x%" PRIxPTR " generation=%" PRIu64 " site=%s\n", kinds[actual->live[i].kind],
+                    actual->live[i].raw, actual->live[i].generation,
                     actual->live[i].site ? actual->live[i].site : "unknown" );
     }
     fflush( stdout );
@@ -607,16 +608,16 @@ static bool windows_ledger_held_result( const char * case_name, const windows_ce
     printf( "%s [%s] SDK identities %s, the last stop's transport held: %u -> %u live%s", case_name, cell->name, phase,
             expected->live_count, actual->live_count, same ? "" : " FAIL" );
     for ( unsigned kind = 0; kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS; ++kind )
-        printf( ", %s live %u -> %u created +%llu closed +%llu", kinds[kind], expected_kind_count[kind], actual_kind_count[kind],
-                (unsigned long long) ( actual->created[kind] - expected->created[kind] ),
-                (unsigned long long) ( actual->closed[kind] - expected->closed[kind] ) );
+        printf( ", %s live %u -> %u created +%" PRIu64 " closed +%" PRIu64, kinds[kind], expected_kind_count[kind], actual_kind_count[kind],
+                actual->created[kind] - expected->created[kind],
+                actual->closed[kind] - expected->closed[kind] );
     printf( "\n" );
     if ( !same )
     {
         for ( unsigned i = 0; i < actual->live_count; ++i )
-            printf( "  SDK live kind=%s raw=0x%llx generation=%llu site=%s\n",
+            printf( "  SDK live kind=%s raw=0x%" PRIxPTR " generation=%" PRIu64 " site=%s\n",
                     actual->live[i].kind < ROCKETNET_LIFECYCLE_RESOURCE_KINDS ? kinds[actual->live[i].kind] : "unknown",
-                    (unsigned long long) actual->live[i].raw, (unsigned long long) actual->live[i].generation,
+                    actual->live[i].raw, actual->live[i].generation,
                     actual->live[i].site ? actual->live[i].site : "unknown" );
     }
     fflush( stdout );
