@@ -47,13 +47,16 @@ static inline int rocketnet_coalesce_split( int message_bytes, int segment_bytes
         return -1;
 
     int n = 0;
+
     for ( int offset = 0; offset < message_bytes; offset += segment_bytes )
     {
         const int remaining = message_bytes - offset;
+
         offsets[n] = offset;
         lengths[n] = remaining < segment_bytes ? remaining : segment_bytes;
         n++;
     }
+
     return n;
 }
 

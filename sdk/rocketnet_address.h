@@ -18,7 +18,7 @@
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 /** @brief Load an IPv4 endpoint from network-order integers.
  * @param address [out] Non-NULL destination; previous contents are replaced.
@@ -92,7 +92,7 @@ uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 // the one rule for an ipv4-mapped source (::ffff:a.b.c.d) on receive.
 //
@@ -119,7 +119,9 @@ static inline bool rocketnet_address_accept_received_source( struct rocketnet_ad
         return true;
     if ( !dual_stack )
         return false;
+
     rocketnet_address_convert_ipv6_to_ipv4( from );
+
     return true;
 }
 

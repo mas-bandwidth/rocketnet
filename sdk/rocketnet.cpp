@@ -30,12 +30,12 @@
 #include <mutex>
 #include <new>
 
-
 // -------------------------------------------------
 
 static void default_assert_function( const char * condition, const char * function, const char * file, int line )
 {
     rocketnet_error( "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
+
     fflush( stdout );
 #if defined( _MSC_VER )
     __debugbreak();
@@ -47,7 +47,7 @@ static void default_assert_function( const char * condition, const char * functi
     raise( SIGTRAP );
 #else
 #error "asserts not supported on this platform!"
-#endif
+#endif // #if defined( _MSC_VER )
 }
 
 rocketnet_assert_function_t rn_assert_function = default_assert_function;
@@ -83,10 +83,13 @@ void rocketnet_log_level( enum rocketnet_log_level_t level )
     // library by accident. the level arrives from C, where any int is a
     // valid enum value, so it is read as the int it is: in C++ a load of the
     // enum outside its range of values is undefined (ubsan names it).
+
     int value;
     memcpy( &value, &level, sizeof( value ) );
+
     if ( value < ROCKETNET_LOG_LEVEL_NONE || value > ROCKETNET_LOG_LEVEL_SPAM )
         return;
+
     log_level.store( value, std::memory_order_relaxed );
 }
 
@@ -110,9 +113,11 @@ void rocketnet_log_level_override_apply( const char * value )
          parsed >= ROCKETNET_LOG_LEVEL_NONE && parsed <= ROCKETNET_LOG_LEVEL_SPAM )
     {
         log_level.store( parsed, std::memory_order_relaxed );
+
         rocketnet_info( "log level overridden to %d", log_level.load( std::memory_order_relaxed ) );
         return;
     }
+
     rocketnet_warn( "ignoring ROCKETNET_LOG_LEVEL=\"%s\": not a level %d to %d, keeping %d",
                     value ? value : "", ROCKETNET_LOG_LEVEL_NONE, ROCKETNET_LOG_LEVEL_SPAM, log_level.load( std::memory_order_relaxed ) );
 }
@@ -138,11 +143,14 @@ enum rocketnet_log_level_t rocketnet_log_level_current( void )
 }
 
 // the enum suffix, upper case, or "UNKNOWN" for a value that is not a level
+
 const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
 {
     // read as the int a C caller passed, as rocketnet_log_level does
+
     int value;
     memcpy( &value, &level, sizeof( value ) );
+
     switch ( value )
     {
         case ROCKETNET_LOG_LEVEL_NONE:  return "NONE";
@@ -156,6 +164,7 @@ const char * rocketnet_log_level_name( enum rocketnet_log_level_t level )
 }
 
 // the default sink's line prefix, lower case as it has always printed
+
 static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
 {
     switch ( (int) level )
@@ -171,12 +180,14 @@ static const char * rocketnet_log_level_word( enum rocketnet_log_level_t level )
 
 // The identifier without the ROCKETNET_STATUS_ prefix, mapped by value.
 // "UNKNOWN", never NULL and without asserting, for a value that is not a code.
+
 const char * rocketnet_status_name( enum rocketnet_status_t status )
 {
-    // read as the int a C caller passed, as rocketnet_log_level does: a load
-    // of an enum outside its range of values is undefined in C++
+    // read as the int a C caller passed, as rocketnet_log_level does: a load of an enum outside its range of values is undefined in C++
+
     int value;
     memcpy( &value, &status, sizeof( value ) );
+
     switch ( value )
     {
         case ROCKETNET_STATUS_OK:                               return "OK";
@@ -214,6 +225,7 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         default:
             break;
     }
+
     return "UNKNOWN";
 }
 
@@ -221,6 +233,7 @@ static void default_log_callback( void * context, enum rocketnet_log_level_t lev
 {
 #if !ROCKETNET_UNREAL_ENGINE     // IMPORTANT: Unreal doesn't like printf
     (void) context;
+
     if ( level != ROCKETNET_LOG_LEVEL_NONE )
     {
         const char * level_string = rocketnet_log_level_word( level );
@@ -230,6 +243,7 @@ static void default_log_callback( void * context, enum rocketnet_log_level_t lev
     {
         printf( "%.*s\n", (int) length, message );
     }
+
     fflush( stdout );
 #endif // #if !ROCKETNET_UNREAL_ENGINE
 }
@@ -241,11 +255,14 @@ static void * rocketnet_log_callback_context = NULL;
 // docs/ERRORS-AND-LOGGING.md 3.2 and 3.3: the one sink. a non-NULL callback
 // replaces the active sink; NULL restores the default sink. the (callback,
 // context) pair is guarded by the spin lock so it is never observed torn.
+
 void rocketnet_log_function( rocketnet_log_function_t callback, void * context )
 {
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
+
     rocketnet_log_callback = callback;
     rocketnet_log_callback_context = callback ? context : NULL;
+
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 }
 
@@ -253,6 +270,7 @@ void rocketnet_log_function( rocketnet_log_function_t callback, void * context )
 // relaxed atomics read before vsnprintf), format once into the 1024-byte
 // buffer, clamp length to 1023 (message[length] == '\0' is guaranteed by
 // vsnprintf), then dispatch to the installed callback or the default sink.
+
 ROCKETNET_PRINTF_FORMAT( 2, 0 )
 static void rocketnet_log_v( int level, const char * format, va_list args )
 {
@@ -267,8 +285,10 @@ static void rocketnet_log_v( int level, const char * format, va_list args )
     size_t length = ( n < 0 ) ? 0 : ( (size_t) n < sizeof( buffer ) ? (size_t) n : sizeof( buffer ) - 1 );
 
     rocketnet_platform_spin_lock_u64( &rocketnet_log_sink_lock );
+
     rocketnet_log_function_t cb = rocketnet_log_callback;
     void * ctx = rocketnet_log_callback_context;
+
     rocketnet_platform_spin_unlock_u64( &rocketnet_log_sink_lock );
 
     if ( cb )
@@ -281,9 +301,12 @@ void rocketnet_printf( int level, const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
+
     va_list args;
     va_start( args, format );
+
     rocketnet_log_v( level, format, args );
+
     va_end( args );
 }
 
@@ -291,9 +314,12 @@ void rocketnet_info( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
+
     va_list args;
     va_start( args, format );
+
     rocketnet_log_v( ROCKETNET_LOG_LEVEL_INFO, format, args );
+
     va_end( args );
 }
 
@@ -301,9 +327,12 @@ void rocketnet_warn( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
+
     va_list args;
     va_start( args, format );
+
     rocketnet_log_v( ROCKETNET_LOG_LEVEL_WARN, format, args );
+
     va_end( args );
 }
 
@@ -311,9 +340,12 @@ void rocketnet_error( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
+
     va_list args;
     va_start( args, format );
+
     rocketnet_log_v( ROCKETNET_LOG_LEVEL_ERROR, format, args );
+
     va_end( args );
 }
 
@@ -321,9 +353,12 @@ void rocketnet_debug( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
+
     va_list args;
     va_start( args, format );
+
     rocketnet_log_v( ROCKETNET_LOG_LEVEL_DEBUG, format, args );
+
     va_end( args );
 }
 
@@ -331,9 +366,12 @@ void rocketnet_spam( const char * format, ... )
 {
     if ( !rocketnet_api_null_guard( format ) )
         return;
+
     va_list args;
     va_start( args, format );
+
     rocketnet_log_v( ROCKETNET_LOG_LEVEL_SPAM, format, args );
+
     va_end( args );
 }
 
@@ -348,6 +386,7 @@ void * rocketnet_default_malloc_function( void * context, size_t bytes )
 void rocketnet_default_free_function( void * context, void * p )
 {
     (void) context;
+
     free( p );
 }
 
@@ -366,10 +405,12 @@ uint64_t rocketnet_allocation_refusals()
 
 // counts a failed allocation made outside rocketnet_malloc (a page-aligned
 // buffer a transport registers with the kernel) as a refusal on this thread
+
 void rocketnet_allocation_refused()
 {
     ++rocketnet_allocation_refusals_on_this_thread;
 }
+
 static void ( *rocketnet_free_function )( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;
@@ -415,41 +456,51 @@ uint64_t rocketnet_allocation_overhead()
 // init or during the transition is ALREADY_INITIALIZED, and a change with
 // outstanding allocations is LIVE_ALLOCATIONS. The pair already installed is
 // accepted as it is.
+
 static int rn_allocator_install_locked( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     if ( ( malloc_function == NULL ) != ( free_function == NULL ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     if ( !malloc_function )
     {
         malloc_function = rocketnet_default_malloc_function;
         free_function = rocketnet_default_free_function;
     }
+
     if ( rocketnet_initialized || rocketnet_transitioning )
         return ROCKETNET_STATUS_ALREADY_INITIALIZED;
     if ( malloc_function == rocketnet_malloc_function && free_function == rocketnet_free_function )
         return ROCKETNET_STATUS_OK;
     if ( rocketnet_allocations != 0 )
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
+
     rocketnet_malloc_function = malloc_function;
     rocketnet_free_function = free_function;
+
     return ROCKETNET_STATUS_OK;
 }
 
 int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
-    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: the test seam under
-    // rocketnet_init's allocator arguments. It refuses a NULL callback.
+    // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: the test seam under rocketnet_init's allocator arguments. It refuses a NULL callback.
+
     int status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     if ( malloc_function && free_function )
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
         status = rn_allocator_install_locked( malloc_function, free_function );
     }
+
     if ( status != ROCKETNET_STATUS_OK )
     {
         rocketnet_error( "allocator replacement requires an uninitialized library with no live allocations" );
+
         rocketnet_api_misuse_record();
     }
+
     return status;
 }
 
@@ -462,39 +513,53 @@ void * rocketnet_malloc( void * context, size_t bytes )
         ++rocketnet_allocation_refusals_on_this_thread;
         return NULL;
     }
+
     void * ( *allocate )( void *, size_t );
+
     void ( *release )( void *, void * );
+
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
         allocate = rocketnet_malloc_function;
         release = rocketnet_free_function;
         ++rocketnet_allocations;
     }
+
     void * base = allocate( context, bytes + overhead );
     if ( !base )
     {
         ++rocketnet_allocation_refusals_on_this_thread;
+
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
         --rocketnet_allocations;
         return NULL;
     }
+
     const uintptr_t aligned = ( (uintptr_t) base + overhead ) & ~(uintptr_t) ( alignment - 1 );
     auto * header = new ( (void *) ( aligned - sizeof( rocketnet_allocation_header_t ) ) )
         rocketnet_allocation_header_t{ base, context, release };
     (void) header;
+
     return (void *) aligned;
 }
 
 void rocketnet_free( void * context, void * p )
 {
     (void) context; // allocation ownership is captured at allocation time
+
     if ( !p )
         return;
+
     auto * header = (rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
     const rocketnet_allocation_header_t allocation = *header;
     header->~rocketnet_allocation_header_t();
+
     allocation.free_function( allocation.context, allocation.base );
+
     std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
     --rocketnet_allocations;
 }
 
@@ -506,12 +571,14 @@ double rocketnet_time()
 // a negative, zero or NaN request sleeps not at all, and a request longer
 // than ROCKETNET_SLEEP_MAX_SECONDS (or infinite) sleeps that long, so the
 // platform's microsecond conversion never overflows
+
 double rocketnet_sleep_clamp( double seconds )
 {
     if ( !( seconds > 0.0 ) )
         return 0.0;
     if ( seconds > ROCKETNET_SLEEP_MAX_SECONDS )
         return ROCKETNET_SLEEP_MAX_SECONDS;
+
     return seconds;
 }
 
@@ -537,6 +604,7 @@ void rocketnet_sleep( double seconds )
     {
 #if ROCKETNET_DEV
         ++rocketnet_sleep_platform_dispatch_count;
+
         if ( rocketnet_sleep_platform_dispatch_override_for_test )
         {
             rocketnet_sleep_platform_dispatch_override_for_test( clamped );
@@ -553,11 +621,13 @@ const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t b
 {
     if ( !rocketnet_api_null_guard( buffer ) )
         return NULL;
+
     snprintf( buffer, buffer_size, "%" PRIx64, user_id );
     return buffer;
 }
 
 // The hash of "major.minor". The dot keeps 1.10 and 11.0 apart.
+
 uint64_t rocketnet_protocol_version_hash( int major, int minor )
 {
     char text[64];
@@ -569,6 +639,7 @@ float rocketnet_random_float()
 {
     uint32_t uint32_value;
     randombytes_buf( &uint32_value, sizeof( uint32_value ) );
+
     uint64_t uint64_value = uint64_t( uint32_value );
     double double_value = double( uint64_value ) / 0xFFFFFFFF;
     return float( double_value );
@@ -599,6 +670,7 @@ void rocketnet_random_bytes( uint8_t * data, size_t bytes )
 {
     if ( !rocketnet_api_null_guard( data ) )
         return;
+
     randombytes_buf( data, bytes );
 }
 
@@ -612,14 +684,18 @@ size_t rocketnet_copy_string( char * dest, const char * source, size_t dest_size
         return 0;
     if ( dest_size == 0 )
         return 0;
+
     memset( dest, 0, dest_size );
+
     size_t i = 0;
     for ( ; i < dest_size - 1; i++ )
     {
         if ( source[i] == '\0' )
             break;
+
         dest[i] = source[i];
     }
+
     return i;
 }
 
@@ -637,6 +713,7 @@ const char * rocketnet_platform_name( int platform_id )
         default:
             break;
     }
+
     return "unknown";
 }
 
@@ -650,6 +727,7 @@ const char * rocketnet_connection_name( int connection_type )
         default:
             break;
     }
+
     return "unknown";
 }
 
@@ -669,54 +747,70 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     // an allocator change with outstanding allocations is LIVE_ALLOCATIONS, a
     // failed platform or sodium start is PLATFORM_INIT_FAILED or
     // CRYPTO_INIT_FAILED, and success is OK.
+
     int refused = ROCKETNET_STATUS_OK;
+
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
         refused = rn_allocator_install_locked( malloc_function, free_function );
         if ( refused == ROCKETNET_STATUS_OK )
             rocketnet_transitioning = true;
     }
+
     if ( refused != ROCKETNET_STATUS_OK )
     {
         if ( status )
             *status = refused;
+
         if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
             rocketnet_error( "rocketnet_init: rocketnet is already initialized" );
         else if ( refused == ROCKETNET_STATUS_INVALID_ARGUMENT )
         {
             rocketnet_error( "rocketnet_init: pass both allocator functions, or NULL for both" );
+
             rocketnet_api_misuse_record();
         }
         else
         {
             rocketnet_error( "rocketnet_init: the allocator cannot change while allocations are live" );
+
             rocketnet_api_misuse_record();
         }
+
         return false;
     }
 
     // Platform discovery uses the caller's allocator context during startup.
     // No transport may be used until init returns true; every failure clears it.
+
     rocketnet_global_context = context;
+
     const bool platform_ready = rocketnet_platform_init();
     const bool sodium_ready = platform_ready && sodium_init() >= 0;
     if ( !sodium_ready )
     {
         if ( platform_ready )
             rocketnet_platform_term();
+
         rocketnet_global_context = NULL;
+
         {
             std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
             rocketnet_transitioning = false;
         }
+
         if ( status )
             *status = platform_ready ? ROCKETNET_STATUS_CRYPTO_INIT_FAILED : ROCKETNET_STATUS_PLATFORM_INIT_FAILED;
+
         rocketnet_error( platform_ready ? "failed to initialize sodium" : "failed to initialize platform" );
         return false;
     }
 
     // the level first, so init's own lines obey it
     // a value too long for the buffer is set: the override refuses its empty copy loudly
+
     char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
     if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
         rocketnet_log_level_override_apply( log_level_override );
@@ -724,13 +818,17 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
     rocketnet_info( "platform is %s (%s)", rocketnet_platform_name( rocketnet_platform_id() ),
                     rocketnet_connection_name( rocketnet_platform_connection_type() ) );
+
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
         rocketnet_initialized = true;
         rocketnet_transitioning = false;
     }
+
     if ( status )
         *status = ROCKETNET_STATUS_OK;
+
     return true;
 }
 
@@ -744,10 +842,13 @@ int rocketnet_term_ex()
     // docs/ERRORS-AND-LOGGING.md 1.1 and 2.1: nothing to terminate is
     // NOT_INITIALIZED, a term with outstanding allocations is refused with
     // LIVE_ALLOCATIONS, and a completed term is OK.
+
     bool not_initialized = false;
     bool live_allocations = false;
+
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
         if ( !rocketnet_initialized || rocketnet_transitioning )
             not_initialized = true;
         else
@@ -757,16 +858,19 @@ int rocketnet_term_ex()
                 rocketnet_transitioning = true;
         }
     }
+
     if ( not_initialized )
     {
         rocketnet_error( "rocketnet_term: rocketnet is not initialized" );
         return ROCKETNET_STATUS_NOT_INITIALIZED;
     }
+
     if ( live_allocations )
     {
         rocketnet_error( "destroy all objects and allocations before terminating rocketnet" );
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
+
     // macOS's bundled sysrandom keeps /dev/urandom open after sodium_init.
     // The caller must quiesce all library calls before term, and the private
     // bundled copy belongs to this SDK. A system libsodium may be shared with
@@ -775,18 +879,22 @@ int rocketnet_term_ex()
     // sodium_init is one-time, so a later empty init/term cycle has no open
     // RNG descriptor and randombytes_close returns -1 for that valid case.
     // The strict process resource gate detects a real close failure.
+
     (void) randombytes_close();
-#endif
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     rocketnet_platform_term();
+
     rocketnet_global_context = NULL;
+
     std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+
     rocketnet_initialized = false;
     rocketnet_transitioning = false;
+
     return ROCKETNET_STATUS_OK;
 }
 
 // ---------------------------------------------------------------
-
 
 uint64_t rocketnet_next_packet_lease_id()
 {
@@ -797,5 +905,6 @@ uint64_t rocketnet_next_packet_lease_id()
         if ( next.compare_exchange_weak( ticket, ticket + 1, std::memory_order_relaxed ) )
             return ticket;
     }
+
     return 0;
 }

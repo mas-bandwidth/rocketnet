@@ -178,12 +178,15 @@ template <unsigned Words> struct rocketnet_stats_epoch_bits_t
     uint64_t epoch;
     uint64_t tags[Words];
     uint64_t bits[Words];
+
     void initialize()
     {
         epoch = 1;
+
         for ( unsigned i = 0; i < Words; ++i )
             tags[i] = 0;
     }
+
     void invalidate()
     {
         if ( epoch == UINT64_MAX )
@@ -191,8 +194,10 @@ template <unsigned Words> struct rocketnet_stats_epoch_bits_t
         else
             ++epoch;
     }
+
     uint64_t word( int i ) const { return tags[i] == epoch ? bits[i] : 0; }
     bool test( int i ) const { return ( word( i / 64 ) & ( 1ull << ( i % 64 ) ) ) != 0; }
+
     void set( int i )
     {
         const int w = i / 64;
@@ -201,6 +206,7 @@ template <unsigned Words> struct rocketnet_stats_epoch_bits_t
             bits[w] = 0;
             tags[w] = epoch;
         }
+
         bits[w] |= 1ull << ( i % 64 );
     }
 };
@@ -210,22 +216,27 @@ struct rocketnet_ack_stats_validity_t
     rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent;
     rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received;
     rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt;
+
     void initialize()
     {
         sent.initialize();
+
         received.initialize();
+
         rtt.initialize();
     }
+
     void invalidate()
     {
         sent.invalidate();
+
         received.invalidate();
+
         rtt.invalidate();
     }
 };
 
 #endif // #if ROCKETNET_DEV
-
 
 struct rocketnet_ack_endpoint_t
 {
@@ -308,7 +319,7 @@ struct rocketnet_ack_endpoint_t
     uint32_t stats_received_operations;         // records/blocks visited by the latest receive; test-only
 #else
     uint32_t stats_received_pad;
-#endif
+#endif // #if ROCKETNET_DEV
     double stats_rtt_sum;                       // sum and count of the positive rtt samples
     uint32_t stats_rtt_count;
     uint32_t stats_pad;

@@ -23,16 +23,21 @@ static bool rocketnet_address_parse_port( const char * text, uint16_t & port )
 {
     if ( !*text )
         return false;
+
     unsigned int value = 0;
+
     for ( ; *text; ++text )
     {
         if ( *text < '0' || *text > '9' )
             return false;
+
         value = value * 10 + (unsigned int) ( *text - '0' );
         if ( value > 65535 )
             return false;
     }
+
     port = (uint16_t) value;
+
     return true;
 }
 
@@ -40,9 +45,12 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
 {
     rocketnet_assert( address );
     rocketnet_assert( address_string_in );
+
     if ( !address )
         return false;
+
     memset( address, 0, sizeof( rocketnet_address_t ) );
+
     if ( !address_string_in )
         return false;
 
@@ -52,6 +60,7 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
         ++length;
     if ( !length || length == sizeof( buffer ) )
         return false;
+
     memcpy( buffer, address_string_in, length + 1 );
 
     char * host = buffer;
@@ -60,11 +69,13 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
     if ( bracketed )
     {
         host++;
+
         char * close = strchr( host, ']' );
         if ( !close )
             return false;
         if ( close[1] && ( close[1] != ':' || !rocketnet_address_parse_port( close + 2, port ) ) )
             return false;
+
         *close = '\0';
     }
 
@@ -73,10 +84,13 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
     {
         address->type = ROCKETNET_ADDRESS_IPV6;
         address->port = port;
+
         for ( int i = 0; i < 8; ++i )
             address->data.ipv6[i] = rocketnet_platform_ntohs( addr6[i] );
+
         return true;
     }
+
     if ( bracketed )
         return false;
 
@@ -85,16 +99,21 @@ bool rocketnet_address_parse( rocketnet_address_t * address, const char * addres
     {
         if ( !rocketnet_address_parse_port( colon + 1, port ) )
             return false;
+
         *colon = '\0';
     }
+
     uint32_t addr4;
     if ( !rocketnet_platform_inet_pton4( host, &addr4 ) )
         return false;
 
     address->type = ROCKETNET_ADDRESS_IPV4;
     address->port = port;
-    // inet_pton returns network order, matching the byte-oriented IPv4 storage.
+
+    // inet_pton returns network order, matching the byte-oriented IPv4 storage
+
     memcpy( address->data.ipv4, &addr4, 4 );
+
     return true;
 }
 
@@ -119,14 +138,18 @@ static bool rocketnet_address_write_without_port( const rocketnet_address_t * ad
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         uint16_t ipv6_network_order[8];
+
         for ( int i = 0; i < 8; ++i )
             ipv6_network_order[i] = rocketnet_platform_htons( address->data.ipv6[i] );
+
         if ( !rocketnet_platform_inet_ntop6( ipv6_network_order, buffer, ROCKETNET_MAX_ADDRESS_STRING_LENGTH ) )
         {
             rocketnet_error( "ipv6 address formatting failed" );
+
             rocketnet_address_write_none( buffer );
             return false;
         }
+
         return true;
     }
 
@@ -142,13 +165,16 @@ static bool rocketnet_address_write_without_port( const rocketnet_address_t * ad
         if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
         {
             rocketnet_error( "ipv4 address formatting failed or string truncated" );
+
             rocketnet_address_write_none( buffer );
             return false;
         }
+
         return true;
     }
 
     rocketnet_address_write_none( buffer );
+
     return true;
 }
 
@@ -176,8 +202,10 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
     if ( result < 0 || result >= ROCKETNET_MAX_ADDRESS_STRING_LENGTH )
     {
         rocketnet_error( "address formatting failed or string truncated: %s port %d", address_string, address->port );
+
         rocketnet_address_write_none( buffer );
     }
+
     return buffer;
 }
 
@@ -229,6 +257,7 @@ bool rocketnet_address_equal( const rocketnet_address_t * a, const rocketnet_add
 void rocketnet_address_anonymize( rocketnet_address_t * address )
 {
     rocketnet_assert( address );
+
     if ( address->type == ROCKETNET_ADDRESS_IPV4 )
     {
         address->data.ipv4[3] = 0;
@@ -247,12 +276,14 @@ void rocketnet_address_anonymize( rocketnet_address_t * address )
             address->data.ipv6[7] = 0;
         }
     }
+
     address->port = 0;
 }
 
 bool rocketnet_address_is_ipv4_in_ipv6( struct rocketnet_address_t * address )
 {
     rocketnet_assert( address );
+
     if ( address->type != ROCKETNET_ADDRESS_IPV6 )
         return false;
     if ( address->data.ipv6[0] != 0x0000 )
@@ -267,16 +298,19 @@ bool rocketnet_address_is_ipv4_in_ipv6( struct rocketnet_address_t * address )
         return false;
     if ( address->data.ipv6[5] != 0xFFFF )
         return false;
+
     return true;
 }
 
 void rocketnet_address_convert_ipv4_to_ipv6( struct rocketnet_address_t * address )
 {
     rocketnet_assert( address );
+
     const uint8_t a = uint8_t( address->data.ipv4[0] );
     const uint8_t b = uint8_t( address->data.ipv4[1] );
     const uint8_t c = uint8_t( address->data.ipv4[2] );
     const uint8_t d = uint8_t( address->data.ipv4[3] );
+
     address->type = ROCKETNET_ADDRESS_IPV6;
     address->data.ipv6[0] = 0x0000;
     address->data.ipv6[1] = 0x0000;
@@ -293,10 +327,12 @@ void rocketnet_address_convert_ipv6_to_ipv4( struct rocketnet_address_t * addres
     // IMPORTANT: this function is *only* for converting ipv4 mapped addresses in ipv6 back to native ipv4
     rocketnet_assert( address );
     rocketnet_assert( rocketnet_address_is_ipv4_in_ipv6( address ) );
+
     const uint8_t a = (uint8_t) ( ( address->data.ipv6[6] & 0xFF00 ) >> 8 );
     const uint8_t b = (uint8_t) ( address->data.ipv6[6] & 0x00FF );
     const uint8_t c = (uint8_t) ( ( address->data.ipv6[7] & 0xFF00 ) >> 8 );
     const uint8_t d = (uint8_t) ( address->data.ipv6[7] & 0x00FF );
+
     address->type = ROCKETNET_ADDRESS_IPV4;
     address->data.ipv4[0] = a;
     address->data.ipv4[1] = b;
