@@ -33,7 +33,7 @@ static bool sequence_audit_read( const std::string & relative, std::string & tex
         return false;
     char buffer[4096];
     size_t got;
-    while ( ( got = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
+    while ( ( got = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
         text.append( buffer, got );
     fclose( file );
     return true;
@@ -135,9 +135,9 @@ static std::vector<std::string> sequence_audit_cells( const std::string & line )
 }
 
 // the table rows of one "## " section, header and rule rows skipped
-static std::vector< std::vector<std::string> > sequence_audit_table( const std::string & doc, const char * heading )
+static std::vector<std::vector<std::string>> sequence_audit_table( const std::string & doc, const char * heading )
 {
-    std::vector< std::vector<std::string> > rows;
+    std::vector<std::vector<std::string>> rows;
     const size_t section = doc.find( std::string( "\n## " ) + heading + "\n" );
     if ( section == std::string::npos )
         return rows;
@@ -206,7 +206,7 @@ static void test_sequence_buffers_manifest_matches_source()
     bool functional_harness = false;
     bool soak_allocator = false;
 
-    const std::vector< std::vector<std::string> > rows = sequence_audit_table( doc, "Owned storage manifest" );
+    const std::vector<std::vector<std::string>> rows = sequence_audit_table( doc, "Owned storage manifest" );
     for ( size_t i = 0; i < rows.size(); i++ )
     {
         const std::vector<std::string> & row = rows[i];
@@ -274,7 +274,7 @@ static void test_sequence_buffers_manifest_matches_source()
         problems++;
     }
 
-    const std::vector< std::vector<std::string> > external = sequence_audit_table( doc, "External ABI traversal sites" );
+    const std::vector<std::vector<std::string>> external = sequence_audit_table( doc, "External ABI traversal sites" );
     if ( external.empty() )
     {
         printf( "%s: the manifest has no external ABI traversal sites\n", sequence_audit_case );
