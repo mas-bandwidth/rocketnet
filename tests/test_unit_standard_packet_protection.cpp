@@ -24,7 +24,7 @@
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 static const rn_standard_vector_t standard_packet_protection_table[] = {
     RN_STANDARD_VECTOR( "t9.challenge-ad", "931a7c4e88776655443322110253414c54303030313a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09cb639b1a3c0fda14cbe24" ),
@@ -54,6 +54,7 @@ static int standard_packet_protection_ad( uint8_t * out, int capacity, uint8_t p
 {
     if ( capacity < ROCKETNET_AD_WITH_EPHEMERAL_BYTES )
         return -1;
+
     const uint8_t * client_ephemeral = ( packet_type == ROCKETNET_CONNECTION_CHALLENGE_PACKET ||
                                          packet_type == ROCKETNET_CONNECTION_RESPONSE_PACKET )
                                            ? rocketnet_test_client_eph_public
@@ -74,6 +75,7 @@ static int standard_packet_protection_sealed( uint8_t * out, int capacity, uint8
                                                      client_ephemeral, key );
     if ( bytes <= 0 )
         return -1;
+
     const int header_bytes = ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES +
                              ( session_nonce ? ROCKETNET_SESSION_NONCE_BYTES : 0 );
     const int sealed_bytes = bytes - header_bytes;
@@ -99,6 +101,7 @@ static int standard_packet_protection_tamper( const char * id, uint8_t * out, in
         out[21] ^= 0x01;
     else
         return -1;
+
     return ROCKETNET_AD_WITH_EPHEMERAL_BYTES;
 }
 
@@ -227,7 +230,9 @@ static void test_open_sealed_packet_refuses_plaintext_over_capacity()
 {
     uint8_t plaintext[64];
     for ( int i = 0; i < (int) sizeof( plaintext ); i++ )
+    {
         plaintext[i] = (uint8_t) i;
+    }
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     const int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,

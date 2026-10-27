@@ -59,19 +59,25 @@ static int production_client_connect( const uint8_t * server_key )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     production_token( token, server_key );
+
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 
     struct rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+
     config.transport = "loopback";
     memcpy( config.packet_filter, production_filter, sizeof( config.packet_filter ) );
+
     enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+
     const int status = rocketnet_client_connect( client, token_string );
     check( status != ROCKETNET_STATUS_OK );
+
     rn_test_client_stop_and_destroy( client );
+
     return status;
 }
 
@@ -83,10 +89,12 @@ static void test_production_server_refuses_test_packet_filter()
     {
         rocketnet_server_config_t config;
         check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+
         config.protocol_id = 1;
         memset( config.backend_public_key, 0x42, sizeof( config.backend_public_key ) );
         config.transport = "loopback";
         config.max_clients = 2; // the refusal, not capacity: stay under the suite's RSS bound
+
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
@@ -95,8 +103,11 @@ static void test_production_server_refuses_test_packet_filter()
         rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &status );
         check( server != NULL );
         check( status == ROCKETNET_STATUS_OK );
+
         if ( server )
+        {
             rn_test_server_stop_and_destroy( server );
+        }
     }
 
     // the transport create
@@ -109,6 +120,7 @@ static void test_production_server_refuses_test_packet_filter()
         config.protocol_id = 1;
         snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
         config.max_clients = 2;
+
         int status = -1;
         check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
@@ -117,8 +129,11 @@ static void test_production_server_refuses_test_packet_filter()
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( server != NULL );
         check( status == ROCKETNET_STATUS_OK );
+
         if ( server )
+        {
             rn_test_server_transport_stop_and_destroy( server );
+        }
     }
 
     rocketnet_quiet( false );
@@ -134,7 +149,9 @@ static void test_production_client_refuses_test_packet_filter()
     {
         rocketnet_client_config_t config;
         check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+
         config.transport = "loopback";
+
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         check( rocketnet_client_create( NULL, &config, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
@@ -143,8 +160,11 @@ static void test_production_client_refuses_test_packet_filter()
         rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
         check( client != NULL );
         check( status == ROCKETNET_STATUS_OK );
+
         if ( client )
+        {
             rn_test_client_stop_and_destroy( client );
+        }
     }
 
     rocketnet_quiet( false );

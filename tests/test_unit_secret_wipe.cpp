@@ -37,7 +37,7 @@
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 #include <stdint.h>
 #include <string.h>
@@ -81,6 +81,7 @@ static void mint_test_token( uint8_t * token_data, uint64_t client_id )
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
@@ -158,6 +159,7 @@ static void test_client_token_keys_are_wiped_on_disconnect()
     rocketnet_unit_check( !canary_survives( client.token.client_to_server_key, ROCKETNET_KEY_BYTES ) );
     rocketnet_unit_check( !canary_survives( client.token.server_to_client_key, ROCKETNET_KEY_BYTES ) );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -185,6 +187,7 @@ static void test_client_ephemeral_secret_wiped_on_cookie_timeout()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_COOKIE_REQUEST_TIMED_OUT );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -207,6 +210,7 @@ static void test_client_ephemeral_secret_wiped_on_token_expired()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -226,6 +230,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
 
     // the server seals the denied under the handshake keys derived from the
     // token keys, this attempt's salt and a carried nonce
+
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
     memset( session_nonce, 0x5A, sizeof( session_nonce ) );
 
@@ -246,6 +251,7 @@ static void test_client_ephemeral_secret_wiped_on_denied()
                                                                     100.6, payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -269,6 +275,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_request_timeout()
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_REQUEST_TIMED_OUT );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -285,6 +292,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
     feed_cookie( &client, 100.5 );
 
     // craft a valid challenge the client will accept (mirrors server construction)
+
     uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
     memset( session_nonce, 0x5A, sizeof( session_nonce ) );
 
@@ -303,6 +311,7 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
                                                   client.client_ephemeral_public_key,
                                                   keys.handshake_server_to_client );
     rocketnet_unit_check( ch_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+
     memset( &keys, 0, sizeof( keys ) );
 
     plant_canary( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES );
@@ -312,16 +321,20 @@ static void test_client_ephemeral_secret_wiped_on_connection_response_timeout()
     rocketnet_unit_check( rocketnet_client_protocol_process_packet( &client, challenge, ch_bytes,
                                                                     100.6, payload, sizeof( payload ), &payload_bytes ) == 1 );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
     // zero happened on entry to state 3
+
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
 
     // now drive timeout from state 3
+
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client, 100.0 + ROCKETNET_TEST_TIMEOUT + 1.0, packet, &packet_bytes );
 
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_RESPONSE_TIMED_OUT );
     rocketnet_unit_check( !canary_survives( client.client_ephemeral_secret_key, ROCKETNET_KEY_BYTES ) );
+
     rocketnet_counters_assert_conserved( &counters );
 }
 
@@ -362,12 +375,14 @@ static bool wp_x25519_field( const wycheproof_test_t & test, const char * name, 
     std::map<std::string, std::string>::const_iterator it = test.fields.find( name );
     if ( it == test.fields.end() )
         return false;
+
     std::vector<uint8_t> bytes;
     if ( !wycheproof_hex( it->second, bytes ) )
         return false;
     if ( bytes.size() != 32 )
         return false;
     memcpy( out, &bytes[0], 32 );
+
     return true;
 }
 
@@ -375,7 +390,10 @@ static void wp_x25519_print_disagreement( const wycheproof_test_t & test, const 
 {
     printf( "wycheproof %s tcId %d %s %s", "x25519_test.json", test.tc_id, test.result.c_str(), outcome );
     for ( size_t i = 0; i < test.flags.size(); i++ )
+    {
         printf( " %s", test.flags[i].c_str() );
+    }
+
     printf( "\n" );
     fflush( stdout );
 }
@@ -402,6 +420,7 @@ static int wp_x25519_run( bool skip_zero_check, struct wp_x25519_tally_t * tally
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         const wycheproof_test_t & test = tests[i];
+
         uint8_t private_key[32];
         uint8_t public_key[32];
         uint8_t shared[32];
@@ -452,6 +471,7 @@ static int wp_x25519_run( bool skip_zero_check, struct wp_x25519_tally_t * tally
             tally->accepted++;
         }
     }
+
     return disagreements;
 }
 
@@ -467,6 +487,7 @@ static void test_wycheproof_x25519_vectors()
     struct wp_x25519_tally_t tally;
     tally.accepted = 0;
     tally.refused_low_order = 0;
+
     bool every_disagreement_zero_shared = true;
     rocketnet_unit_check( wp_x25519_run( false, &tally, &every_disagreement_zero_shared ) == 0 );
     rocketnet_unit_check( every_disagreement_zero_shared );
@@ -484,6 +505,7 @@ static void test_wycheproof_x25519_vectors()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         const wycheproof_test_t & test = tests[i];
+
         uint8_t private_key[32];
         uint8_t public_key[32];
         uint8_t shared[32];
@@ -509,10 +531,12 @@ static void test_wycheproof_x25519_vectors()
         else
         {
             rocketnet_unit_check( accepted == 1 );
+
             sdk_accepted++;
             session_client_to_server_keys.insert( std::string( (const char *) keys.session_client_to_server, 32 ) );
         }
     }
+
     rocketnet_unit_check( sdk_accepted == 487 );
     rocketnet_unit_check( session_client_to_server_keys.size() == 487 );
 }
@@ -526,6 +550,7 @@ static void test_wycheproof_x25519_witness_skipped_zero_check_goes_red()
     struct wp_x25519_tally_t tally;
     tally.accepted = 0;
     tally.refused_low_order = 0;
+
     bool every_disagreement_zero_shared = true;
     rocketnet_unit_check( wp_x25519_run( true, &tally, &every_disagreement_zero_shared ) == 31 );
     rocketnet_unit_check( every_disagreement_zero_shared );

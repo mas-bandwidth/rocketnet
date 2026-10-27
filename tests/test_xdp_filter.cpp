@@ -68,15 +68,15 @@
 
 #ifndef ROCKETNET_XDP_FILTER_OBJECT
 #define ROCKETNET_XDP_FILTER_OBJECT "server_xdp.o"
-#endif
+#endif // #ifndef ROCKETNET_XDP_FILTER_OBJECT
 
 #ifndef ETH_P_IP
 #define ETH_P_IP 0x0800
-#endif
+#endif // #ifndef ETH_P_IP
 
 #ifndef ETH_P_IPV6
 #define ETH_P_IPV6 0x86DD
-#endif
+#endif // #ifndef ETH_P_IPV6
 
 // the headers IPv6 may carry between the fixed header and UDP, by next header value
 
@@ -200,8 +200,11 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         if ( spec.next_header == IPV6_FRAGMENT )
         {
             for ( int i = 0; i < spec.ipv6_after_fragment_count; i++ )
+            {
                 extension_bytes += spec.ipv6_after_fragment[i] == IPV6_AH ? 12 : 8;
+            }
         }
+
         p[0] = 0x60;                            // version 6
         put16( p + 4, (uint16_t) ( extension_bytes + udp_bytes ) );
         p[6] = (uint8_t) ( spec.next_header >= 0 ? spec.next_header : IP_UDP );
@@ -209,6 +212,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         memcpy( p + 8, client_ipv6, 16 );
         memcpy( p + 24, destination, 16 );
         p += ROCKETNET_IPV6_HEADER_BYTES;
+
         if ( has_extension )
         {
             p[0] = spec.next_header == IPV6_FRAGMENT && spec.ipv6_after_fragment_count > 0 ? (uint8_t) spec.ipv6_after_fragment[0] : IP_UDP;
@@ -219,6 +223,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
                 put16( p + 2, (uint16_t) ( spec.ipv6_fragment_field >= 0 ? spec.ipv6_fragment_field : 0x0001 ) );
                 p[7] = 0x2A;                    // identification
             }
+
             p += spec.next_header == IPV6_AH ? 12 : 8;
 
             if ( spec.next_header == IPV6_FRAGMENT )
@@ -232,6 +237,7 @@ static void build_frame( frame_t * frame, const spec_t & spec )
                         p[0] = (uint8_t) next;
                         p[1] = i == 0 && spec.ipv6_first_extension_length >= 0 ? (uint8_t) spec.ipv6_first_extension_length : ( type == IPV6_AH ? 1 : 0 );
                     }
+
                     p += type == IPV6_AH ? 12 : 8;
                 }
             }
@@ -247,18 +253,32 @@ static void build_frame( frame_t * frame, const spec_t & spec )
     p += ROCKETNET_UDP_HEADER_BYTES;
 
     if ( spec.packet_bytes > 0 )
+    {
         p[0] = spec.packet_type;
+    }
+
     if ( spec.packet_bytes > 1 )
+    {
         p[1] = spec.epoch;
+    }
+
     if ( spec.packet_bytes > 2 + ROCKETNET_FILTER_VALUE_BYTES - 1 )
+    {
         memcpy( p + 2, spec.filter, ROCKETNET_FILTER_VALUE_BYTES );
+    }
+
     for ( int i = 0; i < 4 && ROCKETNET_PREFILTER_BYTES + i < spec.packet_bytes; i++ )
+    {
         p[ROCKETNET_PREFILTER_BYTES + i] = (uint8_t) ( spec.sequence >> ( 8 * i ) );
+    }
+
     p += spec.packet_bytes;
 
     frame->size = (int) ( p - frame->data );
     if ( spec.truncate_to >= 0 && spec.truncate_to < frame->size )
+    {
         frame->size = spec.truncate_to;
+    }
 }
 
 // the loaded program
@@ -282,7 +302,10 @@ static void print_log_tail( int lines )
         return;
     size_t end = length;
     while ( end > 0 && ( verifier_log[end - 1] == '\n' || verifier_log[end - 1] == ' ' ) )
+    {
         end--;
+    }
+
     size_t start = end;
     int seen = 0;
     while ( start > 0 )
@@ -291,6 +314,7 @@ static void print_log_tail( int lines )
             break;
         start--;
     }
+
     printf( "verifier log tail:\n%.*s\n", (int) ( end - start ), verifier_log + start );
 }
 
@@ -316,7 +340,7 @@ static bool load_filter( filter_t * filter, const char * path )
     options.kernel_log_buf = verifier_log;
     options.kernel_log_size = sizeof( verifier_log );
     options.kernel_log_level = 1;
-#endif
+#endif // #if !ROCKETNET_XDP_LEGACY_LIBBPF
 
     filter->object = bpf_object__open_file( path, &options );
     if ( filter->object == NULL || libbpf_get_error( filter->object ) )
@@ -338,11 +362,14 @@ static bool load_filter( filter_t * filter, const char * path )
     struct bpf_program * program = bpf_object__find_program_by_name( filter->object, "server_xdp_filter" );
 #if ROCKETNET_XDP_LEGACY_LIBBPF
     if ( program != NULL )
+    {
         bpf_program__set_type( program, BPF_PROG_TYPE_XDP );
+    }
+
     if ( program == NULL )
 #else
     if ( program == NULL || bpf_program__set_type( program, BPF_PROG_TYPE_XDP ) != 0 )
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
     {
         fprintf( stderr, "the program has no server_xdp_filter to load as XDP\n" );
         return false;
@@ -356,19 +383,22 @@ static bool load_filter( filter_t * filter, const char * path )
     }
 
 #if ROCKETNET_XDP_LEGACY_LIBBPF
-    // Old libbpf reports verifier diagnostics through its print callback.
+    // old libbpf reports verifier diagnostics through its print callback
     struct bpf_object_load_attr load = {};
     load.obj = filter->object;
     load.log_level = 1;
     const int result = bpf_object__load_xattr( &load );
 #else
     const int result = bpf_object__load( filter->object );
-#endif
+#endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
     if ( result != 0 )
     {
         fprintf( stderr, "load failed: %s\n", strerror( -result ) );
         if ( -result == EPERM || -result == EACCES )
+        {
             fprintf( stderr, "loading a BPF program needs root, or CAP_BPF and CAP_NET_ADMIN\n" );
+        }
+
         print_log_tail( 30 );
         return false;
     }
@@ -409,25 +439,35 @@ static bool write_config( filter_t * filter, const uint8_t * ipv4, const uint8_t
 {
     struct rocketnet_server_xdp_config_t config;
     memset( &config, 0, sizeof( config ) );
+
     if ( ipv4 )
+    {
         memcpy( &config.public_address, ipv4, 4 );
+    }
+
     config.public_port = (uint16_t) ( ( server_port >> 8 ) | ( ( server_port & 0xFF ) << 8 ) );
     memcpy( config.packet_filter, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
     config.filter_epoch = filter_epoch;
+
     if ( ipv6 )
+    {
         memcpy( config.public_address_ipv6, ipv6, 16 );
+    }
+
     const __u32 key = 0;
     if ( bpf_map_update_elem( filter->config_fd, &key, &config, BPF_ANY ) != 0 )
     {
         fprintf( stderr, "could not write the config map: %s\n", strerror( errno ) );
         return false;
     }
+
     return true;
 }
 
 static void read_counters( filter_t * filter, uint64_t * counters )
 {
     memset( counters, 0, NUM_COUNTER_SLOTS * sizeof( uint64_t ) );
+
     const int stride = ( filter->stats_value_bytes + 7 ) / 8 * 8;
     uint8_t * values = (uint8_t *) calloc( (size_t) filter->num_cpus, (size_t) stride );
     const __u32 key = 0;
@@ -437,9 +477,12 @@ static void read_counters( filter_t * filter, uint64_t * counters )
         {
             const uint64_t * value = (const uint64_t *) ( values + cpu * stride );
             for ( int i = 0; i < NUM_COUNTER_SLOTS && i < filter->stats_value_bytes / 8; i++ )
+            {
                 counters[i] += value[i];
+            }
         }
     }
+
     free( values );
 }
 
@@ -489,7 +532,9 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
 
     bool ok = (int) options.retval == want_verdict;
     if ( !ok )
+    {
         printf( "  FAIL %s: verdict %s, wanted %s\n", label, verdict_name( (int) options.retval ), verdict_name( want_verdict ) );
+    }
 
     for ( int i = 0; i < NUM_COUNTER_SLOTS; i++ )
     {
@@ -501,6 +546,7 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
             ok = false;
         }
     }
+
     return ok;
 }
 
@@ -635,6 +681,7 @@ static spec_t fragment_spec( bool ipv6, int offset_units, bool more )
 {
     spec_t spec = spec_default( ipv6 );
     spec.packet_bytes = 100;
+
     if ( ipv6 )
     {
         spec.next_header = IPV6_FRAGMENT;
@@ -644,6 +691,7 @@ static spec_t fragment_spec( bool ipv6, int offset_units, bool more )
     {
         spec.ipv4_frag_off = (uint16_t) ( ( more ? 0x2000 : 0 ) | ( offset_units & 0x1fff ) );
     }
+
     return spec;
 }
 
@@ -651,6 +699,7 @@ static bool write_unconfigured( filter_t * filter )
 {
     struct rocketnet_server_xdp_config_t config;
     memset( &config, 0, sizeof( config ) );
+
     const __u32 key = 0;
     return bpf_map_update_elem( filter->config_fd, &key, &config, BPF_ANY ) == 0;
 }
@@ -708,6 +757,7 @@ static bool fragment_rows( filter_t * filter, bool ipv6 )
     ok &= run_frame( filter, label, cut, XDP_PASS, passed );
 
     snprintf( label, sizeof( label ), "%s unfragmented packet to the server", family );
+
     spec_t whole = spec_default( ipv6 );
     whole.packet_bytes = 100;
     ok &= run_frame( filter, label, whole, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
@@ -733,6 +783,7 @@ static bool ipv6_fragments( filter_t * filter )
     char label[160];
 
     ok &= write_config( filter, NULL, server_ipv6 );
+
     for ( int i = 0; i < (int) ( sizeof( headers ) / sizeof( headers[0] ) ); i++ )
     {
         spec_t spec = fragment_spec( true, 0, true );
@@ -834,6 +885,7 @@ static bool ipv6_wrong_address_passes( filter_t * filter )
     // the IPv6 one does not apply to IPv4 frames
 
     ok &= write_config( filter, server_ipv4, server_ipv6 );
+
     spec_t ipv4_wrong = spec_default( false );
     ipv4_wrong.destination_address = other_ipv4;
     ok &= run_frame( filter, "ipv4 other destination address", ipv4_wrong, XDP_PASS, NO_COUNTER );
@@ -923,6 +975,7 @@ static bool ipv6_same_drops_as_ipv4( filter_t * filter )
         snprintf( label, sizeof( label ), "%s connection request at its exact size", name );
         ok &= run_frame( filter, label, request, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
     }
+
     return ok;
 }
 
@@ -938,11 +991,13 @@ static bool config_layout_matches_header( filter_t * filter )
         printf( "  FAIL config map value is %u bytes, the header says %u\n", bpf_map__value_size( config_map ), (unsigned) sizeof( struct rocketnet_server_xdp_config_t ) );
         ok = false;
     }
+
     if ( bpf_map__value_size( stats_map ) != sizeof( struct rocketnet_server_xdp_stats_t ) )
     {
         printf( "  FAIL stats map value is %u bytes, the header says %u\n", bpf_map__value_size( stats_map ), (unsigned) sizeof( struct rocketnet_server_xdp_stats_t ) );
         ok = false;
     }
+
     return ok;
 }
 
@@ -966,6 +1021,7 @@ static struct rocketnet_server_xdp_replay_key_t replay_client_key( bool ipv6, ui
 {
     struct rocketnet_address_t address;
     memset( &address, 0, sizeof( address ) );
+
     if ( !ipv6 )
     {
         address.type = ROCKETNET_ADDRESS_IPV4;
@@ -974,10 +1030,15 @@ static struct rocketnet_server_xdp_replay_key_t replay_client_key( bool ipv6, ui
     else
     {
         address.type = ROCKETNET_ADDRESS_IPV6;
+
         for ( int i = 0; i < 8; i++ )
+        {
             address.data.ipv6[i] = (uint16_t) ( ( client_ipv6[i * 2] << 8 ) | client_ipv6[i * 2 + 1] );
+        }
     }
+
     address.port = port;
+
     struct rocketnet_server_xdp_replay_key_t key;
     rocketnet_xdp_replay_key_from_address( &address, &key );
     return key;
@@ -994,6 +1055,7 @@ static bool replay_clear( int fd )
             return false;
         }
     }
+
     return true;
 }
 
@@ -1008,6 +1070,7 @@ static bool replay_write( int fd, bool ipv6, uint32_t high_water )
         printf( "  FAIL could not write the replay map: %s\n", strerror( errno ) );
         return false;
     }
+
     return true;
 }
 
@@ -1078,20 +1141,24 @@ static void replay_rows( bool ipv6, std::vector<replay_row_t> & rows )
     rows.push_back( replay_row( "fragment a window behind the high-water", ipv6, ROCKETNET_CONNECTION_FRAGMENT_PACKET, replay_behind( window ), high_water, true ) );
 
     // the handshake types are not checked
+
     rows.push_back( replay_row( "connection request a window behind is not checked", ipv6, ROCKETNET_CONNECTION_REQUEST_PACKET, replay_behind( window ), high_water, false ) );
     rows.push_back( replay_row( "connection response a window behind is not checked", ipv6, ROCKETNET_CONNECTION_RESPONSE_PACKET, replay_behind( window ), high_water, false ) );
 
     // another source port has no entry
+
     replay_row_t other = replay_row( "another source port has no entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, false );
     other.spec.source_port = client_port + 1;
     rows.push_back( other );
 
     // no entry at all
+
     replay_row_t none = replay_row( "no replay entry", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, replay_behind( window ), high_water, false );
     none.entry = false;
     rows.push_back( none );
 
     // the wrap: the difference is modulo 2^32, read as signed
+
     rows.push_back( replay_row( "high-water 5, sequence a window behind is behind across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5u - window, 5, true ) );
     rows.push_back( replay_row( "high-water 5, sequence 0xfffffff0 is inside the window across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 0xfffffff0u, 5, false ) );
     rows.push_back( replay_row( "high-water 0xfffffff0, sequence 5 is ahead across the wrap", ipv6, ROCKETNET_CONNECTION_PAYLOAD_PACKET, 5, 0xfffffff0u, false ) );
@@ -1105,6 +1172,7 @@ static bool replay_drops_behind_the_window( filter_t * filter )
         printf( "  FAIL the program has no server_xdp_replay_map\n" );
         return false;
     }
+
     bool ok = write_config( filter, server_ipv4, server_ipv6 );
     std::vector<replay_row_t> rows;
     replay_rows( false, rows );
@@ -1112,10 +1180,15 @@ static bool replay_drops_behind_the_window( filter_t * filter )
     for ( size_t i = 0; i < rows.size(); i++ )
     {
         ok &= replay_clear( fd );
+
         if ( rows[i].entry )
+        {
             ok &= replay_write( fd, rows[i].spec.ipv6, rows[i].high_water );
+        }
+
         ok &= run_frame( filter, rows[i].label, rows[i].spec, rows[i].want_verdict, rows[i].want_counter );
     }
+
     ok &= replay_clear( fd );
     return ok;
 }
@@ -1133,6 +1206,7 @@ static bool replay_never_writes_the_map( filter_t * filter )
         printf( "  FAIL the program has no server_xdp_replay_map\n" );
         return false;
     }
+
     bool ok = write_config( filter, server_ipv4, server_ipv6 );
     ok &= replay_clear( fd );
     ok &= replay_write( fd, false, replay_high_water );
@@ -1145,10 +1219,13 @@ static bool replay_never_writes_the_map( filter_t * filter )
         forged.packet_bytes = 100;
         forged.sequence = 0x7fffffffu;
         frames.push_back( forged );
+
         std::vector<replay_row_t> rows;
         replay_rows( family == 1, rows );
         for ( size_t i = 0; i < rows.size(); i++ )
+        {
             frames.push_back( rows[i].spec );
+        }
     }
 
     for ( size_t i = 0; i < frames.size(); i++ )
@@ -1164,6 +1241,7 @@ static bool replay_never_writes_the_map( filter_t * filter )
     }
 
     // each entry reads back as written
+
     for ( int family = 0; family < 2; family++ )
     {
         const struct rocketnet_server_xdp_replay_key_t key = replay_client_key( family == 1, client_port );
@@ -1182,6 +1260,7 @@ static bool replay_never_writes_the_map( filter_t * filter )
     }
 
     // no key the test did not write
+
     const struct rocketnet_server_xdp_replay_key_t written[2] = { replay_client_key( false, client_port ), replay_client_key( true, client_port ) };
     struct rocketnet_server_xdp_replay_key_t key;
     int keys = 0;
@@ -1189,15 +1268,18 @@ static bool replay_never_writes_the_map( filter_t * filter )
     while ( result == 0 )
     {
         keys++;
+
         if ( memcmp( &key, &written[0], sizeof( key ) ) != 0 && memcmp( &key, &written[1], sizeof( key ) ) != 0 )
         {
             printf( "  FAIL the map holds a key the test did not write (family %d)\n", key.family );
             ok = false;
         }
+
         struct rocketnet_server_xdp_replay_key_t next;
         result = bpf_map_get_next_key( fd, &key, &next );
         key = next;
     }
+
     if ( keys != 2 )
     {
         printf( "  FAIL the map holds %d keys, the test wrote 2\n", keys );
@@ -1218,17 +1300,20 @@ static bool replay_key_layout_matches_header( filter_t * filter )
         printf( "  FAIL the program has no server_xdp_replay_map\n" );
         return false;
     }
+
     bool ok = true;
     if ( bpf_map__key_size( replay_map ) != sizeof( struct rocketnet_server_xdp_replay_key_t ) )
     {
         printf( "  FAIL replay map key is %u bytes, the header says %u\n", bpf_map__key_size( replay_map ), (unsigned) sizeof( struct rocketnet_server_xdp_replay_key_t ) );
         ok = false;
     }
+
     if ( bpf_map__value_size( replay_map ) != sizeof( struct rocketnet_server_xdp_replay_value_t ) )
     {
         printf( "  FAIL replay map value is %u bytes, the header says %u\n", bpf_map__value_size( replay_map ), (unsigned) sizeof( struct rocketnet_server_xdp_replay_value_t ) );
         ok = false;
     }
+
     return ok;
 }
 
@@ -1243,9 +1328,11 @@ static bool inside_virtme_guest()
     FILE * file = fopen( "/proc/cmdline", "r" );
     if ( !file )
         return false;
+
     char line[4096];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
     fclose( file );
+
     return read && strstr( line, "virtme" ) != NULL;
 }
 
@@ -1330,6 +1417,7 @@ static bool xsk_raw_bind( int ifindex, const struct xsk_socket_config & config, 
 
     close( fd );
     munmap( area, frame_size * frames );
+
     return bound;
 }
 
@@ -1360,6 +1448,7 @@ static bool xsk_bind_on_veth( const char * name )
         printf( "  the zero copy bind on %s succeeded (zero_copy %d); veth should refuse it\n", name, zero_copy ? 1 : 0 );
         return false;
     }
+
     printf( "  zero copy bind on %s refused: %s\n", name, strerror( refusal ) );
 
     // the fallback asks for copy and binds
@@ -1404,7 +1493,9 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
     snprintf( command, sizeof( command ), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_far );
     const bool up = system( command ) == 0;
     if ( !up )
+    {
         printf( "  could not bring up the veth pair %s/%s\n", zc_veth, zc_veth_far );
+    }
 
     const bool ok = up && xsk_bind_on_veth( zc_veth );
 
@@ -1413,7 +1504,9 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
     snprintf( command, sizeof( command ), "ip link del %s", zc_veth );
     const bool removed = system( command ) == 0;
     if ( !removed )
+    {
         printf( "  could not remove the veth pair %s/%s\n", zc_veth, zc_veth_far );
+    }
 
     return ok && removed;
 }
@@ -1436,13 +1529,16 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 
 #ifndef BPF_FS_MAGIC
 #define BPF_FS_MAGIC 0xcafe4a11
-#endif
+#endif // #ifndef BPF_FS_MAGIC
 
 static bool onlink_run( const char * command )
 {
     const int status = system( command );
     if ( status != 0 )
+    {
         printf( "  FAIL `%s` exited %d\n", command, status );
+    }
+
     return status == 0;
 }
 
@@ -1463,10 +1559,17 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     const pid_t pid = fork();
     if ( pid != 0 )
         return pid;
+
     if ( stdin_fd >= 0 && dup2( stdin_fd, 0 ) < 0 )
+    {
         _exit( 126 );
+    }
+
     if ( netns_fd >= 0 && setns( netns_fd, CLONE_NEWNET ) != 0 )
+    {
         _exit( 126 );
+    }
+
     const int log_fd = open( log_path, O_WRONLY | O_CREAT | O_TRUNC, 0600 );
     if ( log_fd >= 0 )
     {
@@ -1474,14 +1577,17 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
         dup2( log_fd, 2 );
         close( log_fd );
     }
+
     if ( xdp_server )
     {
         setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
         setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 );
         setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "1", 1 );
     }
+
     // the case connects one client: a message object sized for the default
     // 1000 clients does not fit the guest (server.c:872, :925)
+
     if ( xdp_server )
         execl( program, program, argument, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
     else
@@ -1494,6 +1600,7 @@ static void onlink_stop( pid_t pid )
     if ( pid <= 0 )
         return;
     kill( pid, SIGINT );
+
     const double deadline = onlink_now() + 5.0;
     while ( onlink_now() < deadline )
     {
@@ -1501,6 +1608,7 @@ static void onlink_stop( pid_t pid )
             return;
         usleep( 10000 );
     }
+
     kill( pid, SIGKILL );
     waitpid( pid, NULL, 0 );
 }
@@ -1510,11 +1618,16 @@ static bool onlink_log_has( const char * path, const char * text )
     FILE * file = fopen( path, "r" );
     if ( !file )
         return false;
+
     char line[1024];
     bool found = false;
     while ( !found && fgets( line, sizeof( line ), file ) )
+    {
         found = strstr( line, text ) != NULL;
+    }
+
     fclose( file );
+
     return found;
 }
 
@@ -1523,7 +1636,9 @@ static void onlink_print_tail( const char * label, const char * path )
     char command[512];
     snprintf( command, sizeof( command ), "tail -5 %s | sed 's/^/    %s: /'", path, label );
     if ( system( command ) != 0 )
+    {
         printf( "    %s: no log\n", label );
+    }
 }
 
 struct onlink_environment_t
@@ -1638,15 +1753,22 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     {
         if ( setns( environment.client_netns_fd, CLONE_NEWNET ) != 0 )
             return false;
+
         const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
         struct ifreq ifr;
         memset( &ifr, 0, sizeof( ifr ) );
         strncpy( ifr.ifr_name, ONLINK_FAR, sizeof( ifr.ifr_name ) - 1 );
         const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
         if ( have_mac )
+        {
             memcpy( client_mac, ifr.ifr_hwaddr.sa_data, 6 );
+        }
+
         if ( probe >= 0 )
+        {
             close( probe );
+        }
+
         client_ifindex = (int) if_nametoindex( ONLINK_FAR );
         environment.capture_fd = socket( AF_PACKET, SOCK_RAW, htons( ETH_P_IP ) );
         if ( environment.capture_fd >= 0 )
@@ -1662,6 +1784,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
                 environment.capture_fd = -1;
             }
         }
+
         if ( setns( environment.home_netns_fd, CLONE_NEWNET ) != 0 )
             return false;
         if ( !have_mac || client_ifindex == 0 || environment.capture_fd < 0 )
@@ -1686,10 +1809,12 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     int frames_to_client = 0;
     int frames_elsewhere = 0;
     const double deadline = onlink_now() + ONLINK_SECONDS;
+
     // Keep the exchange alive for the full bounded window. Captured frames
     // include control traffic, so reaching ONLINK_WANT_FRAMES can precede
     // the client's report after 100 received payloads. Stopping at that
     // frame count races the payload assertion below.
+
     while ( onlink_now() < deadline )
     {
         struct pollfd fds;
@@ -1698,12 +1823,14 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         fds.revents = 0;
         if ( poll( &fds, 1, 100 ) <= 0 )
             continue;
+
         uint8_t frame[2048];
         const ssize_t bytes = recv( environment.capture_fd, frame, sizeof( frame ), 0 );
         if ( bytes < 14 + 20 + 8 )
             continue;
         if ( frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != IP_UDP )
             continue;
+
         static const uint8_t onlink_server_ipv4[4] = { 10, 77, 1, 1 };
         const int ihl = ( frame[14] & 0x0F ) * 4;
         const uint16_t source_port = (uint16_t) ( ( frame[14 + ihl] << 8 ) | frame[14 + ihl + 1] );
@@ -1739,26 +1866,31 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         printf( "  FAIL the server did not run without a gateway on " ONLINK_NEAR "\n" );
         ok = false;
     }
+
     if ( !server_was_xdp )
     {
         printf( "  FAIL the server did not start with the xdp transport on " ONLINK_NEAR "\n" );
         ok = false;
     }
+
     if ( !client_connected || !exchanged )
     {
         printf( "  FAIL the client did not connect and exchange payloads (connected %d, exchanged %d)\n", client_connected ? 1 : 0, exchanged ? 1 : 0 );
         ok = false;
     }
+
     if ( frames_to_client < ONLINK_WANT_FRAMES || frames_elsewhere != 0 )
     {
         printf( "  FAIL %d frames reached the client's MAC (want %d) and %d went elsewhere (want 0)\n", frames_to_client, ONLINK_WANT_FRAMES, frames_elsewhere );
         ok = false;
     }
+
     if ( !ok )
     {
         onlink_print_tail( "server", environment.server_log );
         onlink_print_tail( "client", environment.client_log );
     }
+
     return ok;
 }
 
@@ -1783,11 +1915,13 @@ static int isolated_cpu_count()
     FILE * file = fopen( "/sys/devices/system/cpu/isolated", "r" );
     if ( !file )
         return 0;
+
     char line[1024];
     const bool read = fgets( line, sizeof( line ), file ) != NULL;
     fclose( file );
     if ( !read )
         return 0;
+
     int count = 0;
     const char * p = line;
     while ( *p >= '0' && *p <= '9' )
@@ -1801,10 +1935,15 @@ static int isolated_cpu_count()
             last = strtol( p + 1, &end, 10 );
             p = end;
         }
+
         count += (int) ( last - first + 1 );
+
         if ( *p == ',' )
+        {
             p++;
+        }
     }
+
     return count;
 }
 
@@ -1833,6 +1972,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
     if ( !slash )
         return false;
     *slash = '\0';
+
     char server_path[4200];
     snprintf( server_path, sizeof( server_path ), "%s/server", exe );
 
@@ -1880,6 +2020,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
                 dup2( log_fd, 2 );
                 close( log_fd );
             }
+
             setenv( "ROCKETNET_SERVER_TRANSPORT", "xdp", 1 );
             setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
             setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2", 1 );
@@ -1887,6 +2028,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
             execl( server_path, server_path, TEARDOWN_SERVER_ADDRESS, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
             _exit( 127 );
         }
+
         if ( pid < 0 )
         {
             printf( "  FAIL could not fork the example server\n" );
@@ -1902,8 +2044,10 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
                     exited = true;
                     break;
                 }
+
                 usleep( 10000 );
             }
+
             if ( !exited )
             {
                 onlink_stop( pid );
@@ -1935,13 +2079,17 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
     }
 
     if ( !ok )
+    {
         onlink_print_tail( "server", server_log );
+    }
 
     if ( system( "ip link del " TEARDOWN_NEAR " 2>/dev/null" ) != 0 )
     {
         // already gone
     }
+
     unlink( server_log );
+
     return ok;
 }
 
@@ -1995,10 +2143,16 @@ int main( int argc, char ** argv )
         const size_t length = strnlen( verifier_log, sizeof( verifier_log ) );
         size_t end = length;
         while ( end > 0 && ( verifier_log[end - 1] == '\n' || verifier_log[end - 1] == ' ' ) )
+        {
             end--;
+        }
+
         size_t start = end;
         while ( start > 0 && verifier_log[start - 1] != '\n' )
+        {
             start--;
+        }
+
         printf( "verifier: %.*s\n", (int) ( end - start ), verifier_log + start );
     }
 
@@ -2007,6 +2161,7 @@ int main( int argc, char ** argv )
     for ( int i = 0; i < (int) ( sizeof( cases ) / sizeof( cases[0] ) ); i++ )
     {
         case_skip_reason = NULL;
+
         const bool ok = cases[i].function( &filter );
         if ( ok && case_skip_reason )
         {
@@ -2014,9 +2169,12 @@ int main( int argc, char ** argv )
             skipped++;
             continue;
         }
+
         printf( "%s: %s\n", cases[i].name, ok ? "ok" : "FAILED" );
         if ( !ok )
+        {
             failed++;
+        }
     }
 
     bpf_object__close( filter.object );
@@ -2032,5 +2190,6 @@ int main( int argc, char ** argv )
         printf( "test_xdp_filter: %d cases passed, %d skipped\n", total - skipped, skipped );
     else
         printf( "test_xdp_filter: %d cases passed\n", total );
+
     return 0;
 }

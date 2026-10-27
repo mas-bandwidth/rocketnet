@@ -80,8 +80,11 @@ static int stale_rule_offer( struct stale_rule_harness_t * h, uint32_t payload_i
     const int fragment_bytes = fragment_index == 0 ? STALE_RULE_STRIDE : STALE_RULE_FINAL;
 
     rocketnet_write_fragment_header( h->fragment, payload_id, fragment_index, 2 );
+
     for ( int i = 0; i < fragment_bytes; i++ )
+    {
         h->fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + i] = (uint8_t) ( pattern + STALE_RULE_STRIDE * fragment_index + i );
+    }
 
     rocketnet_reassembly_set_begin_update( h->set );
     const int result = rocketnet_reassembly_process_fragment( h->set, 0, h->fragment, ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
@@ -90,9 +93,13 @@ static int stale_rule_offer( struct stale_rule_harness_t * h, uint32_t payload_i
     {
         rocketnet_unit_check( h->set->completed_bytes == STALE_RULE_BYTES );
         for ( int i = 0; i < STALE_RULE_BYTES; i++ )
+        {
             rocketnet_unit_check( h->set->completed_payload[i] == (uint8_t) ( pattern + i ) );
+        }
+
         h->delivered++;
     }
+
     return result;
 }
 
@@ -124,14 +131,17 @@ static void test_reassembly_lost_run_does_not_stale_the_slot()
         if ( id == occupant )
         {
             rocketnet_unit_check( stale_rule_offer( &h, id, 0 ) == 1 );       // its final is lost
+
             lost++;
             continue;
         }
+
         if ( id % 8 == occupant % 8 && id > occupant && id <= occupant + 256 )
         {
             lost++;                                                             // lost whole: nothing arrives
             continue;
         }
+
         stale_rule_offer( &h, id, 0 );
         stale_rule_offer( &h, id, 1 );
     }
@@ -167,11 +177,13 @@ static void test_reassembly_late_fragment_after_completion_does_not_poison()
             rocketnet_unit_check( stale_rule_offer( &h, id, 0 ) == 1 );       // its final is delayed
             continue;
         }
+
         stale_rule_offer( &h, id, 0 );
         stale_rule_offer( &h, id, 1 );
         if ( id == late + 256 )
         {
             rocketnet_unit_check( h.delivered == (int) id - 1 );              // X+256 completed, the slot is empty
+
             stale_rule_offer( &h, late, 1 );                                    // and X's delayed final lands in it
         }
     }
@@ -206,8 +218,11 @@ static void test_reassembly_hostile_far_ahead_id_cannot_poison()
         if ( id == 5 )
         {
             // NEGATIVE: just under half the id space ahead of the occupant, in its slot
+
             rocketnet_unit_check( stale_rule_offer( &h, id + 0x7FFFFFF8u, 0 ) == 0 );
+
             hostile_refused++;
+
             rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
         }
 
@@ -217,10 +232,15 @@ static void test_reassembly_hostile_far_ahead_id_cannot_poison()
         if ( id == 13 )
         {
             // NEGATIVE: the same far-ahead id into the slot the completion of 13 just emptied
+
             rocketnet_unit_check( stale_rule_offer( &h, id + 0x7FFFFFF8u, 0 ) == 0 );
+
             hostile_refused++;
+
             // NEGATIVE: half the id space away, the point where newer and older are undefined
+
             rocketnet_unit_check( stale_rule_offer( &h, id + 0x80000000u, 0 ) == 0 );
+
             hostile_refused++;
         }
 
@@ -228,6 +248,7 @@ static void test_reassembly_hostile_far_ahead_id_cannot_poison()
         {
             // an id ahead within the bound takes the empty slot, which the
             // next honest id of the series, 29, displaces (counted abandoned)
+
             rocketnet_unit_check( stale_rule_offer( &h, id + 0x20000000u, 0 ) == 1 );
         }
     }
@@ -328,8 +349,11 @@ static int connection_index_offer( struct stale_rule_harness_t * h, int connecti
     const int fragment_bytes = fragment_index == 0 ? STALE_RULE_STRIDE : STALE_RULE_FINAL;
 
     rocketnet_write_fragment_header( h->fragment, payload_id, fragment_index, 2 );
+
     for ( int i = 0; i < fragment_bytes; i++ )
+    {
         h->fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + i] = (uint8_t) ( pattern + STALE_RULE_STRIDE * fragment_index + i );
+    }
 
     rocketnet_reassembly_set_begin_update( h->set );
     const int result = rocketnet_reassembly_process_fragment( h->set, connection_index, h->fragment, ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
@@ -338,9 +362,13 @@ static int connection_index_offer( struct stale_rule_harness_t * h, int connecti
     {
         rocketnet_unit_check( h->set->completed_bytes == STALE_RULE_BYTES );
         for ( int i = 0; i < STALE_RULE_BYTES; i++ )
+        {
             rocketnet_unit_check( h->set->completed_payload[i] == (uint8_t) ( pattern + i ) );
+        }
+
         h->delivered++;
     }
+
     return result;
 }
 

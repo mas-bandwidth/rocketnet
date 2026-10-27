@@ -55,6 +55,7 @@ inline int rn_standard_hex_nibble( char c )
         return c - 'a' + 10;
     if ( c >= 'A' && c <= 'F' )
         return c - 'A' + 10;
+
     return -1;
 }
 
@@ -71,16 +72,19 @@ inline int rn_standard_hex_decode( const char * hex, uint8_t * out, int capacity
         const int nibble = rn_standard_hex_nibble( *p );
         if ( nibble < 0 )
             return -1;
+
         if ( high < 0 )
         {
             high = nibble;
             continue;
         }
+
         if ( count >= capacity )
             return -1;
         out[count++] = (uint8_t) ( ( high << 4 ) | nibble );
         high = -1;
     }
+
     return high < 0 ? count : -1;
 }
 
@@ -107,12 +111,18 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
     {
         const int expected_bytes = rn_standard_hex_decode( table[i].hex, expected, RN_STANDARD_VECTOR_MAX_BYTES );
         if ( expected_bytes < 0 )
+        {
             printf( "vector %s: its twin's hex does not decode\n", table[i].id );
+        }
+
         rocketnet_unit_check( expected_bytes >= 0 );
 
         const int actual_bytes = generator( table[i].id, actual, RN_STANDARD_VECTOR_MAX_BYTES );
         if ( actual_bytes < 0 )
+        {
             printf( "vector %s: no generator for this id\n", table[i].id );
+        }
+
         rocketnet_unit_check( actual_bytes >= 0 );
 
         const int first = rn_standard_first_difference( expected, expected_bytes, actual, actual_bytes );
@@ -121,7 +131,8 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
                     table[i].id, first, expected_bytes, actual_bytes );
         rocketnet_unit_check( first < 0 );
     }
+
     return count;
 }
 
-#endif // ROCKETNET_TESTS_TEST_UNIT_STANDARD_H
+#endif // #ifndef ROCKETNET_TESTS_TEST_UNIT_STANDARD_H

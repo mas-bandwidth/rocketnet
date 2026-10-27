@@ -60,10 +60,10 @@ static void env_pin_set_aside( env_pin_saved * saved )
 static void env_pin_put_back( const env_pin_saved * saved )
 {
     if ( saved->was_set )
+    {
         rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
+    }
 }
-
-
 
 #endif // #if ROCKETNET_DEV
 
@@ -82,6 +82,7 @@ static void * allocate( void * context, size_t bytes )
     const int call = ++state->calls;
     if ( state->fail_at == call )
         return NULL;
+
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
@@ -89,6 +90,7 @@ static void * allocate( void * context, size_t bytes )
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
     memset( (void *) address, 0xA5, bytes );
     ++state->live;
+
     return (void *) address;
 }
 
@@ -119,7 +121,7 @@ static void client_create_ex_expected_null_assert( const char *, const char *, c
 {
     client_create_ex_expected_null_asserts++;
 }
-#endif
+#endif // #if ROCKETNET_ASSERTS
 
 static void test_client_transport_create_ex_reports_every_status()
 {
@@ -136,12 +138,13 @@ static void test_client_transport_create_ex_reports_every_status()
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     client_create_ex_expected_null_asserts = 0;
     rocketnet_assert_function( client_create_ex_expected_null_assert );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     check( rocketnet_client_transport_create_ex( &state, NULL, NULL, 1000.0, &status ) == NULL );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
+
     check( client_create_ex_expected_null_asserts == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -150,7 +153,9 @@ static void test_client_transport_create_ex_reports_every_status()
     // the worker starts initialized; terminate so the fault-injecting
     // allocator can be installed and the pre-init refusal is reachable. the
     // token is non-NULL so the refusal is the pre-init check, not C1.
+
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+
     check_create_status( ROCKETNET_STATUS_NOT_INITIALIZED, token, NULL, &state, &status );
 
     check( rocketnet_init_ex( &state, allocate, release, &status ) );
@@ -185,16 +190,19 @@ static void test_client_transport_create_ex_reports_every_status()
     }
 
     // C6: the transport block malloc refuses
+
     state.fail_at = state.calls + 1;
     check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
     state.fail_at = 0;
 
     // C7: the send arena malloc refuses (the second allocation)
+
     state.fail_at = state.calls + 1;
     check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
     state.fail_at = 0;
 
     // C7: the reassembly set malloc refuses (the third allocation)
+
     state.fail_at = state.calls + 1;
     check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
     state.fail_at = 0;
@@ -202,6 +210,7 @@ static void test_client_transport_create_ex_reports_every_status()
     // a valid token for the connect-refusal cases. the client reads the
     // signed fields directly at connect (no signature check until the server),
     // so the signed data is enough to reach C8 and C9.
+
     struct rocketnet_signed_connect_data_t signed_fields;
     memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
@@ -228,6 +237,7 @@ static void test_client_transport_create_ex_reports_every_status()
     // C8: address_flags zero is an invalid connect token
     {
         signed_fields.address_flags = 0;
+
         uint8_t bad[ROCKETNET_CONNECT_TOKEN_BYTES];
         memset( bad, 0, sizeof( bad ) );
         rocketnet_write_signed_connect_data( &signed_fields, bad );
@@ -240,6 +250,7 @@ static void test_client_transport_create_ex_reports_every_status()
     {
         signed_fields.create_timestamp = 1;
         signed_fields.expire_timestamp = 2;
+
         uint8_t expired[ROCKETNET_CONNECT_TOKEN_BYTES];
         memset( expired, 0, sizeof( expired ) );
         rocketnet_write_signed_connect_data( &signed_fields, expired );
@@ -249,6 +260,7 @@ static void test_client_transport_create_ex_reports_every_status()
     }
 
     // a clean term, then restore the default allocator for the worker's term
+
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );

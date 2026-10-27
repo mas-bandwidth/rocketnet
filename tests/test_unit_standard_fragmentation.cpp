@@ -74,6 +74,7 @@ static int standard_fragmentation_generate( const char * id, uint8_t * out, int 
     // the trace: payload 7 completes with its final fragment arriving first
     // and staged; payload 9 repeats a fragment; payload 10 changes its count;
     // payload 16 takes payload 10's slot unfinished.
+
     static const struct rn_t16_fragment_t trace[] = {
         { 7, 2, 3, 5, 'A' },
         { 7, 0, 3, 8, 'B' },
@@ -87,12 +88,17 @@ static int standard_fragmentation_generate( const char * id, uint8_t * out, int 
 
     const int n = (int) ( sizeof( trace ) / sizeof( trace[0] ) );
     for ( int i = 0; i < n; i++ )
+    {
         rn_t16_feed( set, counters, &table, &trace[i] );
+    }
 
     for ( int i = 0; i < 12; i++ )
+    {
         out[i] = (uint8_t) counters[i];
+    }
 
     rocketnet_reassembly_set_destroy( set );
+
     return 12;
 }
 

@@ -43,12 +43,14 @@ static void salt_mismatch_server_setup( struct salt_mismatch_server_t * test )
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
     server->handshake_deadline_seconds = 5.0;
@@ -84,6 +86,7 @@ static void salt_mismatch_build_request( uint8_t * request, const uint8_t * salt
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -132,7 +135,9 @@ static void test_salt_mismatch_resends_stored_challenge()
     int response_bytes = 0;
 
     // the cookie exchange, then the request that creates the half-open mapping
+
     check( salt_mismatch_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+
     memcpy( request + ROCKETNET_PREFILTER_BYTES,
             response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
             ROCKETNET_COOKIE_FIELD_BYTES );
@@ -144,12 +149,14 @@ static void test_salt_mismatch_resends_stored_challenge()
     const int stored_bytes = response_bytes;
 
     // a same-salt duplicate is answered with the stored challenge
+
     check( salt_mismatch_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( response_bytes == stored_bytes );
     check( memcmp( response, stored, (size_t) stored_bytes ) == 0 );
 
     // a request from the same address with another salt gets the same bytes:
     // the mapping's stored challenge, not a new one and not silence
+
     uint8_t other_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     salt_mismatch_build_request( other_request, salt_mismatch_alternate_salt );
     memcpy( other_request + ROCKETNET_PREFILTER_BYTES, request + ROCKETNET_PREFILTER_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
@@ -161,9 +168,12 @@ static void test_salt_mismatch_resends_stored_challenge()
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT] == resent_before + 1 );
 
     // one mapping, still carrying the salt and nonce it was created with
+
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
+
     const int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
+
     const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
     check( memcmp( mapping->connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 );
 

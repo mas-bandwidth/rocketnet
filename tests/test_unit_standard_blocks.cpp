@@ -72,7 +72,9 @@ static uint8_t standard_blocks_data[ROCKETNET_MESSAGE_FRAGMENT_BYTES];
 static void standard_blocks_fill( int bytes )
 {
     for ( int i = 0; i < bytes; i++ )
+    {
         standard_blocks_data[i] = (uint8_t) ( i & 0xFF );
+    }
 }
 
 static int standard_blocks_encode( uint32_t number, uint32_t ring, uint32_t ordering, uint32_t channel,
@@ -113,8 +115,10 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
     rn_region_t region;
     static rn_send_number_t numbers[16];
     standard_blocks_region( &region, numbers, 4096, 2404 );
+
     rn_window_send_t send;
     rn_window_send_init( &send, &region, 9 );
+
     uint64_t first = 0;
     uint64_t ring_start = 0;
     if ( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 2404, 0, &first, &ring_start ) != 3 )
@@ -130,6 +134,7 @@ static int standard_blocks_split( const char * id, uint8_t * out, int capacity )
 
     const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     standard_blocks_fill( bytes );
+
     const rn_send_number_t * slot = &numbers[( first + index ) % region.window];
     const uint32_t ring = (uint32_t) ( ( slot->ring_start % region.ring_bytes ) / 16 );
     return standard_blocks_encode( (uint32_t) ( first + index ), ring, 7, 3, index, 2, bytes, out, capacity );
@@ -143,6 +148,7 @@ static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capaci
     rn_region_t region;
     static rn_send_number_t numbers[16];
     standard_blocks_region( &region, numbers, 1168, 2304 );
+
     rn_window_send_t send;
     rn_window_send_init( &send, &region, 0 );
 
@@ -161,6 +167,7 @@ static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capaci
     {
         const int bytes = index == 0 ? (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES : 1;
         standard_blocks_fill( bytes );
+
         const rn_send_number_t * slot = &numbers[( first + index ) % region.window];
         const uint32_t ring = (uint32_t) ( ( slot->ring_start % region.ring_bytes ) / 16 );
         const int encoded = standard_blocks_encode( (uint32_t) ( first + index ), ring, 1, 0, index, 1, bytes, out + written, capacity - written );
@@ -168,6 +175,7 @@ static int standard_blocks_ring_wrap( const char * id, uint8_t * out, int capaci
             return -1;
         written += encoded;
     }
+
     return written;
 }
 
@@ -183,7 +191,8 @@ static void test_standard_blocks_vectors()
     const int count = (int) ( sizeof( standard_blocks_table ) / sizeof( standard_blocks_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_blocks_table, count, standard_blocks_generate ) == count );
 
-    // Split and reassemble: the fragments in index order are the message.
+    // split and reassemble: the fragments in index order are the message
+
     static uint8_t fragments[2404];
     int at = 0;
     for ( uint32_t index = 0; index < 3; index++ )
@@ -193,18 +202,24 @@ static void test_standard_blocks_vectors()
         memcpy( fragments + at, standard_blocks_data, (size_t) bytes );
         at += bytes;
     }
+
     at = 0;
+
     for ( uint32_t index = 0; index < 3; index++ )
     {
         const int bytes = index == 2 ? 100 : (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES;
         for ( int i = 0; i < bytes; i++ )
+        {
             rocketnet_unit_check( fragments[at + i] == (uint8_t) ( i & 0xFF ) );
+        }
+
         at += bytes;
     }
 
     // The ring-wrap payload passes the ring check at base 0; the same block
     // without the boundary padding would place fragment 0 at 1152 and be
     // refused outside the 1168-byte ring.
+
     uint8_t payload[RN_STANDARD_VECTOR_MAX_BYTES];
     const int wrapped = standard_blocks_ring_wrap( "m8.ring-wrap", payload, (int) sizeof( payload ) );
     rocketnet_unit_check( wrapped > 0 );
@@ -220,6 +235,7 @@ static void test_standard_blocks_vectors()
     uint8_t first_payload[RN_STANDARD_VECTOR_MAX_BYTES];
     const int first_bytes = standard_blocks_ring_wrap( "m8.ring-wrap", first_payload, (int) sizeof( first_payload ) );
     rocketnet_unit_check( first_bytes > 0 );
+
     const int first_length = 16 + (int) ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
     rocketnet_unit_check( rocketnet_message_check_payload( first_payload, first_length, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
 
@@ -229,7 +245,8 @@ static void test_standard_blocks_vectors()
     unpadded[7] = 0;
     rocketnet_unit_check( rocketnet_message_check_payload( unpadded, first_length, &limits ) == ROCKETNET_MESSAGE_VIOLATION_BAD_RING );
 
-    // The generator knows every id it is asked for and no other.
+    // the generator knows every id it is asked for and no other
+
     uint8_t scratch[4];
     rocketnet_unit_check( standard_blocks_generate( "m8.no-such-vector", scratch, 4 ) == -1 );
 }
@@ -255,12 +272,14 @@ static void standard_blocks_quiet_assert( const char * condition, const char * f
 static void test_window_send_zero_ring_stalls()
 {
     rocketnet_assert_function( standard_blocks_quiet_assert );
+
     rn_region_t region;
     static rn_send_number_t numbers[16];
     static rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     standard_blocks_region( &region, numbers, 0, 64 );
     region.counters = &counters;
+
     rn_window_send_t send;
     rn_window_send_init( &send, &region, 0 );
 
@@ -272,6 +291,7 @@ static void test_window_send_zero_ring_stalls()
     rocketnet_unit_check( rn_window_send_first_write( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 32, 0, &number, &ring_start ) == RN_WINDOW_SEND_STALL );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
     rocketnet_unit_check( send.next == 0 );
+
     rocketnet_assert_function( NULL );
 }
 
@@ -280,16 +300,19 @@ REGISTER_UNIT_TEST( test_window_send_zero_ring_stalls );
 static void test_window_send_zero_ring_block_stalls()
 {
     rocketnet_assert_function( standard_blocks_quiet_assert );
+
     rn_region_t region;
     static rn_send_number_t numbers[16];
     static rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     standard_blocks_region( &region, numbers, 0, 64 );
     region.counters = &counters;
+
     rn_window_send_t send;
     rn_window_send_init( &send, &region, 0 );
 
-    // Two fragments: larger than one fragment, so the block path is taken.
+    // two fragments: larger than one fragment, so the block path is taken
+
     const uint32_t bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES + 32;
     uint64_t first = 0;
     uint64_t ring_start = 0;
@@ -299,6 +322,7 @@ static void test_window_send_zero_ring_block_stalls()
     rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, bytes, 0, &first, &ring_start ) == (uint32_t) RN_WINDOW_SEND_STALL );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
     rocketnet_unit_check( send.next == 0 );
+
     rocketnet_assert_function( NULL );
 }
 
@@ -307,6 +331,7 @@ REGISTER_UNIT_TEST( test_window_send_zero_ring_block_stalls );
 static void test_window_send_block_over_window_stalls()
 {
     rocketnet_assert_function( standard_blocks_quiet_assert );
+
     rn_region_t region;
     static rn_send_number_t numbers[16];
     static rn_send_number_t numbers_before[16];
@@ -317,10 +342,12 @@ static void test_window_send_block_over_window_stalls()
     standard_blocks_region( &region, numbers, 8192, 4 * ROCKETNET_MESSAGE_FRAGMENT_BYTES );
     region.window = 2;
     region.counters = &counters;
+
     rn_window_send_t send;
     rn_window_send_init( &send, &region, 0 );
 
-    // Four fragments: 3 * F + 1 bytes needs count 4 against a window of 2.
+    // four fragments: 3 * F + 1 bytes needs count 4 against a window of 2.
+
     const uint32_t bytes = 3 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
     uint64_t first = 0;
     uint64_t ring_start = 0;
@@ -328,6 +355,7 @@ static void test_window_send_block_over_window_stalls()
     rocketnet_unit_check( send.next == 0 );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
     rocketnet_unit_check( memcmp( numbers, numbers_before, sizeof( numbers ) ) == 0 );
+
     rocketnet_assert_function( NULL );
 }
 

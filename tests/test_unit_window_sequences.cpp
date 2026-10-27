@@ -58,7 +58,10 @@ static void action_note( int action )
     if ( g_actions_len + len + 2 < sizeof( g_actions ) )
     {
         if ( g_actions_len )
+        {
             g_actions[g_actions_len++] = ' ';
+        }
+
         memcpy( g_actions + g_actions_len, text, len );
         g_actions_len += len;
         g_actions[g_actions_len] = 0;
@@ -70,12 +73,17 @@ static void fail_replay( const char * condition, const char * file, int line )
     printf( "WINDOW SEQUENCE COUNTEREXAMPLE seed=%llu step=%u\n", (unsigned long long) g_seed, g_step );
     printf( "  actions: %s\n", g_actions_len ? g_actions : "(none)" );
     printf( "  tail:" );
+
     const uint32_t n = g_ring_n < 64 ? g_ring_n : 64;
     const uint32_t start = g_ring_n > 64 ? g_ring_n - 64 : 0;
     for ( uint32_t i = 0; i < n; i++ )
+    {
         printf( " %s", action_name( g_ring[( start + i ) % 64] ) );
+    }
+
     printf( "\n  failed: %s at %s:%d\n", condition, file, line );
     fflush( stdout );
+
     rocketnet_unit_check( 0 );
 }
 
@@ -140,13 +148,17 @@ static int ref_admit( const ref_t * m, uint32_t count, uint64_t span, uint64_t *
         return 0;
     const uint64_t remaining = m->b - p % m->b;
     if ( span > remaining )
+    {
         p += remaining;
+    }
+
     if ( ( p % m->b ) + span > m->b )
         return 0;
     const uint64_t floor = m->uprime < m->next ? m->slot[m->uprime & ( m->w - 1 )].span_start : p;
     if ( p < floor || p - floor > m->b - span )
         return 0;
     *pos = p;
+
     return 1;
 }
 
@@ -156,8 +168,11 @@ static void ref_reset( ref_t * m, uint32_t w, uint32_t b, uint64_t first )
     m->w = w;
     m->b = b;
     m->next = m->u = m->uprime = m->R = m->released = first;
+
     for ( uint32_t i = 0; i < w; i++ )
+    {
         m->slot[i].descriptor = RN_DESCRIPTOR_NONE;
+    }
 }
 
 static void ref_note_uprime( ref_t * m )
@@ -181,7 +196,9 @@ static void ref_span_mark( ref_t * m, uint64_t start, uint32_t len, int on )
 {
     const uint32_t base = (uint32_t) ( start % m->b );
     for ( uint32_t i = 0; i < len; i++ )
+    {
         m->span_bytes[base + i] = on ? 1 : 0;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -210,7 +227,10 @@ static void world_bind( world_t * w, rn_region_t * region, int pool, uint64_t fi
     memset( region->receive_descriptors, 0, sizeof( rn_receive_descriptor_t ) * region->window );
     memset( region->received_bits, 0, ( region->window / 64 ) * sizeof( uint64_t ) );
     for ( uint32_t i = 0; i < region->window; i++ )
+    {
         region->send_numbers[i].descriptor = RN_DESCRIPTOR_NONE;
+    }
+
     w->region = region;
     w->pool = pool;
     w->mint = 1;
@@ -256,15 +276,20 @@ static void world_check( world_t * w )
             seq_check( row->descriptor == RN_DESCRIPTOR_NONE || row->number == 0 );
             continue;
         }
+
         seq_check( ( s->number & ( m->w - 1 ) ) == i );
         if ( s->number >= m->uprime )
+        {
             seq_check( s->number < m->uprime + m->w );
+        }
+
         seq_check( row->number == s->number );
         seq_check( row->descriptor == s->descriptor );
         seq_check( row->fragment == s->fragment );
         seq_check( row->acked == s->acked );
         seq_check( row->ring_start == s->span_start );
         seq_check( row->ring_units == (uint8_t) ( s->span_len / 16 ) );
+
         const uint32_t index = (uint32_t) ( s->number & ( m->w - 1 ) );
         if ( s->live )
         {
@@ -280,12 +305,18 @@ static void world_check( world_t * w )
         else
             seq_check( !w->region->receive_descriptors[index].live || w->region->receive_descriptors[index].number != s->number );
         if ( s->held && w->pool )
+        {
             seq_check( w->region->send_descriptors[s->descriptor].in_use );
+        }
     }
+
     if ( w->pool )
+    {
         seq_check( w->region->queue - w->region->descriptors_free == m->owned );
+    }
 
     // an ack never frees a held record
+
     for ( uint64_t n = m->released; n < m->next; n++ )
     {
         const ref_slot_t * s = &m->slot[n & ( m->w - 1 )];
@@ -303,6 +334,7 @@ static void world_accept( world_t * w, uint64_t number, uint32_t bytes, uint64_t
     record.number = (uint32_t) ( number & ROCKETNET_MESSAGE_U24_MASK );
     record.bytes = (int) bytes;
     record.ring = (uint32_t) ( ring_start % w->region->ring_bytes );
+
     uint32_t slot = RN_DESCRIPTOR_NONE;
     const int rc = rn_window_receive_accept( &w->recv, &record, &slot );
     seq_check( rc == RN_WINDOW_RECEIVE_ACCEPT );
@@ -314,13 +346,16 @@ static void world_accept( world_t * w, uint64_t number, uint32_t bytes, uint64_t
     const int32_t delta = unsigned_delta >= ( 1u << 23 ) ? (int32_t) unsigned_delta - ( 1 << 24 ) : (int32_t) unsigned_delta;
     seq_check( delta >= 0 && (uint32_t) delta < w->ref.w );
     seq_check( w->ref.R + (uint32_t) delta == number );
+
     w->ref.R = number + 1;
 
     ref_slot_t * s = ref_at( &w->ref, number );
     s->live = 1;
+
     if ( span_len )
     {
         seq_check( ref_span_free( &w->ref, ring_start, span_len ) );
+
         ref_span_mark( &w->ref, ring_start, span_len, 1 );
     }
 }
@@ -332,6 +367,7 @@ static int world_take_descriptor( world_t * w, uint32_t bytes, uint32_t * descri
         *descriptor = w->mint++;
         return 1;
     }
+
     *descriptor = rn_region_send_alloc( w->region, (int) bytes );
     return *descriptor != RN_DESCRIPTOR_NONE;
 }
@@ -357,6 +393,7 @@ static void world_commit( world_t * w, uint64_t first, uint32_t count, uint32_t 
         s->held = 1;
         world_accept( w, first + f, bytes, s->span_start, len );
     }
+
     w->ref.next = first + count;
     w->ref.ring_next = ring + (uint64_t) ( count - 1 ) * stride + last_len;
     w->ref.owned++;
@@ -373,19 +410,26 @@ static int world_write_single( world_t * w, uint32_t bytes )
         seq_check( w->pool );
         return 0;
     }
+
     uint64_t number = 0, ring = 0;
     const int rc = rn_window_send_first_write( &w->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, bytes, descriptor, &number, &ring );
     if ( rc != RN_WINDOW_SEND_NUMBERED )
     {
         if ( w->pool )
+        {
             rn_region_send_free( w->region, descriptor );
+        }
+
         seq_check( !ref_ok );
         return 0;
     }
+
     seq_check( ref_ok );
     seq_check( number == w->ref.next );
     seq_check( ring == expect );
+
     world_commit( w, number, 1, descriptor, ring, (uint32_t) span, (uint32_t) span, bytes );
+
     return 1;
 }
 
@@ -400,20 +444,27 @@ static int world_write_block( world_t * w )
     uint32_t descriptor = RN_DESCRIPTOR_NONE;
     if ( !world_take_descriptor( w, bytes, &descriptor ) )
         return 0;
+
     uint64_t first = 0, ring = 0;
     const uint32_t got = rn_window_send_first_write_block( &w->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, bytes, descriptor, &first, &ring );
     if ( got == 0 )
     {
         if ( w->pool )
+        {
             rn_region_send_free( w->region, descriptor );
+        }
+
         seq_check( !ref_ok );
         return 0;
     }
+
     seq_check( ref_ok );
     seq_check( got == count );
     seq_check( first == w->ref.next );
     seq_check( ring == expect );
+
     world_commit( w, first, count, descriptor, ring, F, 16, 16 );
+
     return 1;
 }
 
@@ -430,10 +481,16 @@ static int world_ack_completes_live( const world_t * w )
     {
         const ref_slot_t * q = &w->ref.slot[( first + f ) & ( w->ref.w - 1 )];
         if ( first + f != w->ref.u && !q->acked )
+        {
             others = 0;
+        }
+
         if ( q->live )
+        {
             any_live = 1;
+        }
     }
+
     return others && any_live;
 }
 
@@ -449,18 +506,34 @@ static void world_free_message( world_t * w, uint64_t first )
     {
         const ref_slot_t * q = ref_at( &w->ref, first + f );
         if ( !q->acked )
+        {
             all_acked = 0;
+        }
+
         if ( q->live )
+        {
             any_live = 1;
+        }
     }
+
     if ( any_live )
+    {
         seq_check( s->held );
+    }
+
     if ( !all_acked || any_live )
         return;
+
     if ( w->pool )
+    {
         rn_region_send_free( w->region, s->descriptor );
+    }
+
     for ( uint32_t f = 0; f < count; f++ )
+    {
         ref_at( &w->ref, first + f )->held = 0;
+    }
+
     w->ref.owned--;
 }
 
@@ -471,6 +544,7 @@ static int world_ack( world_t * w )
     const uint64_t n = w->ref.u;
     const int rc = rn_window_send_mark_acked( &w->send, n );
     seq_check( rc == 1 );
+
     ref_at( &w->ref, n )->acked = 1;
     while ( w->ref.u < w->ref.next )
     {
@@ -479,8 +553,10 @@ static int world_ack( world_t * w )
             break;
         w->ref.u++;
     }
+
     ref_note_uprime( &w->ref );
     world_free_message( w, ref_at( &w->ref, n )->first );
+
     return 1;
 }
 
@@ -491,6 +567,7 @@ static int world_release( world_t * w )
     const uint64_t first = w->ref.released;
     ref_slot_t * s = ref_at( &w->ref, first );
     seq_check( s->used && s->live && s->number == first );
+
     const uint32_t count = s->block_count ? s->block_count : 1;
     seq_check( first + count <= w->ref.next );
     for ( uint32_t f = 0; f < count; f++ )
@@ -498,13 +575,18 @@ static int world_release( world_t * w )
         ref_slot_t * q = ref_at( &w->ref, first + f );
         seq_check( q->live );
         seq_check( q->number == first + f );
+
         rn_window_receive_release( &w->recv, first + f );
         q->live = 0;
         if ( q->span_len )
+        {
             ref_span_mark( &w->ref, q->span_start, q->span_len, 0 );
+        }
     }
+
     w->ref.released += count;
     world_free_message( w, first );
+
     return 1;
 }
 
@@ -526,6 +608,7 @@ static int world_retransmit( world_t * w )
     seq_check( rc == RN_WINDOW_RECEIVE_DUPLICATE );
     seq_check( w->recv.R == R );
     seq_check( w->recv.violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
+
     return 1;
 }
 
@@ -542,7 +625,9 @@ static void world_apply( world_t * w, int action )
     else if ( action == 3 )
     {
         if ( !world_ack_completes_live( w ) )
+        {
             world_ack( w );
+        }
     }
     else if ( action == 4 )
         world_release( w );
@@ -561,8 +646,12 @@ static void probe_count_edges( world_t * w )
     world_synth( w, 8, 4096, 0 );
     g_seed = 2;
     action_begin();
+
     for ( int i = 0; i < 7; i++ )
+    {
         seq_check( world_write_single( w, 16 ) );
+    }
+
     world_check( w );
     seq_check( w->send.next == 7 );
     seq_check( world_write_single( w, 16 ) );
@@ -577,12 +666,17 @@ static void probe_partial_block_count( world_t * w )
     world_synth( w, 8, 4096, 0 );
     g_seed = 3;
     action_begin();
+
     seq_check( world_write_block( w ) );
     seq_check( world_ack( w ) );
     seq_check( w->send.U == 1 );
     seq_check( w->send.U_prime == 0 );
+
     for ( int i = 0; i < 6; i++ )
+    {
         seq_check( world_write_single( w, 16 ) );
+    }
+
     seq_check( w->send.next == 8 );
     seq_check( w->send.U_prime == 0 );
     seq_check( !world_write_single( w, 16 ) );
@@ -594,6 +688,7 @@ static void probe_floor_at_uprime( world_t * w )
     world_synth( w, 8, 4096, 0 );
     g_seed = 4;
     action_begin();
+
     seq_check( world_write_block( w ) );
     seq_check( world_write_single( w, 1152 ) );
     seq_check( world_write_single( w, 1152 ) );
@@ -612,15 +707,22 @@ static void probe_padding( world_t * w )
     world_synth( w, 8, 4096, 0 );
     g_seed = 5;
     action_begin();
+
     seq_check( world_write_single( w, 1152 ) );
     seq_check( world_write_single( w, 1152 ) );
     seq_check( world_write_single( w, 1152 ) );
     seq_check( world_write_single( w, 624 ) );
     seq_check( w->send.ring_next == 4080 );
     while ( world_release( w ) )
+    {
         ;
+    }
+
     while ( world_ack( w ) )
+    {
         ;
+    }
+
     seq_check( w->send.U_prime == w->send.next );
     seq_check( world_write_single( w, 32 ) );
     seq_check( w->region->send_numbers[w->send.next - 1].ring_start == 4096 );
@@ -634,16 +736,20 @@ static void probe_ack_does_not_free_held( world_t * w )
     rocketnet_message_default_config( &config );
     config.receive_message_buffer_bytes = 65536;
     config.max_message_bytes = 32768;
+
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     const uint32_t free_before = region->descriptors_free;
     world_bind( w, region, 1, 0 );
     g_seed = 6;
     action_begin();
+
     seq_check( world_write_single( w, 16 ) );
+
     const uint32_t descriptor = w->region->send_numbers[0].descriptor;
     seq_check( world_ack( w ) );
     seq_check( w->ref.slot[0].live );
@@ -655,6 +761,7 @@ static void probe_ack_does_not_free_held( world_t * w )
     seq_check( region->descriptors_free == free_before );
     seq_check( w->ref.released == 1 );
     world_check( w );
+
     rn_arena_destroy( arena );
 }
 
@@ -662,29 +769,35 @@ static void probe_wrap_and_delivery( world_t * w )
 {
     // WireNumberReconstructs across the 24-bit boundary: wire 0 against R just
     // below 2^24 is 0x1000000, not a huge unsigned distance behind R.
+
     world_synth( w, 64, 4096, 0xFFFFF8ULL );
     g_seed = 7;
     action_begin();
+
     rocketnet_message_record_t record;
     memset( &record, 0, sizeof( record ) );
     record.code = ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED;
     record.number = 0;
     record.bytes = 16;
+
     uint32_t slot = RN_DESCRIPTOR_NONE;
     seq_check( rn_window_receive_accept( &w->recv, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
     seq_check( w->region->receive_descriptors[slot].number == 0x1000000ULL );
     seq_check( w->recv.R == 0xFFFFF8ULL );
+
     record.number = 0xFFFFF0u;
     seq_check( rn_window_receive_accept( &w->recv, &record, &slot ) == RN_WINDOW_RECEIVE_DUPLICATE );
 
     world_synth( w, 64, 4096, 0xFFFFF0ULL );
     action_begin();
+
     for ( int i = 0; i < 32; i++ )
     {
         seq_check( world_write_single( w, 16 ) );
         seq_check( world_release( w ) );
         seq_check( w->ref.released == w->send.next );
     }
+
     seq_check( w->send.next > 0x1000000ULL );
     seq_check( w->recv.R > 0x1000000ULL );
     world_check( w );
@@ -693,25 +806,34 @@ static void probe_wrap_and_delivery( world_t * w )
 static void probe_exhaustive( world_t * w )
 {
     g_seed = 1;
+
     int acts[6];
     uint32_t sequences = 0;
     memset( acts, 0, sizeof( acts ) );
+
     for ( ;; )
     {
         world_synth( w, 8, 4096, 0 );
         action_begin();
+
         for ( int i = 0; i < 6; i++ )
+        {
             world_apply( w, acts[i] );
+        }
+
         sequences++;
+
         int k = 5;
         while ( k >= 0 && ++acts[k] == 6 )
         {
             acts[k] = 0;
             k--;
         }
+
         if ( k < 0 )
             break;
     }
+
     rocketnet_unit_check( sequences == 46656 );
 }
 
@@ -731,17 +853,21 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
     rocketnet_message_default_config( &config );
     config.receive_message_buffer_bytes = 65536;          // the walk's reference model is this ring's, not the default's
     config.max_message_bytes = 32768;
+
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     rocketnet_unit_check( region->window == 1024 );
     rocketnet_unit_check( region->ring_bytes == 65536 );
+
     world_bind( w, region, 1, first );
     g_seed = seed;
     g_rng = seed;
     action_begin();
+
     for ( int i = 0; i < steps; i++ )
     {
         const uint32_t pick = (uint32_t) ( next_random() % 10 );
@@ -759,10 +885,12 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
         else
             action = 5;
         world_apply( w, action );
+
         // An exhausted region refuses every further send until reset (sticky,
         // tla/RNConnectionMemory.tla ExhaustionOnlyLeadsToDisconnect). Reset it
         // (the model's Reuse) so the walk keeps exercising live window state;
         // without this the guard stops all writes for the rest of the walk.
+
         if ( rn_region_exhausted( region ) )
         {
             const uint64_t cont = w->ref.next;
@@ -771,12 +899,15 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
             action_begin();
         }
     }
+
     world_check( w );
+
     if ( expect_slide )
     {
         seq_check( w->ref.u > 1000 );
         seq_check( w->send.next > w->region->window );
     }
+
     rn_arena_destroy( arena );
 }
 

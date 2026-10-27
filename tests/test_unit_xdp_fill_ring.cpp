@@ -26,7 +26,7 @@
 
 #if defined( __linux__ ) && defined( ROCKETNET_XDP ) && ROCKETNET_XDP
 #include "../sdk/rocketnet_xdp_socket_config.h"
-#endif
+#endif // #if defined( __linux__ ) && defined( ROCKETNET_XDP ) && ROCKETNET_XDP
 
 namespace
 {
@@ -154,7 +154,7 @@ namespace
         return ratio * MODEL_FILL_FRAMES;
 #else
         return 2 * MODEL_FILL_FRAMES;
-#endif
+#endif // #if defined( __linux__ ) && defined( ROCKETNET_XDP ) && ROCKETNET_XDP
     }
 }
 
@@ -168,6 +168,7 @@ static void test_xdp_transport_fill_ring_of_twice_the_frames_never_runs_empty()
     const uint32_t configured_ring_size = configured_model_fill_ring_size();
     fake_fill_ring_init( &ring, configured_ring_size );
     rocketnet_unit_check( ring.size == MODEL_FILL_FRAMES * 2 );
+
     populate( &ring );
 
     rocketnet_pending_frames_t<MODEL_FILL_FRAMES> pending;
@@ -176,9 +177,11 @@ static void test_xdp_transport_fill_ring_of_twice_the_frames_never_runs_empty()
     for ( uint32_t step = 0; step < 4096; step++ )
     {
         // every burst size from 1 to all the frames, in a scrambled order
+
         const uint32_t burst = 1 + ( step * 5 + step / 7 ) % MODEL_FILL_FRAMES;
         offered += burst;
         rocketnet_unit_check( burst_then_pass( &ring, &pending, burst, &received ) );
+
         check_conservation( &ring, &pending );
     }
 
@@ -196,6 +199,7 @@ static void test_xdp_transport_fill_ring_of_the_frames_runs_empty_holding_every_
     fake_fill_ring_t ring;
     const uint32_t configured_ring_size = configured_model_fill_ring_size();
     rocketnet_unit_check( configured_ring_size == 2 * MODEL_FILL_FRAMES );
+
     fake_fill_ring_init( &ring, MODEL_FILL_FRAMES );
     populate( &ring );
 
@@ -206,13 +210,16 @@ static void test_xdp_transport_fill_ring_of_the_frames_runs_empty_holding_every_
     rocketnet_unit_check( pending.count == 3 );
     rocketnet_unit_check( !burst_then_pass( &ring, &pending, MODEL_FILL_FRAMES - 3, &received ) );
     rocketnet_unit_check( pending.count == MODEL_FILL_FRAMES );
+
     check_conservation( &ring, &pending );
 
     // the next packet ends the kernel's batch: the consumer is published, the
     // ring holds no frame, and the packet is dropped
+
     rocketnet_unit_check( burst_then_pass( &ring, &pending, 1, &received ) );
     rocketnet_unit_check( ring.empty == 1 );
     rocketnet_unit_check( received == MODEL_FILL_FRAMES );
+
     check_conservation( &ring, &pending );
 }
 

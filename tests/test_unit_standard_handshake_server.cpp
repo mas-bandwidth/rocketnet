@@ -49,6 +49,7 @@ static void handshake_server_fill_token( struct rocketnet_signed_connect_data_t 
     signed_fields->expire_timestamp = expire_timestamp;
     signed_fields->timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t advertised[6] = { 203, 0, 113, 10, 0x40, 0x9c };
     memcpy( signed_fields->ipv4_address, advertised, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
@@ -86,7 +87,7 @@ static void handshake_server_build_request( uint8_t * request,
         check( rocketnet_write_connect_token( &signed_fields, &private_fields,
                                               rocketnet_test_backend_secret_key, token_data ) );
     }
-#endif
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
@@ -101,6 +102,7 @@ static void handshake_server_build_request( uint8_t * request,
     const uint64_t cookie_expire = (uint64_t) ( (int64_t) ROCKETNET_TEST_CREATE_TS + cookie_expire_offset );
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
     check( rocketnet_generate_cookie_mac( cookie_mac, &address, rocketnet_test_salt, cookie_expire, rocketnet_test_cookie_key ) );
+
     uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
     rocketnet_write_uint64( &cookie, cookie_expire );
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
@@ -117,6 +119,7 @@ static void handshake_server_setup( struct handshake_server_t * test )
     memcpy( server->server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, ROCKETNET_KEY_BYTES );
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
     server->handshake_deadline_seconds = 5;
@@ -169,14 +172,17 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
     {
         struct handshake_server_t test;
         handshake_server_setup( &test );
+
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "198.51.100.7:56789",
                                         ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
         memset( request + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
+
         uint8_t response[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
         check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
         check( response_bytes <= capacity );
+
         memcpy( out, response, (size_t) response_bytes );
         handshake_server_teardown( &test );
         return response_bytes;
@@ -187,14 +193,17 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
         struct handshake_server_t test;
         handshake_server_setup( &test );
         check( rocketnet_address_parse( &test.client_address, "203.0.113.44:40001" ) );
+
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "203.0.113.44:40001",
                                         ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, -100 );
+
         uint8_t response[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
         check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
         check( response_bytes <= capacity );
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_EXPIRED] == 1 );
+
         memcpy( out, response, (size_t) response_bytes );
         handshake_server_teardown( &test );
         return response_bytes;
@@ -224,6 +233,7 @@ static int handshake_server_generate( const char * id, uint8_t * out, int capaci
 
         struct rocketnet_replay_protection_t replay;
         memset( &replay, 0, sizeof( replay ) );
+
         uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + 8];
         const int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - 8;
         int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &replay );
@@ -276,24 +286,28 @@ static void standard_handshake_server_token_refusals()
     {
         struct handshake_server_t test;
         handshake_server_setup( &test );
+
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "198.51.100.7:56789",
                                         ROCKETNET_TEST_CREATE_TS + 31, ROCKETNET_TEST_CREATE_TS + 300, 3 );
         check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( response_bytes == 0 );
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] == 1 );
+
         handshake_server_teardown( &test );
     }
 
     {
         struct handshake_server_t test;
         handshake_server_setup( &test );
+
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         handshake_server_build_request( request, "198.51.100.7:56789",
                                         ROCKETNET_TEST_CREATE_TS - 100, ROCKETNET_TEST_CREATE_TS - 50, 3 );
         check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( response_bytes == 0 );
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
+
         handshake_server_teardown( &test );
     }
 }
@@ -315,6 +329,7 @@ static void handshake_refusal_releases_claim( int refusal )
 {
     struct handshake_server_t test;
     handshake_server_setup( &test );
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
@@ -322,6 +337,7 @@ static void handshake_refusal_releases_claim( int refusal )
                                   ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES;
     uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     rocketnet_connect_token_identifier( identifier, signed_data );
+
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = { 0 };
     int counter = 0;
     int expected = ROCKETNET_SERVER_PROCESS_IGNORED;
@@ -334,6 +350,7 @@ static void handshake_refusal_releases_claim( int refusal )
         case 1:
             check( rocketnet_client_slots_assign( test.server.client_slots, ROCKETNET_TEST_CLIENT_ID, -1,
                                                   ROCKETNET_TEST_CLIENT_ID, user_data ) >= 0 );
+
             counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED;
             break;
         case 2:
@@ -349,14 +366,17 @@ static void handshake_refusal_releases_claim( int refusal )
             counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_SMALL_ORDER_KEY;
             break;
     }
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     check( handshake_server_process( &test, request, response, &response_bytes ) == expected );
     check( test.counters.values[counter] == 1 );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
+
     struct rocketnet_address_t other;
     check( rocketnet_address_parse( &other, "198.51.100.8:56789" ) );
     check( rocketnet_used_token_history_claim_check( test.server.used_token_history, identifier, &other, 1000.0 ) );
+
     handshake_server_teardown( &test );
 }
 
@@ -440,8 +460,10 @@ static void test_claim_released_with_integrity_limit_mapping()
 
     int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &attacker_address );
     check( mapping_index != -1 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
     check( mapping->control->client_index == -1 );
+
     mapping->integrity_failures = ROCKETNET_INTEGRITY_LIMIT - 1;
 
     uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
@@ -497,12 +519,15 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 
     int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &client_address );
     check( mapping_index != -1 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
 
     // the response sealed under the mapping's own handshake key, with one
     // padding byte set
+
     uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     padding[0] = 1;
+
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                                       rocketnet_test_filter_value, 1, NULL,
@@ -522,6 +547,7 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 
     // it opened, so it is not a forgery: not DID_NOT_OPEN, and the mapping's
     // integrity-failure count does not move
+
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == 0 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO] == 1 );
     check( mapping->integrity_failures == 0 );
@@ -530,6 +556,7 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 
     // the correct response still connects: the refusal was of the contents,
     // not of the client
+
     memset( padding, 0, sizeof( padding ) );
     packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
                                                   rocketnet_test_filter_value, 2, NULL,
@@ -538,6 +565,7 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
                                                   mapping->client_ephemeral_public_key,
                                                   mapping->keys.handshake_client_to_server );
     check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
     response_bytes = 0;
     check( rocketnet_server_protocol_process_packet( &test.server, &client_address, packet, packet_bytes,
                                                      ROCKETNET_TEST_CREATE_TS, 1000.0,
@@ -549,6 +577,7 @@ static void test_response_nonzero_padding_is_not_an_integrity_failure()
 
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_claim_released_with_half_open_idle_mapping );
 REGISTER_UNIT_TEST( test_claim_released_with_integrity_limit_mapping );
 REGISTER_UNIT_TEST( test_response_nonzero_padding_is_not_an_integrity_failure );
@@ -580,6 +609,7 @@ static void test_claim_table_full_counts_its_own_counter()
             break;
         filled++;
     }
+
     check( filled > 0 );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 0 );
 
@@ -594,6 +624,7 @@ static void test_claim_table_full_counts_its_own_counter()
 
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_claim_table_full_counts_its_own_counter );
 
 // The failed-signature budget rung runs before the token-claim rung: a source
@@ -635,6 +666,7 @@ static void test_request_rungs_budget_before_claim()
 
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_request_rungs_budget_before_claim );
 // A response replaces its request claim with a token binding (t12 rule 9;
 // tla/MCReceiveOrder.tla ResponseBind).
@@ -642,18 +674,23 @@ static void test_claim_released_when_response_binds_token()
 {
     struct handshake_server_t test;
     handshake_server_setup( &test );
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+
     const int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( mapping_index != -1 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
     struct rocketnet_address_t other;
     check( rocketnet_address_parse( &other, "198.51.100.8:56789" ) );
     check( !rocketnet_used_token_history_claim_check( test.server.used_token_history, mapping->token_identifier, &other, 1000.0 ) );
+
     uint8_t padding[ROCKETNET_RESPONSE_PADDING_BYTES] = { 0 };
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     const int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_RESPONSE_PACKET,
@@ -663,6 +700,7 @@ static void test_claim_released_when_response_binds_token()
                                                             mapping->client_ephemeral_public_key,
                                                             mapping->keys.handshake_client_to_server );
     check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     int payload_client_index = -1;
@@ -673,8 +711,10 @@ static void test_claim_released_when_response_binds_token()
     check( mapping->control->client_index != -1 );
     check( rocketnet_used_token_history_claim_check( test.server.used_token_history, mapping->token_identifier, &other, 1000.0 ) );
     check( !rocketnet_used_token_history_check( test.server.used_token_history, mapping->token_identifier, &other, ROCKETNET_TEST_CREATE_TS ) );
+
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_claim_released_when_response_binds_token );
 
 // A response may arrive after its token expires: opening it still proves the
@@ -689,17 +729,21 @@ static void test_claim_released_when_response_crosses_token_expiry()
 {
     struct handshake_server_t test;
     handshake_server_setup( &test );
+
     const uint64_t expire_timestamp = ROCKETNET_TEST_CREATE_TS + 1;
     const int free_claims = rocketnet_used_token_history_claim_free_count( test.server.used_token_history );
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, expire_timestamp, 3 );
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     check( handshake_server_process( &test, request, response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     check( rocketnet_used_token_history_claim_free_count( test.server.used_token_history ) == free_claims - 1 );
+
     const int mapping_index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( mapping_index != -1 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, mapping_index );
     struct rocketnet_address_t other;
     check( rocketnet_address_parse( &other, "198.51.100.8:56789" ) );
@@ -714,6 +758,7 @@ static void test_claim_released_when_response_crosses_token_expiry()
                                                             mapping->client_ephemeral_public_key,
                                                             mapping->keys.handshake_client_to_server );
     check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
+
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     int payload_client_index = -1;
@@ -726,8 +771,10 @@ static void test_claim_released_when_response_crosses_token_expiry()
     check( rocketnet_used_token_history_claim_check( test.server.used_token_history, mapping->token_identifier, &other, 1001.0 ) );
     check( rocketnet_used_token_history_check( test.server.used_token_history, mapping->token_identifier, &other,
                                                ROCKETNET_TEST_CREATE_TS ) );
+
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_claim_released_when_response_crosses_token_expiry );
 
 // Copied-request claim lifecycle (standard/TRANSPORT.md t12 rules 9 and 14;
@@ -740,12 +787,15 @@ static void handshake_server_copy_request_for_address( uint8_t * copied,
                                                        const char * address_text )
 {
     memcpy( copied, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+
     struct rocketnet_address_t address;
     check( rocketnet_address_parse( &address, address_text ) );
+
     const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
     check( rocketnet_generate_cookie_mac( cookie_mac, &address, rocketnet_test_salt, cookie_expire,
                                           rocketnet_test_cookie_key ) );
+
     uint8_t * cookie = copied + ROCKETNET_PREFILTER_BYTES;
     rocketnet_write_uint64( &cookie, cookie_expire );
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
@@ -766,13 +816,16 @@ static void test_copied_request_claim_refuses_second_address()
 {
     struct handshake_server_t test;
     handshake_server_setup( &test );
+
     struct rocketnet_address_t holder;
     struct rocketnet_address_t second;
     check( rocketnet_address_parse( &holder, "198.51.100.7:56789" ) );
     check( rocketnet_address_parse( &second, "198.51.100.8:56789" ) );
+
     uint8_t holder_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( holder_request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
     const int free_claims = rocketnet_used_token_history_claim_free_count( test.server.used_token_history );
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -784,34 +837,42 @@ static void test_copied_request_claim_refuses_second_address()
 
     uint64_t before[ROCKETNET_NUM_COUNTERS];
     memcpy( before, test.counters.values, sizeof( before ) );
+
     uint8_t copied[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_copy_request_for_address( copied, holder_request, "198.51.100.8:56789" );
     response_bytes = 0;
     check( handshake_server_process_from( &test, &second, copied, 1000.0,
                                           response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( response_bytes == 0 );
+
     handshake_server_check_only_counter_delta( before, test.counters.values,
                                                ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED,
                                                ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
     check( rocketnet_used_token_history_claim_free_count( test.server.used_token_history ) == free_claims - 1 );
+
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_copied_request_claim_refuses_second_address );
 
 static void test_copied_request_claim_released_at_handshake_deadline()
 {
     struct handshake_server_t test;
     handshake_server_setup( &test );
+
     struct rocketnet_address_t holder;
     struct rocketnet_address_t second;
     check( rocketnet_address_parse( &holder, "198.51.100.7:56789" ) );
     check( rocketnet_address_parse( &second, "198.51.100.8:56789" ) );
+
     uint8_t holder_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( holder_request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
     uint8_t copied[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_copy_request_for_address( copied, holder_request, "198.51.100.8:56789" );
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     check( handshake_server_process_from( &test, &holder, holder_request, 1000.0,
@@ -832,8 +893,10 @@ static void test_copied_request_claim_released_at_handshake_deadline()
     check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 1 );
+
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_copied_request_claim_released_at_handshake_deadline );
 
 static void test_copied_request_claim_released_at_half_open_idle()
@@ -841,15 +904,19 @@ static void test_copied_request_claim_released_at_half_open_idle()
     struct handshake_server_t test;
     handshake_server_setup( &test );
     test.server.handshake_deadline_seconds = 30;
+
     struct rocketnet_address_t holder;
     struct rocketnet_address_t second;
     check( rocketnet_address_parse( &holder, "198.51.100.7:56789" ) );
     check( rocketnet_address_parse( &second, "198.51.100.8:56789" ) );
+
     uint8_t holder_request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_build_request( holder_request, "198.51.100.7:56789",
                                     ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, 3 );
+
     uint8_t copied[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     handshake_server_copy_request_for_address( copied, holder_request, "198.51.100.8:56789" );
+
     const int free_claims = rocketnet_used_token_history_claim_free_count( test.server.used_token_history );
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -872,6 +939,8 @@ static void test_copied_request_claim_released_at_half_open_idle()
     check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     check( rocketnet_encryption_map_num_mappings( test.server.encryption_map ) == 1 );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == 1 );
+
     handshake_server_teardown( &test );
 }
+
 REGISTER_UNIT_TEST( test_copied_request_claim_released_at_half_open_idle );
