@@ -366,12 +366,14 @@ server_config.num_xdp_queues = 2;
 server_config.transport = "xdp";
 ```
 
-RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2.
-The game pins each of its workers from within that thread with
-`pthread_setaffinity_np`, using `NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`,
-and may request `SCHED_FIFO` priority. With a pool of 13 threads,
-including the main thread, with indices 0–12 mapping to CPUs 3–15. The game
-owns its thread placement; RocketNet does not pin the game's worker pool.
+RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2;
+each worker spins on its dedicated isolated CPU by design (NAPI runs in softirq
+on the queue CPUs; the isolated-CPU preflight is the guard). The game pins each
+of its workers from within that thread with `pthread_setaffinity_np`, using
+`NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`, and may request `SCHED_FIFO` priority.
+With a pool of 13 threads, including the main thread, with indices 0–12 mapping
+to CPUs 3–15. The game owns its thread placement; RocketNet does not pin the
+game's worker pool.
 
 An integration must run its pinning callback on every actual worker and
 check affinity/priority return values. Do not treat a completed batch of

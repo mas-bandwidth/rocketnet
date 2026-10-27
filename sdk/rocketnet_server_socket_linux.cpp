@@ -3432,10 +3432,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             sendto( xsk_socket__fd( socket->xsk ), NULL, 0, MSG_DONTWAIT, NULL, 0 );
         }
 
-        // IMPORTANT: Sleep so the transport gets all the time it wants. Otherwise, it can hitch us
-
         if ( stopping ) break;
-        rocketnet_platform_sleep( 0.0 );
     }
     // Last access to queue storage, acquired by stopped before destruction.
     socket->stopped.store( true, std::memory_order_release );
