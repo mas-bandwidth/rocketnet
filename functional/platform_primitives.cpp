@@ -331,7 +331,7 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
         uint8_t random_data[32];
         rocketnet_random_bytes(random_data, sizeof(random_data));
         uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-        uint8_t secret_key[sizeof(rocketnet_dev_server_secret_key)];
+        uint8_t secret_key[32];     // an X25519 server secret, present in production builds too
         rocketnet_check(rocketnet_generate_server_keypair(public_key, secret_key) == ROCKETNET_STATUS_OK);
         // The old bug kept /dev/urandom open across term. If the first term
         // failed to close it, baseline already includes that descriptor and
