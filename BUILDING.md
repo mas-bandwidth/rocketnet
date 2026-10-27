@@ -418,6 +418,28 @@ the BPF target, or no libbpf and AF_XDP development files, is not an error: it
 says why and builds exactly as `-DROCKETNET_XDP=OFF` does
 (`tools/check_xdp_compiled_out.py --absent` checks the built library).
 
+### Building a Linux client without the server libraries
+
+liburing, libbpf and libxdp are server-only: the io_uring and XDP server
+transports link them, and no client code does. A Linux client build therefore
+needs none of their headers or libraries. Configure with both
+`-DROCKETNET_XDP=OFF` and `-DROCKETNET_IO_URING=OFF` and build the two
+libraries:
+
+    cmake -S . -B build-client -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_IO_URING=OFF
+    cmake --build build-client --target rocketnet rocketnet_shared --parallel 4
+    cmake --install build-client --prefix /your/sdk/prefix
+
+The shared library then carries no `liburing`, `libbpf` or `libxdp` link
+(`readelf -d` shows no such `NEEDED` entry), a transport list naming `xdp`
+refuses with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` and one naming `io_uring`
+refuses at create, and the installed CMake package requires none of the
+three: `find_package(RocketNet)`
+succeeds on a machine without their development headers, and a game links
+`RocketNet::rocketnet` or `RocketNet::rocketnet_shared` as usual. CI builds
+exactly this configuration on Linux and runs a C client against both
+installed libraries through it (`tools/check_package.py --client`).
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`
