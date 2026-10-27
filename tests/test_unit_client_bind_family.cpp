@@ -248,6 +248,7 @@ static void test_client_connect_keeps_the_family_that_answers()
 
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.connect = rocketnet_fake_client_connect;
+    operations.close = rocketnet_fake_client_close;
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
 
     bind_family_clock_t clock = { 1000.0 };
@@ -274,6 +275,7 @@ static void test_client_connect_keeps_the_family_that_answers()
     int forwarded = 0;
     int cookie_requests_to_ipv6 = 0, cookie_requests_to_ipv4 = 0, requests_to_ipv6 = 0;
     int sent_to_ipv6_after_commit = 0;
+    int closes_at_commit = -1;
     int destroys_at_commit = -1;
     bool late_cookie_sent = false;
     uint8_t late_cookie[ROCKETNET_RECEIVE_CEILING];
@@ -287,11 +289,13 @@ static void test_client_connect_keeps_the_family_that_answers()
         rocketnet_client_io_step( io, false );
 
         const int state = rocketnet_client_transport_state( transport );
-        if ( destroys_at_commit < 0 && state >= ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
+        if ( closes_at_commit < 0 && state >= ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST )
         {
             // the commit is observed by the reading step, which closes the
-            // losing socket at its next wait or receive
+            // losing socket's handles at its next wait or receive and frees
+            // nothing (tla/RNClientRace.tla ReaderStep)
             rocketnet_client_io_step( io, false );
+            closes_at_commit = fake->close_calls;
             destroys_at_commit = fake->destroy_calls;
         }
 
@@ -313,7 +317,7 @@ static void test_client_connect_keeps_the_family_that_answers()
                         cookie_requests_to_ipv4++;
                 }
             }
-            if ( destroys_at_commit >= 0 && to_ipv6 )
+            if ( closes_at_commit >= 0 && to_ipv6 )
                 sent_to_ipv6_after_commit++;
 
             // the broken IPv6 route: nothing sent there reaches a server
@@ -339,7 +343,7 @@ static void test_client_connect_keeps_the_family_that_answers()
 
         // after the commit the same cookie arrives from the IPv6 server: the
         // answer that lost the race, already in the receive path
-        if ( destroys_at_commit >= 0 && !late_cookie_sent && late_cookie_bytes > 0 )
+        if ( closes_at_commit >= 0 && !late_cookie_sent && late_cookie_bytes > 0 )
         {
             rocketnet_fake_client_push( fake, &ipv6_server, late_cookie, late_cookie_bytes );
             late_cookie_sent = true;
@@ -363,13 +367,16 @@ static void test_client_connect_keeps_the_family_that_answers()
     rocketnet_unit_check( cookie_requests_to_ipv6 == 0 );
     rocketnet_unit_check( sent_to_ipv6_after_commit == 0 );
 
-    // the losing family's socket closed at the commit; the late IPv6 cookie
-    // was dropped and counted
-    rocketnet_unit_check( destroys_at_commit == 1 );
+    // the losing family's socket closed at the commit, its memory kept for
+    // destroy; the late IPv6 cookie was dropped and counted
+    rocketnet_unit_check( closes_at_commit == 1 );
+    rocketnet_unit_check( destroys_at_commit == 0 );
     rocketnet_unit_check( late_cookie_sent );
     rocketnet_unit_check( rocketnet_client_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE] >= 1 );
 
+    // destroy frees both families, the closed one too, and closes nothing more
     rn_test_client_transport_stop_and_destroy( transport );
+    rocketnet_unit_check( fake->close_calls == 1 );
     rocketnet_unit_check( fake->destroy_calls == 2 );
     delete fake;
     bind_family_server_teardown( &server );

@@ -51,6 +51,9 @@ struct rocketnet_fake_client_transport_io_t
     rocketnet_address_t connected_to;
     int calls_before_connect;
     bool refuse_connect;
+    // close: the calls (the family race's losing family, closed by the
+    // reading thread; its memory goes at destroy)
+    int close_calls;
 };
 
 // create returns its context argument (the test passes the fake as the
@@ -168,22 +171,30 @@ static inline bool rocketnet_fake_client_connect( void * transport, const rocket
     return !fake->refuse_connect;
 }
 
+// close counts. No table below has it: a case that wants it sets
+// operations.close on its own copy.
+static inline void rocketnet_fake_client_close( void * transport )
+{
+    rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
+    fake->close_calls++;
+}
+
 // The three tables: base (four required), io (four plus wait and wake), batch
 // (all eight), each in rocketnet_client_transport_io_operations_t member order;
-// none has send_failures or connect.
+// none has send_failures, connect or close.
 
 static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_base = {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, NULL, NULL,
-    NULL, NULL
+    NULL, NULL, NULL
 };
 
 static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_io = {
     rocketnet_fake_client_create, rocketnet_fake_client_destroy,
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     NULL, NULL, rocketnet_fake_client_wait, rocketnet_fake_client_wake,
-    NULL, NULL
+    NULL, NULL, NULL
 };
 
 static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_operations_batch = {
@@ -191,7 +202,7 @@ static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_op
     rocketnet_fake_client_send, rocketnet_fake_client_receive,
     rocketnet_fake_client_send_batch, rocketnet_fake_client_receive_batch,
     rocketnet_fake_client_wait, rocketnet_fake_client_wake,
-    NULL, NULL
+    NULL, NULL, NULL
 };
 
 // Push an inbound datagram (docs/CLIENT-IO.md "The I/O step"). Appends past
