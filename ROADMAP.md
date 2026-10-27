@@ -160,7 +160,7 @@ Portable remains a fallback rather than a performance target. The owner enabled 
 
 ## XDP (later)
 
-The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes after v1.0.0-preview-1; RocketNet has run live with AF_XDP in copy mode: 60-second non-timing correctness rungs at 1, 10, 100, 500 and 1000 clients (415e796d, runtime source a76d641a; docs/QUALIFICATION-v1.0.0-preview-2.md) and a 1000-client LAN proof for 300 s on a 10000 Mb/s server NIC with a minimum per-client rate of 283 kbps (docs/runs/lan-1000-proof-xdp.md, head 534cce2e). No record in this repository measures 10 Gbps throughput; zero-copy and line-rate performance are unqualified (docs/QUALIFICATION-v1.0.0-preview-2.md, docs/LIVE-XDP.md).
+The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes after v1.0.0-preview-1; RocketNet has run live with AF_XDP in copy mode: 60-second non-timing correctness rungs at 1, 10, 100, 500 and 1000 clients (415e796d, runtime source a76d641a; docs/QUALIFICATION-v1.0.0-preview-2.md) and a 1000-client LAN proof for 300 s on a 10000 Mb/s server NIC with minimum per-client uplink 283.96 kbps, delivery pass, timing verdict FAIL (docs/runs/lan-1000-proof-xdp.md, head 534cce2e). No record in this repository measures 10 Gbps throughput; zero-copy and line-rate performance are unqualified (docs/QUALIFICATION-v1.0.0-preview-2.md, docs/LIVE-XDP.md).
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|

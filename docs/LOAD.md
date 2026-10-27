@@ -28,7 +28,9 @@ profile is a separate, additional bounded-memory workload; it cannot substitute
 for the default-profile acceptance. The current `bin/load` harness is capped
 at `ROCKETNET_MAX_CLIENTS` (1,000) and records no ladder results (below). The
 recorded 1,000-client results are the LAN proof cells in
-[`runs/lan-1000-proof.md`](runs/lan-1000-proof.md) (1,000 clients for 600 s,
+[`runs/lan-1000-proof.md`](runs/lan-1000-proof.md)
+([Linux gso and io_uring](runs/lan-1000-proof-linux.md),
+[AF_XDP](runs/lan-1000-proof-xdp.md)) (1,000 clients for 600 s,
 300 s for AF_XDP, against Linux `gso`, `io_uring`, and AF_XDP copy-mode
 servers and a macOS `msgx` server; minimum per-client rates of 276–283 kbps)
 and the 60-second non-timing correctness rungs in

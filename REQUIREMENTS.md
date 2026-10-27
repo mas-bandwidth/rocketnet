@@ -87,7 +87,9 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   rings, and kernel socket buffers).
 - The default compile-time `ROCKETNET_MAX_CLIENTS` ceiling (`1000`) and the
   recorded 1,000-client results in
-  [`docs/runs/lan-1000-proof.md`](docs/runs/lan-1000-proof.md) (1,000 clients
+  [`docs/runs/lan-1000-proof.md`](docs/runs/lan-1000-proof.md)
+  ([Linux gso and io_uring](docs/runs/lan-1000-proof-linux.md),
+  [AF_XDP](docs/runs/lan-1000-proof-xdp.md)) (1,000 clients
   for 600 s, 300 s for AF_XDP, against Linux `gso`, `io_uring`, and AF_XDP
   copy-mode servers and a macOS `msgx` server; minimum per-client rates of
   276–283 kbps) and
