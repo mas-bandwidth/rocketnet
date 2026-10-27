@@ -327,7 +327,7 @@ status code and the accompanying `ERROR` log line:
 
 | Status code (`rocketnet_status_name`) | Where returned | Root cause | Bounded recovery action |
 | --- | --- | --- | --- |
-| `NOT_INITIALIZED` | `create`, `term` | `rocketnet_init` (or `rocketnet_init_ex`) was not called before `create` / `term`. A create before init increments `api_misuses`. | Call `rocketnet_init()` once at process startup before creating any endpoint, and `rocketnet_term()` once after all endpoints are destroyed. |
+| `NOT_INITIALIZED` | `create`, `term` | `rocketnet_init` was not called before `create` / `term`. A create before init increments `api_misuses`. | Call `rocketnet_init()` once at process startup before creating any endpoint, and `rocketnet_term()` once after all endpoints are destroyed. |
 | `CONFIG_NOT_INITIALIZED` | `create`, `required_memory` | `config->config_bytes` is `0`, smaller than `sizeof(size_t)`, or ends inside a struct field (`docs/ABI-EVOLUTION.md`). | Initialize with `rocketnet_client_default_config(&cfg)` / `rocketnet_server_default_config(&cfg)` (or the light function) before modifying fields. |
 | `CONFIG_ENV_INVALID` | `create` (`required_memory` returns `0`) | A `ROCKETNET_*` environment variable failed strict syntax parsing (whitespace, `+` prefix, non-decimal characters, integer overflow, or wrong base64 key/filter length). | Read the `ERROR` line naming the variable, fix or unset it (`docs/ENVIRONMENT.md`), and recreate the endpoint. Empty variables are ignored and logged. |
 | `CONFIG_OUT_OF_RANGE` | `create` (`required_memory` returns `0`) | A field is outside its public-header range or violates a cross-field invariant (`max_message_bytes > receive_message_buffer_bytes`, `packets_in_flight < reliable_messages_in_flight`, or simulator settings in `ROCKETNET_DEV=0`). | Read the field and rule from the `ERROR` line and adjust the configuration using [`docs/LOAD.md`](LOAD.md). Values are never silently clamped. |
@@ -343,8 +343,11 @@ status code and the accompanying `ERROR` log line:
    - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`: returned at
      `rocketnet_client_create` and `rocketnet_server_create` (and causes
      `rocketnet_*_required_memory` to return `0`) when `config.packet_filter`
-     is left at all zeros or set to the published four-byte test filter
-     (`00:01:02:03`) in a production library (`ROCKETNET_DEV=0`).
+     is set to the published four-byte test filter
+     (`b7:59:01:00`, `ROCKETNET_TEST_FILTER_VALUE`) in a production library
+     (`ROCKETNET_DEV=0`). That is the default value, so a config that is never
+     given a title filter is refused; an all-zero filter is not the test
+     filter and is not refused by this rule.
      **Action**: set a non-test four-byte `packet_filter` in `config.packet_filter`
      (or `ROCKETNET_CLIENT_PACKET_FILTER` / `ROCKETNET_SERVER_PACKET_FILTER`)
      identically on both client and server before calling
@@ -622,7 +625,7 @@ disconnects under load:
      or memory corruption.
 3. **Preserving endpoint, allocator, and callback context ownership through `destroy` and `rocketnet_term`**:
    - Keep the endpoint handle, the `context` pointer passed to `create` /
-     `rocketnet_init_ex`, the custom allocator backing store, the
+     `rocketnet_init`, the custom allocator backing store, the
      `state_change_callback` context, and the `rocketnet_log_function` context
      valid and in scope until:
      1. `rocketnet_client_disconnected(client)` / `rocketnet_server_stopped(server)`

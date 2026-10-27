@@ -159,7 +159,7 @@ class RenderTest( unittest.TestCase ):
             with open( path, encoding="utf-8" ) as f:
                 for m in re.finditer( r'^ROCKETNET_[A-Z]+\(\s*\w+,\s*"([a-z_]+)",[^,]*,[^,]*,[^,]*,\s*([^,]+),', f.read(), re.M ):
                     server = m.group( 2 ).strip()
-                    development_rank = re.fullmatch( r'\(\s*ROCKETNET_DEV\s*\?\s*(\d+)\s*:\s*0\s*\)', server )
+                    development_rank = re.fullmatch( r'\(\s*ROCKETNET_DEV\s*\?\s*(\d+)\s*:\s*\d+\s*\)', server )
                     if development_rank:
                         server = development_rank.group( 1 )
                     elif not re.fullmatch( r'\d+|ROCKETNET_TRANSPORT_PIN_ONLY', server ):
