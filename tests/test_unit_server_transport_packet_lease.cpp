@@ -233,6 +233,48 @@ static void test_server_transport_finish_after_flush()
         for ( int step = 0; step < 20 && world.last_rx_payload_bytes == 0; step++ )
             lease_world_pump( &world );
         check( world.last_rx_payload_bytes == 16 && world.last_rx_payload[0] == 0xCC && world.last_rx_payload[15] == 0xCC );
+
+        // 1d. A lease already consumed by finish_packet or abort_packet is in
+        //     state 3, not an active lease retired by reset: after a later
+        //     reset (send_packets or update), finishing a saved copy of that
+        //     context must NOT be treated as retired(), must NOT increment
+        //     api_misuses, and must assert in assert-enabled builds.
+        rocketnet_packet_context_t ctx_fin;
+        uint8_t * frame_fin = rocketnet_server_transport_start_packet( server, slot, 16, &ctx_fin );
+        check( frame_fin != NULL );
+        memset( frame_fin + ctx_fin.payload_index, 0xCE, 16 );
+        rocketnet_packet_context_t saved_fin = ctx_fin;
+        check( rocketnet_server_transport_finish_packet( server, &ctx_fin, 16 ) > 0 );
+        check( g_lease_test_asserts == 0 );
+        rocketnet_server_transport_send_packets( server );
+        const uint64_t misuses_before_fin = rocketnet_api_misuse_count();
+        check( rocketnet_server_transport_finish_packet( server, &saved_fin, 16 ) == 0 );
+        check( saved_fin.frame == NULL );
+        check( rocketnet_api_misuse_count() == misuses_before_fin );
+#if ROCKETNET_ASSERTS
+        check( g_lease_test_asserts == 1 );
+#else
+        check( g_lease_test_asserts == 0 );
+#endif
+        g_lease_test_asserts = 0;
+
+        rocketnet_packet_context_t ctx_abt;
+        uint8_t * frame_abt = rocketnet_server_transport_start_packet( server, slot, 16, &ctx_abt );
+        check( frame_abt != NULL );
+        rocketnet_packet_context_t saved_abt = ctx_abt;
+        rocketnet_server_transport_abort_packet( server, &ctx_abt );
+        check( g_lease_test_asserts == 0 );
+        rocketnet_server_transport_send_packets( server );
+        const uint64_t misuses_before_abt = rocketnet_api_misuse_count();
+        check( rocketnet_server_transport_finish_packet( server, &saved_abt, 16 ) == 0 );
+        check( saved_abt.frame == NULL );
+        check( rocketnet_api_misuse_count() == misuses_before_abt );
+#if ROCKETNET_ASSERTS
+        check( g_lease_test_asserts == 1 );
+#else
+        check( g_lease_test_asserts == 0 );
+#endif
+        g_lease_test_asserts = 0;
     }
 
     lease_world_destroy( &world );

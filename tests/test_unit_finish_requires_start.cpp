@@ -951,6 +951,46 @@ static void test_finish_requires_start_transport_packets()
         rocketnet_client_transport_update( client_a, world_a.time - c_origin );
         rocketnet_server_transport_update( server_a, world_a.time - s_origin );
         world_a.time += 0.01;
+
+        // Consumed lease (finished or aborted in state 3) followed by reset
+        // (send_packets or update) must still assert on finish of a saved copy,
+        // not take the retired() misuse path.
+        s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
+        check( s_frame != NULL );
+        memset( s_frame + s_ctx.payload_index, 0x23, 16 );
+        s_copy = s_ctx;
+        check( rocketnet_server_transport_finish_packet( server_a, &s_ctx, 16 ) > 0 );
+        check_not_asserted();
+        rocketnet_server_transport_send_packets( server_a );
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_a, &s_copy, 16 ) == 0 );
+            check_asserted_once();
+            check( rocketnet_api_misuse_count() == misuses );
+        }
+        world_a.time += 0.01;
+        g_finish_test_now = world_a.time;
+        rocketnet_client_transport_update( client_a, world_a.time - c_origin );
+        rocketnet_server_transport_update( server_a, world_a.time - s_origin );
+        (void) rocketnet_client_transport_payloads( client_a, &rx_data, &rx_bytes );
+        world_a.time += 0.01;
+        g_finish_test_now = world_a.time;
+        rocketnet_client_transport_update( client_a, world_a.time - c_origin );
+        rocketnet_server_transport_update( server_a, world_a.time - s_origin );
+
+        s_frame = rocketnet_server_transport_start_packet( server_a, slot_a, 16, &s_ctx );
+        check( s_frame != NULL );
+        s_copy = s_ctx;
+        rocketnet_server_transport_abort_packet( server_a, &s_ctx );
+        check_not_asserted();
+        rocketnet_server_transport_send_packets( server_a );
+        {
+            const uint64_t misuses = rocketnet_api_misuse_count();
+            check( rocketnet_server_transport_finish_packet( server_a, &s_copy, 16 ) == 0 );
+            check_asserted_once();
+            check( rocketnet_api_misuse_count() == misuses );
+        }
+        world_a.time += 0.01;
     }
 
     // 3h. After all invalid packet finishes, world_a still delivers messages end-to-end

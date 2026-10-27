@@ -114,7 +114,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             const uint64_t entry_epoch = state >> 2;
             if ( entry_epoch == 0 )
                 return false;
-            if ( entry_epoch == epoch || (state & 3) == 1 )
+            if ( entry_epoch == epoch || (state & 3) != 2 )
                 continue;
             const auto & owned = entry.context;
             if ( owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
