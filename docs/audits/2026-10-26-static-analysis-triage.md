@@ -25,7 +25,7 @@ stale cppcheck entries were removed. The GCC baseline remains empty.
 The staged source was
 `ef0229e87240cadf6e3b2376d2f72782d5fd7c97` on
 `sprint/rn-static-analysis-zero-unresolved.w1.g1.e1`. Analysis and builds ran
-on the allocated `hetzner2` Linux bench, one `benchslot` at a time and at most
+on an allocated Linux x64 bench, one `benchslot` at a time and at most
 four compile/analyzer jobs. Tool versions were:
 
 - GCC/G++ 13.3.0;

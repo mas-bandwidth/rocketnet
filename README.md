@@ -89,16 +89,15 @@ available; production server auto selection prefers native transports. Follow [B
 
 ## Preview status
 
-The [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) describe changes
-from preview-1 and the required migration steps. Preview-2 release testing is
-recorded at the tagged commit
-`83d04c4d9df1b7f54fd6886455372b237f85740b` (v1.0.0-preview-2); the
-preview-2 functional gate is not green, with the macOS Debug socket
-receive-short condition and the s390x big-endian full-system run as known
-issues deferred to preview-3. [TESTING.md](TESTING.md) and
-[docs/QUALIFICATION-v1.0.0-preview-2.md](docs/QUALIFICATION-v1.0.0-preview-2.md)
-record the same status, separately from historical results. The API remains provisional. Large-server frame time,
-memory use and transport qualification still need attention; see the
+The [preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) describe changes
+from preview-2, the required migration steps and the known limits. Preview-3
+release testing is recorded in
+[docs/QUALIFICATION-v1.0.0-preview-3.md](docs/QUALIFICATION-v1.0.0-preview-3.md),
+which also lists the gates still owed when the tag is cut. The
+[preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) and
+[preview-2 qualification record](docs/QUALIFICATION-v1.0.0-preview-2.md) keep
+their original scope. The API remains provisional. Large-server memory use and
+some transport qualification still need attention; see the
 [roadmap](ROADMAP.md).
 
 ## What the tests establish
@@ -112,8 +111,9 @@ A passing unit suite is not a throughput or player-count measurement.
 ## Documentation
 
 - [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — start here: from a fresh checkout to a dedicated server and a client exchanging messages, and the order to read the rest.
-- [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits.
-- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the previous preview.
+- [v1.0.0-preview-3 release notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) — migration from preview-2, wire changes and known limits.
+- [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits; the previous preview.
+- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the first preview.
 
 - [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
 - [docs/SESSION.md](docs/SESSION.md) — sessions, connect tokens, session isolation, and reconnect rules.
