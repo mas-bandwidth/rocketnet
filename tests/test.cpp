@@ -5,6 +5,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_config.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_allocator.h"
 #include "portable_crt.h"
 #include "suite_runner.h"
@@ -77,6 +78,17 @@ static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lo
     rocketnet_unit_fake_connection_type,
     rocketnet_unit_fake_ipv6_available,
 };
+
+// The unit tier starts no OS network stack: the platform start (WSAStartup on
+// Windows) is answered by this fake, and every other platform call in the
+// table stays real. Cases that inject their own refusal copy the current table
+// and restore it, so a case's own init cycles stay on this fake too.
+static int rocketnet_unit_fake_platform_start( void )
+{
+    return 0;
+}
+
+static rocketnet_platform_priority_calls_t rocketnet_unit_platform_calls;
 
 #endif // #if ROCKETNET_DEV
 
@@ -184,6 +196,9 @@ static int rocketnet_unit_worker( const char * name )
 
 #if ROCKETNET_DEV
     rocketnet_platform_set_network_lookups_for_testing( &rocketnet_unit_fake_network_lookups );
+    rocketnet_unit_platform_calls = *rocketnet_platform_priority_calls_real();
+    rocketnet_unit_platform_calls.platform_start = rocketnet_unit_fake_platform_start;
+    rocketnet_platform_set_priority_calls_for_testing( &rocketnet_unit_platform_calls );
 #endif // #if ROCKETNET_DEV
 
     if ( rocketnet_init( NULL, malloc_function, free_function ) != ROCKETNET_STATUS_OK )
