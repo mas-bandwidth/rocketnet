@@ -34,14 +34,33 @@ static void rn_window_ack_count( const rn_region_t * region, int counter )
 }
 
 // ----------------------------------------------------------------
-//     Two intrusive resend FIFOs over the one region->resend_fifo
+//     Two flat resend sequences over the one region->resend_fifo
 // ----------------------------------------------------------------
 
-// The two FIFOs share the W links: a number is in at most one of them, the
-// one its class picks when it is linked (tla/RNResendTiming.tla, one FIFO per
-// class). Unlinking needs no class: a slot with no prev is the head of the
-// FIFO whose head it is, and a slot with no next the tail of the FIFO whose
-// tail it is, so a slot whose descriptor was freed still unlinks exactly.
+// The two sequences share the W entries: a number is in at most one of them,
+// the one its class picks when it is sequenced (tla/RNResendTiming.tla, one
+// sequence per class). Each entry's order is its flat sequence key
+// (rn_resend_key_of), and its class is the entry's chunk flag, so a slot
+// whose descriptor was freed still removes exactly from its own sequence.
+
+#define RN_RESEND_ORDER_STEP    1024ULL
+#define RN_RESEND_ORDER_BASE    ( 1ULL << 32 )
+
+static uint64_t rn_resend_key_of( const rn_resend_link_t * entry )
+{
+    return ( (uint64_t) ( entry->next & 0x7FFFFFFFu ) << 32 ) | (uint64_t) entry->prev;
+}
+
+static bool rn_resend_entry_is_chunk( const rn_resend_link_t * entry )
+{
+    return ( entry->next & 0x80000000u ) != 0;
+}
+
+static void rn_resend_set_key( rn_resend_link_t * entry, uint64_t key, bool chunk )
+{
+    entry->prev = (uint32_t) key;
+    entry->next = (uint32_t) ( key >> 32 ) | ( chunk ? 0x80000000u : 0u );
+}
 
 bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_index )
 {
@@ -55,8 +74,131 @@ bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_ind
 
 static bool rn_resend_fifo_is_linked( const rn_window_ack_t * ack, uint32_t slot )
 {
-    const rn_resend_link_t * link = &ack->region->resend_fifo[slot];
-    return ack->resend_head == slot || ack->chunk_head == slot || link->prev != RN_RESEND_NONE || link->next != RN_RESEND_NONE;
+    return rn_resend_key_of( &ack->region->resend_fifo[slot] ) != 0;
+}
+
+uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk )
+{
+    const rn_region_t * region = ack->region;
+    uint32_t best = RN_RESEND_NONE;
+    uint64_t best_key = 0;
+    for ( uint32_t slot = 0; slot < region->window; slot++ )
+    {
+        const rn_resend_link_t * entry = &region->resend_fifo[slot];
+        const uint64_t key = rn_resend_key_of( entry );
+        if ( key == 0 || rn_resend_entry_is_chunk( entry ) != chunk )
+            continue;
+        if ( best == RN_RESEND_NONE || key < best_key )
+        {
+            best = slot;
+            best_key = key;
+        }
+    }
+    return best;
+}
+
+uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot )
+{
+    const rn_region_t * region = ack->region;
+    if ( slot >= region->window )
+        return RN_RESEND_NONE;
+    const uint64_t after = rn_resend_key_of( &region->resend_fifo[slot] );
+    uint32_t best = RN_RESEND_NONE;
+    uint64_t best_key = 0;
+    for ( uint32_t candidate = 0; candidate < region->window; candidate++ )
+    {
+        const rn_resend_link_t * entry = &region->resend_fifo[candidate];
+        const uint64_t key = rn_resend_key_of( entry );
+        if ( key <= after || rn_resend_entry_is_chunk( entry ) != chunk )
+            continue;
+        if ( best == RN_RESEND_NONE || key < best_key )
+        {
+            best = candidate;
+            best_key = key;
+        }
+    }
+    return best;
+}
+
+static uint32_t rn_resend_fifo_last( const rn_window_ack_t * ack, bool chunk )
+{
+    const rn_region_t * region = ack->region;
+    uint32_t best = RN_RESEND_NONE;
+    uint64_t best_key = 0;
+    for ( uint32_t slot = 0; slot < region->window; slot++ )
+    {
+        const rn_resend_link_t * entry = &region->resend_fifo[slot];
+        const uint64_t key = rn_resend_key_of( entry );
+        if ( key == 0 || rn_resend_entry_is_chunk( entry ) != chunk )
+            continue;
+        if ( best == RN_RESEND_NONE || key > best_key )
+        {
+            best = slot;
+            best_key = key;
+        }
+    }
+    return best;
+}
+
+static void rn_resend_fifo_sync_ends( rn_window_ack_t * ack, bool chunk )
+{
+    if ( chunk )
+    {
+        ack->chunk_head = rn_window_ack_resend_first( ack, true );
+        ack->chunk_tail = rn_resend_fifo_last( ack, true );
+    }
+    else
+    {
+        ack->resend_head = rn_window_ack_resend_first( ack, false );
+        ack->resend_tail = rn_resend_fifo_last( ack, false );
+    }
+}
+
+// Restamp one class's keys in its current order, spaced by RN_RESEND_ORDER_STEP
+// above every key it held, so a later midpoint or head insertion has room.
+static void rn_resend_fifo_rebalance( rn_window_ack_t * ack, bool chunk )
+{
+    rn_region_t * region = ack->region;
+    uint64_t max_key = 0;
+    uint32_t count = 0;
+    for ( uint32_t slot = 0; slot < region->window; slot++ )
+    {
+        const rn_resend_link_t * entry = &region->resend_fifo[slot];
+        const uint64_t key = rn_resend_key_of( entry );
+        if ( key != 0 && rn_resend_entry_is_chunk( entry ) == chunk )
+        {
+            if ( key > max_key )
+                max_key = key;
+            count++;
+        }
+    }
+    if ( count == 0 )
+        return;
+    const uint64_t base = max_key + RN_RESEND_ORDER_STEP * ( (uint64_t) count + 2 );
+    uint64_t last = 0;
+    for ( uint32_t i = 0; i < count; i++ )
+    {
+        uint32_t best = RN_RESEND_NONE;
+        uint64_t best_key = 0;
+        for ( uint32_t slot = 0; slot < region->window; slot++ )
+        {
+            const rn_resend_link_t * entry = &region->resend_fifo[slot];
+            const uint64_t key = rn_resend_key_of( entry );
+            if ( key <= last || key >= base || rn_resend_entry_is_chunk( entry ) != chunk )
+                continue;
+            if ( best == RN_RESEND_NONE || key < best_key )
+            {
+                best = slot;
+                best_key = key;
+            }
+        }
+        rocketnet_assert( best != RN_RESEND_NONE );
+        if ( best == RN_RESEND_NONE )
+            return;
+        last = best_key;
+        rn_resend_set_key( &region->resend_fifo[best], base + (uint64_t) i * RN_RESEND_ORDER_STEP, chunk );
+    }
+    rn_resend_fifo_sync_ends( ack, chunk );
 }
 
 static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
@@ -64,30 +206,18 @@ static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
     if ( !rn_resend_fifo_is_linked( ack, slot ) )
         return;
 
-    rn_resend_link_t * fifo = ack->region->resend_fifo;
-    const uint32_t prev = fifo[slot].prev;
-    const uint32_t next = fifo[slot].next;
-
-    if ( prev != RN_RESEND_NONE )
-        fifo[prev].next = next;
-    else if ( ack->resend_head == slot )
-        ack->resend_head = next;
-    else
-        ack->chunk_head = next;
-
-    if ( next != RN_RESEND_NONE )
-        fifo[next].prev = prev;
-    else if ( ack->resend_tail == slot )
-        ack->resend_tail = prev;
-    else
-        ack->chunk_tail = prev;
-
-    fifo[slot].prev = RN_RESEND_NONE;
-    fifo[slot].next = RN_RESEND_NONE;
-    fifo[slot].generation = 0;
-    fifo[slot].owner_epoch = 0;
+    rn_resend_link_t * entry = &ack->region->resend_fifo[slot];
+    const bool chunk = rn_resend_entry_is_chunk( entry );
+    const bool was_end = chunk ? ( ack->chunk_head == slot || ack->chunk_tail == slot )
+                               : ( ack->resend_head == slot || ack->resend_tail == slot );
+    entry->prev = 0;
+    entry->next = 0;
+    entry->generation = 0;
+    entry->owner_epoch = 0;
     rocketnet_assert( ack->resend_count > 0 );
     ack->resend_count--;
+    if ( was_end )
+        rn_resend_fifo_sync_ends( ack, chunk );
 }
 
 // tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation and this connection's
@@ -141,19 +271,23 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
         rn_resend_fifo_unlink( ack, slot );
 
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
-    uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
-    uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
-
-    rn_resend_link_t * fifo = ack->region->resend_fifo;
-    fifo[slot].prev = *tail;
-    fifo[slot].next = RN_RESEND_NONE;
-
-    if ( *tail != RN_RESEND_NONE )
-        fifo[*tail].next = slot;
+    const uint32_t tail = chunk ? ack->chunk_tail : ack->resend_tail;
+    uint64_t key = RN_RESEND_ORDER_BASE;
+    if ( tail != RN_RESEND_NONE )
+        key = rn_resend_key_of( &ack->region->resend_fifo[tail] ) + RN_RESEND_ORDER_STEP;
+    rn_resend_set_key( &ack->region->resend_fifo[slot], key, chunk );
+    if ( chunk )
+    {
+        if ( ack->chunk_head == RN_RESEND_NONE )
+            ack->chunk_head = slot;
+        ack->chunk_tail = slot;
+    }
     else
-        *head = slot;
-
-    *tail = slot;
+    {
+        if ( ack->resend_head == RN_RESEND_NONE )
+            ack->resend_head = slot;
+        ack->resend_tail = slot;
+    }
     ack->resend_count++;
     rn_resend_fifo_stamp( ack, slot );
 }
@@ -164,19 +298,28 @@ static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
         rn_resend_fifo_unlink( ack, slot );
 
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
-    uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
-    uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
-
-    rn_resend_link_t * fifo = ack->region->resend_fifo;
-    fifo[slot].prev = RN_RESEND_NONE;
-    fifo[slot].next = *head;
-
-    if ( *head != RN_RESEND_NONE )
-        fifo[*head].prev = slot;
+    uint32_t head = chunk ? ack->chunk_head : ack->resend_head;
+    if ( head != RN_RESEND_NONE && rn_resend_key_of( &ack->region->resend_fifo[head] ) <= RN_RESEND_ORDER_STEP )
+    {
+        rn_resend_fifo_rebalance( ack, chunk );
+        head = chunk ? ack->chunk_head : ack->resend_head;
+    }
+    uint64_t key = RN_RESEND_ORDER_BASE;
+    if ( head != RN_RESEND_NONE )
+        key = rn_resend_key_of( &ack->region->resend_fifo[head] ) - RN_RESEND_ORDER_STEP;
+    rn_resend_set_key( &ack->region->resend_fifo[slot], key, chunk );
+    if ( chunk )
+    {
+        if ( ack->chunk_tail == RN_RESEND_NONE )
+            ack->chunk_tail = slot;
+        ack->chunk_head = slot;
+    }
     else
-        *tail = slot;
-
-    *head = slot;
+    {
+        if ( ack->resend_tail == RN_RESEND_NONE )
+            ack->resend_tail = slot;
+        ack->resend_head = slot;
+    }
     ack->resend_count++;
     rn_resend_fifo_stamp( ack, slot );
 }
@@ -195,16 +338,25 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
         rn_resend_fifo_unlink( ack, slot_index );
 
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot_index );
-    uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
-    rn_resend_link_t * fifo = ack->region->resend_fifo;
-    const uint32_t next = fifo[after].next;
-    fifo[slot_index].prev = after;
-    fifo[slot_index].next = next;
-    fifo[after].next = slot_index;
-    if ( next != RN_RESEND_NONE )
-        fifo[next].prev = slot_index;
-    else
-        *tail = slot_index;
+    uint32_t successor = rn_window_ack_resend_next( ack, chunk, after );
+    if ( successor != RN_RESEND_NONE &&
+         rn_resend_key_of( &ack->region->resend_fifo[successor] ) - rn_resend_key_of( &ack->region->resend_fifo[after] ) < 2 )
+    {
+        rn_resend_fifo_rebalance( ack, chunk );
+        successor = rn_window_ack_resend_next( ack, chunk, after );
+    }
+    const uint64_t after_key = rn_resend_key_of( &ack->region->resend_fifo[after] );
+    uint64_t key = after_key + RN_RESEND_ORDER_STEP;
+    if ( successor != RN_RESEND_NONE )
+        key = after_key + ( rn_resend_key_of( &ack->region->resend_fifo[successor] ) - after_key ) / 2;
+    rn_resend_set_key( &ack->region->resend_fifo[slot_index], key, chunk );
+    if ( successor == RN_RESEND_NONE )
+    {
+        if ( chunk )
+            ack->chunk_tail = slot_index;
+        else
+            ack->resend_tail = slot_index;
+    }
     ack->resend_count++;
     rn_resend_fifo_stamp( ack, slot_index );
 }
@@ -385,6 +537,16 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     memset( ack, 0, sizeof(*ack) );
     ack->send = send;
     ack->region = region;
+
+    // The flat resend sequences start empty: no sequence key of an earlier
+    // binding of this region may resurrect an entry under the new ack state.
+    for ( uint32_t slot = 0; slot < region->window; slot++ )
+    {
+        region->resend_fifo[slot].prev = 0;
+        region->resend_fifo[slot].next = 0;
+        region->resend_fifo[slot].generation = 0;
+        region->resend_fifo[slot].owner_epoch = 0;
+    }
     ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
     ack->resend_delay_min = (double) config->message_resend_delay_min_ms / 1000.0;
     ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;

@@ -99,11 +99,15 @@ is delivered or the connection reaches its timeout.
 Reliable resend, the per-channel descriptor FIFO, ready-channel membership, and
 the unreliable endpoint FIFO name an entry by descriptor generation and the
 connection's schedule epoch (`tla/RNChannelQueues.tla`). A carve restarts that
-epoch at 1 and clears tickets, flags, and resend links, so a reused slot matches
+epoch at 1 and clears tickets, flags, and resend sequence keys, so a reused slot matches
 a slot carved once. Inside the connection, freeing a descriptor bumps its
-generation, and ACK, cancel, and expiry remove only the named generation. A resend slot is in at most one FIFO;
-capacity is W, unlink is O(1), and an acked resend hole stays linked so a walk
-still counts it. A channel or unreliable cancel of an interior entry marks a
+generation, and ACK, cancel, and expiry remove only the named generation. A resend slot is in at most one
+flat resend sequence; capacity is W, and an acked resend hole stays sequenced so a walk
+still counts it. The per-channel and unreliable FIFOs are the flat
+send-descriptor array ordered by enqueue ticket, ready membership is the flat
+channel array ordered by ready ticket, and each resend sequence is the flat
+resend array ordered by its entries' sequence keys: no queue element points
+at another. A channel or unreliable cancel of an interior entry marks a
 hole in O(1). Holes compact in one pass when more than 64 are outstanding, or
 once at the start of a write, never once per emitted record. That pass is
 O(C + queued), not O(C times Q). Channel enqueue tickets are distinct because
@@ -111,7 +115,7 @@ reliable numbers are assigned later. CONFIG is spliced at the front of channel
 0 and that one channel's tickets are rebased so CONFIG holds the smallest
 ticket. Ready membership is one ticket per channel.
 
-The sized terms are 16W for the resend link, 40C for channel send state, and
+The sized terms are 16W for the resend sequence entry, 40C for channel send state, and
 64C (40 bytes of channel send state plus 24 bytes of channel receive state).
 A send descriptor is 80 bytes (`rn_send_descriptor_t`). `docs/LOAD.md` prints
 `64C + 120.125W + B + 80Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
