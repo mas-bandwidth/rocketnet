@@ -8,8 +8,7 @@ that no workflow runs is unsupported, even if the code happens to build there.
 
 The table below is the whole claim. Each row names the workflow file and the
 runner's operating-system and architecture tokens. `tools/check_platform_policy.py`
-checks that each row is backed by the workflow it names, and that each
-supported row names the per-commit functional steps in that workflow. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide, and [docs/WINDOWS.md](WINDOWS.md) for the Windows build, transports, host requirements and verification.
+checks that each row is backed by the workflow it names. See [docs/LINUX.md](LINUX.md) for the Linux build, transport ladder, kernel/provisioning requirements, and host verification guide, and [docs/WINDOWS.md](WINDOWS.md) for the Windows build, transports, host requirements and verification.
 
 ## The table
 
