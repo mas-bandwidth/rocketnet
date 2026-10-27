@@ -197,7 +197,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
-| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | by hand |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
@@ -524,9 +524,14 @@ target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 ```
 
 When linking the static archive (`librocketnet.a`) directly in a C project
-without CMake, link against the C++ standard library runtime (`-lstdc++` on
-Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
-`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
+without CMake, compile with `-DROCKETNET_DEV=0` for a production archive (and
+`-DROCKETNET_MAX_CLIENTS=<n>` when the library was built with a non-default
+value) so `rocketnet.h` matches the archive, and link against the C++ standard
+library runtime (`-lstdc++` on Linux, `-lc++` on macOS) and the required
+platform libraries (on Linux: `-lbpf -lxdp -luring -lstdc++ -lpthread -lm`,
+where `-lbpf -lxdp` apply only when the library was built with XDP and
+`-luring` applies only when the library was built with `io_uring`; on macOS:
+`-lc++ -lpthread -lm`).
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
@@ -537,8 +542,10 @@ The package accepts a request for any earlier or equal version of the same major
 version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
 finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
-only compile definitions they carry are `ROCKETNET_DEV`, the value the library
-was built with, and `ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
+only compile definitions they carry are `ROCKETNET_DEV` and
+`ROCKETNET_MAX_CLIENTS`, the values the library was built with, and
+`ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py`
+checks all three.
 The Unix shared-library soname follows the major version.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`

@@ -160,7 +160,7 @@ Portable remains a fallback rather than a performance target. The owner enabled 
 
 ## XDP (later)
 
-The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes after v1.0.0-preview-1; RocketNet already runs with XDP, measured at 10 Gbps.
+The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes after v1.0.0-preview-1; RocketNet has run live with AF_XDP in copy mode: 60-second non-timing correctness rungs at 1, 10, 100, 500 and 1000 clients (415e796d, runtime source a76d641a; docs/QUALIFICATION-v1.0.0-preview-2.md) and a 1000-client LAN proof for 300 s on a 10000 Mb/s server NIC with minimum per-client uplink 283.96 kbps, delivery pass, timing verdict FAIL (docs/runs/lan-1000-proof-xdp.md, head 534cce2e). No record in this repository measures 10 Gbps throughput; zero-copy and line-rate performance are unqualified (docs/QUALIFICATION-v1.0.0-preview-2.md, docs/LIVE-XDP.md).
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -177,7 +177,7 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
 | Preview-2 live AF_XDP copy-mode correctness at 1, 10, 100, 500 and 1000 clients | ✅ | — | — | — | — | — | — | — |
 | Packet blaster and simulated-client harnesses at line rate | ❌ | — | — | — | — | — | — | — |
-| Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ | — | — | — | — | — | — | — |
+| Ownership and retry paths regression-validated against a recorded throughput baseline | ❌ | — | — | — | — | — | — | — |
 | Privileged syscall-failure coverage in its own lab | ❌ | — | — | — | — | — | — | — |
 | The live stress run: the XDP server against one client from every test machine (later) | ❌ | — | — | — | — | — | — | — |
 | complete | 75% | — | — | — | — | — | — | — |
@@ -334,13 +334,33 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
 | Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
 | The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| complete | 50% | 38% | 38% |
+| Mutation audit finding 6: the keyed filter value is compared under AddressSanitizer against a direct eight-byte SipHash reference | ❌ | — | — |
+| Mutation audit finding 7: received-bandwidth high time after receive-tail eviction matches the reference recompute | ❌ | ❌ | ❌ |
+| Mutation audit finding 8: overwriting a zero RTT sample keeps the RTT count and minimum exact | ❌ | ❌ | ❌ |
+| Mutation audit finding 9: acknowledging the packet exactly at the loss-eligible top keeps packet loss exact | ❌ | ❌ | ❌ |
+| Mutation audit finding 10: an empty ACK block reconciles the newest sequence's bitmap bits | ❌ | ❌ | ❌ |
+| Mutation audit finding 11: the reference recompute's received-bandwidth span matches a direct min/max-time calculation | ❌ | ❌ | ❌ |
+| Mutation audit finding 12: the ack allocation-size helper returns zero for zero clients | ❌ | ❌ | ❌ |
+| Mutation audit finding 13: the server delivered-capacity helper returns zero for zero slots | ❌ | ❌ | ❌ |
+| Mutation audit finding 14: maximum-sized non-final fragments are size-checked before the final fragment arrives | ❌ | ❌ | ❌ |
+| Mutation audit finding 15: the send-arena allocation helper returns zero for a zero dimension | ❌ | ❌ | ❌ |
+| Mutation audit finding 16: the arena ownership check refuses the one-past-end pointer | ❌ | ❌ | ❌ |
+| Mutation audit finding 17: opening a packet with a mismatched ephemeral key returns a negative error both ways | ❌ | ❌ | ❌ |
+| Mutation audit finding 18: an ACK finds a packet sitting in its home hash slot | ❌ | ❌ | ❌ |
+| Mutation audit finding 19: reference-head advancement in normal reclaim and forced eviction keeps ref_tail - ref_head exact | ❌ | ❌ | ❌ |
+| Mutation audit finding 20: a reset ACK map starts with an empty packet and reference map | ❌ | ❌ | ❌ |
+| Mutation audit finding 21: development resend-gap diagnostics report each class's count and gap bounds exactly | ❌ | ❌ | ❌ |
+| Mutation audit finding 22: the batch-ACK entry refuses a null packet-id array with a positive count | ❌ | ❌ | ❌ |
+| Mutation audit finding 23: a reused receive descriptor starts with no fragment-block state | ❌ | ❌ | ❌ |
+| Mutation audit finding 24: duplicate and out-of-window ACKs report no newly matched ACK | ❌ | ❌ | ❌ |
+| Mutation audit finding 25: releasing the oldest number clears a stalled reliable send window, releasing another does not | ❌ | ❌ | ❌ |
+| complete | 35% | 22% | 22% |
 
 [Source data](docs/roadmap.sexp)
 
 ## Platforms
 
-Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux, macOS and Windows; the nightly jobs run on Linux, and their macOS and Windows jobs are not yet enabled.
+Where RocketNet builds and passes. Every push runs the unit and functional suites on Linux and macOS; on Windows every push runs the unit suite, the lifecycle binary, the native driver contract and the transport family matrix, and the whole functional suite runs in the nightly tier (about 223 s, over the per-commit bound). The nightly jobs run on Linux, macOS and Windows.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|

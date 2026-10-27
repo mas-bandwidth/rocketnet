@@ -56,10 +56,13 @@ this configuration on Linux and runs a C client against both installed
 libraries (`tools/check_package.py --client`); BUILDING.md, "Building a
 Linux client without the server libraries", is the full paragraph.
 
-`make` is the front door. It configures `build/` as **Release** and runs the
-child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
-or the caller's own `-j` overrides it (`Makefile`). CI's Release rows run
-`make` (`.github/workflows/ci.yml`, "Build (Release, through the Makefile)"):
+`make` is the front door. It configures `build/` as **Release** with
+`-DROCKETNET_DEV=ON` (`make ROCKETNET_DEV=OFF` builds the production library;
+`BUILDING.md`, "Production builds"), shows the configure status lines for XDP
+and `liburing`, and runs the child make with `-j` set to the processor count
+capped at 8; `make JOBS=<n>` or the caller's own `-j` overrides it (`Makefile`).
+CI's Release rows run `make` (`.github/workflows/ci.yml`, "Build (Release,
+through the Makefile)"):
 
 ```sh
 make JOBS=4
@@ -69,7 +72,8 @@ A Debug build is configured directly, as CI's Debug row does
 (`.github/workflows/ci.yml`): `cmake -B build -DCMAKE_BUILD_TYPE=Debug`
 then `cmake --build build --parallel 4`. Both write their executables and
 shared libraries into `bin/` (`CMakeLists.txt`), and `make` reconfigures
-`build/` to Release (`Makefile`), so use one or the other in a checkout.
+`build/` to Release with `-DROCKETNET_DEV=ON` unless `ROCKETNET_DEV` is set
+(`Makefile`), so use one or the other in a checkout.
 
 The executables this guide runs: `./bin/test` (the unit suite, no sockets,
 `BUILDING.md`), `./bin/functional` (real sockets and real transports,
@@ -379,12 +383,15 @@ server_config.num_xdp_queues = 2;
 server_config.transport = "xdp";
 ```
 
-RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2.
-The game pins each of its workers from within that thread with
-`pthread_setaffinity_np`, using `NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`,
-and may request `SCHED_FIFO` priority. With a pool of 13 threads,
-including the main thread, with indices 0–12 mapping to CPUs 3–15. The game
-owns its thread placement; RocketNet does not pin the game's worker pool.
+RocketNet pins each XDP worker to `num_os_cpus + queue`, giving CPUs 1 and 2;
+each SCHED_RR worker spins on its dedicated isolated CPU by design (NAPI runs
+in softirq on the queue CPUs; the isolated-CPU preflight is the guard). The
+game pins each of its workers from within that thread with
+`pthread_setaffinity_np`, using
+`NUM_OS_CPUS + NUM_XDP_CPUS + thread_index`, and may request `SCHED_FIFO` priority.
+With a pool of 13 threads, including the main thread, with indices 0–12 mapping
+to CPUs 3–15. The game owns its thread placement; RocketNet does not pin the
+game's worker pool.
 
 An integration must run its pinning callback on every actual worker and
 check affinity/priority return values. Do not treat a completed batch of

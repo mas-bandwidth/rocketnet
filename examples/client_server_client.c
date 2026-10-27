@@ -54,7 +54,12 @@ int main( int argc, char ** argv )
 {
     const int wrong_protocol = argc > 1 && strcmp( argv[1], "--wrong-protocol" ) == 0;
 
-    rocketnet_init( NULL, NULL, NULL );
+    const enum rocketnet_status_t init_status = rocketnet_init( NULL, NULL, NULL );
+    if ( init_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: init: %s\n", rocketnet_status_name( init_status ) );
+        return 1;
+    }
 
     // the server writes the key file once it has started: wait up to 10 seconds for it
     uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
@@ -65,6 +70,9 @@ int main( int argc, char ** argv )
         if ( rocketnet_time() - keys_start > 10.0 )
         {
             printf( "FAIL: no complete %s within 10 seconds\n", KEY_FILE );
+            const enum rocketnet_status_t term_status = rocketnet_term();
+            if ( term_status != ROCKETNET_STATUS_OK )
+                printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
             return 1;
         }
         rocketnet_sleep( 0.05 );
@@ -78,12 +86,22 @@ int main( int argc, char ** argv )
     if ( token_status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
-        rocketnet_term();
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
 
     struct rocketnet_client_config_t config;
-    rocketnet_client_default_config( &config );
+    const enum rocketnet_status_t client_config_status = rocketnet_client_default_config( &config );
+    if ( client_config_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     config.transport = "portable";
     config.state_change_callback = state_changed;
     enum rocketnet_status_t client_status = ROCKETNET_STATUS_OK;
@@ -92,7 +110,9 @@ int main( int argc, char ** argv )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
         rn_cli_client_stop_and_destroy( client );
-        rocketnet_term();
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
         return 1;
     }
 
@@ -137,7 +157,12 @@ int main( int argc, char ** argv )
     rocketnet_client_disconnect( client );
     printf( "client state after disconnect: %s\n", rocketnet_client_state_name( rocketnet_client_state( client ) ) );
     rn_cli_client_stop_and_destroy( client );
-    rocketnet_term();
+    const enum rocketnet_status_t term_status = rocketnet_term();
+    if ( term_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        return 1;
+    }
     printf( result ? "PASS\n" : "FAIL: the echo arrived, or with --wrong-protocol the server refused the token\n" );
     return result ? 0 : 1;
 }
