@@ -54,9 +54,15 @@
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
 #endif
 #else
+// Re-measured 2026-10-27 on hetzner2, RelWithDebInfo, clang++ 18.1.3,
+// ROCKETNET_DEV=ON, head ad91bdfabaddfd2866c3c172b941917ca872105c.
+// Server was 3231507666 (grew by 7070650). Client was 22896245 (now 22890053).
+// Generation, owner epoch, enqueue ticket and hole bound 64 stayed.
+// The non-dev figures below were not re-measured: this file is not linked
+// when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3231507666ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22896245 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3238578316ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22890053 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )

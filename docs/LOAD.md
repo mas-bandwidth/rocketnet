@@ -191,10 +191,15 @@ receipts, and one reassembly slot (`max_fragmented_messages` is 1). Its
 of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 120,000 bits/s). The reliable timeout stays at its 10,000 ms default. At
 `max_clients` 1000 the server's `rocketnet_server_required_memory` is
-3,231,507,666 bytes, and `rocketnet_client_required_memory` for the client
-profile is 22,896,245 bytes (Linux x86-64, development build, io_uring and
+3,238,578,316 bytes, and `rocketnet_client_required_memory` for the client
+profile is 22,890,053 bytes (Linux x86-64, development build, io_uring and
 XDP built; each is the lifecycle peak the caller's allocator sees, for the
-largest transport the ladder can grant). On Windows x64 with MSVC, the
+largest transport the ladder can grant). Re-measured 2026-10-27 on hetzner2
+at `ad91bdfa`, RelWithDebInfo, clang++ 18.1.3, `ROCKETNET_DEV=ON`. The previous
+development figures were 3,231,507,666 and 22,896,245. Generation, owner epoch,
+enqueue ticket and the hole bound of 64 stayed. The non-development column was
+not re-measured: `tests/test_unit_light_profile.cpp` is not linked when
+`ROCKETNET_DEV=OFF`. On Windows x64 with MSVC, the
 server/client figures are 1,591,206,044 / 22,968,879 bytes in development builds
 and 1,584,809,680 / 22,183,075 bytes with `ROCKETNET_DEV=OFF`.
 These are configuration calculations and planned allocator peaks, not
@@ -534,7 +539,7 @@ Sample `LOAD_PLAN_ONLY=1` receipts on Linux x86-64 (`ROCKETNET_DEV=1`):
 
 ```text
 load_plan: clients=1000 profile=default client_public_required_bytes=29992800 server_public_required_bytes=20908851166 total_public_required_bytes=50901651166 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
-load_plan: clients=1000 profile=light client_public_required_bytes=22896245 server_public_required_bytes=3231507666 total_public_required_bytes=26127752666 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
+load_plan: clients=1000 profile=light client_public_required_bytes=22890053 server_public_required_bytes=3238578316 total_public_required_bytes=26128631316 public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start term_status_code=0 reason=none verdict=PASS
 ```
 
 ### Named configuration examples
@@ -564,7 +569,7 @@ match:
 | `default` | `NULL` / `"auto"` or `"gso"` | `7,852,032` (7.49 MiB) | `29,992,800` (28.60 MiB) | `29,206,996` (27.85 MiB) | Client `send_kbps = 1000`; auto ladder `gso -> portable`, sized for `gso` (`20,022,665` dev transport bytes) |
 | `default` | `"portable"` | `7,852,032` (7.49 MiB) | `29,842,576` (28.46 MiB) | `29,056,772` (27.71 MiB) | Single UDP socket, 2 worker threads |
 | `default` | `"loopback"` | `7,852,032` (7.49 MiB) | `32,864,566` (31.34 MiB) | `32,078,762` (30.59 MiB) | In-process queue rings (`4096` packets each way) |
-| `light` | `NULL` / `"auto"` or `"gso"` | `947,776` (0.90 MiB) | `22,896,245` (21.84 MiB) | `22,110,441` (21.09 MiB) | `max_message_bytes = 1415`, `max_fragmented_messages = 1`, `send_kbps = 256` |
+| `light` | `NULL` / `"auto"` or `"gso"` | `947,776` (0.90 MiB) | `22,890,053` (21.83 MiB) | `22,110,441` (21.09 MiB) | `max_message_bytes = 1415`, `max_fragmented_messages = 1`, `send_kbps = 256` |
 | `light` | `"portable"` | `947,776` (0.90 MiB) | `22,746,021` (21.69 MiB) | `21,960,217` (20.94 MiB) | Pinned portable UDP |
 | `light` | `"loopback"` | `947,776` (0.90 MiB) | `25,768,011` (24.57 MiB) | `24,982,207` (23.82 MiB) | In-process loopback |
 | `arena-64` | `NULL` / `"auto"` or `"gso"` | `1,426,240` (1.36 MiB) | `23,408,754` (22.32 MiB) | `22,622,950` (21.57 MiB) | 4 channels, 16 KiB max msg, 2 fragment slots, `W=64`, `P=128` |
@@ -601,7 +606,7 @@ match:
 | `light` | `100` | `NULL` / `"auto"` (includes `xdp`) | `947,776` (0.90 MiB) | `2,010,686,080` (1.87 GiB) | `2,004,397,676` (1.87 GiB) |
 | `light` | `250` | `NULL` / `"auto"` (includes `xdp`) | `947,776` (0.90 MiB) | `2,214,156,355` (2.06 GiB) | `2,207,849,967` (2.06 GiB) |
 | `light` | `500` | `NULL` / `"auto"` (includes `xdp`) | `947,776` (0.90 MiB) | `2,553,273,480` (2.38 GiB) | `2,546,937,076` (2.37 GiB) |
-| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `947,776` (0.90 MiB) | `3,231,507,666` (3.01 GiB) | `3,225,111,294` (3.00 GiB) |
+| `light` | `1000` | `NULL` / `"auto"` or `"xdp"` | `947,776` (0.90 MiB) | `3,238,578,316` (3.02 GiB) | `3,225,111,294` (3.00 GiB) |
 | `light` | `1000` | `"io_uring"` | `947,776` (0.90 MiB) | `2,607,628,266` (2.43 GiB) | `2,601,231,894` (2.42 GiB) |
 | `light` | `1000` | `"gso"` | `947,776` (0.90 MiB) | `1,632,049,972` (1.52 GiB) | `1,625,653,600` (1.51 GiB) |
 | `light` | `1000` | `"portable"` | `947,776` (0.90 MiB) | `1,591,206,196` (1.48 GiB) | `1,584,809,824` (1.48 GiB) |
