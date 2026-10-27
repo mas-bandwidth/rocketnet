@@ -698,6 +698,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_status_client_transport_create_ex.cpp
             tests/test_unit_status_codes_reached.cpp
             tests/test_unit_status_server_transport_create_ex.cpp
+            tests/test_unit_table_churn_probe_bound.cpp
             tests/test_unit_unreliable_in_place.cpp
             tests/test_unit_uring_reap_budget.cpp
             tests/test_unit_uring_rearm.cpp

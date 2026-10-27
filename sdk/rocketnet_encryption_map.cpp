@@ -16,7 +16,6 @@
 #include <stdlib.h>
 
 #define ROCKETNET_ENCRYPTION_INDEX_EMPTY UINT32_MAX
-#define ROCKETNET_ENCRYPTION_INDEX_TOMBSTONE ( UINT32_MAX - 1 )
 
 struct rocketnet_encryption_map_t
 {
@@ -26,7 +25,7 @@ struct rocketnet_encryption_map_t
     uint64_t next_generation;
     uint8_t hash_key[crypto_shorthash_KEYBYTES];
 
-    uint32_t * index;                                        // capacity: public slot index, empty or tombstone
+    uint32_t * index;                                        // capacity: public slot index or empty
     uint32_t * free_indices;                                 // capacity: dense LIFO, no link ownership
     uint64_t * generation;                                   // capacity: full-width live slot generation
     struct rocketnet_address_t * address;                    // hot: full key; NONE is the free state
@@ -160,8 +159,8 @@ void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map )
     rocketnet_free( map->context, map );
 }
 
-static uint64_t rocketnet_encryption_map_hash( const struct rocketnet_encryption_map_t * map,
-                                               const struct rocketnet_address_t * address )
+static uint64_t rocketnet_encryption_map_hash_value( const struct rocketnet_encryption_map_t * map,
+                                                     const struct rocketnet_address_t * address )
 {
     uint8_t address_bytes[ROCKETNET_ADDRESS_BYTES_IPV6];
     int address_bytes_length = rocketnet_write_address_bytes( address_bytes, address );
@@ -169,27 +168,33 @@ static uint64_t rocketnet_encryption_map_hash( const struct rocketnet_encryption
 
     uint8_t hash[crypto_shorthash_BYTES];
     crypto_shorthash( hash, address_bytes, (unsigned long long) address_bytes_length, map->hash_key );
-#if ROCKETNET_TEST_SEAMS
-    map->test_hashes++;
-#endif // #if ROCKETNET_TEST_SEAMS
     uint64_t value;
     memcpy( &value, hash, 8 );
     return value;
 }
 
+static uint64_t rocketnet_encryption_map_hash( const struct rocketnet_encryption_map_t * map,
+                                               const struct rocketnet_address_t * address )
+{
+    const uint64_t value = rocketnet_encryption_map_hash_value( map, address );
+#if ROCKETNET_TEST_SEAMS
+    map->test_hashes++;
+#endif // #if ROCKETNET_TEST_SEAMS
+    return value;
+}
+
 // Returns the stable public slot index, or -1. insertion_position receives
-// the first tombstone, else the first empty cell, for an absent key. A table
-// with fewer than capacity live entries always has an empty or tombstone cell.
-// At full capacity, an absent lookup examines all cells and stops. This keeps
-// the old metadata budget exactly: the keyed index, dense free sequence and
-// full-width generation tags together occupy the old bucket/next/live bytes.
+// the first empty cell for an absent key. A table with fewer than capacity
+// live entries always has an empty cell. At full capacity, an absent lookup
+// examines all cells and stops. This keeps the old metadata budget exactly:
+// the keyed index, dense free sequence and full-width generation tags
+// together occupy the old bucket/next/live bytes.
 static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_map_t * map,
                                             const struct rocketnet_address_t * address,
                                             uint64_t hash,
                                             int * insertion_position )
 {
     const int home = (int) ( hash % (uint64_t) map->capacity );
-    int tombstone = -1;
     for ( int probe = 0; probe < map->capacity; ++probe )
     {
         const int position = (int) ( ( (uint64_t) home + (uint64_t) probe ) % (uint64_t) map->capacity );
@@ -200,14 +205,8 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
         {
             if ( insertion_position )
-                *insertion_position = tombstone >= 0 ? tombstone : position;
+                *insertion_position = position;
             return -1;
-        }
-        if ( candidate == ROCKETNET_ENCRYPTION_INDEX_TOMBSTONE )
-        {
-            if ( tombstone < 0 )
-                tombstone = position;
-            continue;
         }
 
         if ( candidate >= (uint32_t) map->capacity )
@@ -222,8 +221,38 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
         }
     }
     if ( insertion_position )
-        *insertion_position = tombstone;
+        *insertion_position = -1;
     return -1;
+}
+
+// Backward-shift deletion (as in rocketnet_client_slots.cpp): clearing the
+// hole and shifting every later entry whose home is not cyclically in
+// (hole, scan] back into the hole keeps every surviving probe cluster
+// searchable and leaves no tombstone. The scan does not count as a lookup
+// probe. A full table has no empty cell, so the hole itself, cleared first,
+// is the empty cell the scan stops at.
+static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_map_t * map, int hole )
+{
+    map->index[hole] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
+    int scan = hole;
+    for ( int step = 0; step < map->capacity; ++step )
+    {
+        scan = scan + 1 == map->capacity ? 0 : scan + 1;
+        const uint32_t candidate = map->index[scan];
+        if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
+            break;
+        if ( candidate >= (uint32_t) map->capacity )
+            continue;
+        const int slot = (int) candidate;
+        const int home = (int) ( rocketnet_encryption_map_hash_value( map, &map->address[slot] ) % (uint64_t) map->capacity );
+        const bool stays = hole <= scan ? ( hole < home && home <= scan )
+                                        : ( hole < home || home <= scan );
+        if ( stays )
+            continue;
+        map->index[hole] = candidate;
+        map->index[scan] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
+        hole = scan;
+    }
 }
 
 int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map, const struct rocketnet_address_t * address )
@@ -333,7 +362,7 @@ static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_
     if ( rocketnet_encryption_map_lookup( map, &map->address[index], hash, &index_position ) != index ||
          index_position < 0 )
         return false;
-    map->index[index_position] = ROCKETNET_ENCRYPTION_INDEX_TOMBSTONE;
+    rocketnet_encryption_map_erase_index( map, index_position );
 
     // the secrets are wiped; the rest of the entry is unreachable once it is
     // not live, and the next add writes it whole
