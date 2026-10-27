@@ -97,10 +97,10 @@ struct rn_channels_t
     uint32_t pending;                 // the send descriptor between start and finish, or RN_DESCRIPTOR_NONE
     uint32_t pending_bytes;           // what the pending start reserved
     uint32_t pending_channel;
-    uint32_t ready_head, ready_tail;  // the channels with queued sends, oldest turn first (9.1)
-    uint32_t ready_ticket_next;       // next ready-list membership ticket, from 1; 0 is not a member
-    uint32_t queue_holes;             // cancelled descriptors still linked in some channel FIFO
-    uint32_t schedule_work;           // links visited by compact and ticket rebase; one pass, not per record
+    uint32_t ready_head, ready_tail;  // cached ends of the flat ready sequence over channel_send, oldest turn first (9.1)
+    uint32_t ready_ticket_next;       // next ready-sequence membership ticket, from 1; 0 is not a member
+    uint32_t queue_holes;             // cancelled descriptors still sequenced in some channel FIFO
+    uint32_t schedule_work;           // queue entries visited by compact and ticket rebase; one pass, not per record
 };
 
 // Binds the dispatch to one connection's region. Allocates nothing: the
@@ -192,7 +192,7 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes );
 bool rn_channels_cancel( struct rn_channels_t * channels );
 
 // Marks one queued descriptor a hole when it still names generation and owner_epoch.
-// The link stays until compact. False changes nothing (tla/RNChannelQueues.tla Cancel).
+// The sequence entry stays until compact. False changes nothing (tla/RNChannelQueues.tla Cancel).
 bool rn_channels_cancel_queued( struct rn_channels_t * channels, uint32_t channel, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch );
 
 // One pass over the channel FIFOs that still hold holes: rebuild each chain,

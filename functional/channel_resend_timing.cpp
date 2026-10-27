@@ -393,7 +393,7 @@ static int block_cost_small_held( const rocketnet_channel_harness_t * h )
     const rn_ordered_t * ordered = &h->message_client->object.connections[0].ordered;
     const rn_window_ack_t * ack = &ordered->ack;
     const rn_region_t * region = ordered->channels.region;
-    for ( uint32_t cursor = ack->resend_head; cursor != RN_RESEND_NONE; cursor = region->resend_fifo[cursor].next )
+    for ( uint32_t cursor = rn_window_ack_resend_first( ack, false ); cursor != RN_RESEND_NONE; cursor = rn_window_ack_resend_next( ack, false, cursor ) )
     {
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( slot->acked )

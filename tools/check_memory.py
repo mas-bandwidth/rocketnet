@@ -77,6 +77,31 @@ for transport in transports:
         # portable, msgx, one-queue gso and iocp each plan two workers;
         # statistics run no thread
         assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
+    # The light rows: the public light presets, each created with an
+    # allocator exposing exactly its public required_memory bytes in one
+    # guarded block. Sufficiency is the arena's own evidence (peak at or
+    # under capacity, no refusal, no canary damage, nothing live after
+    # destroy, second cycle peak equal to the first), never the process
+    # heap behind it. The 1000-client row is the max supported light
+    # server population; it runs on portable, the smaller rows on every
+    # native transport this checker drives.
+    light_profiles = [profiles[0], profiles[1]]
+    if transport == 'portable':
+        light_profiles.append(profiles[2])
+    for profile in light_profiles:
+        _, server, client = run(*profile, transport, 1, '--light-lifecycle')
+        assert server['lifecycle'] == 'server' and client['lifecycle'] == 'client'
+        assert server['profile'] == 'light' and client['profile'] == 'light'
+        for row in (server, client):
+            assert row['arena_capacity_bytes'] == row['required_bytes'], (transport, profile, row)
+            assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
+            assert row['second_cycle_peak_bytes'] == row['first_cycle_peak_bytes'], (transport, profile, row)
+            assert row['final_live_bytes'] == 0, (transport, profile, row)
+            assert row['refused_allocations'] == 0, (transport, profile, row)
+            assert row['invalid_frees'] == 0, (transport, profile, row)
+            assert row['canaries_ok'] is True, (transport, profile, row)
+        assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')

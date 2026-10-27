@@ -1742,6 +1742,32 @@ static void rn_soak_reset( rn_soak_side_t * side )
     side->receipt_count = 0;
 }
 
+// The soak's own copy of layer 6's flat FIFO: live descriptors of one channel
+// ordered by enqueue_ticket over the flat descriptor array.
+static void rn_soak_queue_sync( rn_region_t * region, uint32_t channel_index )
+{
+    rn_channel_send_t * channel = &region->channel_send[channel_index];
+    channel->queue_head = RN_DESCRIPTOR_NONE;
+    channel->queue_tail = RN_DESCRIPTOR_NONE;
+    uint32_t head_ticket = 0, tail_ticket = 0;
+    for ( uint32_t d = 0; d < region->queue; d++ )
+    {
+        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
+        if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->channel != channel_index )
+            continue;
+        if ( channel->queue_head == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < head_ticket )
+        {
+            channel->queue_head = d;
+            head_ticket = descriptor->enqueue_ticket;
+        }
+        if ( channel->queue_tail == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket > tail_ticket )
+        {
+            channel->queue_tail = d;
+            tail_ticket = descriptor->enqueue_ticket;
+        }
+    }
+}
+
 static void rn_soak_send( rn_soak_side_t * side )
 {
     rn_region_t * region = side->sender;
@@ -1807,15 +1833,11 @@ static void rn_soak_send( rn_soak_side_t * side )
         }
         check( offset == (uint32_t) bytes );
 
-        // queue it on its channel's FIFO (layer 6's fields)
+        // queue it on its channel's flat FIFO (layer 6's ticket sequence)
 
         rn_channel_send_t * channel = &region->channel_send[descriptor->channel];
-        descriptor->next = RN_DESCRIPTOR_NONE;
-        if ( channel->queue_tail == RN_DESCRIPTOR_NONE )
-            channel->queue_head = d;
-        else
-            region->send_descriptors[channel->queue_tail].next = d;
-        channel->queue_tail = d;
+        rn_descriptor_enqueue_stamp( region, descriptor );
+        rn_soak_queue_sync( region, descriptor->channel );
         channel->queued[descriptor->priority]++;
         descriptor->ordering = channel->ordered_write++;
         channel->sequenced_write = 0;
@@ -1848,9 +1870,9 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             if ( side->sent_count == region->packets || side->ref_next + fragments > region->sent_ref_entries )
                 return;
 
-            channel->queue_head = descriptor->next;
-            if ( channel->queue_head == RN_DESCRIPTOR_NONE )
-                channel->queue_tail = RN_DESCRIPTOR_NONE;
+            descriptor->enqueue_ticket = 0;
+            descriptor->schedule_flags = 0;
+            rn_soak_queue_sync( region, c );
             channel->queued[descriptor->priority]--;
             descriptor->first_number = side->next_number;
             descriptor->fragments = (uint16_t) fragments;
@@ -3440,8 +3462,8 @@ static void test_channels_window_failed_send_marks_due_now()
     check( region->send_numbers[2].number == 2 && region->send_numbers[2].ring_start == 48 );
     check( ack.resend_count == 3 );
     check( ack.resend_head == 1 );
-    check( region->resend_fifo[1].next == 2 );
-    check( region->resend_fifo[2].next == 0 );
+    check( rn_window_ack_resend_next( &ack, false, 1 ) == 2 );
+    check( rn_window_ack_resend_next( &ack, false, 2 ) == 0 );
     check( ack.resend_tail == 0 );
 
     // At t = 1.02 (no resend delay wait), resend immediately emits n = 1 and n = 2, and stops at n = 0.
@@ -4166,8 +4188,8 @@ static void channels_window_witness_setup( channels_window_witness_rig_t * rig, 
     rig->region.counters = &rig->counters;
     for ( uint32_t i = 0; i < 8; i++ )
     {
-        rig->resend_fifo[i].prev = RN_RESEND_NONE;
-        rig->resend_fifo[i].next = RN_RESEND_NONE;
+        rig->resend_fifo[i].prev = 0;
+        rig->resend_fifo[i].next = 0;
     }
     rn_window_send_init( &rig->send, &rig->region, 0 );
     rn_window_ack_init( &rig->ack, &rig->send, &rig->region, NULL );
