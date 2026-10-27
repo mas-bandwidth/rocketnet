@@ -30,6 +30,7 @@ timed out, -3 request timed out, -2 cookie request timed out, -1 denied, 0 disco
 | `cIndex` | `client_index` | the index is known (from the first keep-alive) |
 | `cSinceSend`, `cSinceRecv`, `cAge` | `last_send_time`, `last_receive_time`, `attempt_start_time` | ticks since, saturating |
 | `cSeen` | `replay_session` | ids of accepted server session packets |
+| `cPayloadDelivered` | none (ghost) | the application has been handed a payload in connected this attempt; recorded only by the reachability witness's step `ClientRecvPayloadWitness`, so it stays FALSE under `Spec` |
 | `cDiscPending`, `cDiscKeys` | the disconnect burst | copies still to send after `disconnect`, and their keys |
 
 **The server, as the client sees it**: one encryption mapping for the client's address
@@ -228,51 +229,58 @@ payload is accepted only while connected.
 of every kind is dropped" (`KindLoss = "firstkind"`), the code's keep-alive behaviour,
 deadlines and timeouts off, payloads on, no disconnects, checking every safety property
 plus `Connects` and `ServerNotStranded`. The other runs are the same file with the lines
-below changed; the TSV has one row per run.
+below changed, except the seven `Reach-*` runs, whose constants are their S case's with
+only the measured changes the table names; the TSV has one row per run.
 
 | Run | Lines changed from the committed cfg | Spec | Checks beyond the safety set | Distinct states | Result |
 |---|---|---|---|---|---|
-| `L-firstkind` | committed | Spec | Connects, ServerNotStranded | 9748 | pass |
-| `L-none` | KindLoss "none" | Spec | Connects, ServerNotStranded | 4089 | pass |
-| `L-first` | KindLoss "none", C2SPattern "first", S2CPattern "first" | Spec | Connects, ServerNotStranded | 4057 | pass |
-| `L-alternate` | KindLoss "none", C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects, ServerNotStranded | 11237 | pass |
-| `L-burst` | KindLoss "none", C2SPattern "burst", S2CPattern "burst" | Spec | Connects, ServerNotStranded | 4055 | pass |
-| `L-arbitrary` | KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary" | SpecTyped | Connects, ServerNotStranded | 23032 | not finished (stopped at the card's deadline) |
-| `W-once-firstkind` | RepeatKeepAlive FALSE | Spec | Connects | 1312 | fail as expected |
-| `W-once-alternate` | KindLoss "none", RepeatKeepAlive FALSE, C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects | 7413 | fail as expected |
-| `W-anysend` | KeepAliveClock "anysend" | Spec | Connects | 9748 | fail as expected |
+| `L-firstkind` | committed | Spec | Connects, ServerNotStranded | 32712 | pass |
+| `L-none` | KindLoss "none" | Spec | Connects, ServerNotStranded | 14521 | pass |
+| `L-first` | KindLoss "none", C2SPattern "first", S2CPattern "first" | Spec | Connects, ServerNotStranded | 14489 | pass |
+| `L-alternate` | KindLoss "none", C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects, ServerNotStranded | 35385 | pass |
+| `L-burst` | KindLoss "none", C2SPattern "burst", S2CPattern "burst" | Spec | Connects, ServerNotStranded | 14487 | pass |
+| `L-arbitrary` | KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary" | SpecTyped | Connects, ServerNotStranded | 71874 at the 110 s stop | bench debt: arbitrary-loss-liveness-over-budget |
+| `W-once-firstkind` | RepeatKeepAlive FALSE | Spec | Connects | 1752 | fail as expected |
+| `W-once-alternate` | KindLoss "none", RepeatKeepAlive FALSE, C2SPattern "alternate", S2CPattern "alternate" | Spec | Connects | 22849 | fail as expected |
+| `W-anysend` | KeepAliveClock "anysend" | Spec | Connects | 32712 | fail as expected |
 | `L-silent` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | SilentServerTimesOut, AttemptResolves | 20 | pass |
-| `L-crash` | Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none" | Spec | CrashedServerTimesOut, AttemptResolves | 772894 | pass |
-| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 28369060 | not finished (stopped at the card's deadline) |
-| `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | 74297106 | pass |
-| `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | 18268052 | pass |
-| `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | 24756464 | pass |
-| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | 75959281 | not finished (stopped at the card's deadline) |
-| `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 7054770 | pass |
-| `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 5051198 | pass |
+| `L-crash` | Timeout 3, Deadline 6, ServerDeadline 4, MaxNonces 2, Disconnects TRUE, KindLoss "none" | Spec | CrashedServerTimesOut, AttemptResolves | - at the 110 s stop | bench debt: crash-timeout-liveness-over-budget |
+| `S-none` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-none` |
+| `S-first` | Timeout 2, Deadline 5, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "first", S2CPattern "first", Duplication TRUE, Reordering TRUE | Spec | safety only | 2234 | pass (handshake up to the timeout) |
+| `S-alternate` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "alternate", S2CPattern "alternate", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-alternate` |
+| `S-burst` | MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "burst", S2CPattern "burst", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-burst` |
+| `S-arbitrary` | Timeout 2, Deadline 5, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", Duplication TRUE, Reordering TRUE | Spec | safety only | - at the 110 s stop | bench debt: reduced replacement `Reach-arbitrary` |
+| `S-firstkind` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 12162 | pass (handshake up to the timeout) |
+| `S-delay` | Timeout 2, Deadline 4, ServerDeadline 3, MaxNonces 2, KindLoss "none", C2SPattern "first", S2CPattern "first", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | safety only | 2196 | pass (handshake up to the timeout) |
+| `Reach-none` | the S-none constants | SpecReach | NotReached | 86216 | fail as expected (NotReached violated) |
+| `Reach-first` | the S-first constants, Timeout 3 | SpecReach | NotReached | 19163 | fail as expected (NotReached violated) |
+| `Reach-alternate` | the S-alternate constants | SpecReach | NotReached | 118680 | fail as expected (NotReached violated) |
+| `Reach-burst` | the S-burst constants | SpecReach | NotReached | 22592 | fail as expected (NotReached violated) |
+| `Reach-arbitrary` | the S-arbitrary constants | SpecReach | NotReached | 69297 | fail as expected (NotReached violated) |
+| `Reach-firstkind` | the S-firstkind constants, Timeout 5, ServerDeadline 4, Deadline 8, Disconnects FALSE, OthersMayJoin FALSE | SpecReach | NotReached | 1009269 | fail as expected (NotReached violated) |
+| `Reach-delay` | the S-delay constants, Timeout 3 | SpecReach | NotReached | 16493 | fail as expected (NotReached violated) |
 | `F4-ephemeral` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | EphemeralErasedOutsideHandshake | 20 | pass |
 | `F8-terminal` | Timeout 2, MaxAttempts 2, Disconnects TRUE, ServerMute TRUE, KindLoss "none" | Spec | TerminalAbsorbing | 149 | pass |
-| `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 17569 | fail as expected (observation) |
+| `OBS-keys` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", C2SPattern "arbitrary", S2CPattern "arbitrary", MaxDelay 1, Duplication TRUE, Reordering TRUE | Spec | KeysErasedWhenDown | 13059 | fail as expected (observation) |
 | `W-denied-keeps-keys` | Timeout 0, Deadline 0, OthersMayJoin TRUE, Disconnects FALSE, ServerPayloads FALSE, KindLoss "none" | SpecDeniedKeepsKeys | KeysErasedWhenDown | 250 | fail as expected |
 
 The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
 `DisconnectCopies = 2`, `Capacity = 2`, `BurstStart = 1`, `BurstLen = 2`. Liveness runs
 (`L-*`, `W-*`): a FIFO link, `MaxNonces = 1`, `MaxAttempts = 1`, every deadline off.
-Safety runs (`S-*`): duplication and reordering on, `MaxNonces = 2`, the application
-and the server may disconnect, other clients may take the slot, deadlines on where the
-pattern lets the handshake finish inside them and off where it does not
-(`"alternate"`, `"burst"`, `"firstkind"`); `S-firstkind` and `S-delay` add a tick of
-latency; `S-arbitrary` adds a second attempt (a reconnect, so a late packet of an old
-attempt meets a new one) and did not finish inside the card's deadline: 74.6 million
-distinct states with no violation when it was stopped, and TLC reports a violation the
-moment it finds one. `S-none` with latency and the full environment was stopped at 28
-million states for the same reason; `S-firstkind` (7 million, complete) is the
-latency-plus-full-environment run that finished. `L-arbitrary` under `SpecTyped` was
-stopped 42 minutes into its temporal check (69 thousand graph nodes): the per-type
-implications are what TLC's tableau is slow on. Under `Spec` the same instance fails
-with the type-targeted drop of "What TLC found" 9, which is the fairness being too
-weak, not the protocol; the arbitrary-loss liveness therefore stands on the hand
-replay of that lasso and on the four deterministic patterns, not on a completed run.
+Safety runs (`S-*`): duplication and reordering on, `MaxNonces = 2`, the application and
+the server may disconnect, other clients may take the slot; `S-firstkind` and `S-delay`
+add a tick of latency; `S-arbitrary` adds a second attempt (a reconnect, so a late
+packet of an old attempt meets a new one). `L-arbitrary` under `SpecTyped` and `L-crash`
+do not finish inside the 110 s per-case budget, and `S-none`, `S-alternate`, `S-burst`
+and `S-arbitrary` do not either: they are explicit bench debt, and `S-none`,
+`S-alternate`, `S-burst` and `S-arbitrary` name a reduced reachability replacement that
+does reach CONNECTED. Under `Spec` the arbitrary-loss instance fails with the
+type-targeted drop of "What TLC found" 9, which is the fairness being too weak, not the
+protocol; the arbitrary-loss liveness therefore stands on the hand replay of that lasso
+and on the four deterministic patterns, not on a completed run. `S-first`, `S-firstkind`
+and `S-delay` pass at their `Timeout 2` constants, which is the handshake up to the idle
+timeout and never connected; their connected coverage is the reduced reachability
+witnesses `Reach-first`, `Reach-firstkind` and `Reach-delay`.
 
 ### Loss patterns explored
 
@@ -280,7 +288,7 @@ Each run names its patterns in the TSV. Across the runs TLC explored: nothing lo
 (`"none"`); the first send on each link lost (`"first"`); every other send lost
 (`"alternate"`: "the first packet dropped, the second through", forever); sends 1 and 2
 lost (`"burst"`); any copy dropped at any time (`"arbitrary"`); and the first packet of
-every kind lost (`KindLoss = "firstkind"`, applied before the link). In every safety run
+every kind lost (`KindLoss = "firstkind"`, applied before the link). In every S-environment run
 both links also duplicate and reorder, and in `S-firstkind`, `S-delay` and the three
 findings runs delay by a tick, so an old packet arriving late and a replayed packet are
 in every safety run. The liveness runs use a FIFO link (the fairness section says why).
@@ -291,6 +299,40 @@ Every counterexample below was replayed by hand through the functions it names b
 it was written down. Three are findings in the code (all three already in
 `docs/TLA-INVENTORY.md`, now reproduced as traces); the rest are model errors fixed on
 the way, or the reversed witnesses doing their job.
+
+### Connected under the S environment (reversed reachability witnesses)
+
+The S-environment cases are the only safety runs with `Duplication` and `Reordering`
+on, so they are the only place a connected client sees duplicated and reordered
+packets. Three of them set `Timeout 2`, and at that timeout the client never connects:
+the idle timeout fires before the cookie-carrying request leaves. A scratch reachability
+probe over `MCClientConnectionSFirst.cfg` that checks `~(cstate = 4)` completes with no
+violation: 9,355 states generated, 2,234 distinct. Its only route runs out like this:
+
+1. connect (`cstate` 1, `cSinceSend` 1);
+2. `ClientSend` sends the first request, which `C2SPattern = "first"` loses;
+3. a tick (`cSinceRecv` 1);
+4. the second request enters the wire; the server answers twice, the first cookie lost
+   to `S2CPattern = "first"`;
+5. `ClientRecvCookie` takes `cstate` to 2 with `cSinceRecv` still 1 — a cookie restarts
+   no clock (`OnlyAuthenticatedRefreshes`);
+6. one tick takes `cSinceRecv` to 2 and `Timeout 2` fires: `cstate` 2 -> -3, before any
+   request carrying the cookie goes out (`cReqFams` stays `{}`).
+
+`SpecReach` adds one step, `ClientRecvPayloadWitness`: exactly the payload acceptance
+`ClientRecvSession` makes in connected, with the delivery recorded in the ghost
+`cPayloadDelivered`. `ReachConnected` is `cstate = 4 /\ cPayloadDelivered` and
+`NotReached` is its negation. Each `MCClientConnectionReach*.cfg` runs `SpecReach` under
+its S case's loss pattern and checks `NotReached`; TLC violates it in every one, so
+connected with a payload delivered is reachable under every S environment. `ReachSNone`,
+`ReachSAlternate`, `ReachSBurst` and `ReachSArbitrary` use their S case's constants
+unchanged. `ReachSFirst`, `ReachSDelay` and `ReachSFirstkind` raise the timeout to the
+measured values that let the handshake finish (3, 3 and 5); first-of-kind loss also
+drops the first response and the first keep-alive, so `ReachSFirstkind` raises the
+server handshake deadline to 4 and the client deadline to 8 and turns the application
+branches off (no disconnects, no other clients) to stay inside the 110 s budget. The
+three S cases at `Timeout 2` remain the controls: they pass and cover the handshake up
+to that timeout, not connected.
 
 ### The hang, reproduced (reversed witnesses)
 
@@ -409,19 +451,21 @@ original parameters and is not a completed proof.
 | 20 | `MCClientConnectionWAnysend.cfg` | temporal / Connects |
 | 21 | `MCClientConnectionLSilent.cfg` | pass |
 | 22 | `MCClientConnectionLCrash.cfg` | pass; debt: crash-timeout-liveness-over-budget |
-| 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget |
-| 24 | `MCClientConnectionSFirst.cfg` | pass; debt: first-loss-full-environment-safety-over-budget |
-| 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget |
-| 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget |
-| 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget |
-| 28 | `MCClientConnectionSFirstkind.cfg` | pass; debt: first-kind-latency-safety-over-budget |
-| 29 | `MCClientConnectionSDelay.cfg` | pass; debt: delayed-first-loss-safety-over-budget |
+| 23 | `MCClientConnectionSNone.cfg` | pass; debt: full-environment-safety-over-budget-reduced-replacement-MCClientConnectionReachSNone.cfg |
+| 24 | `MCClientConnectionSFirst.cfg` | pass (handshake up to the timeout) |
+| 25 | `MCClientConnectionSAlternate.cfg` | pass; debt: alternate-loss-full-environment-safety-over-budget-reduced-replacement-MCClientConnectionReachSAlternate.cfg |
+| 26 | `MCClientConnectionSBurst.cfg` | pass; debt: burst-loss-full-environment-safety-over-budget-reduced-replacement-MCClientConnectionReachSBurst.cfg |
+| 27 | `MCClientConnectionSArbitrary.cfg` | pass; debt: arbitrary-loss-safety-over-budget-reduced-replacement-MCClientConnectionReachSArbitrary.cfg |
+| 28 | `MCClientConnectionSFirstkind.cfg` | pass (handshake up to the timeout) |
+| 29 | `MCClientConnectionSDelay.cfg` | pass (handshake up to the timeout) |
 | 30 | `MCClientConnectionF4Ephemeral.cfg` | pass |
 | 31 | `MCClientConnectionF8Terminal.cfg` | pass |
 | 32 | `MCClientConnectionObsKeys.cfg` | invariant / KeysErasedWhenDown |
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
 
-### 2026-10-21: the cookie restarts nothing (OnlyAuthenticatedRefreshes)
+Seven reversed reachability witnesses have no historical row: `MCClientConnectionReachSNone.cfg`, `MCClientConnectionReachSFirst.cfg`, `MCClientConnectionReachSAlternate.cfg`, `MCClientConnectionReachSBurst.cfg`, `MCClientConnectionReachSArbitrary.cfg`, `MCClientConnectionReachSFirstkind.cfg` and `MCClientConnectionReachSDelay.cfg` (invariant / NotReached).
+
+### The cookie restarts nothing (OnlyAuthenticatedRefreshes)
 
 `ClientRecvCookie` no longer sets `cSinceRecv' = 0`, matching
 `rocketnet_client_process_cookie`, which no longer writes
@@ -441,19 +485,16 @@ against the code by hand: `rocketnet_client_protocol_connect` sets
 to the cookie's arrival time, which is what
 `test_client_cookie_does_not_refresh_idle_timer` catches on the old code.
 
-The whole `clientconnection` group was re-measured on captain (Linux, pinned
-jar, `/opt/tla/tlacheck`, one shard per case, 110 s each). Every declared
-outcome holds. Three bench debt cases that timed out before now finish
-inside the budget, because a cookie no longer resets the clock and the state
-space shrank: `SFirst` (2,234 distinct), `SFirstkind` (12,162) and `SDelay`
-(2,196). The other six debt cases still exit 124. The records in
-`tla/RUNS.tsv` were written again on amd-1 (Linux, pinned jar, one shard per
-case, `mode = bounded`, 110 s) when the branch was brought onto main 0f44ecd8,
-and joined with `tlacheck merge --keep tla/RUNS.tsv`: every required case
-reaches its declared result, `CookieTrust` passes and
-`BrokenCookieRefreshes` reaches `OnlyAuthenticatedRefreshes`.
+Every declared outcome in the `clientconnection` group holds in the current
+records in `tla/RUNS.tsv`, one bounded run per case under `tlacheck` and its
+110 s cap: `CookieTrust` passes and `BrokenCookieRefreshes` reaches
+`OnlyAuthenticatedRefreshes`. `SFirst` (2,234 distinct), `SFirstkind` (12,162)
+and `SDelay` (2,196) pass at their `Timeout 2` constants, which covers the
+handshake up to the idle timeout and never connected; the connected coverage
+those constants owe is the `Reach-first`, `Reach-firstkind` and `Reach-delay`
+witnesses above.
 
-### 2026-10-24: a connect from a failure state is a fresh attempt (FreshAttemptFromFailure)
+### A connect from a failure state is a fresh attempt (FreshAttemptFromFailure)
 
 `AppConnect` already ran from any `cstate <= 0` and reset the attempt by
 construction (commit 9095b711 lets `rocketnet_client_connect` start over
@@ -469,7 +510,7 @@ timers at zero.
 server of one slot that another client may take (`OthersMayJoin`), the idle
 timeout 3 and the total deadline 5, two attempts, with `SafetyInvariants`,
 `FreshAttemptFromFailure`, `DisconnectIsTerminal`, `TerminalAbsorbing` and
-`StepsForwardOrFails`: pass, 224,362 distinct states. The instance reaches
+`StepsForwardOrFails`: pass, 224,404 distinct states. The instance reaches
 -1 (denied, a slot taken), -2, -3, -4, -5 (the four timeouts) and -7 (the
 deadline) and connects again from each; each was checked on the bench with
 a scratch action property `[][~(cstate = k /\ cstate' = 1)]_vars`, which
@@ -496,9 +537,9 @@ and `rocketnet_client_protocol_connect` runs it again before anything else,
 so `has_cookie` and `return_cookie` are zero at the new attempt; only the
 pre-fix action carries them.
 
-The whole `clientconnection` group (28 cases) was re-measured on vision
-(Linux, pinned jar, `/opt/tla/tlacheck`, which prints `groups --stale` `[]`
-at main, one shard per case, 110 s each) and joined with `tlacheck merge --keep tla/RUNS.tsv`. Every declared outcome holds: `RetryFromFailure`
-passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`;
-the six bench debt cases (`LArbitrary`, `LCrash`, `SNone`, `SAlternate`,
-`SBurst`, `SArbitrary`) still exit 124.
+The `clientconnection` group has 37 cases and `tlacheck groups --root . --stale`
+prints `[]`. Every required case reaches its declared result: `RetryFromFailure`
+passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`, and the
+seven `Reach-*` witnesses each exit 12 on `NotReached`. The six bench debt cases
+(`LArbitrary`, `LCrash`, `SNone`, `SAlternate`, `SBurst`, `SArbitrary`) exit 124 at
+the 110 s budget.
