@@ -26,7 +26,8 @@ static const char * const source_audit_cases[] =
     "test_config_env_every_name_read_is_documented",
     "test_counters_every_counter_is_named_by_a_test",
     "test_counters_every_outcome_in_at_most_one_family",
-    "test_xdp_transport_host_every_counter_has_a_case"
+    "test_xdp_transport_host_every_counter_has_a_case",
+    "test_example_send_safety_every_example_and_snippet"
 };
 
 // The unit suite runs every case in its own worker process, with the

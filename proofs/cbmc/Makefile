@@ -58,6 +58,9 @@ deployed_literal = $(shell grep -E '^\#define[[:space:]]+$(1)[[:space:]]+[0-9]+'
 deployed_comment = $(shell grep -E '^\#define[[:space:]]+$(1)[[:space:]]+' $(SDK)/$(2) | awk '{print $$NF}' | head -1)
 
 REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketnet_history.h)
+# Unwind for the replay proofs, derived from ROCKETNET_HISTORY_PACKETS (via
+# ROCKETNET_REPLAY_WINDOW_BITS): one iteration per history word plus one.
+REPLAY_UNWIND := $(shell expr $(REPLAY_WINDOW_BITS) / 64 + 1)
 MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,rocketnet.h)
 MAX_FRAGMENT_BYTES := $(call deployed_comment,ROCKETNET_MAX_FRAGMENT_BYTES,rocketnet_fragment.h)
 MAX_FRAGMENTS := $(call deployed_literal,ROCKETNET_MAX_FRAGMENTS,rocketnet_fragment.h)
@@ -117,7 +120,7 @@ all: replay-delta-1-3 replay-far reconstruct \
 # The quick per-commit instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
 	@echo "replay-delta-1-3 bound delta 1..3 deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS); deltas 4..$(shell expr $(REPLAY_WINDOW_BITS) - 1) are not proved by this target"
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    -DREPLAY_DELTA_BOUND=4 \
 	    --function harness_replay_near proof_replay_advance.c
 
@@ -135,7 +138,7 @@ define run_replay_near_path
 	trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
 	status=0; \
 	( ulimit -v $(CBMC_REPLAY_MEMORY_KB); \
-	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --external-sat-solver $(CBMC_REPLAY_SOLVER) \
 	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) \
 	    --function $(2) proof_replay_advance.c ) \
@@ -146,10 +149,10 @@ define run_replay_near_path
 	if grep -q 'UNKNOWN' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD UNKNOWN"; exit 1; fi; \
 	if grep -Eqi 'unwinding assertion.*FAILURE|FAILURE.*unwinding assertion' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD unwinding assertion failed"; exit 1; fi; \
 	if [ $$status -ne 0 ] || ! grep -q '^VERIFICATION SUCCESSFUL' "$$work/proof.log"; then echo "replay-near-4096-$(1) HOLD exit=$$status"; exit 1; fi; \
-	echo "replay-near-4096-$(1) VERIFICATION SUCCESSFUL full-domain=1..$$(expr $(REPLAY_WINDOW_BITS) - 1) partition=$(1) unwind=65"; \
+	echo "replay-near-4096-$(1) VERIFICATION SUCCESSFUL full-domain=1..$$(expr $(REPLAY_WINDOW_BITS) - 1) partition=$(1) unwind=$(REPLAY_UNWIND)"; \
 	status=0; \
 	( ulimit -v $(CBMC_REPLAY_MEMORY_KB); \
-	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	  timeout $(CBMC_REPLAY_TIMEOUT) $(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --external-sat-solver $(CBMC_REPLAY_SOLVER) \
 	    -DREPLAY_DELTA_BOUND=$(REPLAY_WINDOW_BITS) -DREPLAY_REACHABILITY_WITNESS=1 \
 	    --function $(2) proof_replay_advance.c ) \
@@ -191,7 +194,7 @@ replay-near-4096: proof_replay_advance.c
 
 replay-far: proof_replay_advance.c
 	@echo "replay-far bound delta >= $(REPLAY_WINDOW_BITS) deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 65 -I$(SDK) \
+	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --function harness_replay_far proof_replay_advance.c
 
 reconstruct: proof_reconstruct_sequence.c
@@ -276,6 +279,47 @@ xdp-free-list: proof_xdp_free_list.c
 	@echo "xdp-free-list bound capacity 3 frames deployed ROCKETNET_XDP_NUM_FRAMES=$(XDP_NUM_FRAMES) frames of $(XDP_FRAME_SIZE) bytes"
 	$(CBMC) $(CBMC_FLAGS) --unwind 5 -I$(SDK) proof_xdp_free_list.c
 
+# Paired reachability controls. Each per-commit target above has a
+# `<target>-reachability` partner that recompiles the same harness with a
+# guarded __CPROVER_assert(0) after the production call(s). The control
+# passes only when CBMC reports exactly one failure, on the named control
+# assertion, with VERIFICATION FAILED; anything else is a HOLD.
+define run_reachability
+	@work=$$(mktemp -d); trap 'rm -rf "$$work"' EXIT HUP INT TERM; \
+	status=0; \
+	( $(CBMC) $(CBMC_FLAGS) --unwind $(2) $(3) $(4) ) > "$$work/out.log" 2>&1 || status=$$?; \
+	cat "$$work/out.log"; \
+	failures=$$(grep -c ': FAILURE$$' "$$work/out.log" || true); \
+	if [ $$status -eq 10 ] && [ $$failures -eq 1 ] && \
+	   grep -q '^VERIFICATION FAILED' "$$work/out.log" && \
+	   grep -q '$(5)' "$$work/out.log"; then \
+	  echo "$(1)-reachability EXPECTED FAILURE"; \
+	else \
+	  echo "$(1)-reachability HOLD: expected exactly one named failure (exit=$$status failures=$$failures)"; exit 1; \
+	fi
+endef
+
+.PHONY: replay-delta-1-3-reachability replay-far-reachability reconstruct-reachability \
+        read-write-reachability message-read-reachability xdp-free-list-reachability
+
+replay-delta-1-3-reachability: proof_replay_advance.c
+	$(call run_reachability,replay-delta-1-3,$(REPLAY_UNWIND),-I$(SDK) -DREPLAY_DELTA_BOUND=4 -DREPLAY_REACHABILITY_WITNESS=1 --function harness_replay_near proof_replay_advance.c,,replay path reachability negative control)
+
+replay-far-reachability: proof_replay_advance.c
+	$(call run_reachability,replay-far,$(REPLAY_UNWIND),-I$(SDK) -DREPLAY_FAR_REACHABILITY=1 --function harness_replay_far proof_replay_advance.c,,replay-far reachability control)
+
+reconstruct-reachability: proof_reconstruct_sequence.c
+	$(call run_reachability,reconstruct,1,-DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
+
+read-write-reachability: proof_read_write.c
+	$(call run_reachability,read-write,9,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_read_write.c,,read-write reachability control)
+
+message-read-reachability: proof_message_read.c
+	$(call run_reachability,message-read,8,-DNDEBUG -I$(SDK) -DREACHABILITY_CONTROL=1 proof_message_read.c,,message-read reachability control)
+
+xdp-free-list-reachability: proof_xdp_free_list.c
+	$(call run_reachability,xdp-free-list,5,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_xdp_free_list.c,,xdp-free-list reachability control)
+
 clean:
 	rm -f *.goto *.output
 
@@ -287,6 +331,10 @@ clean:
 NIGHTLY :=
 
 -include $(wildcard */proof.mk)
+
+# The full near-window proof runs nightly, not per commit (see
+# .github/workflows/nightly-proofs.yml and the HOLD in INVENTORY.md).
+NIGHTLY += replay-near-4096
 
 .PHONY: nightly
 
