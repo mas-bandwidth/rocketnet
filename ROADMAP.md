@@ -160,7 +160,7 @@ Portable remains a fallback rather than a performance target. The owner enabled 
 
 ## XDP (later)
 
-The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes after v1.0.0-preview-1; RocketNet already runs with XDP, measured at 10 Gbps.
+The AF_XDP server transport, the xdp column; every other column is —. Further XDP work comes after v1.0.0-preview-1; RocketNet has run live with AF_XDP in copy mode: 60-second non-timing correctness rungs at 1, 10, 100, 500 and 1000 clients (415e796d, runtime source a76d641a; docs/QUALIFICATION-v1.0.0-preview-2.md) and a 1000-client LAN proof for 300 s on a 10000 Mb/s server NIC with a minimum per-client rate of 283 kbps (docs/runs/lan-1000-proof-xdp.md, head 534cce2e). No record in this repository measures 10 Gbps throughput; zero-copy and line-rate performance are unqualified (docs/QUALIFICATION-v1.0.0-preview-2.md, docs/LIVE-XDP.md).
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
@@ -177,7 +177,7 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
 | Preview-2 live AF_XDP copy-mode correctness at 1, 10, 100, 500 and 1000 clients | ✅ | — | — | — | — | — | — | — |
 | Packet blaster and simulated-client harnesses at line rate | ❌ | — | — | — | — | — | — | — |
-| Ownership and retry paths regression-validated against the 10 Gbps baseline | ❌ | — | — | — | — | — | — | — |
+| Ownership and retry paths regression-validated against a recorded throughput baseline | ❌ | — | — | — | — | — | — | — |
 | Privileged syscall-failure coverage in its own lab | ❌ | — | — | — | — | — | — | — |
 | The live stress run: the XDP server against one client from every test machine (later) | ❌ | — | — | — | — | — | — | — |
 | complete | 75% | — | — | — | — | — | — | — |

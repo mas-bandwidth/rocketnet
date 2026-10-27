@@ -25,9 +25,15 @@ offer one 32-byte application message per client per second in each direction
 with the fixed-rate option below. For the stock 1,000-client acceptance, run
 the `default` profile so the result covers SDK-default sizing. The `light`
 profile is a separate, additional bounded-memory workload; it cannot substitute
-for the default-profile acceptance. The current `bin/load` harness and the
-demonstrated 1,000-player configuration are capped at `ROCKETNET_MAX_CLIENTS`
-(1,000) and apply only under their exact workload and deployment assumptions.
+for the default-profile acceptance. The current `bin/load` harness is capped
+at `ROCKETNET_MAX_CLIENTS` (1,000) and records no ladder results (below). The
+recorded 1,000-client results are the LAN proof cells in
+[`runs/lan-1000-proof.md`](runs/lan-1000-proof.md) (1,000 clients for 600 s,
+300 s for AF_XDP, against Linux `gso`, `io_uring`, and AF_XDP copy-mode
+servers and a macOS `msgx` server; minimum per-client rates of 276–283 kbps)
+and the 60-second non-timing correctness rungs in
+[`QUALIFICATION-v1.0.0-preview-2.md`](QUALIFICATION-v1.0.0-preview-2.md);
+they apply only under their exact workload and deployment assumptions.
 Above 1,000 players, callers research, stabilize, and qualify their own
 configuration, memory budget, and host/NIC deployment; no arbitrary client
 count or validated-above-1000 guarantee is available.
@@ -311,8 +317,10 @@ requirements to each configuration group:
   and transport headers are dimensioned by `ROCKETNET_MAX_CLIENTS` (default
   `1000`). If a build never hosts more than `N` clients, compiling with
   `-DROCKETNET_MAX_CLIENTS=N` shrinks those static header tables as well.
-- **Scale qualification boundary**: The demonstrated 1,000-player configuration
-  documented here applies only with its exact workload and deployment
+- **Scale qualification boundary**: The recorded 1,000-client results in
+  [`runs/lan-1000-proof.md`](runs/lan-1000-proof.md) and
+  [`QUALIFICATION-v1.0.0-preview-2.md`](QUALIFICATION-v1.0.0-preview-2.md)
+  apply only with their exact workload and deployment
   assumptions. Above 1,000 players, callers must research, stabilize, and
   qualify their own configuration, memory budget, and host/NIC deployment; no
   arbitrary client count or validated-above-1000 guarantee is available.
