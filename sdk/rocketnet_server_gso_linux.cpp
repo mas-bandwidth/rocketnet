@@ -915,6 +915,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         return NULL;
 
     new ( gso ) rocketnet_server_gso_t();
+    gso->send_stopped.store( true, std::memory_order_relaxed );
 
     gso->context = context;
     gso->num_queues = num_queues;
@@ -933,6 +934,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     for ( int i = 0; i < num_queues; i++ )
     {
         new ( &gso->queues[i] ) rocketnet_server_gso_queue_t();
+        gso->queues[i].stopped.store( true, std::memory_order_relaxed );
         gso->queues[i].fd = -1;
         gso->queues[i].worker_buffer = &gso->queues[i].buffers[0];
         gso->queues[i].main_buffer = &gso->queues[i].buffers[1];
@@ -1034,9 +1036,11 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
             return NULL;
         }
 
+        queue->stopped.store( false, std::memory_order_relaxed );
         queue->thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_worker, queue );
         if ( !queue->thread )
         {
+            queue->stopped.store( true, std::memory_order_relaxed );
             rocketnet_platform_mutex_destroy( &queue->receive_mutex );
             rocketnet_server_gso_abort_create( gso );
             return NULL;
@@ -1056,9 +1060,11 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         rocketnet_server_gso_abort_create( gso );
         return NULL;
     }
+    gso->send_stopped.store( false, std::memory_order_relaxed );
     gso->send_thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_send_worker, gso );
     if ( !gso->send_thread )
     {
+        gso->send_stopped.store( true, std::memory_order_relaxed );
         rocketnet_server_gso_abort_create( gso );
         return NULL;
     }
@@ -1084,9 +1090,9 @@ void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
 bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
 {
     if ( !gso || !gso->stopping ) return false;
-    if ( gso->send_thread && !gso->send_stopped.load( std::memory_order_acquire ) ) return false;
+    if ( !gso->send_stopped.load( std::memory_order_acquire ) ) return false;
     for ( int i = 0; gso->queues && i < gso->num_queues; ++i )
-        if ( gso->queues[i].thread && !gso->queues[i].stopped.load( std::memory_order_acquire ) )
+        if ( !gso->queues[i].stopped.load( std::memory_order_acquire ) )
             return false;
     return true;
 }
