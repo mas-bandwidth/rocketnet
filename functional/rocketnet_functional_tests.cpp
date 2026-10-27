@@ -9180,17 +9180,24 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
 // is false omits them and an explicit --run prints the runs_here refusal.
 extern void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 );
 
+#if ROCKETNET_DEV
 static void rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, false ); }
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
 static void rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, true ); }
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
 static void rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, false ); }
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
 static void rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 1, true ); }
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
 static void rocketnet_test_posix_client_server_gone_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, false ); }
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
 static void rocketnet_test_posix_client_server_gone_xdp_ipv6_client_portable() { rocketnet_posix_hk_run_xdp_cell( 2, true ); }
+#endif // #if ROCKETNET_DEV
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
 
@@ -9223,11 +9230,6 @@ static void wire_totals_client( struct rocketnet_client_transport_t * client, wi
     totals->bytes_sent = stats.bytes_sent;
     totals->bytes_received = stats.bytes_received;
 }
-#endif // #if ROCKETNET_DEV
-#endif // #if ROCKETNET_DEV
-#endif // #if ROCKETNET_DEV
-#endif // #if ROCKETNET_DEV
-#endif // #if ROCKETNET_DEV
 
 static void wire_totals_server( struct rocketnet_server_transport_t * server, wire_totals_t * totals )
 {
@@ -11013,7 +11015,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] =
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
-    { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
+    { "test_posix_hard_killed_client_xdp_ipv4_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable ), ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_xdp_veth_runs_here ) },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable ), rocketnet_test_xdp_veth_runs_here },
     { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable ), rocketnet_test_xdp_veth_runs_here },
     { "test_posix_send_to_closed_port_xdp_ipv6_client_portable", ROCKETNET_FUNCTIONAL_DEV_ONLY( rocketnet_test_posix_send_to_closed_port_xdp_ipv6_client_portable ), rocketnet_test_xdp_veth_runs_here },
