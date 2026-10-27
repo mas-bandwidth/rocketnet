@@ -43,10 +43,13 @@ purpose. In that build a transport list naming `xdp` refuses it at create with
 server host needs no compiler, no `make`, no kernel headers and no temporary
 directory to start `xdp`.
 
-`make` is the front door. It configures `build/` as **Release** and runs the
-child make with `-j` set to the processor count capped at 8; `make JOBS=<n>`
-or the caller's own `-j` overrides it (`Makefile`). CI's Release rows run
-`make` (`.github/workflows/ci.yml`, "Build (Release, through the Makefile)"):
+`make` is the front door. It configures `build/` as **Release** with
+`-DROCKETNET_DEV=ON` (`make ROCKETNET_DEV=OFF` builds the production library;
+`BUILDING.md`, "Production builds"), shows the configure status lines for XDP
+and `liburing`, and runs the child make with `-j` set to the processor count
+capped at 8; `make JOBS=<n>` or the caller's own `-j` overrides it (`Makefile`).
+CI's Release rows run `make` (`.github/workflows/ci.yml`, "Build (Release,
+through the Makefile)"):
 
 ```sh
 make JOBS=4
@@ -56,7 +59,8 @@ A Debug build is configured directly, as CI's Debug row does
 (`.github/workflows/ci.yml`): `cmake -B build -DCMAKE_BUILD_TYPE=Debug`
 then `cmake --build build --parallel 4`. Both write their executables and
 shared libraries into `bin/` (`CMakeLists.txt`), and `make` reconfigures
-`build/` to Release (`Makefile`), so use one or the other in a checkout.
+`build/` to Release with `-DROCKETNET_DEV=ON` unless `ROCKETNET_DEV` is set
+(`Makefile`), so use one or the other in a checkout.
 
 The executables this guide runs: `./bin/test` (the unit suite, no sockets,
 `BUILDING.md`), `./bin/functional` (real sockets and real transports,
