@@ -285,6 +285,7 @@ REGISTER_UNIT_TEST( test_server_admits_sequential_fresh_tokens_past_twice_max_cl
 // The four clients are static: an unoptimised MSVC build stacks them all at
 // once, past the default 1 MB stack. tc_client_init resets each in full.
 
+#if ROCKETNET_DEV
 static void test_server_refuses_a_token_connected_now()
 {
     static struct tc_server_t t;
@@ -403,6 +404,7 @@ static void test_server_rejects_an_expired_token_before_any_crypto()
 }
 
 REGISTER_UNIT_TEST( test_server_rejects_an_expired_token_before_any_crypto );
+#endif // #if ROCKETNET_DEV
 
 // A token whose connection has closed may connect again inside its short
 // expiry: the residual risk accepted by the design (docs/SESSION.md, Token
@@ -488,6 +490,7 @@ REGISTER_UNIT_TEST( test_response_replay_does_not_refresh_connected_slot );
 #define TC_CLAIM_CAPACITY           4
 #define TC_CLAIM_DEADLINE_SECONDS   5.0
 
+#if ROCKETNET_DEV
 static void tc_claim_id( uint8_t * identifier, uint8_t value )
 {
     memset( identifier, 0, ROCKETNET_TOKEN_IDENTIFIER_BYTES );
@@ -748,7 +751,6 @@ static void test_claim_expired_identifier_moves_to_order_tail()
 
 REGISTER_UNIT_TEST( test_claim_expired_identifier_moves_to_order_tail );
 
-#if ROCKETNET_DEV
 // Find full identifiers that share one keyed-index start, then prove that
 // each remains distinct and that the full-table capacity check does only a
 // bounded index probe plus the O(1) chronological-head query.

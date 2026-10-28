@@ -2,7 +2,7 @@
 #include "test_unit_registry.h"
 #include "suite_runner.h"
 
-// Compiled only into rocketnet_test_hooks. No socket or wall-clock schedule:
+// Needs ROCKETNET_DEV. No socket or wall-clock schedule:
 // the adapter drives borrow, contested publish, full-bank drop and both stop
 // interleavings at exact index transitions; one worker uses a paused seam.
 bool rocketnet_portable_tx_test_handoff();

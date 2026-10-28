@@ -173,7 +173,6 @@ bool rocketnet_session_elicits_ack( uint8_t packet_type );
 // little-endian, then the connection salt and the cookie expire timestamp.
 
 #define ROCKETNET_COOKIE_KEY_BYTES              32
-#define ROCKETNET_COOKIE_MAC_INPUT_IPV4_BYTES   23
 #define ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES   35
 
 struct rocketnet_address_t;

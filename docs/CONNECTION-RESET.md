@@ -164,8 +164,7 @@ material is overwritten in place with `sodium_memzero`:
   removed in `db2192c7`. Widths below are the natural layout on the supported
   64-bit ABIs, LP64 and LLP64 (`uint64_t`
   and `double` 8 bytes, align 8; `float` and `int` 4 bytes, align 4), with
-  `ROCKETNET_ENABLE_MEMORY_CHECKS` at its default 0 so the sentinel macros in
-  `sdk/rocketnet_memory_checks.h` add no bytes. `rocketnet_packet_loss_tracker_t`
+  no sentinel padding. `rocketnet_packet_loss_tracker_t`
   (deleted `sdk/rocketnet_packet_loss_tracker.h`) was three `uint64_t` fields
   (24) plus `uint64_t received_packets[1024]` (8192) = 8216; 1024 was
   `ROCKETNET_PACKET_LOSS_TRACKER_HISTORY`. `rocketnet_jitter_tracker_t`

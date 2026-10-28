@@ -16,7 +16,9 @@
 #include <sodium.h>
 #include <string.h>
 
+#if ROCKETNET_DEV
 thread_local struct rocketnet_crypto_tally_t rocketnet_crypto_tally;
+#endif // #if ROCKETNET_DEV
 
 // The packet header already carries the filter field a keyed check reads:
 // the prefilter header (ROCKETNET_PREFILTER_BYTES in sdk/rocketnet_wire.h,
@@ -185,7 +187,7 @@ int rocketnet_write_sealed_payload_in_place( uint8_t * wire_start,
     uint8_t nonce[12];
     rocketnet_sequence_nonce( nonce, sequence );
 
-    rocketnet_crypto_tally.aead_seal++;
+    ROCKETNET_CRYPTO_TALLY( aead_seal );
     unsigned long long sealed_bytes = 0;
     if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, p,
                                                     (unsigned long long) ( ack_block_bytes + payload_bytes ),
@@ -241,7 +243,7 @@ int rocketnet_write_sealed_packet( uint8_t * packet_data,
     uint8_t nonce[12];
     rocketnet_sequence_nonce( nonce, sequence );
 
-    rocketnet_crypto_tally.aead_seal++;
+    ROCKETNET_CRYPTO_TALLY( aead_seal );
     unsigned long long sealed_bytes = 0;
     if ( crypto_aead_chacha20poly1305_ietf_encrypt( p, &sealed_bytes, data, (unsigned long long) data_bytes,
                                                     associated_data, (unsigned long long) associated_data_bytes,
@@ -304,7 +306,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
     uint8_t nonce[12];
     rocketnet_sequence_nonce( nonce, sequence );
 
-    rocketnet_crypto_tally.aead_open++;
+    ROCKETNET_CRYPTO_TALLY( aead_open );
     unsigned long long opened_bytes = 0;
     if ( crypto_aead_chacha20poly1305_ietf_decrypt( out_data, &opened_bytes, NULL,
                                                     packet_data + header_bytes,

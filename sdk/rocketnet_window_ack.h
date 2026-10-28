@@ -40,7 +40,7 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Present only in the unit-test library; counts actual work, not ACK calls.
 struct rn_ack_cost_t
 {
@@ -49,9 +49,7 @@ struct rn_ack_cost_t
 };
 void rn_window_ack_cost_reset();
 rn_ack_cost_t rn_window_ack_cost_read();
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 
-#if ROCKETNET_DEV
 
 // The resend gap record (development builds only; a release build has neither
 // the fields nor the code). For each delay class (0: single-packet records,
@@ -184,12 +182,6 @@ uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uin
 // ones already waiting, ahead of every number that was sent.
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
-// Removes number from its resend FIFO only when the link still names generation
-// and the region's current schedule epoch. Does not free the descriptor and
-// does not mark the number acked. False leaves the FIFO unchanged
-// (tla/RNChannelQueues.tla Ack, StaleCancel).
-bool rn_window_ack_cancel_resend( rn_window_ack_t * ack, uint64_t number, uint32_t generation );
-
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
 // tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.
@@ -261,10 +253,12 @@ void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now );
 static inline void rn_window_ack_gaps_update( rn_window_ack_t *, double ) {}
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 // Number of live (unacked, non-evicted) packet entries currently in the sent-packet map.
 uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack );
 
 // Span of reference slots currently occupied between ref_head and ref_tail (<= 16P).
 uint32_t rn_window_ack_refs_in_flight( const rn_window_ack_t * ack );
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_WINDOW_ACK_H

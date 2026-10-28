@@ -93,12 +93,14 @@ static int cm_fill( rn_region_t * region, int bytes, uint32_t * taken, int max_t
     return n;
 }
 
+#if ROCKETNET_DEV
 static bool cm_inside( const void * block, uint64_t block_bytes, const void * p, uint64_t bytes )
 {
     const uintptr_t base = (uintptr_t) block;
     const uintptr_t address = (uintptr_t) p;
     return address >= base && bytes <= block_bytes && (uint64_t) ( address - base ) <= block_bytes - bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 // The region's bookkeeping, every table carve resets and every scalar the
 // send paths move, compared byte for byte between two regions of the same
@@ -258,6 +260,7 @@ static void test_memory_isolation_between_slots()
 // MESSAGE_MEMORY_EXHAUSTED, and the kick decision for that region says so on
 // every update until the region is reset; a flood is kicked by name.
 
+#if ROCKETNET_DEV
 static void test_exhaustion_is_a_kick_with_its_reason()
 {
     check( ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED != ROCKETNET_DISCONNECT_REASON_NONE );
@@ -330,6 +333,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     rn_arena_destroy( small );
     rn_arena_destroy( arena );
 }
+#endif // #if ROCKETNET_DEV
 
 // RNConnectionMemory Reuse and ReusedSlotStartsClean: a slot's region, used
 // to exhaustion and reset, equals a freshly carved region of the same config
@@ -405,6 +409,7 @@ static void test_reused_slot_starts_clean()
 // every region and every record lies inside the block, a short or misaligned
 // block is refused (never truncated), and destroy frees nothing.
 
+#if ROCKETNET_DEV
 static void test_user_block_is_used_and_nothing_else()
 {
     cm_install();
@@ -472,6 +477,7 @@ static void test_user_block_is_used_and_nothing_else()
     free( raw );
     cm_restore();
 }
+#endif // #if ROCKETNET_DEV
 
 // R2: a counting allocator sees create's one allocation and then nothing
 // across sends, acks, exhaustion, the kick decision, the reset and reuse,
@@ -816,6 +822,7 @@ static void test_span_granted_after_reset()
 // survives its free, the free stack is exact LIFO, and a chunk slot's
 // generation bumps on every take of that chunk.
 
+#if ROCKETNET_DEV
 static void test_generation_tagged_slots_and_lifo_stack()
 {
     rocketnet_counters_t counters;
@@ -867,6 +874,7 @@ static void test_generation_tagged_slots_and_lifo_stack()
 
     rn_arena_destroy( arena );
 }
+#endif // #if ROCKETNET_DEV
 
 // Live spans order by allocation ticket: the oldest live span pins the
 // reclaim floor while interior spans churn, holes are never overwritten, and
@@ -969,6 +977,7 @@ static void test_span_ticket_wraparound_renumbers()
 // the chain's end frees nothing and returns at the chain's end, never after a
 // numeric-gap-proportional walk.
 
+#if ROCKETNET_DEV
 static void test_fragment_free_bounded_by_chain()
 {
     rocketnet_counters_t counters;
@@ -998,18 +1007,27 @@ static void test_fragment_free_bounded_by_chain()
 
     rn_arena_destroy( arena );
 }
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_memory_isolation_between_slots );
 REGISTER_UNIT_TEST( test_reassembly_geometry_refuses_bad_arguments_and_budget );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_exhaustion_is_a_kick_with_its_reason );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_reused_slot_starts_clean );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_user_block_is_used_and_nothing_else );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_connection_memory_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_span_tickets_pin_oldest_live );
 REGISTER_UNIT_TEST( test_span_ticket_wraparound_renumbers );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );
+#endif // #if ROCKETNET_DEV

@@ -14,6 +14,7 @@
 // between calls, so it is checked by known-answer vectors, the pack/parse
 // property test and the fuzz target (CHANNELS.md 3, layer 2 row).
 
+#if ROCKETNET_DEV
 const char * rocketnet_message_violation_name( int violation )
 {
     switch ( violation )
@@ -34,6 +35,7 @@ const char * rocketnet_message_violation_name( int violation )
         default:                                                return "unknown";
     }
 }
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                     the fields of a code
@@ -192,14 +194,14 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
 // sequencing, ordering, channel, fragment, fragments, each only when its
 // code or flags carry it, then the data.
 
-#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#if ROCKETNET_DEV
 static volatile uint64_t rn_message_payload_copies = 0;
 
 uint64_t rn_message_payload_copy_count()
 {
     return rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 0 );
 }
-#endif // #if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record, int copy )
 {
@@ -248,9 +250,9 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
 
     if ( copy )
     {
-#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#if ROCKETNET_DEV
         rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 1 );
-#endif // #if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
         rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame (CHANNELS.md R5)
     }

@@ -41,7 +41,9 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
 void rocketnet_server_socket_forbid_commit();
 
+#if ROCKETNET_DEV
 void rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
 // Development-only, non-mutating pre-flight result control. The functional
 // suite uses it to drive the production pin and ladder decisions through
@@ -139,7 +141,14 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 
 void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t * server_socket );
 
-
+#if ROCKETNET_DEV
+// test_xdp's cases: they run the staging entry points without kernel resources
+bool rocketnet_server_socket_test_buffer_exchange();
+bool rocketnet_server_socket_test_inactive_flow();
+bool rocketnet_server_socket_test_replay_marks();
+bool rocketnet_server_socket_test_send_failures_without_mutex();
+bool rocketnet_server_socket_test_reply_mac_refreshed_at_finish();
+#endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
 

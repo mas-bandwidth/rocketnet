@@ -14,12 +14,12 @@
 #include <math.h>
 #include <limits.h>
 
-#if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Unit-library instrumentation only: each sequence visit during process_block.
 // Per thread, so independent endpoints on different threads never share it;
 // production and development libraries carry no such state.
 thread_local unsigned long long g_ack_visit_count = 0;
-#endif // #if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                           the ack block
@@ -59,8 +59,7 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 // largest word above and at the floor word below -- shifted so the top bit
 // is bit 63, and leading ones (a run) or leading zeros (a gap) are counted
 // with clz as the word is shifted left. Sequence modulo the 4096-bit
-// window gives the circular wrap for free. ctz is available as
-// rocketnet_platform_ctz64 beside clz for upward scans.
+// window gives the circular wrap for free.
 // The builder below is one descending pass over the window words: a
 // three-phase scan (first run, then repeating gap and run) whose counts
 // accumulate across word boundaries and whose ranges are emitted when a
@@ -1309,13 +1308,6 @@ static inline int rn_popcount64( uint64_t v )
 #endif // #if defined( __GNUC__ ) || defined( __clang__ )
 }
 
-// the popcount the ack path uses, for the unit test
-
-int rocketnet_ack_popcount64( uint64_t v )
-{
-    return rn_popcount64( v );
-}
-
 // popcount of one bitmap over the linear slot range [a,b] (a<=b), masking the
 // partial end words
 
@@ -1450,9 +1442,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     auto visit = [&]( uint64_t sequence )
     {
-#if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#if ROCKETNET_DEV
         g_ack_visit_count++;
-#endif // #if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 
         // a set bit names a held, unacknowledged record; a mismatch is a

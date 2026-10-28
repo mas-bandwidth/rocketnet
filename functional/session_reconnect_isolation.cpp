@@ -542,7 +542,9 @@ static void session_run_isolation_pair( const char * server_transport, const cha
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
         if ( far_netns_path != NULL )
         {
+#if ROCKETNET_DEV
             rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
             server_config_b.num_xdp_queues = 1;
             server_config_b.num_os_cpus = 1;
         }
@@ -725,7 +727,9 @@ void rocketnet_test_session_reconnect_isolation_xdp()
     }
     rn_native_server_transport_stop_and_destroy( initial_server );
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
     session_env_guard_t env_xdp_queues( "ROCKETNET_SERVER_NUM_XDP_QUEUES" );
     session_env_guard_t env_os_cpus( "ROCKETNET_SERVER_NUM_OS_CPUS" );
     session_check( setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "1", 1 ) == 0 );

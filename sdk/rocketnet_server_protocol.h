@@ -102,20 +102,18 @@ struct rocketnet_server_protocol_t
     // valid packet has reached that writer, without bypassing any parsing,
     // authentication or state checks. Production builds carry no field.
     int test_fail_fixed_writer;
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_TEST_SEAMS
     uint64_t test_payload_writes;                           // writes of a payload's plaintext bytes: the open, and any copy after it
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 };
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 // The receive path's work since create, for the unit suite: the keyed hashes
 // of the server's encryption map and the writes of payload plaintext.
 // Defined in sdk/rocketnet_server_transport.cpp.
 struct rocketnet_server_transport_t;
 void rocketnet_server_transport_test_receive_work( const struct rocketnet_server_transport_t * server_transport,
                                                    uint64_t * map_hashes, uint64_t * payload_writes );
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // The connection id held by client_index now (P9a): 0 for a free slot, an
 // index out of range, or a protocol without the connection id arrays.
@@ -301,12 +299,14 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
                                                   int payload_bytes,
                                                   double current_time );
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                              int client_index,
                                              const uint8_t * payload_data,
                                              int payload_bytes,
                                              double current_time,
                                              uint8_t * out_packet );
+#endif // #if ROCKETNET_DEV
 
 // the connected client's address, for fill-phase callers that build wire
 // frames without burning a sequence. returns 0 when not connected.
@@ -337,6 +337,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
                                              double current_time,
                                              uint8_t * out_packet );
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_t * server,
                                                int client_index,
                                                const uint8_t * payload_data,
@@ -345,6 +346,7 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
                                                uint8_t * out_packets,
                                                int * out_packet_bytes,
                                                int max_packets );
+#endif // #if ROCKETNET_DEV
 
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence );

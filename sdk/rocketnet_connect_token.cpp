@@ -361,22 +361,22 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
                                           const uint8_t * signature,
                                           const uint8_t * backend_public_key )
 {
-    rocketnet_crypto_tally.signature_verify++;
+    ROCKETNET_CRYPTO_TALLY( signature_verify );
     return crypto_sign_verify_detached( signature, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_public_key ) == 0;
 }
 
 // The private block seam, compiled into the unit suite's hook library only
-// (ROCKETNET_SECRET_WIPE_TEST_HOOKS): rocketnet_open_connect_token_private
+// (ROCKETNET_DEV): rocketnet_open_connect_token_private
 // hands its private block staging to the hook as it enters (at_exit 0, so a
 // unit case can plant a canary in it) and on each of its two exits (at_exit
 // 1, so the case reads what the staging still holds)
 // (test_unit_secrets_wiped.cpp).
-#if defined( ROCKETNET_SECRET_WIPE_TEST_HOOKS )
+#if ROCKETNET_DEV
 void ( *rocketnet_token_private_block_hook )( uint8_t * block, int bytes, int at_exit ) = NULL;
 #define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do { if ( rocketnet_token_private_block_hook ) rocketnet_token_private_block_hook( block, bytes, at_exit ); } while ( 0 )
 #else
 #define ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( block, bytes, at_exit ) do {} while ( 0 )
-#endif // #if defined( ROCKETNET_SECRET_WIPE_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private_t * output,
                                           const uint8_t * signed_connect_data,
@@ -386,7 +386,7 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
     ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof( private_block ), 0 );
 
-    rocketnet_crypto_tally.seal_open++;
+    ROCKETNET_CRYPTO_TALLY( seal_open );
 
     if ( crypto_box_seal_open( private_block,
                                signed_connect_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK,
@@ -459,9 +459,7 @@ const uint8_t rocketnet_dev_server_secret_key[32] = {
     0x31, 0x18, 0xd8, 0x39, 0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70,
     0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97
 };
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 
 enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string,
                                                             uint64_t client_id,

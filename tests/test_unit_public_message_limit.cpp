@@ -79,6 +79,7 @@ static void test_public_message_limit_cross_field_bounds()
 
 REGISTER_UNIT_TEST( test_public_message_limit_cross_field_bounds );
 
+#if ROCKETNET_DEV
 static void test_public_message_limit_does_not_expand_transport_memory()
 {
     rocketnet_server_config_t config;
@@ -121,7 +122,6 @@ static void test_public_message_limit_does_not_expand_transport_memory()
 
 REGISTER_UNIT_TEST( test_public_message_limit_does_not_expand_transport_memory );
 
-#if ROCKETNET_DEV
 struct message_limit_env_t
 {
     const char * name;
@@ -139,9 +139,7 @@ struct message_limit_env_t
     }
     ~message_limit_env_t() { set( present ? previous.c_str() : NULL ); }
 };
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 static void test_public_message_limit_env_is_endpoint_scoped()
 {
     message_limit_env_t client_env( "ROCKETNET_CLIENT_MAX_MESSAGE_BYTES" );
@@ -173,9 +171,7 @@ static void test_public_message_limit_env_is_endpoint_scoped()
 }
 
 REGISTER_UNIT_TEST( test_public_message_limit_env_is_endpoint_scoped );
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 static double message_limit_now = 1000.0;
 static double message_limit_clock( void * ) { return message_limit_now; }
 

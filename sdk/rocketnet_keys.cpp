@@ -76,7 +76,7 @@ int rocketnet_derive_connection_keys( struct rocketnet_connection_keys_t * keys,
     rocketnet_assert( server_ephemeral_public_key );
 
     uint8_t shared_secret[32];
-    rocketnet_crypto_tally.scalarmult++;
+    ROCKETNET_CRYPTO_TALLY( scalarmult );
     if ( crypto_scalarmult( shared_secret, own_ephemeral_secret_key, remote_ephemeral_public_key ) != 0 )
         return 0;
 

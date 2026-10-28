@@ -813,6 +813,7 @@ REGISTER_UNIT_TEST( test_client_handshake_receive_counters_move_exactly );
 // seals a type 9 packet from the server's side: the fresh block, the fragment
 // header and the given number of body bytes
 
+#if ROCKETNET_DEV
 static int rcr_craft_fragment( struct rcr_pair_t * pair, uint32_t payload_id, int index, int count_minus_one,
                                int body_bytes, uint8_t * out )
 {
@@ -946,6 +947,7 @@ static void test_client_fragment_receive_counters_move_exactly()
 }
 
 REGISTER_UNIT_TEST( test_client_fragment_receive_counters_move_exactly );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // a fragment packet becomes ack-eligible only once reassembly accepts it

@@ -257,6 +257,7 @@ static void test_reliable_packet_fit_boundary()
 
 REGISTER_UNIT_TEST( test_reliable_packet_fit_boundary );
 
+#if ROCKETNET_DEV
 static void test_rnchannel_reliable_witness_replays()
 {
     rocketnet_message_config_t config;
@@ -303,6 +304,7 @@ static void test_rnchannel_reliable_witness_replays()
 }
 
 REGISTER_UNIT_TEST( test_rnchannel_reliable_witness_replays );
+#endif // #if ROCKETNET_DEV
 
 static uint64_t reliable_allocator_calls;
 
@@ -546,9 +548,9 @@ static void reliable_block_case( int order )
         }
     }
 
-#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
     rn_channels_block_cost_reset();
-#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     uint32_t delivered = 0;
 
@@ -576,14 +578,14 @@ static void reliable_block_case( int order )
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK] == 0 );
 
-#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
     // every chunk does bounded work: the block's completion never rescans the
     // descriptors already in (a 1 MiB block in order was ~415k visits)
 
     const rn_block_cost_t cost = rn_channels_block_cost_read();
     check( cost.chunks == count );
     check( cost.descriptor_visits <= 3 * (uint64_t) count );
-#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     // the update's end releases every number of the block, and no block
     // state outlives it

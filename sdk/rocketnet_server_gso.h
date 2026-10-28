@@ -130,7 +130,9 @@ bool rocketnet_server_gso_stopped( struct rocketnet_server_gso_t * gso );
 // Requires stopped completion. Joins and frees synchronously.
 void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso );
 
+#if ROCKETNET_DEV
 int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso );
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_gso_features( struct rocketnet_server_gso_t * gso );
 
@@ -163,7 +165,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_packets( struct rocketnet_server_gso_t * gso );
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 // development library only. force_create_flags ORs flags (the DISABLE set)
 // into every following create. fail_receives makes the next count recvmmsg
 // calls on any worker answer -1 with error without reaching the kernel;
@@ -177,6 +179,6 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

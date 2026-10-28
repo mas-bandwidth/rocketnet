@@ -20,10 +20,11 @@
 
 #include <sodium.h>
 
-// test_xdp (ROCKETNET_XDP_TESTS) and test_iocp (ROCKETNET_IOCP_TESTS) compile
-// this file for rocketnet_config_parse_int_value only. They do not link the
-// driver registry, so the rest of this translation unit stays out of those builds.
-#if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
+// test_xdp and test_iocp define ROCKETNET_CONFIG_PARSE_ONLY and compile this
+// file for rocketnet_config_parse_int_value only. They do not link the driver
+// registry, so the rest of this translation unit stays out of those builds.
+// This is a build shape (it removes code), not a development switch.
+#if !defined( ROCKETNET_CONFIG_PARSE_ONLY )
 
 // ----------------------------------------------------------------
 //              the tables, expanded into everything derived
@@ -405,7 +406,7 @@ bool rocketnet_config_env_var_name_for( const char * transport_name, const char 
     return true;
 }
 
-#endif // #if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
+#endif // #if !defined( ROCKETNET_CONFIG_PARSE_ONLY )
 
 static bool rocketnet_config_numeric_charset( const char * value, bool allow_negative )
 {
@@ -455,7 +456,7 @@ bool rocketnet_config_parse_int_value( const char * value, int * out )
     return rocketnet_config_parse_int( value, out );
 }
 
-#if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
+#if !defined( ROCKETNET_CONFIG_PARSE_ONLY )
 
 static bool rocketnet_config_parse_uint64( const char * value, uint64_t * out )
 {
@@ -570,16 +571,16 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 }
 
 // The decode staging seam, compiled into the unit suite's hook library only
-// (ROCKETNET_SECRET_WIPE_TEST_HOOKS): the BYTES case below hands its base64
+// (ROCKETNET_DEV): the BYTES case below hands its base64
 // staging to the hook on both of its exits, after the staging is done with,
 // so a unit case reads what a secret field's staging still holds
 // (test_unit_secrets_wiped.cpp).
-#if defined( ROCKETNET_SECRET_WIPE_TEST_HOOKS )
+#if ROCKETNET_DEV
 void ( *rocketnet_config_decode_staging_hook )( const uint8_t * staging, int bytes ) = NULL;
 #define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do { if ( rocketnet_config_decode_staging_hook ) rocketnet_config_decode_staging_hook( staging, bytes ); } while ( 0 )
 #else
 #define ROCKETNET_CONFIG_DECODE_STAGING_SEEN( staging, bytes ) do {} while ( 0 )
-#endif // #if defined( ROCKETNET_SECRET_WIPE_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static bool rocketnet_config_apply_env_value( const char * transport_name, void * config, const struct rocketnet_config_field_t * field,
                                               const char * env_name, const char * value )
@@ -821,22 +822,18 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
     return true;
 }
 
-#if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
+#if ROCKETNET_DEV
 static bool rocketnet_public_link_simulator_test_hook = false;
 
 void rocketnet_public_link_simulator_test_development( int enabled )
 {
     rocketnet_public_link_simulator_test_hook = enabled != 0;
 }
-#endif // #if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 bool rocketnet_public_link_simulator_development( void )
 {
-#if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
-    return ROCKETNET_DEV != 0 || rocketnet_public_link_simulator_test_hook;
-#else
     return ROCKETNET_DEV != 0;
-#endif // #if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
 }
 
 bool rocketnet_development_values_refused( void )
@@ -1098,4 +1095,4 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
     return true;
 }
 
-#endif // #if !defined( ROCKETNET_XDP_TESTS ) && !defined( ROCKETNET_IOCP_TESTS )
+#endif // #if !defined( ROCKETNET_CONFIG_PARSE_ONLY )

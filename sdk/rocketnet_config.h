@@ -56,9 +56,11 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
 // the transport tables and the message table they are every env-backed field
 // of rocketnet_client_config_t and rocketnet_server_config_t.
 
+#if ROCKETNET_DEV
 const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields );
 
 const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( int * num_fields );
+#endif // #if ROCKETNET_DEV
 
 // the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
 // the defaults, into the transport config, the message config and the send
@@ -75,11 +77,13 @@ struct rocketnet_message_config_t;
 struct rocketnet_client_config_t;
 struct rocketnet_server_config_t;
 
+#if ROCKETNET_DEV
 bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
                                       struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
                                       struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+#endif // #if ROCKETNET_DEV
 
 // the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
 // "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
@@ -162,15 +166,13 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
 bool rocketnet_config_validate_public_link_simulator( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields, bool development );
 
 // Whether the public link simulator is honoured: true in a development
-// library, and, only in a build carrying the unit suite's test hooks, when
-// the suite has explicitly enabled it. A production library never answers
-// true.
+// library (ROCKETNET_DEV=1). A production library never answers true.
 
 bool rocketnet_public_link_simulator_development( void );
 
-#if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
+#if ROCKETNET_DEV
 void rocketnet_public_link_simulator_test_development( int enabled );
-#endif // #if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // The development values: the published test packet filter
 // (ROCKETNET_TEST_FILTER_VALUE) and a connect token sealed to the published

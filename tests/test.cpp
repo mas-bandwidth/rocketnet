@@ -120,12 +120,18 @@ static int rocketnet_unit_clear_environment()
     if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) ||
          !rocketnet_unit_append_config_names( names, "server", fields, count ) )
         return 1;
+#if ROCKETNET_DEV
     fields = rocketnet_client_budget_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "client", fields, count ) )
         return 1;
     fields = rocketnet_server_budget_config_fields( &count );
     if ( !rocketnet_unit_append_config_names( names, "server", fields, count ) )
         return 1;
+#else // #if ROCKETNET_DEV
+    // the send budget fields: the accessors are ROCKETNET_DEV code
+    names.push_back( "ROCKETNET_CLIENT_SEND_KBPS" );
+    names.push_back( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
+#endif // #if ROCKETNET_DEV
 
     // these reads are outside the descriptor engine: startup logging, served
     // addresses, operator memory budgets and the native XDP gateway address
@@ -137,10 +143,8 @@ static int rocketnet_unit_clear_environment()
         "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES",
         "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES",
         "ROCKETNET_GATEWAY_ETHERNET_ADDRESS",
-#if ROCKETNET_TEST_SEAMS
-        "ROCKETNET_DEV_SESSION_SEQUENCE_START",
-#endif // #if ROCKETNET_TEST_SEAMS
 #if ROCKETNET_DEV
+        "ROCKETNET_DEV_SESSION_SEQUENCE_START",
         "ROCKETNET_DEV_CLIENT_LATENCY_MS",
         "ROCKETNET_DEV_CLIENT_JITTER_MS",
         "ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT",

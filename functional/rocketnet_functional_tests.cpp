@@ -2455,7 +2455,7 @@ void rocketnet_test_receive_drops_oversize_datagram()
 
     rocketnet_check( packet_bytes == ROCKETNET_RECEIVE_CEILING + 1 );
 
-#if ROCKETNET_DEV && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
+#if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
     // Live portable server + real token client, public CONNECTED handshake.
     // The private socket registry identifies the sole new client socket; the
     // over-ceiling datagram is sent through that admitted client socket. No
@@ -2556,7 +2556,7 @@ void rocketnet_test_receive_drops_oversize_datagram()
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
+#endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
 
     rocketnet_platform_socket_destroy( socket );
 
@@ -6146,7 +6146,9 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_server_socket_set_preflight_test_result( 0 );
     rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
     struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6204,7 +6206,9 @@ void rocketnet_test_server_transport_io_pin_xdp()
         // the natural unavailable answer drives the production pin, with
         // the barrier lifted so the refusal is the pre-flight's own
 
+#if ROCKETNET_DEV
         rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
         enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
         struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6270,7 +6274,9 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_server_socket_set_preflight_test_result( 0 );
     rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
     struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6328,7 +6334,9 @@ void rocketnet_test_server_transport_io_ladder_fall()
         // the natural unavailable answer: xdp refuses at its pre-flight on a
         // real port and the ladder falls to gso, with the refusal named
 
+#if ROCKETNET_DEV
         rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
         enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
         struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6700,7 +6708,9 @@ void rocketnet_test_server_gso_probe()
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, 0 );
     rocketnet_check( gso );
     rocketnet_check( bind_address.port != 0 );
+#if ROCKETNET_DEV
     rocketnet_check( rocketnet_server_gso_num_queues( gso ) == 2 );
+#endif // #if ROCKETNET_DEV
     rocketnet_check( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT );
 
     uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
@@ -7097,7 +7107,7 @@ void rocketnet_test_server_gso_wire_dual_stack()
 // loopback delivers whole to the client's UDP_GRO socket, so the client's GRO
 // batch count proves the receive split ran.
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 #include "rocketnet_client_gso.h"
 
 static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, const char * server_host, bool segment, const char * server_transport = "portable" )
@@ -7400,7 +7410,7 @@ void rocketnet_test_server_gso_send_overflow()
     rn_native_backend_stop_and_destroy( gso, rocketnet_server_gso_stop, rocketnet_server_gso_stopped, rocketnet_server_gso_destroy );
 }
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 void rocketnet_test_server_gso_shutdown_send_interruptions()
 {
     rocketnet_address_t bind, to;
@@ -7514,7 +7524,7 @@ void rocketnet_test_server_gso_held_receive_view()
 
 #include "rocketnet_server_uring.h"
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 #if defined( __GNUC__ ) || defined( __clang__ )
 __attribute__( ( noinline ) )
 #endif // #if defined( __GNUC__ ) || defined( __clang__ )
@@ -7571,7 +7581,7 @@ void rocketnet_test_server_uring_probe()
     rocketnet_check( rocketnet_address_parse( &over_address, "127.0.0.1" ) );
     rocketnet_check( rocketnet_server_uring_create( NULL, &over_address, ROCKETNET_URING_MAX_QUEUES + 1 ) == NULL );
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     // A stalled completion leaves the caller-owned transport pending. It
     // never turns a deadline into permission to abandon or free its storage.
     // The stall and resume calls are SEND_ERROR test hooks, absent from the
@@ -9773,7 +9783,9 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
 
     // the server: pinned to xdp, one queue, on the near end
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -10220,7 +10232,7 @@ void rocketnet_test_xdp_max_size_both_ways_ipv6()
 // is false omits them and an explicit --run prints the runs_here refusal.
 // The body is in functional/posix_hard_killed_client.cpp, which production
 // does not compile.
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 extern void rocketnet_posix_hk_run_xdp_cell( int kind, bool ipv6 );
 
 static void rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable() { rocketnet_posix_hk_run_xdp_cell( 0, false ); }
@@ -10712,7 +10724,7 @@ struct rocketnet_functional_test_t
     bool ( *runs_here )(); // NULL: every host; else the case is in the suite only where it returns true
 };
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 extern void test_client_destroy_early_threaded_keeps_then_frees();
 extern void test_server_destroy_early_threaded_keeps_then_frees();
 #endif // bodies live in destroy_early_keep.cpp, not in the production executable
@@ -11025,7 +11037,7 @@ void rocketnet_test_client_receive_thread_quit_wake_before_wait_returns()
 // ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED once its update accepts the
 // server's disconnect packet, not CONNECTION_TIMED_OUT.
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 static void rocketnet_test_public_client_reads_server_disconnected()
 {
     struct rocketnet_server_config_t server_config;
@@ -11104,7 +11116,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
 }
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
 
 // A development connect token naming both families, 127.0.0.1 and [::1] at
 // the server's port, against a portable server bound to 127.0.0.1 (port 0),
@@ -11113,7 +11125,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
 // selects the IPv4 address and binds IPv4, the server matches the token's
 // IPv4 address although its IPv6 flag is set, and the client connects.
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 static void rocketnet_test_two_address_token_connects_over_ipv4()
 {
     struct rocketnet_server_config_t server_config;
@@ -11187,7 +11199,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
 }
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
 
 // The family race frees nothing off the caller's thread (tla/RNClientRace.tla
 // FreedOnlyByCaller). A development token naming both families, 127.0.0.1
@@ -11200,7 +11212,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 // families" proves the race ran, so a host that refuses the second socket
 // fails the case rather than passing it vacuously.
 
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 static std::thread::id race_caller_thread;
 static std::atomic<uint64_t> race_off_caller_mallocs{ 0 };
 static std::atomic<uint64_t> race_off_caller_frees{ 0 };
@@ -11333,9 +11345,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 
-#if ROCKETNET_DEV
 
 // A public development token must complete the asynchronous connection and
 // carry application bytes in both directions over a real portable socket.
@@ -11557,7 +11567,7 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
 
 #endif // #if ROCKETNET_DEV
 
-#if !defined( _WIN32 ) && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if !defined( _WIN32 ) && ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 void rocketnet_test_darwin_send_epipe_no_signal();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
@@ -11581,7 +11591,7 @@ bool rocketnet_test_linux_xdp_weather_runs_here();
 bool rocketnet_test_xdp_veth_runs_here();
 #endif // #if ROCKETNET_XDP
 #endif // #if defined( __linux__ )
-#endif // #if !defined( _WIN32 ) && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if !defined( _WIN32 ) && ROCKETNET_DEV
 
 // ---------------------------------------------------
 // The macOS msgx client (docs/MACOS.md, "The msgx client"): the msgx backend's
@@ -11595,7 +11605,7 @@ bool rocketnet_test_xdp_veth_runs_here();
 // against the msgx server and the portable server. The socket a client create
 // made is the registry diff across the create.
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
 #define MSGX_CLIENT_MAX_SOCKETS 256
 
@@ -11923,7 +11933,7 @@ void rocketnet_test_msgx_client_transport_wire_ipv6() { msgx_client_wire( "[::1]
 // a server on the IPv6 wildcard serving an IPv4 client
 void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( "[::]", "127.0.0.1" ); }
 
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
 // ---------------------------------------------------
 // The Windows iocp client (sdk/rocketnet_client_iocp_windows.cpp,
@@ -12132,6 +12142,7 @@ void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( 
 // getaddrinfo can open a socket (the nscd lookup on glibc), so name
 // resolution is a functional case, never a unit one.
 
+#if ROCKETNET_DEV
 static void rocketnet_test_hostname_resolve_localhost()
 {
     rocketnet_address_t address, ipv6;
@@ -12141,10 +12152,13 @@ static void rocketnet_test_hostname_resolve_localhost()
     rocketnet_check( ( address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127 ) ||
                      rocketnet_address_equal( &address, &ipv6 ) );
 }
+#endif // #if ROCKETNET_DEV
 
 extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
+#if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_dropped_stats();
+#endif // #if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_lifecycle();
 extern void rocketnet_test_frame_sync_create_ex_success_status();
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -12211,11 +12225,9 @@ extern void rocketnet_test_session_reconnect_isolation_rio();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
     { "test_server_destroy_early_threaded_keeps_then_frees", test_server_destroy_early_threaded_keeps_then_frees, NULL },
-#endif // production does not compile functional/destroy_early_keep.cpp
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
     { "test_real_environment_dev_session_sequence_start", rocketnet_test_real_environment_dev_session_sequence_start, NULL },
     { "test_real_environment_log_level_before_init", rocketnet_test_real_environment_log_level_before_init, NULL },
     { "test_real_environment_config_precedence_and_invalid", rocketnet_test_real_environment_config_precedence_and_invalid, NULL },
@@ -12223,10 +12235,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
     { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
+#if ROCKETNET_DEV
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
+#if ROCKETNET_DEV
     { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
+#endif // #if ROCKETNET_DEV
     // moved from the unit suite: each creates or reads a real OS resource
     // (the Windows high-resolution waitable timer; the macOS descriptor table)
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle, NULL },
@@ -12242,12 +12258,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_pcapng_corpus_covers_control_packet_types", test_pcapng_corpus_covers_control_packet_types, NULL },
     { "test_fuzz_prefilter_seed_names_match_outcomes", test_fuzz_prefilter_seed_names_match_outcomes, NULL },
     { "test_connect_token_mint_concurrent", rocketnet_test_connect_token_mint_concurrent, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_api_polish_dev_token_string", test_api_polish_dev_token_string, NULL },
     { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
     { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
-#endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
-#if ROCKETNET_DEV
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
@@ -12315,7 +12329,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_transport_wire_totals_concurrent_send_exact", rocketnet_test_transport_wire_totals_concurrent_send_exact, NULL },
     { "test_transport_start_finish_shape", rocketnet_test_transport_start_finish_shape, NULL },
     { "test_loopback_transport_udp", rocketnet_test_transport_udp_loopback, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_client_ipv4_without_ipv6_stack", rocketnet_test_client_ipv4_without_ipv6_stack, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
     { "test_loopback_transport_cpp_transports_connect", rocketnet_test_cpp_transports_connect_over_loopback, NULL },
@@ -12346,7 +12360,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_client_io_windows_handoff_round_trip", rocketnet_test_client_io_windows_handoff_round_trip, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#if !defined( _WIN32 ) && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if !defined( _WIN32 ) && ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "test_darwin_send_epipe_no_signal", rocketnet_test_darwin_send_epipe_no_signal, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
@@ -12356,8 +12370,8 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_posix_platform_send_seam", rocketnet_test_posix_platform_send_seam, NULL },
     { "test_posix_transport_send_seam", rocketnet_test_posix_transport_send_seam, NULL },
     { "test_posix_send_burst", rocketnet_test_posix_send_burst, NULL },
-#endif // #if !defined( _WIN32 ) && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
-#if defined( __linux__ ) && ( !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION )
+#endif // #if !defined( _WIN32 ) && ROCKETNET_DEV
+#if defined( __linux__ ) && ROCKETNET_DEV
     { "test_gso_transport_linux_sendmmsg_errors", rocketnet_test_linux_gso_sendmmsg_errors, NULL },
     { "test_gso_transport_linux_recvmmsg_errors", rocketnet_test_linux_gso_recvmmsg_errors, NULL },
     { "test_io_uring_transport_linux_receive_cqe_errors", rocketnet_test_linux_uring_receive_cqe_errors, rocketnet_server_uring_available },
@@ -12368,7 +12382,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_linux_receive_weather_ipv4", rocketnet_test_linux_xdp_receive_weather_ipv4, rocketnet_test_linux_xdp_weather_runs_here },
     { "test_xdp_transport_linux_receive_weather_ipv6", rocketnet_test_linux_xdp_receive_weather_ipv6, rocketnet_test_linux_xdp_weather_runs_here },
 #endif // #if ROCKETNET_XDP
-#endif // #if defined( __linux__ ) && ( !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION )
+#endif // #if defined( __linux__ ) && ROCKETNET_DEV
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_platform_batch_pump_refused_destination", rocketnet_test_platform_batch_pump_refused_destination, NULL },
     { "test_platform_pump_zero_length_chaff", rocketnet_test_platform_pump_zero_length_chaff, NULL },
@@ -12388,7 +12402,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_xdp_transport_max_size_both_ways_ipv6", rocketnet_test_xdp_max_size_both_ways_ipv6, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv4", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv4, rocketnet_test_xdp_veth_runs_here },
     { "test_xdp_transport_keep_alive_before_first_payloads_ipv6", rocketnet_test_xdp_keep_alive_before_first_payloads_ipv6, rocketnet_test_xdp_veth_runs_here },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_posix_hard_killed_client_xdp_ipv4_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_hard_killed_client_xdp_ipv6_client_portable", rocketnet_test_posix_hard_killed_client_xdp_ipv6_client_portable, rocketnet_test_xdp_veth_runs_here },
     { "test_posix_send_to_closed_port_xdp_ipv4_client_portable", rocketnet_test_posix_send_to_closed_port_xdp_ipv4_client_portable, rocketnet_test_xdp_veth_runs_here },
@@ -12398,11 +12412,11 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #endif // production excludes xdp hard-killed cells
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_XDP
     { "test_config_out_of_range_refuses_create", rocketnet_test_config_out_of_range_refuses_create, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_server_handshake_deadline_from_config", rocketnet_test_server_handshake_deadline_from_config, NULL },
 #endif // production excludes dev-key/test-filter cases
     { "test_config_precedence", rocketnet_test_config_precedence, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
     { "test_two_address_token_connects_over_ipv4", rocketnet_test_two_address_token_connects_over_ipv4, NULL },
@@ -12434,17 +12448,17 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_gso_transport_server_wire_plain", rocketnet_test_server_gso_wire_plain, NULL },
     { "test_gso_transport_server_wire_ipv6", rocketnet_test_server_gso_wire_ipv6, NULL },
     { "test_gso_transport_server_wire_dual_stack", rocketnet_test_server_gso_wire_dual_stack, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_gso_client_transport_wire_ipv4", rocketnet_test_gso_client_wire_ipv4, NULL },
     { "test_gso_client_transport_wire_ipv6", rocketnet_test_gso_client_wire_ipv6, NULL },
     { "test_gso_client_transport_wire_plain", rocketnet_test_gso_client_wire_plain, NULL },
     { "test_gso_client_transport_wire_gro", rocketnet_test_gso_client_wire_gro, NULL },
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
     { "test_gso_transport_server_send_overflow", rocketnet_test_server_gso_send_overflow, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_gso_shutdown_send_interruptions", rocketnet_test_server_gso_shutdown_send_interruptions, NULL },
     { "test_gso_transport_held_receive_view", rocketnet_test_server_gso_held_receive_view, NULL },
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
     { "test_io_uring_transport_server_probe", rocketnet_test_server_uring_probe, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv4", rocketnet_test_server_uring_wire_ipv4, rocketnet_server_uring_available },
     { "test_io_uring_transport_server_wire_ipv6", rocketnet_test_server_uring_wire_ipv6, rocketnet_server_uring_available },
@@ -12460,14 +12474,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     { "test_msgx_transport_server_io_pin", rocketnet_test_server_transport_io_pin_msgx, rocketnet_test_server_pin_allows_msgx },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
     { "test_msgx_client_pin_selects_batch_pump", rocketnet_test_msgx_client_pin_selects_batch_pump, NULL },
     { "test_portable_client_pin_selects_portable_pump", rocketnet_test_portable_client_pin_selects_portable_pump, NULL },
     { "test_msgx_client_degrades_without_loss", rocketnet_test_msgx_client_degrades_without_loss, NULL },
     { "test_msgx_client_transport_wire_ipv4", rocketnet_test_msgx_client_transport_wire_ipv4, NULL },
     { "test_msgx_client_transport_wire_ipv6", rocketnet_test_msgx_client_transport_wire_ipv6, NULL },
     { "test_msgx_client_transport_wire_dual_stack", rocketnet_test_msgx_client_transport_wire_dual_stack, NULL },
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     { "test_iocp_client_transport_wire_ipv4", rocketnet_test_iocp_client_transport_wire_ipv4, NULL },
     { "test_iocp_client_transport_wire_ipv6", rocketnet_test_iocp_client_transport_wire_ipv6, NULL },
@@ -12478,7 +12492,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_transport_io", rocketnet_test_client_transport_io, rocketnet_test_client_pin_allows_auto },
     { "test_lifecycle_transport", rocketnet_test_lifecycle_transport, NULL },
     { "test_loopback_transport_message_objects_from_t1000", rocketnet_test_message_objects_loopback_from_t1000, NULL },
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_harness_one_message_each_way_lossless", harness_one_message_each_way_lossless, NULL },
     { "test_harness_one_message_each_way_lossy", harness_one_message_each_way_lossy, NULL },
     { "test_harness_lossy_100_percent_negative_control", harness_lossy_100_percent_negative_control, NULL },
@@ -12579,7 +12593,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_windows_connreset_child_parent", windows_connreset_child_parent, NULL },
     { "test_windows_connreset_child_dies_with_its_parent", windows_connreset_child_dies_with_its_parent, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     { "test_server_stats_creates_no_thread", rocketnet_test_server_stats_creates_no_thread, NULL },
     { "test_public_step_driven_client_connects_without_a_thread", rocketnet_test_public_step_driven_client_connects_without_a_thread, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
@@ -12622,13 +12636,13 @@ void rocketnet_functional_prepare()
     {
         rocketnet_functional_environment = new rocketnet_test_environment_t();
     }
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !ROCKETNET_DEV
     // the production library refuses the published test packet filter, so
     // the production suite runs on a private filter (base64 of 51 52 53 54)
 
     setenv( "ROCKETNET_CLIENT_PACKET_FILTER", "UVJTVA==", 1 );
     setenv( "ROCKETNET_SERVER_PACKET_FILTER", "UVJTVA==", 1 );
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
 }
 
 // the hard-killed client and ICMP-error cases (functional/posix_hard_killed_client.cpp)
@@ -12655,10 +12669,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
         return "rocketnet_test_posix_io_uring_offered";
     if ( predicate == rocketnet_test_posix_xdp_offered )
         return "rocketnet_test_posix_xdp_offered";
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     if ( predicate == rocketnet_test_linux_xdp_weather_runs_here )
         return "rocketnet_test_linux_xdp_weather_runs_here";
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
     if ( predicate == rocketnet_test_server_receive_low_tick_measurement_requested )
         return "rocketnet_test_server_receive_low_tick_measurement_requested";
     if ( predicate == rocketnet_test_server_pin_allows_gso )
@@ -12719,21 +12733,21 @@ static int rocketnet_functional_static_test_count()
 
 int rocketnet_functional_test_count()
 {
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !ROCKETNET_DEV
     return rocketnet_functional_static_test_count();
 #else
     return rocketnet_functional_static_test_count() + rocketnet_posix_hard_killed_client_test_count();
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
 }
 
 const char * rocketnet_functional_test_name( int index )
 {
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !ROCKETNET_DEV
     (void) index;
 #else
     if ( index >= rocketnet_functional_static_test_count() )
         return rocketnet_posix_hard_killed_client_test_name( index - rocketnet_functional_static_test_count() );
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
     return rocketnet_functional_tests[rocketnet_functional_here[index]].name;
 }
 
@@ -12756,7 +12770,7 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_functional_tests[i].function();
         return 0;
     }
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     for ( int i = 0; i < rocketnet_posix_hard_killed_client_test_count(); i++ )
     {
         if ( strcmp( rocketnet_posix_hard_killed_client_test_name( i ), name ) != 0 )
@@ -12767,7 +12781,7 @@ int rocketnet_functional_run_named( const char * name )
         rocketnet_posix_hard_killed_client_test_run( i );
         return 0;
     }
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
     fprintf( stderr, "unknown functional test %s\n", name );
 
     return 2;

@@ -200,7 +200,7 @@ reconstruct: proof_reconstruct_sequence.c
 ESBMC ?= esbmc
 ACK_RUN_SOURCE = $(CURDIR)/proof_ack_apply_run.c
 ACK_RUN_FLAGS = --std c++17 --z3 --overflow-check --ub-shift-check \
-                -DROCKETNET_ESBMC -DNDEBUG -DROCKETNET_DEV=0 \
+                -DROCKETNET_ESBMC -DNDEBUG -DROCKETNET_DEV=1 \
                 -I$(SDK) --include-file $(CURDIR)/esbmc_shim.h
 ACK_RUN_TIMEOUT ?= 1800
 ACK_RUN_MEMORY_KB ?= 16000000

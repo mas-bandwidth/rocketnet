@@ -318,13 +318,6 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
         if ( !ep_send_next( side, remote, random ) )
             break;
 
-    // while something is in flight, the endpoint names a deadline
-
-    if ( endpoint->ordered.send.U < endpoint->ordered.send.next )
-    {
-        check( rn_endpoint_deadline( endpoint ) < RN_ENDPOINT_NO_DEADLINE );
-    }
-
     // RNEndpoint WritePacket, PacketFailed: the write pass into frames the
     // stand-in transport supplies, under ids it assigns
 
@@ -416,9 +409,6 @@ static int ep_back_to_back( ep_side_t * a, ep_side_t * b, uint64_t seed, ep_stat
         ep_update( b, a, now, &random, stats );
         if ( ep_done( a, b ) && ep_done( b, a ) )
             break;
-
-        const double deadline = rn_endpoint_deadline( &a->endpoint );
-        ep_hash( &stats->trace, &deadline, sizeof( deadline ) );
     }
 
     return step;
@@ -486,7 +476,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
     check( a->endpoint.ordered.config_received && b->endpoint.ordered.config_received );
 
     // an end whose CONFIG from the other side never arrives is a RELIABLE_TIMEOUT reliable_timeout
-    // after the wait began, and the deadline names that time
+    // after the wait began
     {
         const double start = 1000.0 + steps * EP_STEP;
         const double timeout = (double) config.reliable_message_timeout_ms / 1000.0;
@@ -495,7 +485,6 @@ static void test_endpoint_back_to_back_over_lossy_array()
         check( b->endpoint.config_wait_start < 0.0 );
         rn_endpoint_config_tick( &b->endpoint, 1, start );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
-        check( rn_endpoint_deadline( &b->endpoint ) == start + timeout );
         rn_endpoint_config_tick( &b->endpoint, 1, start + timeout * 0.5 );
         check( rn_endpoint_error( &b->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rn_endpoint_config_tick( &b->endpoint, 0, start + timeout );   // started, the wait times out whatever the transport says
@@ -531,7 +520,7 @@ static uint64_t ep_frees = 0;
 // Elsewhere the intercept is absent, and the determinism check below stands
 // alone.
 
-#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#if defined( __linux__ ) && ROCKETNET_DEV
 static uint64_t ep_clock_reads = 0;
 static double ep_fake_clock = 1000.0;
 extern "C" double __real_rocketnet_platform_time();
@@ -541,7 +530,7 @@ extern "C" double __wrap_rocketnet_platform_time()
     ep_fake_clock += ( 1.0 / 60.0 );
     return ep_fake_clock;
 }
-#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( __linux__ ) && ROCKETNET_DEV
 
 static void * ep_malloc( void * context, size_t bytes )
 {
@@ -565,14 +554,14 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
     rocketnet_message_config_t config;
     ep_config( &config );
 
-#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#if defined( __linux__ ) && ROCKETNET_DEV
     // the intercept works: a read of the library's clock is counted
     {
         const uint64_t before = ep_clock_reads;
         rocketnet_time();
         check( ep_clock_reads == before + 1 );
     }
-#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( __linux__ ) && ROCKETNET_DEV
 
     uint64_t traces[2];
     int steps[2];
@@ -590,9 +579,9 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
         const uint64_t mallocs = ep_mallocs;
         const uint64_t frees = ep_frees;
-#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#if defined( __linux__ ) && ROCKETNET_DEV
         const uint64_t clock_reads = ep_clock_reads;
-#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( __linux__ ) && ROCKETNET_DEV
 
         ep_stats_t stats;
         steps[run] = ep_back_to_back( a, b, 77, &stats );
@@ -602,13 +591,12 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
         rocketnet_message_receipt_t receipts[16];
         rn_endpoint_take_receipts( &a->endpoint, receipts, 16 );
-        rn_endpoint_deadline( &a->endpoint );
 
         check( ep_mallocs == mallocs );
         check( ep_frees == frees );
-#if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#if defined( __linux__ ) && ROCKETNET_DEV
         check( ep_clock_reads == clock_reads );                 // not one clock read from the endpoint
-#endif // #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
+#endif // #if defined( __linux__ ) && ROCKETNET_DEV
         traces[run] = stats.trace;
 
         ep_side_destroy( a );
@@ -855,138 +843,3 @@ REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
 
-// Interior cancel and a stale epoch become holes. Expire frees only those
-// generations and the receipt trace matches the oracle. Time is the argument.
-
-static void test_endpoint_unreliable_holes_match_oracle()
-{
-    rocketnet_message_config_t config;
-    ep_config( &config );
-
-    rocketnet_counters_t counters = {};
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
-    check( arena != NULL );
-
-    rn_endpoint_config_t endpoint_config = {};
-    endpoint_config.config = &config;
-    endpoint_config.send_kbps = 0;
-    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
-
-    rn_endpoint_t endpoint;
-    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
-    rn_endpoint_reset( &endpoint, 1000.0 );
-    rn_endpoint_begin_update( &endpoint );
-
-    uint32_t index[4];
-    uint32_t serial[4];
-    uint32_t generation[4];
-
-    for ( int i = 0; i < 4; i++ )
-    {
-        uint8_t * data = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 16, endpoint_config.max_payload_bytes );
-        check( data != NULL );
-        memset( data, (uint8_t) ( 0x10 + i ), 16 );
-        serial[i] = rn_endpoint_finish( &endpoint, 16, 0 );
-        check( serial[i] != 0 );
-    }
-
-    // the flat unreliable walk: live descriptors in enqueue_ticket order
-
-    uint32_t seen = 0;
-    uint32_t after = 0;
-
-    while ( seen < 4 )
-    {
-        uint32_t best = RN_DESCRIPTOR_NONE;
-        uint32_t best_ticket = 0;
-
-        for ( uint32_t d = 0; d < endpoint.region->descriptors_fresh; d++ )
-        {
-            const rn_send_descriptor_t * descriptor = &endpoint.region->send_descriptors[d];
-            if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->enqueue_ticket <= after )
-                continue;
-
-            if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
-            {
-                best = d;
-                best_ticket = descriptor->enqueue_ticket;
-            }
-        }
-
-        if ( best == RN_DESCRIPTOR_NONE )
-            break;
-        after = best_ticket;
-        index[seen] = best;
-        generation[seen] = endpoint.region->send_descriptors[best].generation;
-        check( endpoint.region->send_descriptors[best].serial == serial[seen] );
-        seen++;
-    }
-
-    check( seen == 4 );
-
-    const uint32_t epoch = endpoint.region->schedule_epoch;
-    check( rn_endpoint_cancel_unreliable( &endpoint, index[1], generation[1] + 1, epoch ) == false );
-    check( endpoint.unreliable_count == 4 );
-    check( rn_endpoint_cancel_unreliable( &endpoint, index[1], generation[1], epoch ) == true );
-    check( endpoint.unreliable_count == 3 );
-    endpoint.region->send_descriptors[index[2]].queue_epoch = 0;
-    rn_endpoint_expire_unreliable( &endpoint );
-    check( endpoint.unreliable_count == 2 );
-    check( endpoint.unreliable_holes == 0 );
-
-    uint32_t order[2];
-    uint32_t n = 0;
-    uint32_t after_order = 0;
-
-    while ( n < 2 )
-    {
-        uint32_t best = RN_DESCRIPTOR_NONE;
-        uint32_t best_ticket = 0;
-
-        for ( uint32_t d = 0; d < endpoint.region->descriptors_fresh; d++ )
-        {
-            const rn_send_descriptor_t * descriptor = &endpoint.region->send_descriptors[d];
-            if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->enqueue_ticket <= after_order )
-                continue;
-
-            if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
-            {
-                best = d;
-                best_ticket = descriptor->enqueue_ticket;
-            }
-        }
-
-        if ( best == RN_DESCRIPTOR_NONE )
-            break;
-        after_order = best_ticket;
-        order[n++] = endpoint.region->send_descriptors[best].serial;
-    }
-
-    const uint32_t oracle[2] = { serial[0], serial[3] };
-    check( n == 2 && order[0] == oracle[0] && order[1] == oracle[1] );
-    rn_endpoint_tick( &endpoint, 1000.0 );
-
-    rocketnet_message_receipt_t receipts[8];
-    const int got = rn_endpoint_take_receipts( &endpoint, receipts, 8 );
-    check( got == 2 );
-    check( receipts[0].serial == serial[1] || receipts[1].serial == serial[1] );
-    check( receipts[0].serial == serial[2] || receipts[1].serial == serial[2] );
-    check( receipts[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
-    check( receipts[1].status == ROCKETNET_RECEIPT_STATUS_LOSS );
-
-    uint8_t * again = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16, endpoint_config.max_payload_bytes );
-    check( again != NULL );
-
-    const uint32_t reused = endpoint.pending_descriptor;
-    const uint32_t reused_generation = endpoint.region->send_descriptors[reused].generation;
-    if ( reused == index[1] )
-    {
-        check( reused_generation != generation[1] );
-    }
-    check( rn_endpoint_finish( &endpoint, 16, 0 ) != 0 );
-    check( rn_endpoint_cancel_unreliable( &endpoint, reused, reused_generation + 1, epoch ) == false );
-    check( endpoint.unreliable_count == 3 );
-    rn_arena_destroy( arena );
-}
-
-REGISTER_UNIT_TEST( test_endpoint_unreliable_holes_match_oracle );

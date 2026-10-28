@@ -190,7 +190,7 @@ sleeps or reads the wall clock is functional, and CI runs it only in a step
 named functional, never as a unit step.
 
 Unit cases feed SDK environment parsing through the in-memory source compiled
-only into `rocketnet_test_hooks`; they never read or mutate the process
+only under `ROCKETNET_DEV`; they never read or mutate the process
 environment. `functional/environment_wiring.cpp` sets and restores real
 variables and pins the SDK wiring, precedence, and refusal paths.
 
@@ -470,12 +470,10 @@ production build sets `ROCKETNET_DEV` to 0, one setting:
 or `#define ROCKETNET_DEV 0` (`-DROCKETNET_DEV=0`) when compiling the sources
 into your own build. The CMake option sets the value on `rocketnet` and
 `rocketnet_shared`, and the targets hand it to every consumer, so the header a
-game compiles matches its library. `rocketnet_test_hooks` is built only when
-`ROCKETNET_DEV=ON`; in a production build (`-DROCKETNET_DEV=OFF`) no hook
-library is built, `./bin/test` links `rocketnet` directly to run the
-production-compatible unit suites, and enabling `ROCKETNET_TEST_SEAMS` or any
-`*_TEST_HOOKS` / `*_TESTS` macro is refused at both CMake configure time and
-C/C++ compile time ([docs/TEST-SCAFFOLDING.md](docs/TEST-SCAFFOLDING.md)).
+game compiles matches its library. `ROCKETNET_DEV` is the one switch for every test seam; in a
+production build (`-DROCKETNET_DEV=OFF`) `./bin/test` links `rocketnet`
+directly to run the production-compatible unit suites and no seam is compiled
+([docs/TEST-SCAFFOLDING.md](docs/TEST-SCAFFOLDING.md)).
 `rocketnet_dev` and `rocketnet_shared_dev` are `ROCKETNET_DEV=1` in every
 build when `ROCKETNET_BUILD_DEV_LIBRARIES=ON`, for the examples, the functional
 suite and the tools.

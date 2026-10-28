@@ -34,7 +34,7 @@
 
 struct rocketnet_network_simulator_t;
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 
 struct rocketnet_network_simulator_t * rocketnet_network_simulator_create( void * context,
                                                                            int capacity,
@@ -176,7 +176,7 @@ void rocketnet_network_simulator_test_index_stats( const struct rocketnet_networ
 
 void rocketnet_network_simulator_test_reset_index_stats( struct rocketnet_network_simulator_t * simulator );
 
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV
 
 // A production library has no network simulator: the transports' link
 // simulator is refused at config validation before create, so the pointer is
@@ -192,6 +192,6 @@ static inline void rocketnet_network_simulator_flush_window( struct rocketnet_ne
 static inline void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t *, const struct rocketnet_address_t *, const struct rocketnet_address_t *, const uint8_t *, int, double ) {}
 static inline int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t *, double, struct rocketnet_address_t *, struct rocketnet_address_t *, uint8_t * ) { return 0; }
 
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H

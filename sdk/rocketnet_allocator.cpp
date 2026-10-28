@@ -40,14 +40,14 @@ static_assert( sizeof( ( (rn_send_descriptor_t *) 0 )->reserved ) >= 2, "a send 
 static_assert( sizeof( rn_store_class_t ) >= 32, "a store class header stays a small fixed record" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 static thread_local rn_span_cost_t rn_span_cost;
 void rn_span_cost_reset() { memset( &rn_span_cost, 0, sizeof( rn_span_cost ) ); }
 rn_span_cost_t rn_span_cost_read() { return rn_span_cost; }
 #define RN_SPAN_COST_VISIT() ( rn_span_cost.edge_visits++ )
 #else
 #define RN_SPAN_COST_VISIT() ( (void) 0 )
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static uint64_t rn_align64( uint64_t value )
 {
@@ -108,10 +108,12 @@ static const char * const rn_part_formulas[RN_NUM_PARTS] = {
     "SR",
 };
 
+#if ROCKETNET_DEV
 const char * rn_region_part_name( int part )
 {
     return part >= 0 && part < RN_NUM_PARTS ? rn_part_names[part] : NULL;
 }
+#endif // #if ROCKETNET_DEV
 
 // Section 14: each part is its formula's term exactly, at a 64-aligned offset
 // (4: ROCKETNET_ALLOCATION_ALIGNMENT), so the ring base is 16-aligned and the
@@ -529,6 +531,7 @@ uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t hand
     return cls->data + (uint64_t) i * cls->chunk_bytes;
 }
 
+#if ROCKETNET_DEV
 uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle )
 {
     rocketnet_assert( store );
@@ -609,6 +612,7 @@ uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_in
     rocketnet_assert( store && class_index >= 0 && class_index < RN_STORE_NUM_CLASSES );
     return store->classes[class_index].num_chunks;
 }
+#endif // #if ROCKETNET_DEV
 
 // ----------------------------------------------------------------
 //                            the region
@@ -819,11 +823,13 @@ bool rn_region_exhausted( const rn_region_t * region )
     return region->exhausted != 0;
 }
 
+#if ROCKETNET_DEV
 int rn_region_exhausted_reason( const rn_region_t * region )
 {
     rocketnet_assert( region );
     return region->exhausted ? region->exhausted_reason : ROCKETNET_DISCONNECT_REASON_NONE;
 }
+#endif // #if ROCKETNET_DEV
 
 int rn_connection_memory_decide( const rn_region_t * region )
 {
@@ -1670,6 +1676,7 @@ void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, i
 
 #endif // #if ROCKETNET_ASSERTS
 
+#if ROCKETNET_DEV
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes )
 {
     rocketnet_assert( region );
@@ -1680,6 +1687,7 @@ bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t by
 
     return (uint64_t) ( address - base ) <= region->bytes - bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 // tla/RNRing.tla SpanInsideRing
 
@@ -1860,11 +1868,13 @@ void rn_arena_destroy( rn_arena_t * arena )
         rocketnet_free( arena->context, arena );
 }
 
+#if ROCKETNET_DEV
 int rn_arena_num_regions( const rn_arena_t * arena )
 {
     rocketnet_assert( arena );
     return arena->num_regions;
 }
+#endif // #if ROCKETNET_DEV
 
 rn_region_t * rn_arena_region( rn_arena_t * arena, int index )
 {
@@ -1876,11 +1886,13 @@ rn_region_t * rn_arena_region( rn_arena_t * arena, int index )
     return &arena->regions[index];
 }
 
+#if ROCKETNET_DEV
 uint64_t rn_arena_bytes( const rn_arena_t * arena )
 {
     rocketnet_assert( arena );
     return arena->bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 // ----------------------------------------------------------------
 //                     the sizing, before connect

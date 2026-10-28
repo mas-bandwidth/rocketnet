@@ -84,6 +84,7 @@ static const struct rocketnet_config_field_t rn_server_budget_fields[] = {
     { "per_client_send_kbps", ROCKETNET_CONFIG_KIND_INT, 0, (int) sizeof( int ), (int64_t) INT_MIN, (int64_t) ROCKETNET_SEND_KBPS_UNLIMITED, 0 },
 };
 
+#if ROCKETNET_DEV
 const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields )
 {
     *num_fields = 1;
@@ -95,6 +96,7 @@ const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( i
     *num_fields = 1;
     return rn_server_budget_fields;
 }
+#endif // #if ROCKETNET_DEV
 
 static uint32_t rn_budget_kbps( int kbps )
 {
@@ -445,6 +447,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     return true;
 }
 
+#if ROCKETNET_DEV
 bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
                                       struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps )
 {
@@ -456,6 +459,7 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 {
     return rn_server_split( config, read_env, transport, message, kbps );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------
 //                              client
@@ -977,12 +981,12 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const struc
     return rn_client_create( context, config, NULL, status );
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 struct rocketnet_client_t * rocketnet_client_create_testing( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
 {
     return rn_client_create( context, config, testing, status );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
@@ -1625,6 +1629,7 @@ struct rocketnet_message_server_t * rocketnet_server_message_server( struct rock
     return server ? ( server->running ? server->running : server->retiring ) : NULL;
 }
 
+#if ROCKETNET_DEV
 bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( address ) || address_bytes == 0 )
@@ -1665,6 +1670,7 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
     server->running = running;
     return server;
 }
+#endif // #if ROCKETNET_DEV
 
 // A destination id with ROCKETNET_FLOW_ID_BIT set is a flow id: reserved,
 // refused and counted until flows exist (ROCKETNET_STATUS_FLOW_ID_RESERVED).
@@ -2304,7 +2310,7 @@ bool rocketnet_server_running( const struct rocketnet_server_t * server )
     return server->running != NULL;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     if ( max < 1 )
@@ -2315,7 +2321,7 @@ int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, in
 
     return 1;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // tla/ServerSession.tla Destroy: from any state; a running server is
 // stopped first, then the object goes.
@@ -2912,7 +2918,7 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 // connection's threads do not move, and a production library refuses the
 // simulator and carries none of its memory.
 
-#if ROCKETNET_DEV || defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2968,4 +2974,4 @@ void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int
         (void) rocketnet_server_transport_network_simulator( transport, latency_ms, jitter_ms, packet_loss_percent, duplicate_percent );
 }
 
-#endif // ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
+#endif // ROCKETNET_DEV

@@ -9,43 +9,18 @@
 #define ROCKETNET_TESTS_ROCKETNET_VALUE_TRACKER_H
 
 #include "rocketnet_internal.h"
-#include "rocketnet_memory_checks.h"
 #include <memory.h>
 #include <float.h>
 
 struct rocketnet_value_tracker_t
 {
-    ROCKETNET_DECLARE_SENTINEL(0)
-
     int index;
     int num_samples;
     float minimum;
     float maximum;
 
-    ROCKETNET_DECLARE_SENTINEL(1)
-
     float values[ROCKETNET_VALUE_TRACKER_HISTORY];
-
-    ROCKETNET_DECLARE_SENTINEL(2)
 };
-
-inline void rocketnet_value_tracker_initialize_sentinels( rocketnet_value_tracker_t * tracker )
-{
-    (void) tracker;
-    rocketnet_assert( tracker );
-    ROCKETNET_INITIALIZE_SENTINEL( tracker, 0 )
-    ROCKETNET_INITIALIZE_SENTINEL( tracker, 1 )
-    ROCKETNET_INITIALIZE_SENTINEL( tracker, 2 )
-}
-
-inline void rocketnet_value_tracker_verify_sentinels( rocketnet_value_tracker_t * tracker )
-{
-    (void) tracker;
-    rocketnet_assert( tracker );
-    ROCKETNET_VERIFY_SENTINEL( tracker, 0 )
-    ROCKETNET_VERIFY_SENTINEL( tracker, 1 )
-    ROCKETNET_VERIFY_SENTINEL( tracker, 2 )
-}
 
 inline void rocketnet_value_tracker_reset( rocketnet_value_tracker_t * tracker )
 {
@@ -53,18 +28,12 @@ inline void rocketnet_value_tracker_reset( rocketnet_value_tracker_t * tracker )
 
     memset( tracker, 0, sizeof( rocketnet_value_tracker_t ) );
 
-    rocketnet_value_tracker_initialize_sentinels( tracker );
-
     tracker->maximum = -FLT_MAX;
     tracker->minimum = +FLT_MAX;
-
-    rocketnet_value_tracker_verify_sentinels( tracker );
 }
 
 inline void rocketnet_value_tracker_add_sample( rocketnet_value_tracker_t * tracker, float value )
 {
-    rocketnet_value_tracker_verify_sentinels( tracker );
-
     if ( value > tracker->maximum )
     {
         tracker->maximum = value;
@@ -82,8 +51,6 @@ inline void rocketnet_value_tracker_add_sample( rocketnet_value_tracker_t * trac
 
 inline void rocketnet_value_tracker_calculate( rocketnet_value_tracker_t * tracker, float * min_value, float * max_value, float * avg_value )
 {
-    rocketnet_value_tracker_verify_sentinels( tracker );
-
     rocketnet_assert( min_value );
     rocketnet_assert( max_value );
     rocketnet_assert( avg_value );

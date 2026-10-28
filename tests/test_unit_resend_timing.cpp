@@ -35,7 +35,9 @@
 #define ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES 60
 
 static const double resend_timing_start = 1000.0;
+#if ROCKETNET_DEV
 static const double resend_timing_tick = 1.0 / 60.0;
+#endif // #if ROCKETNET_DEV
 
 struct resend_timing_fixture_t
 {
@@ -91,6 +93,7 @@ static uint64_t resend_timing_send( resend_timing_fixture_t * f, double now, uin
     return packet_id;
 }
 
+#if ROCKETNET_DEV
 // One resend pass at now through the product walk (rn_ordered_write), reading
 // the numbers each written packet carries; returns how many it resent.
 static uint32_t resend_timing_write( resend_timing_fixture_t * f, double now, uint64_t * out, uint32_t max_numbers )
@@ -171,6 +174,7 @@ static void test_resend_delay_is_adaptive_resend_delay()
 }
 
 REGISTER_UNIT_TEST( test_resend_delay_is_adaptive_resend_delay );
+#endif // #if ROCKETNET_DEV
 
 // The equation honors caller bounds; the 2 s default is not an override
 // of an application's explicit maximum.
@@ -224,6 +228,7 @@ static void test_rtt_estimator_moves_five_percent()
 
 REGISTER_UNIT_TEST( test_rtt_estimator_moves_five_percent );
 
+#if ROCKETNET_DEV
 // test_no_backoff_between_resends: a record that is never acked repeats its
 // configured initial resend delay on every pass.
 static void test_no_backoff_between_resends()
@@ -287,6 +292,7 @@ static void test_first_resend_before_any_sample_at_resend_delay_initial()
 }
 
 REGISTER_UNIT_TEST( test_first_resend_before_any_sample_at_resend_delay_initial );
+#endif // #if ROCKETNET_DEV
 
 // test_config_refuses_fewer_than_four_attempts: reliable_message_timeout_ms must fit four
 // sends of the longest first delay, max( the 100 ms resend interval,
@@ -323,6 +329,7 @@ static void test_config_refuses_fewer_than_four_attempts()
 
 REGISTER_UNIT_TEST( test_config_refuses_fewer_than_four_attempts );
 
+#if ROCKETNET_DEV
 // test_resend_timing_witness_replays: the schedule of
 // tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
 // resend delay settings (resend_delay_initial 1000 ms, resend_delay_min 50 ms, resend_delay_max 2000 ms,
@@ -380,6 +387,7 @@ static void test_resend_timing_witness_replays()
 }
 
 REGISTER_UNIT_TEST( test_resend_timing_witness_replays );
+#endif // #if ROCKETNET_DEV
 
 // test_message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
 // interval and RTT scale are constants, so they add no field: revision 1's 15
@@ -405,6 +413,7 @@ REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 // build against the one-FIFO walk too and show where it differs.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 // Numbers a block of `bytes` (more than one fragment) and sends each chunk in
 // its own packet at now. Writes the chunk numbers to out_numbers and returns
 // how many there are.
@@ -620,52 +629,4 @@ static void test_both_fifos_walk_only_what_is_due()
 }
 
 REGISTER_UNIT_TEST( test_both_fifos_walk_only_what_is_due );
-
-// Generation and epoch name a resend entry. A stale generation, a stale epoch,
-// and the pre-wrap message number leave the FIFO alone. Time is the argument.
-static void test_resend_named_generation_and_park()
-{
-    resend_timing_fixture_t f;
-    rocketnet_message_default_config( &f.config );
-    resend_timing_open( &f );
-
-    const double now = resend_timing_start;
-    uint64_t n0 = 0, n1 = 0;
-    resend_timing_send( &f, now, &n0 );
-    resend_timing_send( &f, now, &n1 );
-    const uint64_t numbers[2] = { n0, n1 };
-    rn_window_ack_packet_failed( &f.ack, numbers, 2, now );
-    rn_window_ack_packet_failed( &f.ack, numbers, 2, now );
-    const uint32_t W = f.region->window;
-    const uint32_t s0 = (uint32_t) ( n0 & ( W - 1 ) );
-    const uint32_t s1 = (uint32_t) ( n1 & ( W - 1 ) );
-    check( f.ack.resend_head == s0 );
-    check( rn_window_ack_resend_next( &f.ack, false, s0 ) == s1 );
-    check( f.region->resend_fifo[s0].generation != 0 );
-    check( f.region->resend_fifo[s0].generation == f.region->send_descriptors[f.region->send_numbers[s0].descriptor].generation );
-    check( f.region->resend_fifo[s0].owner_epoch == f.region->schedule_epoch );
-
-    const uint32_t generation = f.region->resend_fifo[s0].generation;
-    const uint32_t epoch = f.region->schedule_epoch;
-    check( rn_window_ack_cancel_resend( &f.ack, n0, generation + 1 ) == false );
-    check( f.ack.resend_head == s0 );
-
-    f.region->schedule_epoch = epoch + 1;
-    check( rn_window_ack_cancel_resend( &f.ack, n0, generation ) == false );
-
-    f.region->schedule_epoch = epoch;
-    check( f.ack.resend_head == s0 );
-
-    const uint64_t wide = n0 + ( 1ULL << 32 );
-    check( rn_window_ack_cancel_resend( &f.ack, wide, generation ) == false );
-
-    f.region->send_numbers[s0].number = wide;
-    check( rn_window_ack_cancel_resend( &f.ack, n0, generation ) == false );
-    check( rn_window_ack_cancel_resend( &f.ack, wide, generation ) == true );
-    check( f.ack.resend_head == s1 );
-    check( f.region->resend_fifo[s1].generation == f.region->send_descriptors[f.region->send_numbers[s1].descriptor].generation );
-
-    resend_timing_close( &f );
-}
-
-REGISTER_UNIT_TEST( test_resend_named_generation_and_park );
+#endif // #if ROCKETNET_DEV

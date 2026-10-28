@@ -11,9 +11,9 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_driver_loopback.h"
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
 #include "channel_harness.h"
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
 #include "../tests/plan_rss.h"
 #include "../tests/suite_runner.h"
 #include "../tests/portable_crt.h"
@@ -114,22 +114,22 @@ static int rocketnet_functional_test_group( const char * name )
     };
     for ( const char * prefix : nightly )
         if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !ROCKETNET_DEV
             return SUITE_GROUP_NIGHTLY;
 #else
             return rocketnet_posix_hard_killed_client_test_group( name ) | SUITE_GROUP_NIGHTLY;
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
 #endif // #if defined( __APPLE__ )
     if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
         return 2;
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !ROCKETNET_DEV
     (void) name;
     return 0;
 #elif defined( _WIN32 )
     return 0;
 #else
     return rocketnet_posix_hard_killed_client_test_group( name );
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
 }
 
 #endif // #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
@@ -185,7 +185,7 @@ int main( int argc, char ** argv )
     // the child client of the hard-killed client cases
     // (functional/posix_hard_killed_client.cpp), started by posix_spawn and
     // ended by the case with SIGKILL
-#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+#if ROCKETNET_DEV
     if ( argc >= 2 && strcmp( argv[1], "--posix-hard-killed-child" ) == 0 )
         return rocketnet_posix_hard_killed_child_main( argc, argv );
 
@@ -194,8 +194,8 @@ int main( int argc, char ** argv )
         fprintf( stderr, "error: channel harness delivery sequence self-test failed\n" );
         return 1;
     }
-#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if ROCKETNET_DEV
+#if !ROCKETNET_DEV
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
 #elif defined( _WIN32 )
     const suite_exec execs[] = {
@@ -235,5 +235,5 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", NULL, true },
     };
     return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
 }

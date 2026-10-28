@@ -618,14 +618,14 @@ static void check_component_create_sweeps( allocator_state & state )
 
     // 8. rocketnet_network_simulator_create: 12 allocations (fail N=1..12, succeed N=13).
     // A production build (ROCKETNET_DEV=0) has no simulator (sdk/rocketnet_test_seams.h).
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     check( sweep_component_create<rocketnet_network_simulator_t>(
                state,
                [&]()
                { return rocketnet_network_simulator_create( &state, 64, 1 ); },
                []( rocketnet_network_simulator_t * s )
                { rocketnet_network_simulator_destroy( s ); } ) == 12 );
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
     // 9. rn_arena_create (sdk/rocketnet_allocator.h): 1 allocation (fail N=1, succeed N=2).
     // Refused configs and region counts allocate nothing; in-region carve/send/store allocate nothing.
@@ -659,7 +659,7 @@ static void check_component_create_sweeps( allocator_state & state )
                {
                    const int before = state.calls;
                    state.fail_at = before + 1;
-                   for ( int i = 0; i < rn_arena_num_regions( a ); ++i )
+                   for ( int i = 0; rn_arena_region( a, i ) != NULL; ++i )
                    {
                        rn_region_t * r = rn_arena_region( a, i );
                        check( r != NULL );

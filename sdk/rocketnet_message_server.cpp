@@ -1869,29 +1869,6 @@ uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * serv
     return rn_message_object_send( &server->object, client_index, channel, reliability, data, bytes );
 }
 
-int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes )
-{
-    if ( !rocketnet_api_null_guard( server ) )
-        return 0;
-    if ( !rocketnet_api_null_guard( data ) )
-        return 0;
-
-    // CHANNELS 11.4 Broadcast: a loop over the slots, each send the same copying
-    // convenience as rocketnet_message_server_send. The R3 copy is one per
-    // connected connection, into that connection's region; there is no new
-    // state and no allocation. A slot that refuses (free, kicked or exhausted)
-    // is skipped by the send path, which counts the refusal, and never retried.
-
-    int queued = 0;
-    for ( int i = 0; i < server->object.num_connections; i++ )
-    {
-        if ( rn_message_object_send( &server->object, i, channel, reliability, data, bytes ) != 0 )
-            queued++;
-    }
-
-    return queued;
-}
-
 int rocketnet_message_server_receive( struct rocketnet_message_server_t * server, int * client_index, int * channel, const uint8_t ** data, int * bytes )
 {
     if ( !rocketnet_api_null_guard( server ) )

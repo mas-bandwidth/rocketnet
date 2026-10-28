@@ -33,7 +33,7 @@
 // defined in functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -2181,7 +2181,9 @@ static void * posix_port_server_create( int kind, uint16_t port )
         struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &address, 2, 0 );
         if ( gso )
         {
+#if ROCKETNET_DEV
             posix_check( rocketnet_server_gso_num_queues( gso ) == 2 );
+#endif // #if ROCKETNET_DEV
         }
 
         return gso;
@@ -2674,7 +2676,9 @@ static void posix_xdp_weather( int ipv6 )
 
     // the server: pinned to xdp, one queue, on the near end
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -3102,4 +3106,4 @@ void rocketnet_test_linux_xdp_receive_weather_ipv6()
 
 #endif // #if defined(__linux__)
 
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

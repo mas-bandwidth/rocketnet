@@ -355,7 +355,7 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
     return client_index;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
@@ -380,7 +380,7 @@ int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
 
     return rocketnet_client_slots_assign( slots, client_id, mapping_index, owner_generation, user_data );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_client_slots_connected( const struct rocketnet_client_slots_t * slots, int client_index )
 {
@@ -599,7 +599,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
         rocketnet_error( "server refused to release client slot %d: stale or missing full-id index entry", client_index );
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
 #define SLOT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_slots_t, field, -1 ),
@@ -613,9 +613,7 @@ bool rocketnet_client_slots_inventory_matches_for_test( char * failure, size_t f
                                               sizeof( rocketnet_client_slots_t ), alignof( rocketnet_client_slots_t ),
                                               failure, failure_bytes );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_slots_reset_witness_for_test()
 {
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
@@ -668,4 +666,4 @@ bool rocketnet_client_slots_reset_witness_for_test()
 
     return clean;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV

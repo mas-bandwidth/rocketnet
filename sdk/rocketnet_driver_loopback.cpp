@@ -81,7 +81,7 @@ static rocketnet_loopback_state_t & loopback_state()
     return init.state;
 }
 
-#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#if ROCKETNET_DEV
 static bool loopback_test_send_contention = false;
 
 void rocketnet_loopback_test_send_contention( bool busy ) { loopback_test_send_contention = busy; }
@@ -96,14 +96,14 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
     *tail = ep->tail;
     *capacity = ep->capacity;
 }
-#endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static bool loopback_try_send_lock( rocketnet_loopback_state_t & state )
 {
-#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( loopback_test_send_contention )
         return false;
-#endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     return rocketnet_platform_mutex_try_acquire( &state.mutex );
 }
@@ -531,6 +531,7 @@ static const rocketnet_client_transport_io_operations_t loopback_client_operatio
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 
+#if ROCKETNET_DEV
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance )
 {
     rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) instance;
@@ -552,3 +553,4 @@ int rocketnet_loopback_endpoints_live()
 
     return live;
 }
+#endif // #if ROCKETNET_DEV

@@ -613,10 +613,12 @@ void rocketnet_server_socket_forbid_commit()
     rocketnet_server_socket_commit_forbidden_flag.store( true );
 }
 
+#if ROCKETNET_DEV
 void rocketnet_server_socket_allow_commit()
 {
     rocketnet_server_socket_commit_forbidden_flag.store( false );
 }
+#endif // #if ROCKETNET_DEV
 
 #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
 // The suite's development control: select the pre-flight answer so the
@@ -2589,7 +2591,7 @@ uint64_t rocketnet_server_socket_replay_commit_failures( struct rocketnet_server
     return server_socket->replay_commit_failures;
 }
 
-#if defined( ROCKETNET_XDP_TESTS )
+#if ROCKETNET_DEV
 // Exercise the native staging entry points without creating kernel resources.
 bool rocketnet_server_socket_test_buffer_exchange()
 {
@@ -2991,7 +2993,7 @@ bool rocketnet_server_socket_test_replay_marks()
 
     return valid;
 }
-#endif // #if defined( ROCKETNET_XDP_TESTS )
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * server_socket, uint8_t * eth, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes )
 {
@@ -3089,7 +3091,7 @@ uint64_t rocketnet_server_socket_send_failures( struct rocketnet_server_socket_t
     return failures;
 }
 
-#if defined( ROCKETNET_XDP_TESTS )
+#if ROCKETNET_DEV
 bool rocketnet_server_socket_test_send_failures_without_mutex()
 {
     // A query must be valid even while the worker owns the send mutex. These
@@ -3119,7 +3121,7 @@ bool rocketnet_server_socket_test_send_failures_without_mutex()
 
     return valid;
 }
-#endif // #if defined( ROCKETNET_XDP_TESTS )
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * server_socket, uint64_t * counters )
 {

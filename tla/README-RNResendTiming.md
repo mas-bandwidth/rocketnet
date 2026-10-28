@@ -23,12 +23,10 @@ records in `tla/RUNS.tsv`.
 ## The rule
 
 - **The resend delay.** `resend_delay = clamp( 1.25·srtt + 2·rttvar, resend_delay_min, resend_delay_max )` over
-  this layer's own RTT samples (`ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT` 125, a
-  constant); `resend_delay_initial` before the first sample. Defaults: `resend_delay_initial`
+  this layer's own RTT samples; `resend_delay_initial` before the first sample. Defaults: `resend_delay_initial`
   100 ms, `resend_delay_min` 10 ms, `resend_delay_max` 250 ms.
 - **The delay.** Every resend of a single-packet record waits
-  `min( resend_delay, resend_interval )`, `resend_interval` the constant
-  `ROCKETNET_MESSAGE_RESEND_INTERVAL_MS` (100 ms). Every resend of a chunk of
+  `min( resend_delay, resend_interval )`, `resend_interval` a fixed 100 ms. Every resend of a chunk of
   a block (a record whose send descriptor has more than one fragment) waits
   `min( resend_delay, reliable_timeout / 4 )`, the resend delay alone at the defaults. There
   is no back-off: the delay does not grow with the number of sends.
@@ -37,7 +35,7 @@ records in `tla/RUNS.tsv`.
 - **The timeout.** A record unacked for `reliable_timeout` (10 s) ends the
   connection with `RELIABLE_TIMEOUT`, and nothing more is sent.
 - **The validation.** A config is refused when
-  `reliable_message_timeout_ms < ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS × max( ROCKETNET_MESSAGE_RESEND_INTERVAL_MS, message_resend_delay_initial_ms )`, with
+  `reliable_message_timeout_ms < ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS × message_resend_delay_initial_ms`, with
   `ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS = 4`.
 
 ## What the module covers

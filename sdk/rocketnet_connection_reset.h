@@ -54,7 +54,7 @@ struct rn_message_object_t;
     X( KEEP, mapping_index ) X( KEEP, confirmed ) X( KEEP, user_data )
 
 #define ROCKETNET_SERVER_REPLAY_MARK_FIELDS( X ) \
-    X( RESET, has_mark ) X( RESET, marked_value ) X( RESET, marked_address )
+    X( RESET, has_mark ) X( RESET, marked_value )
 
 #define ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( X ) \
     X( RESET, packet_leases ) X( KEEP, context ) X( KEEP, bound_port ) X( KEEP, transport ) \
@@ -90,7 +90,7 @@ struct rn_message_object_t;
     X( RESET, pending_type ) X( RESET, pending_descriptor ) X( RESET, pending_bytes ) \
     X( RESET, pending_in_place ) X( RESET, pending_channel ) X( RESET, pending_header ) \
     X( RESET, in_place_serial ) X( RESET, in_place_receipt ) X( RESET, in_place_admitted ) \
-    X( RESET, unreliable_head ) X( RESET, unreliable_tail ) X( RESET, unreliable_count ) X( RESET, unreliable_holes ) \
+    X( RESET, unreliable_head ) X( RESET, unreliable_tail ) X( RESET, unreliable_count ) \
     X( RESET, write_phase ) X( RESET, written ) X( RESET, packet_kind ) X( RESET, packet_written ) \
     X( RESET, large_bytes ) X( RESET, large_admitted ) X( RESET, large_descriptor ) \
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )

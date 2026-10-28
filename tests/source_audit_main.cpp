@@ -16,6 +16,7 @@
 // named in one place.
 
 #include "test_unit_registry.h"
+#include "../sdk/rocketnet.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +24,9 @@
 
 static const char * const source_audit_cases[] = {
     "test_client_server_say_messages_not_packets",
+#if ROCKETNET_DEV
     "test_config_env_every_name_read_is_documented",
+#endif // #if ROCKETNET_DEV
     "test_counters_every_counter_is_named_by_a_test",
     "test_counters_every_outcome_in_at_most_one_family",
     "test_tools_never_cast_public_client_to_internal",

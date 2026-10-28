@@ -744,6 +744,7 @@ static void test_server_repeats_keep_alive_while_idle()
 // not restamp the keep-alive clock, and the keep-alive is still due on it.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void test_keep_alive_clock_counts_only_keep_alives()
 {
     struct rocketnet_handshake_server_t test;
@@ -783,6 +784,7 @@ static void test_keep_alive_clock_counts_only_keep_alives()
 
     rocketnet_handshake_server_teardown( &test );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // Create-skew refusal: a connect token created more than thirty seconds in the
@@ -903,6 +905,7 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
 // second address.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static int rocketnet_handshake_request_past_cookie( struct rocketnet_handshake_server_t * test,
                                                     const struct rocketnet_address_t * from,
                                                     uint8_t * request, uint8_t * response, int * response_bytes )
@@ -962,13 +965,18 @@ static void test_claim_written_only_after_signature_verifies()
 
     rocketnet_handshake_server_teardown( &test );
 }
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_client_ephemeral_erased_outside_handshake );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_claim_written_only_after_signature_verifies );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_token_created_past_skew_is_refused );
 REGISTER_UNIT_TEST( test_token_created_within_skew_passes_the_rung );
 REGISTER_UNIT_TEST( test_token_create_skew_enforced_without_lifetime_cap );
 REGISTER_UNIT_TEST( test_disconnect_absorbs_terminal_state );
 REGISTER_UNIT_TEST( test_one_connection_per_token_after_history_flush );
 REGISTER_UNIT_TEST( test_server_repeats_keep_alive_while_idle );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_keep_alive_clock_counts_only_keep_alives );
+#endif // #if ROCKETNET_DEV

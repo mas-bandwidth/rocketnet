@@ -278,6 +278,7 @@ static void test_unreliable_never_takes_a_number()
 // numbers the packet they name carried -- including a resend, whose packet is
 // keyed by the id the transport assigned to that send.
 
+#if ROCKETNET_DEV
 static void test_ack_feed_marks_only_carried_numbers()
 {
     rn_region_t * region = dispatch_region();
@@ -348,6 +349,7 @@ static void test_ack_feed_marks_only_carried_numbers()
 
     rn_region_reset( region );
 }
+#endif // #if ROCKETNET_DEV
 
 // the reversed witnesses of tla/README-RNChannel.md that concern dispatch and
 // the builder: the code refuses the broken step.
@@ -683,7 +685,9 @@ REGISTER_UNIT_TEST( test_dispatch_reaches_each_of_n_channels );
 REGISTER_UNIT_TEST( test_disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_delivered_as_a_view );
 REGISTER_UNIT_TEST( test_unreliable_never_takes_a_number );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_ack_feed_marks_only_carried_numbers );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_rnchannel_witness_replays );
 REGISTER_UNIT_TEST( test_unreliable_delivery_budget_drops_and_counts );
 REGISTER_UNIT_TEST( test_default_mask_enables_all_eight_types );
@@ -742,7 +746,7 @@ static uint32_t schedule_walk( const rn_channels_t * channels, uint32_t channel,
     return n;
 }
 
-static void test_channel_queue_fill_cancel_and_reuse()
+static void test_channel_queue_fill_exhausts_the_region()
 {
     rocketnet_message_config_t config;
     rn_arena_t * arena = schedule_arena( &config );
@@ -759,49 +763,6 @@ static void test_channel_queue_fill_cancel_and_reuse()
     }
     rocketnet_unit_check( filled == region->queue );
     rocketnet_unit_check( rn_region_exhausted( region ) );
-    rn_arena_destroy( arena );
-
-    arena = schedule_arena( &config );
-    region = rn_arena_region( arena, 0 );
-    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
-    for ( int i = 0; i < 4; i++ )
-    {
-        rocketnet_unit_check( schedule_enqueue( &channels, 0, 16 ) );
-    }
-
-    uint32_t live[4];
-    rocketnet_unit_check( schedule_walk( &channels, 0, live, 4 ) == 4 );
-
-    const uint32_t generation = region->send_descriptors[live[1]].generation;
-    const uint32_t epoch = region->schedule_epoch;
-    uint32_t oracle[4];
-    for ( int i = 0; i < 4; i++ )
-    {
-        oracle[i] = region->send_descriptors[live[i]].ordering;
-    }
-    rocketnet_unit_check( rn_channels_cancel_queued( &channels, 0, live[1], generation + 1, epoch ) == false );
-    rocketnet_unit_check( rn_channels_cancel_queued( &channels, 0, live[1], generation, epoch + 1 ) == false );
-    rocketnet_unit_check( rn_channels_cancel_queued( &channels, 0, live[1], generation, epoch ) == true );
-    rn_channels_compact_queues( &channels );
-
-    uint32_t after[4];
-    const uint32_t n = schedule_walk( &channels, 0, after, 4 );
-    rocketnet_unit_check( n == 3 );
-    rocketnet_unit_check( region->send_descriptors[after[0]].ordering == oracle[0] );
-    rocketnet_unit_check( region->send_descriptors[after[1]].ordering == oracle[2] );
-    rocketnet_unit_check( region->send_descriptors[after[2]].ordering == oracle[3] );
-
-    uint8_t * reused = rn_channels_start( &channels, 1, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, 16 );
-    rocketnet_unit_check( reused != NULL );
-
-    const uint32_t reused_index = channels.pending;
-    const uint32_t reused_generation = region->send_descriptors[reused_index].generation;
-    if ( reused_index == live[1] )
-    {
-        rocketnet_unit_check( reused_generation != generation );
-    }
-    rocketnet_unit_check( rn_channels_finish( &channels, 16 ) );
-    rocketnet_unit_check( rn_channels_cancel_queued( &channels, 1, reused_index, reused_generation + 1, epoch ) == false );
     rn_arena_destroy( arena );
 }
 
@@ -881,32 +842,7 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( ( region->send_descriptors[wrapped_next[2]].ordering & 0xFFFFFFu ) == 0 );
     rocketnet_unit_check( region->channel_send[0].ordered_write == 0x1000001u );
     rn_arena_destroy( arena );
-
-    arena = schedule_arena( &config );
-    region = rn_arena_region( arena, 0 );
-    rocketnet_unit_check( rn_channels_init( &ordered.channels, region, region->num_channels, 0 ) );
-    channels = &ordered.channels;
-
-    const uint32_t queued = 80;
-    for ( uint32_t i = 0; i < queued; i++ )
-    {
-        rocketnet_unit_check( schedule_enqueue( channels, 0, 16 ) );
-    }
-
-    uint32_t all[80];
-    rocketnet_unit_check( schedule_walk( channels, 0, all, 80 ) == queued );
-    channels->schedule_work = 0;
-    for ( uint32_t i = 1; i <= 64; i++ )
-    {
-        rocketnet_unit_check( rn_channels_cancel_queued( channels, 0, all[i], region->send_descriptors[all[i]].generation, region->schedule_epoch ) );
-    }
-    rocketnet_unit_check( channels->schedule_work == 0 );
-    rocketnet_unit_check( rn_channels_cancel_queued( channels, 0, all[65], region->send_descriptors[all[65]].generation, region->schedule_epoch ) );
-    rocketnet_unit_check( channels->schedule_work == queued );
-    rocketnet_unit_check( channels->schedule_work < region->num_channels * region->queue );
-    rocketnet_unit_check( channels->schedule_work < region->queue * region->queue );
-    rn_arena_destroy( arena );
 }
 
-REGISTER_UNIT_TEST( test_channel_queue_fill_cancel_and_reuse );
+REGISTER_UNIT_TEST( test_channel_queue_fill_exhausts_the_region );
 REGISTER_UNIT_TEST( test_channel_config_front_ready_rotation_and_work );

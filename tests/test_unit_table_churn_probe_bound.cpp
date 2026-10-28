@@ -29,9 +29,7 @@
 #if ROCKETNET_DEV
 extern "C" void rocketnet_dev_token_table_reset_operation_counts( struct rocketnet_used_token_history_t * history );
 extern "C" uint64_t rocketnet_dev_token_claim_probe_steps( const struct rocketnet_used_token_history_t * history );
-#endif
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
 static struct rocketnet_address_t churn_map_address( int ordinal )
 {
@@ -114,9 +112,7 @@ static void test_encryption_map_churn_probe_bound()
 
 REGISTER_UNIT_TEST( test_encryption_map_churn_probe_bound );
 
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_DEV
 
 static void churn_token_id( uint8_t * identifier, uint32_t value )
 {

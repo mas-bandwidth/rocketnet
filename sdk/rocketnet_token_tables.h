@@ -101,6 +101,8 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
 // the number of claim-table slots on the free list: a count kept on every
 // push and pop, O(1), read by the unit tests.
 
+#if ROCKETNET_DEV
 int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history );
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H

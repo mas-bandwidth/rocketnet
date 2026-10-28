@@ -99,7 +99,6 @@ struct rn_channels_t
     uint32_t pending_channel;
     uint32_t ready_head, ready_tail;  // cached ends of the flat ready sequence over channel_send, oldest turn first (9.1)
     uint32_t ready_ticket_next;       // next ready-sequence membership ticket, from 1; 0 is not a member
-    uint32_t queue_holes;             // cancelled descriptors still sequenced in some channel FIFO
     uint32_t schedule_work;           // queue entries visited by compact and ticket rebase; one pass, not per record
 };
 
@@ -190,14 +189,6 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes );
 // pending.
 
 bool rn_channels_cancel( struct rn_channels_t * channels );
-
-// Marks one queued descriptor a hole when it still names generation and owner_epoch.
-// The sequence entry stays until compact. False changes nothing (tla/RNChannelQueues.tla Cancel).
-bool rn_channels_cancel_queued( struct rn_channels_t * channels, uint32_t channel, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch );
-
-// One pass over the channel FIFOs that still hold holes: rebuild each chain,
-// free holes, and drop a channel whose live count is zero. O(C + queued), once.
-void rn_channels_compact_queues( struct rn_channels_t * channels );
 
 // ---------------------------------------------------------------
 //                     the receive side, 7.1 and 7.2
@@ -301,7 +292,7 @@ bool rn_block_shape_valid( const struct rn_channels_t * channels, const struct r
 // from the record so dispatch stands alone.
 struct rn_receive_descriptor_t * rn_channels_descriptor( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, uint32_t * out_slot );
 
-#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Present only in the unit-test library: the receive descriptors a code-2
 // block's chunks visit on their way to one delivery, counted as work done.
 struct rn_block_cost_t
@@ -311,7 +302,7 @@ struct rn_block_cost_t
 };
 void rn_channels_block_cost_reset();
 rn_block_cost_t rn_channels_block_cost_read();
-#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // Codes 1 and 4's case (sdk/rocketnet_channel_sequenced.cpp).
 

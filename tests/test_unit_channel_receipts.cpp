@@ -282,6 +282,7 @@ struct receipt_transport_t
     uint64_t ack_batch;
 };
 
+#if ROCKETNET_DEV
 static void receipt_link_update( void * context, double )
 {
     receipt_transport_t * t = (receipt_transport_t *) context;
@@ -399,6 +400,7 @@ static void test_receipts_listed_per_update_by_the_c_api()
     rocketnet_unit_check( rocketnet_message_client_receipts( client, out, 4 ) == 0 );
     rn_message_object_destroy( &client->object );
 }
+#endif // #if ROCKETNET_DEV
 
 static void test_rnreceipts_code5_witness_replays()
 {
@@ -421,6 +423,7 @@ static void test_rnreceipts_code5_witness_replays()
     receipt_fixture_destroy( &f );
 }
 
+#if ROCKETNET_DEV
 static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witnesses()
 {
     rocketnet_message_config_t config;
@@ -520,6 +523,7 @@ static void test_promoted_type5_block_replays_last_index_and_reliable_loss_witne
     rocketnet_unit_check( client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RECEIPT_LOSS] == 0 );
     rn_message_object_destroy( &client->object );
 }
+#endif // #if ROCKETNET_DEV
 
 static uint64_t receipt_allocations;
 
@@ -570,7 +574,11 @@ REGISTER_UNIT_TEST( test_receipt_late_ack_inside_deadline_is_acked );
 REGISTER_UNIT_TEST( test_receipt_loss_only_after_deadline );
 REGISTER_UNIT_TEST( test_unreliable_receipt_loss_on_sent_map_eviction );
 REGISTER_UNIT_TEST( test_receipt_ring_full_drops_oldest_and_counts );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_receipts_listed_per_update_by_the_c_api );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_rnreceipts_code5_witness_replays );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_promoted_type5_block_replays_last_index_and_reliable_loss_witnesses );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_receipts_no_allocation_after_create );

@@ -10,11 +10,11 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_test_seams.h"
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 // Unit-library instrumentation only: hold entries visited by the hold take
 // and by the end-of-update pass, per thread; no shipped library carries it.
 thread_local unsigned long long g_sequenced_hold_visit_count = 0;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // Codes 1 and 4 follow RNChannelTypes!Dispatch and !Drain. A code-4 hold
 // uses its receive descriptor and ring span; the high bit distinguishes that
@@ -550,9 +550,9 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
     rn_region_t * region = channels->region;
     for ( uint32_t i = 0; i < region->sequenced_holds_delivered_count; i++ )
     {
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
         g_sequenced_hold_visit_count++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
         rn_sequenced_hold_return( region, region->sequenced_holds_delivered[i] );
     }
 

@@ -19,7 +19,6 @@
 #define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
     X( has_mark, int has_mark )                                    \
     X( marked_value, uint32_t marked_value )                       \
-    X( marked_address, struct rocketnet_address_t marked_address ) \
     X( seen, int seen )                                            \
     X( seen_address, struct rocketnet_address_t seen_address )     \
     X( mark_owed, int mark_owed )
@@ -181,11 +180,10 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         slot->mark_owed = 0;
         slot->has_mark = 1;
         slot->marked_value = high_water;
-        slot->marked_address = *address;
     }
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 static bool rocketnet_replay_witness_forget( void * context, const rocketnet_address_t * )
 {
     ( *(int *) context )++;
@@ -214,9 +212,7 @@ bool rocketnet_server_replay_marks_inventory_matches_for_test( char * failure, s
                                               sizeof( rocketnet_server_replay_slot_mark_t ),
                                               alignof( rocketnet_server_replay_slot_mark_t ), failure, failure_bytes );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 bool rocketnet_server_replay_marks_reset_witness_for_test()
 {
     rocketnet_server_replay_marks_t * marks = rocketnet_server_replay_marks_create( NULL, 1 );
@@ -265,4 +261,4 @@ bool rocketnet_server_replay_marks_reset_witness_for_test()
 
     return clean;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV

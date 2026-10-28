@@ -309,6 +309,7 @@ REGISTER_UNIT_TEST( test_window_ack_pipelined_reliable_timeout );
 // Finding 5: out-of-order fragment chain (rocketnet_window_ack.cpp)
 // ----------------------------------------------------------------
 
+#if ROCKETNET_DEV
 // The block a descriptor still holds, in allocation order, walked through
 // the store's own chunk_next (sdk/rocketnet_allocator.cpp's contiguous run).
 static int risk_chain( rn_region_t * region, uint32_t d, uint32_t * out, int capacity )
@@ -403,3 +404,4 @@ static void test_window_ack_out_of_order_fragment_chain()
 }
 
 REGISTER_UNIT_TEST( test_window_ack_out_of_order_fragment_chain );
+#endif // #if ROCKETNET_DEV

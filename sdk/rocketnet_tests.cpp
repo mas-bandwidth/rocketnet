@@ -3,7 +3,6 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#include "rocketnet_tests.h"
 #include "../tests/test_env_source.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_crypto_tally.h"
@@ -82,7 +81,7 @@ extern thread_local unsigned long long g_ack_visit_count;
 
 // Sockets, select, and the raw chaff injector live in functional/.
 
-// THE SUITE RUNS SILENT. rocketnet_run_tests installs this sink, so every
+// THE SUITE RUNS SILENT. rocketnet_unit_prepare installs this sink, so every
 // line the library would have printed lands in the ring below instead of
 // on stdout, and the only thing a passing run prints is the test names --
 // which arrive here at level NONE and pass straight through as the bare
@@ -1001,16 +1000,6 @@ void rocketnet_test_random_bytes()
         rocketnet_check( memcmp( buffer, rocketnet_buffer, BufferSize ) != 0 );
 
         memcpy( buffer, rocketnet_buffer, BufferSize );
-    }
-}
-
-void rocketnet_test_random_float()
-{
-    for ( int i = 0; i < 1000; ++i )
-    {
-        float value = rocketnet_random_float();
-        rocketnet_check( value >= 0.0f );
-        rocketnet_check( value <= 1.0f );
     }
 }
 
@@ -2056,8 +2045,8 @@ void rocketnet_test_cookie()
     uint8_t input[ROCKETNET_COOKIE_MAC_INPUT_IPV6_BYTES];
     int input_bytes = rocketnet_write_cookie_mac_input( input, &client_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3 );
 
-    rocketnet_check( input_bytes == ROCKETNET_COOKIE_MAC_INPUT_IPV4_BYTES );
-    rocketnet_check( memcmp( input, rocketnet_test_cookie_mac_input, ROCKETNET_COOKIE_MAC_INPUT_IPV4_BYTES ) == 0 );
+    rocketnet_check( input_bytes == 23 );
+    rocketnet_check( memcmp( input, rocketnet_test_cookie_mac_input, 23 ) == 0 );
 
     uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES];
     rocketnet_check( rocketnet_generate_cookie_mac( mac, &client_address, rocketnet_test_salt, ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_key ) );
@@ -8077,10 +8066,6 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_get_thread_priority_refusals",
     "rocketnet_malloc",
     "rocketnet_free",
-    "rocketnet_user_id_string",
-    "rocketnet_random_float",
-    "rocketnet_random_uint8",
-    "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_random_bytes",
     "rocketnet_time",
@@ -8202,7 +8187,6 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_message_server_finish",
     "rocketnet_message_server_abort",
     "rocketnet_message_server_send",
-    "rocketnet_message_server_broadcast",
     "rocketnet_message_server_receive",
     "rocketnet_message_server_receive_messages",
     "rocketnet_message_server_receipts",
@@ -8224,7 +8208,6 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_debug",
     "rocketnet_spam",
     "rocketnet_allocator_ex",
-    "rocketnet_user_id_string",
     "rocketnet_random_bytes",
     "rocketnet_copy_string",
     "rocketnet_client_transport_default_config",
@@ -8325,7 +8308,6 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_message_server_finish",
     "rocketnet_message_server_abort",
     "rocketnet_message_server_send",
-    "rocketnet_message_server_broadcast",
     "rocketnet_message_server_receive",
     "rocketnet_message_server_receive_messages",
     "rocketnet_message_server_receipts",
@@ -8352,9 +8334,6 @@ static const char * rocketnet_test_layer_null_exempt_exports[] = {
     "rocketnet_get_thread_priority_refusals",
     "rocketnet_malloc",
     "rocketnet_free",
-    "rocketnet_random_float",
-    "rocketnet_random_uint8",
-    "rocketnet_random_uint32",
     "rocketnet_random_uint64",
     "rocketnet_time",
     "rocketnet_sleep",
@@ -8857,10 +8836,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
     rocketnet_check( rocketnet_counters_conserved( NULL, NULL, 0 ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
-    before = rocketnet_api_misuse_count();
-    rocketnet_check( rocketnet_user_id_string( 0, NULL, 0 ) == NULL );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
-
     // the log entry points refuse a NULL format
 
     before = rocketnet_api_misuse_count();
@@ -9000,7 +8975,6 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_server_finish( NULL, 0, 4 ) == 0 );
         rocketnet_message_server_abort( NULL, 0 );
         rocketnet_check( rocketnet_message_server_send( NULL, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, packet, 4 ) == 0 );
-        rocketnet_check( rocketnet_message_server_broadcast( NULL, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, packet, 4 ) == 0 );
         rocketnet_check( rocketnet_message_server_receive( NULL, NULL, NULL, &view, &view_bytes ) == 0 );
         rocketnet_check( rocketnet_message_server_receive_messages( NULL, NULL ) == 0 );
         rocketnet_check( rocketnet_message_server_receipts( NULL, 0, NULL, 0 ) == 0 );
@@ -9009,7 +8983,7 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
         rocketnet_check( rocketnet_message_server_disconnect_reason( NULL, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE );
         rocketnet_check( rocketnet_message_server_client_connected( NULL, 0 ) == 0 );
         rocketnet_check( rocketnet_message_server_counters( NULL ) == NULL );
-        rocketnet_check( rocketnet_api_misuse_count() == before + 18 );
+        rocketnet_check( rocketnet_api_misuse_count() == before + 17 );
 
         // the sizing calls take NULL configs as the defaults: not a misuse
 
@@ -9091,7 +9065,6 @@ void rocketnet_test_ack_popcount64()
     for ( size_t i = 0; i < sizeof( values ) / sizeof( values[0] ); i++ )
     {
         int expected = rocketnet_test_popcount64_reference( values[i] );
-        rocketnet_check( rocketnet_ack_popcount64( values[i] ) == expected );
         rocketnet_check( rocketnet_ack_popcount64_portable( values[i] ) == expected );
     }
 
@@ -9102,7 +9075,6 @@ void rocketnet_test_ack_popcount64()
     {
         rocketnet_check( rocketnet_ack_popcount64_portable( 1ull << bit ) == 1 );
         rocketnet_check( rocketnet_ack_popcount64_portable( ~( 1ull << bit ) ) == 63 );
-        rocketnet_check( rocketnet_ack_popcount64( ~( 1ull << bit ) ) == 63 );
     }
 
     uint64_t x = 0x9e3779b97f4a7c15ull;
@@ -9112,7 +9084,6 @@ void rocketnet_test_ack_popcount64()
         x ^= x >> 7;
         x ^= x << 17;
         int expected = rocketnet_test_popcount64_reference( x );
-        rocketnet_check( rocketnet_ack_popcount64( x ) == expected );
         rocketnet_check( rocketnet_ack_popcount64_portable( x ) == expected );
     }
 }
@@ -9419,14 +9390,14 @@ void rocketnet_test_ack_block_build()
     for ( int trial = 0; trial < 100; trial++ )
     {
         memset( &replay, 0, sizeof( replay ) );
-        uint64_t s = 1 + ( rocketnet_random_uint32() % 1000 );
+        uint64_t s = 1 + ( rocketnet_random_uint64() % 1000 );
         for ( int n = 0; n < 400; n++ )
         {
             rocketnet_replay_advance( &replay, s );
-            s += (uint64_t) ( 1 + rocketnet_random_uint8() % 3 );       // skips leave holes
+            s += (uint64_t) ( 1 + rocketnet_random_uint64() % 3 );       // skips leave holes
         }
 
-        int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * ( rocketnet_random_uint8() % 64 );
+        int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * (int) ( rocketnet_random_uint64() % 64 );
         int built_bytes = rocketnet_ack_block_build( built, capacity, &replay );
         rocketnet_check( built_bytes >= ROCKETNET_ACK_BLOCK_MIN_BYTES );
         rocketnet_check( built_bytes <= capacity );
@@ -15870,7 +15841,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_v4_mapped_source_dropped", rocketnet_test_v4_mapped_source_dropped },
     { "test_received_native_sources_untouched", rocketnet_test_received_native_sources_untouched },
     { "test_random_bytes", rocketnet_test_random_bytes },
-    { "test_random_float", rocketnet_test_random_float },
     { "test_crypto_sizes", rocketnet_test_crypto_sizes },
     { "test_crypto_test_keys", rocketnet_test_crypto_test_keys },
     { "test_crypto_sign", rocketnet_test_crypto_sign },
@@ -16114,14 +16084,6 @@ int rocketnet_unit_run_named( const char * name )
 
     fprintf( stderr, "unknown unit test %s\n", name );
     return 2;
-}
-
-void rocketnet_run_tests()
-{
-    rocketnet_unit_prepare();
-
-    for ( int i = 0; i < rocketnet_unit_test_count(); i++ )
-        rocketnet_unit_run_named( rocketnet_unit_tests[i].name );
 }
 
 static struct rocketnet_client_t * rocketnet_test_public_loopback_client()

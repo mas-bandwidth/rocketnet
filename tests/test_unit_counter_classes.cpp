@@ -55,6 +55,7 @@ static const counters_row_t counters_rows[ROCKETNET_NUM_COUNTERS] = {
 // never move. A counter appended since BASE is listed after, in the order it
 // was appended.
 
+#if ROCKETNET_DEV
 static const char * const counters_base_names[] = {
     "PACKETS_RECEIVED",
     "PREFILTER_TOO_SHORT",
@@ -322,6 +323,7 @@ static const char * const counters_appended_names[] = {
     "CONNECTION_RESPONSE_PADDING_NOT_ZERO",
     "CONNECTION_REQUEST_CLAIM_TABLE_FULL",
 };
+#endif // #if ROCKETNET_DEV
 
 #define COUNTERS_NUM_BASE       ( (int) ( sizeof(counters_base_names) / sizeof(counters_base_names[0]) ) )
 #define COUNTERS_NUM_APPENDED   ( (int) ( sizeof(counters_appended_names) / sizeof(counters_appended_names[0]) ) )
@@ -339,6 +341,7 @@ static bool counters_is_received( int counter )
 // ---------------------------------------------------------------------------
 // 1: every counter has a class and a name, and the names are BASE's, in order
 
+#if ROCKETNET_DEV
 static void test_counters_every_counter_has_a_class()
 {
     check( COUNTERS_NUM_BASE == 215 );
@@ -443,6 +446,7 @@ static void test_counters_every_counter_has_a_class()
 }
 
 REGISTER_UNIT_TEST( test_counters_every_counter_has_a_class );
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // 3: conservation reports the first unbalanced family

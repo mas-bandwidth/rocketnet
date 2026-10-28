@@ -88,7 +88,9 @@
 #define ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION          12  // check 10, layer 3
 #define ROCKETNET_MESSAGE_NUM_VIOLATIONS                    13
 
+#if ROCKETNET_DEV
 const char * rocketnet_message_violation_name( int violation );
+#endif // #if ROCKETNET_DEV
 
 // one record as the wire carries it. Fields the record's code does not carry
 // are zero, so a parsed record packs back to the same bytes and a record
@@ -158,12 +160,12 @@ int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, co
 
 int rocketnet_message_writer_add_in_place( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
-#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#if ROCKETNET_DEV
 // test builds only (the unit suite's library, never the release library): the
 // payload copies writer_add has made, from a send store into a frame -- the
 // message-to-packet copy a fitting unreliable send never makes.
 uint64_t rn_message_payload_copy_count();
-#endif // #if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // writes the RECORDS form byte. Returns the payload's length L, or 0 when no
 // record was added (an empty plan writes nothing).

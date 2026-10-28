@@ -777,7 +777,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
         uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
         uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
-        rocketnet_crypto_tally.keypair++;
+        ROCKETNET_CRYPTO_TALLY( keypair );
         crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
 
         if ( !rocketnet_derive_connection_keys( &keys,
@@ -1203,10 +1203,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet_data, packet_bytes, packet_type,
                                                      sequence, server->protocol_id, mapping->connection_salt,
                                                      ephemeral, key );
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     if ( opened_bytes >= 0 && packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
         server->test_payload_writes++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     if ( opened_bytes < 0 )
     {
         rocketnet_spam( "server ignored sealed packet. did not open" );
@@ -1565,9 +1565,9 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
     if ( payload && *out_payload_bytes > 0 )
     {
         memcpy( out_payload, payload, (size_t) *out_payload_bytes );
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
         server->test_payload_writes++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     }
 
     return outcome;
@@ -2050,6 +2050,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     return wire_bytes;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                              int client_index,
                                              const uint8_t * payload_data,
@@ -2103,6 +2104,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
 
     return bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t * server,
                                               int client_index,
@@ -2224,6 +2226,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
     return bytes;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_t * server,
                                                int client_index,
                                                const uint8_t * payload_data,
@@ -2269,6 +2272,7 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
 
     return fragment_count;
 }
+#endif // #if ROCKETNET_DEV
 
 // tla/ServerConnection.tla ServerAppDisconnect
 // tla/ServerConnection.tla ServerDiscCopy: each of the burst's

@@ -17,11 +17,9 @@ writes, per sdk/ source file and per line, three sets:
 Two kinds of line are reported apart and never mixed into unit_only:
 sdk/rocketnet_tests.cpp (the unit suite's own cases, linked only into
 ./bin/test) and test-seam code, the lines inside a preprocessor branch that
-is compiled only when ROCKETNET_TEST_SEAMS or a ROCKETNET_<name>_TEST_HOOKS
-macro is on. Those lines get their own reached/never counts.
-ROCKETNET_TEST_SEAMS is 1 in a development build too
-(sdk/rocketnet_test_seams.h), so the functional suite and the examples,
-which link rocketnet_dev, can reach seam lines.
+is compiled only when ROCKETNET_DEV is on. Those lines get their own
+reached/never counts. The functional suite and the examples, which link
+rocketnet_dev, can reach seam lines.
 
 The examples run through tools/run_examples.py's own drivers, one at a
 time, and a failing example does not stop the ones after it, so every
@@ -61,8 +59,8 @@ COVERAGE_FLAGS = "-fprofile-instr-generate -fcoverage-mapping"
 TESTS_SOURCE = "sdk/rocketnet_tests.cpp"
 # binaries the functional suite runs besides itself (functional/main.cpp execs)
 FUNCTIONAL_EXECS = ["test_serialize", "test_transport_control", "test_xdp", "test_msgx"]
-SEAM_MACRO = re.compile(r"\b(ROCKETNET_TEST_SEAMS|ROCKETNET_\w+_TEST_HOOKS)\b")
-NEGATED_SEAM = re.compile(r"!\s*(defined\s*\(?\s*)?(ROCKETNET_TEST_SEAMS|ROCKETNET_\w+_TEST_HOOKS)\b")
+SEAM_MACRO = re.compile(r"\bROCKETNET_DEV\b")
+NEGATED_SEAM = re.compile(r"!\s*(defined\s*\(?\s*)?ROCKETNET_DEV\b")
 DIRECTIVE = re.compile(r"^\s*#\s*(if|ifdef|ifndef|elif|else|endif)\b(.*)$")
 SETS = ("production", "unit_only", "never")
 
@@ -389,7 +387,7 @@ def main():
             "production": "reached by the functional suite or an example",
             "unit_only": "reached by ./bin/test and nothing else",
             "never": "reached by neither",
-            "seam_*": "the same three, for lines compiled only under ROCKETNET_TEST_SEAMS or a ROCKETNET_*_TEST_HOOKS macro",
+            "seam_*": "the same three, for lines compiled only under ROCKETNET_DEV",
             "not_in_production_objects": "lines with no mapping in the production-run binaries (any set)",
         },
         "apart": [TESTS_SOURCE],

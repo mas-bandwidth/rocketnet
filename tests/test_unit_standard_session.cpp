@@ -68,10 +68,12 @@ static void rocketnet_session_server_setup_clients( struct rocketnet_session_ser
                                                          owner_generation, user_data ) == 0 );
 }
 
+#if ROCKETNET_DEV
 static void rocketnet_session_server_setup( struct rocketnet_session_server_t * test )
 {
     rocketnet_session_server_setup_clients( test, 1 );
 }
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_session_server_teardown( struct rocketnet_session_server_t * test )
 {
@@ -80,6 +82,7 @@ static void rocketnet_session_server_teardown( struct rocketnet_session_server_t
     rocketnet_encryption_map_destroy( test->server.encryption_map );
 }
 
+#if ROCKETNET_DEV
 static int rocketnet_session_keep_alive_due( struct rocketnet_session_server_t * test, double now )
 {
     uint8_t packet[ROCKETNET_SEND_BUDGET];
@@ -141,6 +144,7 @@ static void test_standard_session_vectors()
 }
 
 REGISTER_UNIT_TEST( test_standard_session_vectors );
+#endif // #if ROCKETNET_DEV
 
 // A connected slot may hold mapping index -1: rocketnet_client_slots_assign
 // stores any index it is given. Accepting a payload for such a slot must

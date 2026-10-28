@@ -134,7 +134,7 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
     uint16_t fragments_acked;
     uint16_t schedule_flags;            // RN_SCHEDULE_QUEUED while this descriptor is a live queue entry
     uint8_t reserved[2];                // unused spare bytes
-    uint32_t enqueue_ticket;            // 0 not queued; RN_ENQUEUE_HOLE a cancelled hole; else the enqueue ticket (from 1)
+    uint32_t enqueue_ticket;            // 0 not queued; else the enqueue ticket (from 1)
     uint32_t queue_epoch;               // region->schedule_epoch at enqueue; a carve makes a stale entry miss
     uint32_t order_slot;                // the flat live-span order array's slot at this descriptor's index: the descriptor at that order position, RN_DESCRIPTOR_NONE outside the live segment
     uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
@@ -152,8 +152,6 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
 #define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, docs/CHANNELS.md 10.3): code 2 with CONTROL set, never an application message
 
 #define RN_SCHEDULE_QUEUED      0x0001u
-#define RN_ENQUEUE_HOLE         0xFFFFFFFFu
-#define RN_SCHEDULE_HOLE_BOUND  64u
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {
@@ -278,7 +276,9 @@ struct rn_region_layout_t
 // false, with a log line naming the rule, for a refused config. NULL is the defaults.
 bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout );
 
+#if ROCKETNET_DEV
 const char * rn_region_part_name( int part );
+#endif // #if ROCKETNET_DEV
 
 // the message table's field descriptors, as the transports' (rocketnet_config.h)
 struct rocketnet_config_field_t;
@@ -351,10 +351,13 @@ void rn_send_store_free( rn_send_store_t * store, uint32_t handle );    // the w
 
 uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t handle );
 
+#if ROCKETNET_DEV
 uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle );
+#endif // #if ROCKETNET_DEV
 
 inline int rn_send_store_chunk_class( uint32_t handle ) { return (int) ( handle >> 30 ); }
 
+#if ROCKETNET_DEV
 uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_index );
 
 uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_index );
@@ -362,6 +365,7 @@ uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_in
 // the chunk slot's current generation tag, or 0 for a handle the store did
 // not issue (a stale handle's tag never matches a live slot's next take)
 uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle );
+#endif // #if ROCKETNET_DEV
 
 // ----------------------------------------------------------------
 //                              the region
@@ -406,7 +410,7 @@ struct rn_region_t
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t span_ticket_next;          // the next span allocation ticket; the flat span order array orders live spans, tickets mirror that order
     uint32_t schedule_epoch;            // 1 after every carve; names this connection's queue entries
-    uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 and RN_ENQUEUE_HOLE are never issued
+    uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -430,16 +434,16 @@ struct rn_region_t
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
 };
 
-// The next enqueue ticket on this connection. 0 and RN_ENQUEUE_HOLE are never issued.
+// The next enqueue ticket on this connection. 0 is never issued.
 
 static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
     uint32_t ticket = region->schedule_ticket_next;
-    if ( ticket == 0 || ticket == RN_ENQUEUE_HOLE )
+    if ( ticket == 0 )
         ticket = 1;
 
     uint32_t next = ticket + 1;
-    if ( next == 0 || next == RN_ENQUEUE_HOLE )
+    if ( next == 0 )
         next = 1;
 
     region->schedule_ticket_next = next;
@@ -454,18 +458,13 @@ static inline void rn_descriptor_enqueue_stamp( rn_region_t * region, rn_send_de
     descriptor->schedule_flags = (uint16_t) RN_SCHEDULE_QUEUED;
 }
 
-static inline bool rn_descriptor_schedule_hole( const rn_send_descriptor_t * descriptor )
-{
-    return descriptor->enqueue_ticket == RN_ENQUEUE_HOLE;
-}
-
 static inline bool rn_descriptor_schedule_live( const rn_send_descriptor_t * descriptor )
 {
     return descriptor->in_use && ( descriptor->schedule_flags & RN_SCHEDULE_QUEUED ) != 0 &&
-           descriptor->enqueue_ticket != 0 && descriptor->enqueue_ticket != RN_ENQUEUE_HOLE;
+           descriptor->enqueue_ticket != 0;
 }
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Present only in the unit-test library; counts descriptors examined by
 // rn_span_unlink's edge search, never production state.
 struct rn_span_cost_t
@@ -474,7 +473,7 @@ struct rn_span_cost_t
 };
 void rn_span_cost_reset();
 rn_span_cost_t rn_span_cost_read();
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // at connect: every table back to its empty state, every free list
 // emptied (the descriptor pool and the store's classes are lazy,
@@ -503,7 +502,9 @@ void rn_region_exhaust( rn_region_t * region );
 
 bool rn_region_exhausted( const rn_region_t * region );
 
+#if ROCKETNET_DEV
 int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_DISCONNECT_REASON_*
+#endif // #if ROCKETNET_DEV
 
 // RNConnectionMemory Kick, the decision: pure, allocation-free, called by the
 // owner every update. ROCKETNET_DISCONNECT_REASON_NONE, or the reason to end
@@ -633,7 +634,9 @@ uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t descripto
 // and returns the descriptor itself to Q when its last fragment is acked (6.4).
 void rn_region_send_free_fragment( rn_region_t * region, uint32_t descriptor, uint32_t chain_index );
 
+#if ROCKETNET_DEV
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes );
+#endif // #if ROCKETNET_DEV
 
 // the receiver's only ring logic (4.3): a placement is 16-aligned and inside B
 bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes );
@@ -661,10 +664,14 @@ rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const
 
 void rn_arena_destroy( rn_arena_t * arena );
 
+#if ROCKETNET_DEV
 int rn_arena_num_regions( const rn_arena_t * arena );
+#endif // #if ROCKETNET_DEV
 
 rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
 
+#if ROCKETNET_DEV
 uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn_arena_required_bytes for its config
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_ALLOCATOR_H
