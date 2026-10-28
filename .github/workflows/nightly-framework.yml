@@ -1,0 +1,170 @@
+# Nightly framework integration: rocketnet main, vendored into the framework
+# (robotgamedevelopers/framework, private) exactly the way the framework
+# vendors it, then built and run. A break in the public API, in the source
+# list the framework compiles (cmake/RocketnetSources.cmake), in the vendored
+# path set or in behaviour a real client and server depend on shows up the
+# night it lands on main, not the day the framework next re-vendors.
+#
+# Each leg:
+#
+#   1. tools/framework_vendor_main.sh clones the framework read-only (its push
+#      URL is "no-push"; nothing here pushes) and runs the framework's own
+#      scripts/revendor_rocketnet.sh at rocketnet main, which also runs its
+#      scripts/check_vendored_rocketnet.sh over the copy.
+#   2. The framework builds the way its own ci.yml builds it on that OS: cmake
+#      and make in game/ on Linux, scripts/build_windows.ps1 (clang-cl, Ninja,
+#      vcpkg curl) on Windows. Release, warnings as errors on the
+#      framework's own code.
+#   3. The framework's unit tests (dist/test), no sockets and no real time.
+#   4. The framework's smoke test, scripts/smoke_test.sh (.ps1 on Windows): a
+#      real dedicated server on 127.0.0.1 and a real client that connects,
+#      syncs time, receives the config, heartbeats and disconnects cleanly;
+#      a listen server; a client timing out after its server is killed; and
+#      singleplayer over the loopback transport. FUNCTIONAL: real sockets,
+#      real time. The framework has no fake-client swarm target yet, so this
+#      is the smallest real client/server run it supports; when it gains one,
+#      that target replaces this step.
+#
+# It always vendors main, whatever ref the workflow file runs from: the
+# framework's re-vendor script refuses a commit that is not on main.
+#
+# Runners: the fleet's Linux runners, and the Windows fleet runner
+# ([self-hosted, Windows, X64, rocketnet-windows]), which takes its captain
+# CI-hold slot in the runner's own job hooks like every other Windows job.
+#
+# THE TOKEN. The framework is private and another organisation's, so
+# GITHUB_TOKEN cannot read it. FRAMEWORK_READ_TOKEN is a repository secret
+# the owner adds: read-only contents on robotgamedevelopers/framework. Until
+# it exists the job falls back to SPACE_READ_TOKEN (same organisation, the
+# release gate's token). A missing token is a failure that says so, never a
+# skip. github.token reads rocketnet main for the re-vendor script's own
+# fetch.
+#
+# Hosted minutes budget: 0 (both legs self-hosted).
+
+name: Nightly framework integration
+
+on:
+  schedule:
+    - cron: "50 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-framework-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+
+  linux:
+    name: framework on rocketnet main (Linux)
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    env:
+      FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN || secrets.SPACE_READ_TOKEN }}
+      ROCKETNET_READ_TOKEN: ${{ github.token }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ make git pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          if ! pkg-config --exists libcurl >/dev/null 2>&1; then
+            echo "TOOL-MISSING libcurl (any) (pkg-config --exists failed) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Vendor rocketnet main into the framework
+        shell: bash
+        run: tools/framework_vendor_main.sh main "$GITHUB_WORKSPACE/tmp/framework"
+
+      # the cmake tree builds the framework's code generators with go
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tmp/framework/go.mod
+          cache: false
+
+      - name: Build the framework (Release)
+        working-directory: tmp/framework/game
+        run: |
+          cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON .
+          make -j"$(nproc)"
+
+      - name: Framework unit tests
+        working-directory: tmp/framework/dist
+        run: ./test
+
+      - name: Framework smoke test (real server, real client, loopback)
+        timeout-minutes: 3
+        working-directory: tmp/framework
+        run: ./scripts/smoke_test.sh
+
+  windows:
+    name: framework on rocketnet main (Windows)
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 45
+    env:
+      FRAMEWORK_READ_TOKEN: ${{ secrets.FRAMEWORK_READ_TOKEN || secrets.SPACE_READ_TOKEN }}
+      ROCKETNET_READ_TOKEN: ${{ github.token }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Vendor rocketnet main into the framework
+        shell: bash
+        run: tools/framework_vendor_main.sh main "$GITHUB_WORKSPACE/tmp/framework"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tmp/framework/go.mod
+          cache: false
+
+      # the framework's own note (its ci.yml): vcpkg's registries cache is
+      # shared per machine by default and two jobs at once race on it, so this
+      # runner keeps its own beside its work directory
+      - name: vcpkg registries cache for this runner
+        shell: pwsh
+        run: |
+          $cache = [System.IO.Path]::GetFullPath( ( Join-Path $env:RUNNER_WORKSPACE '..\vcpkg-registries' ) )
+          New-Item -ItemType Directory -Force -Path $cache | Out-Null
+          "X_VCPKG_REGISTRIES_CACHE=$cache" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Build the framework (Release, clang-cl)
+        shell: pwsh
+        working-directory: tmp/framework
+        env:
+          BUILD_JOBS: '8'
+        run: |
+          ./scripts/build_windows.ps1 Release
+          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
+
+      - name: Framework unit tests
+        shell: pwsh
+        working-directory: tmp/framework/dist
+        run: |
+          ./test.exe
+          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
+
+      - name: Framework smoke test (real server, real client, loopback)
+        timeout-minutes: 3
+        shell: pwsh
+        working-directory: tmp/framework
+        run: |
+          ./scripts/smoke_test.ps1
+          if ( $LASTEXITCODE -ne 0 ) { exit $LASTEXITCODE }
