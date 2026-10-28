@@ -1,0 +1,429 @@
+# THE TOOLCHAIN MATRIX: MORE THAN ONE COMPILER PER OPERATING SYSTEM.
+#
+# Every other leg builds with the one compiler its runner defaults to. A game
+# links this library into a project whose compiler it did not choose, so this
+# nightly builds the libraries, the unit suite and the functional suite with
+# the oldest and the newest compiler the fleet carries on each platform, with
+# warnings as errors (the CMake default), and runs both suites with each.
+#
+# It is a gate, not discovery: a red leg is a compiler that cannot build or run
+# the tree, with a commit range and a bisect, owned by whoever is on the estate
+# that morning.
+#
+# What is here:
+#
+#   windows / <toolset>     every MSVC toolset installed in Visual Studio 18
+#                           2026 on the fleet Windows runner, x64 Release:
+#                           v141 (MSVC 14.16, the VS 2017 tools), v142 (14.29,
+#                           VS 2019), v143 (14.44, VS 2022), v145 at 14.51 (the
+#                           VS 2026 default) and v145 at 14.52 (the newest).
+#                           Each leg proves from CMake's compiler record that the
+#                           compiler it names is the one that built.
+#
+#   linux / <compiler>      the oldest and newest gcc and clang on the fleet,
+#                           Debug and Release: gcc 13 and clang 18 (Ubuntu
+#                           24.04 hosts), gcc 15 and clang 22 (Ubuntu 26.04
+#                           hosts), each pinned to a host that carries it.
+#
+#   macos / minimum target  the deployment target CMakeLists.txt claims (12.0),
+#                           set explicitly, Debug, on the fleet's Apple-silicon
+#                           runner; every Mach-O in bin/ must carry minos 12.0,
+#                           and both suites run natively.
+#
+#   linux / arm64 (qemu)    a cross build for aarch64 whose unit suite runs
+#                           under qemu-user. Off until the fleet carries the
+#                           aarch64 cross toolchain and the arm64 multiarch
+#                           libraries: set the repository variable
+#                           ROCKETNET_LINUX_ARM64_CROSS=1 to enable it.
+#
+#   windows / arm64         the native ARM64 suites. Off until an ARM64
+#                           Windows runner is registered: set
+#                           ROCKETNET_WINDOWS_ARM64_RUNNER=1 to enable it.
+#
+# What is NOT here, because it already runs elsewhere: clang-cl x64 and the
+# MSVC ARM64 cross build (nightly.yml, windows-toolchains), the default Linux
+# clang (nightly.yml, linux-clang) and the universal macOS build with its
+# x86_64 slice under Rosetta 2 (nightly-examples.yml, examples-macos).
+#
+# ZERO WARNINGS. -Werror and /WX fail the compile on a compiler warning; each
+# leg also keeps its configure and build output and fails on any warning line
+# left in it (a linker, MSBuild or CMake warning that no -Werror reaches).
+
+name: nightly-toolchains
+
+on:
+  schedule:
+    - cron: "55 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  # THE MSVC TOOLSETS. One leg per toolset installed on the runner, serial on
+  # the one Windows runner (and through its CI-hold hooks like every other
+  # Windows job). Each build writes its binaries under its own build directory,
+  # as windows-toolchains in nightly.yml does, so nothing replaces bin/.
+
+  windows-msvc:
+    name: windows / ${{ matrix.toolset.name }}
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        toolset:
+          - { name: v141 MSVC 14.16 (VS 2017), id: v141, cmake: "v141", msvc: "14.16" }
+          - { name: v142 MSVC 14.29 (VS 2019), id: v142, cmake: "v142", msvc: "14.29" }
+          - { name: v143 MSVC 14.44 (VS 2022), id: v143, cmake: "v143", msvc: "14.44" }
+          - { name: v145 MSVC 14.51 (VS 2026 default), id: v145-1451, cmake: "v145,version=14.51.36231", msvc: "14.51" }
+          - { name: v145 MSVC 14.52 (newest), id: v145-1452, cmake: "v145,version=14.52.36815", msvc: "14.52" }
+    concurrency:
+      group: nightly-toolchains-windows-${{ matrix.toolset.id }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD: build-${{ matrix.toolset.id }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: |
+          set -o pipefail
+          cmake -B "$BUILD" -G "Visual Studio 18 2026" -A x64 -T "${{ matrix.toolset.cmake }}" \
+            "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$BUILD/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$BUILD/bin" \
+            2>&1 | tr -d '\r' | tee "configure-${{ matrix.toolset.id }}.log"
+
+      - name: The named toolset is the one that built
+        run: |
+          set -euo pipefail
+          compiler=$(grep -h 'set(CMAKE_C_COMPILER "' "$BUILD"/CMakeFiles/*/CMakeCCompiler.cmake | tr -d '\r')
+          echo "$compiler"
+          echo "$compiler" | grep -q "MSVC/${{ matrix.toolset.msvc }}\."
+
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build "$BUILD" --config Release --parallel 4 2>&1 | tr -d '\r' | tee "build-${{ matrix.toolset.id }}.log"
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          if grep -nE 'CMake Warning|[: ]warning [A-Z]+[0-9]+' "configure-${{ matrix.toolset.id }}.log" "build-${{ matrix.toolset.id }}.log"; then
+            echo "the ${{ matrix.toolset.name }} build left the warnings above"
+            exit 1
+          fi
+
+      - name: Unit suite
+        run: ./$BUILD/bin/Release/test.exe
+
+      - name: Functional suite
+        timeout-minutes: 20
+        run: ./$BUILD/bin/Release/functional.exe
+
+  # THE LINUX COMPILERS. The fleet's two Ubuntu releases carry different
+  # compilers: gcc 13 and clang 18 on 24.04, gcc 15 and clang 18, 21 and 22 on
+  # 26.04. Each leg is pinned to a host label that carries its compiler and
+  # checks it is present before it configures.
+
+  linux-compilers:
+    name: linux / ${{ matrix.compiler.cc }} ${{ matrix.build_type }}
+    runs-on: ${{ fromJSON(matrix.compiler.runner) }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        build_type: [Debug, Release]
+        compiler:
+          - { cc: gcc-13,   cxx: g++-13,     runner: '["self-hosted","Linux","X64","fleet","hetzner2"]' }
+          - { cc: gcc-15,   cxx: g++-15,     runner: '["self-hosted","Linux","X64","fleet","amd-2"]' }
+          - { cc: clang-18, cxx: clang++-18, runner: '["self-hosted","Linux","X64","fleet","hetzner2"]' }
+          - { cc: clang-22, cxx: clang++-22, runner: '["self-hosted","Linux","X64","fleet","amd-3"]' }
+    concurrency:
+      group: nightly-toolchains-linux-${{ matrix.compiler.cc }}-${{ matrix.build_type }}-${{ matrix.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the compiler is present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake xxd pkg-config ${{ matrix.compiler.cc }} ${{ matrix.compiler.cxx }}; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Print compiler versions
+        run: |
+          ${{ matrix.compiler.cc }} --version | head -1
+          ${{ matrix.compiler.cxx }} --version | head -1
+
+      - name: Configure
+        run: |
+          set -o pipefail
+          cmake -B build -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DCMAKE_C_COMPILER=${{ matrix.compiler.cc }} -DCMAKE_CXX_COMPILER=${{ matrix.compiler.cxx }} \
+            2>&1 | tee configure.log
+
+      - name: Build static and shared libraries, unit suite and functional suite
+        run: |
+          set -o pipefail
+          cmake --build build --parallel 2>&1 | tee build.log
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          if grep -nE 'CMake Warning|warning:' configure.log build.log; then
+            echo "the ${{ matrix.compiler.cc }} ${{ matrix.build_type }} build left the warnings above"
+            exit 1
+          fi
+
+      - name: Unit suite
+        run: ./bin/test
+
+      - name: Functional suite
+        timeout-minutes: 20
+        run: ./bin/functional
+
+  # THE MACOS MINIMUM DEPLOYMENT TARGET. CMakeLists.txt claims 12.0 (BUILDING.md
+  # says why: the lowest target the Xcode 27 build system and the Command Line
+  # Tools both build). This leg sets it explicitly, so a change to the default
+  # cannot move what is checked, builds Debug (examples-macos builds Release),
+  # fails on any warning -- an API newer than 12.0 used unguarded is
+  # -Wunguarded-availability-new, an error under -Werror -- reads minos from
+  # every Mach-O the build put in bin/, and runs both suites.
+
+  macos-minimum-target:
+    name: macos / minimum deployment target 12.0
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-toolchains-macos-${{ matrix.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      MINIMUM: "12.0"
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: The minimum checked is the minimum CMakeLists.txt claims
+        run: grep -q "set(CMAKE_OSX_DEPLOYMENT_TARGET \"$MINIMUM\"" CMakeLists.txt
+
+      - name: Print compiler and SDK versions
+        run: |
+          clang --version | head -1
+          xcrun --show-sdk-version
+
+      - name: Configure
+        run: |
+          set -o pipefail
+          cmake -B build -DCMAKE_BUILD_TYPE=Debug "-DCMAKE_OSX_DEPLOYMENT_TARGET=$MINIMUM" 2>&1 | tee configure.log
+
+      - name: Build static and shared libraries, unit suite and functional suite
+        run: |
+          set -o pipefail
+          cmake --build build --parallel 4 2>&1 | tee build.log
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          if grep -nE 'CMake Warning|warning:' configure.log build.log; then
+            echo "the macOS $MINIMUM build left the warnings above"
+            exit 1
+          fi
+
+      - name: Every Mach-O in bin/ carries minos ${{ env.MINIMUM }}
+        run: |
+          set -euo pipefail
+          checked=0
+          bad=0
+          while IFS= read -r file; do
+            if ! file -b "$file" | grep -q 'Mach-O'; then
+              continue
+            fi
+            minos=$(otool -l "$file" | awk '/LC_BUILD_VERSION/{found=1} found && $1=="minos"{print $2; exit}')
+            checked=$((checked + 1))
+            if [ "$minos" != "$MINIMUM" ]; then
+              echo "MINOS $file ${minos:-none} (want $MINIMUM)"
+              bad=1
+            fi
+          done < <(find bin -maxdepth 1 -type f)
+          echo "checked $checked Mach-O files"
+          [ "$checked" -gt 0 ]
+          exit "$bad"
+
+      - name: Unit suite
+        run: ./bin/test
+
+      - name: Functional suite
+        timeout-minutes: 20
+        run: ./bin/functional
+
+  # LINUX ARM64 UNDER QEMU-USER. No ARM64 Linux runner exists, so this follows
+  # ci.yml's big-endian leg: cross-compile at native speed and run under
+  # qemu-user, against the arm64 multiarch tree from the same Ubuntu archive.
+  # Only the unit suite runs: under qemu-user the socket-crossing functional
+  # cases report on the emulator, not the platform (the big-endian leg's
+  # comment has the detail). Enabled by ROCKETNET_LINUX_ARM64_CROSS=1 once a
+  # fleet host carries the toolchain; the presence check then fails the leg on
+  # anything missing.
+
+  linux-arm64-qemu:
+    name: linux / arm64 cross, unit suite under qemu-user
+    if: vars.ROCKETNET_LINUX_ARM64_CROSS == '1'
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-toolchains-linux-arm64-${{ matrix.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      PKG_CONFIG_LIBDIR: /usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the aarch64 cross toolchain, libraries and qemu are present
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake xxd pkg-config readelf aarch64-linux-gnu-gcc aarch64-linux-gnu-g++; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          if ! command -v qemu-aarch64-static >/dev/null 2>&1 && ! command -v qemu-aarch64 >/dev/null 2>&1; then
+            echo "TOOL-MISSING qemu-aarch64 (any) (missing) on $RUNNER_NAME"
+            missing=1
+          fi
+          for lib in libbpf libxdp; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (arm64) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Configure
+        run: |
+          set -o pipefail
+          cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_SYSTEM_NAME=Linux -DCMAKE_SYSTEM_PROCESSOR=aarch64 \
+            -DCMAKE_C_COMPILER=aarch64-linux-gnu-gcc -DCMAKE_CXX_COMPILER=aarch64-linux-gnu-g++ \
+            -DCMAKE_LIBRARY_ARCHITECTURE=aarch64-linux-gnu \
+            -DCMAKE_FIND_ROOT_PATH=/usr/lib/aarch64-linux-gnu \
+            -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=BOTH -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=BOTH \
+            "-DCMAKE_EXE_LINKER_FLAGS=-L/usr/lib/aarch64-linux-gnu -Wl,-rpath-link,/usr/lib/aarch64-linux-gnu" \
+            "-DCMAKE_SHARED_LINKER_FLAGS=-L/usr/lib/aarch64-linux-gnu -Wl,-rpath-link,/usr/lib/aarch64-linux-gnu" \
+            2>&1 | tee configure.log
+
+      - name: Build the libraries, the unit suite and the functional suite for aarch64
+        run: |
+          set -o pipefail
+          cmake --build build --parallel 2>&1 | tee build.log
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          if grep -nE 'CMake Warning|warning:' configure.log build.log; then
+            echo "the aarch64 cross build left the warnings above"
+            exit 1
+          fi
+
+      - name: The binaries are aarch64
+        run: |
+          set -euo pipefail
+          for binary in bin/test bin/functional; do
+            readelf -h "$binary" | grep -E "Class|Machine"
+            readelf -h "$binary" | grep -q "AArch64"
+          done
+
+      - name: Unit suite under qemu-user
+        env:
+          QEMU_LD_PREFIX: /usr/aarch64-linux-gnu
+          LD_LIBRARY_PATH: /usr/lib/aarch64-linux-gnu:/usr/aarch64-linux-gnu/lib
+        run: |
+          qemu=$(command -v qemu-aarch64-static || command -v qemu-aarch64)
+          "$qemu" ./bin/test
+
+  # WINDOWS ARM64, NATIVE. The cross build is checked every night in nightly.yml
+  # (windows-toolchains); this leg runs the suites on ARM64 hardware once a
+  # runner exists. Enabled by ROCKETNET_WINDOWS_ARM64_RUNNER=1.
+
+  windows-arm64:
+    name: windows / arm64 MSVC
+    if: vars.ROCKETNET_WINDOWS_ARM64_RUNNER == '1'
+    runs-on: [self-hosted, Windows, ARM64]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-toolchains-windows-arm64-${{ matrix.ref }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: |
+          set -o pipefail
+          cmake -B build -A ARM64 2>&1 | tr -d '\r' | tee configure.log
+
+      - name: Build
+        run: |
+          set -o pipefail
+          cmake --build build --config Release --parallel 4 2>&1 | tr -d '\r' | tee build.log
+
+      - name: Zero warnings in the configure and build output
+        run: |
+          if grep -nE 'CMake Warning|[: ]warning [A-Z]+[0-9]+' configure.log build.log; then
+            echo "the ARM64 build left the warnings above"
+            exit 1
+          fi
+
+      - name: Unit suite
+        run: ./bin/Release/test.exe
+
+      - name: Functional suite
+        timeout-minutes: 20
+        run: ./bin/Release/functional.exe
