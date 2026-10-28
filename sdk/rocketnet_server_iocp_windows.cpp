@@ -1793,12 +1793,10 @@ void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * 
         counters[i] = iocp->counters[i].load( std::memory_order_relaxed );
 }
 
-#if ROCKETNET_DEV
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp )
 {
     return iocp->pending.load( std::memory_order_acquire );
 }
-#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp )
 {

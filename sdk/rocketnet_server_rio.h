@@ -100,11 +100,9 @@ enum rocketnet_server_rio_counter_t
 };
 
 void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * counters );
-#if ROCKETNET_DEV
 // posted sends and receives the kernel has not completed or the transport has
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
-#endif // #if ROCKETNET_DEV
 uint64_t rocketnet_server_rio_allocation_bytes();
 
 #if ROCKETNET_DEV
