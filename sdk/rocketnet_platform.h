@@ -639,13 +639,14 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
 
 // ----------------------------------------------------------------
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
-
-    // linux and the BSDs: same pure-POSIX shapes
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS // POSIX
 
 #include <pthread.h>
 #include <unistd.h>
 #include <sched.h>
+#if defined( __APPLE__ )
+#include <mach/mach_types.h>
+#endif // #if defined( __APPLE__ )
 
 typedef int rocketnet_platform_socket_handle_t;
 
@@ -654,12 +655,15 @@ struct rocketnet_platform_socket_t
     void * context;
     int type;
     bool ipv6;
-    bool connected;
+    bool connected;                 // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
     rocketnet_platform_socket_handle_t handle;
-        // atomic, monotonic
-    uint64_t send_failures;
-        // zero here (no sendmsg_x); atomic, monotonic
-    uint64_t send_replay_failures;
+    uint64_t send_failures;         // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
+    uint64_t send_replay_failures;  // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
+#if defined( __APPLE__ )
+    bool msgx;                      // the sendmsg_x/recvmsg_x pump is eligible (macOS only); the first batch call probes it
+    double msgx_down_until;         // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
+    struct rocketnet_platform_send_errnos_t send_errnos; // every failed send call above, by call and errno
+#endif // #if defined( __APPLE__ )
 };
 
 struct sockaddr_storage;
@@ -669,10 +673,13 @@ struct rocketnet_platform_thread_t
 {
     void * context;
     pthread_t handle;
+#if defined( __APPLE__ )
+    mach_port_t wake_semaphore;     // thread_wait waits on it, thread_wake signals it
+#else // #if defined( __APPLE__ )
     pthread_mutex_t wake_mutex;
     pthread_cond_t wake_cond;
-        // set once by thread_wake; never cleared
-    bool woken;
+#endif // #if defined( __APPLE__ )
+    int woken;                      // set once by thread_wake, never cleared
 };
 
 struct rocketnet_platform_mutex_t
@@ -681,47 +688,7 @@ struct rocketnet_platform_mutex_t
     pthread_mutex_t handle;
 };
 
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-    // macos and ios
-
-#include <pthread.h>
-#include <unistd.h>
-#include <mach/mach_types.h>
-
-typedef int rocketnet_platform_socket_handle_t;
-
-struct rocketnet_platform_socket_t
-{
-    void * context;
-    bool ipv6;
-    bool msgx;                  // the batched sendmsg_x/recvmsg_x pump is eligible (first batch call probes support, macOS only)
-    bool connected;             // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
-    double msgx_down_until;     // a hard refusal pauses the msgx pump until this time; the next batch call after it is the re-probe
-    rocketnet_platform_socket_handle_t handle;
-    uint64_t send_failures;     // datagrams a failed send dropped, plus one per refused sendmsg_x chunk; atomic, monotonic
-    uint64_t send_replay_failures; // refused sends of the per-packet replay of a refused sendmsg_x chunk; atomic, monotonic
-    struct rocketnet_platform_send_errnos_t send_errnos; // every failed send call above, by call and errno
-};
-
-struct sockaddr_storage;
-bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
-
-struct rocketnet_platform_thread_t
-{
-    void * context;
-    pthread_t handle;
-    mach_port_t wake_semaphore;     // a mach semaphore: thread_wait waits on it, thread_wake signals it
-    int woken;                      // set once by thread_wake (atomic store), never cleared
-};
-
-struct rocketnet_platform_mutex_t
-{
-    bool ok;
-    pthread_mutex_t handle;
-};
-
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS // #if POSIX
 
     // windows
 
