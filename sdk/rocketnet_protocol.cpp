@@ -12,6 +12,7 @@
 #include "rocketnet_address.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_fragment.h"
+#include "rocketnet_ack.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -432,6 +433,14 @@ bool rocketnet_session_ack_eligible_on_open( uint8_t packet_type )
 bool rocketnet_session_elicits_ack( uint8_t packet_type )
 {
     return packet_type != ROCKETNET_CONNECTION_ACK_PACKET && rocketnet_session_ack_eligible_on_open( packet_type );
+}
+
+int rocketnet_session_ack_block_build( uint8_t * output, int other_bytes, const struct rocketnet_replay_protection_t * accepted )
+{
+    int capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - other_bytes;
+    if ( capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
+        capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
+    return rocketnet_ack_block_build( output, capacity, accepted );
 }
 
 uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened )

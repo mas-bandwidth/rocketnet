@@ -461,6 +461,10 @@ const uint8_t rocketnet_dev_server_secret_key[32] = {
 };
 
 
+// the development token: the production writer over the published development
+// keys, protocol id, lifetimes and one server address. A token naming port 0
+// is refused, as the production writer refuses it.
+
 enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_address_string,
                                                             uint64_t client_id,
                                                             uint64_t current_timestamp,
@@ -470,61 +474,19 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
     if ( !rocketnet_api_null_guard( server_address_string ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
-    if ( !rocketnet_api_null_guard( connect_token ) )
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
-
-    if ( connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
+    if ( connect_token && connect_token_bytes < ROCKETNET_CONNECT_TOKEN_BYTES )
     {
         rocketnet_error( "test connect token refused: the buffer is %d bytes, not the %d a token needs", (int) connect_token_bytes, ROCKETNET_CONNECT_TOKEN_BYTES );
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
 
-    struct rocketnet_address_t server_address;
-    if ( !rocketnet_address_parse( &server_address, server_address_string ) )
-        return ROCKETNET_STATUS_INVALID_ADDRESS;
+    const char * const addresses[1] = { server_address_string };
 
-    if ( server_address.type != ROCKETNET_ADDRESS_IPV4 && server_address.type != ROCKETNET_ADDRESS_IPV6 )
-        return ROCKETNET_STATUS_INVALID_ADDRESS;
-
-    struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof( signed_fields ) );
-    signed_fields.version = ROCKETNET_WIRE_VERSION;
-    signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-    signed_fields.create_timestamp = current_timestamp;
-    signed_fields.expire_timestamp = current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
-    signed_fields.timeout_seconds = ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
-    memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
-
-    uint8_t * p;
-    if ( server_address.type == ROCKETNET_ADDRESS_IPV4 )
-    {
-        signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-        p = signed_fields.ipv4_address;
-        rocketnet_write_bytes( &p, server_address.data.ipv4, 4 );
-        rocketnet_write_uint16( &p, server_address.port );
-    }
-    else
-    {
-        signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV6;
-        p = signed_fields.ipv6_address;
-
-        for ( int i = 0; i < 8; i++ )
-            rocketnet_write_uint16( &p, server_address.data.ipv6[i] );
-
-        rocketnet_write_uint16( &p, server_address.port );
-    }
-
-    struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof( private_fields ) );
-    private_fields.client_id = client_id;
-    randombytes_buf( private_fields.client_to_server_key, ROCKETNET_KEY_BYTES );
-    randombytes_buf( private_fields.server_to_client_key, ROCKETNET_KEY_BYTES );
-
-    const int result = rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, connect_token );
-
-    sodium_memzero( &private_fields, sizeof( private_fields ) );
-
-    return result ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    return rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key, rocketnet_dev_server_public_key, ROCKETNET_DEV_PROTOCOL_ID,
+                                                     addresses, 1, client_id,
+                                                     current_timestamp, current_timestamp + ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS,
+                                                     ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS, NULL,
+                                                     connect_token, connect_token_bytes );
 }
 
 static bool rn_dev_token_address( const char * address, int family )

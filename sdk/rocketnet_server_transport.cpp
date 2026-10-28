@@ -3538,10 +3538,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     const int index = ( server_transport->disconnect_burst_head + server_transport->disconnect_burst_count ) % ROCKETNET_MAX_CLIENTS;
     struct rocketnet_server_disconnect_burst_t * burst = &server_transport->disconnect_bursts[index];
 
-    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES;
-    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
-        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-    burst->plaintext_bytes = rocketnet_ack_block_build( burst->plaintext, block_capacity, &mapping->accepted_session );
+    burst->plaintext_bytes = rocketnet_session_ack_block_build( burst->plaintext, 0, &mapping->accepted_session );
     burst->to = *client_address;
     burst->first_sequence = mapping->send_sequence_session;
     burst->sealed = 0;
