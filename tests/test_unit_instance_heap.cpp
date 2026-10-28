@@ -12,7 +12,8 @@
 //     and counts, and tlsf's integrity walk passes throughout;
 //   * the client: under a counting allocator, connect, the handshake,
 //     disconnect and three reconnects call the installed allocator not once
-//     after create, and destroy frees the one block create took.
+//     after create, and destroy frees the one block create took;
+//   * the server: start, stop and three restarts, the same.
 //
 // No socket, no real time and no thread: the client is step-driven on the
 // loopback transport, on a test clock starting at 1000.0.
@@ -301,5 +302,73 @@ static void test_instance_heap_client_connect_allocates_nothing_after_create()
 }
 
 REGISTER_UNIT_TEST( test_instance_heap_client_connect_allocates_nothing_after_create );
+
+// Finding 3 of the allocation audit: the server allocated its transport at
+// every start. Now create takes one block holding the heap, and start, stop
+// and restart take nothing from the installed allocator; destroy frees the
+// one block.
+
+static void test_instance_heap_server_start_allocates_nothing_after_create()
+{
+    heap_counting_allocator_t server_counts = {};
+
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, heap_counting_malloc, heap_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_quiet( 1 );
+
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; i++ )
+        seed[i] = (uint8_t) ( 0x5C ^ i );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = HEAP_PROTOCOL;
+    server_config.max_clients = 4;
+    server_config.transport = "loopback";
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    rocketnet_server_t * server = rocketnet_server_create( &server_counts, "127.0.0.1:0", NULL, &server_config, &status );
+    check( server != NULL && status == ROCKETNET_STATUS_OK );
+    check( server_counts.mallocs == 1 );
+
+    for ( int run = 0; run < 4; run++ )
+    {
+        check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+        for ( int i = 0; i < 10; i++ )
+        {
+            heap_now += 0.01;
+            rocketnet_server_update( server, heap_now );
+            rocketnet_server_send_packets( server );
+        }
+
+        rocketnet_server_stop( server );
+        for ( int i = 0; i < 64 && !rocketnet_server_stopped( server ); i++ )
+        {
+            heap_now += 0.01;
+            rocketnet_server_update( server, heap_now );
+        }
+
+        check( rocketnet_server_stopped( server ) );
+
+        // the installed allocator saw create's one block and nothing since
+
+        check( server_counts.mallocs == 1 );
+        check( server_counts.frees == 0 );
+    }
+
+    rocketnet_server_destroy( server );
+    check( server_counts.mallocs == 1 );
+    check( server_counts.frees == 1 );
+    check( server_counts.live == 0 );
+
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_instance_heap_server_start_allocates_nothing_after_create );
 
 #endif // #if ROCKETNET_DEV
