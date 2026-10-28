@@ -55,6 +55,8 @@ on:
   schedule:
     - cron: "55 8 * * *"
   workflow_dispatch:
+  push:
+    branches: [nightly/toolchains]
 
 permissions:
   contents: read
@@ -73,7 +75,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         toolset:
           - { name: v141 MSVC 14.16 (VS 2017), id: v141, cmake: "v141", msvc: "14.16" }
           - { name: v142 MSVC 14.29 (VS 2019), id: v142, cmake: "v142", msvc: "14.29" }
@@ -139,7 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         build_type: [Debug, Release]
         compiler:
           - { cc: gcc-13,   cxx: g++-13,     runner: '["self-hosted","Linux","X64","fleet","hetzner2"]' }
@@ -216,7 +218,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
       group: nightly-toolchains-macos-${{ matrix.ref }}
       cancel-in-progress: true
@@ -301,7 +303,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
       group: nightly-toolchains-linux-arm64-${{ matrix.ref }}
       cancel-in-progress: true
@@ -391,7 +393,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
       group: nightly-toolchains-windows-arm64-${{ matrix.ref }}
       cancel-in-progress: true
