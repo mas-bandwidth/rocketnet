@@ -2431,6 +2431,32 @@ ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_
 
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
 
+/// Copies the user data from the slot's connect token into user_data.
+///
+/// The bytes are the ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES the backend put
+/// in the token, exactly as signed. They are readable from the moment the slot
+/// connects, the same moment rocketnet_server_client_id reads the token's
+/// client ID, until the slot is released: a disconnect, a timeout, or the
+/// server stopping. Release wipes the server's copy, so a later read of the
+/// slot writes zeros, and a new client in the slot reads its own token's
+/// bytes. The copy written here is the caller's to keep.
+///
+/// Callable running or stopped. A slot without a connected client, and any
+/// slot while stopped, writes zeros and returns false; that is not misuse.
+/// Thread: not thread-safe; the caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse, zeroes user_data and
+/// returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse, zeroes user_data and returns false.
+/// @param user_data The output buffer of
+/// ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES. NULL counts as API misuse and
+/// writes nothing.
+/// @return True if the slot holds a connected client and its user data was
+/// copied.
+
+ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data );
+
 /// Disconnects a client and frees its slot.
 ///
 /// Needs a running server and a connected slot; otherwise it does nothing.

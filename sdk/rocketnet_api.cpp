@@ -2504,6 +2504,28 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, i
     return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
 }
 
+static_assert( ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES == ROCKETNET_USER_DATA_BYTES, "connect token user data bytes" );
+
+// the slot's copy of its token's user data, read where client_id is read: a
+// slot without a connected client, or a stopped server, writes zeros
+
+bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data )
+{
+    if ( !rocketnet_api_null_guard( user_data ) )
+        return false;
+
+    memset( user_data, 0, ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES );
+
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return false;
+
+    return rocketnet_server_transport_client_user_data( rn_server_transport( server ), slot, user_data );
+}
+
 // The slot ends at once, before the next update, in every query and send: a
 // slot the message layer holds CONNECTED is kicked (rn_message_object_kick),
 // which cancels its open in-place start,

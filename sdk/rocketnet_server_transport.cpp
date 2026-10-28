@@ -3754,6 +3754,30 @@ uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport
     return rocketnet_client_slots_client_id( server_transport->protocol.client_slots, client_index );
 }
 
+// the slot holds its copy of the token's user data from assign until release,
+// which wipes it (rocketnet_client_slots_release_exact; tla/RNDestroyWipe.tla
+// Remove). This read changes no state; a free slot reads zeros here and never
+// reaches the slot accessor, which asserts connected
+
+bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transport_t * server_transport, int client_index, uint8_t * user_data )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return false;
+    rocketnet_assert( server_transport );
+    rocketnet_assert( user_data );
+
+    const struct rocketnet_client_slots_t * slots = server_transport->protocol.client_slots;
+    if ( !rocketnet_client_slots_connected( slots, client_index ) )
+    {
+        memset( user_data, 0, ROCKETNET_USER_DATA_BYTES );
+        return false;
+    }
+
+    memcpy( user_data, rocketnet_client_slots_user_data( slots, client_index ), ROCKETNET_USER_DATA_BYTES );
+
+    return true;
+}
+
 // docs/CHANNELS.md P9a: the connection that holds the slot now
 
 uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index )

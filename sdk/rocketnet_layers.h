@@ -1306,6 +1306,15 @@ int rocketnet_server_transport_is_client_connected( struct rocketnet_server_tran
  */
 uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// a NULL server_transport is a counted no-op that returns false
+/** @brief Copy the connect-token user data of the client currently assigned to a slot.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @param user_data [out] ROCKETNET_USER_DATA_BYTES; zeroed for a free or invalid slot.
+ * @return True if the slot is connected and its user data was copied. Read on the main thread outside update work.
+ */
+bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transport_t * server_transport, int client_index, uint8_t * user_data );
+
 // the connection that holds the slot now: nonzero and unique for each
 // connection over the transport's life, 0 while the slot is free (and for an
 // index out of range). A reconnect into the same slot, even inside one

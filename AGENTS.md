@@ -407,7 +407,12 @@ A production server refuses that published key.
 
 Tokens bind the client ID, protocol ID, server addresses, lifetime and signed
 user data. The server verifies the signature, opens the token with its own
-key and enforces expiry and replay checks. A dual-family client selects a
+key and enforces expiry and replay checks. On the server, read a connected
+slot's client ID with `rocketnet_server_client_id` and its user data with
+`rocketnet_server_client_user_data( server, client_index, user_data )`, which
+copies `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` and returns true from connect
+until the slot is released; release wipes the server's copy, and a free slot
+writes zeros and returns false. A dual-family client selects a
 family it can open; this is not a guarantee of fallback after a reachability
 failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 
