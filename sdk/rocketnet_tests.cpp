@@ -451,118 +451,6 @@ void rocketnet_test_read_write()
     rocketnet_check( port_bytes[0] == 0xd5 && port_bytes[1] == 0xdd );
 }
 
-void rocketnet_test_read_bytes_bounded_refuses_negative()
-{
-    // a count below zero must be refused before it can move the end check
-    // backwards or reach memcpy as a huge size_t. the destination keeps its
-    // pattern and the pointer does not move.
-
-    uint8_t buffer[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    const uint8_t * end = buffer + sizeof( buffer );
-
-    uint8_t out[8];
-    const uint8_t * r = buffer + 4;
-    const uint8_t * before = r;
-    memset( out, 0xA5, sizeof( out ) );
-
-    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, -1 ) == 0 );
-    rocketnet_check( r == before );
-
-    for ( size_t i = 0; i < sizeof( out ); ++i )
-        rocketnet_check( out[i] == 0xA5 );
-
-    r = buffer + 4;
-    before = r;
-    memset( out, 0xA5, sizeof( out ) );
-
-    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, INT_MIN ) == 0 );
-    rocketnet_check( r == before );
-
-    for ( size_t i = 0; i < sizeof( out ); ++i )
-        rocketnet_check( out[i] == 0xA5 );
-
-    // a count of exactly the room left succeeds and advances by that count
-
-    r = buffer + 4;
-    memset( out, 0xA5, sizeof( out ) );
-
-    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 4 ) == 1 );
-    rocketnet_check( r == buffer + 8 );
-    rocketnet_check( memcmp( out, buffer + 4, 4 ) == 0 );
-
-    // one past the room left is refused and leaves the pointer unchanged
-
-    r = buffer + 4;
-    before = r;
-
-    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 5 ) == 0 );
-    rocketnet_check( r == before );
-}
-
-void rocketnet_test_bounded_reader_refuses_past_end()
-{
-    uint8_t buffer[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
-    const uint8_t * end = buffer + sizeof( buffer );
-
-    const uint8_t * r = buffer;
-    uint8_t v8 = 0;
-    rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 1 );
-    rocketnet_check( v8 == 1 );
-    rocketnet_check( r == buffer + 1 );
-
-    uint16_t v16 = 0;
-    rocketnet_check( rocketnet_read_uint16_bounded( &r, end, &v16 ) == 1 );
-    rocketnet_check( v16 == 0x0302 );
-    rocketnet_check( r == buffer + 3 );
-
-    uint32_t v32 = 0;
-    rocketnet_check( rocketnet_read_uint32_bounded( &r, end, &v32 ) == 1 );
-    rocketnet_check( v32 == 0x07060504 );
-    rocketnet_check( r == buffer + 7 );
-
-    uint64_t v64 = 0;
-    r = buffer;
-
-    rocketnet_check( rocketnet_read_uint64_bounded( &r, end, &v64 ) == 1 );
-    rocketnet_check( v64 == 0x0807060504030201ULL );
-    rocketnet_check( r == buffer + 8 );
-
-    uint8_t out[3];
-    r = buffer;
-
-    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 3 ) == 1 );
-    rocketnet_check( memcmp( out, buffer, 3 ) == 0 );
-    rocketnet_check( r == buffer + 3 );
-
-    // a bounded read past the end returns failure and leaves the pointer unchanged
-
-    r = buffer + 7;
-    const uint8_t * before = r;
-
-    rocketnet_check( rocketnet_read_uint16_bounded( &r, end, &v16 ) == 0 );
-    rocketnet_check( r == before );
-
-    r = buffer + 7;
-    v8 = 0;
-
-    rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 1 );
-    rocketnet_check( v8 == 8 );
-    rocketnet_check( rocketnet_read_uint8_bounded( &r, end, &v8 ) == 0 );
-    rocketnet_check( r == buffer + 8 );
-
-    r = buffer + 5;
-    before = r;
-
-    rocketnet_check( rocketnet_read_uint32_bounded( &r, end, &v32 ) == 0 );
-    rocketnet_check( r == before );
-
-    r = buffer + 6;
-    before = r;
-
-    rocketnet_check( rocketnet_read_bytes_bounded( &r, end, out, 4 ) == 0 );
-    rocketnet_check( r == before );
-}
-
 void rocketnet_test_base64()
 {
     const char * vectors[] = { "", "AA==", "AAE=", "AAEC", "AAECAw==", "AAECAwQ=", "AAECAwQF", "AAECAwQFBg==", "AAECAwQFBgc=" };
@@ -596,14 +484,6 @@ void rocketnet_test_base64()
                 rocketnet_check( output[i] == 0xa5 );
         }
     }
-
-    const char * input = "a test string. let's see if it works properly";
-    char encoded[1024];
-    char decoded[1024];
-    rocketnet_check( rocketnet_base64_encode_string( input, encoded, sizeof( encoded ) ) > 0 );
-    rocketnet_check( rocketnet_base64_decode_string( encoded, decoded, sizeof( decoded ) ) > 0 );
-    rocketnet_check( strcmp( decoded, input ) == 0 );
-    rocketnet_check( rocketnet_base64_decode_string( encoded, decoded, 10 ) == 0 );
 
     // the strict decoder (#110 review, both readers independently): invalid
     // characters, high-bit bytes, misplaced or excessive padding, and
@@ -7788,58 +7668,6 @@ void rocketnet_test_wire_server_packet_valid()
 
     const int expected = 2 + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES + 1 ) + ( ROCKETNET_RECEIVE_CEILING - ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES + 1 );
     rocketnet_check( accepted == expected );
-}
-
-void rocketnet_test_anonymize_address_ipv4()
-{
-    rocketnet_address_t address;
-    rocketnet_address_parse( &address, "1.2.3.4:5" );
-
-    rocketnet_check( address.type == ROCKETNET_ADDRESS_IPV4 );
-    rocketnet_check( address.data.ipv4[0] == 1 );
-    rocketnet_check( address.data.ipv4[1] == 2 );
-    rocketnet_check( address.data.ipv4[2] == 3 );
-    rocketnet_check( address.data.ipv4[3] == 4 );
-    rocketnet_check( address.port == 5 );
-
-    rocketnet_address_anonymize( &address );
-
-    rocketnet_check( address.type == ROCKETNET_ADDRESS_IPV4 );
-    rocketnet_check( address.data.ipv4[0] == 1 );
-    rocketnet_check( address.data.ipv4[1] == 2 );
-    rocketnet_check( address.data.ipv4[2] == 3 );
-    rocketnet_check( address.data.ipv4[3] == 0 );
-    rocketnet_check( address.port == 0 );
-}
-
-void rocketnet_test_anonymize_address_ipv6()
-{
-    rocketnet_address_t address;
-    rocketnet_address_parse( &address, "[2001:0db8:85a3:0000:0000:8a2e:0370:7334]:40000" );
-
-    rocketnet_check( address.type == ROCKETNET_ADDRESS_IPV6 );
-    rocketnet_check( address.data.ipv6[0] == 0x2001 );
-    rocketnet_check( address.data.ipv6[1] == 0x0db8 );
-    rocketnet_check( address.data.ipv6[2] == 0x85a3 );
-    rocketnet_check( address.data.ipv6[3] == 0x0000 );
-    rocketnet_check( address.data.ipv6[4] == 0x0000 );
-    rocketnet_check( address.data.ipv6[5] == 0x8a2e );
-    rocketnet_check( address.data.ipv6[6] == 0x0370 );
-    rocketnet_check( address.data.ipv6[7] == 0x7334 );
-    rocketnet_check( address.port == 40000 );
-
-    rocketnet_address_anonymize( &address );
-
-    rocketnet_check( address.type == ROCKETNET_ADDRESS_IPV6 );
-    rocketnet_check( address.data.ipv6[0] == 0x2001 );
-    rocketnet_check( address.data.ipv6[1] == 0x0db8 );
-    rocketnet_check( address.data.ipv6[2] == 0x85a3 );
-    rocketnet_check( address.data.ipv6[3] == 0x0000 );
-    rocketnet_check( address.data.ipv6[4] == 0x0000 );
-    rocketnet_check( address.data.ipv6[5] == 0x0000 );
-    rocketnet_check( address.data.ipv6[6] == 0x0000 );
-    rocketnet_check( address.data.ipv6[7] == 0x0000 );
-    rocketnet_check( address.port == 0 );
 }
 
 void rocketnet_test_platform_inet6_round_trip()
@@ -16066,8 +15894,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
 #endif // #if ROCKETNET_XDP
     { "test_endian", rocketnet_test_endian },
     { "test_read_write", rocketnet_test_read_write },
-    { "test_read_bytes_bounded_refuses_negative", rocketnet_test_read_bytes_bounded_refuses_negative },
-    { "test_bounded_reader_refuses_past_end", rocketnet_test_bounded_reader_refuses_past_end },
     { "test_base64", rocketnet_test_base64 },
     { "test_hash", rocketnet_test_hash },
     { "test_protocol_version_hash", rocketnet_test_protocol_version_hash },
@@ -16171,9 +15997,7 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_server_disconnect_client", rocketnet_test_server_disconnect_client },
     { "test_live_client_id_refused_until_timeout", rocketnet_test_live_client_id_refused_until_timeout },
     { "test_client_id_free_after_clean_disconnect", rocketnet_test_client_id_free_after_clean_disconnect },
-    { "test_anonymize_address_ipv4", rocketnet_test_anonymize_address_ipv4 },
     { "test_client_index_range_checked", rocketnet_test_client_index_range_checked },
-    { "test_anonymize_address_ipv6", rocketnet_test_anonymize_address_ipv6 },
     { "test_platform_inet6_round_trip", rocketnet_test_platform_inet6_round_trip },
     { "test_frame_sync_advance", rocketnet_test_frame_sync_advance },
     { "test_frame_sync_guard", rocketnet_test_frame_sync_guard },

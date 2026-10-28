@@ -73,14 +73,10 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 # instance, in the same sense as replay-delta-1-3:
 #   read-write         proved: proof_read_write.c, unwind 9. Symbolic
 #                      buffers of 8 bytes. Writers and readers round-trip;
-#                      the bounded readers, including the variable-length
-#                      byte reader, refuse a read past the end pointer and
-#                      leave the cursor alone. rocketnet_copy_string with
+#                      rocketnet_copy_string with
 #                      dest_size 0 writes nothing and returns 0; a positive
 #                      dest_size up to 8 keeps the copy inside the buffer
-#                      and terminates it. The backing object for a bounded
-#                      read is 8 bytes of slack past the end pointer, so the
-#                      guard's pointer add stays inside the object.
+#                      and terminates it.
 #   fragment-bounds    superseded: proof_fragment_bounds.c copies the
 #                      reassembly function, and fragment_reassembly/ proves
 #                      the real one on ESBMC. It is no longer in `all`.

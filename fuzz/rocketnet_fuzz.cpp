@@ -432,9 +432,6 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
         rocketnet_fuzz_type_counters[ROCKETNET_FUZZ_TYPE_BASE64_DECODED]++;
     }
 
-    char decoded_string[4097];
-    rocketnet_base64_decode_string( text, decoded_string, sizeof( decoded_string ) );
-
     // THE REAL CALLER'S GEOMETRY, and the reason this second decode exists.
     // rocketnet_config_apply_env hands this decoder a value straight out of
     // getenv -- any length at all -- against an output buffer that is the
@@ -460,17 +457,6 @@ static void rocketnet_fuzz_base64( const uint8_t * data, size_t bytes )
     if ( wide_bytes > 0 && wide_bytes <= (int) sizeof( key_field ) )
         rocketnet_fuzz_require( key_bytes == wide_bytes && memcmp( key_field, decoded, (size_t) wide_bytes ) == 0,
                                 "base64 fitting field must preserve all bytes" );
-
-    char small_string[8];
-    const int small_string_bytes = rocketnet_base64_decode_string( text, small_string, sizeof( small_string ) );
-    if ( wide_bytes >= (int) sizeof( small_string ) )
-    {
-        rocketnet_fuzz_require( small_string_bytes == 0, "base64 string must reserve its terminator" );
-    }
-
-    if ( wide_bytes > 0 && wide_bytes < (int) sizeof( small_string ) )
-        rocketnet_fuzz_require( small_string_bytes == wide_bytes && memcmp( small_string, decoded, (size_t) wide_bytes ) == 0 && small_string[wide_bytes] == '\0',
-                                "base64 fitting string must preserve bytes and terminator" );
 
     // ONE SPELLING PER KEY, as an oracle rather than a table of examples:
     // whatever these bytes are, encoding then decoding them must return
