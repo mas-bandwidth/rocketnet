@@ -31,6 +31,7 @@
 #include "../sdk/rocketnet_test_seams.h"
 #include "../sdk/rocketnet_memory.h"
 #include "suite_runner.h"
+#include "msan_scale_allocator.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -328,6 +329,7 @@ static void test_mass_join_spreads_handshakes_across_updates()
 #if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
     static mass_disconnect_population_t population;
     const int budget = 16; // independent expected default, not the implementation constant
@@ -396,6 +398,7 @@ static void test_server_disconnect_prelink_kicks_share_update_allowance()
 #if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
     static mass_disconnect_population_t population;
@@ -498,6 +501,7 @@ static void test_server_disconnect_all_1000_real_time()
 #if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
     static mass_disconnect_population_t population;
@@ -576,6 +580,7 @@ static void test_clients_disconnect_together_server_count_exact()
 #if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
     static mass_disconnect_population_t population;
@@ -639,6 +644,7 @@ static void test_server_disconnect_full_queue_never_bypasses_budget()
 #if ROCKETNET_DEV
     mass_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
     static mass_disconnect_population_t population;
