@@ -37,6 +37,7 @@ static inline rocketnet_client_io_rig_t * rocketnet_client_io_rig_create()
     rocketnet_client_io_rig_t * rig = new rocketnet_client_io_rig_t();
     memset( rig->ring, 0, sizeof( rig->ring ) );
     memset( rig->counts, 0, sizeof( rig->counts ) );
+
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
     {
         rig->view[i].data = rig->ring[i];
@@ -45,13 +46,18 @@ static inline rocketnet_client_io_rig_t * rocketnet_client_io_rig_create()
         rig->view[i].wire_bytes = (const uint8_t *) rig->counts[i];
         rig->view[i].wire_bytes_stride = sizeof( int );
     }
+
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+    {
         rig->buffers[i] = new rocketnet_client_receive_buffer_t;
+    }
+
     if ( !rocketnet_platform_mutex_create( &rig->mutex ) )
     {
         printf( "client io rig: mutex create failed\n" );
         exit( 1 );
     }
+
     return rig;
 }
 
@@ -62,6 +68,7 @@ static inline void rocketnet_client_io_rig_init( rocketnet_client_io_rig_t * rig
 }
 
 // the bytes of slot `slot` of ring `ring`, where the I/O step reads them
+
 static inline uint8_t * rocketnet_client_io_rig_slot( rocketnet_client_io_rig_t * rig, int ring, int slot )
 {
     return rig->ring[ring] + slot * ROCKETNET_FRAME_STRIDE + ROCKETNET_FRAME_WIRE_OFFSET;
@@ -71,7 +78,9 @@ static inline void rocketnet_client_io_rig_destroy( rocketnet_client_io_rig_t * 
 {
     rocketnet_platform_mutex_destroy( &rig->mutex );
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+    {
         delete rig->buffers[i];
+    }
     delete rig;
 }
 

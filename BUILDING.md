@@ -878,6 +878,7 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
 * Environment: ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE
+* Environment: ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE
 * Environment: ROCKETNET_SERVER_TRANSPORT
 * Environment: ROCKETNET_SERVER_IPV4_ADDRESS
 * Environment: ROCKETNET_SERVER_IPV6_ADDRESS
@@ -1089,8 +1090,11 @@ BPF object, static/shared libraries, examples and XDP test executables. Run
 `./bin/test_xdp_compat` for the legacy loader/attachment adapter contract checks
 (no kernel operations), `./bin/test` for the unit suite, and
 `python3 tools/check_package.py build` for relocated C/C++ consumers of both
-libraries. Jammy's liburing 2.1 lacks multishot receive, so the existing
-io_uring guard leaves that transport unavailable; XDP is independent of it.
+libraries. Jammy's liburing 2.1 lacks multishot receive, so configure prints
+`liburing found without multishot receive` and does not build the io_uring
+transport: it is absent from the transport list, as in a build without
+liburing, and the production ladder is `xdp -> gso -> portable`. XDP is
+independent of it.
 
 Compilation and linking in an Ubuntu 22.04 container qualify its toolchain and
 userspace libraries only. The host supplies the container's kernel. Loading,

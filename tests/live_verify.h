@@ -103,6 +103,7 @@ static inline const char * rocketnet_live_bucket_name( int bucket )
 
 // Section 3, the message header: byte 0 is 0xA0 | direction << 3 | mode.
 // Direction 0 is client to server.
+
 static inline uint8_t rocketnet_live_tag( int direction, int mode )
 {
     return (uint8_t) ( ROCKETNET_LIVE_TAG_BASE | ( (uint32_t) ( direction & 1 ) << 3 ) | (uint32_t) ( mode & 7 ) );
@@ -113,21 +114,29 @@ static inline uint8_t rocketnet_live_tag( int direction, int mode )
 // u16 record length, max_message_bytes and the transport payload cap less
 // its 11-byte overhead (channels below 256). The reliable codes and code 5
 // (promoted to a reliable block above 1,411): max_message_bytes.
+
 static inline uint32_t rocketnet_live_mode_max( const rocketnet_live_config_t * config, int mode )
 {
     const uint32_t mmb = config->max_message_bytes;
     if ( mode == 0 )
         return ROCKETNET_LIVE_UNRELIABLE_LIMIT < mmb ? ROCKETNET_LIVE_UNRELIABLE_LIMIT : mmb;
+
     if ( mode == 1 )
     {
         uint32_t m = ROCKETNET_LIVE_MAX_RECORD_BYTES;
         if ( mmb < m )
+        {
             m = mmb;
+        }
+
         const uint32_t payload = ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES > ROCKETNET_LIVE_CODE1_OVERHEAD ? ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES - ROCKETNET_LIVE_CODE1_OVERHEAD : 1u;
         if ( payload < m )
+        {
             m = payload;
+        }
         return m;
     }
+
     return mmb;
 }
 
@@ -137,9 +146,11 @@ static inline uint32_t rocketnet_live_mode_max( const rocketnet_live_config_t * 
 // largest message whose payload fits one transport packet, 1,415 - 11 =
 // 1,404, the first of its transport payload edges. Clipped to the mode's
 // maximum.
+
 static inline uint32_t rocketnet_live_edge( const rocketnet_live_config_t * config, int mode )
 {
     uint32_t e;
+
     switch ( mode )
     {
         case 0:
@@ -151,6 +162,7 @@ static inline uint32_t rocketnet_live_edge( const rocketnet_live_config_t * conf
         case 4:  e = 1399u; break;
         default: e = 1404u; break;
     }
+
     const uint32_t m = rocketnet_live_mode_max( config, mode );
     return e < m ? e : m;
 }
@@ -159,16 +171,22 @@ static inline void rocketnet_live_boundary_add( uint32_t * list, int * count, in
 {
     // section 4: each value is clipped to the mode's maximum and skipped when
     // it is below 1; a value already in the list is not added twice
+
     if ( value < 1 )
         return;
+
     const uint32_t v = value > (int64_t) max_m ? max_m : (uint32_t) value;
+
     for ( int i = 0; i < *count; i++ )
     {
         if ( list[i] == v )
             return;
     }
+
     if ( *count < ROCKETNET_LIVE_MAX_BOUNDARIES )
+    {
         list[( *count )++] = v;
+    }
 }
 
 // Section 4, the boundary list B of a mode, in the order the section lists
@@ -176,6 +194,7 @@ static inline void rocketnet_live_boundary_add( uint32_t * list, int * count, in
 // transport payload edges, the block stride's multiples, and the
 // near-maximum values. Returns the count; list holds
 // ROCKETNET_LIVE_MAX_BOUNDARIES entries.
+
 static inline int rocketnet_live_boundaries( const rocketnet_live_config_t * config, int mode, uint32_t * list )
 {
     const uint32_t m = rocketnet_live_mode_max( config, mode );
@@ -183,16 +202,20 @@ static inline int rocketnet_live_boundaries( const rocketnet_live_config_t * con
     const int64_t F = (int64_t) ROCKETNET_LIVE_BLOCK_STRIDE;
     int n = 0;
     for ( int64_t i = 1; i <= 7; i++ )
+    {
         rocketnet_live_boundary_add( list, &n, i, m );
+    }
     rocketnet_live_boundary_add( list, &n, e - 1, m );
     rocketnet_live_boundary_add( list, &n, e, m );
     rocketnet_live_boundary_add( list, &n, e + 1, m );
+
     if ( mode == 1 )
     {
         const int64_t o = (int64_t) ROCKETNET_LIVE_CODE1_OVERHEAD;
         rocketnet_live_boundary_add( list, &n, 1404, m );
         rocketnet_live_boundary_add( list, &n, 1405, m );
         rocketnet_live_boundary_add( list, &n, 1406, m );
+
         for ( int64_t k = 2; k <= 3; k++ )
         {
             const int64_t full = k * (int64_t) ROCKETNET_LIVE_FRAGMENT_STRIDE - o;
@@ -200,17 +223,20 @@ static inline int rocketnet_live_boundaries( const rocketnet_live_config_t * con
             rocketnet_live_boundary_add( list, &n, full, m );
             rocketnet_live_boundary_add( list, &n, full + 1, m );
         }
+
         const int64_t payload_max = (int64_t) ROCKETNET_LIVE_DEFAULT_PAYLOAD_BYTES - o;
         rocketnet_live_boundary_add( list, &n, payload_max - 1, m );
         rocketnet_live_boundary_add( list, &n, payload_max, m );
         rocketnet_live_boundary_add( list, &n, payload_max + 1, m );
     }
+
     for ( int64_t k = 1; k <= 3; k++ )
     {
         rocketnet_live_boundary_add( list, &n, k * F - 1, m );
         rocketnet_live_boundary_add( list, &n, k * F, m );
         rocketnet_live_boundary_add( list, &n, k * F + 1, m );
     }
+
     rocketnet_live_boundary_add( list, &n, 16383, m );
     rocketnet_live_boundary_add( list, &n, 16384, m );
     rocketnet_live_boundary_add( list, &n, 16385, m );
@@ -218,11 +244,13 @@ static inline int rocketnet_live_boundaries( const rocketnet_live_config_t * con
     rocketnet_live_boundary_add( list, &n, (int64_t) m - F, m );
     rocketnet_live_boundary_add( list, &n, (int64_t) m - 1, m );
     rocketnet_live_boundary_add( list, &n, (int64_t) m, m );
+
     return n;
 }
 
 // Section 4, the bucket rule: lo + (((s + seed) * 1023) % (hi - lo + 1)) in
 // 64-bit unsigned arithmetic.
+
 static inline uint32_t rocketnet_live_bucket_length( uint32_t lo, uint32_t hi, uint32_t sequence, uint32_t seed )
 {
     const uint64_t span = (uint64_t) hi - (uint64_t) lo + 1u;
@@ -236,12 +264,12 @@ static inline uint32_t rocketnet_live_bucket_length( uint32_t lo, uint32_t hi, u
 // A bucket that is empty at this mode's maximum falls back to small, as the
 // section says for large; a small bucket with no room above the header is
 // the maximum itself.
+
 static inline uint32_t rocketnet_live_length( const rocketnet_live_config_t * config, int mode, int channel, uint32_t sequence )
 {
     const uint32_t m = rocketnet_live_mode_max( config, mode );
     const uint32_t e = rocketnet_live_edge( config, mode );
     const uint32_t r = (uint32_t) ( ( (uint64_t) sequence + (uint32_t) channel ) % ROCKETNET_LIVE_SLOTS );
-
     if ( r == 0 )
     {
         uint32_t list[ROCKETNET_LIVE_MAX_BOUNDARIES];
@@ -252,6 +280,7 @@ static inline uint32_t rocketnet_live_length( const rocketnet_live_config_t * co
     }
 
     const uint32_t small_lo = 7u < e ? 7u : e;
+
     if ( r >= 24u && r <= 29u )
     {
         const uint32_t hi = m < 16384u ? m : 16384u;
@@ -263,12 +292,14 @@ static inline uint32_t rocketnet_live_length( const rocketnet_live_config_t * co
         if ( m >= 16385u )
             return rocketnet_live_bucket_length( 16385u, m, sequence, config->seed );
     }
+
     return rocketnet_live_bucket_length( small_lo, e, sequence, config->seed );
 }
 
 // The number of sequences a stream sends so that every (direction, mode)
 // walks all of B once every channel has passed them: 32 x ceil(|B| / 32)
 // (section 4, r = 0).
+
 static inline uint32_t rocketnet_live_sequences_per_stream( const rocketnet_live_config_t * config, int mode )
 {
     uint32_t list[ROCKETNET_LIVE_MAX_BOUNDARIES];
@@ -278,6 +309,7 @@ static inline uint32_t rocketnet_live_sequences_per_stream( const rocketnet_live
 
 // Section 4, the size bucket a length of a mode falls in, as the results
 // name it.
+
 static inline int rocketnet_live_bucket( const rocketnet_live_config_t * config, int mode, uint32_t length )
 {
     const uint32_t m = rocketnet_live_mode_max( config, mode );
@@ -290,11 +322,13 @@ static inline int rocketnet_live_bucket( const rocketnet_live_config_t * config,
         return ROCKETNET_LIVE_BUCKET_TINY;
     if ( length + 1u >= e && length <= e + 1u )
         return ROCKETNET_LIVE_BUCKET_EDGE;
+
     for ( uint32_t k = 1; k <= 3; k++ )
     {
         const uint32_t f = k * ROCKETNET_LIVE_BLOCK_STRIDE;
         if ( length + 1u >= f && length <= f + 1u )
             return ROCKETNET_LIVE_BUCKET_FRAGMENT;
+
         if ( mode == 1 && k >= 2 )
         {
             const uint32_t full = k * ROCKETNET_LIVE_FRAGMENT_STRIDE - ROCKETNET_LIVE_CODE1_OVERHEAD;
@@ -302,10 +336,12 @@ static inline int rocketnet_live_bucket( const rocketnet_live_config_t * config,
                 return ROCKETNET_LIVE_BUCKET_FRAGMENT;
         }
     }
+
     if ( length <= e )
         return ROCKETNET_LIVE_BUCKET_SMALL;
     if ( length <= 16384u )
         return ROCKETNET_LIVE_BUCKET_MEDIUM;
+
     return ROCKETNET_LIVE_BUCKET_LARGE;
 }
 
@@ -314,12 +350,14 @@ static inline int rocketnet_live_bucket( const rocketnet_live_config_t * config,
 // cycle mod 256, sequence u32 little endian) and then byte i = (i + sequence)
 // % 256; a shorter one is the first L bytes of the header and nothing else.
 // Returns the length, or 0 when it does not fit capacity.
+
 static inline int rocketnet_live_generate( const rocketnet_live_config_t * config, int direction, int mode, int channel,
                                            uint32_t cycle, uint32_t sequence, uint8_t * buffer, int capacity )
 {
     const uint32_t length = rocketnet_live_length( config, mode, channel, sequence );
     if ( capacity < 0 || length > (uint32_t) capacity )
         return 0;
+
     uint8_t header[ROCKETNET_LIVE_HEADER_BYTES];
     header[0] = rocketnet_live_tag( direction, mode );
     header[1] = (uint8_t) channel;
@@ -329,14 +367,20 @@ static inline int rocketnet_live_generate( const rocketnet_live_config_t * confi
     header[5] = (uint8_t) ( sequence >> 16 );
     header[6] = (uint8_t) ( sequence >> 24 );
     for ( uint32_t i = 0; i < length && i < ROCKETNET_LIVE_HEADER_BYTES; i++ )
+    {
         buffer[i] = header[i];
+    }
     for ( uint32_t i = ROCKETNET_LIVE_HEADER_BYTES; i < length; i++ )
+    {
         buffer[i] = (uint8_t) ( ( i + sequence ) % 256u );
+    }
+
     return (int) length;
 }
 
 // The sequence a message of 7 bytes or more carries (section 3, bytes 3 to
 // 6). 0 for a shorter one, which carries none.
+
 static inline uint32_t rocketnet_live_sequence( const uint8_t * buffer, int bytes )
 {
     if ( bytes < ROCKETNET_LIVE_HEADER_BYTES )
@@ -352,34 +396,47 @@ static inline uint32_t rocketnet_live_sequence( const uint8_t * buffer, int byte
 // (expected_sequence >= 0, the ordered modes), its length and sequence bytes
 // are checked against that sequence too. bad_offset, when not NULL, receives
 // the offset of the first wrong byte.
+
 static inline int rocketnet_live_check( const rocketnet_live_config_t * config, const uint8_t * buffer, int bytes,
                                         int direction, int mode, int channel, uint32_t cycle,
                                         int64_t expected_sequence, int * bad_offset )
 {
     if ( bad_offset )
+    {
         *bad_offset = -1;
+    }
     if ( !buffer || bytes < 1 )
         return ROCKETNET_LIVE_SHORT;
+
     if ( buffer[0] != rocketnet_live_tag( direction, mode ) )
     {
         if ( bad_offset )
+        {
             *bad_offset = 0;
+        }
         return ROCKETNET_LIVE_BAD_HEADER;
     }
+
     if ( bytes >= 2 && buffer[1] != (uint8_t) channel )
     {
         if ( bad_offset )
+        {
             *bad_offset = 1;
+        }
         return ROCKETNET_LIVE_BAD_CHANNEL;
     }
+
     if ( bytes >= 3 && buffer[2] != (uint8_t) cycle )
     {
         if ( bad_offset )
+        {
             *bad_offset = 2;
+        }
         return ROCKETNET_LIVE_BAD_CYCLE;
     }
 
     uint32_t sequence;
+
     if ( bytes >= ROCKETNET_LIVE_HEADER_BYTES )
     {
         sequence = rocketnet_live_sequence( buffer, bytes );
@@ -399,19 +456,25 @@ static inline int rocketnet_live_check( const rocketnet_live_config_t * config, 
         if ( buffer[i] != (uint8_t) ( sequence >> ( 8 * ( i - 3 ) ) ) )
         {
             if ( bad_offset )
+            {
                 *bad_offset = i;
+            }
             return ROCKETNET_LIVE_BAD_BYTE;
         }
     }
+
     for ( int i = ROCKETNET_LIVE_HEADER_BYTES; i < bytes; i++ )
     {
         if ( buffer[i] != (uint8_t) ( ( (uint32_t) i + sequence ) % 256u ) )
         {
             if ( bad_offset )
+            {
                 *bad_offset = i;
+            }
             return ROCKETNET_LIVE_BAD_BYTE;
         }
     }
+
     return ROCKETNET_LIVE_OK;
 }
 

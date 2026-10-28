@@ -45,6 +45,7 @@ static void * allocate( void * context, size_t bytes )
     const int call = ++state->calls;
     if ( state->fail_at == call )
         return NULL;
+
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
@@ -52,6 +53,7 @@ static void * allocate( void * context, size_t bytes )
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
     memset( (void *) address, 0xA5, bytes );
     ++state->live;
+
     return (void *) address;
 }
 
@@ -78,7 +80,6 @@ static void production_config( struct rocketnet_server_transport_config_t * conf
 // A named production server rung with a concrete memory plan. The budget=1
 // case refuses before opening it, so this unit test needs no native backend.
 
-
 #if ROCKETNET_ASSERTS
 // the NULL argument below is the documented counted no-op, which fires
 // rocketnet_assert in a build with asserts on: count it instead of breaking
@@ -88,48 +89,53 @@ static void server_create_ex_expected_null_assert( const char *, const char *, c
 {
     server_create_ex_expected_null_asserts++;
 }
-#endif
+#endif // #if ROCKETNET_ASSERTS
 
 static void test_server_transport_create_ex_reports_every_status()
 {
-
     allocator_state state = { 0, 0, 0 };
     int status = -1;
 
     // the worker starts the process initialized; return to the pre-init state
     // so the lifecycle refusals below are reachable
+
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
 
     // S1: a NULL public_address_string is a logged INVALID_ARGUMENT, even
     // before init (the public NULL guard runs first)
+
     status = -1;
 #if ROCKETNET_ASSERTS
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     server_create_ex_expected_null_asserts = 0;
     rocketnet_assert_function( server_create_ex_expected_null_assert );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     check( rocketnet_server_transport_create_ex( NULL, NULL, NULL, 1000.0, &status ) == NULL );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
+
     check( server_create_ex_expected_null_asserts == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // install the fault-injecting allocator while uninitialized, so every
     // allocation below goes through allocate and release
+
     check( rocketnet_allocator_ex( allocate, release ) == ROCKETNET_STATUS_OK );
 
     // not initialized: a non-NULL create before rocketnet_init is refused
+
     status = -1;
     check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_NOT_INITIALIZED );
 
     // init with the fault-injecting allocator's state as the context
+
     status = -1;
     check( rocketnet_init_ex( &state, allocate, release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
 
-    // S2 environment parsing is covered by test_platform_primitives.
+    // S2 environment parsing is covered by test_platform_primitives
 
     // S3: an out-of-range config value refuses validation
     {
@@ -156,6 +162,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // are covered by test_platform_primitives.
 
     // S6: a keyless config (the default shape) is refused
+
     status = -1;
     check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_MISSING_KEYS );
@@ -212,7 +219,7 @@ static void test_server_transport_create_ex_reports_every_status()
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED );
     }
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
     // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
@@ -234,23 +241,30 @@ static void test_server_transport_create_ex_reports_every_status()
             if ( server )
             {
                 check( status == ROCKETNET_STATUS_OK );
+
                 rn_test_server_transport_stop_and_destroy( server );
+
                 check( state.live == 0 );
+
                 reached_success = 1;
             }
             else
             {
                 check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
                 check( state.live == 0 );
+
                 out_of_memory++;
             }
         }
+
         check( out_of_memory > 0 );
         check( reached_success );
+
         state.fail_at = 0;
     }
 
     // a clean term, then restore the default allocator for the worker's term
+
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );

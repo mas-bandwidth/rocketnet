@@ -37,14 +37,17 @@ static int standard_security_and_conformance_generate( const char * id, uint8_t 
         };
         if ( capacity < 18 )
             return -1;
+
         for ( int i = 0; i < 6; i++ )
         {
             out[i * 3 + 0] = types[i];
             out[i * 3 + 1] = (uint8_t) ( wires[i] & 0xff );
             out[i * 3 + 2] = (uint8_t) ( wires[i] >> 8 );
         }
+
         return 18;
     }
+
     return -1;
 }
 

@@ -408,8 +408,23 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
         case ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE:
         case ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST:
         {
+            // the kept cookie goes out on at least every second request: a
+            // later cookie alternates with it and never displaces it, so a
+            // forged cookie cannot take the kept one off the wire
+            // (tla/ClientConnection.tla ClientPacket, HandshakeNeverRewinds)
+
+            const uint8_t * return_cookie = client->has_cookie ? client->return_cookie : NULL;
+
+            if ( client->has_latest_cookie )
+            {
+                if ( client->send_latest_cookie )
+                    return_cookie = client->latest_cookie;
+
+                client->send_latest_cookie = !client->send_latest_cookie;
+            }
+
             rocketnet_write_connection_request_packet( out_packet, client->packet_filter,
-                                                       client->has_cookie ? client->return_cookie : NULL,
+                                                       return_cookie,
                                                        client->connection_salt,
                                                        client->client_ephemeral_public_key,
                                                        client->token.signed_connect_data,
@@ -493,18 +508,34 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
         return 0;
     }
 
-    // store the last 24 bytes -- expire and mac -- and carry them in every
-    // subsequent request. a fresh cookie replaces a stale one. nothing is
-    // sent because this arrived; the next scheduled request carries it.
-    //
     // the client trusts only the server: the salt rides in the clear, so
-    // anyone who sees the request can echo it. a cookie therefore never
-    // refreshes the receive time and never gives a round-trip sample; both
-    // come only from the challenge and later packets that open under the
-    // attempt's keys (standard/TRANSPORT.md t11.1 Cookie processing).
+    // anyone who sees the request can echo it, and the client cannot check
+    // the mac. a cookie therefore never refreshes the receive time and never
+    // gives a round-trip sample; both come only from the challenge and later
+    // packets that open under the attempt's keys (standard/TRANSPORT.md
+    // t11.1 Cookie processing).
+    //
+    // for the same reason a cookie never displaces the one the attempt keeps.
+    // the first accepted cookie is kept for the attempt; a later one replaces
+    // only the latest cookie, which alternates with the kept one on the wire.
+    // a forged cookie can cost a request, never the kept cookie: the handshake
+    // moves backwards on no packet that does not open under the attempt's
+    // keys (tla/ClientConnection.tla HandshakeNeverRewinds). a genuine fresh
+    // cookie, after the kept one expired, still goes out on every second
+    // request. nothing is sent because this arrived.
 
-    memcpy( client->return_cookie, packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES, ROCKETNET_COOKIE_FIELD_BYTES );
-    client->has_cookie = 1;
+    const uint8_t * cookie_field = packet_data + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES;
+
+    if ( !client->has_cookie )
+    {
+        memcpy( client->return_cookie, cookie_field, ROCKETNET_COOKIE_FIELD_BYTES );
+        client->has_cookie = 1;
+    }
+    else
+    {
+        memcpy( client->latest_cookie, cookie_field, ROCKETNET_COOKIE_FIELD_BYTES );
+        client->has_latest_cookie = 1;
+    }
 
     counters[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED]++;
 

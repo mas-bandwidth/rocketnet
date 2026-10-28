@@ -83,6 +83,7 @@ inline enum rocketnet_unit_file_register_result_t rocketnet_unit_file_register(
     registry->tests[0].function = function;
     registry->tests[0].expected_fail_card = expected_fail_card;
     registry->count++;
+
     return ROCKETNET_UNIT_FILE_REGISTERED;
 }
 
@@ -213,6 +214,7 @@ inline int rocketnet_unit_tests_run_named( const char * name )
     printf( "check failed: ( %s ), expected to fail for card %s but passed; remove the marker\n",
             test->name, test->expected_fail_card );
     fflush( stdout );
+
     return 1;
 }
 

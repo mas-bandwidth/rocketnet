@@ -44,7 +44,7 @@
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
-#endif
+#endif // #if ROCKETNET_DEV
 #elif defined( __APPLE__ )
 // macOS adds, over the figures before them: per socket, the send failure
 // counts by call and errno (3 calls x 13 kinds x 8 bytes, plus the first
@@ -63,7 +63,7 @@
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
-#endif
+#endif // #if ROCKETNET_DEV
 #else
 // Re-measured 2026-10-27 on hetzner2, Release, clang++ 18.1.3,
 // ROCKETNET_DEV=ON, head d00cf56e517dad7477ce41059d48e276c95aa970.
@@ -78,8 +78,8 @@
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )
-#endif
-#endif
+#endif // #if ROCKETNET_DEV
+#endif // #if defined( _WIN32 )
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
@@ -126,10 +126,13 @@ static void test_light_profile_server_1000_required_memory()
     light_message_fields_server( &config );
 
     config.max_clients = 1000;
+
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
     if ( bytes != LIGHT_SERVER_1000_MAX_BYTES )
+    {
         printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES );
+    }
     check( bytes <= LIGHT_SERVER_1000_MAX_BYTES );
 }
 
@@ -145,7 +148,9 @@ static void test_light_profile_client_required_memory()
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
     if ( bytes != LIGHT_CLIENT_MAX_BYTES )
+    {
         printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES );
+    }
     check( bytes <= LIGHT_CLIENT_MAX_BYTES );
 }
 
@@ -155,6 +160,7 @@ static void test_light_profile_configs_create()
 {
     // create does not bind, and it takes no clock. update at 1000.0 on a
     // stopped server and a disconnected client opens no socket.
+
     const double now = 1000.0;
 
     struct rocketnet_server_config_t server_config;
@@ -173,6 +179,7 @@ static void test_light_profile_configs_create()
     check( rocketnet_client_light_config( &client_config ) == ROCKETNET_STATUS_OK );
 
     status = ROCKETNET_TEST_STATUS_UNSET;
+
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
     check( client != NULL );
     check( status == ROCKETNET_STATUS_OK );

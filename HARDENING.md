@@ -186,6 +186,11 @@ and limits:
     at `3f900fa1254d938e50150bcb3386a5a0bb857e1a` and
     [Windows `portable` soak](docs/runs/windows-soak-portable.md): 1,800s
     same-host loopback runs passed `--assert-flat`.
+- **Preview-3 qualification:**
+  - [Preview-3 qualification](docs/QUALIFICATION-v1.0.0-preview-3.md): native
+    Release unit and functional suites on Linux, macOS and Windows at the
+    candidate head, the LAN proof and soak records it cites, and the gates
+    still owed at tag time.
 - **Historical and custom-capacity qualification records:**
   - [Preview-2 qualification](docs/QUALIFICATION-v1.0.0-preview-2.md) at
     `c1a63ac978c0389f97e2d37e9ab61c8139191e34` /

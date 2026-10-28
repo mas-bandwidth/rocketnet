@@ -25,8 +25,10 @@
 (* fresh values every key is derived from, so a key pair here is the       *)
 (* record [att, nonce]: a sealed packet opens iff its [att, nonce] is the  *)
 (* pair the receiver holds.  The client's ephemeral keypair is the boolean *)
-(* cEph (live or erased).  A cookie is a flag: the cookie gate itself is   *)
-(* the security module's business.                                         *)
+(* cEph (live or erased).  A cookie is "none", "good" (the server's) or     *)
+(* "forged" (anyone's who saw the request: the salt rides in the clear and *)
+(* the client cannot check the mac); the cookie gate itself is the         *)
+(* security module's business.                                             *)
 (*                                                                         *)
 (* Sequence numbers and the replay window.  Server session packets carry   *)
 (* an id from a small pool instead of a 64-bit sequence.  A fresh send     *)
@@ -127,6 +129,18 @@ RaceFamilies       == {"ipv4"}
 ReachableFamilies  == {"ipv4"}
 CommitBeforeAnswer == FALSE
 
+(***************************************************************************)
+(* Forgery (TRANSPORT.md t11.1).  An observer of the request knows the     *)
+(* attempt's salt and can send the client a cookie echoing it with a mac   *)
+(* of its own; the client cannot tell it from the server's.  Forgery =     *)
+(* TRUE adds that observer as an environment action (ForgeCookie).  A      *)
+(* definition, replaced with <- in the forgery cfgs, so every other run    *)
+(* keeps its cfg and its state space.                                      *)
+(***************************************************************************)
+Forgery == FALSE
+
+CookieVal == {"none", "good", "forged"}
+
 NoKeys == [att |-> 0, nonce |-> 0]
 Keys   == [att : Att, nonce : Nonce]
 
@@ -138,11 +152,11 @@ Keys   == [att : Att, nonce : Nonce]
 SessionTypes == {"keepalive", "disconnect"} \cup (IF ServerPayloads THEN {"payload"} ELSE {})
 
 ClientPackets ==
-    [type : {"request"}, att : Att, cookie : BOOLEAN, fams : (SUBSET Families) \ {{}}]
+    [type : {"request"}, att : Att, cookie : CookieVal, fams : (SUBSET Families) \ {{}}]
     \cup [type : {"response", "keepalive", "disconnect"}, att : Att, nonce : Nonce]
 
 ServerPackets ==
-    [type : {"cookie"}, att : Att, fam : Families]
+    [type : {"cookie"}, att : Att, fam : Families, forged : BOOLEAN]
     \cup [type : {"challenge"}, att : Att, nonce : Nonce]
     \cup [type : {"denied"}, att : Att, nonce : Nonce \cup {0}]
     \cup [type : SessionTypes, att : Att, nonce : Nonce, id : Id]
@@ -153,7 +167,9 @@ VARIABLES
     \* the client (sdk/rocketnet_client_protocol.h, struct rocketnet_client_protocol_t)
     cstate,        \* -7..4
     cAttempt,      \* the attempt number: salt and ephemeral, fresh per connect
-    cHasCookie,    \* has_cookie
+    cKept,         \* has_cookie, return_cookie: the attempt's first cookie, kept
+    cLatest,       \* has_latest_cookie, latest_cookie: a later cookie, see ClientRecvCookie
+    cAltLatest,    \* send_latest_cookie: the next request carries the latest cookie
     cKeys,         \* the committed keys, NoKeys before the challenge
     cEph,          \* client_ephemeral_secret_key is live (not zeroed)
     cIndex,        \* client_index is known (set by the first keep-alive)
@@ -180,7 +196,8 @@ VARIABLES
     s2cWire, s2cSent, s2cPulse
 
 raceVars   == <<cFam, cReqFams>>
-clientVars == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
+cookieVars == <<cKept, cLatest, cAltLatest>>
+clientVars == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
                 cSinceRecv, cAge, cSeen, cReasm, cPayloadDelivered, cDiscPending,
                 cDiscKeys, cLostKinds, raceVars>>
 serverVars == <<sMap, sOthers, sReasm, sDiscPending, sDiscKeys, sDiscId, sLostKinds>>
@@ -241,7 +258,8 @@ ServerSendSession(t, i) ==
     /\ cSeen' = cSeen \ {i}
 
 Init ==
-    /\ cstate = 0 /\ cAttempt = 0 /\ cHasCookie = FALSE /\ cKeys = NoKeys
+    /\ cstate = 0 /\ cAttempt = 0 /\ cKept = "none" /\ cLatest = "none" /\ cAltLatest = FALSE
+    /\ cKeys = NoKeys
     /\ cEph = FALSE /\ cIndex = FALSE
     /\ cSinceSend = 0 /\ cSinceRecv = 0 /\ cAge = 0 /\ cSeen = {}
     /\ cDiscPending = 0 /\ cDiscKeys = NoKeys /\ cLostKinds = {} /\ cReasm = FALSE
@@ -261,7 +279,8 @@ Init ==
 AppConnect ==
     /\ cstate <= 0 /\ cAttempt < MaxAttempts
     /\ cstate' = 1 /\ cAttempt' = cAttempt + 1
-    /\ cHasCookie' = FALSE /\ cKeys' = NoKeys /\ cEph' = TRUE /\ cIndex' = FALSE
+    /\ cKept' = "none" /\ cLatest' = "none" /\ cAltLatest' = FALSE
+    /\ cKeys' = NoKeys /\ cEph' = TRUE /\ cIndex' = FALSE
     /\ cReasm' = FALSE /\ cPayloadDelivered' = FALSE
     /\ cSinceSend' = SendInterval        \* "the first update sends immediately"
     /\ cSinceRecv' = 0 /\ cAge' = 0 /\ cSeen' = {}
@@ -278,7 +297,7 @@ AppConnectKeepsAttempt ==
     /\ cSinceSend' = SendInterval
     /\ cSinceRecv' = 0 /\ cAge' = 0
     /\ cFam' = "none" /\ cReqFams' = {}
-    /\ UNCHANGED <<cHasCookie, cSeen, cDiscPending, cDiscKeys, cLostKinds,
+    /\ UNCHANGED <<cookieVars, cSeen, cDiscPending, cDiscKeys, cLostKinds,
                    cPayloadDelivered, serverVars, c2sVars, s2cVars>>
 
 \* rocketnet_client_protocol_disconnect: in 3 or 4 a burst of sealed
@@ -291,7 +310,7 @@ AppDisconnect ==
          THEN cDiscPending' = DisconnectCopies /\ cDiscKeys' = cKeys
          ELSE UNCHANGED <<cDiscPending, cDiscKeys>>
     /\ cstate' = 0 /\ cKeys' = NoKeys /\ cEph' = FALSE /\ cReasm' = FALSE
-    /\ UNCHANGED <<cAttempt, cHasCookie, cIndex, cSinceSend, cSinceRecv, cAge, cSeen,
+    /\ UNCHANGED <<cAttempt, cookieVars, cIndex, cSinceSend, cSinceRecv, cAge, cSeen,
                    cPayloadDelivered, cLostKinds, raceVars, serverVars, c2sVars, s2cVars>>
 
 (***************************************************************************)
@@ -302,8 +321,13 @@ AppDisconnect ==
 \* first cookie commits the attempt, then the committed family alone
 InFlight == IF cFam = "none" THEN RaceFamilies ELSE {cFam}
 
+\* the cookie a request carries: the kept cookie, or, once a latest cookie
+\* is stored, the kept and the latest in turn, starting with the kept
+\* (rocketnet_client_protocol_update)
+SentCookie == IF cLatest # "none" /\ cAltLatest THEN cLatest ELSE cKept
+
 ClientPacket ==
-    CASE cstate \in {1, 2} -> [type |-> "request", att |-> cAttempt, cookie |-> cHasCookie, fams |-> InFlight]
+    CASE cstate \in {1, 2} -> [type |-> "request", att |-> cAttempt, cookie |-> SentCookie, fams |-> InFlight]
       [] cstate = 3        -> [type |-> "response", att |-> cKeys.att, nonce |-> cKeys.nonce]
       [] cstate = 4        -> [type |-> "keepalive", att |-> cKeys.att, nonce |-> cKeys.nonce]
 
@@ -311,8 +335,9 @@ ClientSend ==
     /\ cstate \in 1..4 /\ cSinceSend = SendInterval
     /\ ClientSendPacket(ClientPacket)
     /\ cSinceSend' = 0
-    /\ cReqFams' = IF cstate \in {1, 2} /\ cHasCookie THEN cReqFams \cup InFlight ELSE cReqFams
-    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceRecv, cAge,
+    /\ cReqFams' = IF cstate \in {1, 2} /\ SentCookie # "none" THEN cReqFams \cup InFlight ELSE cReqFams
+    /\ cAltLatest' = IF cstate \in {1, 2} /\ cLatest # "none" THEN ~cAltLatest ELSE cAltLatest
+    /\ UNCHANGED <<cstate, cAttempt, cKept, cLatest, cKeys, cEph, cIndex, cSinceRecv, cAge,
                    cSeen, cReasm, cPayloadDelivered, cDiscPending, cDiscKeys, cFam,
                    serverVars, s2cVars>>
 
@@ -321,7 +346,7 @@ ClientSend ==
 ClientCommitEarly ==
     /\ CommitBeforeAnswer /\ cstate = 1 /\ cFam = "none" /\ Cardinality(RaceFamilies) > 1
     /\ \E f \in RaceFamilies : cFam' = f
-    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
                    cAge, cSeen, cReasm, cPayloadDelivered, cDiscPending, cDiscKeys, cLostKinds,
                    cReqFams, serverVars, c2sVars, s2cVars>>
 
@@ -330,7 +355,7 @@ ClientDiscCopy ==
     /\ cDiscPending > 0
     /\ ClientSendPacket([type |-> "disconnect", att |-> cDiscKeys.att, nonce |-> cDiscKeys.nonce])
     /\ cDiscPending' = cDiscPending - 1
-    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, cSinceRecv,
                    cAge, cSeen, cReasm, cPayloadDelivered, cDiscKeys, raceVars, serverVars,
                    s2cVars>>
 
@@ -349,16 +374,32 @@ clientRecvUnchanged == <<cAttempt, cSinceSend, cAge, cDiscPending, cDiscKeys, cL
 \* counted, sdk/rocketnet_client_transport.cpp)
 CookieFamilyAccepted(p) == p.fam \in InFlight
 
-\* rocketnet_client_process_cookie: states 1 and 2, salt must match; store,
-\* 1 -> 2. The client trusts only the server: the salt is in the clear, so
-\* the cookie never restarts the receive clock (TRANSPORT.md t11.1)
+\* the value a delivered cookie carries
+CookieOf(p) == IF p.forged THEN "forged" ELSE "good"
+
+\* a cookie the client accepts: the first of the attempt is kept, a later
+\* one replaces only the latest, never the kept one. A latest cookie of the
+\* kept cookie's value is not recorded: a request carries the same value
+\* whichever of the two it takes, so the model keeps "none" there and every
+\* run without forgery keeps the state space it had.
+StoreCookie(p) ==
+    IF cKept = "none"
+      THEN cKept' = CookieOf(p) /\ UNCHANGED cLatest
+      ELSE /\ cLatest' = IF CookieOf(p) = cKept THEN "none" ELSE CookieOf(p)
+           /\ UNCHANGED cKept
+
+\* rocketnet_client_process_cookie: states 1 and 2, salt must match; the
+\* first cookie is kept, a later one replaces only the latest; 1 -> 2. The
+\* client trusts only the server: the salt is in the clear, so the cookie
+\* never restarts the receive clock and never displaces the kept cookie
+\* (TRANSPORT.md t11.1)
 ClientRecvCookie(p) ==
     /\ p.type = "cookie"
     /\ S2C!Deliver(p)
     /\ IF cstate \in {1, 2} /\ p.att = cAttempt /\ CookieFamilyAccepted(p)
-         THEN cHasCookie' = TRUE /\ cstate' = 2 /\ cFam' = p.fam
-         ELSE UNCHANGED <<cHasCookie, cstate, cFam>>
-    /\ UNCHANGED <<cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
+         THEN StoreCookie(p) /\ cstate' = 2 /\ cFam' = p.fam
+         ELSE UNCHANGED <<cKept, cLatest, cstate, cFam>>
+    /\ UNCHANGED <<cAltLatest, cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
     /\ UNCHANGED clientRecvUnchanged
 
 \* the pre-fix cookie, only in SpecCookieRefreshes: an accepted cookie also
@@ -367,9 +408,21 @@ ClientRecvCookieRefreshes(p) ==
     /\ p.type = "cookie"
     /\ S2C!Deliver(p)
     /\ IF cstate \in {1, 2} /\ p.att = cAttempt /\ CookieFamilyAccepted(p)
-         THEN cHasCookie' = TRUE /\ cSinceRecv' = 0 /\ cstate' = 2 /\ cFam' = p.fam
-         ELSE UNCHANGED <<cHasCookie, cSinceRecv, cstate, cFam>>
-    /\ UNCHANGED <<cKeys, cEph, cIndex, cSeen, cReasm>>
+         THEN StoreCookie(p) /\ cSinceRecv' = 0 /\ cstate' = 2 /\ cFam' = p.fam
+         ELSE UNCHANGED <<cKept, cLatest, cSinceRecv, cstate, cFam>>
+    /\ UNCHANGED <<cAltLatest, cKeys, cEph, cIndex, cSeen, cReasm>>
+    /\ UNCHANGED clientRecvUnchanged
+
+\* the pre-fix cookie, only in SpecCookieReplaces: an accepted cookie
+\* replaces the one stored, so a forged cookie after the server's takes the
+\* server's off the wire. Not a disjunct of Next.
+ClientRecvCookieReplaces(p) ==
+    /\ p.type = "cookie"
+    /\ S2C!Deliver(p)
+    /\ IF cstate \in {1, 2} /\ p.att = cAttempt /\ CookieFamilyAccepted(p)
+         THEN cKept' = CookieOf(p) /\ cstate' = 2 /\ cFam' = p.fam
+         ELSE UNCHANGED <<cKept, cstate, cFam>>
+    /\ UNCHANGED <<cLatest, cAltLatest, cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
     /\ UNCHANGED clientRecvUnchanged
 
 \* rocketnet_client_process_challenge: state 2 only; opens under temporary
@@ -382,7 +435,7 @@ ClientRecvChallenge(p) ==
          THEN /\ cKeys' = KeysOf(p) /\ cEph' = FALSE /\ cSinceRecv' = 0
               /\ cstate' = 3 /\ cSeen' = {}
          ELSE UNCHANGED <<cKeys, cEph, cSinceRecv, cstate, cSeen>>
-    /\ UNCHANGED <<cHasCookie, cIndex, cReasm>>
+    /\ UNCHANGED <<cookieVars, cIndex, cReasm>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* rocketnet_client_process_denied: state 2 (temporary keys from the carried
@@ -399,7 +452,7 @@ ClientRecvDenied(p) ==
               /\ cKeys' = NoKeys
               /\ cEph' = FALSE
          ELSE UNCHANGED <<cstate, cKeys, cEph>>
-    /\ UNCHANGED <<cHasCookie, cIndex, cSinceRecv, cSeen, cReasm>>
+    /\ UNCHANGED <<cookieVars, cIndex, cSinceRecv, cSeen, cReasm>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* the pre-fix denial, only in SpecDeniedKeepsKeys: state -1, and the keys
@@ -411,7 +464,7 @@ ClientRecvDeniedKeepsKeys(p) ==
           \/ cstate = 3 /\ KeysOf(p) = cKeys
          THEN cstate' = -1
          ELSE UNCHANGED cstate
-    /\ UNCHANGED <<cHasCookie, cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
+    /\ UNCHANGED <<cookieVars, cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* rocketnet_client_open_session_packet then the per-type action: states 3
@@ -435,7 +488,7 @@ ClientRecvSession(p) ==
                    [] p.type = "payload"    -> UNCHANGED <<cIndex, cstate>>
                    [] p.type = "disconnect" -> cstate' = 0 /\ UNCHANGED cIndex
          ELSE UNCHANGED <<cSeen, cSinceRecv, cIndex, cstate, cReasm>>
-    /\ UNCHANGED <<cHasCookie, cKeys, cEph>>
+    /\ UNCHANGED <<cookieVars, cKeys, cEph>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* the reachability witness's step, not a disjunct of Next: the payload
@@ -450,7 +503,7 @@ ClientRecvPayloadWitness(p) ==
     /\ cstate = 4 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
     /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
     /\ cPayloadDelivered' = TRUE
-    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend, cAge,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend, cAge,
                    cReasm, cDiscPending, cDiscKeys, cLostKinds, cFam, cReqFams,
                    serverVars, c2sVars>>
 
@@ -462,7 +515,7 @@ ClientRecvEarlyPayload(p) ==
     /\ S2C!Deliver(p)
     /\ cstate = 3 /\ KeysOf(p) = cKeys /\ p.id \notin cSeen
     /\ cSeen' = cSeen \cup {p.id} /\ cSinceRecv' = 0
-    /\ UNCHANGED <<cIndex, cstate, cReasm, cHasCookie, cKeys, cEph>>
+    /\ UNCHANGED <<cIndex, cstate, cReasm, cookieVars, cKeys, cEph>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
 \* a fragment (type 9), modelled at the receive step itself: the sealed
@@ -472,7 +525,7 @@ ClientRecvEarlyPayload(p) ==
 ClientFragmentReceive ==
     /\ cstate = 4 /\ ~cReasm
     /\ cReasm' = TRUE
-    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
                    cSinceRecv, cAge, cSeen, cPayloadDelivered, cDiscPending, cDiscKeys,
                    cLostKinds, raceVars, serverVars, c2sVars, s2cVars>>
 
@@ -482,7 +535,7 @@ ClientFragmentReceive ==
 ClientFragmentReceiveEarly ==
     /\ cstate \in {3, 4} /\ ~cReasm
     /\ cReasm' = TRUE
-    /\ UNCHANGED <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
+    /\ UNCHANGED <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
                    cSinceRecv, cAge, cSeen, cPayloadDelivered, cDiscPending, cDiscKeys,
                    cLostKinds, raceVars, serverVars, c2sVars, s2cVars>>
 
@@ -494,7 +547,7 @@ ClientRecv(p) ==
 (* The server receives.  rocketnet_server_protocol_process_connection_      *)
 (* request and the sealed-packet ladder, as far as they answer the client. *)
 (***************************************************************************)
-serverRecvUnchanged == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
+serverRecvUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
                          cSinceRecv, cAge, cReasm, cPayloadDelivered, cDiscPending, cDiscKeys,
                          cLostKinds, raceVars, sOthers, sDiscPending, sDiscKeys, sDiscId>>
 
@@ -510,10 +563,11 @@ ServerRecvRequest(p) ==
          [] sMap.live ->
                 /\ ServerSendPacket([type |-> "challenge", att |-> sMap.att, nonce |-> sMap.nonce])
                 /\ UNCHANGED <<sMap, cSeen>>
-         [] ~p.cookie ->
-                \* the stateless answer, on a family the request reached
+         [] p.cookie # "good" ->
+                \* the stateless answer to a request with no cookie or a
+                \* forged one, on a family the request reached
                 /\ \E f \in p.fams \cap ReachableFamilies :
-                       ServerSendPacket([type |-> "cookie", att |-> p.att, fam |-> f])
+                       ServerSendPacket([type |-> "cookie", att |-> p.att, fam |-> f, forged |-> FALSE])
                 /\ UNCHANGED <<sMap, cSeen>>
          [] FreeSlots = 0 ->
                 /\ ServerSendPacket([type |-> "denied", att |-> p.att, nonce |-> 0])
@@ -579,7 +633,7 @@ ServerRecv(p) == ServerRecvRequest(p) \/ ServerRecvResponse(p) \/ ServerRecvSess
 (***************************************************************************)
 (* The server's own sends.                                                 *)
 (***************************************************************************)
-serverSendUnchanged == <<cstate, cAttempt, cHasCookie, cKeys, cEph, cIndex, cSinceSend,
+serverSendUnchanged == <<cstate, cAttempt, cookieVars, cKeys, cEph, cIndex, cSinceSend,
                          cSinceRecv, cAge, cReasm, cPayloadDelivered, cDiscPending, cDiscKeys,
                          cLostKinds, raceVars, c2sVars>>
 
@@ -687,9 +741,16 @@ Tick ==
                                            !.sinceSend = ssend1]
                  /\ sReasm' = IF expired \/ stimed THEN FALSE ELSE sReasm
          ELSE UNCHANGED <<sMap, sReasm>>
-    /\ UNCHANGED <<cAttempt, cHasCookie, cKeys, cIndex, cSeen, cPayloadDelivered,
+    /\ UNCHANGED <<cAttempt, cookieVars, cKeys, cIndex, cSeen, cPayloadDelivered,
                    cDiscPending, cDiscKeys, cLostKinds, raceVars, sOthers, sDiscPending,
                    sDiscKeys, sDiscId, sLostKinds>>
+
+\* the observer of the request (Forgery): a cookie echoing this attempt's
+\* salt, on a family in flight, with a mac the client cannot check
+ForgeCookie ==
+    /\ Forgery /\ cstate \in {1, 2}
+    /\ \E f \in InFlight : S2C!Send([type |-> "cookie", att |-> cAttempt, fam |-> f, forged |-> TRUE])
+    /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
 
 C2SEnvironment == C2S!Environment /\ UNCHANGED <<clientVars, serverVars, s2cVars>>
 S2CEnvironment == S2C!Environment /\ UNCHANGED <<clientVars, serverVars, c2sVars>>
@@ -704,6 +765,7 @@ Next ==
     \/ OtherJoins \/ OtherLeaves
     \/ Tick
     \/ C2SEnvironment \/ S2CEnvironment
+    \/ ForgeCookie
 
 (***************************************************************************)
 (* Fairness: time passes, the scheduled sends go out, the application      *)
@@ -797,6 +859,11 @@ SpecDeniedKeepsKeys ==
 SpecCookieRefreshes ==
     Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvCookieRefreshes(p))]_vars /\ Fairness
 
+\* the reversed witness's spec: Next plus the pre-fix cookie that replaces
+\* the stored one
+SpecCookieReplaces ==
+    Init /\ [][Next \/ (\E p \in ServerPackets : ClientRecvCookieReplaces(p))]_vars /\ Fairness
+
 \* the reversed witness's spec: Next plus the pre-fix retry that keeps the
 \* earlier attempt's cookie and replay window
 SpecRetryKeepsAttempt == Init /\ [][Next \/ AppConnectKeepsAttempt]_vars /\ Fairness
@@ -815,7 +882,8 @@ SpecReach ==
 (***************************************************************************)
 TypeOK ==
     /\ cstate \in -7..4 /\ cAttempt \in 0..MaxAttempts
-    /\ cHasCookie \in BOOLEAN /\ cKeys \in Keys \cup {NoKeys}
+    /\ cKept \in CookieVal /\ cLatest \in CookieVal /\ cAltLatest \in BOOLEAN
+    /\ cKeys \in Keys \cup {NoKeys}
     /\ cEph \in BOOLEAN /\ cIndex \in BOOLEAN
     /\ cSinceSend \in 0..SendInterval /\ cSinceRecv \in 0..Timeout /\ cAge \in 0..Deadline
     /\ cSeen \subseteq Id
@@ -832,7 +900,7 @@ TypeOK ==
 \* this attempt's committed keys, the index from a keep-alive, and no
 \* ephemeral
 ConnectedMeansHandshake ==
-    cstate = 4 => /\ cHasCookie /\ cKeys # NoKeys /\ cKeys.att = cAttempt
+    cstate = 4 => /\ cKept # "none" /\ cKeys # NoKeys /\ cKeys.att = cAttempt
                   /\ cIndex /\ ~cEph
 
 \* reassembly state changes only while connected: client reassembly exists
@@ -871,7 +939,7 @@ TerminalAbsorbing ==
 \* every state at or below DISCONNECTED)
 FreshAttemptFromFailure ==
     [][(cstate < 0 /\ cstate' = 1) =>
-         /\ cAttempt' = cAttempt + 1 /\ cKeys' = NoKeys /\ ~cHasCookie' /\ cEph'
+         /\ cAttempt' = cAttempt + 1 /\ cKeys' = NoKeys /\ cKept' = "none" /\ cLatest' = "none" /\ cEph'
          /\ ~cIndex' /\ ~cReasm' /\ cSeen' = {} /\ cSinceRecv' = 0 /\ cAge' = 0
          /\ cFam' = "none" /\ cReqFams' = {}]_vars
 
@@ -886,6 +954,18 @@ TimeoutPairing ==
 \* after it reset it (TRANSPORT.md t11 rule 8, t11.1)
 OnlyAuthenticatedRefreshes ==
     [][(cstate \in {1, 2} /\ cstate' \in {1, 2} /\ cAttempt' = cAttempt) => cSinceRecv' >= cSinceRecv]_vars
+
+\* the handshake never rewinds without authentication: within an attempt
+\* that is still in the positive states, the state never goes down and,
+\* once the client keeps the server's cookie, no step takes it away. A
+\* cookie is the only packet a client accepts that does not open under the
+\* attempt's keys, and the kept cookie is what carries the attempt to the
+\* challenge; a forged cookie may cost a request (it alternates as the
+\* latest), never the kept cookie (TRANSPORT.md t11.1)
+HandshakeNeverRewinds ==
+    [][(cAttempt' = cAttempt /\ cstate \in 1..4 /\ cstate' \in 1..4) =>
+         /\ cstate' >= cstate
+         /\ (cKept = "good" => cKept' = "good")]_vars
 
 \* the idle timeout and the total deadline fire when they are due
 TimeoutHonoured  == (Timeout > 0 /\ cstate \in 1..4) => cSinceRecv < Timeout

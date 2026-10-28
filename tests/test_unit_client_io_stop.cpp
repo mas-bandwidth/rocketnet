@@ -41,6 +41,7 @@ static void client_io_stop_test_open( rocketnet_fake_client_transport_io_t * fak
 // Stop with a handed-off ring: the I/O thread sends the ring in flight (both
 // packets), then exits, in the same step. wake_calls 2: the hand-off wakes
 // once, stop wakes again. RNClientIo Stop, IoExit; RNBufferHandoff WorkerExit.
+
 static void test_client_io_stop_sends_in_flight_ring_first()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -50,6 +51,7 @@ static void test_client_io_stop_sends_in_flight_ring_first()
     rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     rig->counts[0][0] = 5;
     rig->counts[0][1] = 7;
+
     client_io_stop_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
     rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
@@ -81,6 +83,7 @@ REGISTER_UNIT_TEST( test_client_io_stop_sends_in_flight_ring_first );
 // sends both queued rings in order, then that one, then exits; nothing
 // committed is lost. RNBufferHandoff StopSendsAll, ExitSentAll,
 // MCRNBufferHandoffBrokenDropFinal.cfg.
+
 static void test_client_io_stop_hands_over_the_filling_ring()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -88,11 +91,13 @@ static void test_client_io_stop_hands_over_the_filling_ring()
     client_io_stop_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
     rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+
     for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
     {
         rig->counts[ring][0] = 3;
         rocketnet_client_io_rig_slot( rig, ring, 0 )[0] = (uint8_t) ( 0xB0 + ring );
     }
+
     client_io_stop_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
     rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
@@ -105,6 +110,7 @@ static void test_client_io_stop_hands_over_the_filling_ring()
     rocketnet_unit_check( io.send_fill == 2 );
 
     // the mutex is busy at stop: stop does not need it
+
     rocketnet_platform_mutex_acquire( &rig->mutex );
     rocketnet_client_io_stop( &io, 1, &to );
     rocketnet_platform_mutex_release( &rig->mutex );
@@ -118,6 +124,7 @@ static void test_client_io_stop_hands_over_the_filling_ring()
     rocketnet_unit_check( rocketnet_address_equal( &fake.sent[2].address, &to ) );
 
     // a step after the exit sends nothing again
+
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
     rocketnet_unit_check( fake.num_sent == 3 );
 
@@ -129,6 +136,7 @@ REGISTER_UNIT_TEST( test_client_io_stop_hands_over_the_filling_ring );
 // Stop with nothing handed off and a datagram waiting: the step exits at once,
 // sends nothing, does not receive, does not wait. RNClientIo IoExit (no
 // receive, no publish, no wait).
+
 static void test_client_io_stop_exits_with_nothing_new()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -142,7 +150,10 @@ static void test_client_io_stop_exits_with_nothing_new()
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
+    {
         datagram[i] = (uint8_t) ( 0x40 + i );
+    }
+
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9100 );
     rocketnet_fake_client_push( &fake, &from, datagram, 16 );
@@ -187,6 +198,7 @@ static void test_client_io_hand_off_after_stop_asserts()
 
     rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     rig->counts[0][0] = 5;
+
     client_io_stop_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
     rocketnet_client_io_rig_init( rig, &io, &transport, client_io_stop_test_time, &clock );
@@ -197,18 +209,21 @@ static void test_client_io_hand_off_after_stop_asserts()
     rocketnet_client_io_stop( &io, 0, &to );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_EXITED );
     rocketnet_unit_check( io.stopped.load( std::memory_order_acquire ) );
+
     const int fill = io.send_fill;
     const int ready = io.send.ready_count;
     const int free_count = io.send.free_count;
     uint64_t committed[ROCKETNET_CLIENT_IO_NUM_RINGS];
     rocketnet_address_t destination[ROCKETNET_CLIENT_IO_NUM_RINGS];
     bool held[ROCKETNET_CLIENT_IO_NUM_RINGS];
+
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
     {
         committed[i] = io.committed[i];
         destination[i] = io.to[i];
         held[i] = io.to_held[i];
     }
+
     const int wakes = fake.wake_calls;
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_EMPTY );
 
@@ -216,15 +231,17 @@ static void test_client_io_hand_off_after_stop_asserts()
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 1 );
 #else
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 0 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_unit_check( io.send_fill == fill );
     rocketnet_unit_check( io.send.ready_count == ready && io.send.free_count == free_count );
+
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_RINGS; i++ )
     {
         rocketnet_unit_check( io.committed[i] == committed[i] );
         rocketnet_unit_check( memcmp( &io.to[i], &destination[i], sizeof( destination[i] ) ) == 0 );
         rocketnet_unit_check( io.to_held[i] == held[i] );
     }
+
     rocketnet_unit_check( fake.wake_calls == wakes );
 
     rocketnet_assert_function( saved_assert );
@@ -271,10 +288,14 @@ static void * destroy_wait_create( void * context, const rocketnet_client_transp
 static void destroy_wait_destroy( void * driver )
 {
     destroy_wait_harness_t * h = (destroy_wait_harness_t *) driver;
+
     // the transport is still alive when the driver closes: read the counter
     // destroy increments before it frees the transport
+
     if ( h->transport )
+    {
         h->clock.dropped = rocketnet_client_transport_counters( h->transport )->values[ROCKETNET_COUNTER_SEND_RING_FULL];
+    }
     rocketnet_fake_client_destroy( &h->fake );
 }
 
@@ -290,7 +311,10 @@ static int destroy_wait_receive( void * driver, rocketnet_address_t * from, uint
     h->clock.steps++;
     h->clock.now += 0.001;
     if ( h->clock.steps > h->clock.budget )
+    {
         rocketnet_unit_check( 0 );
+    }
+
     return rocketnet_fake_client_receive( &h->fake, from, data, capacity );
 }
 
@@ -308,7 +332,7 @@ static void destroy_wait_wake( void * driver )
 
 static const rocketnet_client_transport_io_operations_t destroy_wait_io_operations = {
     destroy_wait_create, destroy_wait_destroy, destroy_wait_send, destroy_wait_receive,
-    NULL, NULL, destroy_wait_wait, destroy_wait_wake, NULL, NULL
+    NULL, NULL, destroy_wait_wait, destroy_wait_wake, NULL, NULL, NULL
 };
 
 static void destroy_wait_token( uint8_t * token )
@@ -336,6 +360,7 @@ static rocketnet_client_transport_t * destroy_wait_transport_create( destroy_wai
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     destroy_wait_token( token );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.time_callback = destroy_wait_time;
@@ -346,26 +371,33 @@ static rocketnet_client_transport_t * destroy_wait_transport_create( destroy_wai
 // A worker that does not run (stuck in a platform call) holds two queued
 // rings. Stop returns at once, polling neither advances the clock nor frees
 // worker-owned storage, and completion waits for the worker's own steps.
+
 static void test_client_io_stop_retains_stuck_ring_without_waiting()
 {
     destroy_wait_harness_t h = {};
     h.clock.now = 1000.0;
     h.clock.budget = 100;
+
     rocketnet_client_transport_t * transport = destroy_wait_transport_create( &h );
     rocketnet_unit_check( transport != NULL );
+
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( transport );
     rocketnet_unit_check( io != NULL );
     rocketnet_client_transport_update( transport, 1000.0 );
     rocketnet_client_transport_update( transport, 1001.0 );
     rocketnet_unit_check( io->send_fill == 2 && io->send.ready_count == 2 );
+
     const double before = h.clock.now;
     const long steps = h.clock.steps;
     rocketnet_client_transport_stop( transport );
+
     const int wakes = h.fake.wake_calls;
     rocketnet_client_transport_stop( transport );
     rocketnet_unit_check( h.fake.wake_calls == wakes );
     for ( int i = 0; i < 100; ++i )
+    {
         rocketnet_unit_check( !rocketnet_client_transport_stopped( transport ) );
+    }
     rocketnet_unit_check( h.clock.now == before );
     rocketnet_unit_check( h.clock.steps == steps );
     rocketnet_unit_check( h.fake.destroy_calls == 0 );
@@ -381,14 +413,17 @@ REGISTER_UNIT_TEST( test_client_io_stop_retains_stuck_ring_without_waiting );
 
 // A returning assertion hook and a release build must both retain the object
 // after premature destroy, so a caller can finish stopping it safely.
+
 static void test_client_io_destroy_requires_completed_stop()
 {
     destroy_wait_harness_t h = {};
     h.clock.now = 1000.0;
     h.clock.budget = 100;
+
     rocketnet_client_transport_t * transport = destroy_wait_transport_create( &h );
     rocketnet_unit_check( transport != NULL );
     rocketnet_client_transport_stop( transport );
+
     auto saved_assert = rn_assert_function;
     client_io_stop_hand_off_asserts = 0;
     rocketnet_assert_function( client_io_stop_hand_off_assert_hook );
@@ -396,7 +431,7 @@ static void test_client_io_destroy_requires_completed_stop()
     rocketnet_assert_function( saved_assert );
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( client_io_stop_hand_off_asserts == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_unit_check( h.fake.destroy_calls == 0 );
     rocketnet_unit_check( !rocketnet_client_transport_stopped( transport ) );
     rocketnet_unit_check( h.clock.now == 1000.0 );

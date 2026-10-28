@@ -72,19 +72,24 @@ static uint64_t cm_calls()
 // ---------------------------------------------------------------------------
 
 // sends of one small message until the region refuses; returns the count taken
+
 static int cm_fill( rn_region_t * region, int bytes, uint32_t * taken, int max_taken )
 {
     int n = 0;
+
     for ( ;; )
     {
         const uint32_t d = rn_region_send_alloc( region, bytes );
         if ( d == RN_DESCRIPTOR_NONE )
             break;
         if ( taken && n < max_taken )
+        {
             taken[n] = d;
+        }
         n++;
         check( n < 1000000 );
     }
+
     return n;
 }
 
@@ -100,6 +105,7 @@ static bool cm_inside( const void * block, uint64_t block_bytes, const void * p,
 // config. carves (the connections a region has carried) is the one field a
 // reuse is meant to change, and the ring's and the chunks' payload bytes are
 // left alone by design (every reader writes them first).
+
 static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
 {
     if ( a->bytes != b->bytes || a->num_channels != b->num_channels || a->window != b->window || a->queue != b->queue )
@@ -108,9 +114,11 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         return false;
     if ( rn_connection_memory_decide( a ) != rn_connection_memory_decide( b ) )
         return false;
+
     // the pools are lazy (tla/RNLazyPool.tla): their state is the free list,
     // the free count and the watermark; the bytes of a descriptor or chunk
     // link at or past the watermark are not state and are not compared
+
     if ( a->descriptors_free_top != b->descriptors_free_top || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
         return false;
     if ( memcmp( a->channel_send, b->channel_send, sizeof( rn_channel_send_t ) * a->num_channels ) != 0 )
@@ -139,6 +147,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         return false;
     if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof( rn_resend_link_t ) * a->window ) != 0 )
         return false;
+
     for ( uint32_t h = 0; h < a->holds; h++ )
     {
         const rn_sequenced_hold_t * x = &a->sequenced_messages_held[h];
@@ -146,6 +155,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         if ( x->bytes != y->bytes || x->ordering != y->ordering || x->sequencing != y->sequencing || x->channel != y->channel || x->used != y->used || x->code != y->code )
             return false;
     }
+
     for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
     {
         const rn_store_class_t * x = &a->store.classes[c];
@@ -154,10 +164,13 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
             return false;
         if ( memcmp( x->meta, y->meta, sizeof( uint32_t ) * x->fresh ) != 0 )
             return false;
+
         // the class's place in its region, the same offset in both
+
         if ( x->data - a->store_memory != y->data - b->store_memory )
             return false;
     }
+
     return true;
 }
 
@@ -168,6 +181,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
 // RNConnectionMemory NoCrossSlotEffect: two regions from one arena (the
 // server shape). Exhausting A changes nothing of B: not its memory, not its
 // region state, not its kick decision, and B still sends after.
+
 static void test_memory_isolation_between_slots()
 {
     rocketnet_counters_t counters;
@@ -179,16 +193,21 @@ static void test_memory_isolation_between_slots()
 
     const uint64_t arena_bytes = rn_arena_required_bytes( NULL, 2 );
     check( arena_bytes > 0 );
+
     uint8_t * raw = (uint8_t *) calloc( 1, (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw );
+
     uint8_t * block = (uint8_t *) ( ( (uintptr_t) raw + ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
     rn_arena_t * arena = rn_arena_create_in_block( block, arena_bytes, NULL, 2, &counters );
     check( arena );
+
     rn_region_t * a = rn_arena_region( arena, 0 );
     rn_region_t * b = rn_arena_region( arena, 1 );
 
     // B carries a connection with some sends in flight
+
     uint32_t b_taken[8];
+
     for ( int i = 0; i < 8; i++ )
     {
         b_taken[i] = rn_region_send_alloc( b, 100 + i );
@@ -200,27 +219,33 @@ static void test_memory_isolation_between_slots()
     check( b_memory );
     memcpy( b_memory, b->base, (size_t) b->bytes );
 
-    // A sends until refused, then refuses again
+    // a sends until refused, then refuses again
+
     const int sent = cm_fill( a, 10, NULL, 0 );
     check( sent > 0 );
     check( rn_region_exhausted( a ) );
     check( rn_region_send_alloc( a, 10 ) == RN_DESCRIPTOR_NONE );
 
     // nothing of B moved
+
     check( memcmp( &b_before, b, sizeof( *b ) ) == 0 );
     check( memcmp( b_memory, b->base, (size_t) b->bytes ) == 0 );
     check( !rn_region_exhausted( b ) );
     check( rn_connection_memory_decide( b ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // B goes on: frees, sends, and is still whole
+
     for ( int i = 0; i < 8; i++ )
+    {
         rn_region_send_free( b, b_taken[i] );
+    }
     check( b->descriptors_free == b->queue );
     check( rn_region_send_alloc( b, 1000 ) != RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( b ) );
 
     // A's exhaustion is a kick for A only: the exhaustion step counts once, and
     // the refusal above (a send after exhaustion) also counts, so it is 2
+
     check( rn_connection_memory_decide( a ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
@@ -232,6 +257,7 @@ static void test_memory_isolation_between_slots()
 // RNConnectionMemory Exhaust and Kick: exhaustion is sticky with the reason
 // MESSAGE_MEMORY_EXHAUSTED, and the kick decision for that region says so on
 // every update until the region is reset; a flood is kicked by name.
+
 static void test_exhaustion_is_a_kick_with_its_reason()
 {
     check( ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED != ROCKETNET_DISCONNECT_REASON_NONE );
@@ -241,8 +267,10 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     memset( &counters, 0, sizeof( counters ) );
 
     // the client shape: one region
+
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     check( !rn_region_exhausted( region ) );
@@ -250,11 +278,13 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // a refusal for the caller's own argument is not exhaustion
+
     check( rn_region_send_alloc( region, 0 ) == RN_DESCRIPTOR_NONE );
     check( rn_region_send_alloc( region, (int) region->max_message_bytes + 1 ) == RN_DESCRIPTOR_NONE );
     check( !rn_region_exhausted( region ) );
 
     // a flood of maximal messages: the store refuses, and that is exhaustion
+
     const int sent = cm_fill( region, (int) region->max_message_bytes, NULL, 0 );
     check( sent >= 1 );
     check( rn_region_exhausted( region ) );
@@ -265,20 +295,26 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     // sticky: a later refusal does not clear it; each refused send counts the
     // exhaustion counter (the send above plus the explicit exhaust call both
     // see an already-exhausted region, so only the send above counts again)
+
     check( rn_region_send_alloc( region, (int) region->max_message_bytes ) == RN_DESCRIPTOR_NONE );
     rn_region_exhaust( region );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
     for ( int update = 0; update < 3; update++ )
+    {
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
+    }
 
     // the descriptor pool running out is the same outcome, with its own counter
+
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
     config.send_queue_messages = 16;
+
     rn_arena_t * small = rn_arena_create( NULL, &config, 1, &counters );
     check( small );
+
     rn_region_t * q = rn_arena_region( small, 0 );
     check( cm_fill( q, 10, NULL, 0 ) == 16 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
@@ -286,6 +322,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 3 );
 
     // the kick resets the region for the slot's next client
+
     rn_region_reset( region );
     check( !rn_region_exhausted( region ) );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -297,6 +334,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
 // RNConnectionMemory Reuse and ReusedSlotStartsClean: a slot's region, used
 // to exhaustion and reset, equals a freshly carved region of the same config
 // in every byte of its bookkeeping, and holds nothing of its previous client.
+
 static void test_reused_slot_starts_clean()
 {
     rocketnet_counters_t counters;
@@ -305,20 +343,27 @@ static void test_reused_slot_starts_clean()
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
     rn_arena_t * fresh_arena = rn_arena_create( NULL, NULL, 1, &counters );
     check( arena && fresh_arena );
+
     rn_region_t * a = rn_arena_region( arena, 0 );
     const rn_region_t * fresh = rn_arena_region( fresh_arena, 0 );
 
     check( cm_bookkeeping_equal( a, fresh ) );
 
     // the previous client: mixed sends, a block's fragment acked, tables written
+
     uint32_t taken[64];
     const int n = cm_fill( a, 300, taken, 64 );
     check( n > 0 );
+
     const uint32_t block = rn_region_send_alloc( a, 4000 );
     if ( block != RN_DESCRIPTOR_NONE )
+    {
         rn_region_send_free_fragment( a, block, 1 );
+    }
     for ( int i = 0; i < n && i < 64; i += 2 )
+    {
         rn_region_send_free( a, taken[i] );
+    }
     a->channel_send[0].ordered_write = 7;
     a->channel_receive[1].ordered_read = 9;
     a->send_numbers[3].descriptor = 5;
@@ -337,14 +382,17 @@ static void test_reused_slot_starts_clean()
     check( !cm_bookkeeping_equal( a, fresh ) );
 
     // the kick, then the reset before reuse
+
     rn_region_reset( a );
     check( cm_bookkeeping_equal( a, fresh ) );
     check( a->carves == 2 );
 
     // and the reused slot behaves as fresh: the same descriptor order
+
     const uint32_t first_a = rn_region_send_alloc( a, 10 );
     rn_arena_t * fresh_arena2 = rn_arena_create( NULL, NULL, 1, &counters );
     check( fresh_arena2 );
+
     const uint32_t first_fresh = rn_region_send_alloc( rn_arena_region( fresh_arena2, 0 ), 10 );
     check( first_a == first_fresh );
 
@@ -356,6 +404,7 @@ static void test_reused_slot_starts_clean()
 // The caller may supply the block: create takes nothing from the allocator,
 // every region and every record lies inside the block, a short or misaligned
 // block is refused (never truncated), and destroy frees nothing.
+
 static void test_user_block_is_used_and_nothing_else()
 {
     cm_install();
@@ -371,11 +420,13 @@ static void test_user_block_is_used_and_nothing_else()
 
     uint8_t * raw = (uint8_t *) malloc( (size_t) required + 2 * ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw );
+
     uint8_t * block = (uint8_t *) ( ( (uintptr_t) raw + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
 
     const uint64_t before = cm_calls();
 
     // short by one byte, misaligned, and missing: refused whole, nothing taken
+
     check( rn_arena_create_in_block( block, required - 1, NULL, slots, &counters ) == NULL );
     check( rn_arena_create_in_block( block + 1, required, NULL, slots, &counters ) == NULL );
     check( rn_arena_create_in_block( NULL, required, NULL, slots, &counters ) == NULL );
@@ -393,12 +444,15 @@ static void test_user_block_is_used_and_nothing_else()
         check( cm_inside( block, required, region->base, region->bytes ) );
 
         std::vector<uint32_t> taken( region->queue );
+
         const int n = cm_fill( region, 200 + 300 * s, taken.data(), (int) taken.size() );
         check( n > 0 && (size_t) n <= taken.size() );
+
         for ( size_t i = 0; i < (size_t) n; i++ )
         {
             const rn_send_descriptor_t * d = &region->send_descriptors[taken[i]];
             check( cm_inside( block, required, d, sizeof( *d ) ) );
+
             for ( uint32_t chunk = d->chunk; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
             {
                 const uint8_t * data = rn_send_store_chunk_data( &region->store, chunk );
@@ -406,6 +460,7 @@ static void test_user_block_is_used_and_nothing_else()
                 check( rn_region_contains( region, data, 1 ) );
             }
         }
+
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
         rn_region_reset( region );
         check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -421,6 +476,7 @@ static void test_user_block_is_used_and_nothing_else()
 // R2: a counting allocator sees create's one allocation and then nothing
 // across sends, acks, exhaustion, the kick decision, the reset and reuse,
 // for a server-shaped arena and a client-shaped one; destroy is the one free.
+
 static void test_connection_memory_no_allocation_after_create()
 {
     cm_install();
@@ -438,7 +494,9 @@ static void test_connection_memory_no_allocation_after_create()
 
     rn_region_t * regions[5];
     for ( int s = 0; s < 4; s++ )
+    {
         regions[s] = rn_arena_region( server, s );
+    }
     regions[4] = rn_arena_region( client, 0 );
 
     for ( int round = 0; round < 6; round++ )
@@ -456,6 +514,7 @@ static void test_connection_memory_no_allocation_after_create()
                 else if ( i % 2 == 0 )
                     rn_region_send_free( region, taken[i] );
             }
+
             const int reason = rn_connection_memory_decide( region );
             check( reason == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
             rn_region_reset( region );
@@ -476,12 +535,14 @@ static void test_connection_memory_no_allocation_after_create()
 // RNConnectionMemory ExhaustionOnlyLeadsToDisconnect: once a region is
 // exhausted, every send is refused until the region is reset (the model's
 // Reuse). The old code allowed a free + alloc to succeed after exhaustion.
+
 static void test_exhausted_region_refuses_sends_until_reset()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
-    // Use a small queue to exhaust quickly (min is 16)
+    // use a small queue to exhaust quickly (min is 16)
+
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
@@ -489,42 +550,52 @@ static void test_exhausted_region_refuses_sends_until_reset()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
-    // Fill the descriptor pool completely
+    // fill the descriptor pool completely
+
     uint32_t descriptors[16];
+
     for ( int i = 0; i < 16; i++ )
     {
         descriptors[i] = rn_region_send_alloc( region, 10 );
         check( descriptors[i] != RN_DESCRIPTOR_NONE );
     }
+
     check( region->descriptors_free == 0 );
 
-    // Next alloc exhausts the region (queue full)
+    // next alloc exhausts the region (queue full)
+
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_SEND_QUEUE_FULL] == 1 );
 
-    // Free one descriptor - but region is still exhausted
+    // free one descriptor - but region is still exhausted
+
     rn_region_send_free( region, descriptors[3] );
     check( region->descriptors_free == 1 );
 
-    // Send is refused because region is exhausted (sticky flag); the refusal is
+    // send is refused because region is exhausted (sticky flag); the refusal is
     // counted under MESSAGE_MEMORY_EXHAUSTED and takes nothing from either pool
+
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
     check( region->descriptors_free == 1 );  // nothing taken
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 2 );
 
-    // Kick decision says disconnect
+    // kick decision says disconnect
+
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
 
-    // Reset the region (Reuse in the model)
+    // reset the region (Reuse in the model)
+
     rn_region_reset( region );
     check( !rn_region_exhausted( region ) );
     check( rn_connection_memory_decide( region ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    // Now send succeeds
+    // now send succeeds
+
     const uint32_t d = rn_region_send_alloc( region, 10 );
     check( d != RN_DESCRIPTOR_NONE );
     check( region->descriptors_free == 15 );
@@ -541,6 +612,7 @@ static void test_exhausted_region_refuses_sends_until_reset()
 // so there is no receive no-room outcome to wire. What a receive can do is
 // arrive on an already-exhausted region; this pins that it is refused -- the
 // connection's exhaustion already kicked it -- and the decision stays exhaustion.
+
 static void test_receive_without_room_exhausts_the_region()
 {
     rocketnet_counters_t counters;
@@ -548,30 +620,37 @@ static void test_receive_without_room_exhausts_the_region()
 
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     // exhaust the region through reliable sends (the store runs out)
+
     const int n = cm_fill( region, (int) region->max_message_bytes, NULL, 0 );
     check( n > 0 );
     check( rn_region_exhausted( region ) );
 
     // the shipped receive path over this region (layer 3 and 4 over the codec)
+
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
+
     rn_ordered_t ordered;
     check( rn_ordered_init( &ordered, region, &config, NULL, 8, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
 
     // a valid unreliable record
+
     uint8_t payload[2048];
     struct rocketnet_message_writer_t writer;
     rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
+
     struct rocketnet_message_record_t record;
     memset( &record, 0, sizeof( record ) );
     record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
     record.data = (const uint8_t *) "hi";
     record.bytes = 2;
     check( rocketnet_message_writer_add( &writer, &record ) );
+
     const int payload_bytes = rocketnet_message_writer_finish( &writer );
     check( payload_bytes > 0 );
 
@@ -591,11 +670,13 @@ static void test_receive_without_room_exhausts_the_region()
 // delivered at least 1) or an over-budget geometry is refused before any
 // allocation (sdk/rocketnet_fragment.cpp rocketnet_reassembly_memory_required,
 // rocketnet_reassembly_memory_allowed, rocketnet_reassembly_set_create).
+
 static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
 {
     const int MP = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
 
     // a bad argument yields required 0 and allowed false
+
     const int bad[][4] = {
         { 0, 1, MP, 1 },
         { 1, 0, MP, 1 },
@@ -611,6 +692,7 @@ static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
     }
 
     // valid geometries are accepted
+
     check( rocketnet_reassembly_memory_required( 4, 8, 16384, 32 ) != 0 );
     check( rocketnet_reassembly_memory_allowed( 4, 8, 16384, 32 ) );
     check( rocketnet_reassembly_memory_required( 1, 1, MP, 1 ) != 0 );
@@ -618,6 +700,7 @@ static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
 
     // an over-budget geometry: required is non-zero and over the budget,
     // allowed is false, and create refuses it before any allocation
+
     const uint64_t required = rocketnet_reassembly_memory_required(
         1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 );
     const uint64_t budget = (uint64_t) ROCKETNET_REASSEMBLY_MEMORY_MIB * 1024 * 1024;
@@ -627,6 +710,7 @@ static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
         1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 ) );
 
     cm_install();
+
     const uint64_t before = cm_calls();
     check( rocketnet_reassembly_set_create( NULL, 1024, ROCKETNET_MAX_FRAGMENTS, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES, 1024 ) == NULL );
     check( cm_calls() == before );
@@ -638,6 +722,7 @@ static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
 // exhausted by its descriptor table, with one descriptor then returned, still
 // refuses a span: nothing is taken, and each refusal counts
 // MESSAGE_MEMORY_EXHAUSTED exactly as rn_region_send_alloc does.
+
 static void test_exhausted_region_refuses_spans()
 {
     rocketnet_counters_t counters;
@@ -651,19 +736,23 @@ static void test_exhausted_region_refuses_spans()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     uint32_t descriptors[16];
+
     for ( int i = 0; i < 16; i++ )
     {
         descriptors[i] = rn_region_send_alloc( region, 10 );
         check( descriptors[i] != RN_DESCRIPTOR_NONE );
     }
+
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
     check( rn_region_exhausted( region ) );
     check( counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED] == 1 );
 
     // room returns (an ack), and the span ring is empty: a span would fit
+
     rn_region_send_free( region, descriptors[3] );
     check( region->descriptors_free == 1 );
     check( region->span_first == RN_DESCRIPTOR_NONE );
@@ -682,6 +771,7 @@ static void test_exhausted_region_refuses_spans()
 
 // RNConnectionMemory Reuse: the reset clears the sticky state, and the span
 // path takes room again.
+
 static void test_span_granted_after_reset()
 {
     rocketnet_counters_t counters;
@@ -694,10 +784,13 @@ static void test_span_granted_after_reset()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     for ( int i = 0; i < 16; i++ )
+    {
         check( rn_region_send_alloc( region, 10 ) != RN_DESCRIPTOR_NONE );
+    }
     check( rn_region_send_alloc( region, 10 ) == RN_DESCRIPTOR_NONE );
     check( rn_region_exhausted( region ) );
     check( rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES ) == RN_DESCRIPTOR_NONE );
@@ -722,6 +815,7 @@ static void test_span_granted_after_reset()
 // Generation-tagged slots: a descriptor's generation bumps on every take and
 // survives its free, the free stack is exact LIFO, and a chunk slot's
 // generation bumps on every take of that chunk.
+
 static void test_generation_tagged_slots_and_lifo_stack()
 {
     rocketnet_counters_t counters;
@@ -734,6 +828,7 @@ static void test_generation_tagged_slots_and_lifo_stack()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     const uint32_t a = rn_region_send_alloc( region, 10 );
@@ -741,10 +836,12 @@ static void test_generation_tagged_slots_and_lifo_stack()
     const uint32_t c = rn_region_send_alloc( region, 10 );
     check( a != RN_DESCRIPTOR_NONE && b != RN_DESCRIPTOR_NONE && c != RN_DESCRIPTOR_NONE );
     check( region->send_descriptors[a].generation == 1 );
+
     const uint32_t chunk_a = region->send_descriptors[a].chunk;
     check( rn_send_store_chunk_generation( &region->store, chunk_a ) == 1 );
 
     // exact LIFO: free b then a; the next takes are a then b
+
     rn_region_send_free( region, b );
     rn_region_send_free( region, a );
     check( region->descriptors_free_top == 2 );
@@ -756,11 +853,13 @@ static void test_generation_tagged_slots_and_lifo_stack()
 
     // a stale chunk handle's generation never matches the slot's live take:
     // freeing the live chain, then freeing it again, is refused whole
+
     const uint32_t live_chunk = region->send_descriptors[a].chunk;
     const uint32_t gen_before = rn_send_store_chunk_generation( &region->store, live_chunk );
     rn_region_send_free( region, a );
     check( rn_send_store_chunk_generation( &region->store, live_chunk ) == gen_before );
     check( !rn_send_store_free_checked( &region->store, live_chunk ) );
+
     const uint32_t a2 = rn_region_send_alloc( region, 10 );
     check( a2 == a );
     check( rn_send_store_chunk_generation( &region->store, region->send_descriptors[a2].chunk ) != gen_before ||
@@ -772,6 +871,7 @@ static void test_generation_tagged_slots_and_lifo_stack()
 // Live spans order by allocation ticket: the oldest live span pins the
 // reclaim floor while interior spans churn, holes are never overwritten, and
 // the floor advances only when the oldest span is freed.
+
 static void test_span_tickets_pin_oldest_live()
 {
     rocketnet_counters_t counters;
@@ -784,6 +884,7 @@ static void test_span_tickets_pin_oldest_live()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     check( region->span_bytes >= 4 * 4096 );
 
@@ -795,12 +896,15 @@ static void test_span_tickets_pin_oldest_live()
     check( region->span_first == s0 && region->span_last == s2 );
     check( region->send_descriptors[s0].span_ticket < region->send_descriptors[s1].span_ticket );
     check( region->send_descriptors[s1].span_ticket < region->send_descriptors[s2].span_ticket );
+
     const uint32_t floor = region->span_head;
     check( floor == region->send_descriptors[s0].span_start );
 
     // interior churn: free and retake the middle span; the floor stays pinned
+
     rn_region_send_free( region, s1 );
     check( region->span_first == s0 && region->span_head == floor );
+
     const uint32_t s1b = rn_region_send_alloc_span( region, span_bytes );
     check( s1b != RN_DESCRIPTOR_NONE );
     check( region->span_first == s0 && region->span_head == floor );
@@ -808,6 +912,7 @@ static void test_span_tickets_pin_oldest_live()
     check( region->span_last == s1b );
 
     // freeing the oldest advances the floor to the next-oldest live span
+
     rn_region_send_free( region, s0 );
     check( region->span_first == s2 );
     check( region->span_head == region->send_descriptors[s2].span_start );
@@ -821,6 +926,7 @@ static void test_span_tickets_pin_oldest_live()
 
 // Near ticket exhaustion: tickets renumber in order instead of wrapping onto
 // a live span's ticket, so oldest-live order survives the wrap.
+
 static void test_span_ticket_wraparound_renumbers()
 {
     rocketnet_counters_t counters;
@@ -833,18 +939,23 @@ static void test_span_ticket_wraparound_renumbers()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     const uint32_t s0 = rn_region_send_alloc_span( region, 2048 );
     const uint32_t s1 = rn_region_send_alloc_span( region, 2048 );
     check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE );
     region->span_ticket_next = 0xFFFFFFFFu;
+
     const uint32_t s2 = rn_region_send_alloc_span( region, 2048 );
     check( s2 != RN_DESCRIPTOR_NONE );
     check( region->send_descriptors[s2].span_ticket == 0xFFFFFFFFu );
+
     const uint32_t s3 = rn_region_send_alloc_span( region, 2048 );
     check( s3 != RN_DESCRIPTOR_NONE );
+
     // renumbered 1..3 in allocation order, the new span last
+
     check( region->send_descriptors[s0].span_ticket == 1 );
     check( region->send_descriptors[s1].span_ticket == 2 );
     check( region->send_descriptors[s2].span_ticket == 3 );
@@ -857,6 +968,7 @@ static void test_span_ticket_wraparound_renumbers()
 // Freeing a fragment follows only the block's own references: an index past
 // the chain's end frees nothing and returns at the chain's end, never after a
 // numeric-gap-proportional walk.
+
 static void test_fragment_free_bounded_by_chain()
 {
     rocketnet_counters_t counters;
@@ -869,6 +981,7 @@ static void test_fragment_free_bounded_by_chain()
 
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     const uint32_t large_free = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );

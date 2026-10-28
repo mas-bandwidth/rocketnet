@@ -32,4 +32,4 @@
 #error the XDP replay map must hold an entry for every client
 #endif // #if ROCKETNET_XDP_REPLAY_MAX_ENTRIES < ROCKETNET_MAX_CLIENTS
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_LIMITS_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_LIMITS_H

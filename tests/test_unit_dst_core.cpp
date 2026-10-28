@@ -72,13 +72,19 @@ static void test_dst_substreams_independent()
 
     uint64_t drawn[8];
     for ( int i = 0; i < 8; i++ )
+    {
         drawn[i] = rocketnet_dst_substream_draw( &alone );
+    }
 
     for ( int i = 0; i < 64; i++ )
+    {
         rocketnet_dst_substream_draw( &other );
+    }
 
     for ( int i = 0; i < 8; i++ )
+    {
         rocketnet_unit_check( rocketnet_dst_substream_draw( &after ) == drawn[i] );
+    }
 }
 
 static void test_dst_fail_names_seed()
@@ -121,10 +127,12 @@ static void test_dst_fail_names_seed()
 // a burst routed by that index as a DST client index reached a client of
 // another session (refused as already received or did not open) while the
 // slot's holder never heard it and timed out.
+
 static void test_dst_server_kick_reaches_slot_holder()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 2200 );
     options.fault_steps = 200;
+
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 2, &options, &result ) );
     rocketnet_unit_check( result.passed );
@@ -134,11 +142,13 @@ static void test_dst_server_kick_reaches_slot_holder()
 // the server transport does, and the wire's duplicate fault replays some of
 // them at the client: CLIENT_ACK_ALREADY_RECEIVED is explained under that
 // fault, as soak_sim explains it. Seed 8 replays server ACKs at the client.
+
 static void test_dst_duplicate_server_ack_explained()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 2500 );
     options.fault_steps = 500;
     options.faults = ROCKETNET_DST_FAULT_DUP;
+
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 8, &options, &result ) );
     rocketnet_unit_check( result.passed );
@@ -150,17 +160,21 @@ static void test_dst_duplicate_server_ack_explained()
 // seq-wrap pair fires in this run; those two need the process's
 // ROCKETNET_DEV_SESSION_SEQUENCE_START, which ./bin/dst sets and the unit
 // suite does not, so here they fire only when the seam holds their start.
+
 static void test_dst_schedule_same_seed_same_trace()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 900 );
     options.fault_steps = 600;
+
     struct rocketnet_dst_result_t plain;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &plain ) );
     rocketnet_unit_check( plain.schedule_fired == 0 );
     rocketnet_unit_check( plain.clock_back_seen == 0 );
+
     for ( int schedule = ROCKETNET_DST_SCHEDULE_NONE + 1; schedule < ROCKETNET_DST_NUM_SCHEDULES; schedule++ )
     {
         options.schedule = schedule;
+
         struct rocketnet_dst_result_t a;
         struct rocketnet_dst_result_t b;
         rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &a ) );
@@ -169,6 +183,7 @@ static void test_dst_schedule_same_seed_same_trace()
         rocketnet_unit_check( a.schedule_fired == b.schedule_fired );
         rocketnet_unit_check( a.passed == b.passed );
         rocketnet_unit_check( a.step == b.step );
+
         const uint64_t start = rocketnet_dst_schedule_sequence_start( schedule );
         if ( start == 0 )
         {
@@ -183,11 +198,13 @@ static void test_dst_schedule_same_seed_same_trace()
 // clock-back steps one endpoint's clock back by a drawn 10 ms .. 5 s: the
 // transport's update is handed a time below the one it had the step before,
 // and only that once.
+
 static void test_dst_clock_back_reaches_endpoints()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 600 );
     options.fault_steps = 400;
     options.schedule = ROCKETNET_DST_SCHEDULE_CLOCK_BACK;
+
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 5, &options, &result ) );
     rocketnet_unit_check( result.passed );
@@ -202,11 +219,13 @@ static void test_dst_clock_back_reaches_endpoints()
 // seq-gap advances one end's send sequence past the 1024-packet replay
 // history in one step: the receiver's highest opened sequence rises by more
 // than 1024 at once, which no run without the schedule does.
+
 static void test_dst_seq_gap_exceeds_history()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 600 );
     options.fault_steps = 400;
     options.schedule = ROCKETNET_DST_SCHEDULE_SEQ_GAP;
+
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 7, &options, &result ) );
     rocketnet_unit_check( result.passed );
@@ -223,11 +242,13 @@ static void test_dst_seq_gap_exceeds_history()
 // apart), and the window's release hands it the wire's whole backlog in one
 // step. Seed 3 stages and releases at least two hundred each way; a run
 // without the schedule moves none.
+
 static void test_dst_burst_releases_a_batch_in_one_step()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 900 );
     options.fault_steps = 600;
     options.schedule = ROCKETNET_DST_SCHEDULE_BURST;
+
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
     rocketnet_unit_check( result.passed );
@@ -244,12 +265,14 @@ static void test_dst_burst_releases_a_batch_in_one_step()
 // The dup-storm schedule delivers every packet of its window more than once,
 // each copy at its own time, so the receivers take the payload twice. With
 // the duplicate fault off, only the storm makes duplicates.
+
 static void test_dst_dup_storm_duplicates_payloads()
 {
     struct rocketnet_dst_options_t options = dst_test_options( 600 );
     options.fault_steps = 400;
     options.faults = ROCKETNET_DST_FAULT_LOSS;
     options.schedule = ROCKETNET_DST_SCHEDULE_DUP_STORM;
+
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 3, &options, &result ) );
     rocketnet_unit_check( result.passed );
@@ -280,6 +303,7 @@ static void test_dst_steps_refused_past_int_range()
     rocketnet_unit_check( rocketnet_dst_steps_valid( 4000 ) == 1 );
     rocketnet_unit_check( rocketnet_dst_steps_valid( ROCKETNET_DST_MAX_STEPS ) == 1 );
     rocketnet_unit_check( rocketnet_dst_steps_valid( 3000000000ULL ) == 0 );
+
     const struct rocketnet_dst_options_t options = dst_test_options( 3000000000ULL );
     struct rocketnet_dst_result_t result;
     rocketnet_unit_check( rocketnet_dst_run_seed_with_options( 1, &options, &result ) == 0 );

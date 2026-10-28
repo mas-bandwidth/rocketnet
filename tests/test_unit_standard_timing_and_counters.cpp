@@ -40,6 +40,7 @@ static uint32_t standard_fnv1a32( const char * text )
         hash ^= *p;
         hash *= 16777619u;
     }
+
     return hash;
 }
 
@@ -52,7 +53,9 @@ static void standard_put_u16le( uint8_t * out, int & at, uint16_t value )
 static void standard_put_u64le( uint8_t * out, int & at, uint64_t value )
 {
     for ( int i = 0; i < 8; i++ )
+    {
         out[at++] = (uint8_t) ( ( value >> ( 8 * i ) ) & 0xff );
+    }
 }
 
 static int standard_timing_and_counters_generate( const char * id, uint8_t * out, int capacity )
@@ -68,13 +71,14 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
             (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS,
             (uint64_t) ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS,
             (uint64_t) ROCKETNET_ACK_DEBT_THRESHOLD,
-            (uint64_t) ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE,
+            (uint64_t) ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE,
             (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET,
             (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS,
         };
         const int count = (int) ( sizeof( defaults ) / sizeof( defaults[0] ) );
         if ( capacity < count * 8 )
             return -1;
+
         int at = 0;
         for ( int i = 0; i < count; i++ )
             standard_put_u64le( out, at, defaults[i] );
@@ -86,6 +90,7 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
         const int count = ROCKETNET_NUM_COUNTERS;
         if ( capacity < count * 7 )
             return -1;
+
         int at = 0;
         for ( int i = 0; i < count; i++ )
         {
@@ -97,17 +102,19 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
             out[at++] = (uint8_t) rocketnet_counter_class( i );
             standard_put_u16le( out, at, (uint16_t) ( counter_families[i] + 1 ) );
         }
+
         return at;
     }
 
     return -1;
 }
 
-// Re-pin t17 because the ACK-debt threshold now records one eliciting packet.
+// Re-pin t17 because the ACK-debt threshold now records one eliciting packet,
+// and again for the handshake work budget's default of 16.
 static const rn_standard_vector_t standard_timing_and_counters_table[] = {
     RN_STANDARD_VECTOR( "t17.timing-defaults", "0a0000000000000005000000000000000a000000000000000300000000000000"
                                                "3c000000000000000a000000000000000a000000000000000100000000000000"
-                                               "00040000000000005a000000000000000a00000000000000" ),
+                                               "10000000000000005a000000000000000a00000000000000" ),
     // Vector reflects the nine message-violation counters plus XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE, XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION and MESSAGE_NOT_RECEIVED appended in sdk/rocketnet_counters.h.
     RN_STANDARD_VECTOR( "t18.counter-registry",
                         "8472d40203000064f915d0000000ed4bcc7f000000d0a5f5ee000000a0f3313d000000b6f1b51a00"
@@ -167,25 +174,31 @@ static void test_standard_timing_and_counters_vectors()
 
     // the registry is a registry: every name is non-empty and distinct, every
     // class is one of the four, and every family is none or a counter index
+
     const int counters = ROCKETNET_NUM_COUNTERS;
     rocketnet_unit_check( counters == (int) ( sizeof( counter_names ) / sizeof( counter_names[0] ) ) );
     rocketnet_unit_check( counters == (int) ( sizeof( counter_families ) / sizeof( counter_families[0] ) ) );
     for ( int i = 0; i < counters; i++ )
     {
         rocketnet_unit_check( counter_names[i] != NULL && counter_names[i][0] != 0 );
+
         const int klass = rocketnet_counter_class( i );
         rocketnet_unit_check( klass >= ROCKETNET_COUNTER_CLASS_REFUSAL && klass < ROCKETNET_NUM_COUNTER_CLASSES );
         rocketnet_unit_check( counter_families[i] == ROCKETNET_COUNTER_NONE ||
                               ( counter_families[i] >= 0 && counter_families[i] < counters ) );
         for ( int j = 0; j < i; j++ )
+        {
             rocketnet_unit_check( strcmp( counter_names[i], counter_names[j] ) != 0 );
+        }
     }
 
     // the walk's own refusals, as the skeleton's case checks them
+
     const uint8_t a[3] = { 1, 2, 3 };
     const uint8_t b[3] = { 1, 9, 3 };
     rocketnet_unit_check( rn_standard_first_difference( a, 3, a, 3 ) == -1 );
     rocketnet_unit_check( rn_standard_first_difference( a, 3, b, 3 ) == 1 );
+
     uint8_t scratch[2];
     rocketnet_unit_check( rn_standard_hex_decode( "0g", scratch, 2 ) == -1 );
     rocketnet_unit_check( standard_timing_and_counters_generate( "t17.no-such-vector", scratch, 2 ) == -1 );

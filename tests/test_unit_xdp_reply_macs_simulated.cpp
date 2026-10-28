@@ -55,7 +55,10 @@ static const uint8_t * fake_start_packet( struct rocketnet_xdp_reply_macs_t * ta
     const uintptr_t view_end = (uintptr_t) &view->from[view->num_packets];
     const uintptr_t to_pointer = (uintptr_t) to;
     if ( to_pointer >= view_begin && to_pointer < view_end )
+    {
         answered_mac = view->eth[( to_pointer - view_begin ) / sizeof( rocketnet_address_t )];
+    }
+
     return rocketnet_xdp_reply_mac( table, to, answered_mac, refused );
 }
 
@@ -70,6 +73,7 @@ static void fake_receive( struct fake_receive_view_t * view, const rocketnet_add
 static void fake_link_hold( struct fake_link_t * link, const rocketnet_address_t * to, double due_time )
 {
     rocketnet_unit_check( link->num_packets < FAKE_LINK_PACKETS );
+
     link->packets[link->num_packets].due_time = due_time;
     link->packets[link->num_packets].to = *to;
     link->num_packets++;
@@ -88,14 +92,18 @@ static int fake_link_drain( struct fake_link_t * link, struct rocketnet_xdp_repl
             link->packets[kept++] = link->packets[i];
             continue;
         }
+
         const uint8_t * destination_mac = fake_start_packet( table, view, &link->packets[i].to, refused );
         if ( destination_mac )
         {
             rocketnet_unit_check( mac && memcmp( destination_mac, mac, 6 ) == 0 );
+
             sent++;
         }
     }
+
     link->num_packets = kept;
+
     return sent;
 }
 
@@ -116,43 +124,53 @@ static void test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac()
 
     struct fake_receive_view_t view;
     memset( &view, 0, sizeof( view ) );
+
     struct fake_link_t link;
     memset( &link, 0, sizeof( link ) );
+
     uint64_t refused = 0;
     double time = 1000.0;
 
     // a connection request arrives; its cookie reply is reserved in the view
     // with the request's MAC, then handed to the link, which holds it 30 ms
     // and duplicates it
+
     fake_receive( &view, &client, client_mac );
     const uint8_t * mac = fake_start_packet( table, &view, &view.from[0], &refused );
     rocketnet_unit_check( mac && memcmp( mac, client_mac, 6 ) == 0 );
+
     fake_link_hold( &link, &view.from[0], time + 0.030 );
     fake_link_hold( &link, &view.from[0], time + 0.032 );
     view.num_packets = 0;                              // the view is gone
 
     // nothing is due yet
+
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time + 0.010, client_mac, &refused ) == 0 );
     rocketnet_unit_check( link.num_packets == 2 );
 
     // the held reply and its duplicate leave to the MAC the request taught,
     // before anything is learned (the client opens nothing until the cookie
     // reaches it)
+
     time += 0.040;
+
     rocketnet_unit_check( rocketnet_xdp_reply_macs_find( table, &client ) == NULL );
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, client_mac, &refused ) == 2 );
     rocketnet_unit_check( refused == 0 );
     rocketnet_unit_check( link.num_packets == 0 );
 
     // an address no frame ever came from is still refused and counted
+
     fake_link_hold( &link, &stranger, time );
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, NULL, &refused ) == 0 );
     rocketnet_unit_check( refused == 1 );
 
     // a frame with a zero source MAC teaches nothing and its reply is refused
+
     fake_receive( &view, &stranger, zero_mac );
     rocketnet_unit_check( fake_start_packet( table, &view, &view.from[0], &refused ) == NULL );
     rocketnet_unit_check( refused == 2 );
+
     view.num_packets = 0;
     fake_link_hold( &link, &stranger, time );
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, NULL, &refused ) == 0 );
@@ -160,10 +178,12 @@ static void test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac()
 
     // the client's response opens under its keys: the learn takes over, and
     // an unauthenticated frame from its address steers no later reply
+
     rocketnet_xdp_reply_macs_learn( table, &client, client_mac );
     fake_receive( &view, &client, spoofer_mac );
     mac = fake_start_packet( table, &view, &view.from[0], &refused );
     rocketnet_unit_check( mac && memcmp( mac, client_mac, 6 ) == 0 );
+
     fake_link_hold( &link, &view.from[0], time + 0.030 );
     view.num_packets = 0;
     time += 0.040;
@@ -172,26 +192,32 @@ static void test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac()
     // the client is released: its learned MAC is forgotten, so it is no
     // longer a learned client, and an ack still held for it leaves to the
     // MAC its replies went to, as it would have on the wire
+
     fake_link_hold( &link, &client, time + 0.030 );
     rocketnet_xdp_reply_macs_forget( table, &client );
     rocketnet_unit_check( rocketnet_xdp_reply_macs_find( table, &client ) == NULL );
+
     time += 0.040;
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, client_mac, &refused ) == 1 );
     rocketnet_unit_check( refused == 3 );
 
     // a new client at the released address: the newest answered frame wins
+
     static const uint8_t next_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x0e };
     fake_receive( &view, &client, next_mac );
     mac = fake_start_packet( table, &view, &view.from[0], &refused );
     rocketnet_unit_check( mac && memcmp( mac, next_mac, 6 ) == 0 );
+
     fake_link_hold( &link, &view.from[0], time + 0.030 );
     view.num_packets = 0;
     time += 0.040;
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, next_mac, &refused ) == 1 );
 
     // a forget leaves nothing for an address no frame came from
+
     rocketnet_address_t never;
     rocketnet_unit_check( rocketnet_address_parse( &never, "10.77.4.9:50000" ) );
+
     rocketnet_xdp_reply_macs_forget( table, &never );
     fake_link_hold( &link, &never, time );
     rocketnet_unit_check( fake_link_drain( &link, table, &view, time, NULL, &refused ) == 0 );
@@ -199,11 +225,13 @@ static void test_xdp_transport_reply_mac_held_reply_finds_the_answered_mac()
 
     // with a gateway, a held reply to an unlearned address goes to the
     // gateway, as a direct one does
+
     static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
     rocketnet_xdp_reply_macs_reset( table, gateway_mac );
     fake_receive( &view, &client, client_mac );
     mac = fake_start_packet( table, &view, &view.from[0], &refused );
     rocketnet_unit_check( mac && memcmp( mac, gateway_mac, 6 ) == 0 );
+
     fake_link_hold( &link, &view.from[0], time + 0.030 );
     view.num_packets = 0;
     time += 0.040;
@@ -223,13 +251,16 @@ static void test_xdp_transport_reply_mac_answered_entries_never_displace_learned
 
     rocketnet_address_t client;
     rocketnet_unit_check( rocketnet_address_parse( &client, "10.77.4.2:50000" ) );
+
     rocketnet_xdp_reply_macs_learn( table, &client, client_mac );
 
     struct fake_receive_view_t view;
     memset( &view, 0, sizeof( view ) );
+
     uint64_t refused = 0;
     rocketnet_address_t many = client;
     uint8_t many_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
     for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_ENTRIES * 2; ++i )
     {
         many.port = (uint16_t) ( 1000 + i );
@@ -237,11 +268,14 @@ static void test_xdp_transport_reply_mac_answered_entries_never_displace_learned
         many_mac[5] = (uint8_t) i;
         fake_receive( &view, &many, many_mac );
         rocketnet_unit_check( fake_start_packet( table, &view, &view.from[0], &refused ) != NULL );
+
         view.num_packets = 0;
         const uint8_t * mac = fake_start_packet( table, &view, &many, &refused );
         rocketnet_unit_check( mac && memcmp( mac, many_mac, 6 ) == 0 );
     }
+
     rocketnet_unit_check( refused == 0 );
+
     const uint8_t * mac = fake_start_packet( table, &view, &client, &refused );
     rocketnet_unit_check( mac && memcmp( mac, client_mac, 6 ) == 0 );
 }

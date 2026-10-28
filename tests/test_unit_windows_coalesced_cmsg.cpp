@@ -39,8 +39,10 @@ static void coalesced_cmsg_build( coalesced_cmsg_buffer_t * b, int level, int ty
 {
     memset( b, 0, sizeof( *b ) );
     b->message.Control.buf = b->control;
+
     // The control area holds exactly one header and its DWORD, as the stack
     // fills it for a coalesced receive, so the walk ends after that header.
+
     b->message.Control.len = WSA_CMSG_SPACE( sizeof( DWORD ) );
     WSACMSGHDR * cmsg = WSA_CMSG_FIRSTHDR( &b->message );
     check( cmsg != NULL );
@@ -49,6 +51,7 @@ static void coalesced_cmsg_build( coalesced_cmsg_buffer_t * b, int level, int ty
     cmsg->cmsg_len = cmsg_len;
     cmsg->cmsg_level = level;
     cmsg->cmsg_type = type;
+
     const DWORD stride = 1234;
     memcpy( WSA_CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
 }
@@ -64,9 +67,11 @@ static void test_windows_coalesced_cmsg_short_length_is_not_read()
 {
     // cmsg_len one byte short of a DWORD, and a header with no data at all:
     // neither carries a whole stride, so neither is copied.
+
     coalesced_cmsg_buffer_t b;
     coalesced_cmsg_build( &b, IPPROTO_UDP, UDP_COALESCED_INFO, WSA_CMSG_LEN( sizeof( DWORD ) ) - 1 );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
+
     coalesced_cmsg_build( &b, IPPROTO_UDP, UDP_COALESCED_INFO, WSA_CMSG_LEN( 0 ) );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
 }
@@ -76,10 +81,12 @@ static void test_windows_coalesced_cmsg_other_headers_are_skipped()
     coalesced_cmsg_buffer_t b;
     coalesced_cmsg_build( &b, IPPROTO_IP, UDP_COALESCED_INFO, WSA_CMSG_LEN( sizeof( DWORD ) ) );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
+
     coalesced_cmsg_build( &b, IPPROTO_UDP, UDP_COALESCED_INFO + 1, WSA_CMSG_LEN( sizeof( DWORD ) ) );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
 
-    // An empty control area has no header.
+    // an empty control area has no header
+
     memset( &b, 0, sizeof( b ) );
     check( rocketnet_iocp_coalesced_stride( &b.message ) == 0 );
 }

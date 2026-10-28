@@ -61,6 +61,7 @@ static void rocketnet_session_server_setup_clients( struct rocketnet_session_ser
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof( user_data ) );
+
     const uint64_t owner_generation =
         rocketnet_encryption_map_owner_generation( server->encryption_map, test->mapping_index );
     rocketnet_unit_check( rocketnet_client_slots_assign( server->client_slots, 0x1234, test->mapping_index,
@@ -118,6 +119,7 @@ static int rocketnet_session_generate( const char * id, uint8_t * out, int capac
     out[bytes++] = (uint8_t) rocketnet_session_keep_alive_due( &test, 1000.55 );
 
     rocketnet_session_server_teardown( &test );
+
     return bytes;
 }
 
@@ -168,6 +170,7 @@ static void test_standard_session_accept_payload_without_mapping_touches_nothing
     rocketnet_unit_check( memcmp( &accepted_before, &mapping->accepted_session, sizeof( accepted_before ) ) == 0 );
 
     // the slot with a live mapping still takes the same payload
+
     rocketnet_server_protocol_accept_payload( &test.server, 0, 0, 7 );
     rocketnet_unit_check( test.server.acks->endpoints[0].ack_debt == 1 );
     rocketnet_unit_check( test.server.acks->endpoints[client_index].ack_debt == 0 );

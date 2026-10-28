@@ -43,6 +43,7 @@ static void rocketnet_server_address_match_server_setup( struct rocketnet_server
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -50,8 +51,10 @@ static void rocketnet_server_address_match_server_setup( struct rocketnet_server
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
     rocketnet_unit_check( rocketnet_address_parse( &server->advertised_ipv6, "[::]:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &server->advertised_ipv4, "0.0.0.0:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -62,6 +65,7 @@ static void rocketnet_server_address_match_server_setup( struct rocketnet_server
     server->counters = &test->counters;
     rocketnet_unit_check( server->encryption_map && server->used_token_history &&
                           server->client_slots && server->acks && server->reassembly );
+
     rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
 
@@ -91,10 +95,17 @@ static void rocketnet_server_address_match_mint_request( uint8_t * request, uint
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = address_flags;
+
     if ( ipv4 )
+    {
         memcpy( signed_fields.ipv4_address, ipv4, 6 );
+    }
+
     if ( ipv6 )
+    {
         memcpy( signed_fields.ipv6_address, ipv6, 18 );
+    }
+
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -104,6 +115,7 @@ static void rocketnet_server_address_match_mint_request( uint8_t * request, uint
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
 
@@ -127,8 +139,10 @@ void test_rocketnet_test_server_address_match_v4_mapped()
     const int addr_counter = ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED;
 
     // loopback 127.0.0.1:40000
+
     const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, loopback_ipv4, NULL );
+
     const uint64_t before = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
@@ -136,8 +150,10 @@ void test_rocketnet_test_server_address_match_v4_mapped()
     rocketnet_unit_check( test.counters.values[addr_counter] == before );
 
     // v4-mapped ::ffff:127.0.0.1:40000, normalised to the same loopback
+
     const uint8_t mapped_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0x00, 0x7F, 0x01, 0x00, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV6, NULL, mapped_ipv6 );
+
     const uint64_t before_mapped = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
@@ -145,8 +161,10 @@ void test_rocketnet_test_server_address_match_v4_mapped()
     rocketnet_unit_check( test.counters.values[addr_counter] == before_mapped );
 
     // a foreign IPv4 is still refused
+
     const uint8_t foreign_ipv4[6] = { 198, 51, 100, 1, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, ROCKETNET_ADDRESS_FLAG_IPV4, foreign_ipv4, NULL );
+
     const uint64_t before_foreign = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 100.0,
@@ -176,14 +194,17 @@ void test_rocketnet_test_server_address_match_two_address_token()
     const uint8_t both = ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6;
 
     // 127.0.0.1:40000 and [::1]:40000
+
     const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
     const uint8_t loopback_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
 
     // an IPv4 server at 127.0.0.1:40000, no IPv6
+
     memset( &test.server.advertised_ipv6, 0, sizeof( test.server.advertised_ipv6 ) );
     rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv4, "127.0.0.1:40000" ) );
 
     rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
+
     const uint64_t before_ipv4 = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 1000.0,
@@ -192,11 +213,13 @@ void test_rocketnet_test_server_address_match_two_address_token()
 
     // an IPv6 server at [::1]:40000, no IPv4; the request arrives over IPv6,
     // so the token's IPv6 address is the one checked (TokenAddressAdvertised)
+
     memset( &test.server.advertised_ipv4, 0, sizeof( test.server.advertised_ipv4 ) );
     rocketnet_unit_check( rocketnet_address_parse( &test.server.advertised_ipv6, "[::1]:40000" ) );
     rocketnet_unit_check( rocketnet_address_parse( &test.client_address, "[2001:db8::7]:56789" ) );
 
     rocketnet_server_address_match_mint_request( request, both, loopback_ipv4, loopback_ipv6 );
+
     const uint64_t before_ipv6 = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 1000.0,
@@ -204,9 +227,11 @@ void test_rocketnet_test_server_address_match_two_address_token()
     rocketnet_unit_check( test.counters.values[addr_counter] == before_ipv6 );
 
     // both addresses foreign to the IPv6 server: still refused
+
     const uint8_t foreign_ipv4[6] = { 198, 51, 100, 1, 0x40, 0x9c };
     const uint8_t foreign_ipv6[18] = { 0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
     rocketnet_server_address_match_mint_request( request, both, foreign_ipv4, foreign_ipv6 );
+
     const uint64_t before_foreign = test.counters.values[addr_counter];
     rocketnet_unit_check( rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                                 request, sizeof( request ), ROCKETNET_TEST_CREATE_TS, 1000.0,

@@ -39,6 +39,7 @@
 #if ROCKETNET_DEV
 // a token whose IPv4 address is 127.0.0.1:ipv4_port and whose IPv6 address
 // is [::1]:ipv6_port, flagged by flags; ports are little-endian on the wire
+
 static void port_zero_token( uint8_t * token, uint8_t flags, uint16_t ipv4_port, uint16_t ipv6_port )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -63,25 +64,31 @@ static void port_zero_token( uint8_t * token, uint8_t flags, uint16_t ipv4_port,
 
 // the step-driven client transport create on the fake driver; returns the
 // status, and destroys whatever was created
+
 static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port, uint16_t ipv6_port )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     port_zero_token( token, flags, ipv4_port, ipv6_port );
+
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.game_clock_epoch = 1000;
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+
     int status = -1;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( fake, token, &config, 1000.0,
                                                                                                  &rocketnet_fake_client_operations_base, fake, &status );
     check( ( transport != NULL ) == ( status == ROCKETNET_STATUS_OK ) );
+
     if ( transport )
     {
         rn_test_client_transport_stop_and_destroy( transport );
+
         // a token naming both families may open the driver once per family
         // it tries (tests/test_unit_client_bind_family.cpp), so an accepted
         // create closes it at least once
+
         check( fake->destroy_calls >= 1 );
     }
     else
@@ -89,7 +96,9 @@ static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port,
         // refused before the driver opened anything
         check( fake->destroy_calls == 0 );
     }
+
     delete fake;
+
     return status;
 }
 
@@ -102,18 +111,22 @@ static void test_client_transport_refuses_connect_token_port_zero()
     const uint8_t both = ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6;
 
     // either family naming port 0 is refused
+
     check( port_zero_client_transport_create( ipv4, 0, 40000 ) == ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO );
     check( port_zero_client_transport_create( ipv6, 40000, 0 ) == ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO );
 
     // a token naming both families is refused when either names port 0,
     // whichever family this host would pick
+
     check( port_zero_client_transport_create( both, 0, 40000 ) == ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO );
     check( port_zero_client_transport_create( both, 40000, 0 ) == ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO );
 
     // an unflagged family's port is not read
+
     check( port_zero_client_transport_create( ipv4, 40000, 0 ) == ROCKETNET_STATUS_OK );
 
     // port 1, the smallest port, is a real port
+
     check( port_zero_client_transport_create( ipv4, 1, 0 ) == ROCKETNET_STATUS_OK );
     check( port_zero_client_transport_create( both, 40000, 40000 ) == ROCKETNET_STATUS_OK );
 
@@ -129,14 +142,17 @@ REGISTER_UNIT_TEST( test_client_transport_refuses_connect_token_port_zero );
 
 // true when every byte of the buffer still holds the sentinel, so a refusal
 // that wrote nothing left the caller's bytes alone
+
 static bool port_zero_buffer_untouched( const void * buffer, size_t bytes )
 {
     const uint8_t * view = (const uint8_t *) buffer;
+
     for ( size_t i = 0; i < bytes; ++i )
     {
         if ( view[i] != PORT_ZERO_SENTINEL )
             return false;
     }
+
     return true;
 }
 
@@ -147,6 +163,7 @@ static void test_token_makers_refuse_port_zero()
 #if ROCKETNET_DEV
     // the development maker refuses an address naming port 0, with or
     // without an explicit ":0", and writes nothing into the token buffer
+
     char dev_token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
 
     memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
@@ -164,6 +181,7 @@ static void test_token_makers_refuse_port_zero()
     // an address with a nonzero port is accepted in either family, and an
     // IPv6 address is judged by its parsed port, not by the text of its
     // groups: "[2001:0db8::1]:40000" carries port 40000
+
     memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
     check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_OK );
     check( !port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
@@ -175,10 +193,11 @@ static void test_token_makers_refuse_port_zero()
     memset( dev_token, PORT_ZERO_SENTINEL, sizeof( dev_token ) );
     check( rocketnet_create_dev_connect_token( NULL, "[2001:0db8::1]:40000", rocketnet_dev_server_public_key, 60, 15, 1, 1, 1000, NULL, dev_token ) == ROCKETNET_STATUS_OK );
     check( !port_zero_buffer_untouched( dev_token, sizeof( dev_token ) ) );
-#endif
+#endif // #if ROCKETNET_DEV
 
     // the production writer refuses an address naming port 0 before it
     // writes any field, so the token buffer is left alone
+
     uint8_t production_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     uint8_t production_public_key[ROCKETNET_KEY_BYTES];
     uint8_t production_backend_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
@@ -217,6 +236,7 @@ static void test_client_connect_refuses_connect_token_port_zero()
     client_config.transport = "loopback";
     client_config.step_driven = 1;
     client_config.time_callback = port_zero_clock;
+
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client != NULL );
@@ -227,12 +247,14 @@ static void test_client_connect_refuses_connect_token_port_zero()
 
     port_zero_token( token, ROCKETNET_ADDRESS_FLAG_IPV4, 0, 0 );
     check( rn_test_token_to_string( token, token_string ) );
+
     const uint64_t misuse = rocketnet_api_misuse_count();
     check( rocketnet_client_connect( client, token_string ) == ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_disconnected( client ) );
 
     // the refusal is not misuse, and the client takes the next connect the same way
+
     port_zero_token( token, ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6, 40000, 0 );
     check( rn_test_token_to_string( token, token_string ) );
     check( rocketnet_client_connect( client, token_string ) == ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO );

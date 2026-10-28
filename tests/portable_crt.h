@@ -22,6 +22,7 @@
 // Copies the environment variable into buffer and returns 1, or returns 0,
 // with buffer empty, when it is unset or its value does not fit in size bytes
 // (NUL included). size must be at least 1.
+
 static inline int rocketnet_test_getenv( const char * name, char * buffer, size_t size )
 {
     buffer[0] = '\0';
@@ -32,11 +33,13 @@ static inline int rocketnet_test_getenv( const char * name, char * buffer, size_
         buffer[0] = '\0';
         return 0;
     }
+
     return 1;
 #else // #if defined( _MSC_VER )
     const char * value = getenv( name );
     if ( value == NULL )
         return 0;
+
     const size_t length = strlen( value );
     if ( length + 1 > size )
         return 0;
@@ -46,6 +49,7 @@ static inline int rocketnet_test_getenv( const char * name, char * buffer, size_
 }
 
 // fopen, through fopen_s on MSVC: the open file, or NULL.
+
 static inline FILE * rocketnet_test_fopen( const char * path, const char * mode )
 {
 #if defined( _MSC_VER )

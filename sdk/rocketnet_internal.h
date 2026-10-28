@@ -539,6 +539,23 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 #define ROCKETNET_DEFAULT_MAX_CLIENTS          ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
 
+// the handshake work budget (handshakes_per_update): the most post-cookie
+// connection requests one server update processes, each one Ed25519 verify
+// and, when it verifies, the sealed-block open, a keypair and the key
+// exchange. A request past it is dropped before any asymmetric work and
+// counted; the client's next request, at its send rate, is processed in a
+// later update (tla/RNSecurityTables.tla HonestRequest). One request costs
+// about 130 to 190 us with a valid token and 42 to 67 us with a forged
+// signature on a Ryzen 7 255 (bench/handshake_cost.cpp), so the old fixed
+// budget of 1024, now the ceiling, let one update run about 190 ms of
+// handshakes. The default of 16 bounds it to about 3 ms, and still seats a
+// 1000-client mass join in about 6.3 s when every client's request lands in
+// the same update each 10 Hz send interval, inside a 10-second token timeout
+// (tests/test_unit_server_mass_disconnect.cpp).
+
+#define ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE   16
+#define ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE       1024
+
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                                       \
     UINT64_FIELD( protocol_id,           0,                                                                                    0 )                          \
     INT_FIELD(    max_clients,        ROCKETNET_DEFAULT_MAX_CLIENTS,     1, ROCKETNET_MAX_CLIENTS,                             0 )                          \
@@ -561,7 +578,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
     INT_FIELD(    simulated_drop_every_nth,    0,                         2, 1000000,                                          ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     INT_FIELD(    simulated_reverse_window,    0,                         2, 64,                                               ROCKETNET_CONFIG_ZERO_MEANS_DEFAULT ) \
     STRING_FIELD( second_public_address, ROCKETNET_MAX_ADDRESS_STRING_LENGTH, "",                                              ROCKETNET_CONFIG_NO_ENV )             \
-    INT_FIELD(    disconnect_packets_per_update, ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE, 1, 1024,              0 )
+    INT_FIELD(    disconnect_packets_per_update, ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE, 1, 1024,              0 ) \
+    INT_FIELD(    handshakes_per_update, ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE, 1, ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE, 0 )
 
 /** @brief Size in bytes of the server transport config before game_clock_epoch. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshake_deadline_seconds ) + sizeof( int ), sizeof( uint64_t ) )
@@ -573,8 +591,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, simulated_reverse_window ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Server transport config revision 3, in bytes: the other family's public address, appended. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, second_public_address ) + ROCKETNET_MAX_ADDRESS_STRING_LENGTH, sizeof( uint64_t ) )
-/** @brief Server transport config revision 4, in bytes: the disconnect notification packet allowance, appended. */
-#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, disconnect_packets_per_update ) + sizeof( int ), sizeof( uint64_t ) )
+/** @brief Server transport config revision 4, in bytes: the disconnect notification packet allowance and the handshake work budget, appended. */
+#define ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_transport_config_t, handshakes_per_update ) + sizeof( int ), sizeof( uint64_t ) )
 /** @brief Known server transport config sizes, in bytes. */
 #define ROCKETNET_SERVER_TRANSPORT_CONFIG_KNOWN_BYTES ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1_ORIGINAL, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_1, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2_PRE_PATTERNS, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_2, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_3, ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4
 
@@ -687,4 +705,4 @@ int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_so
 void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
 void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_INTERNAL_H
+#endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

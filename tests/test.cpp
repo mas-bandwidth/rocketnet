@@ -17,7 +17,7 @@
 #if defined( _WIN32 )
 #include <fcntl.h>
 #include <io.h>
-#endif
+#endif // #if defined( _WIN32 )
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
@@ -48,10 +48,12 @@ static const char * rocketnet_suite_test_name( int index )
     const int units = rocketnet_unit_test_count();
     if ( index < units )
         return rocketnet_unit_test_name( index );
+
     const int channels = rocketnet_channels_test_count();
     const int cindex = index - units;
     if ( cindex < channels )
         return rocketnet_channels_test_name( cindex );
+
     return rocketnet_unit_tests_name( cindex - channels );
 }
 
@@ -82,6 +84,7 @@ static const rocketnet_platform_network_lookups_t rocketnet_unit_fake_network_lo
 // Windows) is answered by this fake, and every other platform call in the
 // table stays real. Cases that inject their own refusal copy the current table
 // and restore it, so a case's own init cycles stay on this fake too.
+
 static int rocketnet_unit_fake_platform_start( void )
 {
     return 0;
@@ -93,6 +96,7 @@ static rocketnet_platform_priority_calls_t rocketnet_unit_platform_calls;
 
 // Derive only SDK configuration names from the same descriptor tables that
 // the SDK reads. Test-runner and diagnostic variables remain untouched.
+
 static bool rocketnet_unit_append_config_names( std::vector<std::string> & names, const char * prefix,
                                                 const rocketnet_config_field_t * fields, int count )
 {
@@ -100,11 +104,13 @@ static bool rocketnet_unit_append_config_names( std::vector<std::string> & names
     {
         if ( ( fields[i].flags & ROCKETNET_CONFIG_NO_ENV ) != 0 )
             continue;
+
         char name[128];
         if ( !rocketnet_config_env_var_name_for( prefix, fields[i].name, name, sizeof( name ) ) )
             return false;
         names.push_back( name );
     }
+
     return true;
 }
 
@@ -129,8 +135,9 @@ static int rocketnet_unit_clear_environment()
     if ( !rocketnet_unit_append_config_names( names, "server", fields, count ) )
         return 1;
 
-    // These reads are outside the descriptor engine: startup logging, served
-    // addresses, operator memory budgets and the native XDP gateway address.
+    // these reads are outside the descriptor engine: startup logging, served
+    // addresses, operator memory budgets and the native XDP gateway address
+
     const char * const explicit_names[] = {
         "ROCKETNET_LOG_LEVEL",
         "ROCKETNET_SERVER_IPV4_ADDRESS",
@@ -153,19 +160,24 @@ static int rocketnet_unit_clear_environment()
 #endif // #if ROCKETNET_DEV
     };
     for ( size_t i = 0; i < sizeof( explicit_names ) / sizeof( explicit_names[0] ); ++i )
+    {
         names.push_back( explicit_names[i] );
+    }
     std::sort( names.begin(), names.end() );
     names.erase( std::unique( names.begin(), names.end() ), names.end() );
-    // Names only: no configuration value is read, copied or logged.
+
+    // names only: no configuration value is read, copied or logged
+
     for ( size_t i = 0; i < names.size(); ++i )
     {
 #if defined( _WIN32 )
         if ( _putenv_s( names[i].c_str(), "" ) != 0 )
 #else
         if ( unsetenv( names[i].c_str() ) != 0 )
-#endif
+#endif // #if defined( _WIN32 )
             return 1;
     }
+
     return 0;
 }
 
@@ -179,6 +191,7 @@ static int rocketnet_unit_worker( const char * name )
     // write of the fflush below, and parallel workers never tear a line. A
     // text-mode stream may split a flush into several writes as it converts
     // newlines, so stdout is binary: a flush is then a single write.
+
     if ( _setmode( _fileno( stdout ), _O_BINARY ) == -1 ||
          setvbuf( stdout, NULL, _IOFBF, 1 << 20 ) != 0 ||
          setvbuf( stderr, NULL, _IONBF, 0 ) != 0 )
@@ -186,16 +199,18 @@ static int rocketnet_unit_worker( const char * name )
 #else
     setvbuf( stdout, NULL, _IOLBF, 0 );
     setvbuf( stderr, NULL, _IOLBF, 0 );
-#endif
+#endif // #if defined( _WIN32 )
 
     // DEV0 runs ordinary production startup discovery here. That lifecycle
     // setup is functional evidence, rather than OS-free unit evidence.
+
     if ( rocketnet_unit_clear_environment() != 0 )
         return 1;
 
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
     // allocator cases pass their hooks to init
+
     void * ( *malloc_function )( void * context, size_t bytes ) = NULL;
     void ( *free_function )( void * context, void * p ) = NULL;
     rocketnet_channels_prepare( name, &malloc_function, &free_function );
@@ -219,6 +234,7 @@ static int rocketnet_unit_worker( const char * name )
     // cases create a client transport through the public API before stepping
     // it themselves; run those step-driven, after the isolation, so the unit
     // suite starts no client I/O thread.
+
     const bool step_driven_case = strcmp( name, "test_token_time_game_clock_admits_a_fixed_token" ) == 0 ||
                                   strcmp( name, "test_public_link_simulator_revision_1_prefixes" ) == 0;
     if ( step_driven_case )
@@ -226,16 +242,25 @@ static int rocketnet_unit_worker( const char * name )
         if ( rocketnet_test_env_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
             return 1;
     }
+
     rocketnet_channels_prepare_log( name );
+
     int result = rocketnet_channels_run_named( name );
     if ( result == 2 )
+    {
         result = rocketnet_unit_tests_run_named( name );
+    }
     if ( result == 2 )
+    {
         result = rocketnet_unit_run_named( name );
+    }
     if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
+    {
         result = 1;
+    }
     rocketnet_term();
     fflush( stdout );
+
     return result;
 }
 
@@ -245,7 +270,7 @@ static int rocketnet_unit_worker( const char * name )
 #define ROCKETNET_TEST_FP_NOINLINE __attribute__((noinline))
 #else
 #define ROCKETNET_TEST_FP_NOINLINE
-#endif
+#endif // #if defined( _MSC_VER )
 
 // Canary: the estate's strict floating-point floor is -ffp-contract=off
 // (GCC/Clang) or /fp:precise (MSVC). Compiled with contraction enabled, a*b+c
@@ -261,11 +286,13 @@ ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_float( float a, float b
     const float r = a * b + c;
     uint32_t bits;
     memcpy( &bits, &r, sizeof( bits ) );
+
     if ( bits != UINT32_C( 0x00000000 ) )
     {
         printf( "FAIL test_fp_contract_off: float a*b+c bits 0x%08X, expected 0x00000000\n", (unsigned) bits );
         return 1;
     }
+
     return 0;
 }
 
@@ -274,11 +301,13 @@ ROCKETNET_TEST_FP_NOINLINE static int rocketnet_fp_check_double( double a, doubl
     const double r = a * b + c;
     uint64_t bits;
     memcpy( &bits, &r, sizeof( bits ) );
+
     if ( bits != UINT64_C( 0x0000000000000000 ) )
     {
         printf( "FAIL test_fp_contract_off: double a*b+c bits 0x%016llX, expected 0x0000000000000000\n", (unsigned long long) bits );
         return 1;
     }
+
     return 0;
 }
 
@@ -334,9 +363,10 @@ int main( int argc, char ** argv )
 #else
     unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
     unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-#endif
+#endif // #if defined( _WIN32 )
 
     int result;
+
     // ./bin/test <name> runs that one test alone, in this process: a suite
     // name, or a message-layer test's alias (the name a card's TEST line uses)
 
@@ -356,14 +386,22 @@ int main( int argc, char ** argv )
 
 #if defined( _WIN32 )
     if ( server_pinned )
+    {
         _putenv_s( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport );
+    }
     if ( client_pinned )
+    {
         _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport );
+    }
 #else
     if ( server_pinned )
+    {
         setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
+    }
     if ( client_pinned )
+    {
         setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
-#endif
+    }
+#endif // #if defined( _WIN32 )
     return result;
 }

@@ -494,6 +494,45 @@ handshake up to the idle timeout and never connected; the connected coverage
 those constants owe is the `Reach-first`, `Reach-firstkind` and `Reach-delay`
 witnesses above.
 
+### A forged cookie never rewinds the handshake (HandshakeNeverRewinds)
+
+A cookie is now `"none"`, `"good"` (the server's) or `"forged"`. `ForgeCookie`
+is the observer of the request as an environment action, enabled by the
+definition `Forgery` (`Forgery <- MCForgery` in the forgery cfgs, `FALSE`
+everywhere else): in requesting cookie (1) or sending connection request (2)
+it sends a cookie echoing the attempt's salt with a MAC the client cannot
+check. The server answers a request whose cookie is not `"good"` with a
+fresh cookie. `ClientRecvCookie` keeps the first cookie of the attempt
+(`cKept`, `return_cookie`) and stores a later one only as the latest
+(`cLatest`, `latest_cookie`); `ClientSend` alternates the two once a latest
+is stored (`cAltLatest`, `send_latest_cookie`), starting with the kept one,
+matching `rocketnet_client_process_cookie` and
+`rocketnet_client_protocol_update`. A latest cookie of the kept cookie's
+value is not recorded, because a request carries the same value either way;
+every run without forgery therefore keeps its state space
+(`CookieTrust` is still 28,946 distinct states).
+
+The action property `HandshakeNeverRewinds` says that within one attempt in
+the positive states the state never goes down and a kept `"good"` cookie is
+never taken away. `MCClientConnectionForgedCookie.cfg` checks it under
+forgery with a responsive server and Timeout 3, with `SafetyInvariants`,
+`OnlyAuthenticatedRefreshes` and `StepsForwardOrFails`: pass, 162,727
+distinct states. `MCClientConnectionBrokenCookieReplaces.cfg` is the
+reversed witness: the pre-fix cookie that replaces the one stored
+(`ClientRecvCookieReplaces`, only in `SpecCookieReplaces`). TLC exits 13
+with `HandshakeNeverRewinds` violated in 7 states: connect, the request, the
+server's cookie, the cookie kept (`cKept` `"good"`, `cstate` 2), a forged
+cookie, then the forged cookie delivered and `cKept` `"forged"`. Checked
+against the code by hand: before the fix `rocketnet_client_process_cookie`
+copied every accepted cookie over `return_cookie` in sending connection
+request, so the next request carried the forged cookie and drew a fresh
+cookie instead of the challenge, which
+`test_client_forged_cookie_never_displaces_kept_cookie` catches on the old
+code. A forgery that beats the server's first cookie in requesting cookie
+(1) is kept; that is a step forward on a packet the standard has always
+accepted there, not a rewind, and the server's cookie then rides as the
+latest.
+
 ### A connect from a failure state is a fresh attempt (FreshAttemptFromFailure)
 
 `AppConnect` already ran from any `cstate <= 0` and reset the attempt by

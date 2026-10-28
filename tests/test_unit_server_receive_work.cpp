@@ -106,7 +106,9 @@ static bool server_receive_work_pair_setup( struct server_receive_work_pair_t * 
         rocketnet_server_transport_send_packets( pair->server );
         rocketnet_client_transport_send_packets( pair->client );
     }
+
     check( false );
+
     return false;
 }
 
@@ -136,6 +138,7 @@ static void server_receive_work_one_update( struct server_receive_work_pair_t * 
         memset( payload, (uint8_t) ( round * SERVER_RECEIVE_WORK_PACKETS_PER_UPDATE + i + 1 ), sizeof( payload ) );
         rocketnet_client_transport_send_packet( pair->client, payload, (int) sizeof( payload ) );
     }
+
     rocketnet_client_transport_send_packets( pair->client );
 
     const struct rocketnet_counters_t * counters = rocketnet_server_transport_counters( pair->server );
@@ -158,6 +161,7 @@ static void server_receive_work_one_update( struct server_receive_work_pair_t * 
 
     const int * client_index = NULL;
     uint8_t * const * payload_data = NULL;
+
     const int * payload_bytes = NULL;
     out->payloads_delivered = rocketnet_server_transport_payloads( pair->server, &client_index, &payload_data, &payload_bytes );
     out->payloads_match = true;
@@ -169,6 +173,7 @@ static void server_receive_work_one_update( struct server_receive_work_pair_t * 
             out->payloads_match = false;
             continue;
         }
+
         for ( int j = 0; j < payload_bytes[i]; j++ )
         {
             if ( payload_data[i][j] != expected )
@@ -196,11 +201,15 @@ static void test_server_receive_one_lookup_per_packet()
         check( update.payloads_delivered == SERVER_RECEIVE_WORK_PACKETS_PER_UPDATE );
         check( update.payloads_match );
         check( update.packets_received >= (uint64_t) SERVER_RECEIVE_WORK_PACKETS_PER_UPDATE );
+
         // every packet in this update is an accepted session packet from a
         // connected client: one keyed hash each, and no other
+
         check( update.map_hashes == update.packets_received );
+
         packets_total += update.packets_received;
     }
+
     check( packets_total >= (uint64_t) ( SERVER_RECEIVE_WORK_UPDATES * SERVER_RECEIVE_WORK_PACKETS_PER_UPDATE ) );
 
     server_receive_work_pair_teardown( &pair );
@@ -221,8 +230,10 @@ static void test_server_receive_payload_one_copy()
         server_receive_work_one_update( &pair, round, &update );
         check( update.payloads_delivered == SERVER_RECEIVE_WORK_PACKETS_PER_UPDATE );
         check( update.payloads_match );
+
         // the open writes each payload's plaintext into the storage the
         // application reads, and nothing copies it again
+
         check( update.payload_writes == (uint64_t) update.payloads_delivered );
     }
 

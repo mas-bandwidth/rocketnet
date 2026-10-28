@@ -49,6 +49,7 @@ static inline enum rocketnet_status_t rn_test_production_token_string( const uin
         return status;
     if ( !rn_test_token_to_string( token, token_string ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     return ROCKETNET_STATUS_OK;
 }
 

@@ -77,7 +77,9 @@ static void transport_oom_env_set_aside( const char * name, transport_oom_env_pi
 static void transport_oom_env_put_back( const char * name, const transport_oom_env_pin_t * saved )
 {
     if ( saved->was_set )
+    {
         rocketnet_test_env_setenv( name, saved->value, 1 );
+    }
 }
 #endif // #if ROCKETNET_DEV
 
@@ -98,13 +100,16 @@ static void * transport_oom_allocate( void * context, size_t bytes )
     state->asked_bytes[1] = bytes;
     if ( state->fail_at == call || call <= state->refuse_through )
         return NULL;
+
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
+
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
     memset( (void *) address, 0xA5, bytes );
     ++state->live;
+
     return (void *) address;
 }
 
@@ -119,10 +124,12 @@ static void transport_oom_release( void * context, void * pointer )
 
 // the worker starts initialized: terminate, install the fault-injecting
 // allocator, and initialize with its state as the context
+
 static void transport_oom_begin( transport_oom_allocator_t * state )
 {
     memset( state, 0, sizeof( *state ) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+
     int status = -1;
     check( rocketnet_init_ex( state, transport_oom_allocate, transport_oom_release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
@@ -130,6 +137,7 @@ static void transport_oom_begin( transport_oom_allocator_t * state )
 
 // a clean term, then the default allocator back for the worker's own term,
 // as test_unit_status_server_transport_create_ex.cpp ends
+
 static void transport_oom_end( transport_oom_allocator_t * state )
 {
     state->fail_at = 0;
@@ -157,22 +165,27 @@ static void * transport_oom_create( void * context )
 {
     if ( transport_oom_refuse )
         return NULL;
+
     transport_oom_instance_t * instance = (transport_oom_instance_t *) rocketnet_malloc( context, sizeof( transport_oom_instance_t ) );
     if ( !instance )
         return NULL;
     memset( instance, 0, sizeof( *instance ) );
     instance->context = context;
+
     for ( int i = 1; i < TRANSPORT_OOM_BLOCKS; i++ )
     {
         instance->blocks[i] = rocketnet_malloc( context, 64 );
         if ( !instance->blocks[i] )
         {
             for ( int j = 1; j < i; j++ )
+            {
                 rocketnet_free( context, instance->blocks[j] );
+            }
             rocketnet_free( context, instance );
             return NULL;
         }
     }
+
     return instance;
 }
 
@@ -180,7 +193,9 @@ static void transport_oom_destroy( void * transport )
 {
     transport_oom_instance_t * instance = (transport_oom_instance_t *) transport;
     for ( int i = 1; i < TRANSPORT_OOM_BLOCKS; i++ )
+    {
         rocketnet_free( instance->context, instance->blocks[i] );
+    }
     rocketnet_free( instance->context, instance );
 }
 
@@ -220,11 +235,13 @@ static void test_transport_open_reports_out_of_memory()
 
     struct rocketnet_server_transport_config_t server_transport_config;
     rocketnet_server_transport_default_config( &server_transport_config );
+
     struct rocketnet_client_transport_config_t client_transport_config;
     rocketnet_client_transport_default_config( &client_transport_config );
 
     // each allocation of the create, failed in turn, is OUT_OF_MEMORY with
     // nothing live; with none failed the open succeeds
+
     for ( int k = 1; k <= TRANSPORT_OOM_BLOCKS + 1; k++ )
     {
         rocketnet_address_t bind = {};
@@ -234,6 +251,7 @@ static void test_transport_open_reports_out_of_memory()
         const rocketnet_server_transport_io_config_t server_config = { "oom", &server_transport_config, NULL, &status };
         rocketnet_server_transport_io_t server = {};
         state.fail_at = state.calls + k;
+
         const bool server_opened = rocketnet_server_transport_io_open( &server_operations, &state, &server_config, &bind, &server );
         check( server_opened == ( k > TRANSPORT_OOM_BLOCKS ) );
         check( status == ( k > TRANSPORT_OOM_BLOCKS ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY ) );
@@ -241,21 +259,25 @@ static void test_transport_open_reports_out_of_memory()
         check( state.live == 0 );
 
         status = ROCKETNET_STATUS_OK;
+
         const rocketnet_client_transport_io_config_t client_config = { "oom", &client_transport_config, &status };
         rocketnet_client_transport_io_t client = {};
         state.fail_at = state.calls + k;
+
         const bool client_opened = rocketnet_client_transport_io_open( &client_operations, &state, &client_config, &bind, &client );
         check( client_opened == ( k > TRANSPORT_OOM_BLOCKS ) );
         check( status == ( k > TRANSPORT_OOM_BLOCKS ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_OUT_OF_MEMORY ) );
         rocketnet_client_transport_io_close( &client );
         check( state.live == 0 );
     }
+
     state.fail_at = 0;
 
     // a create that refuses with no failed allocation is a refusal: the
     // status stays OK, so the ladder falls to the next candidate
     {
         transport_oom_refuse = true;
+
         rocketnet_address_t bind = {};
         bind.type = ROCKETNET_ADDRESS_IPV4;
 
@@ -276,6 +298,7 @@ static void test_transport_open_reports_out_of_memory()
     {
         rocketnet_address_t bind = {};
         bind.type = ROCKETNET_ADDRESS_IPV4;
+
         const rocketnet_server_transport_io_config_t server_config = { "oom", &server_transport_config, NULL, NULL };
         rocketnet_server_transport_io_t server = {};
         state.fail_at = state.calls + 1;
@@ -305,13 +328,16 @@ static void transport_oom_production_server_config( struct rocketnet_server_tran
 // the allocations of a pinned loopback create, counted by failing each in
 // turn until the create succeeds: every failure is OUT_OF_MEMORY with
 // nothing live and no loopback endpoint bound
+
 static int transport_oom_walk_server( transport_oom_allocator_t * state, const char * transport )
 {
     struct rocketnet_server_transport_config_t config;
     transport_oom_production_server_config( &config, transport );
+
     for ( int k = 1; k <= 256; k++ )
     {
         state->fail_at = state->calls + k;
+
         int status = -1;
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( state, "127.0.0.1:0", &config, 1000.0, &status );
         if ( server )
@@ -323,11 +349,14 @@ static int transport_oom_walk_server( transport_oom_allocator_t * state, const c
             check( rocketnet_loopback_endpoints_live() == 0 );
             return k - 1;
         }
+
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         check( state->live == 0 );
         check( rocketnet_loopback_endpoints_live() == 0 );
     }
+
     check( false );
+
     return 0;
 }
 
@@ -343,11 +372,13 @@ static void test_transport_create_server_ladder_stops_on_out_of_memory()
 
     // the pin: a transport allocation that fails ends the create with
     // OUT_OF_MEMORY, never TRANSPORT_LADDER_EXHAUSTED
+
     const int allocations = transport_oom_walk_server( &state, "loopback" );
     check( allocations > 0 );
 
     // two candidates: the same walk, the same count. A failed transport
     // allocation in the first candidate never falls to the second
+
     check( transport_oom_walk_server( &state, "loopback, loopback" ) == allocations );
 
     transport_oom_end( &state );
@@ -369,9 +400,11 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
     config.step_driven = 1;
     config.time_callback = transport_oom_time_callback;
+
     for ( int k = 1; k <= 256; k++ )
     {
         state->fail_at = state->calls + k;
+
         int status = -1;
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( state, token, &config, 1000.0, &status );
         if ( client )
@@ -383,11 +416,14 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
             check( rocketnet_loopback_endpoints_live() == 0 );
             return k - 1;
         }
+
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         check( state->live == 0 );
         check( rocketnet_loopback_endpoints_live() == 0 );
     }
+
     check( false );
+
     return 0;
 }
 
@@ -464,13 +500,17 @@ static unsigned long transport_oom_query_needs = 0;
 static int transport_oom_query( void * buffer, unsigned long * bytes )
 {
     ++transport_oom_query_calls;
+
     if ( !buffer || transport_oom_query_overflows > 0 )
     {
         if ( buffer )
+        {
             --transport_oom_query_overflows;
+        }
         *bytes = transport_oom_query_needs;
         return TRANSPORT_OOM_ADAPTERS_OVERFLOW;
     }
+
     return transport_oom_query_answer;
 }
 
@@ -491,16 +531,22 @@ static void test_platform_adapters_fetch_is_bounded()
     // nothing live and the query never run
     {
         transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_OK, 0, 15000 );
+
         const int before = state.calls;
         state.refuse_through = before + TRANSPORT_OOM_GIVE_WAY;
+
         void * buffer = rocketnet_platform_adapters_fetch( &state, 15000, transport_oom_query );
         const int asked = state.calls - before;
         state.refuse_through = 0;
         if ( asked != 1 )
+        {
             printf( "test_platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (one expected, bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
+        }
         check( asked == 1 );
         if ( buffer )
+        {
             rocketnet_free( &state, buffer );
+        }
         check( buffer == NULL );
         check( transport_oom_query_calls == 0 );
         check( state.live == 0 );
@@ -510,10 +556,13 @@ static void test_platform_adapters_fetch_is_bounded()
     // buffer freed
     {
         transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_OK, TRANSPORT_OOM_GIVE_WAY, 256 );
+
         const int before = state.calls;
         void * buffer = rocketnet_platform_adapters_fetch( &state, 128, transport_oom_query );
         if ( buffer )
+        {
             rocketnet_free( &state, buffer );
+        }
         check( buffer == NULL );
         check( transport_oom_query_calls == TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
         check( state.calls - before == TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
@@ -523,12 +572,15 @@ static void test_platform_adapters_fetch_is_bounded()
     // one overflow, then success at the size the query asked for
     {
         transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_OK, 1, 256 );
+
         void * buffer = rocketnet_platform_adapters_fetch( &state, 128, transport_oom_query );
         check( buffer != NULL );
         check( transport_oom_query_calls == 2 );
         check( state.live == 1 );
+
         // the retry asks for the size the query named: 128 more bytes than the
         // first attempt, whatever overhead rocketnet_malloc adds to both
+
         check( state.asked_bytes[1] - state.asked_bytes[0] == 256 - 128 );
         memset( buffer, 0, 256 );
         rocketnet_free( &state, buffer );
@@ -538,6 +590,7 @@ static void test_platform_adapters_fetch_is_bounded()
     // an error answer ends the fetch with nothing live
     {
         transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_ERROR, 0, 128 );
+
         void * buffer = rocketnet_platform_adapters_fetch( &state, 128, transport_oom_query );
         check( buffer == NULL );
         check( transport_oom_query_calls == 1 );
@@ -554,12 +607,14 @@ static void test_platform_adapters_fetch_is_bounded()
 // of get_connection_type, made from rocketnet_platform_init, so the count is
 // exactly one and the connection type is unknown; elsewhere the case checks
 // the bound only.
+
 static void test_platform_init_survives_a_refusing_allocator()
 {
     transport_oom_allocator_t state;
     memset( &state, 0, sizeof( state ) );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     state.refuse_through = TRANSPORT_OOM_GIVE_WAY;
+
     int status = -1;
     const bool initialized = rocketnet_init_ex( &state, transport_oom_allocate, transport_oom_release, &status );
     const int asked = state.calls;
@@ -567,12 +622,14 @@ static void test_platform_init_survives_a_refusing_allocator()
     check( initialized );
     check( status == ROCKETNET_STATUS_OK );
     if ( asked > TRANSPORT_OOM_ADAPTERS_ATTEMPTS )
+    {
         printf( "test_platform_init_survives_a_refusing_allocator: platform init asked a refusing allocator %d times (bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
+    }
     check( asked <= TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     check( asked == 1 );
     check( rocketnet_platform_connection_type() == ROCKETNET_CONNECTION_TYPE_UNKNOWN );
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     transport_oom_end( &state );
     printf( "test_platform_init_survives_a_refusing_allocator\n" );
 }

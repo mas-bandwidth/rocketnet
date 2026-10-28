@@ -76,8 +76,12 @@ static int m5_reconstruct_generate( const char * id, uint8_t * out, int capacity
     {
         const uint64_t number = region->receive_descriptors[slot].number;
         out[0] = 0x00;
+
         for ( int i = 0; i < 8; i++ )
+        {
             out[1 + i] = (uint8_t) ( number >> ( 8 * i ) );
+        }
+
         bytes = 9;
     }
     else if ( outcome == RN_WINDOW_RECEIVE_DUPLICATE && capacity >= 1 )
@@ -92,6 +96,7 @@ static int m5_reconstruct_generate( const char * id, uint8_t * out, int capacity
     }
 
     rn_arena_destroy( arena );
+
     return bytes;
 }
 

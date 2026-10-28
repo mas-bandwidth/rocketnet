@@ -20,7 +20,7 @@
 
 #if defined( __linux__ )
 #include "../sdk/rocketnet_uring_codec.h"
-#endif
+#endif // #if defined( __linux__ )
 
 #include <stdint.h>
 #include <stdio.h>
@@ -60,6 +60,7 @@ static int uring_fake_size( struct uring_fake_t * fake )
 static void uring_fake_push( struct uring_fake_t * fake, uint64_t user_data, int32_t res, uint32_t flags )
 {
     check( uring_fake_size( fake ) < URING_FAKE_CAPACITY );
+
     struct rocketnet_server_uring_test_completion_t * completion = &fake->fifo[fake->tail % URING_FAKE_CAPACITY];
     completion->user_data = user_data;
     completion->res = res;
@@ -81,6 +82,7 @@ static bool uring_fake_flooding( struct uring_fake_t * fake )
         if ( fake->flood[i] )
             return true;
     }
+
     return false;
 }
 
@@ -99,16 +101,25 @@ static int uring_fake_peek( void * context, struct rocketnet_server_uring_test_c
     while ( uring_fake_flooding( fake ) && uring_fake_size( fake ) < max )
     {
         while ( !fake->flood[fake->next_queue] )
+        {
             fake->next_queue = ( fake->next_queue + 1 ) % ROCKETNET_URING_MAX_QUEUES;
+        }
+
         uring_fake_push_receive( fake, fake->next_queue );
         fake->next_queue = ( fake->next_queue + 1 ) % ROCKETNET_URING_MAX_QUEUES;
     }
 
     int count = uring_fake_size( fake );
     if ( count > max )
+    {
         count = max;
+    }
+
     for ( int i = 0; i < count; i++ )
+    {
         completions[i] = fake->fifo[( fake->head + (uint64_t) i ) % URING_FAKE_CAPACITY];
+    }
+
     return count;
 }
 
@@ -116,6 +127,7 @@ static void uring_fake_advance( void * context, int count )
 {
     struct uring_fake_t * fake = (struct uring_fake_t *) context;
     check( count >= 0 && count <= uring_fake_size( fake ) );
+
     fake->head += (uint64_t) count;
     fake->consumed += count;
 }
@@ -175,6 +187,7 @@ static struct uring_fake_t * uring_fake_create( int64_t guard, struct rocketnet_
 {
     struct uring_fake_t * fake = (struct uring_fake_t *) calloc( 1, sizeof( struct uring_fake_t ) );
     check( fake );
+
     fake->flood_on_arm = true;
     fake->guard = guard;
     source->context = fake;
@@ -182,21 +195,26 @@ static struct uring_fake_t * uring_fake_create( int64_t guard, struct rocketnet_
     source->advance = uring_fake_advance;
     source->ready = uring_fake_ready;
     source->submitted = uring_fake_submitted;
+
     return fake;
 }
 
 static void uring_fake_stop_and_destroy( rocketnet_server_uring_t * uring, uring_fake_t * fake )
 {
     rocketnet_server_uring_stop( uring );
+
     bool stopped = false;
     for ( int i = 0; i < 64 && !stopped; ++i )
     {
         fake->consumed = 0;
         stopped = rocketnet_server_uring_stopped( uring );
+
         check( fake->consumed <= ROCKETNET_URING_RECEIVE_BUDGET );
         check( !fake->guard_tripped );
     }
+
     check( stopped );
+
     rocketnet_server_uring_destroy( uring );
 }
 
@@ -221,10 +239,14 @@ static void uring_stage_sends( struct rocketnet_server_uring_t * uring, int coun
         uint64_t packet_id = 0;
         uint8_t * frame = rocketnet_server_uring_start_packet( uring, &to, &packet_id );
         check( frame );
+
         memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, (uint8_t) i, 64 );
         rocketnet_server_uring_finish_packet( uring, packet_id, frame, 64 );
+
         if ( frames )
+        {
             frames[i] = frame;
+        }
     }
 }
 
@@ -240,11 +262,11 @@ static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring );
 
-
     for ( int call = 0; call < 4; call++ )
     {
         fake->consumed = 0;
         rocketnet_server_uring_receive_packets( uring );
+
         check( !fake->guard_tripped );
         check( fake->consumed <= ROCKETNET_URING_RECEIVE_BUDGET );
         check( fake->consumed == ROCKETNET_URING_RECEIVE_BUDGET );
@@ -284,7 +306,6 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
     rocketnet_unit_check( uring );
 
-
     for ( int i = 0; i < 2 * ROCKETNET_URING_SEND_BUDGET; i++ )
         uring_fake_push_receive( fake, 0 );
 
@@ -295,6 +316,7 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
 
     fake->consumed = 0;
     rocketnet_server_uring_send_packets( uring );
+
     check( !fake->guard_tripped );
     check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
     check( fake->sends_submitted == URING_TEST_SENDS );
@@ -315,11 +337,13 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     {
         fake->consumed = 0;
         rocketnet_server_uring_receive_packets( uring );
+
         check( !fake->guard_tripped );
         check( fake->consumed <= ROCKETNET_URING_RECEIVE_BUDGET );
 
         fake->consumed = 0;
         rocketnet_server_uring_send_packets( uring );
+
         check( !fake->guard_tripped );
         check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
 
@@ -336,6 +360,7 @@ static void test_io_uring_transport_reap_send_retires_under_receive_pressure()
     uint8_t * first_again = NULL;
     uring_stage_sends( uring, 1, &first_again );
     check( first_again == frames[0] );
+
     rocketnet_server_uring_abort_packet( uring, 0, first_again );
 
     fake->consumed = 0;
@@ -357,18 +382,21 @@ static void test_io_uring_transport_reap_destroy_after_saturation()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring );
 
-
     fake->consumed = 0;
     rocketnet_server_uring_receive_packets( uring );
+
     check( !fake->guard_tripped );
 
     for ( int i = 0; i < 2 * ROCKETNET_URING_SEND_BUDGET; i++ )
+    {
         uring_fake_push_receive( fake, i % 2 );
+    }
 
     uring_stage_sends( uring, 100, NULL );
 
     fake->consumed = 0;
     rocketnet_server_uring_send_packets( uring );
+
     check( !fake->guard_tripped );
     check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
     check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED ) == 1 );
@@ -401,6 +429,7 @@ static void test_io_uring_transport_receive_without_a_buffer_is_counted()
 
     uring_fake_push( fake, recv_tag, ROCKETNET_URING_RECV_BUFFER_BYTES, IORING_CQE_F_MORE );
     rocketnet_server_uring_receive_packets( uring );
+
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
     check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 1 );
@@ -408,12 +437,14 @@ static void test_io_uring_transport_receive_without_a_buffer_is_counted()
     const uint32_t outside = IORING_CQE_F_BUFFER | IORING_CQE_F_MORE | ( (uint32_t) ROCKETNET_URING_RECV_BUFFERS << IORING_CQE_BUFFER_SHIFT );
     uring_fake_push( fake, recv_tag, ROCKETNET_URING_RECV_BUFFER_BYTES, outside );
     rocketnet_server_uring_receive_packets( uring );
+
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 0 );
     check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
 
     uring_fake_push_receive( fake, 0 );
     rocketnet_server_uring_receive_packets( uring );
+
     check( !fake->guard_tripped );
     check( rocketnet_server_uring_process_packets( uring )->num_packets == 1 );
     check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER ) == 2 );
@@ -432,29 +463,45 @@ static void test_io_uring_stop_waits_for_kernel_ownership_without_waiting()
     rocketnet_server_uring_test_source_t source;
     uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET, &source );
     fake->hold_cancel = true;
+
     rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     check( uring );
     check( !rocketnet_server_uring_stopped( uring ) );
+
     rocketnet_server_uring_stop( uring );
     rocketnet_server_uring_stop( uring );
+
     for ( int i = 0; i < 1024; ++i )
     {
         fake->consumed = 0;
+
         check( !rocketnet_server_uring_stopped( uring ) );
         check( fake->consumed <= ROCKETNET_URING_RECEIVE_BUDGET );
         check( !fake->guard_tripped );
     }
+
     check( fake->cancels_submitted == 2 );
     check( rocketnet_server_uring_num_queues( uring ) == 2 );
-    // Terminal receives alone do not prove cancellation requests have completed.
+
+    // terminal receives alone do not prove cancellation requests have completed
+
     fake->hold_cancel = false;
+
     for ( int i = 0; i < 2; ++i )
+    {
         uring_fake_push( fake, rocketnet_uring_tag( ROCKETNET_URING_TAG_RECV, i, 0 ), -ECANCELED, 0 );
+    }
+
     check( !rocketnet_server_uring_stopped( uring ) );
+
     for ( int i = 0; i < 2; ++i )
+    {
         uring_fake_push( fake, rocketnet_uring_tag( ROCKETNET_URING_TAG_CANCEL, i, 0 ), 0, 0 );
+    }
+
     check( rocketnet_server_uring_stopped( uring ) );
     check( rocketnet_server_uring_stopped( uring ) );
+
     rocketnet_server_uring_destroy( uring );
     free( fake );
 }
@@ -465,18 +512,29 @@ static void test_io_uring_shutdown_flush_never_waits_for_saturated_sends()
     uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET, &source );
     fake->flood_on_arm = false;
     fake->hold_send = true;
+
     rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
     check( uring );
+
     uring_stage_sends( uring, ROCKETNET_URING_SEND_QUEUE_SIZE, NULL );
+
     for ( int i = 0; i < 16; ++i )
+    {
         rocketnet_server_uring_send_packets( uring );
+    }
+
     check( fake->sends_submitted == ROCKETNET_URING_SEND_QUEUE_SIZE );
     check( rocketnet_server_uring_test_wait_calls( uring ) == 0 );
+
     rocketnet_server_uring_stop( uring );
     check( !rocketnet_server_uring_stopped( uring ) );
     check( rocketnet_server_uring_test_wait_calls( uring ) == 0 );
+
     for ( int i = 0; i < ROCKETNET_URING_SEND_QUEUE_SIZE; ++i )
+    {
         uring_fake_push( fake, rocketnet_uring_tag( ROCKETNET_URING_TAG_SEND, 0, (uint32_t) i ), 64, 0 );
+    }
+
     uring_fake_stop_and_destroy( uring, fake );
     free( fake );
 }
@@ -489,4 +547,4 @@ REGISTER_UNIT_TEST( test_io_uring_transport_reap_send_retires_under_receive_pres
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_destroy_after_saturation );
 REGISTER_UNIT_TEST( test_io_uring_transport_receive_without_a_buffer_is_counted );
 
-#endif
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )

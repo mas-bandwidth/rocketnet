@@ -46,6 +46,9 @@ SPANS_ALLOWED = (
      "iproute2 syntax: `ip link add A type veth " + WORD + " name B`"),
     (re.compile(r"\b(?:Argument)?TypeError\b"),
      "Python exception names: 'TypeError' holds the letters, not the word"),
+    (re.compile(r"\bPE" + r"Error\b"),
+     "tools/check_hardening.py's Windows PE image parse error class: 'PE' "
+     "then 'Error' holds the letters, not the word"),
 )
 
 # The same, for the second banned word.
