@@ -30,9 +30,10 @@ _Static_assert( sizeof(__u8) == 1 && sizeof(__u16) == 2 && sizeof(__u32) == 4 &&
 
 _Static_assert( __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "the XDP host shim models a little-endian host" );
 
-#ifndef __always_inline
+// defined here whatever the host's sys/cdefs.h said: NetBSD's has no inline
+// keyword in it, and gcc refuses an always_inline function not declared inline
+#undef __always_inline
 #define __always_inline inline __attribute__((always_inline))
-#endif
 
 #define __constant_htons(x) ((__be16)((((__u16)(x) & 0x00ffu) << 8) | (((__u16)(x) & 0xff00u) >> 8)))
 
