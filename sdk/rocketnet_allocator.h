@@ -134,7 +134,7 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
     uint16_t fragments_acked;
     uint16_t schedule_flags;            // RN_SCHEDULE_QUEUED while this descriptor is a live queue entry
     uint8_t reserved[2];                // unused spare bytes
-    uint32_t enqueue_ticket;            // 0 not queued; RN_ENQUEUE_HOLE a cancelled hole; else the enqueue ticket (from 1)
+    uint32_t enqueue_ticket;            // 0 not queued; else the enqueue ticket (from 1)
     uint32_t queue_epoch;               // region->schedule_epoch at enqueue; a carve makes a stale entry miss
     uint32_t order_slot;                // the flat live-span order array's slot at this descriptor's index: the descriptor at that order position, RN_DESCRIPTOR_NONE outside the live segment
     uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
@@ -152,8 +152,6 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
 #define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, docs/CHANNELS.md 10.3): code 2 with CONTROL set, never an application message
 
 #define RN_SCHEDULE_QUEUED      0x0001u
-#define RN_ENQUEUE_HOLE         0xFFFFFFFFu
-#define RN_SCHEDULE_HOLE_BOUND  64u
 
 struct rn_sent_packet_t                 // 32 bytes: the sent-packet ring, P entries (6.4)
 {
@@ -406,7 +404,7 @@ struct rn_region_t
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t span_ticket_next;          // the next span allocation ticket; the flat span order array orders live spans, tickets mirror that order
     uint32_t schedule_epoch;            // 1 after every carve; names this connection's queue entries
-    uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 and RN_ENQUEUE_HOLE are never issued
+    uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
     uint32_t * sent_refs;
@@ -430,16 +428,16 @@ struct rn_region_t
     uint32_t send_room_armed;           // 1 until the send room watch reports a crossing, 1 again below half (rn_region_send_room_watch)
 };
 
-// The next enqueue ticket on this connection. 0 and RN_ENQUEUE_HOLE are never issued.
+// The next enqueue ticket on this connection. 0 is never issued.
 
 static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 {
     uint32_t ticket = region->schedule_ticket_next;
-    if ( ticket == 0 || ticket == RN_ENQUEUE_HOLE )
+    if ( ticket == 0 )
         ticket = 1;
 
     uint32_t next = ticket + 1;
-    if ( next == 0 || next == RN_ENQUEUE_HOLE )
+    if ( next == 0 )
         next = 1;
 
     region->schedule_ticket_next = next;
@@ -454,15 +452,10 @@ static inline void rn_descriptor_enqueue_stamp( rn_region_t * region, rn_send_de
     descriptor->schedule_flags = (uint16_t) RN_SCHEDULE_QUEUED;
 }
 
-static inline bool rn_descriptor_schedule_hole( const rn_send_descriptor_t * descriptor )
-{
-    return descriptor->enqueue_ticket == RN_ENQUEUE_HOLE;
-}
-
 static inline bool rn_descriptor_schedule_live( const rn_send_descriptor_t * descriptor )
 {
     return descriptor->in_use && ( descriptor->schedule_flags & RN_SCHEDULE_QUEUED ) != 0 &&
-           descriptor->enqueue_ticket != 0 && descriptor->enqueue_ticket != RN_ENQUEUE_HOLE;
+           descriptor->enqueue_ticket != 0;
 }
 
 #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )

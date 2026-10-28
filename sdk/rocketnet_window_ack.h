@@ -184,12 +184,6 @@ uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uin
 // ones already waiting, ahead of every number that was sent.
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
-// Removes number from its resend FIFO only when the link still names generation
-// and the region's current schedule epoch. Does not free the descriptor and
-// does not mark the number acked. False leaves the FIFO unchanged
-// (tla/RNChannelQueues.tla Ack, StaleCancel).
-bool rn_window_ack_cancel_resend( rn_window_ack_t * ack, uint64_t number, uint32_t generation );
-
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
 // tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.

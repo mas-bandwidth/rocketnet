@@ -59,8 +59,7 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 // largest word above and at the floor word below -- shifted so the top bit
 // is bit 63, and leading ones (a run) or leading zeros (a gap) are counted
 // with clz as the word is shifted left. Sequence modulo the 4096-bit
-// window gives the circular wrap for free. ctz is available as
-// rocketnet_platform_ctz64 beside clz for upward scans.
+// window gives the circular wrap for free.
 // The builder below is one descending pass over the window words: a
 // three-phase scan (first run, then repeating gap and run) whose counts
 // accumulate across word boundaries and whose ranges are emitted when a
@@ -1307,13 +1306,6 @@ static inline int rn_popcount64( uint64_t v )
 #else
     return rocketnet_ack_popcount64_portable( v );
 #endif // #if defined( __GNUC__ ) || defined( __clang__ )
-}
-
-// the popcount the ack path uses, for the unit test
-
-int rocketnet_ack_popcount64( uint64_t v )
-{
-    return rn_popcount64( v );
 }
 
 // popcount of one bitmap over the linear slot range [a,b] (a<=b), masking the

@@ -50,22 +50,6 @@ extern "C"
 /// capacity less the one form byte.
 #define ROCKETNET_MESSAGE_SINGLE_BYTES                     ( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 )
 
-/// The standard's numbering of the ways a connection ends (standard/MESSAGES.md),
-/// the one place it maps from the public enum, which is dense and negative.
-static inline int rocketnet_disconnect_reason_standard_code( int reason )
-{
-    switch ( reason )
-    {
-        case ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH:          return 1;
-        case ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION:       return 3;
-        case ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT:       return 4;
-        case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED: return 5;
-        case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:      return 6;
-        case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:     return 7;
-        default:                                                   return 0;
-    }
-}
-
 /// What the message layer's update returns. The public update returns void.
 enum rocketnet_update_result_t
 {
@@ -224,18 +208,6 @@ void rocketnet_debug( const char * format, ... );
 /** @brief Emits a message at ROCKETNET_LOG_LEVEL_SPAM. @param format Printf format; NULL is a counted no-op. The remaining arguments must match format specifiers. */
 ROCKETNET_PRINTF_FORMAT( 1, 2 )
 void rocketnet_spam( const char * format, ... );
-
-/** @brief Formats a user identifier as lowercase hexadecimal. @param user_id Identifier to format. @param buffer Caller-owned output buffer; NULL is a counted no-op returning NULL. @param buffer_size Buffer capacity in bytes; zero writes no bytes. @return buffer, or NULL when buffer is NULL. A nonempty buffer is NUL-terminated and may contain a truncated string. */
-const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size );
-
-/** @brief Returns a cryptographically generated float in the inclusive range [0, 1]. @return Random value. */
-float rocketnet_random_float( void );
-
-/** @brief Returns a cryptographically generated 8-bit value. @return Value in [0, 255]. */
-uint8_t rocketnet_random_uint8( void );
-
-/** @brief Returns a cryptographically generated 32-bit value. @return Value in [0, UINT32_MAX]. */
-uint32_t rocketnet_random_uint32( void );
 
 /** @brief Returns a cryptographically generated 64-bit value. @return Value in [0, UINT64_MAX]. */
 uint64_t rocketnet_random_uint64( void );
@@ -1894,13 +1866,6 @@ void rocketnet_message_server_abort( struct rocketnet_message_server_t * server,
 
 // the convenience over start and finish; it copies data into the region record. a NULL server or data is a counted no-op that returns 0
 uint32_t rocketnet_message_server_send( struct rocketnet_message_server_t * server, int client_index, int channel, int reliability, const uint8_t * data, int bytes );
-
-// sends data to every connected slot exactly as rocketnet_message_server_send
-// would, one copy per connection: each connection's region holds its own copy
-// (docs/CHANNELS.md section 11.4, Broadcast). Returns the number of slots it
-// was queued for; a slot that refuses (exhausted, not connected) is skipped.
-// a NULL server or data is a counted no-op that returns 0
-int rocketnet_message_server_broadcast( struct rocketnet_message_server_t * server, int channel, int reliability, const uint8_t * data, int bytes );
 
 // 1 with the next message of the update from the one receive queue across
 // every client slot, its sender's slot in *client_index and the channel it

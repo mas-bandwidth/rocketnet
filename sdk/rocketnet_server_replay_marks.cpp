@@ -19,7 +19,6 @@
 #define ROCKETNET_SERVER_REPLAY_SLOT_MARK_LAYOUT_FIELDS( X ) \
     X( has_mark, int has_mark )                                    \
     X( marked_value, uint32_t marked_value )                       \
-    X( marked_address, struct rocketnet_address_t marked_address ) \
     X( seen, int seen )                                            \
     X( seen_address, struct rocketnet_address_t seen_address )     \
     X( mark_owed, int mark_owed )
@@ -181,7 +180,6 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         slot->mark_owed = 0;
         slot->has_mark = 1;
         slot->marked_value = high_water;
-        slot->marked_address = *address;
     }
 }
 

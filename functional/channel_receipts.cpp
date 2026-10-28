@@ -33,8 +33,9 @@ static void unreliable_receipts_settle_config( rocketnet_channel_harness_t * h )
 
     for ( int i = 0; i < 60 * 10; i++ )
     {
-        if ( rn_endpoint_deadline( client_endpoint ) == RN_ENDPOINT_NO_DEADLINE &&
-             rn_endpoint_deadline( server_endpoint ) == RN_ENDPOINT_NO_DEADLINE )
+        if ( client_endpoint->ordered.config_received && server_endpoint->ordered.config_received &&
+             client_endpoint->ordered.send.U >= client_endpoint->ordered.send.next &&
+             server_endpoint->ordered.send.U >= server_endpoint->ordered.send.next )
             return;
         receipt_check( rocketnet_channel_harness_pump( h, 1.0 / 60.0 ) );
     }

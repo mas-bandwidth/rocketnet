@@ -42,8 +42,6 @@
 #define RN_ENDPOINT_PACKET_UNRELIABLE       2   // small unreliable records packed by the unreliable builder
 #define RN_ENDPOINT_PACKET_SEQUENCED_LARGE  3   // one code-1 record larger than a packet, fragmented by the transport
 
-#define RN_ENDPOINT_NO_DEADLINE             1.0e300
-
 struct rn_endpoint_config_t
 {
     const struct rocketnet_message_config_t * config;   // the connection's message config; outlives the endpoint
@@ -83,7 +81,7 @@ struct rn_endpoint_config_t
     X( unreliable_head, uint32_t unreliable_head )                                                                                                    \
     X( unreliable_tail, uint32_t unreliable_tail )                                                                                                    \
     X( unreliable_count, uint32_t unreliable_count )                                                                                                  \
-    X( unreliable_holes, uint32_t unreliable_holes ) /* cancelled unreliable descriptors still sequenced */ /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */ /* writes it, packet_sent or packet_failed ends it */                                                                                             \
+    /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */ /* writes it, packet_sent or packet_failed ends it */                                                                                             \
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
     X( written, int written ) /* packets this update, in place and queued, against packets_per_update */                                          \
     X( packet_kind, int packet_kind ) /* RN_ENDPOINT_PACKET_* of the planned packet */                                                                \
@@ -109,16 +107,6 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
 // A new connection on this endpoint: the region carved again and every layer
 // bound to it fresh, so nothing of the previous connection is reachable.
 void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now );
-
-// Marks one queued unreliable descriptor a hole when generation and owner_epoch
-// still name it. False changes nothing. A receipt LOSS is emitted when the
-// hole is freed by compact or expire (tla/RNChannelQueues.tla).
-bool rn_endpoint_cancel_unreliable( struct rn_endpoint_t * endpoint, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch );
-
-// One walk: drop holes and entries whose queue epoch is not the current
-// connection, keep the order of the rest, and emit LOSS for a receipt entry
-// as it is freed.
-void rn_endpoint_expire_unreliable( struct rn_endpoint_t * endpoint );
 
 // tla/RNEndpoint.tla Reset, the CONFIG half (10.3): called when the connection
 // this endpoint was reset for is connected, before anything else is queued.
@@ -262,11 +250,5 @@ int rn_endpoint_take_receipts( const struct rn_endpoint_t * endpoint, struct roc
 
 // 0, or the ROCKETNET_DISCONNECT_REASON_* reason the connection ends with (12).
 int rn_endpoint_error( const struct rn_endpoint_t * endpoint );
-
-// The earliest time the endpoint has work: a resend due, the reliable
-// timeout, the CONFIG wait's timeout, a receipt's LOSS, or (0.0) something
-// queued now.
-// RN_ENDPOINT_NO_DEADLINE when there is none.
-double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint );
 
 #endif // ROCKETNET_SDK_ROCKETNET_ENDPOINT_H

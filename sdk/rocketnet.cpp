@@ -557,44 +557,11 @@ void rocketnet_sleep( double seconds )
 
 // -------------------------------------------------------------
 
-const char * rocketnet_user_id_string( uint64_t user_id, char * buffer, size_t buffer_size )
-{
-    if ( !rocketnet_api_null_guard( buffer ) )
-        return NULL;
-
-    snprintf( buffer, buffer_size, "%" PRIx64, user_id );
-    return buffer;
-}
-
 uint64_t rocketnet_protocol_version_hash( int major, int minor )
 {
     char text[64];
     snprintf( text, sizeof( text ), "%d.%d", major, minor );
     return rocketnet_hash_string( text );
-}
-
-float rocketnet_random_float()
-{
-    uint32_t uint32_value;
-    randombytes_buf( &uint32_value, sizeof( uint32_value ) );
-
-    uint64_t uint64_value = uint64_t( uint32_value );
-    double double_value = double( uint64_value ) / 0xFFFFFFFF;
-    return float( double_value );
-}
-
-uint8_t rocketnet_random_uint8()
-{
-    uint8_t value;
-    randombytes_buf( &value, sizeof( value ) );
-    return value;
-}
-
-uint32_t rocketnet_random_uint32()
-{
-    uint32_t value;
-    randombytes_buf( &value, sizeof( value ) );
-    return value;
 }
 
 uint64_t rocketnet_random_uint64()

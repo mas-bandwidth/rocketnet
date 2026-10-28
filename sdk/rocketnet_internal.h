@@ -110,7 +110,6 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 }
 #endif // #ifdef __cplusplus
 
-#define ROCKETNET_PLATFORM_UNKNOWN                                     0
 #define ROCKETNET_PLATFORM_WINDOWS                                     1
 #define ROCKETNET_PLATFORM_MAC                                         2
 #define ROCKETNET_PLATFORM_LINUX                                       3
@@ -143,14 +142,6 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 #if !defined( ROCKETNET_UNREAL_ENGINE )
 #define ROCKETNET_UNREAL_ENGINE 0
 #endif // #if !defined(ROCKETNET_UNREAL_ENGINE)
-
-#if !defined( ROCKETNET_SPIKE_TRACKING )
-#define ROCKETNET_SPIKE_TRACKING 0
-#endif // #if !defined(ROCKETNET_SPIKE_TRACKING)
-
-#if !defined( ROCKETNET_ENABLE_MEMORY_CHECKS )
-#define ROCKETNET_ENABLE_MEMORY_CHECKS 0
-#endif // #if !defined(ROCKETNET_ENABLE_MEMORY_CHECKS)
 
 #if !defined( ROCKETNET_LITTLE_ENDIAN ) && !defined( ROCKETNET_BIG_ENDIAN )
 

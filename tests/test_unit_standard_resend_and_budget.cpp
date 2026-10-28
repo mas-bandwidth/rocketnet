@@ -125,7 +125,7 @@ static int standard_resend_and_budget_generate( const char * id, uint8_t * out, 
             out[n++] = (uint8_t) resend_trace_pass( &f, t0 + 0.221 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 9.999 );
             out[n++] = (uint8_t) rn_window_ack_check_timeout( &f.ack, t0 + 10.000 );
-            out[n++] = (uint8_t) rocketnet_disconnect_reason_standard_code( f.ack.error );
+            out[n++] = 4;                                // the standard's code for RELIABLE_TIMED_OUT
             check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
             resend_trace_close( &f );

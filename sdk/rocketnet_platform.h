@@ -33,17 +33,6 @@ static inline int rocketnet_platform_clz64( uint64_t value )
 #endif // #if defined( _MSC_VER )
 }
 
-static inline int rocketnet_platform_ctz64( uint64_t value )
-{
-#if defined( _MSC_VER )
-    unsigned long index;
-    _BitScanForward64( &index, value );
-    return (int) index;
-#else
-    return __builtin_ctzll( value );
-#endif // #if defined( _MSC_VER )
-}
-
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( __cplusplus )
 // Private static-development-library fixture interface. Never compiled into a
 // production or shared library. RIO IDs are resources, not Windows HANDLEs.
@@ -584,37 +573,15 @@ void rocketnet_platform_mutex_release( struct rocketnet_platform_mutex_t * mutex
 struct rocketnet_platform_mutex_helper_t
 {
     rocketnet_platform_mutex_t * mutex;
-#if ROCKETNET_SPIKE_TRACKING
-    const char * file;
-    int line;
-    double start_time;
-    rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line );
-#else // #if ROCKETNET_SPIKE_TRACKING
     rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex );
-#endif // #if ROCKETNET_SPIKE_TRACKING
     ~rocketnet_platform_mutex_helper_t();
 };
 
-#if ROCKETNET_SPIKE_TRACKING
-#define rocketnet_platform_mutex_guard( _mutex ) rocketnet_platform_mutex_helper_t __mutex_helper( _mutex, __FILE__, __LINE__ )
-#else // #if ROCKETNET_SPIKE_TRACKING
 #define rocketnet_platform_mutex_guard( _mutex ) rocketnet_platform_mutex_helper_t __mutex_helper( _mutex )
-#endif // #if ROCKETNET_SPIKE_TRACKING
 
-#if ROCKETNET_SPIKE_TRACKING
-inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex, const char * file, int line ) : mutex( held_mutex ), file( file ), line( line ), start_time( rocketnet_platform_time() )
-#else // #if ROCKETNET_SPIKE_TRACKING
 inline rocketnet_platform_mutex_helper_t::rocketnet_platform_mutex_helper_t( rocketnet_platform_mutex_t * held_mutex ) : mutex( held_mutex )
-#endif // #if ROCKETNET_SPIKE_TRACKING
 {
     rocketnet_assert( mutex );
-
-#if ROCKETNET_SPIKE_TRACKING
-    if ( !mutex->ok )
-    {
-        rocketnet_error( "bad mutex - %s:%d", file, line );
-    }
-#endif // #if ROCKETNET_SPIKE_TRACKING
 
     rocketnet_platform_mutex_acquire( mutex );
 }
@@ -624,14 +591,6 @@ inline rocketnet_platform_mutex_helper_t::~rocketnet_platform_mutex_helper_t()
     rocketnet_assert( mutex );
 
     rocketnet_platform_mutex_release( mutex );
-#if ROCKETNET_SPIKE_TRACKING
-    double finish_time = rocketnet_platform_time();
-    double mutex_duration = finish_time - start_time;
-    if ( mutex_duration > 0.001 )
-    {
-        rocketnet_warn( "mutex spike %.2f milliseconds at %s:%d", mutex_duration, file, line );
-    }
-#endif // #if ROCKETNET_SPIKE_TRACKING
     mutex = NULL;
 }
 

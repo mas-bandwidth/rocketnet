@@ -245,15 +245,6 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 
 #define ROCKETNET_ACK_DEBT_THRESHOLD                                       1
 
-// the adaptive resend delay: it follows the measured round trip
-
-#define ROCKETNET_MESSAGE_RESEND_DELAY_SCALE_PERCENT                          200
-#define ROCKETNET_MESSAGE_RESEND_DELAY_VARIANCE_SCALE                           4
-#define ROCKETNET_MESSAGE_RESEND_DELAY_GRANULARITY_MS                          30
-
-// retained for historical benchmark comparisons; it does not cap live resends
-#define ROCKETNET_MESSAGE_RESEND_INTERVAL_MS                              100
-
 // ROCKETNET_IPV4_HEADER_BYTES and ROCKETNET_UDP_HEADER_BYTES live in
 // rocketnet_wire.h, beside the MTU they derive the packet size from
 

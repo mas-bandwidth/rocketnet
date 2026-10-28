@@ -784,7 +784,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     list( APPEND ROCKETNET_COUNTER_TEST_SOURCES "sdk/rocketnet_tests.cpp" )
     file( GLOB ROCKETNET_COUNTER_SDK_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
         "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.h" "${CMAKE_CURRENT_SOURCE_DIR}/sdk/*.inc" )
-    list( REMOVE_ITEM ROCKETNET_COUNTER_SDK_SOURCES "sdk/rocketnet_tests.cpp" "sdk/rocketnet_tests.h"
+    list( REMOVE_ITEM ROCKETNET_COUNTER_SDK_SOURCES "sdk/rocketnet_tests.cpp"
         "sdk/rocketnet_counters.h" "sdk/rocketnet_counters.cpp" )
     string( REPLACE ";" "|" ROCKETNET_COUNTER_TEST_SOURCES_LIST "${ROCKETNET_COUNTER_TEST_SOURCES}" )
     string( REPLACE ";" "|" ROCKETNET_COUNTER_SDK_SOURCES_LIST "${ROCKETNET_COUNTER_SDK_SOURCES}" )
@@ -913,7 +913,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # from any object file of the test binary, to the test's counting wrapper.
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_DEV)
         target_link_options(test PRIVATE "-Wl,--wrap=rocketnet_platform_time")
-        set_property( SOURCE tests/test_unit_endpoint.cpp APPEND PROPERTY COMPILE_DEFINITIONS ROCKETNET_TEST_CLOCK_WRAP=1 )
     endif()
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)

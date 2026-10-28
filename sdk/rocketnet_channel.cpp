@@ -262,7 +262,6 @@ bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * reg
     channels->ready_head = RN_DESCRIPTOR_NONE;
     channels->ready_tail = RN_DESCRIPTOR_NONE;
     channels->ready_ticket_next = 1;
-    channels->queue_holes = 0;
     channels->schedule_work = 0;
 
     return true;
@@ -1002,7 +1001,7 @@ static bool rn_channel_queue_member( const rn_send_descriptor_t * descriptor, ui
     return descriptor->in_use && descriptor->channel == channel &&
            descriptor->reliability >= ROCKETNET_CHANNEL_TYPE_RELIABLE &&
            descriptor->reliability <= ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED &&
-           ( rn_descriptor_schedule_live( descriptor ) || rn_descriptor_schedule_hole( descriptor ) );
+           rn_descriptor_schedule_live( descriptor );
 }
 
 static uint32_t rn_channel_queue_next_live( const rn_region_t * region, uint32_t channel, uint32_t after_ticket )
@@ -1116,7 +1115,7 @@ static void rn_ready_rebase_tickets( rn_channels_t * channels )
         send[channel].ready_ticket = ticket++;
         channels->schedule_work++;
 
-        if ( ticket == 0 || ticket == RN_ENQUEUE_HOLE )
+        if ( ticket == 0 )
             ticket = 1;
     }
 
@@ -1151,12 +1150,12 @@ static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool fron
     }
     else
     {
-        if ( channels->ready_ticket_next == 0 || channels->ready_ticket_next == RN_ENQUEUE_HOLE )
+        if ( channels->ready_ticket_next == 0 )
             rn_ready_rebase_tickets( channels );
 
         const uint32_t ticket = channels->ready_ticket_next++;
 
-        if ( channels->ready_ticket_next == 0 || channels->ready_ticket_next == RN_ENQUEUE_HOLE )
+        if ( channels->ready_ticket_next == 0 )
             channels->ready_ticket_next = 1;
 
         send[channel].ready_ticket = ticket;
@@ -1195,7 +1194,7 @@ static void rn_ready_push_front( rn_channels_t * channels, uint32_t channel )
     rn_ready_link( channels, channel, true );
 }
 
-// Rebuild one channel's flat FIFO. Holes are freed. Live descriptors keep
+// Rebuild one channel's flat FIFO. Live descriptors keep
 // their ticket order and receive a fresh increasing ticket range, so a CONFIG
 // spliced at the head holds the smallest ticket. One pass over this channel's
 // entries, never per emitted record. Restamping parks each live descriptor
@@ -1216,17 +1215,6 @@ static void rn_channel_compact_one( rn_channels_t * channels, uint32_t channel )
             continue;
 
         channels->schedule_work++;
-
-        if ( rn_descriptor_schedule_hole( descriptor ) )
-        {
-            if ( channels->queue_holes > 0 )
-                channels->queue_holes--;
-
-            descriptor->enqueue_ticket = 0;
-            descriptor->schedule_flags = 0;
-            if ( descriptor->in_use )
-                rn_region_send_free( region, d );
-        }
     }
 
     uint32_t after = 0;
@@ -1257,48 +1245,6 @@ static void rn_channel_compact_one( rn_channels_t * channels, uint32_t channel )
 
         rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
     }
-}
-
-void rn_channels_compact_queues( struct rn_channels_t * channels )
-{
-    if ( !channels || !channels->region )
-        return;
-
-    for ( uint32_t channel = 0; channel < channels->num_channels; channel++ )
-    {
-        bool has_entry = false;
-        for ( uint32_t d = 0; d < channels->region->descriptors_fresh && !has_entry; d++ )
-            has_entry = rn_channel_queue_member( &channels->region->send_descriptors[d], channel );
-        if ( has_entry )
-            rn_channel_compact_one( channels, channel );
-    }
-}
-
-bool rn_channels_cancel_queued( struct rn_channels_t * channels, uint32_t channel, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch )
-{
-    if ( !channels || !channels->region || channel >= channels->num_channels )
-        return false;
-
-    rn_region_t * region = channels->region;
-    if ( region->schedule_epoch != owner_epoch || descriptor >= region->queue )
-        return false;
-
-    rn_send_descriptor_t * desc = &region->send_descriptors[descriptor];
-    if ( !desc->in_use || desc->generation != generation || desc->queue_epoch != owner_epoch )
-        return false;
-    if ( !rn_descriptor_schedule_live( desc ) || desc->channel != channel )
-        return false;
-
-    desc->enqueue_ticket = RN_ENQUEUE_HOLE;
-    desc->schedule_flags = (uint16_t) ( desc->schedule_flags & ~RN_SCHEDULE_QUEUED );
-    if ( desc->priority < 4 && region->channel_send[channel].queued[desc->priority] > 0 )
-        region->channel_send[channel].queued[desc->priority]--;
-
-    channels->queue_holes++;
-    if ( rn_channel_live_count( region->channel_send + channel ) == 0 || channels->queue_holes > RN_SCHEDULE_HOLE_BOUND )
-        rn_channel_compact_one( channels, channel );
-
-    return true;
 }
 
 // tla/RNChannel.tla RefuseSend
@@ -1767,11 +1713,6 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
     ack->walk_visits = 0;
 
-    // holes are rebuilt once per pass, not once per emitted record
-
-    if ( channels->queue_holes > 0 )
-        rn_channels_compact_queues( channels );
-
     uint32_t last_unsent_small = RN_RESEND_NONE;
     uint32_t last_unsent_chunk = RN_RESEND_NONE;
     const bool walked = rn_ordered_walk( ordered, false, now, &plan, &last_unsent_small ) &&
@@ -1788,8 +1729,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     {
         const uint32_t channel = channels->ready_head;
         rn_channel_send_t * send = region->channel_send + channel;
-        if ( send->queue_head == RN_DESCRIPTOR_NONE ||
-             rn_descriptor_schedule_hole( &region->send_descriptors[send->queue_head] ) )
+        if ( send->queue_head == RN_DESCRIPTOR_NONE )
         {
             rn_channel_compact_one( channels, channel );
             continue;

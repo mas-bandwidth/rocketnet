@@ -46,7 +46,7 @@ static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
            ( descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE ||
              descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
              descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT ) &&
-           ( rn_descriptor_schedule_live( descriptor ) || rn_descriptor_schedule_hole( descriptor ) );
+           rn_descriptor_schedule_live( descriptor );
 }
 
 static uint32_t rn_unreliable_next_live( const rn_region_t * region, uint32_t after_ticket )
@@ -131,7 +131,6 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
     endpoint->packet_written = 0;
-    endpoint->unreliable_holes = 0;
 }
 
 void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
@@ -180,7 +179,6 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->unreliable_head = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_tail = RN_DESCRIPTOR_NONE;
     endpoint->unreliable_count = 0;
-    endpoint->unreliable_holes = 0;
 
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
     endpoint->written = 0;
@@ -923,107 +921,13 @@ static void rn_endpoint_unreliable_unlink( rn_endpoint_t * endpoint, uint32_t d 
 {
     rn_region_t * region = endpoint->region;
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-    const bool hole = rn_descriptor_schedule_hole( descriptor );
-    if ( hole )
-    {
-        if ( endpoint->unreliable_holes > 0 )
-            endpoint->unreliable_holes--;
-    }
-    else if ( endpoint->unreliable_count > 0 )
+    if ( endpoint->unreliable_count > 0 )
         endpoint->unreliable_count--;
 
     descriptor->enqueue_ticket = 0;
     descriptor->schedule_flags = 0;
     rn_region_send_free( region, d );
     rn_unreliable_sync( endpoint );
-}
-
-static bool rn_endpoint_unreliable_receipt( const rn_send_descriptor_t * descriptor )
-{
-    return descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT;
-}
-
-static void rn_endpoint_unreliable_rebuild( rn_endpoint_t * endpoint )
-{
-    // tla/RNChannelQueues.tla EnqueueUnreliable, StaleEpoch and Expire.
-    // One pass over the flat sequence. Drops holes and entries from another
-    // schedule epoch. Live entries keep their ticket order. schedule_work
-    // counts each sequence entry once.
-
-    rn_region_t * region = endpoint->region;
-    uint32_t after = 0;
-    uint32_t d;
-    while ( ( d = rn_unreliable_next_live( region, after ) ) != RN_DESCRIPTOR_NONE )
-    {
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        after = descriptor->enqueue_ticket;
-        endpoint->ordered.channels.schedule_work++;
-
-        if ( descriptor->queue_epoch != region->schedule_epoch )
-        {
-            if ( rn_endpoint_unreliable_receipt( descriptor ) )
-                rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial );
-
-            rn_endpoint_unreliable_unlink( endpoint, d );
-        }
-    }
-
-    for ( uint32_t hole = 0; hole < region->descriptors_fresh; hole++ )
-    {
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[hole];
-        if ( !rn_unreliable_member( descriptor ) || !rn_descriptor_schedule_hole( descriptor ) )
-            continue;
-
-        endpoint->ordered.channels.schedule_work++;
-        if ( rn_endpoint_unreliable_receipt( descriptor ) )
-            rn_window_ack_receipt_emit_loss( &endpoint->ordered.ack, descriptor->serial );
-
-        rn_endpoint_unreliable_unlink( endpoint, hole );
-    }
-
-    rn_unreliable_sync( endpoint );
-}
-
-bool rn_endpoint_cancel_unreliable( struct rn_endpoint_t * endpoint, uint32_t descriptor, uint32_t generation, uint32_t owner_epoch )
-{
-    if ( !endpoint || !endpoint->region )
-        return false;
-
-    rn_region_t * region = endpoint->region;
-    if ( region->schedule_epoch != owner_epoch || descriptor >= region->queue )
-        return false;
-
-    rn_send_descriptor_t * desc = &region->send_descriptors[descriptor];
-    if ( !desc->in_use || desc->generation != generation || desc->queue_epoch != owner_epoch )
-        return false;
-
-    if ( !rn_descriptor_schedule_live( desc ) )
-        return false;
-
-    if ( desc->reliability != ROCKETNET_RELIABILITY_UNRELIABLE &&
-         desc->reliability != ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED &&
-         desc->reliability != ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT )
-        return false;
-
-    desc->enqueue_ticket = RN_ENQUEUE_HOLE;
-    desc->schedule_flags = (uint16_t) ( desc->schedule_flags & ~RN_SCHEDULE_QUEUED );
-
-    if ( endpoint->unreliable_count > 0 )
-        endpoint->unreliable_count--;
-
-    endpoint->unreliable_holes++;
-    rn_unreliable_sync( endpoint );
-
-    if ( endpoint->unreliable_count == 0 || endpoint->unreliable_holes > RN_SCHEDULE_HOLE_BOUND )
-        rn_endpoint_unreliable_rebuild( endpoint );
-
-    return true;
-}
-
-void rn_endpoint_expire_unreliable( struct rn_endpoint_t * endpoint )
-{
-    if ( endpoint )
-        rn_endpoint_unreliable_rebuild( endpoint );
 }
 
 static void rn_endpoint_unreliable_drop_all( rn_endpoint_t * endpoint, int counter, uint32_t already_counted )
@@ -1182,9 +1086,6 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 
     while ( endpoint->write_phase == RN_ENDPOINT_WRITE_UNRELIABLE )
     {
-        if ( endpoint->unreliable_holes > 0 )
-            rn_endpoint_unreliable_rebuild( endpoint );
-
         if ( endpoint->written >= max_packets || endpoint->unreliable_count == 0 || endpoint->unreliable_head == RN_DESCRIPTOR_NONE )
         {
             endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
@@ -1585,74 +1486,4 @@ int rn_endpoint_error( const struct rn_endpoint_t * endpoint )
         return reason;
 
     return endpoint->config_error;
-}
-
-static double rn_endpoint_fifo_deadline( const rn_region_t * region, const rn_window_ack_t * ack, bool chunk, double delay )
-{
-    uint32_t cursor = rn_window_ack_resend_first( ack, chunk );
-    for ( int steps = 0; cursor != RN_RESEND_NONE; steps++ )
-    {
-        if ( steps >= 64 )
-            return 0.0;                                         // a long acked prefix: the write walks it now
-
-        const rn_send_number_t * slot = &region->send_numbers[cursor];
-        if ( !slot->acked )
-            return rn_send_number_unsent_due( slot->last_send ) ? 0.0 : slot->last_send + delay;
-
-        cursor = rn_window_ack_resend_next( ack, chunk, cursor );
-    }
-
-    return RN_ENDPOINT_NO_DEADLINE;
-}
-
-double rn_endpoint_deadline( const struct rn_endpoint_t * endpoint )
-{
-    // 10.1 "start a timer": the earliest of the resend dues (RNResendTiming
-    // Due), the reliable timeout (6.4 "Giving up"), the next receipt LOSS
-    // (RNReceipts SweepLoss); 0.0 while a message waits for its first write
-
-    const rn_ordered_t * ordered = &endpoint->ordered;
-    if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE || endpoint->unreliable_count > 0 )
-        return 0.0;
-
-    const rn_window_ack_t * ack = &ordered->ack;
-    const rn_region_t * region = endpoint->region;
-    double deadline = RN_ENDPOINT_NO_DEADLINE;
-
-    const double resend = rn_endpoint_fifo_deadline( region, ack, false, rn_window_ack_resend_delay( ack ) );
-    const double chunk = rn_endpoint_fifo_deadline( region, ack, true, rn_window_ack_chunk_resend_delay( ack ) );
-    if ( resend < deadline )
-        deadline = resend;
-    if ( chunk < deadline )
-        deadline = chunk;
-
-    if ( ack->send && ack->send->U < ack->send->next && ack->has_oldest )
-    {
-        const double timeout = ack->oldest_first_send + ack->reliable_timeout;
-        if ( timeout < deadline )
-            deadline = timeout;
-    }
-
-    // the CONFIG wait's timeout (10.3, rn_endpoint_config_tick)
-
-    if ( !ordered->config_received && endpoint->config_wait_start >= 0.0 )
-    {
-        const double config_timeout = endpoint->config_wait_start + (double) endpoint->config->reliable_message_timeout_ms / 1000.0;
-        if ( config_timeout < deadline )
-            deadline = config_timeout;
-    }
-
-    uint64_t sweep = ack->receipt_sweep < ack->pkt_head ? ack->pkt_head : ack->receipt_sweep;
-    for ( int steps = 0; sweep < ack->pkt_tail && steps < 64; steps++, sweep++ )
-    {
-        const rn_sent_packet_t * entry = &region->sent_packets[sweep % region->packets];
-        if ( entry->packet_id == 0 )
-            continue;
-        const double loss = entry->send_time + ack->resend_delay_max;   // tla/RNReceipts.tla SweepLoss: the receipt deadline
-        if ( loss < deadline )
-            deadline = loss;
-        break;
-    }
-
-    return deadline;
 }

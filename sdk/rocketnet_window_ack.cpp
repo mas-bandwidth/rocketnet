@@ -277,15 +277,6 @@ static bool rn_resend_fifo_unlink_named( rn_window_ack_t * ack, uint32_t slot, u
     return true;
 }
 
-bool rn_window_ack_cancel_resend( rn_window_ack_t * ack, uint64_t number, uint32_t generation )
-{
-    if ( !ack || !ack->region || ack->region->window == 0 )
-        return false;
-
-    const uint32_t slot = (uint32_t) ( number & ( ack->region->window - 1 ) );
-    return rn_resend_fifo_unlink_named( ack, slot, number, generation );
-}
-
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
     if ( rn_resend_fifo_is_linked( ack, slot ) )

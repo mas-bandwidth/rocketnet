@@ -24,7 +24,6 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_client_iocp.h"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-#include "rocketnet_memory_checks.h"
 #include "rocketnet_config.h"
 #include "rocketnet_network_simulator.h"
 
