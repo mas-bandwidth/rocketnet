@@ -899,6 +899,8 @@ struct rocketnet_server_t;
 /// Returns the version this library was built with. Compare it with
 /// ROCKETNET_VERSION to detect a header and library mismatch.
 /// This function works before init.
+///
+/// @return The library's ROCKETNET_VERSION value.
 
 ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 
@@ -955,6 +957,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_term( void );
 /// It works before init, and its strings last for the process.
 ///
 /// @param status The status to name.
+/// @return The status name, or "UNKNOWN". Never NULL.
 
 ROCKETNET_EXPORT const char * rocketnet_status_name( enum rocketnet_status_t status );
 
@@ -1010,6 +1013,7 @@ ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 /// Use this to format a level like the default log sink.
 ///
 /// @param level The level to name.
+/// @return The level name, or "UNKNOWN". Never NULL.
 
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
@@ -1567,6 +1571,11 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 /// Fills the light profile within config_bytes and leaves config_bytes
 /// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
 /// is too small. Use rocketnet_client_light_config to initialize a config.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config );
 
@@ -2121,6 +2130,11 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 /// Fills the light profile within config_bytes and leaves config_bytes
 /// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
 /// is too small. Use rocketnet_server_light_config to initialize a config.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config );
 
