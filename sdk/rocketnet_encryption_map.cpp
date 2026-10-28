@@ -440,29 +440,6 @@ void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t 
     (void) removed;
 }
 
-bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map )
-{
-    rocketnet_assert( map );
-
-    if ( map->next_generation == 0 )
-        return false;
-
-    for ( int i = 0; i < map->capacity; ++i )
-        if ( map->address[i].type != ROCKETNET_ADDRESS_NONE )
-            rocketnet_encryption_mapping_wipe_secrets( &map->mapping[i] );
-
-    map->num_free = map->capacity;
-
-    for ( int i = 0; i < map->capacity; ++i )
-    {
-        map->index[i] = ROCKETNET_ENCRYPTION_INDEX_EMPTY;
-        map->address[i].type = ROCKETNET_ADDRESS_NONE;
-        map->free_indices[map->capacity - 1 - i] = (uint32_t) i;
-    }
-
-    return true;
-}
-
 int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map, int * iterator )
 {
     rocketnet_assert( map );

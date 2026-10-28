@@ -1354,20 +1354,6 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
     check( rocketnet_encryption_map_find( map, &second ) == index );
     check( ( (const uint8_t *) &new_mapping->keys )[0] == 0xD4 );
 
-    check( rocketnet_encryption_map_reset( map ) );
-    check( rocketnet_encryption_map_num_mappings( map ) == 0 );
-    check( rocketnet_encryption_map_find( map, &second ) == -1 );
-    check( !rocketnet_encryption_map_test_remove_handle( map, &current ) );
-    check( secrets_wiped_all_zero( (const uint8_t *) &new_mapping->keys, sizeof( new_mapping->keys ) ) );
-    check( rocketnet_encryption_map_add( map, &first, 300.0 ) == 0 );
-
-    rn_sequence_buffer_handle_t after_reset;
-    check( rocketnet_encryption_map_test_handle( map, 0, &after_reset ) );
-    check( after_reset.owner_epoch > current.owner_epoch );
-    check( after_reset.generation == current.generation + 1 );
-    check( after_reset.owner_epoch == after_reset.generation );
-    check( after_reset.ticket == after_reset.generation );
-
     rocketnet_encryption_map_destroy( map );
 }
 

@@ -102,12 +102,6 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map );
 
-// Wipes every live mapping and reconstructs the index and free-handle
-// sequence. The full-width generation stream never restarts, so every old
-// handle stays stale. Refuses without mutation only after it is exhausted.
-
-bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map );
-
 // returns the mapping index for this address, or -1. one keyed hash, then a
 // bounded flat-index probe that validates the complete stored address.
 
