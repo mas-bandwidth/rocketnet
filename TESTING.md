@@ -8,6 +8,8 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 
 | release gate | status |
 |---|:---:|
+| Preview-3 candidate: unit and functional suites, Release, on Linux, macOS and Windows at 126ef062238c8f82a14a0a3a7ed97ba818cb2269 | ✅ |
+| Preview-3 candidate: space vendor and space soak gates on the release commit | ❌ |
 | Reviewed runtime source pin a76d641ad64768e239528cd1c6bfdf37a0caaa41 and qualification index recorded | ✅ |
 | Unit tier at the tested preview-2 heads and named platforms | ✅ |
 | Functional tier at the tested preview-2 heads and named platforms | ❌ |
@@ -17,7 +19,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Server update and send p99 at or below 100 microseconds at 1000 clients | ❌ |
 | Windows native-server LAN qualification on a provisioned 10 GbE NIC | ❌ |
 | AF_XDP live qualification identifies copy or zero-copy mode | ✅ |
-| complete | 44% |
+| complete | 45% |
 
 ## Historical preview-1 baseline: tests per platform
 

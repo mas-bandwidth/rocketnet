@@ -388,7 +388,7 @@
    :rows
    ((:feature "TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client" :cells (n n n) :note "the query itself ships as rocketnet_server_running in v1.0.0-preview-1")))
   (:id "preview-2-known-issues"
-   :title "Preview-2 known issues (deferred to preview-3)"
+   :title "Preview-2 known issues (carried into preview-3 where still open)"
    :text "Current limits accepted for the preview-2 cut. These rows describe preview-2; the historical preview-1 table below is retained only as history."
    :label "known issue"
    :columns platforms
@@ -487,5 +487,6 @@
     (:feature "Reproducible vendored sources" :cells (y n n) :evidence "Linux: ci.yml reproduces the committed sodium pair on the Linux runners; 23d4c40 sodium; f6457b5 XDP archive" :note "reproducible release dependencies as a whole are still owed")
     (:feature "An integrating application vendors the SDK and proves it (release gate)" :cells (n n n) :note "held. The ultimate soak: vendored byte for byte, the server runs under real conditions. The application loop pegs to real time with drop-frame detection, so update stays non-blocking with time passed in and bounded walks, and nothing in the transports blocks or takes unbounded time in update")
     (:feature "Supported-platform policy" :cells (n - -) :note "34406ce docs/PLATFORMS.md; 1952f918 wires tools/check_platform_policy.py in .github/workflows/ci.yml:427; tools/check_platform_policy.py exits 0 (4 supported, 9 nightly, 3 unsupported rows match); a passing CI run is owed")
+    (:feature "v1.0.0-preview-3 release candidate: shipping label, release notes and qualification record" :cells (y y y) :evidence "Linux, macOS, Windows: native Release unit and functional suites passed at 126ef062 with zero warnings in both builds; docs/QUALIFICATION-v1.0.0-preview-3.md, docs/RELEASE-NOTES-v1.0.0-preview-3.md" :note "the tag waits for the owner's review of sdk/rocketnet.h and the space vendor and soak gates at tag time")
     (:feature "Security disclosure and release process" :cells (y - -) :evidence "Linux: a document; 6795ac1 SECURITY.md, docs/RELEASING.md" :note "tools/check_release_doc.py passes by hand; no workflow runs it")
     (:feature "Independent review of the connection layer repair diff, received" :cells (n - -) :note "the repair of findings #143 to #159; a review request sent is not a review received or an approval")))))
