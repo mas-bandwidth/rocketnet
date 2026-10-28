@@ -51,30 +51,29 @@ struct base64_decode_case_t
     const char * what;      // the case, for a failing line
 };
 
-static const struct base64_decode_case_t k_decode_cases[] =
-{
-    { "",       8, "empty input" },
-    { "AAAA",   8, "valid whole group" },
-    { "AA==",   8, "valid two-pad group" },
-    { "AAA=",   8, "valid one-pad group" },
-    { "!!!!",   8, "all-invalid characters" },
-    { "AA*A",   8, "one invalid character" },
-    { "AAA",    8, "mis-padded length, not a multiple of four" },
-    { "AA=",    8, "mis-padded length, one pad and short" },
-    { "A===",   8, "too many pad characters" },
-    { "AAAA",   2, "over-long for the output buffer" },
+static const struct base64_decode_case_t k_decode_cases[] = {
+    { "", 8, "empty input" },
+    { "AAAA", 8, "valid whole group" },
+    { "AA==", 8, "valid two-pad group" },
+    { "AAA=", 8, "valid one-pad group" },
+    { "!!!!", 8, "all-invalid characters" },
+    { "AA*A", 8, "one invalid character" },
+    { "AAA", 8, "mis-padded length, not a multiple of four" },
+    { "AA=", 8, "mis-padded length, one pad and short" },
+    { "A===", 8, "too many pad characters" },
+    { "AAAA", 2, "over-long for the output buffer" },
 };
 
 static void test_base64_decode_data_never_returns_negative()
 {
-    const int count = (int) ( sizeof(k_decode_cases) / sizeof(k_decode_cases[0]) );
+    const int count = (int) ( sizeof( k_decode_cases ) / sizeof( k_decode_cases[0] ) );
     for ( int i = 0; i < count; ++i )
     {
         uint8_t output[16];
-        memset( output, 0xEE, sizeof(output) );
+        memset( output, 0xEE, sizeof( output ) );
         const int result = rocketnet_base64_decode_data( k_decode_cases[i].input,
-                                                          output,
-                                                          k_decode_cases[i].output_size );
+                                                         output,
+                                                         k_decode_cases[i].output_size );
         if ( result < 0 )
         {
             printf( "base64 decode case %d (%s) returned %d, negative\n",
@@ -86,13 +85,40 @@ static void test_base64_decode_data_never_returns_negative()
 }
 
 // ---------------------------------------------------------------------------
+// rocketnet_base64_encode_data refuses an encoded length over INT_MAX.
+//
+// The return is an int, so an encoded length above INT_MAX cannot be
+// returned whole. 3 * 2^29 input bytes encode to exactly 2^31 characters,
+// INT_MAX + 1. The test cannot allocate 2 GB, so it relies on the refusal
+// touching nothing: the input and output are 16 bytes each and output_size
+// claims SIZE_MAX, so a guard that reads or writes a byte walks off both
+// buffers. At head it returns -1 with the output untouched.
+// ---------------------------------------------------------------------------
+
+static void test_base64_encode_refuses_length_over_int_max()
+{
+    uint8_t input[16];
+    memset( input, 0x5A, sizeof( input ) );
+    char output[16];
+    memset( output, 0x7E, sizeof( output ) );
+
+    const size_t input_length = (size_t) 3 * ( (size_t) 1 << 29 );     // encodes to 2^31 characters
+
+    const int result = rocketnet_base64_encode_data( input, input_length, output, SIZE_MAX );
+
+    rocketnet_unit_check( result == -1 );
+    rocketnet_unit_check( output[0] == 0x7E );
+    rocketnet_unit_check( output[15] == 0x7E );
+}
+
+// ---------------------------------------------------------------------------
 // the longest bracketed IPv6 address with a port fits the buffer.
 // ---------------------------------------------------------------------------
 
 static void test_address_ipv6_with_port_fits_the_buffer()
 {
     struct rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     address.type = ROCKETNET_ADDRESS_IPV6;
     for ( int i = 0; i < 8; ++i )
         address.data.ipv6[i] = 0xFFFF;
@@ -130,7 +156,7 @@ static void test_address_load_ipv4_round_trips()
     memcpy( &port_big_endian, port_bytes, 2 );
 
     struct rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     rocketnet_address_load_ipv4( &address, ipv4, port_big_endian );
 
     rocketnet_unit_check( address.type == ROCKETNET_ADDRESS_IPV4 );
@@ -145,7 +171,7 @@ static void test_address_load_ipv4_round_trips()
     rocketnet_unit_check( rocketnet_address_equal( &address, &parsed ) );
 
     const uint32_t round_trip = rocketnet_address_ipv4( &address );
-    const uint8_t * round_trip_bytes = (const uint8_t*) &round_trip;
+    const uint8_t * round_trip_bytes = (const uint8_t *) &round_trip;
     rocketnet_unit_check( round_trip_bytes[0] == 203 );
     rocketnet_unit_check( round_trip_bytes[1] == 0 );
     rocketnet_unit_check( round_trip_bytes[2] == 113 );
@@ -175,10 +201,162 @@ static void test_address_to_string_without_port_each_type()
     rocketnet_unit_check( strcmp( ipv6_text, "2001:db8::1" ) == 0 );
 
     struct rocketnet_address_t none;
-    memset( &none, 0, sizeof(none) );
+    memset( &none, 0, sizeof( none ) );
     const char * none_text = rocketnet_address_to_string_without_port( &none, buffer );
     rocketnet_unit_check( none_text == buffer );
     rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
+}
+
+// ---------------------------------------------------------------------------
+// rocketnet_address_to_string and rocketnet_address_to_string_without_port
+// render every address form exactly: IPv4 and IPv6 with and without a port,
+// the longest forms, an IPv4-mapped IPv6 address, and NONE (with and without
+// a port). These strings are pinned so that folding the two functions onto
+// one formatting helper changes no output.
+// ---------------------------------------------------------------------------
+
+struct address_to_string_case_t
+{
+    const char * input;             // parsed text, or NULL for a zeroed NONE address
+    uint16_t none_port;             // the port set on the NONE address
+    const char * with_port;         // expected rocketnet_address_to_string
+    const char * without_port;      // expected rocketnet_address_to_string_without_port
+};
+
+static const struct address_to_string_case_t k_address_to_string_cases[] = {
+    { "203.0.113.10:40000", 0, "203.0.113.10:40000", "203.0.113.10" },
+    { "203.0.113.10", 0, "203.0.113.10", "203.0.113.10" },
+    { "255.255.255.255:65535", 0, "255.255.255.255:65535", "255.255.255.255" },
+    { "0.0.0.0:1", 0, "0.0.0.0:1", "0.0.0.0" },
+    { "[2001:db8::1]:40000", 0, "[2001:db8::1]:40000", "2001:db8::1" },
+    { "2001:db8::1", 0, "2001:db8::1", "2001:db8::1" },
+    { "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", 0, "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 0, "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "[::ffff:192.0.2.1]:40000", 0, "[::ffff:192.0.2.1]:40000", "::ffff:192.0.2.1" },
+    { "::ffff:192.0.2.1", 0, "::ffff:192.0.2.1", "::ffff:192.0.2.1" },
+    { "[::1]:1", 0, "[::1]:1", "::1" },
+    { NULL, 0, "NONE", "NONE" },
+    { NULL, 40000, "NONE", "NONE" },
+};
+
+static void test_address_to_string_forms_pinned()
+{
+    const int count = (int) ( sizeof( k_address_to_string_cases ) / sizeof( k_address_to_string_cases[0] ) );
+    for ( int i = 0; i < count; ++i )
+    {
+        const struct address_to_string_case_t & c = k_address_to_string_cases[i];
+
+        struct rocketnet_address_t address;
+        memset( &address, 0, sizeof( address ) );
+        if ( c.input )
+        {
+            rocketnet_unit_check( rocketnet_address_parse( &address, c.input ) );
+        }
+        else
+        {
+            address.port = c.none_port;
+        }
+
+        char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+
+        memset( buffer, 'x', sizeof( buffer ) );
+        const char * with_port = rocketnet_address_to_string( &address, buffer );
+        if ( with_port != buffer || strcmp( with_port, c.with_port ) != 0 )
+        {
+            printf( "address case %d to_string was \"%s\", expected \"%s\"\n", i, with_port, c.with_port );
+            fflush( stdout );
+        }
+        rocketnet_unit_check( with_port == buffer );
+        rocketnet_unit_check( strcmp( with_port, c.with_port ) == 0 );
+
+        memset( buffer, 'x', sizeof( buffer ) );
+        const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
+        if ( without_port != buffer || strcmp( without_port, c.without_port ) != 0 )
+        {
+            printf( "address case %d to_string_without_port was \"%s\", expected \"%s\"\n", i, without_port, c.without_port );
+            fflush( stdout );
+        }
+        rocketnet_unit_check( without_port == buffer );
+        rocketnet_unit_check( strcmp( without_port, c.without_port ) == 0 );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// rocketnet_address_anonymize touches only the data of the type it names: a
+// NONE address keeps every data byte and loses only its port, while IPv4,
+// mapped IPv6 and plain IPv6 are cut exactly as before.
+// ---------------------------------------------------------------------------
+
+static void test_address_anonymize_leaves_other_types_untouched()
+{
+    struct rocketnet_address_t none;
+    memset( &none, 0, sizeof( none ) );
+    none.type = ROCKETNET_ADDRESS_NONE;
+    memset( &none.data, 0xA5, sizeof( none.data ) );
+    none.port = 7;
+    rocketnet_address_anonymize( &none );
+    const uint8_t * none_bytes = (const uint8_t *) &none.data;
+    for ( size_t i = 0; i < sizeof( none.data ); ++i )
+    {
+        if ( none_bytes[i] != 0xA5 )
+        {
+            printf( "anonymized NONE address data byte %d was 0x%02x, expected 0xa5\n", (int) i, none_bytes[i] );
+            fflush( stdout );
+        }
+        rocketnet_unit_check( none_bytes[i] == 0xA5 );
+    }
+    rocketnet_unit_check( none.port == 0 );
+    rocketnet_unit_check( none.type == ROCKETNET_ADDRESS_NONE );
+
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+
+    struct rocketnet_address_t ipv4;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv4, "203.0.113.10:40000" ) );
+    rocketnet_address_anonymize( &ipv4 );
+    rocketnet_unit_check( strcmp( rocketnet_address_to_string( &ipv4, buffer ), "203.0.113.0" ) == 0 );
+
+    struct rocketnet_address_t mapped;
+    rocketnet_unit_check( rocketnet_address_parse( &mapped, "[::ffff:203.0.113.10]:40000" ) );
+    rocketnet_address_anonymize( &mapped );
+    rocketnet_unit_check( mapped.type == ROCKETNET_ADDRESS_IPV6 );
+    rocketnet_unit_check( mapped.data.ipv6[5] == 0xFFFF );
+    rocketnet_unit_check( mapped.data.ipv6[6] == 0xCB00 );
+    rocketnet_unit_check( mapped.data.ipv6[7] == 0x7100 );
+    rocketnet_unit_check( mapped.port == 0 );
+
+    struct rocketnet_address_t ipv6;
+    rocketnet_unit_check( rocketnet_address_parse( &ipv6, "[2001:db8:1:2:3:4:5:6]:40000" ) );
+    rocketnet_address_anonymize( &ipv6 );
+    rocketnet_unit_check( strcmp( rocketnet_address_to_string( &ipv6, buffer ), "2001:db8:1:2::" ) == 0 );
+}
+
+// ---------------------------------------------------------------------------
+// the widest IPv4 text, with and without its port, comes back whole from
+// rocketnet_address_to_string and rocketnet_address_to_string_without_port.
+// ---------------------------------------------------------------------------
+
+static void test_address_to_string_ipv4_widest_is_complete()
+{
+    struct rocketnet_address_t address;
+    rocketnet_unit_check( rocketnet_address_parse( &address, "255.255.255.255:65535" ) );
+
+    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    const char * with_port = rocketnet_address_to_string( &address, buffer );
+    if ( strcmp( with_port, "255.255.255.255:65535" ) != 0 )
+    {
+        printf( "widest ipv4 rendering was \"%s\", expected \"255.255.255.255:65535\"\n", with_port );
+        fflush( stdout );
+    }
+    rocketnet_unit_check( with_port == buffer );
+    rocketnet_unit_check( strcmp( with_port, "255.255.255.255:65535" ) == 0 );
+
+    const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
+    rocketnet_unit_check( without_port == buffer );
+    rocketnet_unit_check( strcmp( without_port, "255.255.255.255" ) == 0 );
+
+    address.port = 0;
+    const char * zero_port = rocketnet_address_to_string( &address, buffer );
+    rocketnet_unit_check( strcmp( zero_port, "255.255.255.255" ) == 0 );
 }
 
 // ---------------------------------------------------------------------------
@@ -204,10 +382,14 @@ static void test_wycheproof_files_load_and_count()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
-        if ( tests[i].result == "valid" ) chacha_valid++;
-        else if ( tests[i].result == "invalid" ) chacha_invalid++;
-        else if ( tests[i].result == "acceptable" ) chacha_acceptable++;
-        else rocketnet_unit_check( 0 );
+        if ( tests[i].result == "valid" )
+            chacha_valid++;
+        else if ( tests[i].result == "invalid" )
+            chacha_invalid++;
+        else if ( tests[i].result == "acceptable" )
+            chacha_acceptable++;
+        else
+            rocketnet_unit_check( 0 );
         std::vector<uint8_t> bytes;
         for ( int f = 0; f < 6; f++ )
         {
@@ -227,10 +409,14 @@ static void test_wycheproof_files_load_and_count()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
-        if ( tests[i].result == "valid" ) x25519_valid++;
-        else if ( tests[i].result == "invalid" ) x25519_invalid++;
-        else if ( tests[i].result == "acceptable" ) x25519_acceptable++;
-        else rocketnet_unit_check( 0 );
+        if ( tests[i].result == "valid" )
+            x25519_valid++;
+        else if ( tests[i].result == "invalid" )
+            x25519_invalid++;
+        else if ( tests[i].result == "acceptable" )
+            x25519_acceptable++;
+        else
+            rocketnet_unit_check( 0 );
         std::vector<uint8_t> bytes;
         for ( int f = 0; f < 3; f++ )
         {
@@ -250,10 +436,14 @@ static void test_wycheproof_files_load_and_count()
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
-        if ( tests[i].result == "valid" ) ed25519_valid++;
-        else if ( tests[i].result == "invalid" ) ed25519_invalid++;
-        else if ( tests[i].result == "acceptable" ) ed25519_acceptable++;
-        else rocketnet_unit_check( 0 );
+        if ( tests[i].result == "valid" )
+            ed25519_valid++;
+        else if ( tests[i].result == "invalid" )
+            ed25519_invalid++;
+        else if ( tests[i].result == "acceptable" )
+            ed25519_acceptable++;
+        else
+            rocketnet_unit_check( 0 );
         std::vector<uint8_t> bytes;
         std::map<std::string, std::string>::const_iterator msg = tests[i].fields.find( "msg" );
         std::map<std::string, std::string>::const_iterator sig = tests[i].fields.find( "sig" );
@@ -294,8 +484,12 @@ static void test_wycheproof_reader_refuses_malformed_json()
 }
 
 REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
+REGISTER_UNIT_TEST( test_base64_encode_refuses_length_over_int_max );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
 REGISTER_UNIT_TEST( test_address_load_ipv4_round_trips );
 REGISTER_UNIT_TEST( test_address_to_string_without_port_each_type );
+REGISTER_UNIT_TEST( test_address_to_string_forms_pinned );
+REGISTER_UNIT_TEST( test_address_anonymize_leaves_other_types_untouched );
+REGISTER_UNIT_TEST( test_address_to_string_ipv4_widest_is_complete );
 REGISTER_UNIT_TEST( test_wycheproof_files_load_and_count );
 REGISTER_UNIT_TEST( test_wycheproof_reader_refuses_malformed_json );

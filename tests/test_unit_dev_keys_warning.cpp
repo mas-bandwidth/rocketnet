@@ -14,7 +14,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
 #include "fake_client_driver.h"
+#endif // #if ROCKETNET_DEV
 
 #include "rocketnet.h"
 #include "rocketnet_client_io.h"
@@ -75,10 +77,11 @@ static void stop_capture()
 
 // A connect token whose signed server key is the given 32 bytes. The client
 // reads the signed fields at connect, so the signed data is enough.
+#if ROCKETNET_DEV
 static void token_with_server_key( uint8_t * token, const uint8_t * server_key )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     signed_fields.create_timestamp = 1;
@@ -122,30 +125,13 @@ static void client_create_and_expect_warn( const uint8_t * server_key, int expec
     check( fake->destroy_calls == 1 );
     delete fake;
 }
-
-static int test_set_environment( const char * name, const char * value )
-{
-#if defined( _WIN32 )
-    return _putenv_s( name, value );
-#else
-    return setenv( name, value, 1 );
-#endif
-}
-
-static int test_unset_environment( const char * name )
-{
-#if defined( _WIN32 )
-    return _putenv_s( name, "" );
-#else
-    return unsetenv( name );
-#endif
-}
+#endif // #if ROCKETNET_DEV
 
 static void dev_warning_server_config( rocketnet_server_transport_config_t * config )
 {
     rocketnet_server_transport_dev_config( config );
     config->max_clients = ROCKETNET_MAX_CLIENTS;
-    snprintf( config->transport, sizeof(config->transport), "%s", "loopback" );
+    snprintf( config->transport, sizeof( config->transport ), "%s", "loopback" );
 }
 
 // Development creates a full-capacity server before checking the warning.
@@ -203,26 +189,12 @@ static void test_dev_keys_warn_on_every_start()
 #endif
     }
 
-    // the server, production keys: no warning line. The ladder is forced to
-    // exhaust on the operator memory budget, so no socket opens.
-    {
-        struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_default_config( &config );
-        memset( config.backend_public_key, 0x42, 32 );
-        memset( config.server_public_key, 0x43, 32 );
-        memset( config.server_secret_key, 0x44, 32 );
-        config.protocol_id = 1;
-        check( test_set_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "1" ) == 0 );
-        int status = -1;
-        start_capture();
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
-        stop_capture();
-        check( srv == NULL );
-        check( status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
-        check( g_dev_warn_lines == 0 );
-        check( test_unset_environment( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" ) == 0 );
-    }
+    // The remaining checks use development-only caller-step scaffolding; the
+    // production build retains the refusal above.
+    // The real environment budget/no-warning scenario runs in
+    // test_platform_primitives against the selected normal library.
 
+#if ROCKETNET_DEV
     // the client can tell from its token's server key: a development key warns
     {
         uint8_t dev_key[ROCKETNET_KEY_BYTES];
@@ -236,6 +208,7 @@ static void test_dev_keys_warn_on_every_start()
         memset( prod_key, 0x52, ROCKETNET_KEY_BYTES );
         client_create_and_expect_warn( prod_key, 0 );
     }
+#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_dev_keys_warn_on_every_start );

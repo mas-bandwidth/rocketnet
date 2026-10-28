@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Check the examples against the house rules.
 
-Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the published
-development keys as data) and the C standard headers below, and may name only rocketnet_ identifiers that sdk/rocketnet.h declares.
+Each examples/*.c may include only "rocketnet.h", "dev_keys.h" (the examples'
+protocol id and packet filter), "shutdown.h" (the command-line wait for
+shutdown) and the C standard headers below, and may name only rocketnet_
+identifiers that sdk/rocketnet.h declares.
 Prints one OK line per source; exits 1 naming file:line for a refusal.
 """
 
@@ -25,7 +27,13 @@ ALLOWED_HEADERS = {
     "stdint.h",
     "stdbool.h",
     "inttypes.h",
-    "time.h",       # a development token is stamped now, as a backend stamps it
+}
+
+# examples/soak.c is a load harness, not a one-feature example: its allocator
+# telemetry takes a native lock across callback threads and, on Linux, maps its
+# arena, so it may also include these platform headers (and only it may)
+HARNESS_HEADERS = {
+    "soak.c": {"windows.h", "pthread.h", "sys/mman.h"},
 }
 
 INCLUDE = re.compile(r'^\s*#\s*include\s*([<"])([^>"]+)[>"]', re.M)
@@ -73,7 +81,7 @@ def main():
 
         for match in includes:
             name = match.group(2)
-            if name not in ALLOWED_HEADERS:
+            if name not in ALLOWED_HEADERS and name not in HARNESS_HEADERS.get(source_path.name, set()):
                 print(f'{rel}:{line_of(source, match.start())}: #include "{name}" is not allowed', file=sys.stderr)
                 source_failed = True
 

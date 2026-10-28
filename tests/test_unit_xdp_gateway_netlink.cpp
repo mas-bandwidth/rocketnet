@@ -62,7 +62,7 @@ struct netlink_datagram_t
 
 static void netlink_append( netlink_datagram_t * datagram, const void * data, size_t bytes )
 {
-    const uint8_t * p = (const uint8_t*) data;
+    const uint8_t * p = (const uint8_t *) data;
     datagram->bytes.insert( datagram->bytes.end(), p, p + bytes );
 }
 
@@ -78,19 +78,19 @@ static size_t netlink_begin( netlink_datagram_t * datagram, uint16_t type, uint1
 {
     const size_t start = datagram->bytes.size();
     struct nlmsghdr header;
-    memset( &header, 0, sizeof(header) );
+    memset( &header, 0, sizeof( header ) );
     header.nlmsg_type = type;
     header.nlmsg_flags = flags;
     header.nlmsg_seq = sequence;
     header.nlmsg_pid = port_id;
-    netlink_append( datagram, &header, sizeof(header) );
+    netlink_append( datagram, &header, sizeof( header ) );
     return start;
 }
 
 static void netlink_end( netlink_datagram_t * datagram, size_t start )
 {
     const uint32_t length = (uint32_t) ( datagram->bytes.size() - start );
-    memcpy( datagram->bytes.data() + start, &length, sizeof(length) );
+    memcpy( datagram->bytes.data() + start, &length, sizeof( length ) );
     netlink_pad( datagram );
 }
 
@@ -99,14 +99,14 @@ static void netlink_attribute( netlink_datagram_t * datagram, uint16_t type, con
     struct rtattr attribute;
     attribute.rta_len = (unsigned short) RTA_LENGTH( bytes );
     attribute.rta_type = type;
-    netlink_append( datagram, &attribute, sizeof(attribute) );
+    netlink_append( datagram, &attribute, sizeof( attribute ) );
     netlink_append( datagram, data, bytes );
     netlink_pad( datagram );
 }
 
 static void netlink_attribute_u32( netlink_datagram_t * datagram, uint16_t type, uint32_t value )
 {
-    netlink_attribute( datagram, type, &value, sizeof(value) );
+    netlink_attribute( datagram, type, &value, sizeof( value ) );
 }
 
 // one route as the kernel dumps it: an rtmsg and RTA_TABLE, RTA_DST when
@@ -137,15 +137,16 @@ static void netlink_route( netlink_datagram_t * datagram, const netlink_route_t 
 {
     const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI, route.sequence, route.port_id );
     struct rtmsg message;
-    memset( &message, 0, sizeof(message) );
+    memset( &message, 0, sizeof( message ) );
     message.rtm_family = (unsigned char) route.family;
     message.rtm_dst_len = route.destination_length;
-    message.rtm_table = (unsigned char) ( route.rtm_table >= 0 ? (uint32_t) route.rtm_table : route.table < 256 ? route.table : (uint32_t) RT_TABLE_COMPAT );
+    message.rtm_table = (unsigned char) ( route.rtm_table >= 0 ? (uint32_t) route.rtm_table : route.table < 256 ? route.table
+                                                                                                                : (uint32_t) RT_TABLE_COMPAT );
     message.rtm_protocol = RTPROT_BOOT;
     message.rtm_scope = RT_SCOPE_UNIVERSE;
     message.rtm_type = route.type;
     message.rtm_flags = route.flags;
-    netlink_append( datagram, &message, sizeof(message) );
+    netlink_append( datagram, &message, sizeof( message ) );
     netlink_attribute_u32( datagram, RTA_TABLE, route.table );
     if ( route.destination )
         netlink_attribute( datagram, RTA_DST, route.destination, netlink_address_bytes( route.family ) );
@@ -172,12 +173,12 @@ static void netlink_neighbor( netlink_datagram_t * datagram, const netlink_neigh
 {
     const size_t start = netlink_begin( datagram, RTM_NEWNEIGH, NLM_F_MULTI );
     struct ndmsg message;
-    memset( &message, 0, sizeof(message) );
+    memset( &message, 0, sizeof( message ) );
     message.ndm_family = (unsigned char) neighbor.family;
     message.ndm_ifindex = neighbor.interface_index;
     message.ndm_state = neighbor.state;
     message.ndm_type = RTN_UNICAST;
-    netlink_append( datagram, &message, sizeof(message) );
+    netlink_append( datagram, &message, sizeof( message ) );
     if ( neighbor.destination )
         netlink_attribute( datagram, NDA_DST, neighbor.destination, netlink_address_bytes( neighbor.family ) );
     if ( neighbor.lladdr )
@@ -190,7 +191,7 @@ static void netlink_neighbor( netlink_datagram_t * datagram, const netlink_neigh
 static void netlink_done( netlink_datagram_t * datagram, int code = 0, uint32_t sequence = netlink_sequence, uint32_t port_id = netlink_port_id )
 {
     const size_t start = netlink_begin( datagram, NLMSG_DONE, NLM_F_MULTI, sequence, port_id );
-    netlink_append( datagram, &code, sizeof(code) );
+    netlink_append( datagram, &code, sizeof( code ) );
     netlink_end( datagram, start );
 }
 
@@ -198,9 +199,9 @@ static void netlink_error( netlink_datagram_t * datagram, int code )
 {
     const size_t start = netlink_begin( datagram, NLMSG_ERROR, 0 );
     struct nlmsgerr error;
-    memset( &error, 0, sizeof(error) );
+    memset( &error, 0, sizeof( error ) );
     error.error = code;
-    netlink_append( datagram, &error, sizeof(error) );
+    netlink_append( datagram, &error, sizeof( error ) );
     netlink_end( datagram, start );
 }
 
@@ -420,18 +421,19 @@ static void test_xdp_transport_gateway_netlink_only_the_main_unicast_default_rou
     }
 }
 
-// an IPv4 multipath default route answers with its first next hop's
-// interface and gateway, as /proc/net/route (netstat -rn) listed it
+// a multipath default route: two next hops, each an rtnexthop plus an
+// RTA_GATEWAY of the family's address size
 
-static void netlink_multipath_route( netlink_datagram_t * datagram, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
+static void netlink_multipath_route( netlink_datagram_t * datagram, int family, int first_interface, const uint8_t * first_gateway, int second_interface, const uint8_t * second_gateway )
 {
+    const size_t address_bytes = family == AF_INET ? 4 : 16;
     const size_t start = netlink_begin( datagram, RTM_NEWROUTE, NLM_F_MULTI );
     struct rtmsg message;
-    memset( &message, 0, sizeof(message) );
-    message.rtm_family = AF_INET;
+    memset( &message, 0, sizeof( message ) );
+    message.rtm_family = (unsigned char) family;
     message.rtm_table = RT_TABLE_MAIN;
     message.rtm_type = RTN_UNICAST;
-    netlink_append( datagram, &message, sizeof(message) );
+    netlink_append( datagram, &message, sizeof( message ) );
     netlink_attribute_u32( datagram, RTA_TABLE, RT_TABLE_MAIN );
 
     std::vector<uint8_t> hops;
@@ -440,17 +442,17 @@ static void netlink_multipath_route( netlink_datagram_t * datagram, int first_in
     for ( int i = 0; i < 2; i++ )
     {
         struct rtnexthop hop;
-        memset( &hop, 0, sizeof(hop) );
-        hop.rtnh_len = (unsigned short) ( sizeof(hop) + RTA_LENGTH( 4 ) );
+        memset( &hop, 0, sizeof( hop ) );
+        hop.rtnh_len = (unsigned short) ( sizeof( hop ) + RTA_LENGTH( address_bytes ) );
         hop.rtnh_ifindex = interfaces[i];
-        const uint8_t * h = (const uint8_t*) &hop;
-        hops.insert( hops.end(), h, h + sizeof(hop) );
+        const uint8_t * h = (const uint8_t *) &hop;
+        hops.insert( hops.end(), h, h + sizeof( hop ) );
         struct rtattr attribute;
-        attribute.rta_len = (unsigned short) RTA_LENGTH( 4 );
+        attribute.rta_len = (unsigned short) RTA_LENGTH( address_bytes );
         attribute.rta_type = RTA_GATEWAY;
-        const uint8_t * a = (const uint8_t*) &attribute;
-        hops.insert( hops.end(), a, a + sizeof(attribute) );
-        hops.insert( hops.end(), gateways[i], gateways[i] + 4 );
+        const uint8_t * a = (const uint8_t *) &attribute;
+        hops.insert( hops.end(), a, a + sizeof( attribute ) );
+        hops.insert( hops.end(), gateways[i], gateways[i] + address_bytes );
     }
     netlink_attribute( datagram, RTA_MULTIPATH, hops.data(), hops.size() );
     netlink_end( datagram, start );
@@ -462,17 +464,40 @@ static void test_xdp_transport_gateway_netlink_ipv4_multipath_first_next_hop()
     int error = -1;
 
     netlink_datagram_t ours;
-    netlink_multipath_route( &ours, server_interface, gateway_ipv4, other_interface, gateway_ipv4_other );
+    netlink_multipath_route( &ours, AF_INET, server_interface, gateway_ipv4, other_interface, gateway_ipv4_other );
     netlink_done( &ours );
     check( parse_route( ours, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
     check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 
-    // this interface only as the second next hop: not its default route
+    // this interface as the second next hop: that hop is the route
 
     netlink_datagram_t second;
-    netlink_multipath_route( &second, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
+    netlink_multipath_route( &second, AF_INET, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
     netlink_done( &second );
-    check( parse_route( second, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_DONE );
+    check( parse_route( second, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv6_multipath_found()
+{
+    uint8_t gateway[16];
+    int error = -1;
+    netlink_datagram_t datagram;
+    netlink_multipath_route( &datagram, AF_INET6, other_interface, gateway_ipv6_other, server_interface, gateway_ipv6 );
+    netlink_done( &datagram );
+    check( parse_route( datagram, AF_INET6, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv6, 16 ) == 0 );
+}
+
+static void test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop()
+{
+    uint8_t gateway[16];
+    int error = -1;
+    netlink_datagram_t datagram;
+    netlink_multipath_route( &datagram, AF_INET, other_interface, gateway_ipv4_other, server_interface, gateway_ipv4 );
+    netlink_done( &datagram );
+    check( parse_route( datagram, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_FOUND );
+    check( memcmp( gateway, gateway_ipv4, 4 ) == 0 );
 }
 
 // a gateway attribute that is not the family's address size refuses
@@ -647,11 +672,11 @@ static void test_xdp_transport_gateway_netlink_neighbor_other_family()
         netlink_datagram_t datagram;
         const size_t start = netlink_begin( &datagram, RTM_NEWNEIGH, NLM_F_MULTI );
         struct ndmsg message;
-        memset( &message, 0, sizeof(message) );
+        memset( &message, 0, sizeof( message ) );
         message.ndm_family = (unsigned char) ( family == AF_INET ? AF_INET6 : AF_INET );
         message.ndm_ifindex = server_interface;
         message.ndm_state = NUD_REACHABLE;
-        netlink_append( &datagram, &message, sizeof(message) );
+        netlink_append( &datagram, &message, sizeof( message ) );
         netlink_attribute( &datagram, NDA_DST, gateway, netlink_address_bytes( family ) );
         netlink_attribute( &datagram, NDA_LLADDR, other_mac, 6 );
         netlink_end( &datagram, start );
@@ -695,16 +720,16 @@ static void test_xdp_transport_gateway_netlink_truncated_message()
 
     netlink_datagram_t longer = whole;
     uint32_t length;
-    memcpy( &length, longer.bytes.data(), sizeof(length) );
+    memcpy( &length, longer.bytes.data(), sizeof( length ) );
     length += 4;
-    memcpy( longer.bytes.data(), &length, sizeof(length) );
+    memcpy( longer.bytes.data(), &length, sizeof( length ) );
     check( parse_route( longer, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
 
     // a length shorter than the header itself
 
     netlink_datagram_t shorter = whole;
-    length = sizeof(struct nlmsghdr) - 1;
-    memcpy( shorter.bytes.data(), &length, sizeof(length) );
+    length = sizeof( struct nlmsghdr ) - 1;
+    memcpy( shorter.bytes.data(), &length, sizeof( length ) );
     check( parse_route( shorter, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
 
     // a message with no room for its rtmsg
@@ -726,17 +751,17 @@ static void test_xdp_transport_gateway_netlink_attribute_past_the_end()
     // the gateway attribute is the second of three (RTA_TABLE, RTA_GATEWAY,
     // RTA_OIF): its rta_len sits 8 bytes after the end of RTA_TABLE
 
-    const size_t gateway_attribute = NLMSG_HDRLEN + NLMSG_ALIGN( sizeof(struct rtmsg) ) + RTA_LENGTH( 4 );
+    const size_t gateway_attribute = NLMSG_HDRLEN + NLMSG_ALIGN( sizeof( struct rtmsg ) ) + RTA_LENGTH( 4 );
 
     netlink_datagram_t past = default_route_datagram();
     netlink_done( &past );
     const unsigned short too_long = 200;
-    memcpy( past.bytes.data() + gateway_attribute, &too_long, sizeof(too_long) );
+    memcpy( past.bytes.data() + gateway_attribute, &too_long, sizeof( too_long ) );
     check( parse_route( past, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
 
     netlink_datagram_t tiny = default_route_datagram();
     const unsigned short too_short = 2;
-    memcpy( tiny.bytes.data() + gateway_attribute, &too_short, sizeof(too_short) );
+    memcpy( tiny.bytes.data() + gateway_attribute, &too_short, sizeof( too_short ) );
     check( parse_route( tiny, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
 
     // the same in a neighbour reply: the NDA_LLADDR length past the end
@@ -746,8 +771,8 @@ static void test_xdp_transport_gateway_netlink_attribute_past_the_end()
     neighbor.destination = gateway_ipv4;
     neighbor.lladdr = gateway_mac;
     netlink_neighbor( &neighbor_past, neighbor );
-    const size_t lladdr_attribute = NLMSG_HDRLEN + NLMSG_ALIGN( sizeof(struct ndmsg) ) + RTA_LENGTH( 4 );
-    memcpy( neighbor_past.bytes.data() + lladdr_attribute, &too_long, sizeof(too_long) );
+    const size_t lladdr_attribute = NLMSG_HDRLEN + NLMSG_ALIGN( sizeof( struct ndmsg ) ) + RTA_LENGTH( 4 );
+    memcpy( neighbor_past.bytes.data() + lladdr_attribute, &too_long, sizeof( too_long ) );
     uint8_t mac[6];
     check( parse_neighbor( neighbor_past, AF_INET, gateway_ipv4, mac, &error ) == ROCKETNET_GATEWAY_NETLINK_MALFORMED );
 }
@@ -795,9 +820,9 @@ static void test_xdp_transport_gateway_netlink_error_message()
 
     netlink_datagram_t interrupted = default_route_datagram();
     struct nlmsghdr header;
-    memcpy( &header, interrupted.bytes.data(), sizeof(header) );
+    memcpy( &header, interrupted.bytes.data(), sizeof( header ) );
     header.nlmsg_flags = (uint16_t) ( header.nlmsg_flags | NLM_F_DUMP_INTR );
-    memcpy( interrupted.bytes.data(), &header, sizeof(header) );
+    memcpy( interrupted.bytes.data(), &header, sizeof( header ) );
     check( parse_route( interrupted, AF_INET, gateway, &error ) == ROCKETNET_GATEWAY_NETLINK_ERROR );
     check( error == EINTR );
 }
@@ -870,6 +895,8 @@ REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_default_route_not_on
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_no_default_route );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_only_the_main_unicast_default_route_wins );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_multipath_first_next_hop );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv6_multipath_found );
+REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_ipv4_multipath_later_next_hop );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_gateway_wrong_size_refuses );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_lladdr_found );
 REGISTER_UNIT_TEST( test_xdp_transport_gateway_netlink_neighbor_wrong_interface );

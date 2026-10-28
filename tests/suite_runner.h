@@ -8,19 +8,30 @@
     "*** ALL TESTS PASSED ***". A failing test prints its own output (its
     check line) and the suite exits 1 at once. A test over 120s is killed and
     fails. The functional runner keeps 120s in every build; the unit runner
-    scales it for Debug, sanitizer or emulated builds (tests/time_scale.h). A
-    test whose peak resident set (wait4 ru_maxrss on POSIX,
+    scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
+    ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
+    a suite passes in; the nightly macOS TSAN functional runs set 30, a
+    one-hour case limit, and every other run leaves it unset. A
+    functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
     a sanitizer build does not enforce it unless the variable sets one). A case
     whose subject is a full-capacity server declares its own bound with
-    SUITE_CASE_RSS_BOUND. Every registered name is test_ lowercase snake_case,
+    SUITE_CASE_RSS_BOUND. A case process that counts the SDK's bytes reports
+    its own bound, its plan's peak plus a fixed slack (tests/plan_rss.h), and
+    is held to that instead. Every registered name is test_ lowercase snake_case,
     or the suite fails before running anything. ROCKETNET_TEST_REPORT=1 prints
     the slowest cases and the peak resident sets after the results.
+    ROCKETNET_TEST_NIGHTLY=1 adds the nightly tier: the cases group_of marks
+    with SUITE_GROUP_NIGHTLY, which a per-commit run leaves out.
 */
 
 #pragma once
 
+#ifndef ROCKETNET_TESTS_SUITE_RUNNER_H
+#define ROCKETNET_TESTS_SUITE_RUNNER_H
+
+#include "plan_rss.h"
 #include "portable_crt.h"
 #include "time_scale.h"
 #include "rocketnet.h"                      // ROCKETNET_MAX_CLIENTS
@@ -35,11 +46,11 @@
 #include <thread>
 #include <vector>
 
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
 #include <mach-o/dyld.h>
 #endif
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -55,14 +66,15 @@
 #include <sys/wait.h>
 #include <fcntl.h>
 #include <unistd.h>
-extern char **environ;
+extern char ** environ;
 #endif
 
 // The largest peak resident set one case process may reach, in MiB: the larger
 // of 256 and 1.5 times the largest case measured on a Linux Release build
 // (465 MiB, test_gso_transport_server_io_pin, 2026-10-19), so 698; never over 1024.
 // A case over it fails the suite. The environment variable of the same name
-// overrides it with a positive value.
+// overrides it with a positive value. A case process that reports its plan's
+// bound (tests/plan_rss.h) is held to that instead.
 //
 // A build for more clients (-DROCKETNET_MAX_CLIENTS, BUILDING.md "Maximum
 // clients") carries larger per-server tables whatever the case's max_clients:
@@ -77,6 +89,18 @@ extern char **environ;
 #define ROCKETNET_TEST_MAX_CASE_RSS_MB 1217
 #endif
 
+// group_of's flag for a case of the nightly tier: the case runs, in the group
+// the rest of the value names, only under ROCKETNET_TEST_NIGHTLY=1. The cases
+// moved there each wait out a real protocol timeout or repeat a transport
+// pair whose every assertion a per-commit case of the same name keeps.
+#define SUITE_GROUP_NIGHTLY 0x100
+
+inline bool suite_nightly()
+{
+    char value[16];
+    return rocketnet_test_getenv( "ROCKETNET_TEST_NIGHTLY", value, sizeof( value ) ) && std::strcmp( value, "1" ) == 0;
+}
+
 // Whether the environment variable is set (to a value of at most 4095 bytes).
 inline bool suite_env_is_set( const char * name )
 {
@@ -84,16 +108,38 @@ inline bool suite_env_is_set( const char * name )
     return rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
 }
 
+// The case limit after the environment's scale. ROCKETNET_TEST_CASE_TIME_SCALE
+// unset or empty leaves the limit as the suite passed it; set, it is a number over 0
+// and at most 1000 that multiplies the limit, or the suite refuses to run.
+inline bool suite_case_limit( double case_limit_s, double * limit_s )
+{
+    *limit_s = case_limit_s;
+    double scale = 1.0;
+    if ( !rocketnet_test_case_env_time_scale( &scale ) )
+    {
+        char env[64];
+        rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", env, sizeof( env ) );
+        printf( "check failed: ROCKETNET_TEST_CASE_TIME_SCALE=%s is not a number over 0 and at most 1000\n", env );
+        return false;
+    }
+    *limit_s = case_limit_s * scale;
+    return true;
+}
+
 struct suite_exec
 {
-    const char *name;
-    const char *file;
+    const char * name;
+    const char * file;
+    const char * argument;
+    bool check_rss;
 };
 
 struct suite_case
 {
     std::string name;
     std::string exec_path; // empty: re-exec this binary with --run name
+    std::string exec_argument;
+    bool check_rss;
     int group; // suite_main's group_of: cases of different groups never run at once
 };
 
@@ -106,6 +152,9 @@ struct suite_result
     bool failed;
     std::string detail;
     long peak_rss_mb; // -1: not measured
+    long plan_rss_mb; // the bound the case process reported from its plan (tests/plan_rss.h); -1: none
+    bool rss_over_bound;
+    bool check_rss;
     std::string output;
 };
 
@@ -120,7 +169,7 @@ inline long suite_max_case_rss_mb()
         if ( requested > 0 )
             return requested;
     }
-#if defined(ROCKETNET_FUNCTIONAL_SANITIZED)
+#if defined( ROCKETNET_FUNCTIONAL_SANITIZED )
     return 0;
 #else
     return ROCKETNET_TEST_MAX_CASE_RSS_MB;
@@ -133,31 +182,87 @@ inline long suite_max_case_rss_mb()
 // itself with SUITE_CASE_RSS_BOUND( name, function ): function returns the
 // bound in MiB, computed from the memory plan for the configuration the case
 // uses plus a margin the case states (suite_rss_bound_mb). A static
-// registrar adds it to a list before main runs, so the parent reads it by
+// registrar adds it to a fixed registry before main runs, so the parent reads it by
 // case name. Every other case keeps ROCKETNET_TEST_MAX_CASE_RSS_MB.
 
 struct suite_case_rss_bound_t
 {
     const char * name;
     long ( *bound_mb )();
-    suite_case_rss_bound_t * next;
 };
 
-inline suite_case_rss_bound_t ** suite_case_rss_bound_head()
+// Fifteen bounds existed when this registry replaced the pointer chain. The
+// next power of two with another full doubling of headroom is 64. It remains
+// allocation-free during static initialization and refuses overflow loudly.
+#define SUITE_CASE_RSS_BOUND_CAPACITY 64
+
+struct suite_case_rss_bound_registry_t
 {
-    static suite_case_rss_bound_t * head = NULL;
-    return &head;
+    suite_case_rss_bound_t entries[SUITE_CASE_RSS_BOUND_CAPACITY];
+    int count;
+};
+
+inline suite_case_rss_bound_registry_t * suite_case_rss_bound_registry()
+{
+    static suite_case_rss_bound_registry_t registry = {};
+    return &registry;
+}
+
+// Adds a bound at the front, the order the pointer chain had: the most
+// recently constructed registrar is enumerated first, so when a name is
+// registered twice the later registration is the one a lookup finds, exactly
+// as the chain did. A full registry is left unchanged and the overflow
+// function is called with the omitted name and the capacity; false then.
+inline bool suite_case_rss_bound_add( suite_case_rss_bound_registry_t * registry, int capacity, const char * name,
+                                      long ( *bound_mb )(), void ( *overflow )( const char * name, int capacity ) )
+{
+    if ( registry->count >= capacity )
+    {
+        overflow( name, capacity );
+        return false;
+    }
+    if ( registry->count > 0 )
+        memmove( &registry->entries[1], &registry->entries[0],
+                 (size_t) registry->count * sizeof( registry->entries[0] ) );
+    registry->entries[0].name = name;
+    registry->entries[0].bound_mb = bound_mb;
+    registry->count++;
+    return true;
+}
+
+// The first entry under a name (the latest registered), or NULL.
+inline suite_case_rss_bound_t * suite_case_rss_bound_find( suite_case_rss_bound_registry_t * registry, const char * name )
+{
+    for ( int i = 0; i < registry->count; i++ )
+        if ( strcmp( registry->entries[i].name, name ) == 0 )
+            return &registry->entries[i];
+    return NULL;
+}
+
+// The line printed before the abort when a registration would overflow.
+inline int suite_case_rss_bound_overflow_text( char * text, size_t bytes, const char * name, int capacity )
+{
+    return snprintf( text, bytes, "error: suite RSS bound registry capacity %d exceeded while registering %s\n",
+                     capacity, name );
+}
+
+// A static registrar's overflow: print the omitted name, then abort before
+// main runs, so a bound is never silently dropped.
+inline void suite_case_rss_bound_overflow_abort( const char * name, int capacity )
+{
+    char text[256];
+    suite_case_rss_bound_overflow_text( text, sizeof( text ), name, capacity );
+    fputs( text, stderr );
+    fflush( stderr );
+    abort();
 }
 
 struct suite_case_rss_bound_registrar_t
 {
-    suite_case_rss_bound_t entry;
     suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
     {
-        entry.name = name;
-        entry.bound_mb = bound_mb;
-        entry.next = *suite_case_rss_bound_head();
-        *suite_case_rss_bound_head() = &entry;
+        suite_case_rss_bound_add( suite_case_rss_bound_registry(), SUITE_CASE_RSS_BOUND_CAPACITY, name, bound_mb,
+                                  suite_case_rss_bound_overflow_abort );
     }
 };
 
@@ -177,40 +282,61 @@ inline long suite_rss_bound_mb( uint64_t planned_bytes, long margin_mb )
     return (long) ( ( planned_bytes + mib - 1 ) / mib ) + margin_mb;
 }
 
+// The size of one page of this process's memory in bytes: 4 KiB on x86_64
+// Linux and Windows, 16 KiB on Apple silicon. A case whose library tables are
+// touched sparsely holds one page resident for each touch, so its resident
+// set grows with the page; a bound for such a case scales with this.
+inline uint64_t suite_page_bytes()
+{
+#if defined( _WIN32 )
+    SYSTEM_INFO info;
+    GetSystemInfo( &info );
+    return info.dwPageSize > 0 ? (uint64_t) info.dwPageSize : 4096;
+#else
+    const long bytes = sysconf( _SC_PAGESIZE );
+    return bytes > 0 ? (uint64_t) bytes : 4096;
+#endif
+}
+
 // The bound for one case: none in a sanitizer build without the environment
-// override, else the bound the case declares, else the suite-wide one. The
-// environment override replaces the suite-wide bound for every case, and a
-// declared bound under it: it lifts a case's plan, never lowers it. A
-// declared bound of 0 (a refused plan) keeps the suite-wide bound.
-inline long suite_case_rss_mb( const std::string & name )
+// override, else the bound the case declares, else the bound its process
+// reported from its plan (plan_mb, -1 for none), else the suite-wide one.
+// The environment override replaces the suite-wide bound for every case, and
+// a declared or reported bound under it: it lifts a case's plan, never
+// lowers it. A declared bound of 0 (a refused plan) keeps the suite-wide
+// bound.
+inline long suite_case_rss_mb( const std::string & name, long plan_mb )
 {
     const long bound = suite_max_case_rss_mb();
     if ( bound <= 0 )
         return bound;
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    long planned = plan_mb > 0 ? plan_mb : 0;
+    suite_case_rss_bound_t * entry = suite_case_rss_bound_find( suite_case_rss_bound_registry(), name.c_str() );
+    if ( entry != NULL )
     {
-        if ( name == entry->name )
-        {
-            const long declared = entry->bound_mb();
-            if ( declared <= 0 )
-                return bound;
-            if ( suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
-                return declared > bound ? declared : bound;
-            return declared;
-        }
+        const long declared = entry->bound_mb();
+        if ( declared > 0 )
+            planned = declared;
     }
-    return bound;
+    if ( planned <= 0 )
+        return bound;
+    if ( suite_env_is_set( "ROCKETNET_TEST_MAX_CASE_RSS_MB" ) )
+        return planned > bound ? planned : bound;
+    return planned;
 }
 
-// Fails a finished case whose peak is over the bound, naming both.
-inline void suite_check_rss( suite_result & result, long bound_mb )
+// Records a finished case whose peak is over the bound, naming both. The
+// functional tier enforces the result; the unit tier keeps the same
+// measurement and prints the over-bound line without changing its verdict.
+inline void suite_check_rss( suite_result & result, long bound_mb, bool enforce = true )
 {
     if ( result.failed || bound_mb <= 0 || result.peak_rss_mb <= bound_mb )
         return;
     char text[96];
     snprintf( text, sizeof( text ), " peak_rss_mb=%ld bound_mb=%ld", result.peak_rss_mb, bound_mb );
-    result.failed = true;
     result.detail = result.name + text;
+    result.rss_over_bound = true;
+    result.failed = enforce;
 }
 
 // A test name is test_ then lowercase snake_case: [a-z0-9] words joined by
@@ -243,8 +369,7 @@ inline bool suite_name_is_test_snake_case( const std::string & name )
 // their registration order within a layer.
 inline int suite_layer_of( const std::string & name )
 {
-    static const char * const layers[][48] =
-    {
+    static const char * const layers[][48] = {
         // helpers: platform, time, base64, config, logging, memory
         { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "bounded", "base64", "hash", "copy", "address", "anonymize", "random", "config", "log", "memory", "allocator", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
         // packet: wire, crypto, tokens, prefilter, fragments
@@ -271,7 +396,7 @@ inline int suite_layer_of( const std::string & name )
 
 inline std::string suite_executable_path()
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     std::vector<wchar_t> buf( MAX_PATH );
     for ( ;; )
     {
@@ -284,7 +409,7 @@ inline std::string suite_executable_path()
             return "";
         buf.resize( buf.size() * 2 );
     }
-#elif defined(__APPLE__)
+#elif defined( __APPLE__ )
     char buf[4096];
     uint32_t size = (uint32_t) sizeof( buf );
     if ( _NSGetExecutablePath( buf, &size ) != 0 )
@@ -310,7 +435,7 @@ inline std::string suite_directory_of( const std::string & path )
 
 inline bool suite_file_exists( const std::string & path )
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const std::wstring wide = rocketnet_test_wide_path( path );
     if ( wide.empty() )
         return false;
@@ -389,7 +514,7 @@ inline long suite_uring_case_memlock_kib()
         if ( requested > 0 )
             return requested;
     }
-#if defined(__linux__)
+#if defined( __linux__ )
     struct utsname host;
     int major = 0;
     int minor = 0;
@@ -402,7 +527,7 @@ inline long suite_uring_case_memlock_kib()
 // The soft RLIMIT_MEMLOCK in KiB, or -1 when unlimited (or not POSIX).
 inline long suite_memlock_limit_kib()
 {
-#if defined(_WIN32)
+#if defined( _WIN32 )
     return -1;
 #else
     struct rlimit limit;
@@ -423,8 +548,17 @@ inline int suite_uring_slots( long limit_kib, long case_kib, int jobs )
 
 inline int suite_usage( char ** argv )
 {
-    fprintf( stderr, "usage: %s [--run <case>]\n", argv[0] );
+    fprintf( stderr, "usage: %s [--run <case> | --list | --enforce-rss]\n", argv[0] );
     return 2;
+}
+
+inline int suite_list_registered_cases( int ( *count )(), const char * ( *name_at )(int) )
+{
+    const int n = count ? count() : 0;
+    for ( int i = 0; i < n; i++ )
+        printf( "%s\n", name_at( i ) );
+    fflush( stdout );
+    return 0;
 }
 
 // Calls emit( line ) for each line of output, without its line ending.
@@ -444,18 +578,36 @@ template <typename F> inline void suite_for_each_line( const std::string & outpu
     }
 }
 
+// The bound a case process reported on its plan_rss line (tests/plan_rss.h)
+// in its captured output, or -1 when it reported none.
+inline long suite_reported_plan_rss_mb( const std::string & output )
+{
+    const char * line = PLAN_RSS_LINE;
+    const size_t length = std::strlen( line );
+    long reported = -1;
+    suite_for_each_line( output, [line, length, &reported]( const std::string & text )
+                         {
+        if ( text.compare( 0, length, line ) == 0 )
+        {
+            const long bound = std::atol( text.c_str() + length );
+            if ( bound > 0 )
+                reported = bound;
+        } } );
+    return reported;
+}
+
 // A passing case's output keeps only its test-name lines. Returns the number
 // of lines printed.
 inline int suite_emit_captured( const std::string & output, bool show_all )
 {
     int printed = 0;
-    suite_for_each_line( output, [show_all, &printed]( const std::string & line ) {
+    suite_for_each_line( output, [show_all, &printed]( const std::string & line )
+                         {
         if ( show_all || suite_name_is_test_snake_case( line ) )
         {
             printf( "%s\n", line.c_str() );
             printed++;
-        }
-    } );
+        } } );
     fflush( stdout );
     return printed;
 }
@@ -478,10 +630,10 @@ inline bool suite_print_ready( std::vector<suite_result> & results, size_t & pri
             fflush( stdout );
             return false;
         }
-        if ( !capture )
-            continue;
-        if ( !result.exec || suite_emit_captured( result.output, false ) == 0 )
+        if ( capture && ( !result.exec || suite_emit_captured( result.output, false ) == 0 ) )
             printf( "%s\n", result.name.c_str() );
+        if ( result.rss_over_bound )
+            printf( "%s\n", result.detail.c_str() );
     }
     fflush( stdout );
     return true;
@@ -497,35 +649,50 @@ inline void suite_print_report( const std::vector<suite_result> & results )
     for ( size_t i = 0; i < results.size(); i++ )
         if ( results[i].done )
             ran.push_back( results[i] );
-    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) { return a.seconds > b.seconds; } );
+    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b )
+               { return a.seconds > b.seconds; } );
     printf( "\nslowest cases:\n" );
     for ( size_t i = 0; i < ran.size() && i < 10; i++ )
         printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
-    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b ) { return a.peak_rss_mb > b.peak_rss_mb; } );
+    std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b )
+               { return a.peak_rss_mb > b.peak_rss_mb; } );
     printf( "peak rss:\n" );
-    for ( size_t i = 0; i < ran.size() && i < 10; i++ )
-        if ( ran[i].peak_rss_mb >= 0 )
-            printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name ), ran[i].name.c_str() );
+    int printed = 0;
+    for ( size_t i = 0; i < ran.size() && printed < 10; i++ )
+        if ( ran[i].peak_rss_mb >= 0 && ran[i].check_rss )
+        {
+            printf( "  %6ld MiB (bound %ld)  %s\n", ran[i].peak_rss_mb, suite_case_rss_mb( ran[i].name, ran[i].plan_rss_mb ), ran[i].name.c_str() );
+            printed++;
+        }
     fflush( stdout );
 }
 
 // The cases in suite order, or false (after printing why) when a name is not
 // test_ snake_case or an exec binary is missing.
 inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_result> & results,
-    int ( *count )(), const char * ( *name_at )( int ), const suite_exec * execs, int nexecs,
-    int ( *group_of )( const char * name ), const std::string & dir, const char * exe_suffix )
+                           int ( *count )(), const char * ( *name_at )(int), const suite_exec * execs, int nexecs,
+                           int ( *group_of )( const char * name ), const std::string & dir, const char * exe_suffix )
 {
     // Each case is built in place from its name's characters, never copied
     // or moved as a whole string: under MemorySanitizer the prebuilt
     // libstdc++ copies a short (SSO) string without telling the shadow, so a
     // copied name reads as uninitialised (tools/run_msan.sh).
+    // A registered case group_of marks SUITE_GROUP_NIGHTLY is not collected
+    // outside the nightly tier.
     const size_t first = pending.size();
-    const int num_registered = count();
+    const bool nightly = suite_nightly();
+    int num_registered = 0;
+    for ( int i = 0; i < count(); i++ )
+        if ( nightly || !group_of || ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) == 0 )
+            num_registered++;
     pending.resize( first + (size_t) num_registered + (size_t) nexecs );
-    for ( int i = 0; i < num_registered; i++ )
+    for ( int i = 0, kept = 0; i < count(); i++ )
     {
-        suite_case & item = pending[first + (size_t) i];
+        if ( !nightly && group_of && ( group_of( name_at( i ) ) & SUITE_GROUP_NIGHTLY ) != 0 )
+            continue;
+        suite_case & item = pending[first + (size_t) kept++];
         item.name = name_at( i );
+        item.check_rss = true;
         item.group = 0;
     }
     for ( int i = 0; i < nexecs; i++ )
@@ -533,6 +700,8 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         suite_case & item = pending[first + (size_t) num_registered + (size_t) i];
         item.name = execs[i].name;
         item.exec_path = dir + "/" + execs[i].file + exe_suffix;
+        item.exec_argument = execs[i].argument ? execs[i].argument : "";
+        item.check_rss = execs[i].check_rss;
         item.group = 0;
         if ( !suite_file_exists( item.exec_path ) )
         {
@@ -548,8 +717,10 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
             return false;
         }
     }
-    for ( suite_case_rss_bound_t * entry = *suite_case_rss_bound_head(); entry != NULL; entry = entry->next )
+    suite_case_rss_bound_registry_t * rss_registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < rss_registry->count; i++ )
     {
+        suite_case_rss_bound_t * entry = &rss_registry->entries[i];
         if ( !suite_name_is_test_snake_case( entry->name ) )
         {
             printf( "check failed: SUITE_CASE_RSS_BOUND name %s is not test_ lowercase snake_case\n", entry->name );
@@ -563,12 +734,12 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
     // own group, so a group runs in parallel within itself and alone. Within
     // a group the cases run in layer order (suite_layer_of).
     for ( size_t i = 0; i < pending.size(); i++ )
-        pending[i].group = group_of ? group_of( pending[i].name.c_str() ) : 0;
-    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b ) {
+        pending[i].group = group_of ? ( group_of( pending[i].name.c_str() ) & ~SUITE_GROUP_NIGHTLY ) : 0;
+    std::stable_sort( pending.begin(), pending.end(), []( const suite_case & a, const suite_case & b )
+                      {
         if ( a.group != b.group )
             return a.group < b.group;
-        return suite_layer_of( a.name ) < suite_layer_of( b.name );
-    } );
+        return suite_layer_of( a.name ) < suite_layer_of( b.name ); } );
     for ( size_t i = 0; i < pending.size(); i++ )
     {
         suite_result result;
@@ -578,14 +749,66 @@ inline bool suite_collect( std::vector<suite_case> & pending, std::vector<suite_
         result.seconds = 0;
         result.failed = false;
         result.peak_rss_mb = -1;
+        result.plan_rss_mb = -1;
+        result.rss_over_bound = false;
+        result.check_rss = pending[i].check_rss;
         results.push_back( result );
     }
     return true;
 }
 
+// Rows a suite omitted because their runs_here predicate is false on this
+// host. A suite that filters its table by predicate (the functional suite)
+// notes each omitted row here; suite_finish then prints one SKIPPED line
+// per row and the skipped count, so an omitted row is never silent. Suites
+// that never note a row print nothing extra.
+struct suite_skipped_row
+{
+    std::string name;
+    std::string predicate;
+};
+
+inline std::vector<suite_skipped_row> & suite_skipped_rows()
+{
+    static std::vector<suite_skipped_row> rows;
+    return rows;
+}
+
+inline bool & suite_skipped_reporting()
+{
+    static bool enabled = false;
+    return enabled;
+}
+
+inline void suite_enable_skipped_reporting()
+{
+    suite_skipped_reporting() = true;
+}
+
+inline void suite_note_skipped( const char * name, const char * predicate )
+{
+    suite_enable_skipped_reporting();
+    suite_skipped_row row;
+    row.name = name;
+    row.predicate = predicate;
+    suite_skipped_rows().push_back( row );
+}
+
+inline void suite_print_skipped()
+{
+    if ( !suite_skipped_reporting() )
+        return;
+    const std::vector<suite_skipped_row> & rows = suite_skipped_rows();
+    for ( size_t i = 0; i < rows.size(); i++ )
+        printf( "SKIPPED %s: %s\n", rows[i].name.c_str(), rows[i].predicate.c_str() );
+    printf( "skipped: %d\n", (int) rows.size() );
+    fflush( stdout );
+}
+
 inline int suite_finish( const std::vector<suite_result> & results, bool passed )
 {
     suite_print_report( results );
+    suite_print_skipped();
     if ( !passed )
         return 1;
     printf( "\n*** ALL TESTS PASSED ***\n\n" );
@@ -593,7 +816,7 @@ inline int suite_finish( const std::vector<suite_result> & results, bool passed 
     return 0;
 }
 
-#if !defined(_WIN32)
+#if !defined( _WIN32 )
 
 inline void suite_drain( int fd, std::string & output )
 {
@@ -666,15 +889,23 @@ inline int suite_run_names_only( int ( *worker )( const char * ), const char * n
 }
 
 inline int suite_main( int argc, char ** argv,
-    int ( *worker )( const char * name ),
-    int ( *count )(),
-    const char * ( *name_at )( int ),
-    const suite_exec * execs, int nexecs,
-    int ( *group_of )( const char * name ) = NULL,
-    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
-    int max_jobs = 0,
-    bool bound_io_uring = false )
+                       int ( *worker )( const char * name ),
+                       int ( *count )(),
+                       const char * ( *name_at )(int),
+                       const suite_exec * execs, int nexecs,
+                       int ( *group_of )( const char * name ) = NULL,
+                       double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
+                       int max_jobs = 0,
+                       bool bound_io_uring = false,
+                       bool enforce_case_rss = true )
 {
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
@@ -711,7 +942,9 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
-    const double limit_s = case_limit_s;
+    double limit_s = case_limit_s;
+    if ( !suite_case_limit( case_limit_s, &limit_s ) )
+        return 1;
     int uring_slots = jobs;
     if ( bound_io_uring )
     {
@@ -760,7 +993,8 @@ inline int suite_main( int argc, char ** argv,
             arg0.push_back( '\0' );
             std::vector<char> arg_run;
             std::vector<char> arg_name;
-            char * spawn_argv[4];
+            std::vector<char> exec_argument;
+            char * spawn_argv[5];
             spawn_argv[0] = arg0.data();
             if ( item.exec_path.empty() )
             {
@@ -774,7 +1008,17 @@ inline int suite_main( int argc, char ** argv,
             }
             else
             {
-                spawn_argv[1] = NULL;
+                if ( item.exec_argument.empty() )
+                {
+                    spawn_argv[1] = NULL;
+                }
+                else
+                {
+                    exec_argument.assign( item.exec_argument.begin(), item.exec_argument.end() );
+                    exec_argument.push_back( '\0' );
+                    spawn_argv[1] = exec_argument.data();
+                    spawn_argv[2] = NULL;
+                }
             }
 
             int pipefd[2] = { -1, -1 };
@@ -856,7 +1100,7 @@ inline int suite_main( int argc, char ** argv,
                 continue;
             }
             result.seconds = seconds;
-#if defined(__APPLE__)
+#if defined( __APPLE__ )
             result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / ( 1024 * 1024 ) ) : -1; // bytes on macOS
 #else
             result.peak_rss_mb = got > 0 ? (long) ( usage.ru_maxrss / 1024 ) : -1; // kilobytes on Linux
@@ -885,12 +1129,14 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( text, sizeof( text ), " signal %d", WIFSIGNALED( status ) ? WTERMSIG( status ) : 0 );
                 result.detail = result.name + text;
             }
-            suite_check_rss( result, suite_case_rss_mb( result.name ) );
             if ( running[i].out_fd >= 0 )
             {
                 suite_drain( running[i].out_fd, result.output );
                 close( running[i].out_fd );
             }
+            result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
+            if ( result.check_rss )
+                suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ), enforce_case_rss );
             result.done = true;
             uring_running -= running[i].uring ? 1 : 0;
             running.erase( running.begin() + (std::ptrdiff_t) i );
@@ -907,7 +1153,9 @@ inline int suite_main( int argc, char ** argv,
         kill( -running[i].pid, SIGKILL );
         kill( running[i].pid, SIGKILL );
         int status = 0;
-        while ( waitpid( running[i].pid, &status, 0 ) < 0 && errno == EINTR ) {}
+        while ( waitpid( running[i].pid, &status, 0 ) < 0 && errno == EINTR )
+        {
+        }
         if ( running[i].out_fd >= 0 )
             close( running[i].out_fd );
     }
@@ -933,16 +1181,51 @@ inline void suite_drain( HANDLE pipe, std::string & output )
     }
 }
 
-inline int suite_main( int argc, char ** argv,
-    int ( *worker )( const char * name ),
-    int ( *count )(),
-    const char * ( *name_at )( int ),
-    const suite_exec * execs, int nexecs,
-    int ( *group_of )( const char * name ) = NULL,
-    double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
-    int max_jobs = 0,
-    bool bound_io_uring = false )
+// A spawn failure names the call and its Windows error code, so a red that
+// never started its case says why (1455 is the commit limit, 8 and 1450 are
+// out of memory or system resources).
+inline std::string suite_spawn_failure_text( const char * call, DWORD error )
 {
+    char text[96];
+    snprintf( text, sizeof( text ), " failed to spawn (%s error %lu)", call, (unsigned long) error );
+    return text;
+}
+
+// A case that declares SUITE_CASE_RSS_BOUND is a full-capacity server: its
+// memory plan allocates every slot up front. Windows charges committed memory
+// against the system commit limit when it is allocated, not when it is
+// touched, so one such case commits tens of GiB, and two at once (or one with
+// the cases beside it) can pass the limit: every allocation in every running
+// case can then fail, wherever it is (a world that does not create, a
+// connection that comes back NULL, a case that does not spawn). Such a case
+// runs alone.
+inline bool suite_case_runs_alone( const std::string & name )
+{
+    suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < registry->count; i++ )
+        if ( name == registry->entries[i].name )
+            return true;
+    return false;
+}
+
+inline int suite_main( int argc, char ** argv,
+                       int ( *worker )( const char * name ),
+                       int ( *count )(),
+                       const char * ( *name_at )(int),
+                       const suite_exec * execs, int nexecs,
+                       int ( *group_of )( const char * name ) = NULL,
+                       double case_limit_s = 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE,
+                       int max_jobs = 0,
+                       bool bound_io_uring = false,
+                       bool enforce_case_rss = true )
+{
+    if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
+        return suite_list_registered_cases( count, name_at );
+    if ( argc == 2 && std::strcmp( argv[1], "--enforce-rss" ) == 0 )
+    {
+        enforce_case_rss = true;
+        argc = 1;
+    }
     if ( argc >= 2 && std::strcmp( argv[1], "--run" ) == 0 )
     {
         if ( argc < 3 || argv[2][0] == '-' )
@@ -969,7 +1252,9 @@ inline int suite_main( int argc, char ** argv,
         return 1;
 
     const int jobs = max_jobs > 0 ? ( std::min )( suite_job_count(), max_jobs ) : suite_job_count();
-    const double limit_s = case_limit_s;
+    double limit_s = case_limit_s;
+    if ( !suite_case_limit( case_limit_s, &limit_s ) )
+        return 1;
     (void) bound_io_uring; // no io_uring on Windows
     struct running_t
     {
@@ -978,6 +1263,7 @@ inline int suite_main( int argc, char ** argv,
         std::chrono::steady_clock::time_point start;
         bool killed;
         int group;
+        bool alone;
         HANDLE out;
     };
     const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
@@ -988,7 +1274,8 @@ inline int suite_main( int argc, char ** argv,
 
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) )
+        while ( (int) running.size() < jobs && next < pending.size() &&
+                ( running.empty() || ( running[0].group == pending[next].group && !running[0].alone && !suite_case_runs_alone( pending[next].name ) ) ) )
         {
             const size_t index = next++;
             const suite_case & item = pending[index];
@@ -998,6 +1285,8 @@ inline int suite_main( int argc, char ** argv,
             std::wstring command = L"\"" + wide_path + L"\"";
             if ( item.exec_path.empty() )
                 command += L" --run " + rocketnet_test_utf8_to_wide( item.name );
+            else if ( !item.exec_argument.empty() )
+                command += L" " + rocketnet_test_utf8_to_wide( item.exec_argument );
             std::vector<wchar_t> mutable_command( command.begin(), command.end() );
             mutable_command.push_back( L'\0' );
             STARTUPINFOW startup;
@@ -1013,13 +1302,14 @@ inline int suite_main( int argc, char ** argv,
                 inherit.bInheritHandle = TRUE;
                 if ( !CreatePipe( &read_end, &write_end, &inherit, 1 << 20 ) || !SetHandleInformation( read_end, HANDLE_FLAG_INHERIT, 0 ) )
                 {
+                    const DWORD error = GetLastError();
                     if ( read_end )
                         CloseHandle( read_end );
                     if ( write_end )
                         CloseHandle( write_end );
                     result.done = true;
                     result.failed = true;
-                    result.detail = item.name + " failed to spawn";
+                    result.detail = item.name + suite_spawn_failure_text( "CreatePipe", error );
                     continue;
                 }
                 startup.dwFlags = STARTF_USESTDHANDLES;
@@ -1030,6 +1320,7 @@ inline int suite_main( int argc, char ** argv,
             PROCESS_INFORMATION info;
             std::memset( &info, 0, sizeof( info ) );
             const BOOL created = !wide_path.empty() && CreateProcessW( wide_path.c_str(), mutable_command.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP, NULL, NULL, &startup, &info );
+            const DWORD error = created ? 0 : GetLastError();
             if ( write_end )
                 CloseHandle( write_end );
             if ( !created )
@@ -1038,7 +1329,7 @@ inline int suite_main( int argc, char ** argv,
                     CloseHandle( read_end );
                 result.done = true;
                 result.failed = true;
-                result.detail = item.name + " failed to spawn";
+                result.detail = item.name + suite_spawn_failure_text( "CreateProcessW", error );
                 continue;
             }
             CloseHandle( info.hThread );
@@ -1048,6 +1339,7 @@ inline int suite_main( int argc, char ** argv,
             child.start = std::chrono::steady_clock::now();
             child.killed = false;
             child.group = item.group;
+            child.alone = suite_case_runs_alone( item.name );
             child.out = read_end;
             running.push_back( child );
         }
@@ -1104,7 +1396,9 @@ inline int suite_main( int argc, char ** argv,
                 snprintf( text, sizeof( text ), " exit %lu", (unsigned long) code );
                 result.detail = result.name + text;
             }
-            suite_check_rss( result, suite_case_rss_mb( result.name ) );
+            result.plan_rss_mb = suite_reported_plan_rss_mb( result.output );
+            if ( result.check_rss )
+                suite_check_rss( result, suite_case_rss_mb( result.name, result.plan_rss_mb ), enforce_case_rss );
             result.done = true;
             running.erase( running.begin() + (std::ptrdiff_t) i );
         }
@@ -1125,3 +1419,5 @@ inline int suite_main( int argc, char ** argv,
 }
 
 #endif
+
+#endif // ROCKETNET_TESTS_SUITE_RUNNER_H

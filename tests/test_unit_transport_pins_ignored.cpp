@@ -10,6 +10,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 #include "portable_crt.h"
@@ -23,24 +24,17 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if ROCKETNET_DEV
 void rocketnet_unit_prepare();
 
 static void pins_set( const char * name, const char * value )
 {
-#if defined(_WIN32)
-    _putenv_s( name, value );
-#else
-    setenv( name, value, 1 );
-#endif
+    rocketnet_test_env_setenv( name, value, 1 );
 }
 
 static void pins_clear( const char * name )
 {
-#if defined(_WIN32)
-    _putenv_s( name, "" );
-#else
-    unsetenv( name );
-#endif
+    rocketnet_test_env_unsetenv( name );
 }
 
 static double pins_ignored_clock = 1000.0;
@@ -54,8 +48,8 @@ static void test_unit_transport_pins_ignored()
 {
     char saved_server[64] = "";
     char saved_client[64] = "";
-    const bool had_server = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server, sizeof( saved_server ) ) != 0;
-    const bool had_client = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client, sizeof( saved_client ) ) != 0;
+    const bool had_server = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server, sizeof( saved_server ) ) != 0;
+    const bool had_client = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client, sizeof( saved_client ) ) != 0;
 
     pins_set( "ROCKETNET_SERVER_TRANSPORT", "io_uring" );
     pins_set( "ROCKETNET_CLIENT_TRANSPORT", "io_uring" );
@@ -139,3 +133,5 @@ static void test_unit_transport_pins_ignored()
 }
 
 REGISTER_UNIT_TEST( test_unit_transport_pins_ignored );
+
+#endif // #if ROCKETNET_DEV

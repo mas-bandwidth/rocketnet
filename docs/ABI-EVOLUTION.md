@@ -84,7 +84,7 @@ The steps for adding a field:
    revision's `sizeof`, with a default that equals the old behaviour.
 2. Write its default in the library's default fill, and its environment
    variable beside the field in the header, as for every other field.
-3. Add a case to `test_unit_sized_config.cpp` that passes the previous
+3. Add a case to `tests/test_unit_sized_config.cpp` that passes the previous
    revision's size as `config_bytes` and checks the new field reads its
    default.
 4. Leave the major version unchanged.
@@ -145,7 +145,11 @@ receive queue uses `rocketnet_message_batch_t` and needs no release call.
 `rocketnet_server_create( context, address, NULL, config, &status )` take a nullable
 status out-parameter, so a NULL result has a specific `rocketnet_status_t`.
 Each makes one block through the allocator; `rocketnet_client_required_memory`
-and `rocketnet_server_required_memory` give its size. The process-wide
+and `rocketnet_server_required_memory` give the lifecycle allocator peak,
+including planned built-in transport allocations at connect or start and
+repeated cycles with unchanged configuration and environment overrides.
+Development builds include the link simulator. OS-owned memory and custom
+transport allocations are excluded. The process-wide
 allocator, assert function, log function, log level, quiet flag and thread
 priority switch are installed through `rocketnet_init`,
 `rocketnet_assert_function`, `rocketnet_log_function`, `rocketnet_log_level`,
@@ -171,7 +175,7 @@ enum in `sdk/rocketnet.h` is the size of `int`. A static assert in
 A zero-filled receipt reads NONE. The library writes ACKED or LOSS.
 
 `rocketnet_disconnect_reason_t` keeps its values. NONE is 0 and each reason
-is negative, -1 to -5. `rocketnet_disconnect_reason_name` returns a name for
+is negative, -1 to -6. `rocketnet_disconnect_reason_name` returns a name for
 every value in the enum. It returns `"UNKNOWN"` for any other value. The same rule
 holds for `rocketnet_status_name`, `rocketnet_log_level_name` and
 `rocketnet_client_state_name`.

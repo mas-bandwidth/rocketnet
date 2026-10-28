@@ -2,7 +2,9 @@
 #
 # Runs MrDocs 2026.9.29 against the standalone compilation database in
 # docs/mrdocs, verifies that the HTML reference pages build cleanly under
-# build/docs/html, and uploads build/docs/html as a workflow artifact.
+# build/docs/html, fails when `make docs-undocumented` prints any symbol of
+# sdk/rocketnet.h without documentation, and uploads build/docs/html as a
+# workflow artifact.
 
 name: docs
 
@@ -42,6 +44,34 @@ jobs:
 
       - name: Build HTML reference documentation
         run: make docs
+
+      - name: Build the library
+        run: make build
+
+      # the example checker, the roadmap and testing page checks, the
+      # roadmap render tests and the GETTING-STARTED snippet check run on
+      # every commit, after the library builds
+      - name: Check documentation gates
+        run: |
+          sh tools/docs/check_agents_md.sh all
+          make roadmap-check testing-check
+          python3 tools/roadmap/test_render.py
+          python3 tools/docs/check_getting_started.py
+
+      # every public symbol carries its reference: a new function, field or
+      # parameter without documentation fails the job
+      - name: Refuse undocumented symbols
+        run: |
+          set +e
+          make docs-undocumented > build/docs/undocumented.txt
+          status=$?
+          set -e
+          cat build/docs/undocumented.txt
+          count=$(wc -l < build/docs/undocumented.txt)
+          if [ "$status" -ne 0 ] || [ "$count" -ne 0 ]; then
+            echo "::error::make docs-undocumented printed $count undocumented symbol(s) (exit $status); document each one in sdk/rocketnet.h"
+            exit 1
+          fi
 
       - name: Upload HTML reference documentation
         uses: actions/upload-artifact@v4

@@ -132,19 +132,23 @@ static volatile int quit;
 // refusal exactly where the flattering reading was. What is withheld is the
 // confidence, stated beside the figure it qualifies.
 
-enum { SOAK_PROFILE_WIRE, SOAK_PROFILE_PRODUCT, SOAK_PROFILE_BUCKETS };
-
-static const char * soak_profile_bucket_name[SOAK_PROFILE_BUCKETS] =
+enum
 {
+    SOAK_PROFILE_WIRE,
+    SOAK_PROFILE_PRODUCT,
+    SOAK_PROFILE_BUCKETS
+};
+
+static const char * soak_profile_bucket_name[SOAK_PROFILE_BUCKETS] = {
     "the wire      (harness: network simulator)",
     "the protocol  (product: client + server + crypto)",
 };
 
-static int      soak_profile_enabled;
-static int      soak_profile_double_charge;             // the negative control
-static double   soak_profile_seconds[SOAK_PROFILE_BUCKETS];
+static int soak_profile_enabled;
+static int soak_profile_double_charge;             // the negative control
+static double soak_profile_seconds[SOAK_PROFILE_BUCKETS];
 static uint64_t soak_profile_regions[SOAK_PROFILE_BUCKETS];
-static double   soak_profile_timer_cost;                // seconds per timed region, measured
+static double soak_profile_timer_cost;                // seconds per timed region, measured
 
 static inline double soak_profile_now()
 {
@@ -155,9 +159,11 @@ static inline void soak_profile_charge( int bucket, double start )
 {
     if ( !soak_profile_enabled )
         return;
+
     const double elapsed = rocketnet_platform_time() - start;
     soak_profile_seconds[bucket] += elapsed;
     soak_profile_regions[bucket]++;
+
     if ( soak_profile_double_charge )
     {
         // the negative control: charge every bucket twice, so the parts add up
@@ -165,6 +171,7 @@ static inline void soak_profile_charge( int bucket, double start )
         // just one, because the wire is small enough that doubling it alone
         // does not break the sum -- a negative control has to stay able to
         // break the thing it is controlling for.
+
         soak_profile_seconds[bucket] += elapsed;
     }
 }
@@ -197,20 +204,25 @@ static void soak_profile_calibrate()
     {
         const double start = rocketnet_platform_time();
         double sink = 0.0;
+
         for ( int i = 0; i < samples; i++ )
         {
             const double t0 = rocketnet_platform_time();
             sink += rocketnet_platform_time() - t0;
         }
+
         cost[b] = ( rocketnet_platform_time() - start ) / (double) samples;
         (void) sink;
     }
 
     for ( int i = 1; i < batches; i++ )
     {
-        for ( int j = i; j > 0 && cost[j] < cost[j-1]; j-- )
+        for ( int j = i; j > 0 && cost[j] < cost[j - 1]; j-- )
         {
-            const double swap = cost[j]; cost[j] = cost[j-1]; cost[j-1] = swap;
+            const double swap = cost[j];
+
+            cost[j] = cost[j - 1];
+            cost[j - 1] = swap;
         }
     }
 
@@ -229,6 +241,7 @@ static void wire_send( struct rocketnet_network_simulator_t * simulator,
                        double current_time )
 {
     const double start = soak_profile_now();
+
     rocketnet_network_simulator_send( simulator, from, to, packet_data, packet_bytes, current_time );
     soak_profile_charge( SOAK_PROFILE_WIRE, start );
 }
@@ -254,6 +267,7 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
 
     double accounted = 0.0;
     uint64_t regions = 0;
+
     for ( int i = 0; i < SOAK_PROFILE_BUCKETS; i++ )
     {
         accounted += soak_profile_seconds[i];
@@ -277,6 +291,7 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
     }
 
     int unsupportable = 0;
+
     for ( int i = 0; i < SOAK_PROFILE_BUCKETS; i++ )
     {
         const double instrument = soak_profile_timer_cost * (double) soak_profile_regions[i];
@@ -331,29 +346,36 @@ static int soak_profile_report( double total_seconds, uint64_t iterations )
                 "  printed with that said, rather than withheld.\n" );
 
     fflush( stdout );
+
     return 0;
 }
 
 void interrupt_handler( int signal_value )
 {
-    (void) signal_value; quit = 1;
+    (void) signal_value;
+    quit = 1;
 }
 
 static void generate_payload( uint8_t * payload_data, int payload_bytes )
 {
     const int start = payload_bytes % 256;
+
     for ( int i = 0; i < payload_bytes; i++ )
+    {
         payload_data[i] = (uint8_t) ( start + i );
+    }
 }
 
 static int verify_payload( const uint8_t * payload_data, int payload_bytes )
 {
     const int start = payload_bytes % 256;
+
     for ( int i = 0; i < payload_bytes; i++ )
     {
         if ( payload_data[i] != (uint8_t) ( start + i ) )
             return 0;
     }
+
     return 1;
 }
 
@@ -367,9 +389,11 @@ int main( int argc, char ** argv )
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     uint64_t max_iterations = 0;
+
     if ( argc > 1 )
     {
         char * end = NULL;
+
         errno = 0;
         max_iterations = strtoull( argv[1], &end, 10 );
         if ( argv[1][0] < '0' || argv[1][0] > '9' || !end || *end || errno || !max_iterations )
@@ -399,12 +423,13 @@ int main( int argc, char ** argv )
     // the server, on the development keys, at the vector server address
 
     struct rocketnet_counters_t server_counters;
-    memset( &server_counters, 0, sizeof(server_counters) );
+    memset( &server_counters, 0, sizeof( server_counters ) );
 
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
+    memset( &server, 0, sizeof( server ) );
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_dev_backend_public_key, 32 );
@@ -423,6 +448,7 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     server.used_token_history = rocketnet_used_token_history_create( NULL, 256 );
     if ( !server.used_token_history )
     {
@@ -430,6 +456,7 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     server.client_slots = rocketnet_client_slots_create( NULL, 16 );
     if ( !server.client_slots )
     {
@@ -437,6 +464,7 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     server.acks = rocketnet_server_acks_create( NULL, 16 );
     if ( !server.acks )
     {
@@ -444,6 +472,7 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     server.reassembly = rocketnet_reassembly_set_create( NULL, 16, 8, 16384, 16 * 8 );
     if ( !server.reassembly )
     {
@@ -451,9 +480,10 @@ int main( int argc, char ** argv )
         rocketnet_term();
         return 1;
     }
+
     server.counters = &server_counters;
 
-    #define SOAK_NUM_CLIENTS 8
+#define SOAK_NUM_CLIENTS 8
 
     // These addresses are simulated: every one of them is a key into the
     // in-memory network simulator and no socket is ever created for any of
@@ -465,10 +495,11 @@ int main( int argc, char ** argv )
     rocketnet_address_parse( &server_address, "203.0.113.10:40000" );
 
     struct rocketnet_address_t client_address[SOAK_NUM_CLIENTS];
+
     for ( int i = 0; i < SOAK_NUM_CLIENTS; i++ )
     {
         char address_string[64];
-        snprintf( address_string, sizeof(address_string), "198.51.100.%d:56789", 10 + i );
+        snprintf( address_string, sizeof( address_string ), "198.51.100.%d:56789", 10 + i );
         rocketnet_address_parse( &client_address[i], address_string );
     }
 
@@ -487,7 +518,9 @@ int main( int argc, char ** argv )
     const int seed_pinned = rocketnet_test_getenv( "ROCKETNET_SOAK_SIM_SEED", seed_string, sizeof( seed_string ) );
     const uint64_t simulator_seed = seed_pinned ? strtoull( seed_string, NULL, 10 ) : rocketnet_random_uint64();
     if ( seed_pinned )
+    {
         printf( "soak_sim: simulator seed pinned to %llu\n", (unsigned long long) simulator_seed );
+    }
 
     struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 4096, simulator_seed );
     rocketnet_network_simulator_config( simulator, 0.05, 0.02, 2.0f, 2.0f );
@@ -511,11 +544,13 @@ int main( int argc, char ** argv )
                 (unsigned long long) index_fault_iteration );
 
     static struct rocketnet_counters_t client_counters;
-    memset( &client_counters, 0, sizeof(client_counters) );
+    memset( &client_counters, 0, sizeof( client_counters ) );
+
     static struct rocketnet_client_protocol_t clients[SOAK_NUM_CLIENTS];
     int last_state[SOAK_NUM_CLIENTS];
     double last_state_change_time[SOAK_NUM_CLIENTS];
     double connected_since[SOAK_NUM_CLIENTS];
+
     for ( int i = 0; i < SOAK_NUM_CLIENTS; i++ )
     {
         rocketnet_client_protocol_init( &clients[i], &client_counters );
@@ -539,7 +574,6 @@ int main( int argc, char ** argv )
     int fragmented_payload_size = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
     uint64_t client_id = 1;
 
-
     const double soak_started = rocketnet_platform_time();
 
     while ( !quit )
@@ -549,7 +583,9 @@ int main( int argc, char ** argv )
             break;
 
         if ( index_fault_iteration && iteration == index_fault_iteration )
+        {
             rocketnet_network_simulator_inject_index_fault( simulator );
+        }
 
         time += 0.005;                              // mocked time, stepped fast
         timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( time - 100.0 );
@@ -559,104 +595,117 @@ int main( int argc, char ** argv )
 
         for ( int c = 0; c < SOAK_NUM_CLIENTS; c++ )
         {
-        struct rocketnet_client_protocol_t & client = clients[c];
+            struct rocketnet_client_protocol_t & client = clients[c];
 
         // a fresh attempt whenever the machine is at rest or terminal --
         // recovery is the ordinary path, run constantly
 
-        if ( client.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
-        {
-            if ( client.state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+            if ( client.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             {
+                if ( client.state < ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
+                {
                 // under light loss every attempt must complete: a terminal
                 // is a client that failed to connect or got stuck -- found it
-                printf( "CLIENT %d FAILED: reached '%s' under light loss -- the state machine did not tolerate a drop\n",
-                        c, rocketnet_client_transport_state_name( client.state ) );
-                terminals++;
-                failures++;
+
+                    printf( "CLIENT %d FAILED: reached '%s' under light loss -- the state machine did not tolerate a drop\n",
+                            c, rocketnet_client_transport_state_name( client.state ) );
+                    terminals++;
+                    failures++;
+                }
+
+                uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+                struct rocketnet_signed_connect_data_t signed_fields;
+                struct rocketnet_connect_token_private_t private_fields;
+                memset( &signed_fields, 0, sizeof( signed_fields ) );
+                memset( &private_fields, 0, sizeof( private_fields ) );
+                signed_fields.version = ROCKETNET_WIRE_VERSION;
+                signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+                signed_fields.create_timestamp = timestamp;
+                signed_fields.expire_timestamp = timestamp + 300;
+                signed_fields.timeout_seconds = 10;
+                signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
+                const uint8_t server_address_bytes[6] = { 203, 0, 113, 10, 0x40, 0x9c };
+                memcpy( signed_fields.ipv4_address, server_address_bytes, 6 );
+                memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
+                private_fields.client_id = client_id++;
+                randombytes_buf( private_fields.client_to_server_key, 32 );
+                randombytes_buf( private_fields.server_to_client_key, 32 );
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                              rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, token_data ) );
+
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                              rocketnet_client_protocol_connect( &client, token_data, time, timestamp ) );
+                attempts++;
             }
-
-            uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
-            struct rocketnet_signed_connect_data_t signed_fields;
-            struct rocketnet_connect_token_private_t private_fields;
-            memset( &signed_fields, 0, sizeof(signed_fields) );
-            memset( &private_fields, 0, sizeof(private_fields) );
-            signed_fields.version = ROCKETNET_WIRE_VERSION;
-            signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
-            signed_fields.create_timestamp = timestamp;
-            signed_fields.expire_timestamp = timestamp + 300;
-            signed_fields.timeout_seconds = 10;
-            signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-            const uint8_t server_address_bytes[6] = { 203, 0, 113, 10, 0x40, 0x9c };
-            memcpy( signed_fields.ipv4_address, server_address_bytes, 6 );
-            memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
-            private_fields.client_id = client_id++;
-            randombytes_buf( private_fields.client_to_server_key, 32 );
-            randombytes_buf( private_fields.server_to_client_key, 32 );
-            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, token_data ) );
-
-            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                rocketnet_client_protocol_connect( &client, token_data, time, timestamp ) );
-            attempts++;
-        }
 
         // the watchdog: a machine that neither progresses nor terminally
         // fails is a wedge. per-state timeouts are 10 seconds, the handshake
         // deadline 5, the total deadline 300 -- sixty seconds of sim time
         // with no transition is a hang, full stop.
 
-        if ( client.state != last_state[c] )
-        {
-            if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            if ( client.state != last_state[c] )
             {
-                connects++;
-                connected_since[c] = time;
+                if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+                {
+                    connects++;
+                    connected_since[c] = time;
+                }
+
+                last_state[c] = client.state;
+                last_state_change_time[c] = time;
             }
-            last_state[c] = client.state;
-            last_state_change_time[c] = time;
-        }
-        else if ( client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - last_state_change_time[c] > 60.0 )
-        {
-            printf( "HANG: client %d wedged in '%s' for 60 sim seconds\n", c, rocketnet_client_transport_state_name( client.state ) );
-            hangs++;
-            quit = 1;
-            break;
-        }
+            else if ( client.state != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - last_state_change_time[c] > 60.0 )
+            {
+                printf( "HANG: client %d wedged in '%s' for 60 sim seconds\n", c, rocketnet_client_transport_state_name( client.state ) );
+                hangs++;
+                quit = 1;
+                break;
+            }
 
         // a connected client cycles off on its own staggered period, through
         // the burst, so disconnect and reconnect stay routine
 
-        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - connected_since[c] > 20.0 + 3.0 * c )
-        {
-            uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
-            int burst_count = 0;
-            int burst_bytes = 0;
-            SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes ) );
-            for ( int i = 0; i < burst_count; i++ )
-                wire_send( simulator, &client_address[c], &server_address,
-                           burst + i * ROCKETNET_SEND_BUDGET,
-                           burst_bytes, time );
-        }
+            if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && time - connected_since[c] > 20.0 + 3.0 * c )
+            {
+                uint8_t burst[ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
+                int burst_count = 0;
+                int burst_bytes = 0;
+
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                              rocketnet_client_protocol_disconnect( &client, burst, &burst_count, &burst_bytes ) );
+                for ( int i = 0; i < burst_count; i++ )
+                    wire_send( simulator, &client_address[c], &server_address,
+                               burst + i * ROCKETNET_SEND_BUDGET,
+                               burst_bytes, time );
+            }
 
         // client drives, wire carries, server answers, wire carries back
 
-        SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-            rocketnet_client_protocol_update( &client, time, packet, &packet_bytes ) );
-        if ( packet_bytes > 0 )
-            wire_send( simulator, &client_address[c], &server_address, packet, packet_bytes, time );
-
-        if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
-        {
-            uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
-            generate_payload( payload, payload_size );
-            int bytes = 0;
             SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet ) );
-            if ( bytes > 0 )
-                wire_send( simulator, &client_address[c], &server_address, packet, bytes, time );
-            payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
+                          rocketnet_client_protocol_update( &client, time, packet, &packet_bytes ) );
+
+            if ( packet_bytes > 0 )
+            {
+                wire_send( simulator, &client_address[c], &server_address, packet, packet_bytes, time );
+            }
+
+            if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            {
+                uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+                generate_payload( payload, payload_size );
+
+                int bytes = 0;
+
+                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                              bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet ) );
+
+                if ( bytes > 0 )
+                {
+                    wire_send( simulator, &client_address[c], &server_address, packet, bytes, time );
+                }
+
+                payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
 
             // an occasional fragmented payload, staggered per client, so
             // reassembly soaks under the same hostile wire: at this loss a
@@ -664,35 +713,40 @@ int main( int argc, char ** argv )
             // semantics -- the abandoned counter records it, and nothing
             // else in the fragment family may ever fire
 
-            if ( ( ( iteration + (uint64_t) c * 29 ) % 233 ) == 0 )
-            {
-                static uint8_t fragmented_payload[16384];
-                generate_payload( fragmented_payload, fragmented_payload_size );
-                static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
-                int fragment_packet_bytes[16];
-                int fragment_count = 0;
-                SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                    fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_payload_size,
-                                                                               time, fragment_packets, fragment_packet_bytes, 16 ) );
-                if ( fragment_count > 0 )
+                if ( ( ( iteration + (uint64_t) c * 29 ) % 233 ) == 0 )
                 {
-                    for ( int i = 0; i < fragment_count; i++ )
-                        wire_send( simulator, &client_address[c], &server_address,
-                                   fragment_packets + i * ROCKETNET_SEND_BUDGET,
-                                   fragment_packet_bytes[i], time );
-                    fragmented_sent++;
-                }
-                fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
-            }
-        }
+                    static uint8_t fragmented_payload[16384];
+                    generate_payload( fragmented_payload, fragmented_payload_size );
 
+                    static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
+                    int fragment_packet_bytes[16];
+                    int fragment_count = 0;
+
+                    SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
+                                  fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_payload_size,
+                                                                                              time, fragment_packets, fragment_packet_bytes, 16 ) );
+
+                    if ( fragment_count > 0 )
+                    {
+                        for ( int i = 0; i < fragment_count; i++ )
+                            wire_send( simulator, &client_address[c], &server_address,
+                                       fragment_packets + i * ROCKETNET_SEND_BUDGET,
+                                       fragment_packet_bytes[i], time );
+                        fragmented_sent++;
+                    }
+
+                    fragmented_payload_size = fragmented_payload_size < 16384 - 997 ? fragmented_payload_size + 997 : ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
+                }
+            }
         }   // for each client
 
         struct rocketnet_address_t from;
         int bytes;
+
         SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-            rocketnet_reassembly_set_begin_update( server.reassembly ) );
+                      rocketnet_reassembly_set_begin_update( server.reassembly ) );
         server.acks->num_acked = 0;
+
         while ( ( bytes = wire_receive( simulator, &server_address, time, &from, packet ) ) > 0 )
         {
             uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -700,35 +754,54 @@ int main( int argc, char ** argv )
             uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
             int delivered_bytes = 0;
             int delivered_client_index = -1;
+
             SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
-                                                          response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index ) );
+                          rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
+                                                                    response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index ) );
+
             if ( response_bytes > 0 )
+            {
                 wire_send( simulator, &server_address, &from, response, response_bytes, time );
+            }
+
             if ( delivered_bytes > 0 )
             {
                 if ( verify_payload( delivered, delivered_bytes ) )
+                {
                     payloads_verified++;
+                }
                 else
-                    { printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", delivered_bytes ); failures++; }
+                {
+                    printf( "PAYLOAD VERIFY FAILED at server (%d bytes)\n", delivered_bytes );
+                    failures++;
+                }
             }
+
             if ( server.reassembly->completed_bytes > 0 )
             {
                 if ( verify_payload( server.reassembly->completed_payload, server.reassembly->completed_bytes ) )
+                {
                     fragmented_verified++;
+                }
                 else
-                    { printf( "FRAGMENTED PAYLOAD VERIFY FAILED at server (%d bytes)\n", server.reassembly->completed_bytes ); failures++; }
+                {
+                    printf( "FRAGMENTED PAYLOAD VERIFY FAILED at server (%d bytes)\n", server.reassembly->completed_bytes );
+                    failures++;
+                }
             }
         }
 
         SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-            rocketnet_server_protocol_update( &server, time ) );
+                      rocketnet_server_protocol_update( &server, time ) );
+
         for ( int i = 0; i < 16; i++ )
         {
             uint8_t keep_alive[ROCKETNET_RECEIVE_CEILING];
             int keep_alive_bytes = 0;
+
             SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server, i, time, keep_alive ) );
+                          keep_alive_bytes = rocketnet_server_protocol_write_keep_alive_if_due( &server, i, time, keep_alive ) );
+
             if ( keep_alive_bytes > 0 )
             {
                 int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
@@ -738,8 +811,10 @@ int main( int argc, char ** argv )
 
             uint8_t ack_packet[ROCKETNET_RECEIVE_CEILING];
             int ack_bytes = 0;
+
             SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                ack_bytes = rocketnet_server_protocol_write_ack_if_due( &server, i, time, ack_packet ) );
+                          ack_bytes = rocketnet_server_protocol_write_ack_if_due( &server, i, time, ack_packet ) );
+
             if ( ack_bytes > 0 )
             {
                 int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
@@ -755,14 +830,21 @@ int main( int argc, char ** argv )
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
                 bool processed = false;
+
                 SOAK_PROFILE( SOAK_PROFILE_PRODUCT,
-                    processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes ) );
+                              processed = rocketnet_client_protocol_process_packet( &clients[c], packet, bytes, time, delivered, sizeof( delivered ), &delivered_bytes ) );
+
                 if ( processed && delivered_bytes > 0 )
                 {
                     if ( verify_payload( delivered, delivered_bytes ) )
+                    {
                         payloads_verified++;
+                    }
                     else
-                        { printf( "PAYLOAD VERIFY FAILED at client %d (%d bytes)\n", c, delivered_bytes ); failures++; }
+                    {
+                        printf( "PAYLOAD VERIFY FAILED at client %d (%d bytes)\n", c, delivered_bytes );
+                        failures++;
+                    }
                 }
             }
         }
@@ -807,15 +889,14 @@ int main( int argc, char ** argv )
     // overflow, duplication alone moves only the ALREADY_RECEIVED rows, and
     // jitter alone moves nothing.
 
-    static const soak_explained_refusal_t soak_explained_refusals[] =
-    {
-        { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW,              "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
-        { ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED,        "duplication: the wire delivers a keep-alive twice, the second is a replay" },
-        { ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED,           "duplication: the wire delivers a payload twice, the second is a replay" },
-        { ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,          "duplication: the wire delivers a fragment twice, the second is a replay" },
+    static const soak_explained_refusal_t soak_explained_refusals[] = {
+        { ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW, "loss: a lost keep-alive takes its acks with it, so sent packets age out of the history unacknowledged" },
+        { ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
+        { ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED, "duplication: the wire delivers a payload twice, the second is a replay" },
+        { ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED, "duplication: the wire delivers a fragment twice, the second is a replay" },
         { ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED, "duplication: the wire delivers a keep-alive twice, the second is a replay" },
-        { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED,               "duplication: the wire delivers a standalone ack twice, the second is a replay" },
-        { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED,        "duplication: the wire delivers a standalone ack twice, the second is a replay" },
+        { ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
+        { ROCKETNET_COUNTER_CLIENT_ACK_ALREADY_RECEIVED, "duplication: the wire delivers a standalone ack twice, the second is a replay" },
         { -1, NULL }
     };
 
@@ -828,18 +909,22 @@ int main( int argc, char ** argv )
     const soak_end_t soak_ends[2] = { { "server", &server_counters }, { "clients", &client_counters } };
 
     int conservation_ok = 1;
+
     for ( int e = 0; e < 2; e++ )
     {
         char report[256];
-        if ( !rocketnet_counters_conserved( soak_ends[e].counters, report, sizeof(report) ) )
+        if ( !rocketnet_counters_conserved( soak_ends[e].counters, report, sizeof( report ) ) )
         {
             printf( "CONSERVATION FAILED at %s: %s\n", soak_ends[e].name, report );
             conservation_ok = 0;
             failures++;
         }
     }
+
     if ( conservation_ok )
+    {
         printf( "soak_sim: conservation ok (server and clients)\n" );
+    }
 
     for ( int e = 0; e < 2; e++ )
     {
@@ -848,16 +933,21 @@ int main( int argc, char ** argv )
             const uint64_t value = rocketnet_counter_value( soak_ends[e].counters, i );
             if ( value == 0 || rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL )
                 continue;
+
             const char * fault = NULL;
             for ( int j = 0; soak_explained_refusals[j].fault; j++ )
                 if ( soak_explained_refusals[j].counter == i )
+                {
                     fault = soak_explained_refusals[j].fault;
+                }
+
             if ( fault )
             {
                 printf( "soak_sim: explained refusal at %s: %s = %llu (%s)\n", soak_ends[e].name,
                         rocketnet_counter_name( i ), (unsigned long long) value, fault );
                 continue;
             }
+
             printf( "UNEXPLAINED REFUSAL at %s: %s = %llu\n", soak_ends[e].name,
                     rocketnet_counter_name( i ), (unsigned long long) value );
             failures++;
@@ -877,6 +967,13 @@ int main( int argc, char ** argv )
     // went has not measured what it claims to measure.
 
     const int profile_refused = soak_profile_report( soak_elapsed, iteration );
+
+    // A failing run always names its simulator seed, pinned or not, so the
+    // wire that failed can be replayed from the log alone.
+
+    if ( failures || hangs || terminals || profile_refused )
+        printf( "soak_sim: FAILED simulator seed=%llu replay: ROCKETNET_SOAK_SIM_SEED=%llu ./bin/soak_sim\n",
+                (unsigned long long) simulator_seed, (unsigned long long) simulator_seed );
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );

@@ -39,6 +39,15 @@
 #                           ci.yml's tsan job on 2026-10-22 step for step:
 #                           345-454s on the fleet's 16-core runner hosts.
 #
+#   macos / Release         the macOS functional suite's nightly tier
+#   functional nightly      (ROCKETNET_TEST_NIGHTLY=1, functional/main.cpp):
+#   tier                    the four hard-killed client cells on the portable
+#                           server, each of which waits out the real 10 s
+#                           token timeout, and three of the four transport
+#                           pairs of connect/disconnect x1000 and of
+#                           destroy-under-traffic. ci.yml's macOS rows keep the
+#                           msgx cells of each on every commit (docs/MACOS.md).
+#
 #   linux / transport       every cell of ci.yml's Linux transport family
 #   cells x50 and ASan      matrix fifty times in a row, then the same cells
 #                           and the whole functional suite once per cell on
@@ -48,6 +57,11 @@
 #   macos / transport       every cell of ci.yml's macOS transport family
 #   cells x50               matrix fifty times in a row on the fleet's
 #                           Apple-silicon runner, for the same reason.
+#
+#   windows / transport     every cell of ci.yml's Windows transport family
+#   cells x50               matrix (the portable, iocp and rio servers and
+#                           loopback) fifty times in a row on the native
+#                           Windows runner, for the same one-in-fifty reason.
 
 name: nightly
 
@@ -106,6 +120,40 @@ jobs:
         timeout-minutes: 20
         run: ./bin/functional
 
+  # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole Release functional suite with
+  # ROCKETNET_TEST_NIGHTLY=1 on the fleet's darwin runner (the same host
+  # ci.yml's macOS rows use), which adds the cases moved off the per-commit
+  # path (functional/main.cpp, rocketnet_functional_test_group). Every case
+  # keeps every assertion; the tier exists because those cells wait out real
+  # protocol timeouts or repeat a transport pair a per-commit case keeps.
+  # Measured times: docs/MACOS.md.
+
+  macos-functional-nightly:
+    name: macos / Release functional nightly tier
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-macos-functional-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release, through the Makefile)
+        run: make -j8
+
+      - name: Functional suite, nightly tier
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_REPORT: "1"
+        run: ./bin/functional
+
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
   # 2026-10-22 step for step (its comment there is the doctrine: a real race
   # stops the world, halt_on_error=1, no suppressions file; setarch -R for gcc
@@ -113,7 +161,7 @@ jobs:
   # 345-454s, past ci.yml's 3-minute law, so it runs here with a real budget.
   # The live message matrix case runs alone in the functional suite (its own
   # suite group, functional/main.cpp): its 50s tsan wall-clock bound measures
-  # the case, about 35s alone on amd-1, and not the rest of the suite.
+  # the case, about 35s alone on a Linux x64 gcc bench, and not the rest of the suite.
 
   tsan-threaded:
     name: tsan (threaded transport)
@@ -268,6 +316,53 @@ jobs:
           path: build/transport-cells-repeat
           if-no-files-found: ignore
 
+  # THE WINDOWS TRANSPORT CELLS, FIFTY TIMES IN A ROW.
+  # scripts/transport-cells-repeat reads the cells and cases from ci.yml's
+  # TRANSPORT_MATRIX_WINDOWS step (never a copy) and runs each named cell's
+  # cases (IPv4, IPv6, an IPv4 client of a dual-stack server, and the pin
+  # check) fifty times in a row with the matrix's pins and pass rule, printing
+  # one CELL <server>/<client> <case> runs=N pass=P fail=F line per case and
+  # keeping the first failing log. A failure is reported with its log, never
+  # retried. The cells named here are the portable, iocp and rio servers and
+  # loopback: every cell of the Windows matrix, each named so a cell added to
+  # ci.yml is added here on purpose.
+
+  windows-transport-cells-repeat:
+    name: windows / transport cells x50
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-transport-cells-repeat-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build Release
+        run: cmake --build build --config Release --parallel 4
+
+      - name: The Windows transport cells, fifty times in a row
+        timeout-minutes: 60
+        shell: bash
+        run: scripts/transport-cells-repeat --runs 50 --cell portable/portable --cell iocp/portable --cell rio/portable --cell loopback/loopback
+
+      - name: Keep the logs of a failing run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-transport-cells-repeat-${{ matrix.ref }}
+          path: build/transport-cells-repeat
+          if-no-files-found: ignore
+
+
   # The windows Debug row, lifted from ci.yml's build-and-test-windows on
   # 2026-09-13, step for step. The doctrine it carries (#81's baseline): the
   # portable transport built with MSVC and the full test suite run on the runner.
@@ -289,14 +384,12 @@ jobs:
     # build-and-test-windows runs on, never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     # Debug only, by the owner's ruling of 2026-10-20: a Windows Debug run over the
-    # per-case peak-RSS bound runs with that bound lifted, and the bound in code
-    # stays. tests/suite_runner.h:58 sets the bound to 698 MiB, measured on a Linux
-    # Release build; tests/suite_runner.h:89 reads this variable in its place. In
+    # functional per-case peak-RSS bound runs with that bound lifted, and the
+    # bound in code stays. The unit step reports RSS; the functional step
+    # enforces it through test_unit_case_memory. In
     # Debug on the fleet Windows runner test_swarm peaks near 750 MiB,
     # transport_loopback_* near 1480 MiB and functional cases up to about 940 MiB,
     # so 2048 covers each. Release jobs keep the 698 bound.
-    env:
-      ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
     strategy:
       fail-fast: false
       matrix:
@@ -320,7 +413,7 @@ jobs:
       - name: Build
         run: cmake --build build --config Debug --parallel
 
-      - name: Run tests
+      - name: Run tests (RSS telemetry, deterministic verdict)
         shell: bash
         run: |
           ./bin/Debug/test.exe
@@ -330,15 +423,18 @@ jobs:
         timeout-minutes: 5
         run: ./bin/Debug/test_iocp.exe
 
-      - name: Run functional suite
+      - name: Run functional suite (RSS enforced)
         timeout-minutes: 20
         shell: bash
+        env:
+          ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
         run: ./bin/Debug/functional.exe
 
       - name: Functional suite with IOCP selected
         timeout-minutes: 20
         shell: bash
         env:
+          ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
           ROCKETNET_SERVER_TRANSPORT: iocp
         run: |
           set -o pipefail
@@ -399,8 +495,6 @@ jobs:
 
   windows-transport-extension:
     name: external transport backend / windows-2025
-    # DISABLED: no Windows fleet runner registered for this repository; owed: the Windows fleet machine
-    if: false
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
     strategy:
       fail-fast: false

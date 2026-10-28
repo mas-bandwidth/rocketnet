@@ -42,7 +42,7 @@ static unsigned char nondet_uchar( void ) { return 0; }
 uint64_t nondet_uint64( void );
 uint32_t nondet_uint32( void );
 unsigned char nondet_uchar( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 #define U32_MOD  0x100000000ULL
 #define U32_HALF 0x80000000ULL
@@ -97,9 +97,13 @@ uint64_t rocketnet_reconstruct_u24( uint32_t wire, uint64_t reference )
     uint32_t d;
 
     if ( w >= rlow )
+    {
         d = w - rlow;
+    }
     else
+    {
         d = ( w + (uint32_t) U24_MOD ) - rlow;
+    }
 
     if ( d >= (uint32_t) U24_HALF )
         return reference - ( U24_MOD - (uint64_t) d );
@@ -122,7 +126,7 @@ int main( void )
     uint64_t n;
     uint64_t reference;
 
-    /* --- 32-bit nearest candidate, every wire value --- */
+    // --- 32-bit nearest candidate, every wire value ---
     wire = nondet_uint32();
     expected = nondet_uint64();
     __CPROVER_assume( expected >= U32_MOD );
@@ -147,7 +151,7 @@ int main( void )
     __CPROVER_assert( rocketnet_reconstruct_near( (uint32_t) n, expected ) == n,
                       "32-bit in-window value round-trips across the wrap" );
 
-    /* --- rocketnet_reconstruct_sequence, reference = highest_opened + 1 --- */
+    // --- rocketnet_reconstruct_sequence, reference = highest_opened + 1 ---
     highest = nondet_uint64();
     __CPROVER_assume( highest >= U32_MOD - 1 );
     __CPROVER_assume( highest < 0xFFFFFFFEFFFFFFFFULL );
@@ -171,7 +175,7 @@ int main( void )
     __CPROVER_assert( rocketnet_reconstruct_sequence( (uint32_t) n, highest ) == n,
                       "reconstruct_sequence round-trips every in-window value" );
 
-    /* --- 24-bit signed half range --- */
+    // --- 24-bit signed half range ---
     reference = nondet_uint64();
     __CPROVER_assume( reference >= U24_HALF );
     __CPROVER_assume( reference <= UINT64_MAX - ( U24_HALF - 1 ) );
@@ -194,5 +198,8 @@ int main( void )
     __CPROVER_assert( rocketnet_reconstruct_u24( (uint32_t) n, reference ) == n,
                       "24-bit in-window value round-trips across the wrap" );
 
+#if defined( REACHABILITY_CONTROL )
+    __CPROVER_assert( 0, "reconstruct reachability control" );
+#endif // #if defined( REACHABILITY_CONTROL )
     return 0;
 }

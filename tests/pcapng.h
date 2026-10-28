@@ -18,8 +18,10 @@
     buffers are std::vector and the timestamps come from the caller.
 */
 
-#ifndef ROCKETNET_TEST_PCAPNG_H
-#define ROCKETNET_TEST_PCAPNG_H
+#pragma once
+
+#ifndef ROCKETNET_TESTS_PCAPNG_H
+#define ROCKETNET_TESTS_PCAPNG_H
 
 #include "resource_file.h"
 
@@ -30,7 +32,7 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 #include <io.h>
 #else
 #include <dirent.h>
@@ -82,19 +84,19 @@ inline const char * rocketnet_pcapng_result_name( int result )
 {
     switch ( result )
     {
-        case ROCKETNET_PCAPNG_OK:                               return "PCAPNG_OK";
-        case ROCKETNET_PCAPNG_TRUNCATED_BLOCK:                  return "PCAPNG_TRUNCATED_BLOCK";
-        case ROCKETNET_PCAPNG_BLOCK_LENGTH_NOT_MULTIPLE_OF_4:   return "PCAPNG_BLOCK_LENGTH_NOT_MULTIPLE_OF_4";
-        case ROCKETNET_PCAPNG_UNKNOWN_LINKTYPE:                 return "PCAPNG_UNKNOWN_LINKTYPE";
-        case ROCKETNET_PCAPNG_FILE_OVER_CAP:                    return "PCAPNG_FILE_OVER_CAP";
-        case ROCKETNET_PCAPNG_NOT_A_SECTION:                    return "PCAPNG_NOT_A_SECTION";
-        case ROCKETNET_PCAPNG_SECOND_SECTION:                   return "PCAPNG_SECOND_SECTION";
-        case ROCKETNET_PCAPNG_UNKNOWN_BLOCK:                    return "PCAPNG_UNKNOWN_BLOCK";
-        case ROCKETNET_PCAPNG_UNKNOWN_INTERFACE:                return "PCAPNG_UNKNOWN_INTERFACE";
-        case ROCKETNET_PCAPNG_BAD_PACKET_LENGTH:                return "PCAPNG_BAD_PACKET_LENGTH";
-        case ROCKETNET_PCAPNG_BAD_OPTION:                       return "PCAPNG_BAD_OPTION";
-        case ROCKETNET_PCAPNG_CANNOT_OPEN:                      return "PCAPNG_CANNOT_OPEN";
-        default:                                                return "PCAPNG_UNKNOWN_RESULT";
+        case ROCKETNET_PCAPNG_OK:                             return "PCAPNG_OK";
+        case ROCKETNET_PCAPNG_TRUNCATED_BLOCK:                return "PCAPNG_TRUNCATED_BLOCK";
+        case ROCKETNET_PCAPNG_BLOCK_LENGTH_NOT_MULTIPLE_OF_4: return "PCAPNG_BLOCK_LENGTH_NOT_MULTIPLE_OF_4";
+        case ROCKETNET_PCAPNG_UNKNOWN_LINKTYPE:               return "PCAPNG_UNKNOWN_LINKTYPE";
+        case ROCKETNET_PCAPNG_FILE_OVER_CAP:                  return "PCAPNG_FILE_OVER_CAP";
+        case ROCKETNET_PCAPNG_NOT_A_SECTION:                  return "PCAPNG_NOT_A_SECTION";
+        case ROCKETNET_PCAPNG_SECOND_SECTION:                 return "PCAPNG_SECOND_SECTION";
+        case ROCKETNET_PCAPNG_UNKNOWN_BLOCK:                  return "PCAPNG_UNKNOWN_BLOCK";
+        case ROCKETNET_PCAPNG_UNKNOWN_INTERFACE:              return "PCAPNG_UNKNOWN_INTERFACE";
+        case ROCKETNET_PCAPNG_BAD_PACKET_LENGTH:              return "PCAPNG_BAD_PACKET_LENGTH";
+        case ROCKETNET_PCAPNG_BAD_OPTION:                     return "PCAPNG_BAD_OPTION";
+        case ROCKETNET_PCAPNG_CANNOT_OPEN:                    return "PCAPNG_CANNOT_OPEN";
+        default:                                              return "PCAPNG_UNKNOWN_RESULT";
     }
 }
 
@@ -222,13 +224,27 @@ inline void rocketnet_pcapng_ipv4_udp_frame( std::vector<uint8_t> & out,
 {
     out.clear();
     const uint32_t total = 20 + 8 + (uint32_t) bytes;
-    const uint8_t header[20] =
-    {
-        0x45, 0x00, (uint8_t) ( total >> 8 ), (uint8_t) total,
-        0x00, 0x00, 0x00, 0x00,
-        64, 17, 0x00, 0x00,
-        (uint8_t) ( source_address >> 24 ), (uint8_t) ( source_address >> 16 ), (uint8_t) ( source_address >> 8 ), (uint8_t) source_address,
-        (uint8_t) ( destination_address >> 24 ), (uint8_t) ( destination_address >> 16 ), (uint8_t) ( destination_address >> 8 ), (uint8_t) destination_address,
+    const uint8_t header[20] = {
+        0x45,
+        0x00,
+        (uint8_t) ( total >> 8 ),
+        (uint8_t) total,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        64,
+        17,
+        0x00,
+        0x00,
+        (uint8_t) ( source_address >> 24 ),
+        (uint8_t) ( source_address >> 16 ),
+        (uint8_t) ( source_address >> 8 ),
+        (uint8_t) source_address,
+        (uint8_t) ( destination_address >> 24 ),
+        (uint8_t) ( destination_address >> 16 ),
+        (uint8_t) ( destination_address >> 8 ),
+        (uint8_t) destination_address,
     };
     out.insert( out.end(), header, header + 20 );
     uint32_t sum = 0;
@@ -240,12 +256,15 @@ inline void rocketnet_pcapng_ipv4_udp_frame( std::vector<uint8_t> & out,
     out[10] = (uint8_t) ( checksum >> 8 );
     out[11] = (uint8_t) checksum;
     const uint32_t udp_length = 8 + (uint32_t) bytes;
-    const uint8_t udp[8] =
-    {
-        (uint8_t) ( source_port >> 8 ), (uint8_t) source_port,
-        (uint8_t) ( destination_port >> 8 ), (uint8_t) destination_port,
-        (uint8_t) ( udp_length >> 8 ), (uint8_t) udp_length,
-        0x00, 0x00,
+    const uint8_t udp[8] = {
+        (uint8_t) ( source_port >> 8 ),
+        (uint8_t) source_port,
+        (uint8_t) ( destination_port >> 8 ),
+        (uint8_t) destination_port,
+        (uint8_t) ( udp_length >> 8 ),
+        (uint8_t) udp_length,
+        0x00,
+        0x00,
     };
     out.insert( out.end(), udp, udp + 8 );
     if ( bytes > 0 )
@@ -393,7 +412,7 @@ inline int rocketnet_pcapng_read_file( const std::string & path, std::vector<uin
         return ROCKETNET_PCAPNG_CANNOT_OPEN;
     uint8_t chunk[4096];
     size_t n;
-    while ( image.size() <= ROCKETNET_PCAPNG_MAX_FILE_BYTES && ( n = fread( chunk, 1, sizeof(chunk), file ) ) > 0 )
+    while ( image.size() <= ROCKETNET_PCAPNG_MAX_FILE_BYTES && ( n = fread( chunk, 1, sizeof( chunk ), file ) ) > 0 )
         image.insert( image.end(), chunk, chunk + n );
     fclose( file );
     return image.size() > ROCKETNET_PCAPNG_MAX_FILE_BYTES ? ROCKETNET_PCAPNG_FILE_OVER_CAP : ROCKETNET_PCAPNG_OK;
@@ -440,7 +459,7 @@ inline int rocketnet_pcapng_udp_payload( const std::vector<uint8_t> & frame,
 inline void rocketnet_pcapng_list( const std::string & directory, std::vector<std::string> & names )
 {
     names.clear();
-#if defined(_WIN32)
+#if defined( _WIN32 )
     const std::wstring pattern = rocketnet_test_wide_path( directory + "\\*.pcapng" );
     WIN32_FIND_DATAW found;
     const HANDLE handle = FindFirstFileW( pattern.c_str(), &found );
@@ -472,4 +491,4 @@ inline void rocketnet_pcapng_list( const std::string & directory, std::vector<st
             names[j].swap( names[j - 1] );
 }
 
-#endif // #ifndef ROCKETNET_TEST_PCAPNG_H
+#endif // ROCKETNET_TESTS_PCAPNG_H

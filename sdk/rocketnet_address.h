@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ADDRESS_H
-#define ROCKETNET_ADDRESS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ADDRESS_H
+#define ROCKETNET_SDK_ROCKETNET_ADDRESS_H
 
 #include "rocketnet_internal.h"
 
@@ -16,8 +16,9 @@
 // public API takes and gives addresses only as strings.
 
 #ifdef __cplusplus
-extern "C" {
-#endif
+extern "C"
+{
+#endif // #ifdef __cplusplus
 
 /** @brief Load an IPv4 endpoint from network-order integers.
  * @param address [out] Non-NULL destination; previous contents are replaced.
@@ -91,7 +92,7 @@ uint32_t rocketnet_address_ipv4( struct rocketnet_address_t * address );
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 // the one rule for an ipv4-mapped source (::ffff:a.b.c.d) on receive.
 //
@@ -118,8 +119,10 @@ static inline bool rocketnet_address_accept_received_source( struct rocketnet_ad
         return true;
     if ( !dual_stack )
         return false;
+
     rocketnet_address_convert_ipv6_to_ipv4( from );
+
     return true;
 }
 
-#endif // #ifndef ROCKETNET_ADDRESS_H
+#endif // ROCKETNET_SDK_ROCKETNET_ADDRESS_H

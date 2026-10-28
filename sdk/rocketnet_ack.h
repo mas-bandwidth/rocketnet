@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ACK_H
-#define ROCKETNET_ACK_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ACK_H
+#define ROCKETNET_SDK_ROCKETNET_ACK_H
 
 #include <stdint.h>
 #include "rocketnet_wire.h"
@@ -58,12 +58,15 @@ int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rock
 
 uint64_t rocketnet_reconstruct_ack_largest( uint32_t wire_value, uint64_t highest_sent );
 
-// Decodes and validates a block at the front of opened session data,
-// evaluating validity on the reconstructed 64-bit largest. Every rule in
-// _Acks_/Validity: geometry contained in the opened size, first range
-// length zero exactly when largest is zero, first range length never
-// exceeding largest, no zero gap or length entry, and the walk never
-// falling below sequence one -- computed without unsigned underflow.
+// Decodes and validates a block at the front of opened session data. The
+// empty block is recognised on its wire fields at any highest sent: wire
+// largest 0, first range length 0 and no ranges (tla/AckBlockWrap.tla
+// ReadBlock); a zero first range length with anything else nonzero is
+// malformed. Every other block is evaluated on the reconstructed 64-bit
+// largest, by every rule in _Acks_/Validity: geometry contained in the opened
+// size, first range length never exceeding largest, no zero gap or length
+// entry, and the walk never falling below sequence one -- computed without
+// unsigned underflow.
 // Returns the block's byte length (7 + 4 * count), or 0 when the block is
 // malformed, which refuses its whole packet as BAD_ACK_BLOCK.
 
@@ -113,9 +116,11 @@ struct rocketnet_received_packet_record_t
     uint64_t sequence;
     double receive_time;
     uint32_t wire_bytes;
-    uint16_t stats_prev;                    // the running stats' receive-time list, by ring slot;
-    uint16_t stats_next;                    // read only while the record is counted
+    uint32_t stats_word;                   // one word of the fixed block-aggregate storage
 };
+
+static_assert( sizeof( rocketnet_received_packet_record_t ) == 24,
+               "received block metadata reuses the former link storage" );
 
 // The sent ring's shadow bitmaps: one bit per slot, held (written) and
 // unacknowledged. The walk reads them instead of visiting every sequence in
@@ -126,6 +131,8 @@ struct rocketnet_received_packet_record_t
 #define ROCKETNET_AGGREGATES_WRITTEN_WORDS ( ( ROCKETNET_PACKET_AGGREGATE_BUFFER_SIZE + 63 ) / 64 )
 static_assert( ROCKETNET_SENT_PACKET_BUFFER_SIZE % 64 == 0,
                "the sent ring must be a multiple of 64 for the bitmaps" );
+
+#if ROCKETNET_DEV
 
 // The fields the statistics definition reads, as a standalone history for the
 // reference recompute (rocketnet_ack_stats_history_compute). The live ACK
@@ -147,8 +154,8 @@ struct rocketnet_ack_stats_received_t
     uint32_t pad;
 };
 
-static_assert( sizeof(rocketnet_ack_stats_sent_t) == 24, "stats sent projection size" );
-static_assert( sizeof(rocketnet_ack_stats_received_t) == 24, "stats received projection size" );
+static_assert( sizeof( rocketnet_ack_stats_sent_t ) == 24, "stats sent projection size" );
+static_assert( sizeof( rocketnet_ack_stats_received_t ) == 24, "stats received projection size" );
 
 struct rocketnet_ack_stats_history_t
 {
@@ -171,14 +178,36 @@ template <unsigned Words> struct rocketnet_stats_epoch_bits_t
     uint64_t epoch;
     uint64_t tags[Words];
     uint64_t bits[Words];
-    void initialize() { epoch = 1; for (unsigned i = 0; i < Words; ++i) tags[i] = 0; }
-    void invalidate() { if (epoch == UINT64_MAX) initialize(); else ++epoch; }
-    uint64_t word(int i) const { return tags[i] == epoch ? bits[i] : 0; }
-    bool test(int i) const { return (word(i / 64) & (1ull << (i % 64))) != 0; }
-    void set(int i) {
+
+    void initialize()
+    {
+        epoch = 1;
+
+        for ( unsigned i = 0; i < Words; ++i )
+            tags[i] = 0;
+    }
+
+    void invalidate()
+    {
+        if ( epoch == UINT64_MAX )
+            initialize();
+        else
+            ++epoch;
+    }
+
+    uint64_t word( int i ) const { return tags[i] == epoch ? bits[i] : 0; }
+    bool test( int i ) const { return ( word( i / 64 ) & ( 1ull << ( i % 64 ) ) ) != 0; }
+
+    void set( int i )
+    {
         const int w = i / 64;
-        if (tags[w] != epoch) { bits[w] = 0; tags[w] = epoch; }
-        bits[w] |= 1ull << (i % 64);
+        if ( tags[w] != epoch )
+        {
+            bits[w] = 0;
+            tags[w] = epoch;
+        }
+
+        bits[w] |= 1ull << ( i % 64 );
     }
 };
 
@@ -187,10 +216,27 @@ struct rocketnet_ack_stats_validity_t
     rocketnet_stats_epoch_bits_t<ROCKETNET_SENT_BITMAP_WORDS> sent;
     rocketnet_stats_epoch_bits_t<ROCKETNET_RECEIVED_STATS_DIRTY_WORDS> received;
     rocketnet_stats_epoch_bits_t<ROCKETNET_RTT_STATS_DIRTY_WORDS> rtt;
-    void initialize() { sent.initialize(); received.initialize(); rtt.initialize(); }
-    void invalidate() { sent.invalidate(); received.invalidate(); rtt.invalidate(); }
+
+    void initialize()
+    {
+        sent.initialize();
+
+        received.initialize();
+
+        rtt.initialize();
+    }
+
+    void invalidate()
+    {
+        sent.invalidate();
+
+        received.invalidate();
+
+        rtt.invalidate();
+    }
 };
 
+#endif // #if ROCKETNET_DEV
 
 struct rocketnet_ack_endpoint_t
 {
@@ -206,11 +252,13 @@ struct rocketnet_ack_endpoint_t
     uint64_t ack_debt;                          // eliciting packets received since the last block sent
 
     // published per-connection statistics. The running aggregates below keep
-    // them current as each send, receive and ack lands, exactly the numbers
-    // update_stats recomputes from the full histories, so a server slot's
-    // stats are current at every read and cost nothing per idle slot. The
-    // client still recomputes on each stats read. rtt and jitter in
-    // milliseconds, loss as a percentage.
+    // them current as each send, receive and ack lands. Every field is
+    // exactly the number update_stats recomputes from the full histories,
+    // except jitter, which matches it within floating-point rounding: the
+    // running form subtracts count * min from a double sum, the recompute
+    // sums sample - min in float. A server slot's stats are current at every
+    // read and cost nothing per idle slot. The client still recomputes on
+    // each stats read. rtt and jitter in milliseconds, loss as a percentage.
     float rtt;
     float jitter;
     float packet_loss;
@@ -243,8 +291,10 @@ struct rocketnet_ack_endpoint_t
     // that goes backwards), so the sent spans are read at the lowest and
     // highest counted sequences. Receive times do not follow sequence
     // (reordering, late and duplicate arrivals), so the counted received
-    // records are linked in receive-time order through their ring slots,
-    // the links held in the records themselves.
+    // records are summarized by fixed 32-slot physical blocks. Their compact
+    // summaries occupy the stats_word padding reclaimed from these records,
+    // so the endpoint memory budget does not grow. Exact sequence tags reject
+    // stale aliases before a summary or edge record is counted.
     // All zero is the empty state.
 
     uint64_t stats_sent_bytes;                  // counted sent records' wire bytes
@@ -262,11 +312,14 @@ struct rocketnet_ack_endpoint_t
     uint32_t stats_eligible_count;              // counted records in the loss-eligible part
     uint32_t stats_eligible_unacked;            // of those, unacknowledged
     uint64_t stats_received_bytes;
-    double stats_received_low_time;             // receive times at the list's head and tail
+    double stats_received_low_time;             // receive-time extrema reduced from the blocks
     double stats_received_high_time;
     uint32_t stats_received_count;
-    uint16_t stats_received_head;               // slot received earliest; valid while the count is nonzero
-    uint16_t stats_received_tail;               // slot received latest
+#if ROCKETNET_DEV
+    uint32_t stats_received_operations;         // records/blocks visited by the latest receive; test-only
+#else
+    uint32_t stats_received_pad;
+#endif // #if ROCKETNET_DEV
     double stats_rtt_sum;                       // sum and count of the positive rtt samples
     uint32_t stats_rtt_count;
     uint32_t stats_pad;
@@ -299,8 +352,8 @@ struct rocketnet_ack_endpoint_t
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
                "the rtt min tree needs a power-of-two history" );
-static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE <= 65536,
-               "the received list links are 16-bit slots" );
+static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE % 32 == 0,
+               "the received block aggregate needs 32-slot blocks" );
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 
@@ -410,6 +463,14 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
 
+// Internal unit-test access to the production popcount and its portable
+// implementation. The latter is also the fallback used when no builtin is
+// available, so the suite can exercise it on every host.
+int rocketnet_ack_popcount64( uint64_t value );
+int rocketnet_ack_popcount64_portable( uint64_t value );
+
+#if ROCKETNET_DEV
+
 // The six-field result of the reference recompute over a standalone history.
 // The function never mutates the history.
 struct rocketnet_ack_stats_result_t
@@ -418,10 +479,12 @@ struct rocketnet_ack_stats_result_t
 };
 
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
-                                        rocketnet_ack_stats_result_t * result,
-                                        const uint64_t * sent_written = NULL,
-                                        const uint64_t * received_written = NULL,
-                                        const rocketnet_ack_stats_validity_t * validity = NULL );
+                                          rocketnet_ack_stats_result_t * result,
+                                          const uint64_t * sent_written = NULL,
+                                          const uint64_t * received_written = NULL,
+                                          const rocketnet_ack_stats_validity_t * validity = NULL );
+
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                    the server's acks
@@ -452,4 +515,4 @@ void rocketnet_server_acks_destroy( struct rocketnet_server_acks_t * acks );
 
 void rocketnet_server_acks_reset_slot( struct rocketnet_server_acks_t * acks, int client_index );
 
-#endif // #ifndef ROCKETNET_ACK_H
+#endif // ROCKETNET_SDK_ROCKETNET_ACK_H

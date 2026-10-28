@@ -5,6 +5,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "fake_client_driver.h"
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
@@ -42,24 +43,21 @@ static const int DESTROY_DISCONNECT_MAX_CLIENTS = 4;
 // sdk/rocketnet_client_transport.cpp:968 because portable has no
 // non-blocking step. each case clears both names for its run and restores
 // them at its end.
+#if ROCKETNET_DEV
 static int destroy_disconnect_setenv( const char * name, const char * value )
 {
-#ifdef _WIN32
-    return _putenv_s( name, value );
-#else
-    return setenv( name, value, 1 );
-#endif
+    return rocketnet_test_env_setenv( name, value, 1 );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 static int destroy_disconnect_unsetenv( const char * name )
 {
-#ifdef _WIN32
-    return _putenv_s( name, "" );
-#else
-    return unsetenv( name );
-#endif
+    return rocketnet_test_env_unsetenv( name );
 }
+#endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 struct destroy_disconnect_env_guard_t
 {
     static const int NUM_NAMES = 2;
@@ -72,7 +70,7 @@ struct destroy_disconnect_env_guard_t
         for ( int i = 0; i < NUM_NAMES; i++ )
         {
             char prior[4096];
-            present[i] = rocketnet_test_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
+            present[i] = rocketnet_test_env_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
             if ( present[i] )
             {
                 check( strlen( prior ) < sizeof( saved[i] ) );
@@ -93,6 +91,7 @@ struct destroy_disconnect_env_guard_t
         }
     }
 };
+#endif // #if ROCKETNET_DEV
 
 struct destroy_disconnect_keys_t
 {
@@ -147,8 +146,8 @@ static void destroy_disconnect_mint_token( const destroy_disconnect_keys_t * key
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
-        DESTROY_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
-        1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     DESTROY_DISCONNECT_PROTOCOL_ID, addresses, 1, client_id,
+                                                     1000, 1030, 10, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 }
 
 static double destroy_disconnect_fixed_clock( void * ) { return 1000.0; }
@@ -303,7 +302,9 @@ static uint64_t destroy_disconnect_drain( void * endpoint, uint64_t * dropped )
 // move.
 static void test_disconnect_then_destroy_connected_client_sends_disconnect()
 {
+#if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -380,7 +381,9 @@ REGISTER_UNIT_TEST( test_disconnect_then_destroy_connected_client_sends_disconne
 // it for at least two clients.
 static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_client()
 {
+#if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -389,7 +392,10 @@ static void test_stop_then_destroy_server_sends_disconnect_to_every_connected_cl
     rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
     const uint16_t port = rocketnet_server_port( server );
 
-    enum { NUM_CLIENTS = 3 };
+    enum
+    {
+        NUM_CLIENTS = 3
+    };
     rocketnet_client_t * clients[NUM_CLIENTS] = {};
     int slots[NUM_CLIENTS] = {};
 
@@ -489,7 +495,9 @@ static void destroy_disconnect_public_client_destroy_sends_nothing( const destro
 // nothing (a case counts datagrams handed to the fake transport: zero).
 static void test_shutdown_without_live_connection_sends_nothing()
 {
+#if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -613,7 +621,10 @@ static void test_shutdown_without_live_connection_sends_nothing()
         rocketnet_server_t * server = destroy_disconnect_server_create( &keys, time );
         const uint16_t port = rocketnet_server_port( server );
 
-        enum { NUM_CLIENTS = 2 };
+        enum
+        {
+            NUM_CLIENTS = 2
+        };
         rocketnet_client_t * clients[NUM_CLIENTS] = {};
         void * endpoints[NUM_CLIENTS] = {};
         uint64_t dropped[NUM_CLIENTS] = {};
@@ -659,7 +670,9 @@ REGISTER_UNIT_TEST( test_shutdown_without_live_connection_sends_nothing );
 // before full transport stop. The legacy worker is stepped explicitly here.
 static void test_transport_disconnect_twice_delivers_original_burst()
 {
+#if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
     double now = 1000.0;
@@ -690,7 +703,9 @@ REGISTER_UNIT_TEST( test_transport_disconnect_twice_delivers_original_burst );
 // 100-percent loss policy applies to the burst, including repeated requests.
 static void test_transport_disconnect_preserves_simulator_loss()
 {
+#if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_public_link_simulator_test_development( 1 );
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -723,7 +738,9 @@ REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
 // clock fixed, so latency must not keep the burst back (tla/RNClientLinkStop.tla).
 static void test_client_disconnect_sends_burst_staged_in_link_simulator()
 {
+#if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
+#endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
     rocketnet_public_link_simulator_test_development( 1 );
     destroy_disconnect_keys_t keys;

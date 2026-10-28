@@ -21,14 +21,20 @@ static void rs_functional_check( bool condition, const char * label )
 static void rs_state_bytes( uint32_t state, uint8_t bytes[4] )
 {
     for ( int i = 0; i < 4; i++ )
+    {
         bytes[i] = (uint8_t) ( state >> ( i * 8 ) );
+    }
 }
 
 static uint32_t rs_state_read( const uint8_t * bytes )
 {
     uint32_t state = 0;
+
     for ( int i = 0; i < 4; i++ )
+    {
         state |= (uint32_t) bytes[i] << ( i * 8 );
+    }
+
     return state;
 }
 
@@ -42,21 +48,26 @@ void reliable_state_stream_over_lossy_link()
     uint32_t last = 0;
     uint32_t delivered = 0;
     uint32_t accepted = 0;
+
     for ( uint32_t tick = 1; tick <= 120 + 900; tick++ )
     {
         if ( tick <= 120 )
         {
             uint8_t bytes[4];
             rs_state_bytes( tick, bytes );
+
             const int type = tick == 60 ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED;
             rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, type, bytes, 4 ) != 0, "send" );
             accepted++;
         }
+
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rs_functional_check( d.bytes == 4, "payload length" );
+
             const uint32_t state = rs_state_read( d.data );
             rs_functional_check( state > last, "state moved backwards or duplicated" );
             last = state;
@@ -94,7 +105,12 @@ static uint32_t rs_server_stale( const rocketnet_channel_harness_t * h )
 // ordered record and the newest state have arrived.
 void reliable_sequenced_long_run_across_epochs()
 {
-    enum { states = 1400, ordered_every = 8 };
+    enum
+    {
+        states = 1400,
+        ordered_every = 8
+    };
+
     rocketnet_channel_harness_t h;
     rs_functional_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
     rs_functional_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
@@ -107,45 +123,59 @@ void reliable_sequenced_long_run_across_epochs()
     uint32_t states_seen = 0;
     uint32_t newest_seen = 0;
     int have_last = 0;
+
     for ( uint32_t tick = 1; tick <= states + 60 * 30; tick++ )
     {
         if ( tick <= states )
         {
             uint8_t bytes[4];
+
             if ( tick % ordered_every == 0 )
             {
                 rs_state_bytes( rs_ordered_flag | ++position, bytes );
                 rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes, 4 ) != 0, "send ordered" );
                 ordered_sent++;
             }
+
             rs_state_bytes( ++position, bytes );
             rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, bytes, 4 ) != 0, "send state" );
         }
+
         if ( !rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) )
+        {
             rs_functional_check( false, "connection lost" );
+        }
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             rs_functional_check( d.bytes == 4, "payload length" );
+
             const uint32_t value = rs_state_read( d.data );
             const uint32_t at = value & ~rs_ordered_flag;
             rs_functional_check( at > last_position, "a delivery went backwards or repeated" );
             last_position = at;
+
             if ( value & rs_ordered_flag )
+            {
                 ordered_seen++;
+            }
             else
             {
                 states_seen++;
                 newest_seen = at;
             }
         }
+
         have_last = tick > states && ordered_seen == ordered_sent && newest_seen == position;
         if ( have_last )
             break;
     }
 
     rocketnet_channel_harness_read_counters( &h );
+
     const uint32_t stale = rs_server_stale( &h );
+
     printf( "test_reliable_sequenced_long_run_across_epochs: sent=%u ordered=%u/%u states=%u newest=%u/%u stale=%u resends=%llu elapsed=%.3fs seed=0x%016llx\n",
             position, ordered_seen, ordered_sent, states_seen, newest_seen, position, stale,
             (unsigned long long) h.resends, h.now - 1000.0, (unsigned long long) h.seed );
@@ -170,48 +200,68 @@ void reliable_sequenced_held_record_released()
     rs_functional_check( rocketnet_channel_harness_create( &h ) != 0, "create" );
     rocketnet_channel_harness_set_link( &h, 0.0, 0.0, 0.0f, 0.0f );
     rs_functional_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) != 0, "connect" );
+
     for ( int i = 0; i < 30; i++ )
+    {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+    }
+
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_HOLD_PAYLOADS, ROCKETNET_CHANNEL_WIRE_PASS );
 
     uint8_t bytes[4];
     rs_state_bytes( rs_ordered_flag | 1, bytes );
     rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, bytes, 4 ) != 0, "send ordered" );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
     const int ordered_end = h.held_count;
+
     rs_state_bytes( 2, bytes );
     rs_functional_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED, bytes, 4 ) != 0, "send state" );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
     const int state_end = h.held_count;
     rs_functional_check( ordered_end >= 1 && state_end > ordered_end, "the scripted packets were not held" );
 
     int order[ROCKETNET_CHANNEL_HARNESS_MAX_HELD];
     int count = 0;
+
     for ( int i = ordered_end; i < state_end; i++ )
+    {
         order[count++] = i;
+    }
+
     rs_functional_check( rocketnet_channel_harness_deliver_held( &h, order, count ) == count, "deliver the state" );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
     rocketnet_channel_delivery_t d;
     rs_functional_check( !rocketnet_channel_harness_server_collect( &h, 0, &d ), "a state ahead of its epoch was delivered" );
 
     count = 0;
+
     for ( int i = 0; i < ordered_end; i++ )
+    {
         order[count++] = i;
+    }
+
     rs_functional_check( rocketnet_channel_harness_deliver_held( &h, order, count ) == count, "deliver the ordered record" );
     rocketnet_channel_harness_clear_held( &h );
     rocketnet_channel_harness_set_wire( &h, ROCKETNET_CHANNEL_WIRE_PASS, ROCKETNET_CHANNEL_WIRE_PASS );
     rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
     rs_functional_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) && d.bytes == 4 &&
-                         rs_state_read( d.data ) == ( rs_ordered_flag | 1 ), "the ordered record did not arrive first" );
+                             rs_state_read( d.data ) == ( rs_ordered_flag | 1 ),
+                         "the ordered record did not arrive first" );
     rs_functional_check( rocketnet_channel_harness_server_collect( &h, 0, &d ) && d.bytes == 4 &&
-                         rs_state_read( d.data ) == 2, "the held state was not released when its epoch opened" );
+                             rs_state_read( d.data ) == 2,
+                         "the held state was not released when its epoch opened" );
 
-    // Nothing more arrives: the resends the client makes are duplicates now.
+    // nothing more arrives: the resends the client makes are duplicates now
+
     for ( int i = 0; i < 60 * 3; i++ )
     {
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
         rs_functional_check( !rocketnet_channel_harness_server_collect( &h, 0, &d ), "a message arrived twice" );
     }
+
     printf( "test_reliable_sequenced_held_record_released: held=%d ordered_packets=%d state_packets=%d\n",
             state_end, ordered_end, state_end - ordered_end );
     rs_functional_check( h.held_overflow == 0, "held packets overflowed" );

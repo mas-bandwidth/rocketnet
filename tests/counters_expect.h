@@ -31,8 +31,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TEST_COUNTERS_EXPECT_H
-#define ROCKETNET_TEST_COUNTERS_EXPECT_H
+#ifndef ROCKETNET_TESTS_COUNTERS_EXPECT_H
+#define ROCKETNET_TESTS_COUNTERS_EXPECT_H
 
 #ifndef ROCKETNET_COUNTERS_CHECK
 #error "name the suite's check before including counters_expect.h: #define ROCKETNET_COUNTERS_CHECK <check>"
@@ -71,8 +71,8 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
 {
     uint64_t named[ROCKETNET_NUM_COUNTERS];
     bool is_named[ROCKETNET_NUM_COUNTERS];
-    memset( named, 0, sizeof(named) );
-    memset( is_named, 0, sizeof(is_named) );
+    memset( named, 0, sizeof( named ) );
+    memset( is_named, 0, sizeof( is_named ) );
 
     std::string lines;
     bool ok = true;
@@ -110,11 +110,11 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
 
         char line[256];
         if ( is_named[i] )
-            snprintf( line, sizeof(line), "  %s: expected +%llu, got %s%llu%s\n", rocketnet_counter_name( i ),
+            snprintf( line, sizeof( line ), "  %s: expected +%llu, got %s%llu%s\n", rocketnet_counter_name( i ),
                       (unsigned long long) named[i], backwards ? "-" : "+", (unsigned long long) actual,
                       matches ? "" : "  <-- wrong delta" );
         else
-            snprintf( line, sizeof(line), "  %s: moved %s%llu and was not named  <-- unnamed move\n", rocketnet_counter_name( i ),
+            snprintf( line, sizeof( line ), "  %s: moved %s%llu and was not named  <-- unnamed move\n", rocketnet_counter_name( i ),
                       backwards ? "-" : "+", (unsigned long long) actual );
         lines += line;
     }
@@ -178,7 +178,7 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
         if ( explained )
             continue;
         char line[128];
-        snprintf( line, sizeof(line), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
+        snprintf( line, sizeof( line ), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
         lines += line;
         moved++;
     }
@@ -214,4 +214,4 @@ do                                                                              
     ROCKETNET_COUNTERS_ASSERT_CLEAN( (counters), rocketnet_counters_allowed );                                    \
 } while(0)
 
-#endif // #ifndef ROCKETNET_TEST_COUNTERS_EXPECT_H
+#endif // ROCKETNET_TESTS_COUNTERS_EXPECT_H

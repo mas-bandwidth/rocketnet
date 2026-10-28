@@ -4,28 +4,33 @@
 */
 
 // What the tests, tools and benches set on a client that a game never does:
-// the receive stamp clock, and the step-driven client (no network thread;
-// update and send_packets run its I/O step on the caller's thread). Games
-// include rocketnet.h alone. ROCKETNET_CLIENT_STEP_DRIVEN=1 in the
-// environment still turns the step-driven client on, read at create.
+// the receive stamp clock, and, in a development build, the step-driven client
+// (no network thread; update and send_packets run its I/O step on the caller's
+// thread). Games include rocketnet.h alone. The step-driven setting and its
+// environment control do not exist in a production library.
 
-#ifndef ROCKETNET_TESTING_H
-#define ROCKETNET_TESTING_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_TESTING_H
+#define ROCKETNET_SDK_ROCKETNET_TESTING_H
 
 #include "rocketnet.h"
 
 #ifdef __cplusplus
-extern "C" {
-#endif
+extern "C"
+{
+#endif // #ifdef __cplusplus
 
 struct rocketnet_client_testing_t
 {
     // the receive stamp clock; NULL is the platform clock; runs on the
     // network thread, and on the caller's thread during disconnect and destroy
-    double (*time_callback)( void * context );
+    double ( *time_callback )( void * context );
 
-    // true runs the client's I/O step inside update and send_packets on the
-    // caller's thread, with no network thread
+    // Development only: true runs the client's I/O step inside update and
+    // send_packets on the caller's thread, with no network thread. The field
+    // stays in this private test struct in production so non-stepping clock
+    // fixtures keep one source shape; production creation ignores it.
     bool step_driven;
 };
 
@@ -43,7 +48,7 @@ struct rocketnet_client_t * rocketnet_client_create_testing( void * context,
 #if !ROCKETNET_DEV
 void rocketnet_client_network_simulator( struct rocketnet_client_t * client, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
-#endif // !ROCKETNET_DEV
+#endif // #if !ROCKETNET_DEV
 
 #ifdef __cplusplus
 }
@@ -70,6 +75,6 @@ template <typename config_t> static inline struct rocketnet_client_t * rocketnet
     return rocketnet_client_create_testing( context, config, config, status );
 }
 
-#endif // __cplusplus
+#endif // #ifdef __cplusplus
 
-#endif // ROCKETNET_TESTING_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TESTING_H

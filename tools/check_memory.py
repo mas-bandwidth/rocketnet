@@ -7,7 +7,11 @@ import subprocess
 import sys
 
 binary = Path(sys.argv[1] if len(sys.argv) > 1 else 'bin/transport_memory').resolve()
-profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 16), (1000, 4096, 16)]
+# (clients, payload column, max_fragmented_messages). The payload column is
+# ignored: the payload is fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (16384).
+# Slots 0 is the default config (ROCKETNET_DEFAULT_REASSEMBLY_SLOTS, 8), which
+# must plan and create at 1000 clients.
+profiles = [(1, 1416, 1), (2, 1416, 1), (1000, 1416, 1), (1000, 1416, 0), (1000, 4096, 1)]
 transports = ['portable']
 if sys.platform == 'darwin':
     transports.append('msgx')
@@ -56,6 +60,48 @@ for transport in transports:
         assert session['native_retained_on_failed_cancel_bytes'] is None
         assert session['config_copy_frozen_for_future_start'] is False
         assert session['one_block_sufficient'] is False
+        assert plan['allocator_bytes'] == plan['planned_bytes'] - plan['umem_bytes']
+        assert plan['os_bytes'] == plan['umem_bytes'] + plan['thread_stack_bytes'] + plan['mapped_ring_bytes']
+        assert plan['thread_stack_bytes'] > 0
+    # The lifecycle rows: the public server through start, stop, start, stop
+    # and the public client through connect, disconnect, connect, disconnect.
+    # required_memory bounds the first cycle's peak and the second cycle takes
+    # no more than the first: one block sized from the plan never runs out.
+    for profile in [profiles[0], profiles[1]]:
+        _, server, client = run(*profile, transport, 1, '--lifecycle')
+        assert server['lifecycle'] == 'server' and client['lifecycle'] == 'client'
+        for row in (server, client):
+            assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
+            assert row['second_cycle_peak_bytes'] == row['first_cycle_peak_bytes'], (transport, profile, row)
+        assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
+        # portable, msgx, one-queue gso and iocp each plan two workers;
+        # statistics run no thread
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
+    # The light rows: the public light presets, each created with an
+    # allocator exposing exactly its public required_memory bytes in one
+    # guarded block. Sufficiency is the arena's own evidence (peak at or
+    # under capacity, no refusal, no canary damage, nothing live after
+    # destroy, second cycle peak equal to the first), never the process
+    # heap behind it. The 1000-client row is the max supported light
+    # server population; it runs on portable, the smaller rows on every
+    # native transport this checker drives.
+    light_profiles = [profiles[0], profiles[1]]
+    if transport == 'portable':
+        light_profiles.append(profiles[2])
+    for profile in light_profiles:
+        _, server, client = run(*profile, transport, 1, '--light-lifecycle')
+        assert server['lifecycle'] == 'server' and client['lifecycle'] == 'client'
+        assert server['profile'] == 'light' and client['profile'] == 'light'
+        for row in (server, client):
+            assert row['arena_capacity_bytes'] == row['required_bytes'], (transport, profile, row)
+            assert 0 < row['first_cycle_peak_bytes'] <= row['required_bytes'], (transport, profile, row)
+            assert row['second_cycle_peak_bytes'] == row['first_cycle_peak_bytes'], (transport, profile, row)
+            assert row['final_live_bytes'] == 0, (transport, profile, row)
+            assert row['refused_allocations'] == 0, (transport, profile, row)
+            assert row['invalid_frees'] == 0, (transport, profile, row)
+            assert row['canaries_ok'] is True, (transport, profile, row)
+        assert server['os_bytes'] == server['thread_stack_bytes'] + server['umem_bytes'] + server['mapped_ring_bytes']
+        assert server['thread_stack_bytes'] > 0 and server['worker_threads'] == 2
 # This legal field combination is deliberately too large for the default
 # reassembly budget. The plan-only path must not try to create it.
 large, = run(1000, 305408, 256, 'portable', 0, '--plan-only')
@@ -66,13 +112,33 @@ if sys.platform.startswith('linux'):
     assert xdp['umem_bytes'] > 0
     assert xdp['worker_threads'] == 7  # seven queue workers
     assert xdp['sockets'] == 7
+    assert xdp['os_bytes'] >= xdp['umem_bytes'] + xdp['thread_stack_bytes'] and xdp['thread_stack_bytes'] > 0
+    # the provided buffer rings are kernel-mapped memory outside the allocator;
+    # a build without liburing has no io_uring plan
+    uring = subprocess.run([str(binary), '1', '1416', '1', 'io_uring', '4', '--plan-only'],
+                           capture_output=True, text=True, timeout=10)
+    if uring.returncode == 0:
+        uring_plan = json.loads(uring.stdout)
+        assert uring_plan['mapped_ring_bytes'] > 0 and uring_plan['os_bytes'] >= uring_plan['mapped_ring_bytes']
+    else:
+        assert 'memory plan unavailable' in uring.stderr, (uring.returncode, uring.stdout, uring.stderr)
 if sys.platform == 'win32':
     rio_plan, = run(1, 1416, 1, 'rio', 0, '--plan-only')
     assert rio_plan['worker_threads'] == 1  # one RIO I/O worker
+    # the RIO registered region comes from the allocator; nothing but stacks is OS-owned
+    assert rio_plan['allocator_bytes'] == rio_plan['planned_bytes']
+    assert rio_plan['os_bytes'] == rio_plan['thread_stack_bytes']
     rio, = run(1, 1416, 1, 'rio', 0, '--session-plan-only')
     assert rio['active_rio_registered_region_bytes'] > 0
     assert rio['active_xdp_umem_bytes'] == 0
     assert rio['active_transport_sdk_callback_bytes'] > 0
+# 1000 clients x 16 reassembly slots (not the default 8) at the fixed 16384
+# payload is over the reassembly budget (ROCKETNET_REASSEMBLY_MEMORY_MIB):
+# create refuses it before allocating. The budget is not raised.
+refused_slots = subprocess.run([str(binary), '1000', '1416', '16', 'portable', '1'],
+                               capture_output=True, text=True, timeout=60)
+assert refused_slots.returncode != 0 and 'memory profile configuration refused' in refused_slots.stderr, (
+    refused_slots.returncode, refused_slots.stdout, refused_slots.stderr)
 refused = subprocess.run([str(binary), '1001', '1416', '1', 'portable', '0', '--plan-only'],
                          capture_output=True, text=True, timeout=10)
 assert refused.returncode != 0 and 'memory plan unavailable' in refused.stderr, (

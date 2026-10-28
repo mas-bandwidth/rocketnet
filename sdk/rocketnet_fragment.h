@@ -5,15 +5,15 @@
 
 #pragma once
 
-#ifndef ROCKETNET_FRAGMENT_H
-#define ROCKETNET_FRAGMENT_H
+#ifndef ROCKETNET_SDK_ROCKETNET_FRAGMENT_H
+#define ROCKETNET_SDK_ROCKETNET_FRAGMENT_H
 
 #include <stdint.h>
 #include <stddef.h>
 #include "rocketnet_wire.h"
 #include "rocketnet_protocol.h"
 
-// Fragmentation and reassembly, per STANDARD.md _Fragmentation_: a payload
+// fragmentation and reassembly, per STANDARD.md _Fragmentation_: a payload
 // larger than one packet's capacity is split into fragments, each riding an
 // ordinary sealed session packet (type 9), and reassembled per connection on
 // the far side. This is the transport's own self-contained mechanism: it
@@ -28,7 +28,7 @@
 
 #define ROCKETNET_MAX_FRAGMENTS                 256
 
-// The sender's fragment capacity: budget - 26 - the minimum block - the
+// the sender's fragment capacity: budget - 26 - the minimum block - the
 // fragment header. The stride is chosen against the minimum block, so a
 // current block with ranges truncates there; the stride never shrinks to
 // make room. The receive-side maximum is the same arithmetic against the
@@ -46,7 +46,7 @@ void rocketnet_write_fragment_header( uint8_t * output, uint32_t payload_id, int
 
 void rocketnet_read_fragment_header( const uint8_t * data, uint32_t * payload_id, int * fragment_index, int * fragment_count );
 
-// The split plan for a payload too large for one packet: as few fragments as
+// the split plan for a payload too large for one packet: as few fragments as
 // the stride cap allows, balanced so the last fragment (the remainder) is
 // never empty -- a payload one byte over a single packet's capacity splits
 // into two near-halves rather than a full fragment and a runt of nothing.
@@ -61,8 +61,9 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 //                              reassembly
 // -----------------------------------------
 
-// Reassembly is one set per connection slot, created at create and reached
-// only from a connected slot (STANDARD.md _Fragmentation_), keyed by payload
+// reassembly is one set per transport, with num_slots reassembly slots per
+// connection, created at create and reached only from a connected slot
+// (standard/TRANSPORT.md t16), keyed by payload
 // id in a fixed-size sequence buffer of slots -- the modulo-indexed structure
 // this protocol already uses for replay state. Each slot owns capacity for the configured maximum
 // payload plus one staging buffer at the maximum receive fragment size, for
@@ -71,7 +72,7 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 // stride when the first non-final fragment fixes it, and placed then.
 // Storage is allocated once, at create, and never grown.
 
-// The stale rule's two bounds, per STANDARD.md _Fragmentation_ and
+// the stale rule's two bounds, per standard/TRANSPORT.md t16 and
 // tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
 // slot's occupant an id refuses as superseded -- the window of the stale
 // test before this rule, ROCKETNET_MAX_FRAGMENTS ids. It is also the most one
@@ -97,7 +98,7 @@ struct rocketnet_reassembly_slot_t
     uint8_t received[ROCKETNET_MAX_FRAGMENTS / 8];
 };
 
-// The counter indices the reassembly fires, so the one engine serves the
+// the counter indices the reassembly fires, so the one engine serves the
 // server's counter family and the client's: the eight refusal reasons from
 // the standard in their check order, the per-packet accepted outcome, and
 // the payload-level side counters. batch_full is this implementation's own:
@@ -120,7 +121,7 @@ struct rocketnet_reassembly_counters_t
     int batch_full;
 };
 
-// One set serves one direction of reassembly: the client holds one
+// one set serves one direction of reassembly: the client holds one
 // connection, the server one per connection slot, created at create and
 // reached only from a connected slot. The delivered arena is the
 // destination of the one copy fragmentation inherently costs -- a completed
@@ -167,33 +168,33 @@ struct rocketnet_reassembly_set_t
 #define ROCKETNET_REASSEMBLY_DELIVERED_ALIGN        16
 #define ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( n ) ( ( (size_t) (n) + ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) ) & ~(size_t) ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) )
 
-// Requested component bytes, excluding allocator overhead. Zero means invalid
+// requested component bytes, excluding allocator overhead. Zero means invalid
 // geometry or integer overflow; estimation never allocates or touches storage.
 // The plain forms size the delivered arena at capacity x the aligned maximum
 // payload; the _delivered forms take the caller's byte bound, at least one
 // maximum payload.
-uint64_t rocketnet_reassembly_memory_required(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
-bool rocketnet_reassembly_memory_allowed(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity);
-uint64_t rocketnet_reassembly_memory_required_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
-bool rocketnet_reassembly_memory_allowed_delivered(int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes);
+uint64_t rocketnet_reassembly_memory_required( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
+bool rocketnet_reassembly_memory_allowed( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
+uint64_t rocketnet_reassembly_memory_required_delivered( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
+bool rocketnet_reassembly_memory_allowed_delivered( int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
 
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity );
 struct rocketnet_reassembly_set_t * rocketnet_reassembly_set_create_delivered( void * context, int num_connections, int num_slots, int max_payload_bytes, int delivered_capacity, uint64_t delivered_bytes );
 
-// The server's delivered capacity from its configuration: the completion
-// bound above at the server's drain, ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
+// the server's delivered capacity from its configuration: the completion
+// bound above at the server's drain, ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
 // packets per update -- one global array, not a per-client share, and the
 // larger of the server's two receive paths. Zero for invalid geometry.
 
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots );
 
-// The client's delivered capacity from its configuration: the completion
+// the client's delivered capacity from its configuration: the completion
 // bound above at the client's drain, ROCKETNET_NUM_CLIENT_PACKETS packets
 // per update for its one connection. Zero for invalid geometry.
 
 int rocketnet_client_reassembly_delivered_capacity( int num_slots );
 
-// The server's delivered arena bytes beside that count: the smaller of
+// the server's delivered arena bytes beside that count: the smaller of
 // capacity x the aligned maximum payload and the drain's fragment bytes
 // plus the payloads half-held in slots, padded to the packing stride.
 // Zero for invalid geometry.
@@ -212,7 +213,7 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
 
 void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * set );
 
-// Processes one opened fragment's type data (the 6-byte header plus the
+// processes one opened fragment's type data (the 6-byte header plus the
 // fragment bytes) through the standard's checks in order, each refusal
 // firing its named counter, and places accepted bytes in the slot's arena.
 // When the fragment completes its payload, the payload is copied into the
@@ -231,7 +232,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
 //                          the send arena
 // -----------------------------------------
 
-// The send-side staging for payloads requested above the wire's capacity at
+// the send-side staging for payloads requested above the wire's capacity at
 // start_packet: a fixed number of maximum-payload slots, claimed with one
 // atomic add from any fill thread, reset by the flush. Allocated once at
 // create to the configured maximum, per the arena arithmetic in the
@@ -263,4 +264,4 @@ int rocketnet_send_arena_owns( const struct rocketnet_send_arena_t * arena, cons
 
 void rocketnet_send_arena_reset( struct rocketnet_send_arena_t * arena );
 
-#endif // #ifndef ROCKETNET_FRAGMENT_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_FRAGMENT_H

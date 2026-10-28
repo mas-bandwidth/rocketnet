@@ -3,13 +3,13 @@
 (* The client receive thread's quit-and-wake handshake with destroy, as   *)
 (* rocketnet-client-destroy-joins-receive-thread built it.  This is the   *)
 (* thread that create starts when the granted transport has no wait and wake *)
-(* (sdk/rocketnet_client_transport.cpp:973); the I/O thread of the other  *)
+(* (rocketnet_client_transport_destroy in sdk/rocketnet_client_transport.cpp); the I/O thread of the other  *)
 (* branch is RNClientIo's.                                                *)
 (*                                                                         *)
-(* The thread (sdk/rocketnet_client_transport.cpp:2088-2100) loads quit   *)
-(* with acquire at the top of every pass (2094), drains the socket        *)
-(* (2096, rocketnet_client_receive_packets, which never blocks: it breaks *)
-(* when the buffer is full, 2047, or the socket is empty, 2052), then     *)
+(* The thread (rocketnet_client_thread_function in sdk/rocketnet_client_transport.cpp) loads quit   *)
+(* with acquire at the top of every pass, drains the socket        *)
+(* (rocketnet_client_receive_packets, which never blocks: it breaks *)
+(* when the buffer is full or the socket is empty), then     *)
 (* waits up to 1 ms in rocketnet_platform_thread_wait (2098).  destroy    *)
 (* (1041-1044) stores quit with release, wakes the thread, joins it and   *)
 (* frees its handle, then frees the transport the thread reads (1047 on). *)
@@ -60,9 +60,9 @@ ThreadStates  == {"running", "receiving", "waiting", "woken", "exited"}
 DestroyStates == {"live", "quitSet", "wokeFirst", "woke", "joining",
                   "joined", "freed"}
 
-VARIABLES quit,   \* client_transport->quit (transport.cpp:136)
-          woken,  \* the thread handle's woken flag (platform.h:761, 797)
-          sem,    \* mac: the wake semaphore's count (platform.h:796)
+VARIABLES quit,   \* client_transport->quit (rocketnet_client_transport_t in sdk/rocketnet_client_transport.cpp)
+          woken,  \* the thread handle's woken flag (rocketnet_platform_thread_t in sdk/rocketnet_platform.h)
+          sem,    \* mac: the wake semaphore's count (rocketnet_platform_thread_t in sdk/rocketnet_platform.h)
           th,     \* the receive thread: running (at the quit check),
                   \* receiving (in the drain), waiting (in thread_wait),
                   \* woken (thread_wait returned on the wake), exited
@@ -77,9 +77,9 @@ TypeOK ==
     /\ th \in ThreadStates
     /\ dst \in DestroyStates
 
-\* create: quit{0} (transport.cpp:136), woken false at thread_create
-\* (platform.cpp:1064 linux, 2742 mac), the semaphore created at count 0
-\* (2716), and the thread at the top of its loop (shim 1014-1016, 2707-2709)
+\* create: quit{0} (rocketnet_client_transport_create), woken false at rocketnet_platform_thread_create
+\* (sdk/rocketnet_platform.cpp), the semaphore created at count 0,
+\* and the thread at the top of its loop in rocketnet_client_thread_function
 Init ==
     /\ quit = FALSE
     /\ woken = FALSE
@@ -87,19 +87,19 @@ Init ==
     /\ th = "running"
     /\ dst = "live"
 
-(* ---- the receive thread, transport.cpp:2088-2100 ---- *)
+(* ---- the receive thread, rocketnet_client_thread_function ---- *)
 
-\* transport.cpp:2094: quit.load(acquire); true ends the loop and the
-\* thread function returns (2100), false enters the body
+\* rocketnet_client_thread_function: quit.load(acquire); true ends the loop and the
+\* thread function returns, false enters the body
 Check ==
     /\ th \in {"running", "woken"}
     /\ th' = IF quit THEN "exited" ELSE "receiving"
     /\ UNCHANGED <<quit, woken, sem, dst>>
 
-\* transport.cpp:2096 then 2098: the drain returns (2047 or 2052) and
-\* thread_wait(0.001) begins.  linux: under wake_mutex (1124), woken
-\* already set skips the cond wait (1125) and returns.  mac: woken set
-\* returns at once (2785-2786).  windows: the sleep starts (3286).
+\* rocketnet_client_thread_function: the drain returns and
+\* rocketnet_platform_thread_wait(0.001) begins.  linux: under wake_mutex, woken
+\* already set skips the cond wait and returns.  mac: woken set
+\* returns at once.  windows: the sleep starts.
 WaitBegin ==
     /\ th = "receiving"
     /\ th' = IF HasWake /\ woken THEN "woken" ELSE "waiting"
@@ -141,7 +141,7 @@ Spurious ==
     /\ th' = IF Platform = "mac" THEN "running" ELSE th
     /\ UNCHANGED <<quit, woken, sem, dst>>
 
-(* ---- destroy, transport.cpp:1035-1068 ---- *)
+(* ---- destroy, rocketnet_client_transport_destroy ---- *)
 
 \* thread_wake's effect: linux sets woken under wake_mutex and broadcasts
 \* (1136-1139); mac stores woken with release then signals (2802-2803);
@@ -152,7 +152,7 @@ WakeEffect ==
          /\ sem' = IF Platform = "mac" THEN 1 ELSE sem
     ELSE UNCHANGED <<woken, sem>>
 
-\* transport.cpp:1041: quit.store(true, release)
+\* rocketnet_client_transport_destroy: quit.store(true, release)
 DestroyQuit ==
     /\ dst = "live"
     /\ ~WakeBeforeQuit
@@ -160,7 +160,7 @@ DestroyQuit ==
     /\ dst' = "quitSet"
     /\ UNCHANGED <<woken, sem, th>>
 
-\* transport.cpp:1042: rocketnet_platform_thread_wake(thread), after the
+\* rocketnet_client_transport_destroy: rocketnet_platform_thread_wake(thread), after the
 \* quit store.  Under WakeBeforeQuit it comes first.
 DestroyWake ==
     /\ \/ dst = "quitSet" /\ ~WakeBeforeQuit
@@ -176,8 +176,8 @@ DestroyQuitLate ==
     /\ dst' = "woke"
     /\ UNCHANGED <<woken, sem, th>>
 
-\* transport.cpp:1043: rocketnet_platform_thread_join(thread) is called
-\* (pthread_join, platform.cpp:1087 and 2764; WaitForSingleObject, 3128)
+\* rocketnet_client_transport_destroy: rocketnet_platform_thread_join(thread) is called
+\* (pthread_join on linux and mac; WaitForSingleObject on windows, in sdk/rocketnet_platform.cpp)
 JoinBegin ==
     /\ dst = "woke"
     /\ dst' = "joining"
@@ -190,10 +190,10 @@ JoinReturns ==
     /\ dst' = "joined"
     /\ UNCHANGED <<quit, woken, sem, th>>
 
-\* transport.cpp:1044: rocketnet_platform_thread_destroy frees the handle,
-\* its mutex and cond (platform.cpp:1093-1095), its semaphore (2770-2771)
-\* or its handle (3134-3135); then destroy frees the transport the thread
-\* read (1047-1068)
+\* rocketnet_client_transport_destroy: rocketnet_platform_thread_destroy frees the handle,
+\* its mutex and cond, its semaphore
+\* or its handle (in sdk/rocketnet_platform.cpp); then destroy frees the transport the thread
+\* read
 DestroyFree ==
     /\ dst = "joined"
     /\ dst' = "freed"

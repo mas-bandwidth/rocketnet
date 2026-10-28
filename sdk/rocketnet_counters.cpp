@@ -15,30 +15,27 @@ uint64_t rocketnet_counter_value( const rocketnet_counters_t * counters, int cou
 {
     if ( !rocketnet_api_null_guard( counters ) )
         return 0;
-    return counters && counter >= 0 && counter < ROCKETNET_NUM_COUNTERS ?
-        counters->values[counter] : 0;
+
+    return counter >= 0 && counter < ROCKETNET_NUM_COUNTERS ? counters->values[counter] : 0;
 }
 
 // The name, class and family tables are generated from the counter list in
 // rocketnet_counters.h, one row each, so an index, its name, its class and its
 // family cannot drift apart.
 
-static const char * const rocketnet_counter_names[ROCKETNET_NUM_COUNTERS] =
-{
+static const char * const rocketnet_counter_names[ROCKETNET_NUM_COUNTERS] = {
 #define ROCKETNET_COUNTER_NAME_ROW( name, klass, family ) #name,
     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_NAME_ROW )
 #undef ROCKETNET_COUNTER_NAME_ROW
 };
 
-static const uint8_t rocketnet_counter_classes[ROCKETNET_NUM_COUNTERS] =
-{
+static const uint8_t rocketnet_counter_classes[ROCKETNET_NUM_COUNTERS] = {
 #define ROCKETNET_COUNTER_CLASS_ROW( name, klass, family ) ROCKETNET_COUNTER_CLASS_##klass,
     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_CLASS_ROW )
 #undef ROCKETNET_COUNTER_CLASS_ROW
 };
 
-static const int16_t rocketnet_counter_families[ROCKETNET_NUM_COUNTERS] =
-{
+static const int16_t rocketnet_counter_families[ROCKETNET_NUM_COUNTERS] = {
 #define ROCKETNET_COUNTER_FAMILY_ROW( name, klass, family ) ROCKETNET_COUNTER_##family,
     ROCKETNET_COUNTER_ROWS( ROCKETNET_COUNTER_FAMILY_ROW )
 #undef ROCKETNET_COUNTER_FAMILY_ROW
@@ -51,6 +48,7 @@ const char * rocketnet_counter_name( int counter )
         rocketnet_assert( 0 );
         return "???";
     }
+
     return rocketnet_counter_names[counter];
 }
 
@@ -58,6 +56,7 @@ int rocketnet_counter_class( int counter )
 {
     if ( counter < 0 || counter >= ROCKETNET_NUM_COUNTERS )
         return -1;
+
     return rocketnet_counter_classes[counter];
 }
 
@@ -65,11 +64,11 @@ const char * rocketnet_counter_class_name( int counter_class )
 {
     switch ( counter_class )
     {
-        case ROCKETNET_COUNTER_CLASS_REFUSAL:       return "refusal";
-        case ROCKETNET_COUNTER_CLASS_EXPECTED:      return "expected";
-        case ROCKETNET_COUNTER_CLASS_PATH_LOSS:     return "path_loss";
-        case ROCKETNET_COUNTER_CLASS_ARRIVAL:       return "arrival";
-        default:                                    return NULL;
+        case ROCKETNET_COUNTER_CLASS_REFUSAL:   return "refusal";
+        case ROCKETNET_COUNTER_CLASS_EXPECTED:  return "expected";
+        case ROCKETNET_COUNTER_CLASS_PATH_LOSS: return "path_loss";
+        case ROCKETNET_COUNTER_CLASS_ARRIVAL:   return "arrival";
+        default:                                return NULL;
     }
 }
 
@@ -80,10 +79,10 @@ const char * rocketnet_counter_class_name( int counter_class )
 
 void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters, const uint64_t * prefilter )
 {
-    // One transport counter per kernel prefilter counter, in
-    // ROCKETNET_SERVER_XDP_COUNTER_* index order.
-    static const int rocketnet_prefilter_table[ROCKETNET_SERVER_XDP_NUM_COUNTERS] =
-    {
+    // one transport counter per kernel prefilter counter, in
+    // ROCKETNET_SERVER_XDP_COUNTER_* index order
+
+    static const int rocketnet_prefilter_table[ROCKETNET_SERVER_XDP_NUM_COUNTERS] = {
         ROCKETNET_COUNTER_XDP_KERNEL_REDIRECTED,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_SMALL,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_TOO_LARGE,
@@ -97,7 +96,7 @@ void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_NO_SOCKET,
         ROCKETNET_COUNTER_XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION,
     };
-    static_assert( sizeof(rocketnet_prefilter_table) / sizeof(rocketnet_prefilter_table[0]) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
+    static_assert( sizeof( rocketnet_prefilter_table ) / sizeof( rocketnet_prefilter_table[0] ) == ROCKETNET_SERVER_XDP_NUM_COUNTERS,
                    "a new kernel prefilter counter needs its transport row" );
 
     if ( !rocketnet_api_null_guard( counters ) )

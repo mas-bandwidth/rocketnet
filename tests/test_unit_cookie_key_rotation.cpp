@@ -42,7 +42,7 @@ static void rocketnet_rotation_fill_vector_fields( struct rocketnet_signed_conne
                                                    struct rocketnet_connect_token_private_t * private_fields,
                                                    uint64_t client_id )
 {
-    memset( signed_fields, 0, sizeof(*signed_fields) );
+    memset( signed_fields, 0, sizeof( *signed_fields ) );
     signed_fields->version = ROCKETNET_WIRE_VERSION;
     signed_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields->create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -53,7 +53,7 @@ static void rocketnet_rotation_fill_vector_fields( struct rocketnet_signed_conne
     memcpy( signed_fields->ipv4_address, server_address, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
 
-    memset( private_fields, 0, sizeof(*private_fields) );
+    memset( private_fields, 0, sizeof( *private_fields ) );
     private_fields->client_id = client_id;
     private_fields->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -63,7 +63,7 @@ static void rocketnet_rotation_fill_vector_fields( struct rocketnet_signed_conne
 
 static void rocketnet_rotation_server_setup( struct rocketnet_rotation_server_t * test, int period_seconds )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -155,7 +155,7 @@ static void rocketnet_rotation_clear_mapping( struct rocketnet_rotation_server_t
 {
     int index = rocketnet_encryption_map_find( test->server.encryption_map, &test->client_address );
     if ( index != -1 )
-        rocketnet_encryption_map_remove( test->server.encryption_map, index );
+        rocketnet_encryption_map_remove_current( test->server.encryption_map, index );
 }
 
 static void rocketnet_rotation_build_request_no_cookie( uint8_t * request, uint64_t client_id )
@@ -179,7 +179,7 @@ static void rocketnet_rotation_build_request_no_cookie( uint8_t * request, uint6
 static void rocketnet_rotation_set_client_address( struct rocketnet_rotation_server_t * test, int i )
 {
     char addr_str[64];
-    snprintf( addr_str, sizeof(addr_str), "10.1.%d.%d:56789", ( i / 255 ) + 1, ( i % 255 ) + 1 );
+    snprintf( addr_str, sizeof( addr_str ), "10.1.%d.%d:56789", ( i / 255 ) + 1, ( i % 255 ) + 1 );
     rocketnet_unit_check( rocketnet_address_parse( &test->client_address, addr_str ) );
 }
 
@@ -331,7 +331,7 @@ static void test_cookie_rotation_never_used_key_rejected()
     const double period = (double) ROCKETNET_ROTATION_TEST_PERIOD_SECONDS;
 
     uint8_t never_used_key[ROCKETNET_COOKIE_KEY_BYTES];
-    memset( never_used_key, 0xA5, sizeof(never_used_key) );
+    memset( never_used_key, 0xA5, sizeof( never_used_key ) );
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_rotation_build_request_with_key( &test, request, 0x4001ULL, never_used_key );
@@ -411,8 +411,8 @@ static void test_cookie_rotation_receive_before_update_keeps_fresh_cookie()
         uint8_t response[ROCKETNET_RECEIVE_CEILING];
         int response_bytes = 0;
         rocketnet_unit_check( rocketnet_server_protocol_process_connection_request(
-            &test.server, &test.client_address, request, sizeof(request),
-            ROCKETNET_TEST_CREATE_TS, receive_times[i], response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+                                  &test.server, &test.client_address, request, sizeof( request ),
+                                  ROCKETNET_TEST_CREATE_TS, receive_times[i], response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
         rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
         memcpy( request + ROCKETNET_PREFILTER_BYTES,
                 response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,

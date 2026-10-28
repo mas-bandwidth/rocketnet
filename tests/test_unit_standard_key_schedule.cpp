@@ -16,8 +16,7 @@
 
 #include <string.h>
 
-static const rn_standard_vector_t standard_key_schedule_table[] =
-{
+static const rn_standard_vector_t standard_key_schedule_table[] = {
     RN_STANDARD_VECTOR( "t7.handshake-client-to-server", "4b4d630cdb00c87b73d46b3421d891c24cfd0ab928c987515aabbbd78be27350" ),
     RN_STANDARD_VECTOR( "t7.handshake-server-to-client", "86045b5f8e2da94dbf445a658086d63d50b73b1e666c76c4952fabf998c0c0e0" ),
     RN_STANDARD_VECTOR( "t7.session-client-to-server", "aedc4656e3f82b7e8791279588c7f6204ed2c1bc0c17ba9779c04e3b1c9ef43c" ),
@@ -51,7 +50,13 @@ static int standard_key_schedule_generate( const char * id, uint8_t * out, int c
         return 1;
     }
 
-    enum { HANDSHAKE_C2S, HANDSHAKE_S2C, SESSION_C2S, SESSION_S2C } which;
+    enum
+    {
+        HANDSHAKE_C2S,
+        HANDSHAKE_S2C,
+        SESSION_C2S,
+        SESSION_S2C
+    } which;
     if ( strcmp( id, "t7.handshake-client-to-server" ) == 0 )
         which = HANDSHAKE_C2S;
     else if ( strcmp( id, "t7.handshake-server-to-client" ) == 0 )

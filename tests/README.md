@@ -7,8 +7,39 @@ directory remains the complete drop-in set.
   read of rocketnet.h (the C++ stream surface) is compiled and exercised by
   `bin/test_serialize`. Refresh it when the serialize pin moves.
 - `wycheproof/` — C2SP/wycheproof known-answer vectors for the primitives
-  rocketnet calls (ChaCha20-Poly1305, X25519, Ed25519), read by
+  rocketnet calls (ChaCha20-Poly1305, X25519, Ed25519), parsed by
   tests/wycheproof.h. See tests/wycheproof/README.md for the pin and hashes.
+
+## Fixtures and where each case runs
+
+A unit case reads no file and writes none. The fixed known-answer files the
+unit cases check against, `connect_token_vectors.json` and the three
+`wycheproof/*_test.json` files, are compiled into `./bin/test` at build time by
+`cmake/EmbedTestFixtures.cmake` (portable CMake, `file(READ ... HEX)`) and read
+from memory through `rocketnet_test_fixture`; editing one rebuilds the unit
+binary. Their cases (`test_vectors_regenerate_byte_identical`,
+`test_each_vector_verifies_and_opens`, `test_tampered_vector_refused` and the
+`test_wycheproof_*` cases) are unit cases.
+
+`connect_token_vectors.json` is written only by the tool
+`./bin/connect_token_vectors <path>` (`tools/connect_token_vectors/main.cpp`),
+which mints it from the same generator the unit case checks and writes only
+the path it is given, through a temporary file renamed over it:
+
+```
+./bin/connect_token_vectors tests/connect_token_vectors.json
+```
+
+then rebuild, and `test_vectors_regenerate_byte_identical` checks the new copy.
+
+The corpus-consistency cases walk directories that grow as findings land
+(`pcapng/` with `pcapng/regress/`, and `fuzz/corpus/`), so they are functional
+cases in `functional/corpus_consistency.cpp`, rows of
+`rocketnet_functional_tests[]`: `test_pcapng_corpus_replay`,
+`test_pcapng_corpus_witness_unread_packet_goes_red`,
+`test_pcapng_corpus_covers_control_packet_types` and
+`test_fuzz_prefilter_seed_names_match_outcomes`. Run one with
+`./bin/functional --run <name>`.
 
 ## Running the suite
 
@@ -22,11 +53,41 @@ captured and dropped when it passes; set `ROCKETNET_TEST_VERBOSE=1` to skip
 the capture and watch the log live. A test that a platform does not build is
 not registered there, so it is neither run nor printed.
 
+The repository text audits that used to be unit cases — the client/server
+"says messages, not packets" scan (`test_client_server_say_messages_not_packets`),
+the environment-name documentation check (`test_config_env_every_name_read_is_documented`),
+the counter-named-by-a-test check (`test_counters_every_counter_is_named_by_a_test`),
+the one-family-per-outcome check (`test_counters_every_outcome_in_at_most_one_family`)
+and the XDP counter-row check (`test_xdp_transport_host_every_counter_has_a_case`) —
+run in the static source-audit binary `./bin/source_audit`, not `./bin/test`. It
+is a source-policy gate: it reads source, header and doc files through
+`ROCKETNET_SOURCE_DIR`, opens no socket, starts no thread, and CI runs it on
+a Linux leg beside `tools/check_client_server_words.py`.
+
+Shared-library export cases are functional because they load a separately
+built library through the OS loader: `test_api_polish_dev_token_string`,
+`test_dev_connect_token_timeout_is_the_named_constant`, and
+`test_dev_token_minting_absent_in_release`. They are registered in
+`functional/rocketnet_functional_tests.cpp` and run by `./bin/functional`,
+not `./bin/test`.
+
 Functional cases run one at a time, even with `ROCKETNET_TEST_JOBS` set.
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See
 [BUILDING.md](../BUILDING.md) for the 60-second target and 120-second cap.
+
+Unit cases do not read or change the process environment. SDK environment
+parsing and validation use the in-memory table in `test_env_source.h`, which
+is available only in the unit hook library. The functional environment-wiring
+cases change and restore real process variables and observe each SDK reader.
+
+The process thread-count cases `test_server_stats_creates_no_thread` and
+`test_public_step_driven_client_connects_without_a_thread` read the process's
+OS thread count from `/proc/self/task`, so they are functional cases in
+`./bin/functional`, not unit cases. Their bodies are in
+`functional/process_thread_counts.cpp`. On platforms without that file the
+count is -1 and the thread assertion pins nothing, so it is never unit logic.
 
 ## Peak memory per case
 
@@ -34,8 +95,20 @@ Both runners record each case process's peak resident set (`wait4`
 `ru_maxrss` on POSIX, normalised from kilobytes on Linux and bytes on macOS;
 `PeakWorkingSetSize` on Windows). With `ROCKETNET_TEST_REPORT=1` both
 runners print, after the results, a `slowest cases:` block and a `peak rss:`
-block of the ten largest (`suite_print_report`). A case whose peak is over the
-bound fails the suite with `check failed: <case> peak_rss_mb=<n> bound_mb=<b>`. The bound is
+block of the ten largest (`suite_print_report`). The unit suite reports an
+over-bound case as `<case> peak_rss_mb=<n> bound_mb=<b>` without changing its
+verdict. The functional suite enforces the bound and fails with the same values.
+
+`test_unit_case_memory` is a functional sibling row that runs the complete unit
+binary in enforcement mode. The unit binary therefore supplies the case list,
+the suite-wide fallback, every case-specific declaration and every measured
+peak directly; there is no second bound table. The outer functional row keeps
+the 120-second limit but does not compare the unit controller's aggregate child
+usage with one case's bound. Its inner runner retains the 120-second per-case
+Release limit, including the existing Debug and sanitizer scaling, and enforces
+each unit case separately.
+
+The suite-wide bound is
 `ROCKETNET_TEST_MAX_CASE_RSS_MB`, 698 MiB in `tests/suite_runner.h` (the larger
 of 256 MiB and 1.5 times the largest measured case, never over 1 GiB); the
 environment variable of the same name overrides it with a positive value. A sanitizer build
@@ -62,4 +135,17 @@ under it, but never lowers a declared bound: a Windows Debug job's override
 does not take a full-table case below its plan. Sanitizer builds continue to
 report without enforcing a bound unless the environment sets one. A declared
 plan of zero falls back to the suite-wide bound, so a refused memory plan
-cannot silently disable the check.
+cannot silently disable functional enforcement.
+
+A case whose plan is mostly never touched (a thousand connected clients
+reserve tens of GiB the case does not fill) declares its bound from the pages
+it touches instead: a byte allowance for what it builds plus a count of pages
+scaled by `suite_page_bytes()`, since a sparse touch holds a whole page
+resident and a page is 16 KiB on Apple silicon and 4 KiB on x86_64
+(`no_worker_rss_bound_mb` in `test_unit_server_stats_no_worker.cpp`). The
+bound is a measured scale, not a loosened constant: it grows with the page
+and nothing else.
+
+`./bin/test --run <case>` runs one case without the bound, and a plain
+`./bin/test` run only reports it; the functional `test_unit_case_memory` row
+(`./bin/test --enforce-rss`) is the run that checks each case's peak against it.

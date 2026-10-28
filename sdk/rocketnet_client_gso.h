@@ -36,8 +36,10 @@
 // so the unit cases (tests/test_unit_client_gso.cpp) drive the batching, the
 // run split and the fallback with a fake socket: no socket, no thread, no time.
 
-#ifndef ROCKETNET_CLIENT_GSO_H
-#define ROCKETNET_CLIENT_GSO_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H
+#define ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H
 
 #include "rocketnet_internal.h"
 
@@ -74,11 +76,11 @@ struct rocketnet_client_transport_io_operations_t;
 // socket does not speak.
 struct rocketnet_client_gso_syscalls_t
 {
-    int (*sendmmsg)( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
-    int (*segment_probe)( void * context, int socket );
-    int (*recvmmsg)( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
-    int (*gro_enable)( void * context, int socket );
-    bool (*read_address)( void * context, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
+    int ( *sendmmsg )( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
+    int ( *segment_probe )( void * context, int socket );
+    int ( *recvmmsg )( void * context, int socket, struct mmsghdr * messages, unsigned int num_messages );
+    int ( *gro_enable )( void * context, int socket );
+    bool ( *read_address )( void * context, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 };
 
 // the kernel's: sendmmsg(2), setsockopt(UDP_SEGMENT, 0), recvmmsg(2) with
@@ -174,7 +176,7 @@ int rocketnet_client_gso_receive_batch( struct rocketnet_client_gso_t * gso, str
 // The gso client transport operations, the client column of the gso row.
 extern const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations;
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 // Test seam: a client created while this is set keeps the plain tier, and the
 // segmented messages every gso client has sent, summed.
 extern std::atomic<bool> rocketnet_client_gso_test_disable_segment;
@@ -183,8 +185,8 @@ extern std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent;
 // batches (messages of more than one datagram) every gso client received, summed
 extern std::atomic<bool> rocketnet_client_gso_test_disable_gro;
 extern std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches;
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-#endif // ROCKETNET_CLIENT_GSO_H
+#endif // ROCKETNET_SDK_ROCKETNET_CLIENT_GSO_H

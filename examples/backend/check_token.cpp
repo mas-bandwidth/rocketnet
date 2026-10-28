@@ -38,6 +38,7 @@ int main( int argc, char ** argv )
         printf( "usage: backend_check_token <client id> <protocol id> [backend public key base64] < token.txt\n" );
         return 1;
     }
+
     const uint64_t expected_client_id = strtoull( argv[1], NULL, 0 );
     const uint64_t expected_protocol_id = strtoull( argv[2], NULL, 0 );
 
@@ -51,8 +52,11 @@ int main( int argc, char ** argv )
 
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     memcpy( backend_public_key, rocketnet_dev_backend_public_key, sizeof( backend_public_key ) );
+
     if ( argc == 4 )
+    {
         CHECK( rocketnet_base64_decode_data( argv[3], backend_public_key, sizeof( backend_public_key ) ) == ROCKETNET_BACKEND_PUBLIC_KEY_BYTES );
+    }
 
     struct rocketnet_connect_token_t parts;
     rocketnet_read_connect_token( &parts, token );
@@ -74,20 +78,48 @@ int main( int argc, char ** argv )
     CHECK( memcmp( private_fields.server_to_client_key, parts.server_to_client_key, ROCKETNET_KEY_BYTES ) == 0 );
 
     // the public client's pre-send checks take it too
+
     CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+
     struct rocketnet_client_config_t config;
-    rocketnet_client_default_config( &config );
+    CHECK( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     config.transport = "portable";
+
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );
     CHECK( client != NULL );
+
     const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, text );
+
+    rocketnet_client_disconnect( client );
+
+    const double shutdown_deadline = rocketnet_time() + 10.0;
+    while ( !rocketnet_client_disconnected( client ) && rocketnet_time() < shutdown_deadline )
+    {
+        // A generous failure watchdog, not a performance threshold. The
+        // portable client normally owns an asynchronous worker, while update
+        // also completes an explicitly step-driven client.
+
+        rocketnet_client_update( client, 1000.0 );
+        rocketnet_sleep( 0.001 );
+    }
+
+    if ( !rocketnet_client_disconnected( client ) )
+    {
+        printf( "FAIL: client shutdown did not complete\n" );
+        return 1;
+    }
+
     rocketnet_client_destroy( client );
-    rocketnet_term();
+
+    const enum rocketnet_status_t term_status = rocketnet_term();
+
     CHECK( connect_status == ROCKETNET_STATUS_OK );
+    CHECK( term_status == ROCKETNET_STATUS_OK );
 
     printf( "token for client %llx, protocol id 0x%llx, address flags %d, expires %llu s after create, timeout %d s\n",
             (unsigned long long) private_fields.client_id, (unsigned long long) signed_fields.protocol_id, signed_fields.address_flags,
             (unsigned long long) ( signed_fields.expire_timestamp - signed_fields.create_timestamp ), signed_fields.timeout_seconds );
     printf( "PASS\n" );
+
     return 0;
 }

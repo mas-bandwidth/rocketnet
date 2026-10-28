@@ -27,6 +27,7 @@
 #define check rocketnet_unit_check
 #define SERVER_DISCONNECTED_PROTOCOL 0x5345525644495301ULL
 
+#if ROCKETNET_DEV
 struct server_disconnected_identity_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -82,8 +83,8 @@ static void server_disconnected_token( const server_disconnected_identity_t * id
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, identity->server_public,
-        SERVER_DISCONNECTED_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, timeout_seconds, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     SERVER_DISCONNECTED_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, timeout_seconds, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
@@ -149,13 +150,16 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
         slots[c] = server_disconnected_connect( &identity, server, clients[c], 0x6A00 + (uint64_t) c, 300,
                                                 ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
     for ( int i = 0; i < 4; ++i )
-        for ( int c = 0; c < 2; ++c ) server_disconnected_pump( server, clients[c], &time );
+        for ( int c = 0; c < 2; ++c )
+            server_disconnected_pump( server, clients[c], &time );
     rn_message_object_t * object = &rocketnet_server_message_server( server )->object;
     for ( int i = 0; i < 32; ++i )
         for ( int c = 0; c < 2; ++c )
         {
             uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slots[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
-            check( p ); p[0] = (uint8_t) c; p[1] = (uint8_t) i;
+            check( p );
+            p[0] = (uint8_t) c;
+            p[1] = (uint8_t) i;
             check( rocketnet_server_finish_message( server, 2 ) );
         }
     const auto & a = object->connections[slots[0]].unreliable_build;
@@ -174,21 +178,25 @@ static void test_unreliable_packing_interleaved_clients_and_stop()
                 {
                     check( batch->bytes[j] == 2 && batch->data[j][0] == c && batch->data[j][1] < 32 );
                     const uint32_t bit = 1u << batch->data[j][1];
-                    check( !(seen[c] & bit) ); seen[c] |= bit;
+                    check( !( seen[c] & bit ) );
+                    seen[c] |= bit;
                 }
         }
     check( seen[0] == UINT32_MAX && seen[1] == UINT32_MAX );
     for ( int c = 0; c < 2; ++c )
     {
         uint8_t * p = rocketnet_server_start_message( server, (uint64_t) slots[c], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 2 );
-        check( p ); memset( p, 0, 2 ); check( rocketnet_server_finish_message( server, 2 ) );
+        check( p );
+        memset( p, 0, 2 );
+        check( rocketnet_server_finish_message( server, 2 ) );
     }
     check( rocketnet_server_start_message( server, (uint64_t) slots[0], 0, ROCKETNET_RELIABILITY_UNRELIABLE, 8 ) );
     rocketnet_server_stop( server );
     check( object->pending_connection == -1 && object->in_place == 0 );
     for ( int c = 0; c < 2; ++c )
         check( object->connections[slots[c]].unreliable_build.writer.payload == NULL );
-    for ( int c = 0; c < 2; ++c ) rn_test_client_stop_and_destroy( clients[c] );
+    for ( int c = 0; c < 2; ++c )
+        rn_test_client_stop_and_destroy( clients[c] );
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_unreliable_packing_interleaved_clients_and_stop );
@@ -310,6 +318,7 @@ static void test_client_disconnect_and_timeout_read_none()
 }
 
 REGISTER_UNIT_TEST( test_client_disconnect_and_timeout_read_none );
+#endif // #if ROCKETNET_DEV
 
 // A client message object over a link that is not a client transport (the
 // unit suites' in-memory links, the functional channel harness): the link
@@ -415,6 +424,7 @@ static void test_client_link_without_end_reason_reads_none()
 }
 REGISTER_UNIT_TEST( test_client_link_without_end_reason_reads_none );
 
+#if ROCKETNET_DEV
 // A server disconnect ends the slot in every query and send at once, before
 // the next update: rocketnet_server_disconnect_client and
 // rocketnet_server_disconnect_all_clients go through the message layer's kick
@@ -449,7 +459,8 @@ static void server_disconnect_now_case( bool all )
     const int index = server_disconnected_connect( &identity, server, client, 0x5F00ULL + ( all ? 1 : 0 ), 300,
                                                    ROCKETNET_CLIENT_STATE_DISCONNECTED, &time );
     const int other_index = all ? server_disconnected_connect( &identity, server, other, 0x5F10ULL, 300,
-                                                               ROCKETNET_CLIENT_STATE_DISCONNECTED, &time ) : index;
+                                                               ROCKETNET_CLIENT_STATE_DISCONNECTED, &time )
+                                : index;
     check( rocketnet_server_num_connected_clients( server ) == ( all ? 2 : 1 ) );
     check( index >= 0 && other_index >= 0 );
 
@@ -473,7 +484,14 @@ static void server_disconnect_now_case( bool all )
     server_disconnect_now_check( !rocketnet_server_client_connected( server, other_index ) );
     server_disconnect_now_check( object->in_place == 0 );
     server_disconnect_now_check( object->pending_connection == -1 );
+    const rocketnet_assert_function_t saved_assert = rn_assert_function;
+    static int disconnect_now_finish_asserts = 0;
+    disconnect_now_finish_asserts = 0;
+    rocketnet_assert_function( []( const char *, const char *, const char *, int )
+                               { disconnect_now_finish_asserts++; } );
     server_disconnect_now_check( rocketnet_server_finish_message( server, 16 ) == 0 );
+    rocketnet_assert_function( saved_assert );
+    server_disconnect_now_check( disconnect_now_finish_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) index, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 ) == NULL );
     server_disconnect_now_check( rn_server_stats_of( server ).messages_dropped_not_connected == drops + 1 );
     server_disconnect_now_check( rocketnet_server_start_message( server, (uint64_t) other_index, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16 ) == NULL );
@@ -515,3 +533,4 @@ static void test_server_disconnect_all_clients_ends_slots_at_once()
     server_disconnect_now_case( true );
 }
 REGISTER_UNIT_TEST( test_server_disconnect_all_clients_ends_slots_at_once );
+#endif // #if ROCKETNET_DEV

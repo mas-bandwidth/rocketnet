@@ -31,7 +31,7 @@ static void apply_block( struct rocketnet_ack_endpoint_t * ep, uint64_t largest,
                          uint64_t * unknown, uint64_t * batch_full )
 {
     struct rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = largest;
     block.first_range_length = (uint32_t) first_len;
     rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, capacity, acked_count, unknown, batch_full );
@@ -63,12 +63,12 @@ static void check_bits_match_ring( struct rocketnet_ack_endpoint_t * ep )
 static void test_ack_block_walk_visits_only_unacknowledged()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
-        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
 
-    uint64_t * acked = (uint64_t*) rocketnet_malloc( NULL, N * sizeof(uint64_t) );
+    uint64_t * acked = (uint64_t *) rocketnet_malloc( NULL, N * sizeof( uint64_t ) );
     rocketnet_unit_check( acked );
 
     for ( uint64_t s = 1; s <= N; s++ )
@@ -83,7 +83,9 @@ static void test_ack_block_walk_visits_only_unacknowledged()
     rocketnet_unit_check( batch_full == 0 );
     rocketnet_unit_check( g_ack_visit_count == N );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     g_ack_visit_count = 0;
     apply_block( ep, N, N, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 0 );
@@ -94,7 +96,9 @@ static void test_ack_block_walk_visits_only_unacknowledged()
     for ( uint64_t s = N + 1; s <= N + 4; s++ )
         rec_sent( ep, s );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     g_ack_visit_count = 0;
     apply_block( ep, N + 4, N, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 4 );
@@ -115,12 +119,12 @@ REGISTER_UNIT_TEST( test_ack_block_walk_visits_only_unacknowledged );
 static void test_ack_block_walk_lost_packet_does_not_stall()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
-        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
 
-    uint64_t * acked = (uint64_t*) rocketnet_malloc( NULL, N * sizeof(uint64_t) );
+    uint64_t * acked = (uint64_t *) rocketnet_malloc( NULL, N * sizeof( uint64_t ) );
     rocketnet_unit_check( acked );
 
     for ( uint64_t s = 1; s <= N; s++ )
@@ -128,9 +132,9 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
 
     // acknowledge everything but 100: two ranges, [1,99] and [101,N]
     struct rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = N;
-    block.first_range_length = (uint32_t)( N - 100 );
+    block.first_range_length = (uint32_t) ( N - 100 );
     block.num_ranges = 1;
     block.range_gap[0] = 1;
     block.range_length[0] = 99;
@@ -138,8 +142,8 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     int acked_count = 0;
     uint64_t unknown = 0, batch_full = 0;
     g_ack_visit_count = 0;
-    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, (int) N, &acked_count, &unknown, &batch_full ) == (int)( N - 1 ) );
-    rocketnet_unit_check( acked_count == (int)( N - 1 ) );
+    rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, (int) N, &acked_count, &unknown, &batch_full ) == (int) ( N - 1 ) );
+    rocketnet_unit_check( acked_count == (int) ( N - 1 ) );
     rocketnet_unit_check( unknown == 0 );
     rocketnet_unit_check( g_ack_visit_count == N - 1 );
 
@@ -154,21 +158,23 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
 
         uint64_t window_low = highest >= N ? highest - N + 1 : 1;
         struct rocketnet_ack_block_t b;
-        memset( &b, 0, sizeof(b) );
+        memset( &b, 0, sizeof( b ) );
         b.largest = highest;
         if ( 100 >= window_low && 100 <= highest )
         {
-            b.first_range_length = (uint32_t)( highest - 101 + 1 );
+            b.first_range_length = (uint32_t) ( highest - 101 + 1 );
             b.num_ranges = 1;
             b.range_gap[0] = 1;
-            b.range_length[0] = (uint16_t)( 99 - window_low + 1 );
+            b.range_length[0] = (uint16_t) ( 99 - window_low + 1 );
         }
         else
         {
-            b.first_range_length = (uint32_t)( highest - window_low + 1 );
+            b.first_range_length = (uint32_t) ( highest - window_low + 1 );
         }
 
-        acked_count = 0; unknown = 0; batch_full = 0;
+        acked_count = 0;
+        unknown = 0;
+        batch_full = 0;
         g_ack_visit_count = 0;
         rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &b, 3000.0, acked, (int) N, &acked_count, &unknown, &batch_full ) == 64 );
         rocketnet_unit_check( acked_count == 64 );
@@ -184,7 +190,9 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
         rec_sent( ep, highest );
     }
     uint64_t window_low = highest - N + 1;
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     g_ack_visit_count = 0;
     apply_block( ep, highest, highest - window_low + 1, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 64 );
@@ -194,7 +202,7 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     rocketnet_free( NULL, ep );
 
     // a deferral: batch capacity 2, three new unacknowledged records
-    ep = (struct rocketnet_ack_endpoint_t*) rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    ep = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
 
@@ -203,19 +211,23 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     rec_sent( ep, 3 );
 
     struct rocketnet_ack_block_t db;
-    memset( &db, 0, sizeof(db) );
+    memset( &db, 0, sizeof( db ) );
     db.largest = 3;
     db.first_range_length = 3;
 
     uint64_t da[4];
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     g_ack_visit_count = 0;
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &db, 3000.0, da, 2, &acked_count, &unknown, &batch_full ) == 2 );
     rocketnet_unit_check( acked_count == 2 );
     rocketnet_unit_check( batch_full == 1 );
     rocketnet_unit_check( g_ack_visit_count == 3 );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     g_ack_visit_count = 0;
     rocketnet_unit_check( rocketnet_ack_endpoint_process_block( ep, &db, 3100.0, da, 2, &acked_count, &unknown, &batch_full ) == 1 );
     rocketnet_unit_check( acked_count == 1 );
@@ -236,12 +248,12 @@ REGISTER_UNIT_TEST( test_ack_block_walk_lost_packet_does_not_stall );
 static void test_ack_block_walk_bits_match_ring()
 {
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
-    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t*)
-        rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    struct rocketnet_ack_endpoint_t * ep = (struct rocketnet_ack_endpoint_t *)
+        rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
 
-    uint64_t * acked = (uint64_t*) rocketnet_malloc( NULL, N * sizeof(uint64_t) );
+    uint64_t * acked = (uint64_t *) rocketnet_malloc( NULL, N * sizeof( uint64_t ) );
     rocketnet_unit_check( acked );
 
     int acked_count = 0;
@@ -260,7 +272,9 @@ static void test_ack_block_walk_bits_match_ring()
     for ( uint64_t s = N + 401; s <= N + 450; s++ )
         rec_sent( ep, s );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     apply_block( ep, N + 450, 64, acked, (int) N, &acked_count, &unknown, &batch_full );
     check_bits_match_ring( ep );
 
@@ -269,21 +283,27 @@ static void test_ack_block_walk_bits_match_ring()
     refused = rocketnet_ack_endpoint_record_sent_classified( ep, 5, 100, 5000005, 1, 0, 2000.0 );
     rocketnet_unit_check( refused == ROCKETNET_ACK_SENT_REFUSED_STALE );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     apply_block( ep, N + 450, 64, acked, (int) N, &acked_count, &unknown, &batch_full );
     check_bits_match_ring( ep );
 
     // a second alias, N above an unacknowledged in-window record
     rec_sent( ep, 1000 + N );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     apply_block( ep, 1000 + N, 64, acked, (int) N, &acked_count, &unknown, &batch_full );
     check_bits_match_ring( ep );
 
     for ( uint64_t s = N + 451; s <= N + 520; s++ )
         rec_sent( ep, s );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     apply_block( ep, N + 520, 64, acked, (int) N, &acked_count, &unknown, &batch_full );
     check_bits_match_ring( ep );
 
@@ -292,11 +312,11 @@ static void test_ack_block_walk_bits_match_ring()
 
     // a deferral on a fresh endpoint: capacity 2 over three new unacknowledged
     // records (FragmentsAndAcks RecvAck's batch deferral)
-    ep = (struct rocketnet_ack_endpoint_t*) rocketnet_malloc( NULL, sizeof(struct rocketnet_ack_endpoint_t) );
+    ep = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
 
-    acked = (uint64_t*) rocketnet_malloc( NULL, N * sizeof(uint64_t) );
+    acked = (uint64_t *) rocketnet_malloc( NULL, N * sizeof( uint64_t ) );
     rocketnet_unit_check( acked );
 
     rec_sent( ep, 1 );
@@ -304,18 +324,22 @@ static void test_ack_block_walk_bits_match_ring()
     rec_sent( ep, 3 );
 
     struct rocketnet_ack_block_t block;
-    memset( &block, 0, sizeof(block) );
+    memset( &block, 0, sizeof( block ) );
     block.largest = 3;
     block.first_range_length = 3;
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     rocketnet_ack_endpoint_process_block( ep, &block, 3000.0, acked, 2, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 2 );
     rocketnet_unit_check( batch_full == 1 );
     rocketnet_unit_check( unknown == 0 );
     check_bits_match_ring( ep );
 
-    acked_count = 0; unknown = 0; batch_full = 0;
+    acked_count = 0;
+    unknown = 0;
+    batch_full = 0;
     rocketnet_ack_endpoint_process_block( ep, &block, 3100.0, acked, (int) N, &acked_count, &unknown, &batch_full );
     rocketnet_unit_check( acked_count == 1 );
     check_bits_match_ring( ep );

@@ -5,20 +5,21 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CONNECT_TOKEN_H
-#define ROCKETNET_CONNECT_TOKEN_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H
+#define ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H
 
 #include <stdint.h>
 #include "rocketnet_internal.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_test_seams.h"
 
-// The SDK's C tools use these internal token helpers as well as its C++ code.
+// the SDK's C tools use these internal token helpers as well as its C++ code
 #ifdef __cplusplus
-extern "C" {
-#endif
+extern "C"
+{
+#endif // #ifdef __cplusplus
 
-// The connect token, per STANDARD.md. All layouts are packed little-endian at
+// The connect token, per TRANSPORT.md t6. All layouts are packed little-endian at
 // the exact offsets the standard states; the byte sizes here are the wire
 // format and never change independently of it.
 
@@ -69,7 +70,7 @@ extern "C" {
 /** @brief Byte offset of the sealed private block in signed data. */
 #define ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK    89
 
-// The private connect token data: what the backend seals to the server.
+// the private connect token data: what the backend seals to the server
 
 /** Data sealed to the server inside a connect token. Keys and user data are sensitive. */
 struct rocketnet_connect_token_private_t
@@ -169,6 +170,8 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
                                    const uint8_t * backend_secret_key,
                                    uint8_t * token );
 
+#if ROCKETNET_DEV
+
 // TEST-ONLY. Exists for the known-answer vectors in
 // tests/connect_token_vectors.json, which another implementation of the
 // backend's minting is checked against byte for byte; nothing ships calling
@@ -196,7 +199,9 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
                                                  const uint8_t * ephemeral_secret_key,
                                                  uint8_t * token );
 
-// Client-side split of a 768-byte token into its parts. Pure layout.
+#endif // #if ROCKETNET_DEV
+
+// client-side split of a 768-byte token into its parts. Pure layout
 
 /** The regions of a complete connect token, split without validation. */
 struct rocketnet_connect_token_t
@@ -263,7 +268,6 @@ int rocketnet_connect_token_private_consistent( const struct rocketnet_connect_t
  */
 void rocketnet_connect_token_identifier( uint8_t * identifier, const uint8_t * signed_connect_data );
 
-
 // The published development keys, embedded and used by default so
 // development works out of the box: run the server, point a client at its
 // address, connected -- no backend, no configuration, no copying keys
@@ -283,10 +287,10 @@ extern const uint8_t rocketnet_dev_backend_secret_key[64];
 #endif // #if ROCKETNET_DEV
 /** @brief Public server key used by development tokens. */
 extern const uint8_t rocketnet_dev_server_public_key[32];
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 /** @brief Secret server key used by development tokens. Never use it for production sessions. Absent from a production build (ROCKETNET_DEV=0). */
 extern const uint8_t rocketnet_dev_server_secret_key[32];
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 /** @brief Protocol identifier used by development tokens. */
 #define ROCKETNET_DEV_PROTOCOL_ID 0x1122334455667788ULL
@@ -294,14 +298,14 @@ extern const uint8_t rocketnet_dev_server_secret_key[32];
 // A development token lives 30 seconds from its create timestamp, as a
 // netcode.io token does by default: a connect token is meant to be used
 // once, soon after it is minted, and the short expiry is what bounds reuse
-// of a token whose connection has closed (docs/SESSION.md, Token reuse). A
-// production backend sets its own expiry in the signed fields; 30 seconds is
-// the recommended value.
+// of a token whose connection has closed (TRANSPORT.md t12 rule 5 and t17
+// rule 5). A production backend sets its own expiry in the signed fields; 30
+// seconds is the recommended value.
 
 /** @brief Lifetime in seconds of a development token. */
 #define ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS 30
 
-// The connection timeout the development token carries, in seconds.
+// the connection timeout the development token carries, in seconds
 /** @brief Connection timeout in seconds carried by a development token. */
 #define ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS 10
 
@@ -335,6 +339,7 @@ enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t 
                                                                   size_t connect_token_bytes );
 
 #if ROCKETNET_DEV
+
 // The layer tests' binary token for one address, sealed to the fixed test
 // server key (rocketnet_dev_server_public_key) that the internal transport
 // dev config carries. Public programs use rocketnet_create_dev_connect_token.
@@ -343,6 +348,6 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_CONNECT_TOKEN_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H

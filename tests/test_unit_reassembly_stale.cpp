@@ -14,6 +14,7 @@
 
 #include "test_unit_registry.h"
 
+#include "rocketnet.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_counters.h"
 
@@ -33,7 +34,8 @@ static const struct rocketnet_reassembly_counters_t stale_rule_counters = {
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 // every payload is two fragments: a 100-byte stride and a 60-byte final
 
@@ -52,7 +54,7 @@ struct stale_rule_harness_t
 
 static void stale_rule_begin( struct stale_rule_harness_t * h, int num_slots )
 {
-    memset( h, 0, sizeof(*h) );
+    memset( h, 0, sizeof( *h ) );
     h->counters = h->counters_storage.values;
     h->set = rocketnet_reassembly_set_create( NULL, 1, num_slots, 8192, 4 );
     rocketnet_unit_check( h->set != NULL );
@@ -302,7 +304,120 @@ static void test_reassembly_one_bad_fragment_costs_at_most_the_window()
     }
 }
 
+// The connection index range check (audit finding 4,
+// docs/audits/2026-10-24-code-quality-a.md). rocketnet_assert compiles out
+// when NDEBUG is set, so every Release build relies on the real range check in
+// rocketnet_reassembly_process_fragment and rocketnet_reassembly_set_reset_connection:
+// an index outside [0, num_connections) is refused before anything is read or
+// written. A quiet assert hook covers builds where asserts are on.
+
+static void connection_index_quiet_assert( const char * condition, const char * function, const char * file, int line )
+{
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
+}
+
+// offers one fragment of a two-fragment payload on a connection; a completion is
+// checked byte-exact against the payload id's pattern and counted delivered
+
+static int connection_index_offer( struct stale_rule_harness_t * h, int connection_index, uint32_t payload_id, int fragment_index )
+{
+    const uint8_t pattern = stale_rule_pattern( payload_id );
+    const int fragment_bytes = fragment_index == 0 ? STALE_RULE_STRIDE : STALE_RULE_FINAL;
+
+    rocketnet_write_fragment_header( h->fragment, payload_id, fragment_index, 2 );
+    for ( int i = 0; i < fragment_bytes; i++ )
+        h->fragment[ROCKETNET_FRAGMENT_HEADER_BYTES + i] = (uint8_t) ( pattern + STALE_RULE_STRIDE * fragment_index + i );
+
+    rocketnet_reassembly_set_begin_update( h->set );
+    const int result = rocketnet_reassembly_process_fragment( h->set, connection_index, h->fragment, ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes,
+                                                              h->counters, &stale_rule_counters );
+    if ( h->set->completed_bytes != 0 )
+    {
+        rocketnet_unit_check( h->set->completed_bytes == STALE_RULE_BYTES );
+        for ( int i = 0; i < STALE_RULE_BYTES; i++ )
+            rocketnet_unit_check( h->set->completed_payload[i] == (uint8_t) ( pattern + i ) );
+        h->delivered++;
+    }
+    return result;
+}
+
+static void connection_index_begin( struct stale_rule_harness_t * h )
+{
+    memset( h, 0, sizeof( *h ) );
+    h->counters = h->counters_storage.values;
+    h->set = rocketnet_reassembly_set_create( NULL, 2, 8, 8192, 4 );
+    rocketnet_unit_check( h->set != NULL );
+}
+
+static void test_reassembly_connection_index_out_of_range_refused()
+{
+    rocketnet_assert_function( connection_index_quiet_assert );
+
+    struct stale_rule_harness_t h;
+    connection_index_begin( &h );
+
+    rocketnet_unit_check( connection_index_offer( &h, 2, 5, 0 ) == 0 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 1 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 0 );
+    rocketnet_unit_check( h.set->completed_payload == NULL && h.set->completed_bytes == 0 );
+
+    rocketnet_unit_check( connection_index_offer( &h, -1, 5, 0 ) == 0 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 2 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 0 );
+    rocketnet_unit_check( h.set->completed_payload == NULL && h.set->completed_bytes == 0 );
+
+    rocketnet_unit_check( connection_index_offer( &h, 1, 5, 0 ) == 1 );
+    rocketnet_unit_check( connection_index_offer( &h, 1, 5, 1 ) == 1 );
+    rocketnet_unit_check( h.delivered == 1 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 2 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_SIZE_MISMATCH] == 2 );
+
+    stale_rule_end( &h );
+
+    rocketnet_assert_function( NULL );
+}
+
+static void test_reassembly_reset_connection_out_of_range_ignored()
+{
+    rocketnet_assert_function( connection_index_quiet_assert );
+
+    struct stale_rule_harness_t h;
+    connection_index_begin( &h );
+
+    // connection 1 completes a payload, so its stale-rule reference moves off zero.
+    // the slot records sit directly before the per-connection references in one
+    // allocation, so an unchecked reset of connection 2 would clear connection 1's
+    // reference, and the next payload, out of reach of zero, would refuse stale.
+
+    const uint32_t first = 0x30000000u;
+    const uint32_t next = 0x50000001u;
+
+    rocketnet_unit_check( connection_index_offer( &h, 1, first, 0 ) == 1 );
+    rocketnet_unit_check( connection_index_offer( &h, 1, first, 1 ) == 1 );
+    rocketnet_unit_check( h.delivered == 1 );
+
+    rocketnet_unit_check( connection_index_offer( &h, 1, next, 0 ) == 1 );
+
+    rocketnet_reassembly_set_reset_connection( h.set, 2 );
+    rocketnet_reassembly_set_reset_connection( h.set, -1 );
+
+    rocketnet_unit_check( h.set->newest_completed[1] == first );
+    rocketnet_unit_check( connection_index_offer( &h, 1, next, 1 ) == 1 );
+    rocketnet_unit_check( h.delivered == 2 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_STALE] == 0 );
+    rocketnet_unit_check( h.counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED] == 0 );
+
+    stale_rule_end( &h );
+
+    rocketnet_assert_function( NULL );
+}
+
 REGISTER_UNIT_TEST( test_reassembly_lost_run_does_not_stale_the_slot );
 REGISTER_UNIT_TEST( test_reassembly_one_bad_fragment_costs_at_most_the_window );
 REGISTER_UNIT_TEST( test_reassembly_late_fragment_after_completion_does_not_poison );
 REGISTER_UNIT_TEST( test_reassembly_hostile_far_ahead_id_cannot_poison );
+REGISTER_UNIT_TEST( test_reassembly_connection_index_out_of_range_refused );
+REGISTER_UNIT_TEST( test_reassembly_reset_connection_out_of_range_ignored );

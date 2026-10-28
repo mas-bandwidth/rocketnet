@@ -17,8 +17,10 @@
 //   segmented send: the same destination, every packet the size of the first
 //   except at most one shorter tail, which closes the run.
 
-#ifndef ROCKETNET_COALESCE_H
-#define ROCKETNET_COALESCE_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_COALESCE_H
+#define ROCKETNET_SDK_ROCKETNET_COALESCE_H
 
 #include <stdint.h>
 
@@ -45,13 +47,16 @@ static inline int rocketnet_coalesce_split( int message_bytes, int segment_bytes
         return -1;
 
     int n = 0;
+
     for ( int offset = 0; offset < message_bytes; offset += segment_bytes )
     {
         const int remaining = message_bytes - offset;
+
         offsets[n] = offset;
         lengths[n] = remaining < segment_bytes ? remaining : segment_bytes;
         n++;
     }
+
     return n;
 }
 
@@ -95,4 +100,4 @@ static inline int rocketnet_coalesce_send_run( const int * packet_bytes, const s
     return run_count;
 }
 
-#endif // ROCKETNET_COALESCE_H
+#endif // ROCKETNET_SDK_ROCKETNET_COALESCE_H

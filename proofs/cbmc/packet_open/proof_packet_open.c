@@ -48,7 +48,7 @@ unsigned long long nondet_uint64( void );
 #define PROOF_R_OK( p, n ) __CPROVER_r_ok( (p), (size_t) (n) )
 #define PROOF_W_OK( p, n ) __CPROVER_w_ok( (p), (size_t) (n) )
 #define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
-#endif
+#endif // #ifndef __CPROVER__
 
 /* libsodium models. */
 
@@ -61,6 +61,7 @@ int crypto_shorthash_siphash24( unsigned char * out,
     __CPROVER_assert( PROOF_R_OK( k, 16 ), "siphash reads its 16-byte key" );
     __CPROVER_assert( PROOF_W_OK( out, 8 ), "siphash writes 8 bytes" );
     PROOF_HAVOC( out, 8 );
+
     return 0;
 }
 
@@ -89,6 +90,7 @@ int crypto_aead_chacha20poly1305_ietf_encrypt( unsigned char * c,
     __CPROVER_assert( PROOF_W_OK( clen_p, 8 ), "encrypt writes the ciphertext length" );
     PROOF_HAVOC( c, mlen + 16 );
     *clen_p = mlen + 16;
+
     return 0;
 }
 
@@ -119,6 +121,7 @@ int crypto_aead_chacha20poly1305_ietf_decrypt( unsigned char * m,
     __CPROVER_assert( PROOF_W_OK( mlen_p, 8 ), "decrypt writes the plaintext length" );
     PROOF_HAVOC( m, plaintext );
     *mlen_p = plaintext;
+
     return 0;
 }
 
@@ -133,6 +136,7 @@ int crypto_generichash( unsigned char * out,
     __CPROVER_assert( PROOF_R_OK( key, keylen ), "generichash reads its key" );
     __CPROVER_assert( PROOF_W_OK( out, outlen ), "generichash writes its output" );
     PROOF_HAVOC( out, outlen );
+
     return 0;
 }
 
@@ -199,6 +203,7 @@ void harness_open_sealed_packet( void )
 
     uint8_t * packet = (uint8_t *) malloc( (size_t) packet_bytes );
     __CPROVER_assume( packet != NULL );
+
     uint8_t * out = (uint8_t *) malloc( (size_t) out_capacity );
     __CPROVER_assume( out != NULL );
 
@@ -214,6 +219,7 @@ void harness_open_sealed_packet( void )
     const int has_nonce = rocketnet_packet_type_has_session_nonce( packet_type );
     const int has_ephemeral = rocketnet_packet_type_has_ephemeral_in_ad( packet_type );
     const int sealed = rocketnet_packet_type_is_sealed( packet_type );
+
     const int header_bytes = ROCKETNET_PREFILTER_BYTES + ROCKETNET_SEQUENCE_BYTES +
                              ( has_nonce ? ROCKETNET_SESSION_NONCE_BYTES : 0 );
 
@@ -231,18 +237,24 @@ void harness_open_sealed_packet( void )
     open_assert( result, out_capacity );
 
     if ( !sealed || sequence == 0 )
+    {
         __CPROVER_assert( result == -1, "an unsealed type or zero sequence is refused" );
+    }
     else if ( packet_bytes < header_bytes + ROCKETNET_PACKET_TAG_BYTES )
+    {
         __CPROVER_assert( result == -1, "a short sealed packet is refused" );
+    }
     else if ( out_capacity < packet_bytes - header_bytes - ROCKETNET_PACKET_TAG_BYTES )
+    {
         __CPROVER_assert( result == -1, "a small output is refused" );
+    }
     else
     {
         __CPROVER_assert( result == -1 || result == packet_bytes - header_bytes - ROCKETNET_PACKET_TAG_BYTES,
-            "an opened packet returns the plaintext length" );
+                          "an opened packet returns the plaintext length" );
     }
 
-    /* a session nonce on a type that does not carry one is refused */
+    // a session nonce on a type that does not carry one is refused
 
     const int extra_nonce = rocketnet_open_sealed_packet( out,
                                                           session_nonce,
@@ -255,10 +267,13 @@ void harness_open_sealed_packet( void )
                                                           connection_salt,
                                                           has_ephemeral ? ephemeral : NULL,
                                                           key );
-    if ( !has_nonce )
-        __CPROVER_assert( extra_nonce == -1, "a session nonce on the wrong type is refused" );
 
-    /* an ephemeral key on a type that does not carry one is refused */
+    if ( !has_nonce )
+    {
+        __CPROVER_assert( extra_nonce == -1, "a session nonce on the wrong type is refused" );
+    }
+
+    // an ephemeral key on a type that does not carry one is refused
 
     const int extra_ephemeral = rocketnet_open_sealed_packet( out,
                                                               has_nonce ? session_nonce : NULL,
@@ -271,10 +286,13 @@ void harness_open_sealed_packet( void )
                                                               connection_salt,
                                                               ephemeral,
                                                               key );
-    if ( !has_ephemeral )
-        __CPROVER_assert( extra_ephemeral == -1, "an ephemeral key on the wrong type is refused" );
 
-    /* a type that requires one and does not get it is refused */
+    if ( !has_ephemeral )
+    {
+        __CPROVER_assert( extra_ephemeral == -1, "an ephemeral key on the wrong type is refused" );
+    }
+
+    // a type that requires one and does not get it is refused
 
     const int missing_pairing = rocketnet_open_sealed_packet( out,
                                                               NULL,
@@ -287,8 +305,11 @@ void harness_open_sealed_packet( void )
                                                               connection_salt,
                                                               NULL,
                                                               key );
+
     if ( has_nonce || has_ephemeral )
+    {
         __CPROVER_assert( missing_pairing == -1, "a required nonce or ephemeral key is refused when missing" );
+    }
 }
 
 /* the associated data writer: 53 bytes with the ephemeral key, 21 without. */
@@ -309,7 +330,7 @@ void harness_write_packet_associated_data( void )
                                                                    connection_salt,
                                                                    ephemeral );
     __CPROVER_assert( with_bytes == ROCKETNET_AD_WITH_EPHEMERAL_BYTES,
-        "the writer returns 53 bytes with the ephemeral key" );
+                      "the writer returns 53 bytes with the ephemeral key" );
 
     const int without_bytes = rocketnet_write_packet_associated_data( without_ephemeral,
                                                                       protocol_id,
@@ -317,7 +338,7 @@ void harness_write_packet_associated_data( void )
                                                                       connection_salt,
                                                                       NULL );
     __CPROVER_assert( without_bytes == ROCKETNET_AD_BYTES,
-        "the writer returns 21 bytes without the ephemeral key" );
+                      "the writer returns 21 bytes without the ephemeral key" );
 }
 
 /* the sequence nonce: four zero bytes then the sequence little-endian, all
@@ -331,10 +352,10 @@ void harness_sequence_nonce( void )
     rocketnet_sequence_nonce( nonce, sequence );
 
     __CPROVER_assert( nonce[0] == 0 && nonce[1] == 0 && nonce[2] == 0 && nonce[3] == 0,
-        "the nonce starts with four zero bytes" );
+                      "the nonce starts with four zero bytes" );
     for ( int i = 0; i < 8; i++ )
         __CPROVER_assert( nonce[4 + i] == (uint8_t) ( ( sequence >> ( 8 * i ) ) & 0xFF ),
-            "the nonce carries the sequence little-endian" );
+                          "the nonce carries the sequence little-endian" );
 }
 
 int main( void )
@@ -343,5 +364,6 @@ int main( void )
     harness_open_sealed_packet();
     harness_write_packet_associated_data();
     harness_sequence_nonce();
+
     return 0;
 }

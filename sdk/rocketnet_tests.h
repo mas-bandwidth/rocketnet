@@ -5,19 +5,20 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TESTS_H
-#define ROCKETNET_TESTS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_TESTS_H
+#define ROCKETNET_SDK_ROCKETNET_TESTS_H
 
 #include "rocketnet_internal.h"
 
 #ifdef __cplusplus
-extern "C" {
-#endif
+extern "C"
+{
+#endif // #ifdef __cplusplus
 
 void rocketnet_run_tests( void );
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_TESTS_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TESTS_H

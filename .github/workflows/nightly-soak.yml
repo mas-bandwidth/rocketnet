@@ -213,10 +213,139 @@ jobs:
           [ -n "$line" ] || tail -n 60 "$guest/vm.log" "$guest/xdp.err" 2>/dev/null || true
           check_cell xdp xdp "$line"
 
+      - name: XDP filter BPF_PROG_TEST_RUN in virtme-ng guest (18 cases, 0 skipped)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash tools/run_xdp_filter_guest.sh --artifact-dir build/xdp-filter-guest
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: always() && runner.os == 'Linux'
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload XDP filter guest artifacts
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: xdp-filter-guest-${{ steps.refslug.outputs.slug }}
+          path: build/xdp-filter-guest
+          if-no-files-found: ignore
+
+  low-tick-load:
+    name: low-tick load (${{ matrix.ref }} / 1000 clients / 10 Hz)
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build the named low-tick load case
+        run: make -j4
+
+      - name: Run the enabled low-tick load case on an idle host
+        shell: bash
+        run: |
+          set -euo pipefail
+          cores=$(nproc)
+          load_start=$(awk '{ print $1 }' /proc/loadavg)
+          echo "LOW_TICK host_load start load_1m=$load_start cores=$cores admission=below-half-cores"
+          if ! awk -v observed="$load_start" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+            echo "LOW_TICK DISCARDED host was not idle enough at start: load_1m=$load_start cores=$cores"
+            exit 1
+          fi
+          set +e
+          ROCKETNET_TEST_VERBOSE=1 ROCKETNET_LOW_TICK_MEASURE=1 ./bin/functional --run test_server_receive_1000_clients_256kbps_10hz
+          result=$?
+          set -e
+          load_end=$(awk '{ print $1 }' /proc/loadavg)
+          echo "LOW_TICK host_load end load_1m=$load_end cores=$cores"
+          if ! awk -v observed="$load_end" -v cores="$cores" 'BEGIN { exit !(observed < cores / 2.0) }'; then
+            echo "LOW_TICK DISCARDED host/generator load exceeded half the available cores: load_1m=$load_end cores=$cores"
+            exit 1
+          fi
+          exit "$result"
+
+  # Thirty minutes per Linux server cell under impairment, with flat fds,
+  # threads and resident memory: scripts/soak-per-transport runs bin/soak
+  # --seconds 1800 --assert-flat once per cell (portable, gso, gso plain,
+  # io_uring, and xdp inside a virtme-ng guest of the runner's own kernel),
+  # with loss, latency, jitter and duplication at both ends of the link
+  # simulator (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, written into
+  # the transport configs soak creates from, and a cell fails when they leave
+  # no drops or refused duplicates), and prints one PASS or FAIL line per cell. Five
+  # cells of 30 minutes are about 152 minutes, past the two-minute rule as
+  # every nightly is. A runner with no VM tier fails the xdp cell by name.
+  soak-per-transport:
+    name: soak per transport (${{ matrix.ref }} / 1800 s per cell)
+    runs-on: [self-hosted, Linux, X64, fleet, long]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build
+        run: make
+
+      - name: Soak per transport (1800 s per cell, impaired, flat fds, threads and memory)
+        timeout-minutes: 170
+        shell: bash
+        run: bash scripts/soak-per-transport --seconds 1800 --log-dir build/soak-per-transport
+
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the per-transport soak logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-per-transport-logs-${{ steps.refslug.outputs.slug }}
+          path: build/soak-per-transport
+          if-no-files-found: ignore
+
   soak-macos:
     name: soak (${{ matrix.ref }} / macos-15)
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
-    timeout-minutes: 90
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -274,14 +403,65 @@ jobs:
       - name: UDP loopback soak
         run: ./bin/soak 200000
 
+      - name: Per-transport impaired soaks (1800 s each, flat resources)
+        shell: bash
+        run: |
+          set -uo pipefail
+          # the impairment at both ends of the link simulator, the names soak
+          # writes into the transport configs it creates from (the values
+          # scripts/soak-per-transport runs); --assert-flat fails a run they
+          # leave no drops or refused duplicates in
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+          mkdir -p build/soak-macos-per-transport
+          failures=0
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          for transport in portable msgx; do
+            log="build/soak-macos-per-transport/${transport}.log"
+            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT="$transport" \
+                ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+                ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+                ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+                ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+                ./bin/soak --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$log"
+            server=$(summary "$log" server_transport_io)
+            client=$(summary "$log" client_transport_io)
+            link_ok=1
+            for end in server client; do
+              grep -qx "soak link simulator: $end $want_link" "$log" || link_ok=0
+            done
+            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$client" = "$transport" ] && [ "$link_ok" = 1 ]; then
+              echo "SOAK cell=$transport PASS server=$server client=$client seconds=$seconds verified=$(summary "$log" verified) fds=$(resources "$log" fds) threads=$(resources "$log" threads) resident_bytes=$(resources "$log" resident_bytes) link=impaired missing=$(summary "$log" client_to_server_missing)/$(summary "$log" server_to_client_missing) duplicates_refused=$(summary "$log" duplicates_refused_at_server)/$(summary "$log" duplicates_refused_at_client) log=$log"
+            else
+              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
+              failures=$((failures + 1))
+            fi
+          done
+          exit "$failures"
+
+      - name: Upload macOS per-transport soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-macos-per-transport-logs-${{ strategy.job-index }}
+          path: build/soak-macos-per-transport
+          if-no-files-found: ignore
+
   soak-windows:
     name: soak (${{ matrix.ref }} / windows)
     # the fleet's native Windows runner (Windows 11, MSVC; label rocketnet-windows), the one ci.yml's
     # build-and-test-windows runs on, never a hosted image. Run by hand on that runner:
     # configure 19s, Release build 114s (--parallel 4), Tests 12s, wire audit 23s, simulator
-    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all, inside the 90-minute bound.
+    # soak 561s, UDP loopback soak 339s; 1068s (about 18 minutes) in all. The portable, iocp and
+    # rio server cells add 1800 s each, about 109 minutes in all, inside the 150-minute bound.
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 90
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -312,6 +492,106 @@ jobs:
       - name: UDP loopback soak (Windows)
         shell: bash
         run: ./bin/Release/soak.exe 200000
+
+      - name: Portable transport soak under loss, jitter and duplication (Windows)
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          set -uo pipefail
+          # the portable server with the portable client, impaired at both
+          # ends of the link simulator under the names soak writes into the
+          # transport configs it creates (ROCKETNET_DEV_SERVER_* and
+          # ROCKETNET_DEV_CLIENT_*); --assert-flat fails a run whose handles,
+          # threads or library bytes grow, or whose impairment left no trace
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+          mkdir -p build/soak-windows
+          log=build/soak-windows/portable.log
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          if env ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
+              ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+              ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+              ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+              ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+              ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+            status=0
+          else
+            status=$?
+          fi
+          cat "$log"
+          # soak.exe writes CRLF; the checks read a copy with LF endings
+          lines=build/soak-windows/portable.lf
+          tr -d '\r' < "$log" > "$lines"
+          server=$(summary "$lines" server_transport_io)
+          client=$(summary "$lines" client_transport_io)
+          link_ok=1
+          for end in server client; do
+            grep -qx "soak link simulator: $end $want_link" "$lines" || link_ok=0
+          done
+          if [ "$status" -eq 0 ] && [ "$server" = portable ] && [ "$client" = portable ] && [ "$link_ok" = 1 ]; then
+            echo "SOAK cell=portable PASS server=$server client=$client seconds=$seconds handles=$(resources "$lines" handles) threads=$(resources "$lines" threads) private_bytes=$(resources "$lines" private_bytes) library_bytes=$(resources "$lines" library_bytes) link=impaired missing=$(summary "$lines" client_to_server_missing)/$(summary "$lines" server_to_client_missing) duplicates_refused=$(summary "$lines" duplicates_refused_at_server)/$(summary "$lines" duplicates_refused_at_client) log=$log"
+          else
+            echo "SOAK cell=portable FAIL exit=$status server=${server:-none} client=${client:-none} link_as_asked=$link_ok log=$log"
+            exit 1
+          fi
+
+      # The iocp and rio server cells: 1800 s of bin/soak each under loss,
+      # latency, jitter and duplication at both ends of the link simulator
+      # (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, the values
+      # scripts/soak-per-transport runs), held to flat handles, threads and
+      # private bytes by --assert-flat, which also fails a run the impairment
+      # leaves no drops or refused duplicates in. The server transport is
+      # pinned and the granted name and the applied link settings are checked
+      # from the run's own lines.
+      - name: Soak iocp and rio servers (Windows, 1800 s each, impaired, flat handles, threads and private bytes)
+        timeout-minutes: 70
+        shell: bash
+        run: |
+          set -uo pipefail
+          seconds=1800
+          want_link="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+          mkdir -p build/soak-windows
+          failures=0
+          summary() { awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"; }
+          resources() { sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1; }
+          for transport in iocp rio; do
+            log="build/soak-windows/${transport}.log"
+            if env ROCKETNET_SERVER_TRANSPORT="$transport" ROCKETNET_CLIENT_TRANSPORT=portable \
+                ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT=5 ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT=5 \
+                ROCKETNET_DEV_SERVER_LATENCY_MS=30 ROCKETNET_DEV_CLIENT_LATENCY_MS=30 \
+                ROCKETNET_DEV_SERVER_JITTER_MS=20 ROCKETNET_DEV_CLIENT_JITTER_MS=20 \
+                ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT=2 ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT=2 \
+                timeout $((seconds + 120)) ./bin/Release/soak.exe --seconds "$seconds" --assert-flat > "$log" 2>&1; then
+              status=0
+            else
+              status=$?
+            fi
+            cat "$log"
+            # the soak log is CRLF: strip it once to an LF copy and read only that copy,
+            # never a pipe out of tr, so an early-exiting grep cannot fail a cell under pipefail
+            lf="$log.lf"
+            tr -d '\r' < "$log" > "$lf"
+            server=$(summary "$lf" server_transport_io)
+            link_ok=1
+            for end in server client; do
+              grep -qx "soak link simulator: $end $want_link" "$lf" || link_ok=0
+            done
+            if [ "$status" -eq 0 ] && [ "$server" = "$transport" ] && [ "$link_ok" = 1 ]; then
+              echo "SOAK cell=$transport PASS server=$server seconds=$seconds verified=$(summary "$lf" verified) handles=$(resources "$lf" handles) threads=$(resources "$lf" threads) private_bytes=$(resources "$lf" private_bytes) link=impaired missing=$(summary "$lf" client_to_server_missing)/$(summary "$lf" server_to_client_missing) duplicates_refused=$(summary "$lf" duplicates_refused_at_server)/$(summary "$lf" duplicates_refused_at_client) log=$log"
+            else
+              echo "SOAK cell=$transport FAIL exit=$status server=${server:-none} link_as_asked=$link_ok log=$log"
+              failures=$((failures + 1))
+            fi
+          done
+          exit "$failures"
+
+      - name: Upload Windows soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: soak-windows-logs-${{ strategy.job-index }}
+          path: build/soak-windows
 
   # THE SANITIZED SOAK. Bounded, seed-pinned soak_sim under asan + ubsan +
   # lsan. It lived on the per-commit gate (ci.yml) until 2026-09-13, where at
@@ -346,6 +626,7 @@ jobs:
     name: soak_sim (asan + ubsan + lsan, bounded)
     runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
@@ -419,3 +700,65 @@ jobs:
           name: sanitized-soak-log-${{ steps.refslug.outputs.slug }}
           path: soak_sim.log
           if-no-files-found: ignore
+
+  # Nightly validation of the six validation-tool self-test suites
+  # (defense in depth: ci.yml runs them every commit; nightly re-runs them
+  # against the current ref so a runner drift that only shows up on the
+  # nightly host is caught there). Same shape as the per-commit job: each
+  # suite its own step, full output printed, nonzero exit fails the step,
+  # and a zero-discovered-tests pass fails the count line.
+  validation-tool-selftests:
+    name: validation tool selftests
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 3
+    steps:
+
+      - uses: actions/checkout@v4
+
+      - name: Test the frame-budget checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_frame_budget.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the server-calls checker's verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_server_calls.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the split-load checker's receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_split_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the test-environment checker's inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_test_environment.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the 1000-client load profiler's provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_profile_1000_load.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
+
+      - name: Test the release-version block and workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"

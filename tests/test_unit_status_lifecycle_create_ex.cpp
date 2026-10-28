@@ -13,7 +13,13 @@
 //   * rocketnet_init_ex PLATFORM_INIT_FAILED and CRYPTO_INIT_FAILED, which need
 //     the platform or sodium start to fail (no fault hook exists);
 //   * rocketnet_frame_sync_create_ex F3 TIMER_CREATE_FAILED, which is the
-//     Windows CreateWaitableTimerExW refusal and does not exist on Linux;
+//     Windows CreateWaitableTimerExW(CREATE_WAITABLE_TIMER_HIGH_RESOLUTION)
+//     refusal without coarse fallback (covered by the status-plumbing unit
+//     check in test_unit_status_codes_reached.cpp and the native resource
+//     functional cases in functional/platform_primitives.cpp);
+//   * rocketnet_frame_sync_create_ex success, which creates the real Windows
+//     high-resolution waitable timer (functional case
+//     test_frame_sync_create_ex_success_status in functional/platform_primitives.cpp);
 //   * the client and server transport create exits (C1-C11, S1-S14), which are
 //     Layer 4 work owned by the transport cards, not this card's surface.
 
@@ -37,25 +43,25 @@ struct allocator_state
 
 static void * allocate( void * context, size_t bytes )
 {
-    allocator_state * state = (allocator_state*) context;
+    allocator_state * state = (allocator_state *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
         return NULL;
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
-    uintptr_t address = ( ( (uintptr_t) base + sizeof(void*) + 63 ) & ~(uintptr_t)63 ) + 16;
-    memcpy( (void*) ( address - sizeof(void*) ), &base, sizeof(base) );
-    memset( (void*) address, 0xA5, bytes );
+    uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
+    memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+    memset( (void *) address, 0xA5, bytes );
     ++state->live;
-    return (void*) address;
+    return (void *) address;
 }
 
 static void release( void * context, void * pointer )
 {
-    allocator_state * state = (allocator_state*) context;
+    allocator_state * state = (allocator_state *) context;
     void * base = NULL;
-    memcpy( &base, (uint8_t*) pointer - sizeof(void*), sizeof(base) );
+    memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     --state->live;
     free( base );
 }
@@ -224,13 +230,10 @@ static void test_lifecycle_ex_reports_every_status()
     state.fail_at = 0;
     check( state.live == 0 );
 
-    // frame sync success
-    status = -1;
-    struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( &state, 60.0, &status );
-    check( frame_sync != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    rocketnet_frame_sync_destroy( frame_sync );
-    check( state.live == 0 );
+    // frame sync success creates the real Windows high-resolution waitable
+    // timer, so it is the functional case test_frame_sync_create_ex_success_status
+    // (functional/platform_primitives.cpp), with the same allocator and status
+    // checks
 
     // a clean term is OK and leaves no allocation behind
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );

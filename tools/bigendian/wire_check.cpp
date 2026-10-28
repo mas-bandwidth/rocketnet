@@ -89,7 +89,9 @@ static void check_endian_helpers()
     CHECK( v64 == 0x1122334455667788ULL );
 
     // its own inverse: back out to the wire, in the standard's order
+
     rocketnet_endian_fix( &v64 );
+
     uint8_t out[8];
     memcpy( out, &v64, 8 );
     CHECK( memcmp( out, wire64, 8 ) == 0 );
@@ -141,6 +143,7 @@ static void check_read_write()
     CHECK( w - buffer == 15 );
 
     // the bytes themselves, in the standard's order
+
     const uint8_t expected[15] = { 0xA5, 0xEF, 0xBE, 0x78, 0x56, 0x34, 0x12,
                                    0x88, 0x77, 0x66, 0x55, 0x44, 0x33, 0x22, 0x11 };
     CHECK( memcmp( buffer, expected, 15 ) == 0 );
@@ -153,6 +156,7 @@ static void check_read_write()
 
     // STANDARD.md Appendix A's associated data prefix: version then
     // protocol id, little-endian, exactly these bytes
+
     uint8_t ad[12];
     uint8_t * a = ad;
     rocketnet_write_uint32( &a, ROCKETNET_WIRE_VERSION );
@@ -167,6 +171,7 @@ static void check_addresses()
     struct rocketnet_address_t address;
 
     // #125: the octets, in the order they were written
+
     CHECK( rocketnet_address_parse( &address, "107.77.207.77" ) );
     CHECK( address.type == ROCKETNET_ADDRESS_IPV4 );
     CHECK( address.data.ipv4[0] == 107 );
@@ -181,10 +186,12 @@ static void check_addresses()
 
     // and back to a string, which is where a wrong order would have been
     // visible to a human all along
+
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     CHECK( strcmp( rocketnet_address_to_string( &address, buffer ), "127.0.0.1:40000" ) == 0 );
 
     // #127: the ipv6 groups are host-order uint16 after the parse
+
     CHECK( rocketnet_address_parse( &address, "[fe80::1]:50000" ) );
     CHECK( address.type == ROCKETNET_ADDRESS_IPV6 );
     CHECK( address.data.ipv6[0] == 0xfe80 );
@@ -192,6 +199,7 @@ static void check_addresses()
     CHECK( address.port == 50000 );
 
     // the ipv4-in-ipv6 conversions, both directions
+
     CHECK( rocketnet_address_parse( &address, "10.20.30.40" ) );
     rocketnet_address_convert_ipv4_to_ipv6( &address );
     CHECK( address.data.ipv6[5] == 0xFFFF );
@@ -204,6 +212,7 @@ static void check_addresses()
 
     // the loader's convention, stated: a network-order uint32 lands as the
     // dotted octets in order
+
     uint8_t network_order[4] = { 192, 168, 1, 250 };
     uint32_t big_endian_ipv4;
     memcpy( &big_endian_ipv4, network_order, 4 );
@@ -218,11 +227,13 @@ static void check_prefilter()
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     memset( packet, 0, sizeof( packet ) );
+
     uint8_t * p = packet;
     rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, packet_filter );
     CHECK( p - packet == ROCKETNET_PREFILTER_BYTES );
 
     // the header's bytes: type, epoch, then the value
+
     CHECK( packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
     CHECK( packet[1] == ROCKETNET_FILTER_EPOCH_UNKEYED );
     CHECK( memcmp( packet + 2, packet_filter, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
@@ -247,19 +258,27 @@ static void check_sealed_packet()
     const uint8_t packet_filter[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
 
     uint8_t key[ROCKETNET_KEY_BYTES];
+
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+    {
         key[i] = (uint8_t) ( i * 7 + 1 );
+    }
 
     uint8_t salt[ROCKETNET_CONNECTION_SALT_BYTES];
+
     for ( int i = 0; i < ROCKETNET_CONNECTION_SALT_BYTES; i++ )
+    {
         salt[i] = (uint8_t) ( 0xA0 + i );
+    }
 
     const uint64_t protocol_id = 0x1122334455667788ULL;
     const uint64_t sequence = 0x0000000012345678ULL;
 
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 16];
     for ( size_t i = 0; i < sizeof( plaintext ); i++ )
+    {
         plaintext[i] = (uint8_t) ( i * 3 );
+    }
 
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
@@ -270,6 +289,7 @@ static void check_sealed_packet()
 
     // the clear header, byte for byte: the prefilter, then the low 32 bits
     // of the sequence in the standard's little-endian order
+
     CHECK( packet[0] == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
     CHECK( memcmp( packet + 2, packet_filter, ROCKETNET_FILTER_VALUE_BYTES ) == 0 );
     CHECK( packet[6] == 0x78 && packet[7] == 0x56 && packet[8] == 0x34 && packet[9] == 0x12 );
@@ -285,12 +305,14 @@ static void check_sealed_packet()
 
     // a flipped byte anywhere inside must refuse: the seal is over the
     // whole packet, on this host as on any other
+
     packet[packet_bytes / 2] ^= 0x01;
     CHECK( rocketnet_open_sealed_packet( opened, NULL, (int) sizeof( opened ), packet, packet_bytes,
                                          ROCKETNET_CONNECTION_PAYLOAD_PACKET, sequence,
                                          protocol_id, salt, NULL, key ) < 0 );
 
     // the associated data lengths the standard publishes
+
     uint8_t associated_data[ROCKETNET_AD_WITH_EPHEMERAL_BYTES];
     CHECK( rocketnet_write_packet_associated_data( associated_data, protocol_id,
                                                    ROCKETNET_CONNECTION_PAYLOAD_PACKET,
@@ -305,6 +327,7 @@ static void check_fragments()
     rocketnet_write_fragment_header( header, 0x11223344, 3, 7 );
 
     // the payload id is little-endian on the wire, then index, then count-1
+
     CHECK( header[0] == 0x44 && header[1] == 0x33 && header[2] == 0x22 && header[3] == 0x11 );
     CHECK( header[4] == 3 );
     CHECK( header[5] == 6 );
@@ -333,10 +356,15 @@ static void check_base64_and_config()
     CHECK( rocketnet_base64_decode_data( "AA!A", bytes, sizeof( bytes ) ) == 0 );
 
     uint8_t raw[32];
+
     for ( int i = 0; i < 32; i++ )
+    {
         raw[i] = (uint8_t) ( i * 5 + 3 );
+    }
+
     char encoded[128];
     CHECK( rocketnet_base64_encode_data( raw, sizeof( raw ), encoded, sizeof( encoded ) ) > 0 );
+
     uint8_t decoded[64];
     CHECK( rocketnet_base64_decode_data( encoded, decoded, sizeof( decoded ) ) == 32 );
     CHECK( memcmp( raw, decoded, 32 ) == 0 );
@@ -349,15 +377,19 @@ static void check_base64_and_config()
     const int * available = rocketnet_server_transport_io_availability( &num_available );
     struct rocketnet_transport_ladder_t ladder;
     CHECK( rocketnet_transport_ladder_parse( "auto", available, num_available, &ladder ) );
+
     int auto_available = 0;
+
     for ( int i = 0; i < num_available; i++ )
         if ( !rocketnet_transport_pin_only( available[i] ) )
+        {
             auto_available++;
+        }
+
     CHECK( ladder.num_candidates == auto_available );
     CHECK( rocketnet_transport_ladder_parse( "portable", available, num_available, &ladder ) );
     CHECK( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
     CHECK( !rocketnet_transport_ladder_parse( "rocket", available, num_available, &ladder ) );
-
 }
 
 int main()

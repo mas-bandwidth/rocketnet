@@ -37,7 +37,7 @@ static _Bool nondet_bool( void ) { return 0; }
 #else
 uint64_t nondet_uint64( void );
 _Bool nondet_bool( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 #define CAP     3
 #define STEPS   4
@@ -48,12 +48,14 @@ _Bool nondet_bool( void );
 static uint64_t rocketnet_xdp_free_list_pop( uint64_t * frames, int * count )
 {
     uint64_t frame = INVALID;
+
     if ( *count > 0 )
     {
         ( *count )--;
         frame = frames[*count];
         frames[*count] = INVALID;
     }
+
     return frame;
 }
 
@@ -73,8 +75,11 @@ int main( void )
             uint64_t frame = nondet_uint64();
             int before = count;
             uint64_t saved[CAP];
+
             for ( int i = 0; i < CAP; i++ )
+            {
                 saved[i] = frames[i];
+            }
 
             bool ok = rocketnet_xdp_free_list_push( frames, &count, CAP, frame, region_begin, region_end );
             if ( ok )
@@ -90,11 +95,14 @@ int main( void )
             else
             {
                 __CPROVER_assert( count == before, "refused push leaves the count" );
+
                 for ( int i = 0; i < CAP; i++ )
+                {
                     __CPROVER_assert( frames[i] == saved[i], "refused push leaves the slots" );
-                __CPROVER_assert( before >= CAP || frame < region_begin || frame >= region_end
-                                  || ( frame - region_begin ) % ROCKETNET_XDP_FRAME_SIZE != 0,
-                    "refused push was full, outside the region, or misaligned" );
+                }
+
+                __CPROVER_assert( before >= CAP || frame < region_begin || frame >= region_end || ( frame - region_begin ) % ROCKETNET_XDP_FRAME_SIZE != 0,
+                                  "refused push was full, outside the region, or misaligned" );
             }
         }
         else
@@ -122,8 +130,13 @@ int main( void )
         for ( int i = 0; i < CAP; i++ )
         {
             if ( i < count )
+            {
                 __CPROVER_assert( frames[i] == model[i], "held prefix matches the push order" );
+            }
         }
     }
+#if defined( REACHABILITY_CONTROL )
+    __CPROVER_assert( 0, "xdp-free-list reachability control" );
+#endif // #if defined( REACHABILITY_CONTROL )
     return 0;
 }

@@ -16,7 +16,7 @@
 // reports CONNECTED, and a send before CONNECTED is dropped at start. An ARM
 // that arrives in that window is answered once the client is connected, not
 // on arrival, where its ACK would be dropped and the server would wait out
-// its start deadline (captain, 1000 clients on one host, 3 runs in 10).
+// its start deadline (Windows x64 MSVC, 1000 clients on one host, 3 runs in 10).
 
 static void test_load_split_startup_ack_waits_for_connected()
 {

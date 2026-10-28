@@ -24,8 +24,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TEST_UNIT_STANDARD_H
-#define ROCKETNET_TEST_UNIT_STANDARD_H
+#ifndef ROCKETNET_TESTS_TEST_UNIT_STANDARD_H
+#define ROCKETNET_TESTS_TEST_UNIT_STANDARD_H
 
 #include "test_unit_registry.h"
 
@@ -49,9 +49,12 @@ typedef int ( *rn_standard_vector_generator_t )( const char * id, uint8_t * out,
 
 inline int rn_standard_hex_nibble( char c )
 {
-    if ( c >= '0' && c <= '9' ) return c - '0';
-    if ( c >= 'a' && c <= 'f' ) return c - 'a' + 10;
-    if ( c >= 'A' && c <= 'F' ) return c - 'A' + 10;
+    if ( c >= '0' && c <= '9' )
+        return c - '0';
+    if ( c >= 'a' && c <= 'f' )
+        return c - 'a' + 10;
+    if ( c >= 'A' && c <= 'F' )
+        return c - 'A' + 10;
     return -1;
 }
 
@@ -121,4 +124,4 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
     return count;
 }
 
-#endif // #ifndef ROCKETNET_TEST_UNIT_STANDARD_H
+#endif // ROCKETNET_TESTS_TEST_UNIT_STANDARD_H

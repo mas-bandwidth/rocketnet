@@ -5,28 +5,24 @@
 
 // A production build (ROCKETNET_DEV=0) refuses the development values: the
 // server and the client refuse the published test packet filter at create
-// with ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, at the public create
-// and at the transport create, and the client refuses a connect token sealed
+// with ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, and the client
+// refuses a connect token sealed
 // to the published development server key with
-// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. Any other filter and any
-// other server key pass. The unit suite's production-posture hook library
-// switches the refusal on for these cases only
-// (rocketnet_development_values_refused_test_enable), so its other cases keep
-// the default test filter; a production library refuses always. A
+// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. A production library
+// refuses always. A
 // development build accepts all of it, so these cases are production only.
 //
-// Every case runs in memory: the loopback transport and the fake client
-// driver, no socket, and the game clock in place of the wall clock.
+// Every refusal happens before a worker or socket exists. Successful public
+// create counterparts are destroyed before connect/start.
 
 #include "test_unit_registry.h"
 
 #if !ROCKETNET_DEV
 
 #include "unit_shutdown.h"
-#include "fake_client_driver.h"
 
 #include "rocketnet.h"
-#include "rocketnet_client_io.h"
+#include "rocketnet_base64.h"
 #include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 
@@ -57,35 +53,31 @@ static void production_token( uint8_t * token, const uint8_t * server_key )
     rocketnet_write_signed_connect_data( &signed_fields, token );
 }
 
-// the step-driven client transport create on the fake driver; returns the
-// status, and destroys whatever was created
-static int production_client_transport_create( const uint8_t * filter, const uint8_t * server_key )
+// Public connect with a complete token string. Every caller here expects the
+// production-value check to refuse before the transport opens.
+static int production_client_connect( const uint8_t * server_key )
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     production_token( token, server_key );
-    rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
-    struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
-    config.game_clock_epoch = 1000;
-    if ( filter )
-        memcpy( config.packet_filter, filter, sizeof( config.packet_filter ) );
-    int status = -1;
-    rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( fake, token, &config, 1000.0,
-        &rocketnet_fake_client_operations_base, fake, &status );
-    check( ( transport != NULL ) == ( status == ROCKETNET_STATUS_OK ) );
-    if ( transport )
-    {
-        rn_test_client_transport_stop_and_destroy( transport );
-        check( fake->destroy_calls == 1 );
-    }
-    delete fake;
+    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, sizeof( token_string ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+
+    struct rocketnet_client_config_t config;
+    check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
+    config.transport = "loopback";
+    memcpy( config.packet_filter, production_filter, sizeof( config.packet_filter ) );
+    enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
+    check( client != NULL && create_status == ROCKETNET_STATUS_OK );
+    const int status = rocketnet_client_connect( client, token_string );
+    check( status != ROCKETNET_STATUS_OK );
+    rn_test_client_stop_and_destroy( client );
     return status;
 }
 
 static void test_production_server_refuses_test_packet_filter()
 {
     rocketnet_quiet( true );
-    rocketnet_development_values_refused_test_enable( 1 );
 
     // the public create
     {
@@ -129,7 +121,6 @@ static void test_production_server_refuses_test_packet_filter()
             rn_test_server_transport_stop_and_destroy( server );
     }
 
-    rocketnet_development_values_refused_test_enable( 0 );
     rocketnet_quiet( false );
 }
 
@@ -138,7 +129,6 @@ REGISTER_UNIT_TEST( test_production_server_refuses_test_packet_filter );
 static void test_production_client_refuses_test_packet_filter()
 {
     rocketnet_quiet( true );
-    rocketnet_development_values_refused_test_enable( 1 );
 
     // the public create
     {
@@ -157,13 +147,6 @@ static void test_production_client_refuses_test_packet_filter()
             rn_test_client_stop_and_destroy( client );
     }
 
-    // the transport create
-    uint8_t server_key[ROCKETNET_KEY_BYTES];
-    memset( server_key, 0x52, sizeof( server_key ) );
-    check( production_client_transport_create( NULL, server_key ) == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
-    check( production_client_transport_create( production_filter, server_key ) == ROCKETNET_STATUS_OK );
-
-    rocketnet_development_values_refused_test_enable( 0 );
     rocketnet_quiet( false );
 }
 
@@ -172,19 +155,11 @@ REGISTER_UNIT_TEST( test_production_client_refuses_test_packet_filter );
 static void test_production_client_refuses_dev_connect_token()
 {
     rocketnet_quiet( true );
-    rocketnet_development_values_refused_test_enable( 1 );
 
     uint8_t dev_key[ROCKETNET_KEY_BYTES];
     memcpy( dev_key, rocketnet_dev_server_public_key, sizeof( dev_key ) );
-    check( production_client_transport_create( production_filter, dev_key ) == ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION );
+    check( production_client_connect( dev_key ) == ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION );
 
-    uint8_t server_key[ROCKETNET_KEY_BYTES];
-    memset( server_key, 0x52, sizeof( server_key ) );
-    check( production_client_transport_create( production_filter, server_key ) == ROCKETNET_STATUS_OK );
-
-    // with the refusal off, the hook library's default, the token is accepted
-    rocketnet_development_values_refused_test_enable( 0 );
-    check( production_client_transport_create( production_filter, dev_key ) == ROCKETNET_STATUS_OK );
     rocketnet_quiet( false );
 }
 

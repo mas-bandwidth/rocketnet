@@ -180,7 +180,7 @@ static void test_never_takes_a_reliable_number()
     // queue and reliable number state stay independent (RNChannelTypes!Enqueue).
     rn_message_link_t link = {};
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
-                                                               ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
+                                                             ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( object != NULL );
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     rn_message_connection_t * connection = &object->connections[0];
@@ -198,7 +198,7 @@ static void test_never_takes_a_reliable_number()
         rocketnet_unit_check( connection->ordered.send.next == next );
         uint64_t number = 0, ring = 0;
         rocketnet_unit_check( rn_window_send_first_write( &connection->ordered.send, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED,
-                                                           4, d, &number, &ring ) == RN_WINDOW_SEND_UNRELIABLE );
+                                                          4, d, &number, &ring ) == RN_WINDOW_SEND_UNRELIABLE );
         rocketnet_unit_check( connection->ordered.send.next == next );
     }
     rn_message_object_destroy( object );
@@ -238,7 +238,7 @@ static void test_large_state_promotes_to_reliable_sequenced()
     // An oversize unreliable send is promoted to its reliable twin (the
     // promotion rule), never dropped as unreliable.
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
-                                                  ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
+                                                 ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     rocketnet_unit_check( pointer != NULL );
     if ( pointer )
     {
@@ -252,10 +252,35 @@ static void test_large_state_promotes_to_reliable_sequenced()
     rn_message_object_destroy( object );
 }
 
+static void test_sequenced_drain_refusal_counts_stale()
+{
+    // The ordered record opens the epoch; the drain then refuses the held
+    // record's sequencing (upper half) and must count it, not drop it silently.
+    rn_region_t * region = sequenced_region();
+    rocketnet_unit_check( region != NULL );
+    rn_channels_t channels;
+    rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+    const uint8_t ahead = 1, ordered = 2;
+    rocketnet_message_record_t record;
+    rn_delivery_t out;
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0x800000, &ahead );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    const uint64_t stale_before = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
+    sequenced_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 0, 0, &ordered );
+    rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    rocketnet_unit_check( channels.deliveries == 1 );
+    rocketnet_unit_check( region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE] == stale_before + 1 );
+    rn_region_reset( region );
+}
+
 static void test_rnchannel_sequenced_witness_replays()
 {
     // The reversed traces in README-RNChannelTypes: reject backwards state,
     // reset the watermark on the ordered drain, and keep one future state.
+    // Keep this combined run because the last case must see ordered_read reset
+    // after the middle case advances it to 1; otherwise ordering 1 is delivered
+    // instead of held. The cases reuse the same static region.
     test_older_dropped_newest_delivered();
     test_watermark_resets_on_ordered_delivery();
     test_held_newest_ahead_of_epoch();
@@ -309,5 +334,6 @@ REGISTER_UNIT_TEST( test_hold_full_drops_and_counts );
 REGISTER_UNIT_TEST( test_large_future_state_drops_without_violation );
 REGISTER_UNIT_TEST( test_never_takes_a_reliable_number );
 REGISTER_UNIT_TEST( test_large_state_promotes_to_reliable_sequenced );
+REGISTER_UNIT_TEST( test_sequenced_drain_refusal_counts_stale );
 REGISTER_UNIT_TEST( test_rnchannel_sequenced_witness_replays );
 REGISTER_UNIT_TEST( test_sequenced_no_allocation_after_create );

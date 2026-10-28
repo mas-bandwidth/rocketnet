@@ -43,6 +43,12 @@ WILDCARD_ALLOWED = {
     ("functional/rocketnet_functional_tests.cpp",
      'rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );'):
         "io_uring dual-stack case (Linux): an ipv4 client of the ipv6 wildcard",
+    ("functional/rocketnet_functional_tests.cpp",
+     'void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( "[::]", "127.0.0.1" ); }'):
+        "msgx dual-stack case (macOS): an ipv4 client of the ipv6 wildcard",
+    ("functional/rocketnet_functional_tests.cpp",
+     'void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( "[::]", "127.0.0.1" ); }'):
+        "iocp dual-stack case (Windows): an ipv4 client of the ipv6 wildcard",
 }
 
 TIERS = {"supported", "nightly", "unsupported"}
@@ -54,6 +60,7 @@ COLUMNS = {
     "tier": "tier",
     "workflow": "workflow",
     "runner label": "label",
+    "per commit functional": "functional",
 }
 
 
@@ -136,6 +143,76 @@ def label_tokens(label):
     return tokens
 
 
+def job_blocks(text):
+    """Split a workflow into the text of each top-level job.
+
+    Policy: docs/PLATFORMS.md, "What supported promises". A job starts at a
+    line indented two spaces that ends in a colon, inside the jobs: section,
+    and runs to the next such line.
+    """
+    blocks = []
+    current = None
+    in_jobs = False
+    for line in text.splitlines():
+        if re.match(r"^jobs:\s*$", line):
+            in_jobs = True
+            continue
+        if not in_jobs:
+            continue
+        if re.match(r"^  [A-Za-z0-9_-]+:\s*$", line):
+            current = []
+            blocks.append(current)
+        if current is not None:
+            current.append(line)
+    return ["\n".join(block) for block in blocks]
+
+
+def runner_text(block):
+    """Return the runs-on and runner: lines of a job, comments excluded.
+
+    Policy: docs/PLATFORMS.md, "What supported promises". A runner token in a
+    comment or a shell case is not a runner, so only these lines name one.
+    """
+    return "\n".join(
+        line for line in block.splitlines()
+        if re.match(r"^\s*(?:runs-on|runner):|.*\brunner:\s", line) and not line.lstrip().startswith("#")
+    )
+
+
+def check_functional(row, text):
+    """Return the failures for a supported row's per-commit functional claim.
+
+    Policy: docs/PLATFORMS.md, "What supported promises", item 1. A supported
+    row declares what functional coverage its per-commit leg runs: `full`
+    followed by the step name of the whole-suite step, or `subset:` followed
+    by the step names, separated by semicolons, of the steps that run the
+    subset. Every named step must occur in a job of the named workflow that
+    also holds every token of the row's runner label, so the claim is backed
+    by a step on that runner and not by a step on another one.
+    """
+    name = f"{row['os']} / {row['arch']} / {row['compiler']}"
+    value = row.get("functional", "")
+    if is_placeholder(value):
+        return [f"{name}: supported row declares no per-commit functional step "
+                f"(write `full: <step>` or `subset: <step>; <step>`)"]
+    match = re.match(r"^(full|subset)\s*:\s*(.+)$", value)
+    if not match:
+        return [f"{name}: per-commit functional {value!r} is not `full: <step>` or `subset: <step>; ...`"]
+    steps = [step.strip() for step in match.group(2).split(";") if step.strip()]
+    tokens = label_tokens(row["label"])
+    blocks = [block for block in job_blocks(text)
+              if all(token in runner_text(block) for token in tokens)]
+    failures = []
+    for step in steps:
+        pattern = re.compile(r"^\s*(?:-\s+)?name:\s*[\"']?" + re.escape(step), re.MULTILINE)
+        if not any(pattern.search(block) for block in blocks):
+            failures.append(
+                f"{name}: per-commit functional step {step!r} is not a step name "
+                f"in any job of {row['workflow']} that holds the runner label {row['label']!r}"
+            )
+    return failures
+
+
 def check_row(row, workflow_cache):
     """Return the failures for one table row.
 
@@ -179,16 +256,21 @@ def check_row(row, workflow_cache):
             f"does not appear in {workflow}"
             for token in missing
         ]
+    if tier == "supported":
+        return check_functional(row, text)
     return []
 
 
-def check_wildcard_binds(root=ROOT):
+def check_wildcard_binds(root=ROOT, allowed=None):
     """Return the failures for wildcard address literals in functional/.
 
     Every line of functional/ holding a WILDCARD literal must be a key of
     WILDCARD_ALLOWED, at most as many times as the list names it, and every
-    listed line must still occur.
+    listed line must still occur. The allowed set defaults to WILDCARD_ALLOWED;
+    only the self-check passes another.
     """
+    if allowed is None:
+        allowed = WILDCARD_ALLOWED
     found = Counter()
     where = {}
     directory = root / "functional"
@@ -204,17 +286,58 @@ def check_wildcard_binds(root=ROOT):
 
     failures = []
     for key, count in found.items():
-        if key not in WILDCARD_ALLOWED or count > 1:
-            for number in where[key][0 if key not in WILDCARD_ALLOWED else 1:]:
+        if key not in allowed or count > 1:
+            for number in where[key][0 if key not in allowed else 1:]:
                 failures.append(
                     f"{key[0]}:{number}: wildcard address in functional/ is not on "
                     f"the listed set; bind 127.0.0.1 or ::1 with port 0, or list "
                     f"it in WILDCARD_ALLOWED with its reason: {key[1]}"
                 )
-    for key in WILDCARD_ALLOWED:
+    for key in allowed:
         if key not in found:
             failures.append(f"{key[0]}: listed wildcard line no longer occurs: {key[1]}")
     return failures
+
+
+def self_check(check=check_wildcard_binds):
+    """Prove check_wildcard_binds still reports violations; return failures.
+
+    Builds a temporary functional-style tree and uses no repository file.
+    Each case must be reported by `check`; a case it lets through is a failure
+    of the checker itself.
+    """
+    import tempfile
+
+    name = "functional/case.cpp"
+    listed_line = 'void listed_case() { wire( "[::]", "127.0.0.1" ); }'
+    unlisted_line = 'rocketnet_check( rocketnet_address_parse( &bind_address, "0.0.0.0:40000" ) );'
+    allowed = {(name, listed_line): "listed for the self-check"}
+
+    cases = [
+        ("unlisted wildcard literal", [unlisted_line, listed_line], "is not on the listed set"),
+        ("listed line beyond its count", [listed_line, listed_line], "is not on the listed set"),
+        ("listed line absent", ["int unrelated = 0;"], "no longer occurs"),
+    ]
+    problems = []
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        (root / "functional").mkdir()
+        # The clean tree must pass, or the cases below prove nothing.
+        (root / name).write_text(listed_line + "\n", encoding="utf-8")
+        clean = check(root=root, allowed=allowed)
+        if clean:
+            problems.append(f"self-check: clean tree was reported: {clean}")
+        for label, lines, expected in cases:
+            (root / name).write_text("\n".join(lines) + "\n", encoding="utf-8")
+            reported = check(root=root, allowed=allowed)
+            if not any(expected in failure for failure in reported):
+                problems.append(f"self-check: {label} was not reported ({expected!r})")
+    return problems
+
+
+def accept_everything(root=ROOT, allowed=None):
+    """A deliberately broken check, used to see the self-check fail."""
+    return []
 
 
 def main():
@@ -222,6 +345,19 @@ def main():
 
     Policy: docs/PLATFORMS.md, "Checking the table".
     """
+    if "--self-check-broken" in sys.argv[1:]:
+        problems = self_check(accept_everything)
+        for problem in problems:
+            print(f"check_platform_policy: {problem}", file=sys.stderr)
+        return 1 if problems else 0
+    if "--self-check" in sys.argv[1:]:
+        problems = self_check()
+        for problem in problems:
+            print(f"check_platform_policy: {problem}", file=sys.stderr)
+        if not problems:
+            print("check_platform_policy: self-check: 3 violations reported, clean tree passes")
+        return 1 if problems else 0
+
     try:
         rows = parse_table(DOCUMENT.read_text(encoding="utf-8"))
     except (OSError, ValueError) as error:

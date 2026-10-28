@@ -1,0 +1,679 @@
+#!/usr/bin/env bash
+#
+# lan-proof-remote -- one host's steps of one LAN proof cell.
+#
+# scripts/lan-proof copies this file to ~/lan-proof-live/lan-proof-remote on
+# each machine and runs it there; it is never pasted into an ssh command
+# string. Subcommands:
+#
+#   build <commit>
+#   build-inner <commit>      (the bounded body of build)
+#   build-windows <commit>    (the Windows checkout and build, inside the build slot)
+#   hostinfo <iface>
+#   load
+#   check-xdp-bridge <bridge>
+#   start-server <commit> <dir> <transport> <total> <duration> <run-id> <address> <port> <cap-kbps>
+#   hold-server  <same as start-server>   (starts the server and waits for it)
+#   start-xdp-server <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
+#   guest-server <commit> <total> <duration> <run-id> <port> <cap-kbps>
+#   xdp-command <commit> <dir> <bridge> <total> <duration> <run-id> <port> <cap-kbps>
+#   check-xdp-uplink <commit> <iface>
+#   arm-xdp-detach <iface> <run-id> <seconds>
+#   start-xdp-uplink-server <commit> <dir> <iface> <total> <duration> <run-id> <address> <port> <cap-kbps>
+#   detach-xdp-uplink <iface> <run-id>
+#   start-shard <commit> <dir> <name> <total> <duration> <run-id> <first> <count> <server-endpoint> <key> <cap-kbps>
+#   alive <pidfile>
+#   stop <pidfile>
+#   collect <file>
+#
+# Every process this file starts is recorded in a pidfile under the run
+# directory; stop kills only the process named in that pidfile.
+
+set -u
+
+REPO_URL="https://github.com/mas-bandwidth/rocketnet.git"
+BASE="${LAN_PROOF_BASE:-${HOME}/lan-proof-live}"
+
+fail()
+{
+    echo "lan-proof-remote: $*" >&2
+    exit 1
+}
+
+usage()
+{
+    echo "usage: lan-proof-remote build|build-inner|build-windows|hostinfo|load|check-xdp-bridge|start-server|hold-server|start-xdp-server|guest-server|xdp-command|check-xdp-uplink|arm-xdp-detach|start-xdp-uplink-server|detach-xdp-uplink|start-shard|alive|stop|collect ..." >&2
+    exit 2
+}
+
+# The remote OS decides every host-specific command. A Windows host is driven
+# from its Linux subsystem shell: the build, the facts and the processes are
+# native Windows ones. LAN_PROOF_OS stands in for detection in the self test.
+host_os()
+{
+    if [ -n "${LAN_PROOF_OS:-}" ]; then
+        echo "$LAN_PROOF_OS"
+        return 0
+    fi
+    case "$( uname -s )" in
+        Linux)
+            if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+                echo windows
+            else
+                echo linux
+            fi
+            ;;
+        Darwin) echo macos ;;
+        MINGW*|MSYS*|CYGWIN*) echo windows ;;
+        *) echo unknown ;;
+    esac
+}
+
+# A native Windows build needs its checkout on a Windows drive.
+WIN_BASE="${LAN_PROOF_WIN_BASE:-/mnt/c/lan-proof-live}"
+VCVARS="${LAN_PROOF_VCVARS:-C:\\Program Files\\Microsoft Visual Studio\\18\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat}"
+VS_GENERATOR="${LAN_PROOF_VS_GENERATOR:-Visual Studio 18 2026}"
+
+checkout_dir()
+{
+    if [ "$( host_os )" = "windows" ]; then
+        echo "$WIN_BASE/$1"
+    else
+        echo "$BASE/$1"
+    fi
+}
+
+# The built load_split for a commit; the multi-config Windows build puts it
+# under its configuration directory.
+load_split_bin()
+{
+    local dir candidate
+    dir=$( checkout_dir "$1" )
+    if [ "$( host_os )" = "windows" ]; then
+        for candidate in "$dir/bin/Release/load_split.exe" "$dir/build/Release/load_split.exe"; do
+            [ -f "$candidate" ] && { echo "$candidate"; return 0; }
+        done
+        return 1
+    fi
+    [ -x "$dir/bin/load_split" ] || return 1
+    echo "$dir/bin/load_split"
+}
+
+windows_tool()
+{
+    local name=$1 fallback=$2
+    command -v "$name" 2>/dev/null || { [ -x "$fallback" ] && echo "$fallback"; } || return 1
+}
+
+# Every command on a Windows host runs inside winlock. Facts, builds, log
+# reads and process checks take a shared slot; the server cell holds the
+# exclusive lock, and while it is held (cell.holder names its live holder)
+# a command of that cell runs inside it rather than queueing behind it.
+cell_holder="$BASE/cell.holder"
+
+cell_held()
+{
+    local pid
+    [ -f "$cell_holder" ] || return 1
+    pid=$( cat "$cell_holder" 2>/dev/null )
+    case "$pid" in
+        ''|*[!0-9]*) return 1 ;;
+    esac
+    kill -0 "$pid" 2>/dev/null
+}
+
+windows_lock()
+{
+    [ "$( host_os )" = "windows" ] || return 0
+    [ -z "${LAN_PROOF_LOCKED:-}" ] || return 0
+    cell_held && return 0
+    LAN_PROOF_LOCKED=1 exec winlock --slots 3 --card "${LAN_PROOF_CARD:-lan-proof}" -- "$0" "$@"
+}
+
+cmd_build()
+{
+    local commit=$1 dir head timeout_cmd
+    case "$commit" in
+        ''|*[!0-9a-fA-F]*) fail "build: '$commit' is not a hex commit" ;;
+    esac
+    timeout_cmd=$( command -v timeout 2>/dev/null || command -v gtimeout 2>/dev/null || true )
+    # GNU and BSD timeout both print --kill-after in their help (BSD on
+    # stderr) and both take -k.
+    [ -n "$timeout_cmd" ] && "$timeout_cmd" --help 2>&1 | grep -q -- '--kill-after' ||
+        fail "build: timeout or gtimeout with --kill-after is required for the owned build bound"
+    "$timeout_cmd" -k 15 870 "$0" build-inner "$commit" ||
+        fail "build: checkout, build, or 870-second bound failed"
+    dir=$( checkout_dir "$commit" )
+    head=$( git -C "$dir" rev-parse HEAD ) || fail "build: cannot read HEAD"
+    [ "$head" = "$commit" ] || fail "build: HEAD is $head, not $commit"
+    echo "$head"
+}
+
+cmd_build_inner()
+{
+    local commit=$1 os bin
+    os=$( host_os )
+    case "$os" in
+        linux|macos)
+            build_checkout "$commit"
+            "$HOME/bin/benchslot" -- bash -c 'cd "$1" && mkdir -p build && cd build &&
+                cmake -DCMAKE_BUILD_TYPE=Release .. >/dev/null &&
+                nice make -j4 --no-print-directory load_split' bash "$( checkout_dir "$commit" )" ||
+                fail "build: Release build failed"
+            ;;
+        windows)
+            # build took the shared slot, so the checkout and the build both
+            # run inside it, and the bound counts the build, not the queue.
+            cmd_build_windows "$commit"
+            ;;
+        *) fail "build: unsupported OS $( uname -s )" ;;
+    esac
+    bin=$( load_split_bin "$commit" ) || fail "build: no load_split after the Release build"
+    echo "bin=$bin"
+}
+
+build_checkout()
+{
+    local commit=$1 dir
+    dir=$( checkout_dir "$commit" )
+    mkdir -p "${dir%/*}" || fail "build: cannot create ${dir%/*}"
+    [ -d "$dir/.git" ] || git clone --quiet "$REPO_URL" "$dir" || fail "build: clone failed"
+    git -C "$dir" fetch --quiet origin || fail "build: fetch failed"
+    git -C "$dir" -c advice.detachedHead=false checkout --quiet "$commit" || fail "build: checkout failed"
+    [ "$( git -C "$dir" rev-parse HEAD )" = "$commit" ] || fail "build: checkout is not $commit"
+}
+
+# The body of a Windows build, run by winlock in a shared slot.
+cmd_build_windows()
+{
+    local commit=$1 dir bat cmd_exe windir
+    build_checkout "$commit"
+    dir=$( checkout_dir "$commit" )
+    cmd_exe=$( windows_tool cmd.exe /mnt/c/Windows/System32/cmd.exe ) || fail "build: no cmd.exe"
+    windir=$( wslpath -w "$dir" ) || fail "build: cannot name the checkout as a Windows path"
+    bat="${dir%/*}/lan-proof-build-$commit.bat"
+    printf '%s\r\n' '@echo off' \
+        "call \"$VCVARS\" >nul || exit /b 1" \
+        "cd /d \"$windir\" || exit /b 1" \
+        "cmake -B build -G \"$VS_GENERATOR\" -A x64 > lan-proof-configure.log 2>&1 || exit /b 1" \
+        "cmake --build build --config Release --parallel 4 --target load_split > lan-proof-build.log 2>&1 || exit /b 1" \
+        > "$bat" || fail "build: cannot write the build batch file"
+    # start cmd.exe from a Windows drive, not a Linux path it cannot use
+    ( cd "${dir%/*}" && "$cmd_exe" /c "$( wslpath -w "$bat" )" ) || fail "build: the Windows Release build failed"
+}
+
+is_decimal()
+{
+    printf '%s\n' "$1" | grep -Eq '^[0-9]+(\.[0-9]+)?$'
+}
+
+is_count()
+{
+    printf '%s\n' "$1" | grep -Eq '^[1-9][0-9]*$'
+}
+
+is_ipv4()
+{
+    printf '%s\n' "$1" | awk -F. 'NF != 4 { exit 1 }
+        { for (i = 1; i <= 4; ++i) if ($i !~ /^[0-9]+$/ || $i > 255) exit 1 }'
+}
+
+# One PowerShell call on a Windows host. The interface is an adapter name
+# with _ standing for a space, an interface index, or "default"; an empty
+# interface reads only the processor facts.
+windows_facts()
+{
+    local iface=$1 ps script
+    ps=$( windows_tool powershell.exe /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe ) ||
+        fail "facts: no powershell.exe"
+    case "$iface" in
+        *[!A-Za-z0-9_.-]*) fail "facts: interface '$iface' has characters outside A-Z a-z 0-9 _ . -" ;;
+    esac
+    script="\$ErrorActionPreference = 'Stop'
+\$i = '$iface'
+if (\$i -ne '') {
+  if (\$i -eq 'default') { \$a = Get-NetAdapter -InterfaceIndex ((Get-NetRoute -DestinationPrefix 0.0.0.0/0 | Sort-Object RouteMetric | Select-Object -First 1).ifIndex) }
+  elseif (\$i -match '^[0-9]+\$') { \$a = Get-NetAdapter -InterfaceIndex ([int]\$i) }
+  else { \$a = Get-NetAdapter -Name (\$i -replace '_', ' ') }
+  'name=' + (\$a.Name -replace ' ', '_')
+  'model=' + \$a.InterfaceDescription
+  'driver=' + \$a.DriverFileName
+  'speed_bps=' + \$a.Speed
+  'full_duplex=' + \$a.FullDuplex
+  'address=' + ((Get-NetIPAddress -InterfaceIndex \$a.ifIndex -AddressFamily IPv4 | Where-Object { \$_.IPAddress -notlike '169.254.*' } | Select-Object -First 1).IPAddress)
+  'kernel=' + (Get-CimInstance Win32_OperatingSystem).Version
+}
+\$p = Get-CimInstance Win32_Processor
+'nproc=' + (\$p | Measure-Object NumberOfLogicalProcessors -Sum).Sum
+'cpu_percent=' + (\$p | Measure-Object LoadPercentage -Average).Average
+'queue=' + (Get-CimInstance Win32_PerfFormattedData_PerfOS_System).ProcessorQueueLength"
+    "$ps" -NoProfile -NonInteractive -Command "$script" 2>/dev/null | tr -d '\r' ||
+        fail "facts: powershell failed"
+}
+
+field()
+{
+    printf '%s\n' "$2" | sed -n "s/^$1=//p" | head -n 1
+}
+
+# Windows has no load average: load1 is the running work now, the busy
+# share of the logical processors plus the processor queue.
+windows_load()
+{
+    local facts=$1 nproc percent queue
+    nproc=$( field nproc "$facts" )
+    percent=$( field cpu_percent "$facts" )
+    queue=$( field queue "$facts" )
+    is_count "$nproc" || fail "facts: logical processor count '$nproc' is not a number"
+    is_decimal "$percent" || fail "facts: processor load '$percent' is not a number"
+    is_decimal "$queue" || fail "facts: processor queue '$queue' is not a number"
+    awk -v n="$nproc" -v p="$percent" -v q="$queue" 'BEGIN { printf "%.2f %d\n", n * p / 100 + q, n }'
+}
+
+read_load()
+{
+    local facts
+    case "$( host_os )" in
+        linux) echo "$( awk '{ print $1 }' /proc/loadavg ) $( nproc )" ;;
+        macos) echo "$( sysctl -n vm.loadavg | awk '{ print $2 }' ) $( sysctl -n hw.ncpu )" ;;
+        windows)
+            facts=$( windows_facts "" ) || exit 1
+            windows_load "$facts"
+            ;;
+        *) fail "load: unsupported OS $( uname -s )" ;;
+    esac
+}
+
+cmd_hostinfo()
+{
+    local iface=$1 os kname kernel speed duplex driver bus model address load1 nproc facts media port loads
+    os=$( host_os )
+    speed="" duplex="" driver="" model="" address=""
+    case "$os" in
+        linux)
+            kname=Linux
+            kernel=$( uname -r )
+            speed=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Speed:/ { print $2 }' )
+            duplex=$( ethtool "$iface" 2>/dev/null | awk -F': ' '/Duplex:/ { print $2 }' )
+            driver=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^driver:/ { print $2 }' )
+            bus=$( ethtool -i "$iface" 2>/dev/null | awk -F': ' '/^bus-info:/ { print $2; exit }' )
+            if [ -n "$bus" ] && command -v lspci >/dev/null 2>&1; then
+                model=$( lspci -s "$bus" 2>/dev/null | sed -n '1s/^[^ ]* [^:]*: //p' )
+            fi
+            address=$( ip -4 -o addr show dev "$iface" 2>/dev/null | awk '{ split($4, a, "/"); print a[1]; exit }' )
+            case "$speed" in
+                *Mb/s) speed=${speed%Mb/s} ;;
+                *Gb/s) speed=$( awk -v g="${speed%Gb/s}" 'BEGIN { printf "%d", g * 1000 }' ) ;;
+            esac
+            ;;
+        macos)
+            kname=Darwin
+            kernel=$( uname -r )
+            [ "$iface" = "default" ] &&
+                iface=$( route -n get default 2>/dev/null | awk '/interface:/ { print $2; exit }' )
+            facts=$( ifconfig "$iface" 2>/dev/null ) || fail "hostinfo: no interface $iface"
+            address=$( printf '%s\n' "$facts" | awk '$1 == "inet" { print $2; exit }' )
+            media=$( printf '%s\n' "$facts" | sed -n 's/^[[:space:]]*media: [^(]*(\([^)]*\)).*/\1/p' | head -n 1 )
+            case "$media" in
+                [0-9]*[Gg][Bb]ase*) speed=$( printf '%s\n' "$media" | sed 's/[Gg][Bb]ase.*//' | awk '{ printf "%d", $1 * 1000 }' ) ;;
+                [0-9]*[Bb]ase*) speed=$( printf '%s\n' "$media" | sed 's/[Bb]ase.*//' ) ;;
+            esac
+            case "$media" in
+                *full-duplex*) duplex=Full ;;
+                *half-duplex*) duplex=Half ;;
+            esac
+            port=$( networksetup -listallhardwareports 2>/dev/null |
+                awk -v d="Device: $iface" '/^Hardware Port: / { p = substr($0, 16) } $0 == d { print p; exit }' )
+            model=$port
+            ;;
+        windows)
+            kname=Windows
+            facts=$( windows_facts "$iface" ) || exit 1
+            kernel=$( field kernel "$facts" )
+            model=$( field model "$facts" )
+            driver=$( field driver "$facts" )
+            address=$( field address "$facts" )
+            speed=$( field speed_bps "$facts" )
+            is_count "$speed" && speed=$(( speed / 1000000 ))
+            case "$( field full_duplex "$facts" )" in
+                True) duplex=Full ;;
+                False) duplex=Half ;;
+            esac
+            ;;
+        *) fail "hostinfo: unsupported OS $( uname -s )" ;;
+    esac
+    if [ "$os" = "windows" ]; then
+        loads=$( windows_load "$facts" ) || exit 1
+    else
+        loads=$( read_load ) || exit 1
+    fi
+    load1=${loads% *}
+    nproc=${loads#* }
+    is_decimal "$load1" || fail "hostinfo: load '$load1' is not a number"
+    is_count "$nproc" || fail "hostinfo: core count '$nproc' is not a number"
+    is_ipv4 "$address" || fail "hostinfo: interface $iface has no IPv4 address"
+    is_count "$speed" || speed=unknown
+    [ -n "$kernel" ] || kernel=unknown
+    [ -n "$duplex" ] || duplex=unknown
+    [ -n "$driver" ] || driver=unknown
+    [ -n "$model" ] || model=unknown
+    echo "os=$kname kernel=$kernel iface=$iface model=$model driver=$driver speed_mbps=$speed duplex=$duplex address=$address load1=$load1 nproc=$nproc"
+}
+
+cmd_load()
+{
+    local loads load1 nproc
+    loads=$( read_load ) || exit 1
+    load1=${loads% *}
+    nproc=${loads#* }
+    is_decimal "$load1" || fail "load: load '$load1' is not a number"
+    is_count "$nproc" || fail "load: core count '$nproc' is not a number"
+    echo "load1=$load1 nproc=$nproc"
+}
+
+cmd_check_xdp_bridge()
+{
+    local bridge=$1 default_dev member members="" default_devs routes
+    [ -d "/sys/class/net/$bridge/bridge" ] ||
+        fail "xdp bridge: $bridge is not a Linux bridge"
+    for member in "/sys/class/net/$bridge/brif/"*; do
+        [ -e "$member" ] || continue
+        members="$members ${member##*/}"
+    done
+    [ -n "$members" ] || fail "xdp bridge: $bridge has no test NIC"
+    routes=$( { ip -4 route show default && ip -6 route show default; } 2>/dev/null ) ||
+        fail "xdp bridge: cannot inspect default routes"
+    default_devs=$( printf '%s\n' "$routes" |
+        awk '/^default / { for (i = 1; i < NF; ++i) if ($i == "dev") print $(i + 1) }' |
+        sort -u )
+    for default_dev in $default_devs; do
+        [ "$default_dev" != "$bridge" ] || fail "xdp bridge: $bridge carries a default route"
+        [ ! -e "/sys/class/net/$bridge/brif/$default_dev" ] ||
+            fail "xdp bridge: $bridge contains a default-route interface"
+    done
+    echo "bridge=$bridge member=${members# } default_route_interfaces=${default_devs:-none}"
+}
+
+start_recorded()
+{
+    local dir=$1 name=$2
+    shift 2
+    mkdir -p "$dir" || fail "start: cannot create $dir"
+    if [ "$( uname -s )" = "Darwin" ]; then
+        ulimit -n 65535 2>/dev/null || true
+    fi
+    nohup "$@" > "$dir/$name.log" 2>&1 &
+    echo $! > "$dir/$name.pid"
+    echo "$name pid $!"
+}
+
+cmd_start_server()
+{
+    local commit=$1 dir=$2 transport=$3 total=$4 duration=$5 run_id=$6 address=$7 port=$8 cap=$9
+    local bin
+    bin=$( load_split_bin "$commit" ) || fail "start-server: no built load_split for $commit"
+    # A Windows server is started from its Linux subsystem shell, and that
+    # shell hands a variable to a Windows program only when WSLENV names it.
+    # Other hosts ignore WSLENV, and any names already in it are kept.
+    start_recorded "$dir" server env ROCKETNET_SERVER_TRANSPORT="$transport" \
+        WSLENV="ROCKETNET_SERVER_TRANSPORT${WSLENV:+:$WSLENV}" \
+        "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
+}
+
+# The Windows server runs under an exclusive lock held for its whole life:
+# this command is the one winlock runs, and it returns only when the server
+# it started has exited.
+cmd_hold_server()
+{
+    local dir=$2 pid ready="" status
+    echo $$ > "$cell_holder" || fail "hold-server: cannot mark the cell"
+    trap 'rm -f "$cell_holder"' EXIT
+    cmd_start_server "$@"
+    pid=$( cat "$dir/server.pid" ) || fail "hold-server: no server pidfile"
+    # the ready line goes back on this command's own output, so the caller
+    # never queues a log read behind the lock this command holds
+    for _ in $( seq 1 120 ); do
+        ready=$( grep '^split_ready: ' "$dir/server.log" 2>/dev/null | tail -n 1 )
+        [ -n "$ready" ] && break
+        kill -0 "$pid" 2>/dev/null || break
+        sleep 1
+    done
+    [ -n "$ready" ] && echo "$ready"
+    wait "$pid"
+    status=$?
+    return "$status"
+}
+
+cmd_guest_server()
+{
+    local commit=$1 total=$2 duration=$3 run_id=$4 port=$5 cap=$6
+    local repo="$BASE/$commit" bin="$BASE/$commit/bin/load_split" iface address
+    [ -x "$bin" ] || fail "guest-server: no built load_split for $commit"
+    iface=$( ip -4 -o addr show scope global | awk '$2 != "lo" { print $2; exit }' )
+    [ -n "$iface" ] || fail "guest-server: the guest has no LAN interface"
+    address=$( ip -4 -o addr show dev "$iface" | awk '{ split($4, a, "/"); print a[1]; exit }' )
+    [ -n "$address" ] || fail "guest-server: the guest LAN interface has no IPv4 address"
+    cd "$repo" || fail "guest-server: cannot enter checkout"
+    scripts/rocketnet-provision "$iface" 2 provision 1-2 >/dev/null || fail "guest-server: XDP provision failed"
+    exec env ROCKETNET_SERVER_TRANSPORT=xdp "$bin" server "$total" "$duration" "$run_id" \
+        "$address:$port" "$address" "$cap" proof
+}
+
+# The xdp guest holds the whole server, so it is sized from the server's
+# create-only plan plus the measured run reserve per client (the start-time
+# allocations and UMEM; docs/LOAD.md), with a quarter of headroom and 1 GiB
+# for the guest kernel, rounded up to whole GiB. The cell is refused when
+# the host has less memory available than that.
+XDP_RESERVE_PER_CLIENT="${LAN_PROOF_XDP_RESERVE_PER_CLIENT:-9848630}"
+MEMINFO="${LAN_PROOF_MEMINFO:-/proc/meminfo}"
+
+xdp_guest_gib()
+{
+    local commit=$1 total=$2 bin plan gib avail_kib
+    bin="$BASE/$commit/bin/load_split"
+    [ -x "$bin" ] || fail "xdp: no built load_split for $commit to plan the guest"
+    is_count "$total" || fail "xdp: client count '$total' is not a number"
+    is_count "$XDP_RESERVE_PER_CLIENT" || fail "xdp: reserve per client is not a number"
+    plan=$( "$bin" plan-server "$total" 2>/dev/null |
+        sed -n 's/.* server_public_required_bytes=\([0-9]*\).*/\1/p' | tail -n 1 )
+    is_count "$plan" || fail "xdp: load_split plan-server $total named no server size"
+    gib=$( awk -v p="$plan" -v n="$total" -v r="$XDP_RESERVE_PER_CLIENT" 'BEGIN {
+        g = (p + n * r) * 5 / 4 + 1073741824
+        printf "%d", int((g + 1073741823) / 1073741824) }' )
+    avail_kib=$( awk '/^MemAvailable:/ { print $2; exit }' "$MEMINFO" 2>/dev/null )
+    is_count "$avail_kib" || fail "xdp: cannot read the host's available memory"
+    [ $(( gib * 1048576 )) -le "$avail_kib" ] ||
+        fail "xdp: the guest for $total clients needs $gib GiB and the host has $(( avail_kib / 1048576 )) GiB available; refusing the xdp cell"
+    echo "$gib"
+}
+
+make_xdp_command()
+{
+    local commit=$1 dir=$2 bridge=$3 total=$4 duration=$5 run_id=$6 port=$7 cap=$8
+    local repo="$BASE/$commit" self="$BASE/$commit/scripts/lan-proof-remote" guest gib
+    gib=$( xdp_guest_gib "$commit" "$total" ) || exit 1
+    printf -v guest '%q ' sudo env "LAN_PROOF_BASE=$BASE" "$self" guest-server \
+        "$commit" "$total" "$duration" "$run_id" "$port" "$cap"
+    guest=${guest% }
+    XDP_COMMAND=( vng --run "$HOME/vm-kernels/vmlinuz-$(uname -r)"
+        --memory "${gib}G" --cpus 3
+        --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2"
+        --network "bridge=$bridge" --rwdir "$repo" -- "$guest" )
+}
+
+cmd_start_xdp_server()
+{
+    local commit=$1 dir=$2 bridge=$3 total=$4 duration=$5 run_id=$6 port=$7 cap=$8
+    cmd_check_xdp_bridge "$bridge" >/dev/null
+    make_xdp_command "$commit" "$dir" "$bridge" "$total" "$duration" "$run_id" "$port" "$cap"
+    start_recorded "$dir" server timeout "$(( duration + 180 ))" "${XDP_COMMAND[@]}"
+}
+
+cmd_xdp_command()
+{
+    make_xdp_command "$@"
+    printf '%q ' "${XDP_COMMAND[@]}"
+    printf '\n'
+}
+
+# The bare metal xdp server on a named interface, which may be the
+# machine's uplink. The self-detach is a systemd-run timer owned by the
+# machine's own service manager, so it fires whether or not any ssh session
+# survives: it kills this run's server and detaches XDP from the interface.
+# The server is refused unless that timer is armed. Privileged steps use
+# sudo -n and never prompt.
+XDP_UPLINK_QUEUES="${LAN_PROOF_XDP_QUEUES:-7}"
+
+uplink_args_safe()
+{
+    case "$1" in
+        ''|*[!A-Za-z0-9_.-]*) fail "xdp uplink: interface '$1' has characters outside A-Z a-z 0-9 _ . -" ;;
+    esac
+    case "$2" in
+        ''|*[!0-9a-fA-F]*) fail "xdp uplink: run id '$2' is not hex" ;;
+    esac
+}
+
+detach_unit()
+{
+    echo "lan-proof-xdp-detach-$1"
+}
+
+# The one command both the timer and the normal detach run. The bracket in
+# the pattern keeps it from matching the shell that carries it.
+detach_script()
+{
+    local iface=$1 run_id=$2
+    printf '%s' "pkill -KILL -f 'load_split serve[r] [0-9]+ [0-9]+ $run_id'; ip link set dev $iface xdpgeneric off; ip link set dev $iface xdpdrv off; ip link set dev $iface xdp off; true"
+}
+
+link_has_xdp()
+{
+    ip link show dev "$1" 2>/dev/null | sed "s/$1//g" | grep -q xdp
+}
+
+cmd_check_xdp_uplink()
+{
+    local commit=$1 iface=$2 provision isolated
+    uplink_args_safe "$iface" 0
+    [ -e "/sys/class/net/$iface" ] || fail "xdp uplink: no interface $iface"
+    ip link show dev "$iface" | grep -q ',UP' || fail "xdp uplink: $iface is not up"
+    link_has_xdp "$iface" && fail "xdp uplink: $iface already has an XDP program attached"
+    sudo -n true 2>/dev/null || fail "xdp uplink: sudo -n is refused"
+    command -v systemd-run >/dev/null 2>&1 || fail "xdp uplink: no systemd-run for the self-detach"
+    provision="$( checkout_dir "$commit" )/scripts/rocketnet-provision"
+    [ -x "$provision" ] || fail "xdp uplink: no $provision"
+    isolated=$( cat /sys/devices/system/cpu/isolated 2>/dev/null )
+    [ -n "$isolated" ] || fail "xdp uplink: no isolated cpus"
+    # read only: an uplink is never reprovisioned by this runner
+    sudo -n "$provision" "$iface" "$XDP_UPLINK_QUEUES" verify "$isolated" ||
+        fail "xdp uplink: $iface is not provisioned for $XDP_UPLINK_QUEUES queues"
+    echo "xdp-uplink-ok: iface=$iface queues=$XDP_UPLINK_QUEUES isolated=$isolated xdp=none"
+}
+
+cmd_arm_xdp_detach()
+{
+    local iface=$1 run_id=$2 seconds=$3 unit
+    uplink_args_safe "$iface" "$run_id"
+    is_count "$seconds" || fail "xdp detach: '$seconds' is not a whole number of seconds"
+    unit=$( detach_unit "$run_id" )
+    sudo -n systemd-run --quiet --unit "$unit" --on-active="${seconds}s" --timer-property=AccuracySec=1s \
+        /bin/sh -c "$( detach_script "$iface" "$run_id" )" || fail "xdp detach: systemd-run refused"
+    sudo -n systemctl is-active --quiet "$unit.timer" || fail "xdp detach: $unit.timer is not active"
+    echo "xdp-detach-armed: unit=$unit.timer iface=$iface fires_in_s=$seconds"
+}
+
+cmd_start_xdp_uplink_server()
+{
+    local commit=$1 dir=$2 iface=$3 total=$4 duration=$5 run_id=$6 address=$7 port=$8 cap=$9
+    local bin unit
+    uplink_args_safe "$iface" "$run_id"
+    unit=$( detach_unit "$run_id" )
+    sudo -n systemctl is-active --quiet "$unit.timer" ||
+        fail "start-xdp-uplink-server: the self-detach $unit.timer is not armed; refusing the attach"
+    ip -4 -o addr show dev "$iface" | awk '{ split($4, a, "/"); print a[1] }' | grep -qx "$address" ||
+        fail "start-xdp-uplink-server: $address is not on $iface"
+    bin=$( load_split_bin "$commit" ) || fail "start-xdp-uplink-server: no built load_split for $commit"
+    start_recorded "$dir" server timeout "$(( duration + 180 ))" sudo -n env ROCKETNET_SERVER_TRANSPORT=xdp \
+        "$bin" server "$total" "$duration" "$run_id" "$address:$port" "$address" "$cap" proof
+}
+
+cmd_detach_xdp_uplink()
+{
+    local iface=$1 run_id=$2 unit
+    uplink_args_safe "$iface" "$run_id"
+    unit=$( detach_unit "$run_id" )
+    sudo -n /bin/sh -c "$( detach_script "$iface" "$run_id" )"
+    sudo -n systemctl stop "$unit.timer" 2>/dev/null
+    sudo -n systemctl stop "$unit.service" 2>/dev/null
+    sudo -n systemctl reset-failed "$unit.service" 2>/dev/null
+    link_has_xdp "$iface" && fail "xdp detach: $iface still has XDP: $( ip link show dev "$iface" | head -n 1 )"
+    sudo -n systemctl is-active --quiet "$unit.timer" && fail "xdp detach: $unit.timer is still armed"
+    echo "xdp-detached: iface=$iface xdp=none timer=$unit.timer not armed"
+    echo "ip-link: $( ip link show dev "$iface" | head -n 1 )"
+}
+
+cmd_start_shard()
+{
+    local commit=$1 dir=$2 name=$3 total=$4 duration=$5 run_id=$6 first=$7 count=$8 endpoint=$9 key=${10} cap=${11}
+    local bin
+    bin=$( load_split_bin "$commit" ) || fail "start-shard: no built load_split for $commit"
+    start_recorded "$dir" "$name" \
+        "$bin" client-shard "$total" "$duration" "$run_id" "$first" "$count" "$endpoint" "$key" "$cap" proof
+}
+
+cmd_alive()
+{
+    local pidfile=$1 pid
+    [ -f "$pidfile" ] || exit 1
+    pid=$( cat "$pidfile" )
+    kill -0 "$pid" 2>/dev/null
+}
+
+cmd_stop()
+{
+    local pidfile=$1 pid
+    [ -f "$pidfile" ] || return 0
+    pid=$( cat "$pidfile" )
+    case "$pid" in
+        ''|*[!0-9]*) fail "stop: pidfile $pidfile does not hold a process id" ;;
+    esac
+    kill "$pid" 2>/dev/null || true
+    for _ in 1 2 3 4 5 6 7 8 9 10; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 1
+    done
+    kill -9 "$pid" 2>/dev/null || true
+}
+
+cmd_collect()
+{
+    cat "$1"
+}
+
+case "${1:-}" in
+    build|hostinfo|load|start-server|start-shard|alive|stop|collect) windows_lock "$@" ;;
+esac
+
+case "${1:-}" in
+    build)        [ $# -eq 2 ] || usage; cmd_build "$2" ;;
+    build-inner)  [ $# -eq 2 ] || usage; cmd_build_inner "$2" ;;
+    build-windows) [ $# -eq 2 ] || usage; cmd_build_windows "$2" ;;
+    hostinfo)     [ $# -eq 2 ] || usage; cmd_hostinfo "$2" ;;
+    load)         cmd_load ;;
+    check-xdp-bridge) [ $# -eq 2 ] || usage; cmd_check_xdp_bridge "$2" ;;
+    start-server) [ $# -eq 10 ] || usage; cmd_start_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    hold-server)  [ $# -eq 10 ] || usage; cmd_hold_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    start-xdp-server) [ $# -eq 9 ] || usage; cmd_start_xdp_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
+    guest-server) [ $# -eq 7 ] || usage; cmd_guest_server "$2" "$3" "$4" "$5" "$6" "$7" ;;
+    xdp-command) [ $# -eq 9 ] || usage; cmd_xdp_command "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" ;;
+    check-xdp-uplink) [ $# -eq 3 ] || usage; cmd_check_xdp_uplink "$2" "$3" ;;
+    arm-xdp-detach) [ $# -eq 4 ] || usage; cmd_arm_xdp_detach "$2" "$3" "$4" ;;
+    start-xdp-uplink-server) [ $# -eq 10 ] || usage; cmd_start_xdp_uplink_server "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" ;;
+    detach-xdp-uplink) [ $# -eq 3 ] || usage; cmd_detach_xdp_uplink "$2" "$3" ;;
+    start-shard)  [ $# -eq 12 ] || usage; cmd_start_shard "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}" "${12}" ;;
+    alive)        [ $# -eq 2 ] || usage; cmd_alive "$2" ;;
+    stop)         [ $# -eq 2 ] || usage; cmd_stop "$2" ;;
+    collect)      [ $# -eq 2 ] || usage; cmd_collect "$2" ;;
+    *) usage ;;
+esac

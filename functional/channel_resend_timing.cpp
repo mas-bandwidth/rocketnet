@@ -63,7 +63,7 @@
 
 #if !ROCKETNET_DEV
 #error "channel_resend_timing.cpp reads the resend gap record, which only development builds have"
-#endif
+#endif // #if !ROCKETNET_DEV
 
 #include <algorithm>
 
@@ -106,11 +106,18 @@ static double resend_timing_percentile( const double * sorted, int count, double
 {
     if ( count <= 0 )
         return 0.0;
+
     int index = (int) ceil( fraction * (double) count ) - 1;
     if ( index < 0 )
+    {
         index = 0;
+    }
+
     if ( index >= count )
+    {
         index = count - 1;
+    }
+
     return sorted[index];
 }
 
@@ -131,6 +138,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
 
     rn_ordered_t * ordered = &h.message_client->object.connections[0].ordered;
     rn_window_ack_t * ack = &ordered->ack;
+
     if ( fixed_100ms )
     {
         ack->resend_delay_min = 0.1;
@@ -144,7 +152,9 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     rocketnet_channel_harness_set_link( &h, latency, jitter, (float) loss_percent, 0.0f );
 
     const uint64_t resent_before = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];
+
     // the resend gap record measures this run's messages only
+
     for ( int c = 0; c < 2; c++ )
     {
         ack->gaps.count[c] = 0;
@@ -156,6 +166,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
 
     // the client's reliable messages are numbered in send order from here: one
     // per update, none other on the connection
+
     const rn_region_t * region = ordered->channels.region;
     const uint64_t first_number = ordered->send.next;
 
@@ -165,12 +176,12 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     static double sends_at[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
     static int sends[RESEND_TIMING_MESSAGES];
     static double resend_ceiling_ms[RESEND_TIMING_MESSAGES][RESEND_TIMING_MAX_SENDS];
-    memset( seen, 0, sizeof(seen) );
-    memset( sends, 0, sizeof(sends) );
+    memset( seen, 0, sizeof( seen ) );
+    memset( sends, 0, sizeof( sends ) );
 
     uint8_t payload[RESEND_TIMING_BYTES];
     uint8_t state[32];
-    memset( state, 0x5A, sizeof(state) );
+    memset( state, 0x5A, sizeof( state ) );
 
     const double tick_ms = tick * 1000.0;
     double resend_delay_bound_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
@@ -187,33 +198,45 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         if ( sent < RESEND_TIMING_MESSAGES )
         {
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
+            {
                 payload[i] = (uint8_t) ( sent * 13 + i );
-            memcpy( payload, &sent, sizeof(sent) );
+            }
+
+            memcpy( payload, &sent, sizeof( sent ) );
             resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, payload, RESEND_TIMING_BYTES ) != 0 );
             send_time[sent] = h.now;
             sent++;
         }
-        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
+
+        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof( state ) );
 
         const double previous_resend_delay_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
+
         up = rocketnet_channel_harness_pump( &h, tick );
+
         const double current_resend_delay_ms = resend_timing_resend_delay_bound( ack ) * 1000.0;
         resend_timing_check( fabs( ack->resend_delay * 1000.0 - current_resend_delay_ms ) <= 1e-6 );
         resend_delay_bound_ms = std::max( resend_delay_bound_ms, current_resend_delay_ms );
 
         // each send of each undelivered message: a send sets its number's
         // last_send to the update's time, at most once an update
+
         while ( undelivered_from < sent && seen[undelivered_from] )
+        {
             undelivered_from++;
+        }
+
         for ( int i = undelivered_from; i < sent; i++ )
         {
             if ( seen[i] )
                 continue;
+
             const uint64_t number = first_number + (uint64_t) i;
             const rn_send_number_t * slot = &region->send_numbers[number & ( region->window - 1 )];
             if ( slot->number != number || slot->last_send != h.now )
                 continue;
             resend_timing_check( sends[i] < RESEND_TIMING_MAX_SENDS );
+
             const int n = sends[i];
             if ( n > 0 )
             {
@@ -221,6 +244,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
                 resend_timing_check( gap_ms >= current_resend_delay_ms - 1e-6 );
                 resend_timing_check( gap_ms <= previous_resend_delay_ms + tick_ms + 1e-6 );
             }
+
             resend_ceiling_ms[i][n] = n == 0 ? 0.0 : resend_ceiling_ms[i][n - 1] + previous_resend_delay_ms + tick_ms;
             sends_at[i][sends[i]++] = h.now;
         }
@@ -229,33 +253,47 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             resend_timing_check( delivery.bytes == RESEND_TIMING_BYTES );
+
             int index = -1;
-            memcpy( &index, delivery.data, sizeof(index) );
+            memcpy( &index, delivery.data, sizeof( index ) );
             resend_timing_check( index >= 0 && index < sent && !seen[index] );
             seen[index] = 1;
+
             const double message_ms = ( h.now - send_time[index] ) * 1000.0;
             latency_ms[delivered++] = message_ms;
 
             // the copy that arrived left at least the one-way latency ago:
             // the sends before it are the ones that could have carried it
+
             int k = 0;
             while ( k < sends[index] && sends_at[index][k] <= h.now - latency + 1e-9 )
+            {
                 k++;
+            }
+
             resend_timing_check( k >= 1 );
             if ( k > max_sends )
+            {
                 max_sends = k;
+            }
+
             const double ceiling_ms = ( latency + jitter ) * 1000.0 + 2.0 * tick_ms + resend_ceiling_ms[index][k - 1];
             if ( message_ms - ceiling_ms > ceiling_slack_ms )
+            {
                 ceiling_slack_ms = message_ms - ceiling_ms;
+            }
         }
+
         for ( int channel = 0; channel < h.message_config.num_channels; channel++ )
             while ( rocketnet_channel_harness_client_collect( &h, channel, &delivery ) )
             {
             }
+
         resend_timing_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     }
 
     std::sort( latency_ms, latency_ms + delivered );
+
     const uint64_t resent = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT] - resent_before;
 
     row->schedule = schedule;
@@ -269,6 +307,7 @@ static void resend_timing_run( const char * schedule, int fixed_100ms, int rtt_m
     row->copies = (double) ( RESEND_TIMING_MESSAGES + resent ) / (double) RESEND_TIMING_MESSAGES;
 
     // the single-packet class (0) of the client's resend gap record
+
     const rn_resend_gaps_t * gaps = &ack->gaps;
     row->gaps = gaps->count[0];
     row->gap_min_ms = gaps->gap_min[0] * 1000.0;
@@ -288,14 +327,19 @@ void resend_timing_table_over_lossy_links()
 {
     static const int rtts[] = { 20, 50, 100, 200 };
     static const int losses[] = { 10, 20 };
+
     // the Monte Carlo model's p99 for the rule (ms), by RTT
+
     static const double model_p99[] = { 77.0, 192.0, 250.0, 300.0 };
 
     resend_timing_row_t rows[2][4][2];
+
     for ( int s = 0; s < 2; s++ )
         for ( int r = 0; r < 4; r++ )
             for ( int l = 0; l < 2; l++ )
+            {
                 resend_timing_run( s == 0 ? "rule" : "fixed", s, rtts[r], losses[l], &rows[s][r][l] );
+            }
 
     printf( "test_resend_timing_table_over_lossy_links: %d reliable %d-byte messages per row, one per 60 Hz update\n",
             RESEND_TIMING_MESSAGES, RESEND_TIMING_BYTES );
@@ -305,30 +349,39 @@ void resend_timing_table_over_lossy_links()
             for ( int l = 0; l < 2; l++ )
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
+
                 printf( "%-8s %6d %8d %6.1f %6.1f %7.1f %6.2f %8d %12.0f %7u %10.2f %10.2f %12.3f %11.3f %9d %16.2f\n",
                         row->schedule, row->rtt_ms, row->loss_percent, row->p50_ms, row->p99_ms, row->p999_ms,
                         row->copies, row->timeouts, s == 0 ? model_p99[r] : 0.0,
                         row->gaps, row->gaps ? row->gap_min_ms : 0.0, row->gap_max_ms, row->gaps ? row->early_min_ms : 0.0,
                         row->gaps ? row->late_max_ms : 0.0, row->max_sends, row->ceiling_slack_ms );
             }
+
     fflush( stdout );
 
     const double tick_ms = 1000.0 / 60.0;
     const double eps_ms = 1e-6;
+
     for ( int s = 0; s < 2; s++ )
         for ( int r = 0; r < 4; r++ )
             for ( int l = 0; l < 2; l++ )
             {
                 const resend_timing_row_t * row = &rows[s][r][l];
                 resend_timing_check( row->timeouts == 0 );
+
                 // the rule, per resend: delay at the resend <= gap <= delay at the update before + a tick
+
                 resend_timing_check( row->gaps > 0 );
                 resend_timing_check( row->early_min_ms >= -eps_ms );
                 resend_timing_check( row->late_max_ms <= tick_ms + eps_ms );
                 resend_timing_check( row->gap_max_ms <= row->resend_delay_bound_ms + tick_ms + eps_ms );
+
                 // the attempts rule: MIN_RESEND_ATTEMPTS of the largest gap fit inside reliable_timeout
+
                 resend_timing_check( (double) ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS * row->gap_max_ms <= row->reliable_message_timeout_ms );
+
                 // the rule, per message: within its own ceiling
+
                 resend_timing_check( row->ceiling_slack_ms <= eps_ms );
             }
 }
@@ -393,13 +446,14 @@ static int block_cost_small_held( const rocketnet_channel_harness_t * h )
     const rn_ordered_t * ordered = &h->message_client->object.connections[0].ordered;
     const rn_window_ack_t * ack = &ordered->ack;
     const rn_region_t * region = ordered->channels.region;
-    for ( uint32_t cursor = ack->resend_head; cursor != RN_RESEND_NONE; cursor = region->resend_fifo[cursor].next )
+    for ( uint32_t cursor = rn_window_ack_resend_first( ack, false ); cursor != RN_RESEND_NONE; cursor = rn_window_ack_resend_next( ack, false, cursor ) )
     {
         const rn_send_number_t * slot = &region->send_numbers[cursor];
         if ( slot->acked )
             continue;
         return ( rn_send_number_unsent_due( slot->last_send ) || h->now >= slot->last_send + rn_window_ack_resend_delay( ack ) ) ? 1 : 0;
     }
+
     return 0;
 }
 
@@ -413,13 +467,20 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     const double tick = 1.0 / 60.0;
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+
     if ( burst )
+    {
         config.packets_per_update = 32;
+    }
+
     rocketnet_channel_harness_t h;
     resend_timing_check( rocketnet_channel_harness_create_with_config( &h, &config ) );
     resend_timing_check( rocketnet_channel_harness_connect( &h, 60 * 10 ) );
+
     if ( burst )
+    {
         resend_timing_check( rocketnet_channel_harness_set_budgets( &h, 8000, 8000 ) );
+    }
 
     if ( cap100 )
     {
@@ -433,19 +494,24 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
     rocketnet_channel_harness_set_link( &h, latency, latency * 0.1, 10.0f, 0.0f );
 
     static uint8_t block[BLOCK_COST_BYTES];
+
     for ( int i = 0; i < BLOCK_COST_BYTES; i++ )
+    {
         block[i] = (uint8_t) ( i * 31 + 7 );
+    }
+
     const uint64_t block_hash = rocketnet_channel_hash( block, BLOCK_COST_BYTES );
 
     static double small_send_time[BLOCK_COST_SMALL_MAX];
     static double small_latency_ms[BLOCK_COST_SMALL_MAX];
     uint8_t small[RESEND_TIMING_BYTES];
     uint8_t state[32];
-    memset( state, 0x5A, sizeof(state) );
+    memset( state, 0x5A, sizeof( state ) );
 
     const uint64_t resent_before = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT];
     const int64_t wire_before = h.wire_bytes_to_server;
     const double start = h.now;
+
     resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, block, BLOCK_COST_BYTES ) != 0 );
 
     int delivered = 0;
@@ -461,33 +527,43 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
         // the small messages start once the block's first sends are written
         // (the burst sender writes 256 KiB in about 0.27 s), so they are
         // numbered and resent beside chunks that wait for their acks
+
         if ( with_small && !delivered && h.now - start >= BLOCK_COST_SMALL_START && small_sent < BLOCK_COST_SMALL_MAX )
         {
             for ( int i = 0; i < RESEND_TIMING_BYTES; i++ )
+            {
                 small[i] = (uint8_t) ( small_sent * 13 + i );
-            memcpy( small, &small_sent, sizeof(small_sent) );
+            }
+
+            memcpy( small, &small_sent, sizeof( small_sent ) );
             resend_timing_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE, small, RESEND_TIMING_BYTES ) != 0 );
             small_send_time[small_sent++] = h.now;
         }
-        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof(state) );
+
+        rocketnet_channel_harness_server_send( &h, 0, ROCKETNET_RELIABILITY_UNRELIABLE, state, (int) sizeof( state ) );
 
         up = rocketnet_channel_harness_pump( &h, tick );
+
         if ( with_small && small_sent > 0 )
+        {
             small_held += block_cost_small_held( &h );
+        }
 
         // the small messages share channel 0 with the block; they are told
         // apart by size
+
         rocketnet_channel_delivery_t delivery;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &delivery ) )
         {
             if ( delivery.bytes == RESEND_TIMING_BYTES )
             {
                 int index = -1;
-                memcpy( &index, delivery.data, sizeof(index) );
+                memcpy( &index, delivery.data, sizeof( index ) );
                 resend_timing_check( index >= 0 && index < small_sent );
                 small_latency_ms[small_delivered++] = ( h.now - small_send_time[index] ) * 1000.0;
                 continue;
             }
+
             resend_timing_check( !delivered );
             resend_timing_check( delivery.bytes == BLOCK_COST_BYTES && delivery.hash == block_hash );
             resend_timing_check( memcmp( delivery.data, block, BLOCK_COST_BYTES ) == 0 );
@@ -496,10 +572,12 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
             wire_at_completion = h.wire_bytes_to_server - wire_before;
             resent_at_completion = h.message_client->object.counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT] - resent_before;
         }
+
         for ( int channel = 0; channel < h.message_config.num_channels; channel++ )
             while ( rocketnet_channel_harness_client_collect( &h, channel, &delivery ) )
             {
             }
+
         resend_timing_check( rocketnet_channel_harness_overflows( &h ) == 0 );
     }
 
@@ -507,6 +585,7 @@ static void block_cost_run( const char * schedule, int cap100, int burst, int wi
 
     // the block's chunks: one per fragment of the stride (8); every resend
     // counted while the block was in flight is a chunk's or a small record's
+
     const double chunks = ceil( (double) BLOCK_COST_BYTES / (double) RN_STORE_LARGE_BYTES );
 
     row->schedule = schedule;
@@ -540,7 +619,10 @@ void block_resend_cost_over_long_path()
     fflush( stdout );
 
     for ( int s = 0; s < 5; s++ )
+    {
         resend_timing_check( rows[s].delivered );
+    }
+
     resend_timing_check( rows[0].wire_per_payload <= 1.4 );                 // the shipped rule, block in one RTT
     resend_timing_check( rows[2].wire_per_payload <= 1.4 );                 // the shipped rule, budget-paced
     resend_timing_check( rows[0].wire_per_payload < rows[1].wire_per_payload );

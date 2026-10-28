@@ -45,8 +45,8 @@ static void wso_init_client( struct rocketnet_client_protocol_t * client,
                              int state )
 {
     static const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    memset( counters, 0, sizeof(*counters) );
-    memset( client, 0, sizeof(*client) );
+    memset( counters, 0, sizeof( *counters ) );
+    memset( client, 0, sizeof( *client ) );
     memcpy( client->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memset( client->token.client_to_server_key, 0x11, ROCKETNET_KEY_BYTES );
     memset( client->token.server_to_client_key, 0x22, ROCKETNET_KEY_BYTES );
@@ -68,8 +68,7 @@ static void wso_write_junk_packet( uint8_t * packet, int packet_bytes, uint8_t p
 
 static void test_client_wrong_size_counts_wrong_size_not_integrity()
 {
-    static const int states[] =
-    {
+    static const int states[] = {
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECT_TOKEN_EXPIRED,
         ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN,
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT,
@@ -94,7 +93,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
     // 1. One byte short and one byte long, in every client state: size check
     // runs before state check, counts WRONG_SIZE, and moves neither
     // DID_NOT_OPEN nor integrity_failures.
-    for ( size_t s = 0; s < sizeof(states) / sizeof(states[0]); s++ )
+    for ( size_t s = 0; s < sizeof( states ) / sizeof( states[0] ); s++ )
     {
         const int state = states[s];
 
@@ -109,7 +108,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
             struct rocketnet_counters_t before = counters;
             time += 0.001;
             check( !rocketnet_client_protocol_process_packet( &client, packet, challenge_bytes, time,
-                                                              payload, (int) sizeof(payload), &payload_bytes ) );
+                                                              payload, (int) sizeof( payload ), &payload_bytes ) );
             check( client.integrity_failures == 0 );
             check( client.state == state );
             WSO_EXPECT( "challenge wrong size", &before, &counters,
@@ -123,7 +122,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
             before = counters;
             time += 0.001;
             check( !rocketnet_client_protocol_process_packet( &client, packet, denied_bytes, time,
-                                                              payload, (int) sizeof(payload), &payload_bytes ) );
+                                                              payload, (int) sizeof( payload ), &payload_bytes ) );
             check( client.integrity_failures == 0 );
             check( client.state == state );
             WSO_EXPECT( "denied wrong size", &before, &counters,
@@ -144,7 +143,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
         struct rocketnet_counters_t before = counters;
         time += 0.001;
         check( !rocketnet_client_protocol_process_packet( &client, packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES, time,
-                                                          payload, (int) sizeof(payload), &payload_bytes ) );
+                                                          payload, (int) sizeof( payload ), &payload_bytes ) );
         check( client.integrity_failures == 1 );
         WSO_EXPECT( "challenge did not open", &before, &counters,
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
@@ -155,7 +154,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
         before = counters;
         time += 0.001;
         check( !rocketnet_client_protocol_process_packet( &client, packet, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, time,
-                                                          payload, (int) sizeof(payload), &payload_bytes ) );
+                                                          payload, (int) sizeof( payload ), &payload_bytes ) );
         check( client.integrity_failures == 2 );
         WSO_EXPECT( "denied did not open in sending_connection_request", &before, &counters,
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },
@@ -166,7 +165,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
         before = counters;
         time += 0.001;
         check( !rocketnet_client_protocol_process_packet( &client, packet, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, time,
-                                                          payload, (int) sizeof(payload), &payload_bytes ) );
+                                                          payload, (int) sizeof( payload ), &payload_bytes ) );
         check( client.integrity_failures == 3 );
         WSO_EXPECT( "denied did not open in sending_connection_response", &before, &counters,
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 },

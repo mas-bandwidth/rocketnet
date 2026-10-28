@@ -13,7 +13,11 @@
 //
 // Everything runs over the in-memory loopback transport with step-driven
 // clients: no socket, no thread, no wall clock; time is an argument starting
-// at 1000.0.
+// at 1000.0. This file covers the loopback/step-driven path, where the early
+// destroy completes because the loopback stop is always complete. The
+// threaded path, where an early destroy normally keeps the object and a
+// second destroy after completion frees it, is covered by
+// functional/destroy_early_keep.cpp.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -155,7 +159,7 @@ static void db_connect( db_world_t * world, uint64_t client_id )
     const char * addresses[] = { address };
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rn_test_server_token_string( world->identity.backend_secret, world->server,
-        DESTROY_BEFORE_COMPLETION_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+                                        DESTROY_BEFORE_COMPLETION_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( world->client, token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( world->client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
         db_pump( world );

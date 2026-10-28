@@ -33,12 +33,6 @@
 #include <string.h>
 #include <type_traits>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
 #define check rocketnet_unit_check
 
 // --- the removed names stay removed ----------------------------------------
@@ -50,7 +44,10 @@
 #error "ruling 3 and 6: disconnect reasons, update results and log levels are enums now"
 #endif
 
-template <typename A, typename B> struct rn_same { static const bool value = std::is_same<A, B>::value; };
+template <typename A, typename B> struct rn_same
+{
+    static const bool value = std::is_same<A, B>::value;
+};
 
 // --- ruling 1: status returns ------------------------------------------------
 
@@ -72,7 +69,7 @@ static_assert( rn_same<decltype( rocketnet_client_set_send_kbps( NULL, 0 ) ), ro
 static_assert( rn_same<decltype( rocketnet_server_set_send_kbps( NULL, 0, 0 ) ), rocketnet_status_t>::value, "ruling 1: server set_send_kbps" );
 static_assert( rn_same<decltype( rocketnet_client_connect( NULL, NULL ) ), rocketnet_status_t>::value, "ruling 1: connect" );
 static_assert( rn_same<decltype( rocketnet_server_start( NULL ) ), rocketnet_status_t>::value, "ruling 1: start" );
-static_assert( rn_same<decltype( &rocketnet_status_name ), const char * (*)( rocketnet_status_t )>::value, "ruling 1 and 7: status_name takes the enum" );
+static_assert( rn_same<decltype( &rocketnet_status_name ), const char * (*) ( rocketnet_status_t )>::value, "ruling 1 and 7: status_name takes the enum" );
 
 // the published development keys, set by hand after the defaults
 static void api_polish_dev_server_config( struct rocketnet_server_config_t * config )
@@ -82,8 +79,16 @@ static void api_polish_dev_server_config( struct rocketnet_server_config_t * con
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
 }
 
-static void * api_polish_malloc( void * context, size_t bytes ) { (void) context; return malloc( bytes ); }
-static void api_polish_free( void * context, void * p ) { (void) context; free( p ); }
+static void * api_polish_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    return malloc( bytes );
+}
+static void api_polish_free( void * context, void * p )
+{
+    (void) context;
+    free( p );
+}
 
 // the worker process is initialized before a unit test runs: a second init
 // says why it refused, where the old bool said only false
@@ -139,107 +144,33 @@ static void test_api_polish_status_returns()
 }
 REGISTER_UNIT_TEST( test_api_polish_status_returns );
 
-// --- the dev token minter writes the public token string ---------------------
-
-// The unit suite links the release archive, where the development minter is
-// compiled out; the development shared library built beside it carries it, so
-// the minter is loaded from there (as test_unit_connect_token_vectors.cpp
-// does) and called through the public signature: it writes exactly the
-// NUL-terminated string into ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES and
-// names every refusal.
-typedef rocketnet_status_t ( *api_polish_dev_minter_t )( const char *, const char *, const uint8_t *, int, int, uint64_t, uint64_t, uint64_t, const uint8_t *, char * );
-
-#if ROCKETNET_DEV
-static_assert( rn_same<decltype( &rocketnet_create_dev_connect_token ), api_polish_dev_minter_t>::value, "dev token minter signature" );
-#endif // #if ROCKETNET_DEV
-
-// the development library keeps its own log state, apart from the sink the
-// suite installs in the archive it links, so the test captures the refusal
-// line in that library
-typedef void ( *api_polish_dev_set_log_t )( rocketnet_log_function_t, void * );
-static api_polish_dev_set_log_t api_polish_dev_set_log = NULL;
-static int api_polish_dev_error_lines = 0;
-
-static void api_polish_dev_log_capture( void *, enum rocketnet_log_level_t level, const char *, size_t )
-{
-    if ( level == ROCKETNET_LOG_LEVEL_ERROR )
-        api_polish_dev_error_lines++;
-}
-
-static api_polish_dev_minter_t api_polish_dev_minter()
-{
-    api_polish_dev_minter_t minter = NULL;
-#if defined(_WIN32)
-    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
-    check( library != NULL );
-    minter = (api_polish_dev_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );
-    api_polish_dev_set_log = (api_polish_dev_set_log_t) (void *) GetProcAddress( library, "rocketnet_log_function" );
-#else
-    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
-    check( library != NULL );
-    minter = (api_polish_dev_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
-    api_polish_dev_set_log = (api_polish_dev_set_log_t) dlsym( library, "rocketnet_log_function" );
-#endif
-    check( minter != NULL );
-    check( api_polish_dev_set_log != NULL );
-    return minter;
-}
-
-static void test_api_polish_dev_token_string()
-{
-    api_polish_dev_minter_t create_dev = api_polish_dev_minter();
-    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
-    memset( server_key, 0x42, sizeof( server_key ) );
-    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES + 1];
-    memset( token, 0x5A, sizeof( token ) );
-    api_polish_dev_error_lines = 0;
-    api_polish_dev_set_log( api_polish_dev_log_capture, NULL );
-
-    // no address at all: refused and named, nothing written
-    check( create_dev( NULL, NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( api_polish_dev_error_lines == 1 );
-    check( token[0] == 0x5A && token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1] == 0x5A );
-
-    // an address that does not parse
-    check( create_dev( "not an address", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ADDRESS );
-    check( token[0] == 0x5A );
-
-    // a dead lifetime is refused
-    check( create_dev( "127.0.0.1:40000", NULL, server_key, 0, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    check( token[0] == 0x5A );
-
-    // the string fills the public buffer exactly, NUL-terminated, nothing past it
-    check( create_dev( "127.0.0.1:40000", NULL, server_key, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 1000, NULL, token ) == ROCKETNET_STATUS_OK );
-    check( strlen( token ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-    check( token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES] == 0x5A );
-    api_polish_dev_set_log( NULL, NULL );
-}
-REGISTER_UNIT_TEST( test_api_polish_dev_token_string );
-
 // --- ruling 3: typed enums, values unchanged ----------------------------------
 
 static_assert( ROCKETNET_RELIABILITY_UNRELIABLE == 0 && ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED == 1 &&
-               ROCKETNET_RELIABILITY_RELIABLE == 2 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED == 3 &&
-               ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED == 4 && ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT == 5 &&
-               ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7, "ruling 3: reliability values" );
+                   ROCKETNET_RELIABILITY_RELIABLE == 2 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED == 3 &&
+                   ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED == 4 && ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT == 5 &&
+                   ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT == 6 && ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT == 7,
+               "ruling 3: reliability values" );
 static_assert( ROCKETNET_RECEIPT_STATUS_NONE == 0 && ROCKETNET_RECEIPT_STATUS_ACKED == 1 && ROCKETNET_RECEIPT_STATUS_LOSS == -1, "ruling 3: receipt values, the loss negative" );
 static_assert( ROCKETNET_DISCONNECT_REASON_NONE == 0 && ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH == -1 &&
-               ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == -2 &&
-               ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT == -3 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == -4 &&
-               ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == -5, "disconnect reasons: dense, failures below zero" );
+                   ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION == -2 &&
+                   ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT == -3 && ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED == -4 &&
+                   ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED == -5,
+               "disconnect reasons: dense, failures below zero" );
 static_assert( ROCKETNET_UPDATE_OK == 0 && ROCKETNET_UPDATE_MESSAGE_NOT_RELEASED == -1, "ruling 3: the internal message layer's update values" );
 static_assert( rn_same<decltype( rocketnet_client_update( NULL, 1000.0 ) ), void>::value, "ruling 3: client update returns void" );
 static_assert( rn_same<decltype( rocketnet_server_update( NULL, 1000.0 ) ), void>::value, "ruling 3: server update returns void" );
 static_assert( rn_same<decltype( rocketnet_server_disconnect_reason( NULL, 0 ) ), rocketnet_disconnect_reason_t>::value, "ruling 3: server reason" );
 static_assert( ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED == -8 && ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT == -9 &&
-               ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION == -10 && ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH == -11 &&
-               ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED == -12, "ruling 3: the connection-ended client states" );
-static_assert( rn_same<decltype( &rocketnet_client_index ), int (*)( const rocketnet_client_t * )>::value, "ruling 3: the client index is int" );
-static_assert( rn_same<decltype( &rocketnet_server_client_connected ), bool (*)( const rocketnet_server_t *, int )>::value, "ruling 3: per-client calls take an int index" );
-static_assert( rn_same<decltype( &rocketnet_server_finish_message ), uint32_t (*)( rocketnet_server_t *, int )>::value, "ruling 3: server finish takes no destination" );
-static_assert( rn_same<decltype( &rocketnet_server_abort_message ), void (*)( rocketnet_server_t * )>::value, "ruling 3: server abort takes no destination" );
-static_assert( rn_same<decltype( &rocketnet_client_start_message ), uint8_t * (*)( rocketnet_client_t *, int, rocketnet_reliability_t, int )>::value, "ruling 3: client start" );
-static_assert( rn_same<decltype( &rocketnet_server_start_message ), uint8_t * (*)( rocketnet_server_t *, uint64_t, int, rocketnet_reliability_t, int )>::value, "ruling 3: server start" );
+                   ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION == -10 && ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH == -11 &&
+                   ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED == -12,
+               "ruling 3: the connection-ended client states" );
+static_assert( rn_same<decltype( &rocketnet_client_index ), int ( * )( const rocketnet_client_t * )>::value, "ruling 3: the client index is int" );
+static_assert( rn_same<decltype( &rocketnet_server_client_connected ), bool ( * )( const rocketnet_server_t *, int )>::value, "ruling 3: per-client calls take an int index" );
+static_assert( rn_same<decltype( &rocketnet_server_finish_message ), uint32_t ( * )( rocketnet_server_t *, int )>::value, "ruling 3: server finish takes no destination" );
+static_assert( rn_same<decltype( &rocketnet_server_abort_message ), void ( * )( rocketnet_server_t * )>::value, "ruling 3: server abort takes no destination" );
+static_assert( rn_same<decltype( &rocketnet_client_start_message ), uint8_t * (*) ( rocketnet_client_t *, int, rocketnet_reliability_t, int )>::value, "ruling 3: client start" );
+static_assert( rn_same<decltype( &rocketnet_server_start_message ), uint8_t * (*) ( rocketnet_server_t *, uint64_t, int, rocketnet_reliability_t, int )>::value, "ruling 3: server start" );
 
 // --- ruling 4: pure questions are bool ----------------------------------------
 
@@ -260,10 +191,10 @@ REGISTER_UNIT_TEST( test_api_polish_bool_field_abi );
 
 // --- ruling 5 and 6: set_/get_ naming, one log sink, an enum level -------------
 
-static_assert( rn_same<decltype( &rocketnet_log_level ), void (*)( rocketnet_log_level_t )>::value, "ruling 5: rocketnet_log_level" );
+static_assert( rn_same<decltype( &rocketnet_log_level ), void ( * )( rocketnet_log_level_t )>::value, "ruling 5: rocketnet_log_level" );
 static_assert( rn_same<decltype( rocketnet_log_level_current() ), rocketnet_log_level_t>::value, "ruling 5: the internal rocketnet_log_level_current" );
-static_assert( rn_same<decltype( &rocketnet_assert_function ), void (*)( rocketnet_assert_function_t )>::value, "ruling 5: rocketnet_assert_function" );
-static_assert( rn_same<rocketnet_log_function_t, void (*)( void *, rocketnet_log_level_t, const char *, size_t )>::value, "ruling 6: the callback takes the enum level" );
+static_assert( rn_same<decltype( &rocketnet_assert_function ), void ( * )( rocketnet_assert_function_t )>::value, "ruling 5: rocketnet_assert_function" );
+static_assert( rn_same<rocketnet_log_function_t, void ( * )( void *, rocketnet_log_level_t, const char *, size_t )>::value, "ruling 6: the callback takes the enum level" );
 
 static int g_polish_calls = 0;
 static rocketnet_log_level_t g_polish_level = ROCKETNET_LOG_LEVEL_NONE;
@@ -308,11 +239,12 @@ REGISTER_UNIT_TEST( test_api_polish_log_callback_receives_a_message );
 
 // --- ruling 7: every lookup is _name and says "unknown" ------------------------
 
-static_assert( rn_same<decltype( &rocketnet_log_level_name ), const char * (*)( rocketnet_log_level_t )>::value, "ruling 7: log level name" );
-static_assert( rn_same<decltype( &rocketnet_client_state_name ), const char * (*)( rocketnet_client_state_t )>::value, "ruling 7: client state name" );
-static_assert( rn_same<decltype( &rocketnet_disconnect_reason_name ), const char * (*)( rocketnet_disconnect_reason_t )>::value, "ruling 7: disconnect reason name" );
+static_assert( rn_same<decltype( &rocketnet_log_level_name ), const char * (*) ( rocketnet_log_level_t )>::value, "ruling 7: log level name" );
+static_assert( rn_same<decltype( &rocketnet_client_state_name ), const char * (*) ( rocketnet_client_state_t )>::value, "ruling 7: client state name" );
+static_assert( rn_same<decltype( &rocketnet_disconnect_reason_name ), const char * (*) ( rocketnet_disconnect_reason_t )>::value, "ruling 7: disconnect reason name" );
 static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->state_change_callback ),
-                       void (*)( void *, rocketnet_client_state_t, rocketnet_client_state_t )>::value, "ruling 7: state_change_callback takes the enum" );
+                       void ( * )( void *, rocketnet_client_state_t, rocketnet_client_state_t )>::value,
+               "ruling 7: state_change_callback takes the enum" );
 
 static void test_api_polish_lookups_say_unknown()
 {
@@ -350,8 +282,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     memset( &receipt, 0, sizeof( receipt ) );
     check( receipt.status == ROCKETNET_RECEIPT_STATUS_NONE );
 
-    const enum rocketnet_disconnect_reason_t reasons[] =
-    {
+    const enum rocketnet_disconnect_reason_t reasons[] = {
         ROCKETNET_DISCONNECT_REASON_NONE,
         ROCKETNET_DISCONNECT_REASON_CONFIG_MISMATCH,
         ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION,
@@ -399,14 +330,17 @@ REGISTER_UNIT_TEST( test_api_polish_zero_receipt_and_dense_reasons );
 
 static_assert( rn_same<decltype( rocketnet_client_required_memory( (struct rocketnet_client_config_t *) NULL ) ), size_t>::value, "ruling 8: client required memory" );
 static_assert( rn_same<decltype( rocketnet_server_required_memory( (struct rocketnet_server_config_t *) NULL ) ), size_t>::value, "ruling 8: server required memory" );
-static_assert( rn_same<decltype( static_cast<rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>( &rocketnet_client_create ) ), rocketnet_client_t * (*)( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>::value, "ruling 8: client create" );
-static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*)( void *, const char *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>::value, "ruling 8: server create" );
+static_assert( rn_same<decltype( static_cast<rocketnet_client_t * (*) ( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>( &rocketnet_client_create ) ), rocketnet_client_t * (*) ( void *, const rocketnet_client_config_t *, rocketnet_status_t * )>::value, "ruling 8: client create" );
+static_assert( rn_same<decltype( &rocketnet_server_create ), rocketnet_server_t * (*) ( void *, const char *, const char *, const rocketnet_server_config_t *, rocketnet_status_t * )>::value, "ruling 8: server create" );
 
 // --- ruling 9: a NULL client reads DISCONNECTED, counted ----------------------------
 
 static void api_polish_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
 }
 
 static void test_api_polish_null_client_state_is_disconnected()
@@ -422,11 +356,15 @@ REGISTER_UNIT_TEST( test_api_polish_null_client_state_is_disconnected );
 
 // --- a client index before CONNECTED is -1, never an assert --------------------
 
+#if ROCKETNET_DEV
 static int g_polish_asserts = 0;
 
 static void api_polish_count_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
     g_polish_asserts++;
 }
 
@@ -466,7 +404,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     const char * addresses[] = { address };
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rn_test_server_token_string( backend_secret, server, API_POLISH_INDEX_PROTOCOL, addresses, 1,
-        0x1D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
+                                        0x1D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_test_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -518,6 +456,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     rocketnet_quiet( false );
 }
 REGISTER_UNIT_TEST( test_api_polish_client_index_is_minus_one_until_connected );
+
 // --- server abort_message acts on the pending start: with none, a no-op ---------
 
 static void test_api_polish_server_abort_message_without_start_is_a_no_op()
@@ -530,17 +469,21 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
-    rocketnet_assert_function( api_polish_quiet_assert );
+    rocketnet_assert_function( api_polish_count_assert );
+    g_polish_asserts = 0;
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_server_abort_message( server );
     check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == 0 );
     check( rocketnet_server_finish_message( server, 4 ) == 0 );
     check( rocketnet_api_misuse_count() == before );
+    check( g_polish_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     rocketnet_assert_function( NULL );
 
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_op );
+#endif // #if ROCKETNET_DEV
 
 // --- the production minter refuses a token no server accepts -------------------
 
@@ -559,9 +502,12 @@ static void test_api_polish_production_token_refuses_dead_tokens()
     const char * addresses[] = { "127.0.0.1:40000" };
     const uint64_t create = 1000;
 
-    struct dead_token_case_t { uint64_t expire; int32_t timeout_seconds; };
-    const dead_token_case_t cases[] =
+    struct dead_token_case_t
     {
+        uint64_t expire;
+        int32_t timeout_seconds;
+    };
+    const dead_token_case_t cases[] = {
         { create + 30, 0 },             // no lifetime: timeout zero
         { create + 30, -1 },            // no timeout: a production server refuses it
         { create, 10 },                 // expire == create

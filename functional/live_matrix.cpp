@@ -24,7 +24,8 @@
 
     Time is an argument: the clock the objects see is 1000.0 plus the wall
     time elapsed. The case prints its finish time as wall-clock duration;
-    the target is 60 s and the hard completion bound is 120 s. Timing is
+    the target is 60 s and the hard completion bound is 120 s (times
+    ROCKETNET_TEST_CASE_TIME_SCALE when the environment sets it). Timing is
     reported separately from message correctness; this is not a load test.
 */
 
@@ -64,7 +65,8 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #define LIVE_MATRIX_RELIABLE_RATE           ( 40 * 1400 )
 #define LIVE_MATRIX_UNRELIABLE_RATE         ( 24 * 1400 )
 #define LIVE_MATRIX_RECEIPT_TABLE           ( 1 << 15 )
-// Fixed functional-case budget, independent of build mode.
+// Fixed functional-case budget, independent of build mode; the case multiplies
+// it by the environment's case time scale (tests/time_scale.h), 1 when unset.
 #define LIVE_MATRIX_WALL_BOUND              ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS
 #define LIVE_MATRIX_TARGET_SECONDS          ROCKETNET_FUNCTIONAL_CASE_TARGET_SECONDS
 #define LIVE_MATRIX_MAX_FAIL_LINES          24
@@ -220,8 +222,12 @@ static double live_matrix_now( struct live_matrix_t * m )
 static void live_matrix_fail( struct live_matrix_t * m, const char * label, int direction, int mode, int channel, int64_t sequence, const char * reason, int bytes )
 {
     // section 3: fail <label> <cycle> <direction> <mode> <channel> <sequence> <reason> <bytes>
+
     if ( m->failures < LIVE_MATRIX_MAX_FAIL_LINES )
+    {
         printf( "fail %s %u %d %d %d %lld %s %d\n", label, m->cycle, direction, mode, channel, (long long) sequence, reason, bytes );
+    }
+
     m->failures++;
 }
 
@@ -263,11 +269,14 @@ static int live_matrix_room_admits( struct live_matrix_t * m, int direction, uin
 {
     const int fits = direction == 0 ? rn_message_client_send_fits( m->client, (int) length, free_bytes, pool_bytes, free_messages )
                                     : rn_message_server_send_fits( m->server, 0, (int) length, free_bytes, pool_bytes, free_messages );
+
     // Keep half the pool free for ordinary traffic, but admit a message larger
     // than half the pool when it is otherwise empty. A fixed half-pool reserve
     // would permanently starve the new 1 MiB default's largest messages.
+
     if ( !fits || *free_bytes < (uint64_t) length || *pool_bytes < (uint64_t) length || *free_messages < 1 )
         return 0;
+
     const uint64_t reserve = (uint64_t) length > *pool_bytes / 2 ? *pool_bytes - length : *pool_bytes / 2;
     return *free_bytes - length >= reserve;
 }
@@ -279,6 +288,7 @@ static int live_matrix_room_admits( struct live_matrix_t * m, int direction, uin
 static struct live_matrix_receipt_entry_t * live_matrix_receipt_slot( struct live_matrix_direction_t * d, uint32_t serial, int insert )
 {
     uint32_t index = ( serial * 2654435761u ) & ( LIVE_MATRIX_RECEIPT_TABLE - 1 );
+
     for ( int probe = 0; probe < LIVE_MATRIX_RECEIPT_TABLE; probe++ )
     {
         struct live_matrix_receipt_entry_t * e = &d->receipts[index];
@@ -288,6 +298,7 @@ static struct live_matrix_receipt_entry_t * live_matrix_receipt_slot( struct liv
             return insert ? e : NULL;
         index = ( index + 1 ) & ( LIVE_MATRIX_RECEIPT_TABLE - 1 );
     }
+
     return NULL;
 }
 
@@ -297,11 +308,13 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
     static struct rocketnet_message_receipt_t receipts[4096];
     const int count = direction == 0 ? rocketnet_message_client_receipts( m->client, receipts, 4096 )
                                      : rocketnet_message_server_receipts( m->server, 0, receipts, 4096 );
+
     if ( count < 0 || count > 4096 )
     {
         live_matrix_fail( m, "receipt", direction, -1, -1, 0, "receipt-buffer-too-small", count );
         return;
     }
+
     for ( int i = 0; i < count; i++ )
     {
         struct live_matrix_receipt_entry_t * e = live_matrix_receipt_slot( d, receipts[i].serial, 0 );
@@ -310,13 +323,16 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
             live_matrix_fail( m, "receipt", direction, -1, -1, receipts[i].serial, "unknown-serial", 0 );
             continue;
         }
+
         if ( e->receipted )
         {
             live_matrix_fail( m, "receipt", direction, e->mode, -1, receipts[i].serial, "second-receipt", (int) e->length );
             continue;
         }
+
         e->receipted = 1;
         d->receipts_seen++;
+
         if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_ACKED )
         {
             d->receipts_acked++;
@@ -324,9 +340,13 @@ static void live_matrix_take_receipts( struct live_matrix_t * m, int direction )
         else if ( receipts[i].status == ROCKETNET_RECEIPT_STATUS_LOSS )
         {
             d->receipts_lost++;
+
             // modes 6 and 7, and 5 as a reliable block, get exactly one ACKED and no LOSS
+
             if ( e->mode != 5 || e->length > ROCKETNET_LIVE_UNRELIABLE_LIMIT )
+            {
                 live_matrix_fail( m, "receipt", direction, e->mode, -1, receipts[i].serial, "loss-on-reliable", (int) e->length );
+            }
         }
         else
         {
@@ -348,10 +368,12 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
         live_matrix_fail( m, "arrival", direction, -1, receive_channel, -1, "bad-header", bytes );
         return;
     }
+
     const int mode = data[0] & 7;
     const int channel = bytes >= 2 ? data[1] : receive_channel;
 
     // section 5: codes 1, 3, 4 and 7 on the channel sent, 0, 2, 5 and 6 on channel 0
+
     const int want_channel = live_matrix_carries_channel( mode ) ? channel : 0;
     if ( receive_channel != want_channel || channel >= live_matrix_channels( mode ) )
     {
@@ -377,9 +399,13 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
     {
         // the stated blind spot: a tiny message carries no sequence, so it is
         // counted by length; more arrivals than sends is a duplicate
+
         d->tiny_received[mode][bytes]++;
         if ( d->tiny_received[mode][bytes] > d->tiny_sent[mode][bytes] )
+        {
             live_matrix_fail( m, "arrival", direction, mode, channel, -1, "duplicate-tiny", bytes );
+        }
+
         s->received++;
         live_matrix_table_received[direction][mode][channel][bucket]++;
         m->verified++;
@@ -392,16 +418,19 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
         live_matrix_fail( m, "arrival", direction, mode, channel, q, "never-sent", bytes );
         return;
     }
+
     if ( s->seen[q / 64] & ( 1ull << ( q % 64 ) ) )
     {
         live_matrix_fail( m, "arrival", direction, mode, channel, q, "duplicate", bytes );
         return;
     }
+
     if ( live_matrix_ordered( mode ) && q != s->expected )
     {
         live_matrix_fail( m, "arrival", direction, mode, channel, q, "out-of-order", bytes );
         return;
     }
+
     if ( live_matrix_sequenced( mode ) && s->last >= 0 && (int64_t) q <= s->last )
     {
         live_matrix_fail( m, "arrival", direction, mode, channel, q, "not-increasing", bytes );
@@ -409,13 +438,19 @@ static void live_matrix_arrival( struct live_matrix_t * m, int direction, int re
     }
 
     if ( live_matrix_sequenced( mode ) && s->last >= 0 )
+    {
         s->lost_sequenced += (uint32_t) ( (int64_t) q - s->last - 1 );
+    }
 
     s->seen[q / 64] |= 1ull << ( q % 64 );
     s->last = q;
     s->received++;
+
     if ( live_matrix_ordered( mode ) )
+    {
         s->expected++;
+    }
+
     live_matrix_table_received[direction][mode][channel][bucket]++;
     m->verified++;
 }
@@ -425,12 +460,14 @@ static void live_matrix_receive( struct live_matrix_t * m )
     const uint8_t * data = NULL;
     int bytes = 0;
     int channel = 0;
+
     {
         while ( rocketnet_message_server_receive( m->server, NULL, &channel, &data, &bytes ) )
         {
             live_matrix_arrival( m, 0, channel, data, bytes );
             rocketnet_message_server_release( m->server, data );
         }
+
         while ( rocketnet_message_client_receive( m->client, &channel, &data, &bytes ) )
         {
             live_matrix_arrival( m, 1, channel, data, bytes );
@@ -449,12 +486,22 @@ static uint32_t live_matrix_start_finish( struct live_matrix_t * m, int directio
                                  : rocketnet_message_server_start( m->server, 0, channel, mode, (int) length );
     if ( !p )
         return 0;
+
     const int written = rocketnet_live_generate( &m->live, direction, mode, channel, m->cycle, sequence, p, (int) length );
     if ( written != (int) length )
     {
-        if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+        if ( direction == 0 )
+        {
+            rocketnet_message_client_abort( m->client );
+        }
+        else
+        {
+            rocketnet_message_server_abort( m->server, 0 );
+        }
+
         return 0;
     }
+
     return direction == 0 ? rocketnet_message_client_finish( m->client, written )
                           : rocketnet_message_server_finish( m->server, 0, written );
 }
@@ -474,9 +521,12 @@ static int64_t live_matrix_next_sequence( struct live_matrix_direction_t * d, in
         return -1;
     if ( s->next < s->total )
         return s->next;
+
     // section 5: mode 4's closing message follows the channel's last ordered send
+
     if ( mode == 4 && s->next <= s->closing && live_matrix_ordered_done( d, channel ) )
         return s->closing;
+
     return -1;
 }
 
@@ -486,14 +536,21 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
     const int streams = LIVE_MATRIX_MODES * LIVE_MATRIX_CHANNELS;
     d->reliable_tokens += LIVE_MATRIX_RELIABLE_RATE;
     if ( d->reliable_tokens > LIVE_MATRIX_RELIABLE_RATE )
+    {
         d->reliable_tokens = LIVE_MATRIX_RELIABLE_RATE;
+    }
+
     d->unreliable_tokens += LIVE_MATRIX_UNRELIABLE_RATE;
     if ( d->unreliable_tokens > LIVE_MATRIX_UNRELIABLE_RATE )
+    {
         d->unreliable_tokens = LIVE_MATRIX_UNRELIABLE_RATE;
+    }
+
     int idle = 0;
     while ( idle < streams && ( d->reliable_tokens > 0 || d->unreliable_tokens > 0 ) )
     {
         // round robin across every stream, so every mode and channel is in flight at once
+
         const int mode = d->cursor % LIVE_MATRIX_MODES;
         const int channel = d->cursor / LIVE_MATRIX_MODES;
         const int64_t q = live_matrix_next_sequence( d, mode, channel );
@@ -503,6 +560,7 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
             idle++;
             continue;
         }
+
         const uint32_t sequence = (uint32_t) q;
         const uint32_t length = rocketnet_live_length( &m->live, mode, channel, sequence );
         const int unreliable_queue = live_matrix_unreliable_queue( mode, length );
@@ -511,6 +569,7 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
         if ( ( unreliable_queue ? d->unreliable_tokens : d->reliable_tokens ) <= 0 || !live_matrix_room_admits( m, direction, length, &free_bytes, &pool_bytes, &free_messages ) )
         {
             // held back: the stream waits, the others go on
+
             d->paced++;
             d->cursor = ( d->cursor + 1 ) % streams;
             idle++;
@@ -529,11 +588,16 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
                     (unsigned long long) live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ) );
             return;
         }
+
         struct live_matrix_stream_t * s = &d->streams[mode][channel];
         s->next = sequence + 1;
         s->sent++;
+
         if ( length < LIVE_MATRIX_TINY )
+        {
             d->tiny_sent[mode][length]++;
+        }
+
         if ( live_matrix_has_receipt( mode ) )
         {
             struct live_matrix_receipt_entry_t * e = live_matrix_receipt_slot( d, serial, 1 );
@@ -544,13 +608,20 @@ static void live_matrix_send( struct live_matrix_t * m, int direction )
             e->receipted = 0;
             d->receipts_expected++;
         }
+
         live_matrix_table_sent[direction][mode][channel][rocketnet_live_bucket( &m->live, mode, length )]++;
         d->bytes_sent += length;
         d->messages_sent++;
+
         if ( unreliable_queue )
+        {
             d->unreliable_tokens -= length;
+        }
         else
+        {
             d->reliable_tokens -= length;
+        }
+
         idle = 0;
         d->cursor = ( d->cursor + 1 ) % streams;
     }
@@ -566,6 +637,7 @@ static int live_matrix_sends_done( struct live_matrix_direction_t * d )
         for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
             if ( live_matrix_next_sequence( d, mode, channel ) >= 0 )
                 return 0;
+
     return 1;
 }
 
@@ -575,6 +647,7 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
 {
     struct live_matrix_direction_t * d = &live_matrix_directions[direction];
     uint64_t owed = 0;
+
     for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
     {
         for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
@@ -582,6 +655,7 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
             const struct live_matrix_stream_t * s = &d->streams[mode][channel];
             if ( !s->active )
                 continue;
+
             for ( uint32_t q = 0; q < s->next && q < LIVE_MATRIX_MAX_SEQUENCES; q++ )
             {
                 const uint32_t length = rocketnet_live_length( &m->live, mode, channel, q );
@@ -590,29 +664,42 @@ static uint64_t live_matrix_owed( struct live_matrix_t * m, int direction, int r
                 if ( due && !( s->seen[q / 64] & ( 1ull << ( q % 64 ) ) ) )
                 {
                     owed++;
+
                     if ( report )
+                    {
                         live_matrix_fail( m, "complete", direction, mode, channel, q, "missing", (int) length );
+                    }
                 }
             }
         }
+
         for ( int length = 1; length < LIVE_MATRIX_TINY; length++ )
         {
             if ( !live_matrix_complete( mode, (uint32_t) length ) || live_matrix_ordered( mode ) )
                 continue;           // the ordered modes check a tiny message against the sequence due
+
             if ( d->tiny_received[mode][length] < d->tiny_sent[mode][length] )
             {
                 owed += d->tiny_sent[mode][length] - d->tiny_received[mode][length];
+
                 if ( report )
+                {
                     live_matrix_fail( m, "complete", direction, mode, -1, -1, "missing-tiny", length );
+                }
             }
         }
     }
+
     if ( d->receipts_seen < d->receipts_expected )
     {
         owed += d->receipts_expected - d->receipts_seen;
+
         if ( report )
+        {
             live_matrix_fail( m, "complete", direction, -1, -1, -1, "missing-receipts", (int) ( d->receipts_expected - d->receipts_seen ) );
+        }
     }
+
     return owed;
 }
 
@@ -660,11 +747,12 @@ static void live_matrix_connect( struct live_matrix_t * m )
             break;
         rocketnet_platform_sleep( 0.0005 );
     }
+
     if ( !live_matrix_up( m ) )
     {
         printf( "fail connect %u client_state=%d server_connected=%d\n", m->cycle, rocketnet_message_client_state( m->client ),
                 rocketnet_message_server_client_connected( m->server, 0 ) );
-        live_matrix_check_failed( "connect failed", (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );
+        live_matrix_check_failed( "connect failed", (const char *) __FUNCTION__, (const char *) __FILE__, __LINE__ );
     }
 }
 
@@ -677,52 +765,92 @@ static void live_matrix_over_maximum( struct live_matrix_t * m, int direction )
     for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
     {
         const int channels[2] = { 0, LIVE_MATRIX_CHANNELS - 1 };
+
         for ( int c = 0; c < 2; c++ )
         {
             const int channel = channels[c];
             uint32_t over = rocketnet_live_mode_max( &m->live, mode ) + 1;
+
             if ( mode <= 1 )
             {
                 // The promotion rule: one past the single-record
                 // maximum of codes 0 and 1 starts as its reliable twin, never a
                 // refusal; abort gives the room back, so nothing is sent
+
                 const uint64_t failed_before = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
+
                 uint8_t * q = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) over )
                                              : rocketnet_message_server_start( m->server, 0, channel, mode, (int) over );
+
                 const uint64_t failed_delta = live_matrix_counter( live_matrix_sender_counters( m, direction ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED ) - failed_before;
+
                 if ( live_matrix_verbose )
+                {
                     printf( "promoted %d %d %u start=%d\n", mode, channel, over, q != NULL );
+                }
+
                 if ( q == NULL || failed_delta != 0 )
+                {
                     live_matrix_fail( m, "over", direction, mode, channel, -1, "promotion-refused", (int) over );
+                }
+
                 if ( q )
                 {
-                    if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+                    if ( direction == 0 )
+                    {
+                        rocketnet_message_client_abort( m->client );
+                    }
+                    else
+                    {
+                        rocketnet_message_server_abort( m->server, 0 );
+                    }
                 }
+
                 // the refusal boundary left: max_message_bytes
+
                 over = m->live.max_message_bytes + 1;
             }
+
             const int unreliable = mode <= 1 || mode == 5;
             const int counter = unreliable ? ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED : ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED;
             const int other = unreliable ? ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED : ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED;
             const uint64_t before = live_matrix_counter( live_matrix_sender_counters( m, direction ), counter );
             const uint64_t before_other = live_matrix_counter( live_matrix_sender_counters( m, direction ), other );
+
             uint8_t * p = direction == 0 ? rocketnet_message_client_start( m->client, channel, mode, (int) over )
                                          : rocketnet_message_server_start( m->server, 0, channel, mode, (int) over );
+
             const uint64_t delta = live_matrix_counter( live_matrix_sender_counters( m, direction ), counter ) - before;
             const uint64_t delta_other = live_matrix_counter( live_matrix_sender_counters( m, direction ), other ) - before_other;
+
             if ( live_matrix_verbose )
+            {
                 printf( "refused %d %d %u %s %llu\n", mode, channel, over, rocketnet_counter_name( counter ), (unsigned long long) delta );
+            }
+
             if ( p != NULL || delta != 1 || delta_other != 0 )
             {
                 live_matrix_fail( m, "over", direction, mode, channel, -1, p ? "start-succeeded" : "wrong-counter", (int) over );
                 if ( p )
                 {
-                    if ( direction == 0 ) rocketnet_message_client_abort( m->client ); else rocketnet_message_server_abort( m->server, 0 );
+                    if ( direction == 0 )
+                    {
+                        rocketnet_message_client_abort( m->client );
+                    }
+                    else
+                    {
+                        rocketnet_message_server_abort( m->server, 0 );
+                    }
                 }
             }
+
             live_matrix_table_sent[direction][mode][channel][ROCKETNET_LIVE_BUCKET_OVER]++;
+
             if ( p == NULL && delta == 1 )
+            {
                 live_matrix_table_received[direction][mode][channel][ROCKETNET_LIVE_BUCKET_OVER]++;
+            }
+
             m->refusals++;
         }
     }
@@ -743,6 +871,7 @@ static uint32_t live_matrix_probe_sequence( struct live_matrix_t * m, int mode, 
         if ( ( q + (uint32_t) channel ) % 32u == 0 && rocketnet_live_length( &m->live, mode, channel, q ) == length )
             return q;
     }
+
     return 0;
 }
 
@@ -756,6 +885,7 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
         live_matrix_fail( m, "edge", direction, mode, channel, sequence, "refused", (int) length );
         return 0;
     }
+
     if ( live_matrix_has_receipt( mode ) )
     {
         struct live_matrix_direction_t * d = &live_matrix_directions[direction];
@@ -767,6 +897,7 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
         e->receipted = 0;
         d->receipts_expected++;
     }
+
     const int want_channel = live_matrix_carries_channel( mode ) ? channel : 0;
     const double start = rocketnet_platform_time();
     int arrived = 0;
@@ -783,17 +914,32 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
             {
                 const int result = rocketnet_live_check( &m->live, data, bytes, direction, mode, channel, m->cycle, -1, NULL );
                 if ( result != ROCKETNET_LIVE_OK || rocketnet_live_sequence( data, bytes ) != sequence )
+                {
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, result != ROCKETNET_LIVE_OK ? rocketnet_live_result_name( result ) : "wrong-sequence", bytes );
+                }
                 else if ( c != want_channel )
+                {
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, "receive-channel", bytes );
+                }
                 else
+                {
                     arrived = 1;
-                if ( direction == 0 ) rocketnet_message_server_release( m->server, data ); else rocketnet_message_client_release( m->client, data );
+                }
+
+                if ( direction == 0 )
+                {
+                    rocketnet_message_server_release( m->server, data );
+                }
+                else
+                {
+                    rocketnet_message_client_release( m->client, data );
+                }
             }
         }
         live_matrix_take_receipts( m, 0 );
         live_matrix_take_receipts( m, 1 );
     }
+
     return arrived;
 }
 
@@ -806,6 +952,7 @@ static int live_matrix_probe_one( struct live_matrix_t * m, int direction, int m
 static void live_matrix_edge_probes( struct live_matrix_t * m )
 {
     const int channel = 1;
+
     for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
     {
         for ( int mode = 0; mode < LIVE_MATRIX_MODES && m->failures == 0; mode++ )
@@ -815,15 +962,23 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
             const uint32_t e = rocketnet_live_edge( &m->live, mode );
             const uint32_t max_m = rocketnet_live_mode_max( &m->live, mode );
             const uint32_t candidates[6] = { e - 1, e, e + 1, 1404, 1405, 1406 };
+
             for ( int i = 0; i < ( mode == 1 ? 6 : 3 ); i++ )
             {
                 const uint32_t l = candidates[i] > max_m ? max_m : candidates[i];
                 int seen = 0;
+
                 for ( int j = 0; j < n; j++ )
+                {
                     seen |= lengths[j] == l;
+                }
+
                 if ( !seen )
+                {
                     lengths[n++] = l;
+                }
             }
+
             for ( int i = 0; i < n && m->failures == 0; i++ )
             {
                 const int tries = live_matrix_complete( mode, lengths[i] ) ? 1 : 3;
@@ -835,6 +990,7 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
                     live_matrix_check( sequence != 0 );
                     arrived = live_matrix_probe_one( m, direction, mode, channel, sequence, lengths[i] );
                 }
+
                 if ( !arrived && m->failures == 0 )
                 {
                     live_matrix_fail( m, "edge", direction, mode, channel, sequence, "never-arrived", (int) lengths[i] );
@@ -842,12 +998,15 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
                     m->edge_failures++;
                 }
                 else if ( arrived && live_matrix_verbose )
+                {
                     printf( "edge %d %d %u arrived on channel %d\n", direction, mode, lengths[i], live_matrix_carries_channel( mode ) ? channel : 0 );
+                }
             }
         }
     }
 
     // every probe's receipt is in before the matrix starts its own sends
+
     const double start = rocketnet_platform_time();
     while ( m->failures == 0 && rocketnet_platform_time() - start < 2.0 &&
             ( live_matrix_directions[0].receipts_seen < live_matrix_directions[0].receipts_expected ||
@@ -859,12 +1018,16 @@ static void live_matrix_edge_probes( struct live_matrix_t * m )
         live_matrix_take_receipts( m, 0 );
         live_matrix_take_receipts( m, 1 );
     }
+
     for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
     {
         const struct live_matrix_direction_t * d = &live_matrix_directions[direction];
         if ( m->failures == 0 && d->receipts_seen != d->receipts_expected )
+        {
             live_matrix_fail( m, "edge", direction, -1, -1, -1, "missing-receipts", (int) ( d->receipts_expected - d->receipts_seen ) );
+        }
     }
+
     fflush( stdout );
 }
 
@@ -878,6 +1041,7 @@ static void live_matrix_window_reset( struct live_matrix_t * m )
     {
         struct live_matrix_direction_t * d = &live_matrix_directions[direction];
         memset( d, 0, sizeof( *d ) );
+
         for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
         {
             const uint32_t total = rocketnet_live_sequences_per_stream( &m->live, mode );
@@ -888,20 +1052,26 @@ static void live_matrix_window_reset( struct live_matrix_t * m )
                 s->active = 1;
                 s->total = total;
                 s->last = -1;
+
                 // mode 4's closing message must be identified by its sequence, so
                 // it is the first sequence past the matrix that is 7 bytes or more
+
                 s->closing = total;
                 while ( mode == 4 && rocketnet_live_length( &m->live, 4, channel, s->closing ) < LIVE_MATRIX_TINY )
+                {
                     s->closing++;
+                }
+
                 if ( mode != 4 )
+                {
                     s->closing = 0;
+                }
             }
         }
     }
 }
 
-static const int live_matrix_window_counters[] =
-{
+static const int live_matrix_window_counters[] = {
     ROCKETNET_COUNTER_MESSAGE_SEND_TYPE_NOT_ENABLED,
     ROCKETNET_COUNTER_MESSAGE_RECEIPT_RING_FULL,
     ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED,
@@ -917,8 +1087,11 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
     live_matrix_window_reset( m );
 
     uint64_t server_before[sizeof( live_matrix_window_counters ) / sizeof( int )];
+
     for ( size_t i = 0; i < sizeof( live_matrix_window_counters ) / sizeof( int ); i++ )
+    {
         server_before[i] = live_matrix_counter( rocketnet_message_server_counters( m->server ), live_matrix_window_counters[i] );
+    }
 
     live_matrix_over_maximum( m, 0 );
     live_matrix_over_maximum( m, 1 );
@@ -926,6 +1099,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
     const double window_start = rocketnet_platform_time();
     uint64_t iterations = 0;
     int tail = -1;
+
     while ( 1 )
     {
         live_matrix_pump( m );
@@ -937,10 +1111,12 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
             printf( "fail disconnect %u client_state=%d client_reason=%d server_connected=%d server_reason=%d\n", m->cycle,
                     rocketnet_message_client_state( m->client ), rocketnet_message_client_disconnect_reason( m->client ),
                     rocketnet_message_server_client_connected( m->server, 0 ), rocketnet_message_server_disconnect_reason( m->server, 0 ) );
+
             for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
             {
                 uint64_t c0_free = 0, c0_pool = 0, c1_free = 0, c1_pool = 0, span_free = 0, span_pool = 0;
                 uint32_t free_messages = 0;
+
                 if ( direction == 0 )
                 {
                     rn_message_client_send_fits( m->client, 1, &c0_free, &c0_pool, &free_messages );
@@ -953,7 +1129,9 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                     rn_message_server_send_fits( m->server, 0, 256, &c1_free, &c1_pool, &free_messages );
                     rn_message_server_send_fits( m->server, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES, &span_free, &span_pool, &free_messages );
                 }
+
                 const struct rocketnet_counters_t * c = live_matrix_sender_counters( m, direction );
+
                 printf( "disconnect %s region: store_c0=%llu/%llu store_c1=%llu/%llu spans=%llu/%llu free_messages=%u "
                         "counters: store_full=%llu queue_full=%llu memory_exhausted=%llu bad_ring=%llu bad_block=%llu protocol_violation=%llu\n",
                         direction == 0 ? "client" : "server",
@@ -968,8 +1146,10 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
                         (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK ),
                         (unsigned long long) live_matrix_counter( c, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) );
             }
-            live_matrix_check_failed( "unplanned disconnect", (const char*) __FUNCTION__, (const char*) __FILE__, __LINE__ );
+
+            live_matrix_check_failed( "unplanned disconnect", (const char *) __FUNCTION__, (const char *) __FILE__, __LINE__ );
         }
+
         if ( m->failures > 0 )
             break;
         live_matrix_send( m, 0 );
@@ -983,6 +1163,7 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
             tail = 50;          // a short tail, so a late duplicate is still seen
         if ( tail > 0 && --tail == 0 )
             break;
+
         if ( rocketnet_platform_time() > deadline )
         {
             live_matrix_fail( m, "window", -1, -1, -1, -1, "wall-bound", 0 );
@@ -993,39 +1174,56 @@ static void live_matrix_window( struct live_matrix_t * m, double deadline )
     // count what modes 0, 1 and 4 did not deliver (summed per mode: a 1-byte
     // message of a channel-less mode is credited to channel 0), then name
     // what is missing
+
     for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
     {
         struct live_matrix_direction_t * d = &live_matrix_directions[direction];
+
         for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
         {
             if ( mode != 0 && mode != 1 && mode != 4 )
                 continue;
+
             int64_t sent = 0;
             int64_t received = 0;
+
             for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
             {
                 sent += d->streams[mode][channel].sent;
                 received += d->streams[mode][channel].received;
             }
+
             if ( sent > received )
+            {
                 m->not_delivered += (uint64_t) ( sent - received );
+            }
         }
+
         // the modes without completeness still deliver on the loopback: each
         // (direction, mode) that sent must have received
+
         for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
         {
             int64_t sent = 0;
             int64_t received = 0;
+
             for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
             {
                 sent += d->streams[mode][channel].sent;
                 received += d->streams[mode][channel].received;
             }
+
             if ( live_matrix_verbose )
+            {
                 printf( "delivery %u %d %d %lld/%lld\n", m->cycle, direction, mode, (long long) received, (long long) sent );
+            }
+
             if ( sent > 0 && received == 0 )
+            {
                 live_matrix_fail( m, "delivery", direction, mode, -1, -1, "nothing-delivered", 0 );
+            }
         }
+
         live_matrix_owed( m, direction, 1 );
     }
 
@@ -1074,25 +1272,35 @@ static void live_matrix_print_table()
 {
     printf( "test_loopback_transport_live_message_matrix table: received/sent per (direction, mode, channel, size bucket); over is refused/attempted\n" );
     printf( "dir mode ch" );
+
     for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
+    {
         printf( " %12s", rocketnet_live_bucket_name( b ) );
+    }
+
     printf( "\n" );
     for ( int direction = 0; direction < LIVE_MATRIX_DIRECTIONS; direction++ )
         for ( int mode = 0; mode < LIVE_MATRIX_MODES; mode++ )
             for ( int channel = 0; channel < LIVE_MATRIX_CHANNELS; channel++ )
             {
                 uint32_t any = 0;
+
                 for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
+                {
                     any += live_matrix_table_sent[direction][mode][channel][b];
+                }
+
                 if ( !any )
                     continue;
                 printf( "%3d %4d %2d", direction, mode, channel );
+
                 for ( int b = 0; b < ROCKETNET_LIVE_NUM_BUCKETS; b++ )
                 {
                     char cell[32];
                     snprintf( cell, sizeof( cell ), "%u/%u", live_matrix_table_received[direction][mode][channel][b], live_matrix_table_sent[direction][mode][channel][b] );
                     printf( " %12s", cell );
                 }
+
                 printf( "\n" );
             }
 }
@@ -1104,9 +1312,14 @@ static void live_matrix_print_table()
 void live_message_matrix_loopback()
 {
     const double case_start = rocketnet_platform_time();
+    double case_time_scale = 1.0;
+    live_matrix_check( rocketnet_test_case_env_time_scale( &case_time_scale ) );
+
+    const double wall_bound_seconds = LIVE_MATRIX_WALL_BOUND * case_time_scale;
     static struct live_matrix_t matrix;
     struct live_matrix_t * m = &matrix;
     memset( m, 0, sizeof( *m ) );
+
     char verbose[256];
     live_matrix_verbose = rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) );
     memset( live_matrix_table_sent, 0, sizeof( live_matrix_table_sent ) );
@@ -1116,6 +1329,7 @@ void live_message_matrix_loopback()
     // maximum is 1 MiB, with bounded room shared by every stream: a deeper
     // send region and queue, more packets per update, and receive lists
     // sized so nothing is dropped for want of room
+
     rocketnet_message_default_config( &m->message_config );
     m->message_config.num_channels = LIVE_MATRIX_CHANNELS;
     m->message_config.send_message_buffer_bytes = 128 * 1024 * 1024;
@@ -1139,9 +1353,11 @@ void live_message_matrix_loopback()
     snprintf( m->server_address, sizeof( m->server_address ), "127.0.0.1:%d", rocketnet_server_transport_port( rocketnet_message_server_transport( m->server ) ) );
 
     m->wall_start = rocketnet_platform_time();
-    const double deadline = case_start + LIVE_MATRIX_WALL_BOUND;
+
+    const double deadline = case_start + wall_bound_seconds;
 
     // the matrix window, ending in a clean disconnect the server sees
+
     m->cycle = 0;
     live_matrix_connect( m );
     memset( live_matrix_directions, 0, sizeof( live_matrix_directions ) );
@@ -1156,6 +1372,7 @@ void live_message_matrix_loopback()
             live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
             rocketnet_platform_sleep( 0.0005 );
         }
+
         live_matrix_check( !rocketnet_message_server_client_connected( m->server, 0 ) );
     }
     rn_native_message_client_stop_and_destroy( m->client );
@@ -1163,16 +1380,19 @@ void live_message_matrix_loopback()
 
     struct rocketnet_server_transport_t * server_transport = rocketnet_message_server_transport( m->server );
     rocketnet_server_transport_stop( server_transport );
+
     const double stop_start = rocketnet_platform_time();
     while ( rocketnet_server_transport_state( server_transport ) != ROCKETNET_SERVER_TRANSPORT_STOPPED && rocketnet_platform_time() - stop_start < 5.0 )
     {
         rocketnet_platform_sleep( 0.001 );
         rocketnet_message_server_update( m->server, live_matrix_now( m ) );
     }
+
     live_matrix_check( rocketnet_server_transport_state( server_transport ) == ROCKETNET_SERVER_TRANSPORT_STOPPED );
     rn_native_message_server_stop_and_destroy( m->server );
 
     live_matrix_check( m->failures == 0 );
+
     const double elapsed = rocketnet_platform_time() - case_start;
 
     if ( live_matrix_verbose || m->failures != 0 || m->edge_failures != 0 || elapsed >= LIVE_MATRIX_TARGET_SECONDS )
@@ -1180,10 +1400,10 @@ void live_message_matrix_loopback()
         live_matrix_print_table();
         printf( "test_loopback_transport_live_message_matrix: verified=%llu failures=%llu edge_failures=%llu not_delivered_0_1_4=%llu refusals=%llu elapsed=%.3f s (target %.0f s, max %.0f s)\n",
                 (unsigned long long) m->verified, (unsigned long long) m->failures, (unsigned long long) m->edge_failures, (unsigned long long) m->not_delivered,
-                (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_TARGET_SECONDS, LIVE_MATRIX_WALL_BOUND );
+                (unsigned long long) m->refusals, elapsed, LIVE_MATRIX_TARGET_SECONDS, wall_bound_seconds );
         fflush( stdout );
     }
 
     live_matrix_check( m->edge_failures == 0 );
-    live_matrix_check( elapsed < LIVE_MATRIX_WALL_BOUND );
+    live_matrix_check( elapsed < wall_bound_seconds );
 }

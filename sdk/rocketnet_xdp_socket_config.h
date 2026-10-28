@@ -24,8 +24,10 @@
 // (rocketnet_constants.h, tla/RNXdpReceiveRing.tla). The completion ring asks
 // for XSK_RING_CONS__DEFAULT_NUM_DESCS (2048) entries, from xdp/xsk.h.
 
-#ifndef ROCKETNET_XDP_SOCKET_CONFIG_H
-#define ROCKETNET_XDP_SOCKET_CONFIG_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_XDP_SOCKET_CONFIG_H
+#define ROCKETNET_SDK_ROCKETNET_XDP_SOCKET_CONFIG_H
 
 #include <stdint.h>
 #include <string.h>
@@ -36,7 +38,8 @@
 
 static inline void rocketnet_xdp_socket_config( struct xsk_socket_config * config, uint32_t rx_size, uint32_t tx_size, bool zero_copy )
 {
-    memset( config, 0, sizeof(*config) );
+    memset( config, 0, sizeof( *config ) );
+
     config->rx_size = rx_size;
     config->tx_size = tx_size;
     config->libbpf_flags = XSK_LIBBPF_FLAGS__INHIBIT_PROG_LOAD;
@@ -46,13 +49,21 @@ static inline void rocketnet_xdp_socket_config( struct xsk_socket_config * confi
 
 static inline void rocketnet_xdp_umem_config( struct xsk_umem_config * config )
 {
-    memset( config, 0, sizeof(*config) );
+    memset( config, 0, sizeof( *config ) );
+
     config->fill_size = ROCKETNET_XDP_FILL_RING_SIZE;
     config->comp_size = XSK_RING_CONS__DEFAULT_NUM_DESCS;
     config->frame_size = ROCKETNET_XDP_FRAME_SIZE;
     config->frame_headroom = 0;
 }
 
+// R3 of the pre-flight: the interface is free only when no program is attached
+// in any mode. prog_id alone reads 0 for a multi-mode attachment.
+static inline bool rocketnet_xdp_attached_any( const rocketnet_xdp_attached_t * attached )
+{
+    return attached->prog_id != 0 || attached->drv_prog_id != 0 || attached->skb_prog_id != 0 || attached->hw_prog_id != 0;
+}
+
 ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_FILL_RING_SIZE & ( ROCKETNET_XDP_FILL_RING_SIZE - 1 ) ) == 0, "the kernel takes only power of two ring sizes" );
 
-#endif // #ifndef ROCKETNET_XDP_SOCKET_CONFIG_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_SOCKET_CONFIG_H

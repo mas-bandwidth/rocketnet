@@ -3,15 +3,18 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// A destroyed client always stops its I/O. On the threaded path destroy stores
-// quit and wakes the receive thread's wait explicitly before the join; that
-// path uses real threads and real waits, so its cases (a wake before and
-// during a long wait, and 1000 create and destroy cycles) are in the
-// functional suite (client_receive_thread_quit_*). This unit case keeps the
-// logic only: a step-driven client on the fake transport has no thread, and its
-// destroy steps the I/O core to its exit on the calling thread. Single
-// threaded: no thread, no socket, no sleep and no wall clock; the game clock
-// starts at 1000.0 and the token's unix time is supplied.
+// Step-driven destroy without a worker: this unit case does NOT exercise
+// the threaded quit flag. On the threaded path destroy stores quit and wakes
+// the receive thread's wait explicitly before the join; that path uses real
+// threads and real waits, so its cases (a wake before and during a long
+// wait, and 1000 create and destroy cycles) remain the quit/wake oracle in
+// the functional suite (client_receive_thread_quit_*). This unit case's
+// real contract is narrower: a DEV-only step-driven client on the fake
+// transport has no worker thread, caller stepping drives the I/O core to
+// stopped on the calling thread, and destroy then closes the fake
+// transport exactly once per cycle. Single threaded: no thread, no socket,
+// no sleep and no wall clock; the game clock starts at 1000.0 and the
+// token's unix time is supplied.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -23,18 +26,14 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
 
-#include <atomic>
 #include <stdio.h>
 #include <string.h>
 
 #define check rocketnet_unit_check
 
-// the quit flag destroy writes and the receive loop reads is a lock-free atomic
-static_assert( ATOMIC_BOOL_LOCK_FREE == 2, "quit is a lock-free atomic" );
-
-// four create and destroy cycles of a step-driven client: every destroy
-// returns and closes its transport once
-static void test_client_receive_thread_quit_step_driven_destroy_returns()
+// four create and destroy cycles of a step-driven client without a worker:
+// every destroy returns and closes its fake transport exactly once
+static void test_client_step_driven_destroy_returns_and_closes_once_without_worker()
 {
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
@@ -44,7 +43,7 @@ static void test_client_receive_thread_quit_step_driven_destroy_returns()
     const uint64_t unix_timestamp = ROCKETNET_TEST_CREATE_TS;
 
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = unix_timestamp;
@@ -56,7 +55,7 @@ static void test_client_receive_thread_quit_step_driven_destroy_returns()
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = 1;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = unix_timestamp + 30;
@@ -76,7 +75,7 @@ static void test_client_receive_thread_quit_step_driven_destroy_returns()
         rn_test_client_transport_stop_and_destroy( client );
         check( fake.destroy_calls == i + 1 );
     }
-    printf( "test_client_receive_thread_quit_step_driven_destroy_returns\n" );
+    printf( "test_client_step_driven_destroy_returns_and_closes_once_without_worker\n" );
 }
 
-REGISTER_UNIT_TEST( test_client_receive_thread_quit_step_driven_destroy_returns );
+REGISTER_UNIT_TEST( test_client_step_driven_destroy_returns_and_closes_once_without_worker );

@@ -55,7 +55,7 @@ sequences), `surfacedCount`, `deliveredCount`, `openedEver`, `namedEver`, `badSt
 | `StartPayload` | the application | `start_packet` + `finish_packet` on the wire route: one sequence, one record with the packet id |
 | `StartFragmented(cnt)` | the application | the arena route: `rocketnet_fragment_plan`, `start_fragments` reserves `cnt - 1` sequences after the one `start_packet` spent, the payload id is drawn, `open_aggregate` pins the packet id behind `cnt` acknowledgments, `seal_fragment` records each fragment |
 | `BurnOne` | a failed finish | a sequence spent and never sent (USAGE.md, "Not every NULL from start_packet spends one") |
-| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`sdk/rocketnet_client_transport.cpp:871-903`, the draw at 905) and burns the one sequence `start_packet` spent, which is `BurnOne` |
+| `BurnFragmented(cnt)` | a seal refusal inside the fragment loop | the whole block withdrawn after the payload id and the aggregate were drawn (USAGE.md, "one such failure burns all 14"). Only a seal refusal burns an id: a full ring or a failed `start_fragments` returns before the draw (`rocketnet_client_transport_send_packets` in `sdk/rocketnet_client_transport.cpp`, the draw in `rocketnet_client_transport_start_packet`) and burns the one sequence `start_packet` spent, which is `BurnOne` |
 | `DefectiveSend` | a defective sender | a sealed fragment whose header says anything (`DefectIds` non-empty) |
 | `Flush` | `send_packets` | the staged packets go to the wire in fill order, `Link!Send` |
 | `RecvAck` | a block arrives | `rocketnet_ack_endpoint_process_block` / `rocketnet_ack_apply_run`: the walk, the retained window, unknown sequences, the batch and its deferral, aggregates |
@@ -76,7 +76,8 @@ Safety, checked under every loss pattern with no fairness:
 | Property | The rule |
 |---|---|
 | `SurfacedOnce` | the acked batch names a packet id at most once, ever (USAGE.md, "the packet ids newly acknowledged by the last update") |
-| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: the acks cover a payload that reassembly then refused (`FRAGMENT_STALE`, `FRAGMENT_PAYLOAD_BATCH_FULL`), which USAGE.md:146-148 allows at the fragment level; the gap is real and the model's rule witnesses sit in it |
+| `SurfacedOnlyIfOpened` | a packet id surfaces only when every sequence carrying it was opened by the receiver: for a fragmented payload, every fragment (USAGE.md, "a fragmented payload's id surfaces in the acked batch only when every fragment has been acknowledged"). Opened, not delivered: a completed payload that is then dropped as `FRAGMENT_PAYLOAD_BATCH_FULL` was accepted fragment by fragment and is still acknowledged, which USAGE.md allows at the fragment level; the gap is real and the model's rule witnesses sit in it. A fragment reassembly refuses is not in this gap (`NamedOnlyIfAccepted`) |
+| `NamedOnlyIfAccepted` | a fragment reassembly refuses (stale, count or size mismatch, payload too large, duplicate index) is never named by a block, so the sender's aggregate never completes on it. The block is built from the ack-eligible window (`accepted_session` in the code), and a fragment enters it only when `rocketnet_reassembly_process_fragment` accepts it (standard/TRANSPORT.md t15.3: a packet is eligible only once its type data passes validation); its sequence is still spent in the replay window |
 | `BurnedNeverNamed` | a burned sequence is never opened and never named by a block, so it is never acknowledged as received |
 | `AckedMeansSurfaced` | a record with a packet id is marked acknowledged only once its id has surfaced, and an aggregate reaches zero only once its id has: the batch defers, it never drops (`sdk/rocketnet_ack.cpp`, "a packet id that cannot fit the batch is deferred, never dropped"); the safety face of `OpenedSurfacesOrLaps` |
 | `DeliveredExact` | a delivered payload is exactly the fragments of one id, each index once, every non-final fragment the stride, the final at most the stride (STANDARD.md, Fragmentation, "Fragment bytes land at index × stride") |
@@ -104,7 +105,7 @@ Liveness, under the fairness described below:
 
 ### Loss patterns TLC explored
 
-Both links take a Link pattern. The committed run is `"arbitrary"` on both (any copy may
+Both links take a Link pattern. The full instance is `"arbitrary"` on both (any copy may
 be dropped at any time, with duplication and reordering; `find-stale-ahead2` adds a tick
 of jitter); the four
 deterministic patterns `"none"`, `"first"`, `"alternate"` (the first packet dropped,
@@ -120,7 +121,7 @@ window refuses.
   module. Every block here is truthful by construction, so `SurfacedOnlyIfOpened` says
   what the ack layer does with truthful blocks. F1 broke it from below; the code now
   clears the whole window on a large skip (`rocketnet_replay_advance`,
-  `sdk/rocketnet_replay.cpp:56-61`).
+  `sdk/rocketnet_replay.cpp`).
 - **The 32-bit wire fields.** `largest received` is carried whole; the reconstruction
   against `highest_sent` (`rocketnet_reconstruct_ack_largest`) and the u16 range caps
   are not modelled. Payload ids are modulo `IdSpace` instead of 2^32, with `FirstId` to
@@ -188,7 +189,7 @@ warns of:
 
 `Window = SentRing` means a sequence the sender still retains is one the receiver can
 still name (the code's `ROCKETNET_HISTORY_PACKETS` sizes both). Liveness was then checked
-only at the `live-small` instance; the `live` run on the committed instance did not
+only at the `live-small` instance; the `live` run on the full instance did not
 finish (see the results).
 
 ## How to run it
@@ -198,33 +199,45 @@ through the pinned `tlacheck` as `tla/README.md` describes, each case its own sh
 the 110 s budget:
 
 ```sh
-for i in $(seq 0 24); do
+for i in $(seq 0 26); do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group fragmentsandacks --shards 25 --shard "$i" --workers 2 --timeout 110s \
+    --group fragmentsandacks --shards 27 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/fragmentsandacks-$i"
 done
 "$job/tlacheck" merge --root . --keep tla/RUNS.tsv \
   --out "$job/RUNS.tsv" "$job"/fragmentsandacks-*/RUNS.tsv
 ```
 
-`MCFragmentsAndAcks.cfg` is the committed run: the honest sender under the code's rules
-(`Witness = "none"`, `StaleRule = "code"`), burns on, both links `"arbitrary"` under
-`SpecSafety`, checking the twelve invariants (nine, and the three bitmap invariants
-below) and `CountPinned`. `MCFragmentsAndAcksLive.cfg`
-is the same instance under `Spec` with `OpenedSurfacesOrLaps` added. The
-instance: `MaxSeq = 4`, `SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`,
-`MaxRanges = 2`, `Slots = 1`, `IdSpace = 8`, `StaleAhead = 2`, `MaxGen = 2`, counts
-`{2, 3}`, `Stride = 2`, `FinalBytes = 1`, `MaxPayload = 5`, `MaxFragment = 3`,
-`DrainCap = 4`, `DeliveredCap = 2`, `Capacity = 2`, `MaxDelay = 0`, duplication and
-reordering on. Four sequences are two payload ids' worth: enough for an eviction, a
-burn beside a send, a deferral and every witness. The safety state space at this size
-is 44.9 million distinct states (depth 49, 12 minutes with 4 workers), far over the
-110 s budget, so the committed run is a `bench` row with its debt named; at `MaxSeq = 6`
-with jitter it passes 100 million without finishing in 30 minutes, and at `MaxSeq = 8`
-it passes 95 million. The below-bound batch witness still violates inside the budget.
+The full instance is the honest sender under the code's rules (`Witness = "none"`,
+`StaleRule = "code"`), burns on, both links `"arbitrary"`: `MaxSeq = 4`,
+`SentRing = Window = 4`, `AggRing = 2`, `BatchCap = 1`, `MaxRanges = 2`, `Slots = 1`,
+`IdSpace = 8`, `StaleAhead = 2`, `MaxGen = 2`, counts `{2, 3}`, `Stride = 2`,
+`FinalBytes = 1`, `MaxPayload = 5`, `MaxFragment = 3`, `DrainCap = 4`,
+`DeliveredCap = 2`, `Capacity = 2`, `MaxDelay = 0`, duplication and reordering on. Four
+sequences are two payload ids' worth: enough for an eviction, a burn beside a send, a
+deferral and every witness. Its safety state space is 44.9 million distinct states
+(depth 49, 12 minutes with 4 workers), far over the 110 s budget; at `MaxSeq = 6` with
+jitter it passes 100 million without finishing in 30 minutes, and at `MaxSeq = 8` it
+passes 95 million. `MCFragmentsAndAcksLive.cfg` is the full instance under `Spec` with
+`OpenedSurfacesOrLaps` added, a `bench` row with its debt named, and the `pat-*` bench
+rows are the full instance with a pattern.
+
+`MCFragmentsAndAcks.cfg` is the committed run on the gate instance: the full instance
+with five cuts, both links `"none"` (no loss), duplication off, `MaxCount = 2` with counts
+`{2}`, and burns off, under `SpecSafety`, checking the thirteen invariants (nine,
+`NamedOnlyIfAccepted`, and the three bitmap invariants below) and `CountPinned`. It is
+1,056,577 distinct states at depth 39 and passes inside the budget, so it is a
+`required` row. Reordering stays on with `Capacity = 2`, so payload 2's first fragment
+can overtake payload 1's second; reassembly then refuses the late fragment as stale,
+which is the case `NamedOnlyIfAccepted` is about. The gate instance therefore reaches the
+refusal: `MCFragmentsAndAcksWitAckRefused.cfg` is the same instance with
+`Witness = "ackrefused"` and violates the invariant at depth 12. What the cuts leave out
+is checked elsewhere: duplication by `live-dup`, loss with three-fragment payloads and
+burns by `pat-alternate` (a `required` pass on the full instance), and burns lapping a
+held slot by `bits`. The below-bound batch witness still violates inside the budget.
 The code-arm stale rows are shrunk so their passes finish inside it.
 
-The other cfgs are the committed file with a few lines changed. Three shapes recur:
+The other cfgs are the full instance with a few lines changed. Three shapes recur:
 
 - *safety*: `SPECIFICATION SpecSafety`, no `PROPERTIES`;
 - *defect*: `DefectIds = {0, 1, 5}`, `MaxGen = 1`, `Capacity = 1`, duplication,
@@ -237,7 +250,7 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 
 | Run | Cfg | Changes | Expected | Gate |
 |---|---|---|---|---|
-| committed | `MCFragmentsAndAcks.cfg` | none (`SpecSafety` + `CountPinned`) | passes | bench: over budget |
+| committed | `MCFragmentsAndAcks.cfg` | the gate instance: both links `"none"`, duplication off, `MaxCount = 2`, counts `{2}`, burns off (`SpecSafety` + `CountPinned`) | passes | required |
 | live | `MCFragmentsAndAcksLive.cfg` | `Spec` + `OpenedSurfacesOrLaps` | passes | bench: over budget |
 | live-small | `MCFragmentsAndAcksLiveSmall.cfg` | live with `MaxSeq = 2`, `MaxGen = 1`, `Capacity = 1`, duplication and reordering off | passes | required |
 | live-dup | `MCFragmentsAndAcksLiveDup.cfg` | live with `MaxSeq = 1`, `MaxGen = 1`, `MaxCount = 2`, counts `{2}`, burns off, data link `"none"`, ack link `"arbitrary"` with duplication, reordering off; `OpenedSurfacesOrLaps` only (no INVARIANTS, no CountPinned): the instance on which the old per-link fairness failed; `live-small` has duplication off and cannot tell the two forms apart | passes: the evidence the fairness fix works on the failing case | required |
@@ -261,9 +274,11 @@ The other cfgs are the committed file with a few lines changed. Three shapes rec
 | bits | `MCFragmentsAndAcksBits.cfg` | bits: live-small with `SentRing = 2`, `MaxSeq = 4`, `SpecSafety` + `CountPinned`, ack link `"none"` | passes | required |
 | wit-walkskip | `MCFragmentsAndAcksWitWalkskip.cfg` | bits, `Witness = "walkskip"`, no `CountPinned` | **fails** `WalkVisitsUnacked` | required |
 | wit-staleheld | `MCFragmentsAndAcksWitStaleheld.cfg` | bits, `Witness = "staleheld"`, no `CountPinned` | **fails** `BitsMatchRing` | required |
+| wit-ackrefused | `MCFragmentsAndAcksWitAckRefused.cfg` | the gate instance, safety, `Witness = "ackrefused"`: a fragment is ack-eligible as soon as it opens, before reassembly judges it (the order before t15.3 was applied to type 9) | **fails** `NamedOnlyIfAccepted` | required |
 | link-fair | none | `SPECIFICATION SpecLinkFair` on the live cfg | TLC refuses the formula as a tautology (the fairness note above) | no case |
 
-Instances shrunk to fit the 110 s budget at two TLC workers: `live-small` from
+Instances shrunk to fit the 110 s budget at two TLC workers: the committed run from the
+full instance to the gate instance (above); `live-small` from
 `MaxSeq = 3` with `Capacity = 2` to `MaxSeq = 2` with `Capacity = 1`; `defect` from
 `MaxSeq = 4` to `MaxSeq = 2`. The code-arm stale rows use `IdSpace = 16`, so `Reach` is
 4. `find-stale` is the measured pass: `FirstId` 3 and `MaxGen` 3 give honest ids 3, 4
@@ -290,7 +305,7 @@ probe can be repeated by hand.
 The measured records are the `fragmentsandacks` rows of `tla/RUNS.tsv` (TLC 2.19, the
 pinned jar, two workers per case, 110 s per case, each case its own shard, four at
 once), re-measured after the three bitmap invariants were added to every cfg with an
-`INVARIANTS` section. Every case reaches its declared result except the six `bench`
+`INVARIANTS` section. Every case reaches its declared result except the seven `bench`
 rows that time out (exit 124), which is a failed measurement, not a proof.
 `MCFragmentsAndAcksPatAlternate.cfg` is a required check, not bench debt. With the bitmap state it
 is 1,422,444 distinct states and the recorded run finishes in 57.104 s, inside the budget, so a
@@ -300,7 +315,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 
 | Case | Result | Generated | Distinct | Time |
 |---|---|---|---|---|
-| `MCFragmentsAndAcks.cfg` | timeout, bench debt |  |  | 111.080 s |
+| `MCFragmentsAndAcks.cfg` | pass: the gate instance | 3,796,546 | 1,056,577 | 85.518 s |
 | `MCFragmentsAndAcksLive.cfg` | timeout, bench debt |  |  | 110.397 s |
 | `MCFragmentsAndAcksLiveSmall.cfg` | pass | 20,552 | 6,721 | 9.422 s |
 | `MCFragmentsAndAcksLiveDup.cfg` | pass | 47,836 | 10,276 | 9.381 s |
@@ -326,6 +341,7 @@ required control for the bitmaps is `MCFragmentsAndAcksBits.cfg`.
 | `MCFragmentsAndAcksBits.cfg` | pass | 760,466 | 265,345 | 10.165 s |
 | `MCFragmentsAndAcksWitWalkskip.cfg` | `WalkVisitsUnacked` violated (exit 12) | 618 | 316 | 0.867 s |
 | `MCFragmentsAndAcksWitStaleheld.cfg` | `BitsMatchRing` violated (exit 12) | 1,152 | 567 | 0.910 s |
+| `MCFragmentsAndAcksWitAckRefused.cfg` | `NamedOnlyIfAccepted` violated (exit 12) on the gate instance | 8,335 | 3,858 | 2.310 s |
 
 ### Earlier results without the budget (TLC 2.19, 4 workers, `-Xmx6g`, 2026-10-13)
 
@@ -334,8 +350,8 @@ are not current records; they are the evidence for the bench rows above.
 
 | Run | Result | States | Distinct | Depth | Time |
 |---|---|---|---|---|---|
-| committed (`SpecSafety`, all invariants + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
-| live (`Spec` + `OpenedSurfacesOrLaps`, committed instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
+| full instance (`SpecSafety`, the invariants then + CountPinned) | pass | 317,743,656 | 44,927,746 | 49 | 11 min 52 s |
+| live (`Spec` + `OpenedSurfacesOrLaps`, full instance) | not finished: stopped at 1,928,008 distinct states, BFS at depth 18, 2 h 20 min; it carries no evidence | | | | |
 | live-small (`MaxSeq = 3`, `MaxGen = 1`, no dup, no reorder) | pass | 229,436 | 54,283 | 25 | 1 min 0 s |
 | find-stale-serial-small (unreduced small instance, `StaleRule = "serial"`) | pass: the half-space comparison | 90,830,297 | 19,697,444 | 43 | 3 min 21 s |
 | find-stale-ahead2 (unreduced: `MaxSeq = 8`, `MaxGen = 4`, `MaxDelay = 1`, counts `{2, 3}`, duplication and reordering on, old forward difference) | violated `StaleOnlyIfOlder` under the retired arm | 8,174,784 | 1,739,380 | | 21 s |
@@ -345,7 +361,7 @@ The evidence for an over-budget run of `pat-alternate` (not the gate record) is 
 budget (TLC 2.19, 2 workers, 2026-10-17, before the three invariants were in its cfg):
 pass, 5,924,703 states, 1,422,444 distinct, depth 43, 168.8 s.
 
-Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the committed instance,
+Never run to completion: `pat-none`, `pat-first`, `pat-burst` at the full instance,
 a three-id defect instance (272 million distinct states in 50 minutes) and the serial
 rule at `MaxSeq = 6` with jitter (106 million).
 
@@ -476,9 +492,9 @@ distinct in 15.479 s at two workers.
 
 ### The stale rule the code runs
 
-The shipped test is two comparisons. `sdk/rocketnet_fragment.cpp:378-380` reads the
+The shipped test is two comparisons. `sdk/rocketnet_fragment.cpp` reads the
 reference and refuses an id farther than `ROCKETNET_REASSEMBLY_REACH` (a quarter of the
-id space, `sdk/rocketnet_fragment.h:87`) from the newest completed id in both
+id space, `sdk/rocketnet_fragment.h`) from the newest completed id in both
 directions, before the slot is consulted:
 
 ```
@@ -486,26 +502,26 @@ const uint32_t reference = set->newest_completed[connection_index];
 if ( payload_id - reference > ROCKETNET_REASSEMBLY_REACH && reference - payload_id > ROCKETNET_REASSEMBLY_REACH )
 ```
 
-`sdk/rocketnet_fragment.cpp:387-388` then refuses an id at most
+`sdk/rocketnet_fragment.cpp` then refuses an id at most
 `ROCKETNET_REASSEMBLY_BEHIND` (`ROCKETNET_MAX_FRAGMENTS`,
-`sdk/rocketnet_fragment.h:86`) behind an occupied slot's id:
+`sdk/rocketnet_fragment.h`) behind an occupied slot's id:
 
 ```
 if ( slot->payload_id != 0 && payload_id != slot->payload_id &&
      slot->payload_id - payload_id <= ROCKETNET_REASSEMBLY_BEHIND )
 ```
 
-`tla/FragmentsAndAcks.tla:513-522` scales those two constants, and `:530-534` is the
+`tla/FragmentsAndAcks.tla` scales those two constants, and `SendAck` is the
 `"code"` arm: `Far(new, newestCompleted) \/ BehindOccupant(new, old)`. `Reach` is
 `IdSpace \div 4` and `Behind` is `StaleAhead`. `newestCompleted` starts at 0 and
 advances on a completion, including one the delivery bound drops, when the forward
-distance is nonzero and below half the id space (`tla/FragmentsAndAcks.tla:526-528`,
-`sdk/rocketnet_fragment.cpp:600-602`).
+distance is nonzero and below half the id space (`tla/FragmentsAndAcks.tla`,
+`sdk/rocketnet_fragment.cpp`).
 
 Before this change the model's `code` arm was `((new - old) % IdSpace) > StaleAhead`,
 one unsigned forward distance against the slot's occupant. The shipped test above is two
-comparisons: the reach pair against the newest completed id (`sdk/rocketnet_fragment.cpp:380`)
-and the behind bound against the occupant (`:387-388`). The old arm had neither a
+comparisons: the reach pair against the newest completed id (`sdk/rocketnet_fragment.cpp`)
+and the behind bound against the occupant (`rocketnet_reassembly_process_fragment`). The old arm had neither a
 reference id nor the occupant's behind bound, so it is kept only as the retired arm.
 
 `find-stale` runs that arm and passes `StaleOnlyIfOlder`. Its terrain reaches a
@@ -523,7 +539,7 @@ half-space comparison; `find-stale-serial-small` is the bench row for it.
 
 ### The delivered bound, and the below-bound witness
 
-`sdk/rocketnet_fragment.h:135-139`: an update that drains N packets on one connection
+`sdk/rocketnet_fragment.h`: an update that drains N packets on one connection
 completes at most `(N + min(N, connections × slots)) / 2` payloads, and at that
 capacity `BATCH_FULL` is zero under any load the drain delivers. A set sized below the
 bound counts `BATCH_FULL` for each completion past it.

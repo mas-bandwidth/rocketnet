@@ -25,6 +25,9 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#if ROCKETNET_DEV
+#include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 #include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_base64.h"
@@ -36,15 +39,11 @@
 #include <string.h>
 
 #define check rocketnet_unit_check
+#if ROCKETNET_DEV
 #define RESOLVE_ONCE_PROTOCOL 0x2E50C0FFEE0A11CEULL
 
-#if defined( _WIN32 )
-static void resolve_once_setenv( const char * name, const char * value ) { check( _putenv_s( name, value ) == 0 ); }
-static void resolve_once_unsetenv( const char * name ) { check( _putenv_s( name, "" ) == 0 ); }
-#else
-static void resolve_once_setenv( const char * name, const char * value ) { check( setenv( name, value, 1 ) == 0 ); }
-static void resolve_once_unsetenv( const char * name ) { check( unsetenv( name ) == 0 ); }
-#endif
+static void resolve_once_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
+static void resolve_once_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
 static const uint8_t resolve_once_filter_a[ROCKETNET_PACKET_FILTER_BYTES] = { 0x5A, 0x5A, 0x5A, 0x5A };
 static const uint8_t resolve_once_filter_b[ROCKETNET_PACKET_FILTER_BYTES] = { 0x6B, 0x6B, 0x6B, 0x6B };
@@ -87,8 +86,8 @@ static void resolve_once_token( const rocketnet_server_t * server, const resolve
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
-        RESOLVE_ONCE_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     RESOLVE_ONCE_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
@@ -236,96 +235,69 @@ static void test_config_client_env_transport_refused_at_create()
 }
 REGISTER_UNIT_TEST( test_config_client_env_transport_refused_at_create );
 
-#if !ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
 
-// Production posture: the struct keeps the published test filter and the
-// environment supplies a private one. Create resolves the environment before
-// it validates, so both endpoints are accepted, start and connect.
-static void test_production_env_only_packet_filter_accepted()
+// Production environment filter acceptance/refusal runs in
+// test_platform_primitives against ordinary native workers.
+
+// Auto expands to the availability list, and the ladder holds only
+// ROCKETNET_MAX_TRANSPORT_CANDIDATES of them. An availability list with more
+// auto-eligible transports than that must be refused loudly in a release
+// build, not written past candidates: the count is bounded by a real check,
+// not by an assert that NDEBUG removes. Capture the assert where it is
+// compiled in, and check the refusal in every build.
+static int config_ladder_max_assertions;
+
+static void config_ladder_max_assert_hook( const char *, const char *, const char *, int )
+{
+    config_ladder_max_assertions++;
+}
+
+static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 {
     rocketnet_quiet( 1 );
-    rocketnet_development_values_refused_test_enable( 1 );
-    resolve_once_identity_t identity;
-    resolve_once_identity( &identity );
-    char filter_a[16];
-    resolve_once_filter_text( resolve_once_filter_a, filter_a, sizeof( filter_a ) );
-    resolve_once_setenv( "ROCKETNET_SERVER_PACKET_FILTER", filter_a );
-    resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", filter_a );
+    const int num_available = ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1;
+    int available[ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1];
+    for ( int i = 0; i < num_available; i++ )
+        available[i] = ROCKETNET_TRANSPORT_PORTABLE;
+    check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, true ) );
+    check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, false ) );
 
-    rocketnet_server_config_t server_config;
-    resolve_once_server_config( &server_config, &identity, 1 );
-    enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
-    check( server != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    check( server && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
-
-    rocketnet_client_test_config_t client_config;
-    resolve_once_client_config( &client_config );
-    status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
-    check( client != NULL );
-    check( status == ROCKETNET_STATUS_OK );
-    if ( server && client )
+    // a by-value sibling so a write past candidates is visible: parse clears
+    // only the ladder, and every canary byte must survive it.
+    struct
     {
-        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-        resolve_once_token( server, &identity, 0x3000, token );
-        check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
-        for ( int step = 0; step < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; step++ )
-            resolve_once_pump( server, &client, 1, 1 );
-        check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+        struct rocketnet_transport_ladder_t ladder;
+        uint8_t canary[32];
+    } guarded;
+    const char * const values[2] = { "auto", NULL };
+    config_ladder_max_assertions = 0;
+    rocketnet_assert_function( config_ladder_max_assert_hook );
+    for ( int v = 0; v < 2; v++ )
+    {
+        for ( int server = 0; server < 2; server++ )
+        {
+            memset( &guarded, 0xA5, sizeof( guarded ) );
+#if ROCKETNET_ASSERTS
+            const int assertions_before_parse = config_ladder_max_assertions;
+#endif
+            check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
+#if ROCKETNET_ASSERTS
+            check( config_ladder_max_assertions == assertions_before_parse + 1 );
+#endif
+            check( guarded.ladder.num_candidates >= 0 );
+            check( guarded.ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
+            for ( int i = 0; i < guarded.ladder.num_candidates; i++ )
+                check( guarded.ladder.candidates[i] == ROCKETNET_TRANSPORT_PORTABLE );
+            for ( size_t i = 0; i < sizeof( guarded.canary ); i++ )
+                check( guarded.canary[i] == 0xA5 );
+        }
     }
-
-    resolve_once_unsetenv( "ROCKETNET_SERVER_PACKET_FILTER" );
-    resolve_once_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" );
-    rn_test_client_stop_and_destroy( client );
-    rn_test_server_stop_and_destroy( server );
-    rocketnet_development_values_refused_test_enable( 0 );
+    rocketnet_assert_function( NULL );
+#if ROCKETNET_ASSERTS
+    // Two values times two roles; each parse checks the same refusal once.
+    check( config_ladder_max_assertions == 4 );
+#endif
     rocketnet_quiet( 0 );
 }
-REGISTER_UNIT_TEST( test_production_env_only_packet_filter_accepted );
-
-// Production posture: the struct holds a private filter and the environment
-// supplies the published test filter. The resolved filter is the test filter,
-// so both creates refuse it with TEST_PACKET_FILTER_IN_PRODUCTION.
-static void test_production_env_only_test_packet_filter_refused()
-{
-    rocketnet_quiet( 1 );
-    rocketnet_development_values_refused_test_enable( 1 );
-    resolve_once_identity_t identity;
-    resolve_once_identity( &identity );
-    static const uint8_t test_filter[ROCKETNET_PACKET_FILTER_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    char test_filter_text[16];
-    resolve_once_filter_text( test_filter, test_filter_text, sizeof( test_filter_text ) );
-    resolve_once_setenv( "ROCKETNET_SERVER_PACKET_FILTER", test_filter_text );
-    resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", test_filter_text );
-
-    rocketnet_server_config_t server_config;
-    resolve_once_server_config( &server_config, &identity, 1 );
-    memcpy( server_config.packet_filter, resolve_once_filter_a, sizeof( server_config.packet_filter ) );
-    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
-    check( server == NULL );
-    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
-
-    rocketnet_client_config_t client_config;
-    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
-    client_config.transport = "loopback";
-    memcpy( client_config.packet_filter, resolve_once_filter_a, sizeof( client_config.packet_filter ) );
-    status = ROCKETNET_STATUS_OK;
-    rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
-    check( client == NULL );
-    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
-
-    resolve_once_unsetenv( "ROCKETNET_SERVER_PACKET_FILTER" );
-    resolve_once_unsetenv( "ROCKETNET_CLIENT_PACKET_FILTER" );
-    if ( client )
-        rn_test_client_stop_and_destroy( client );
-    if ( server )
-        rn_test_server_stop_and_destroy( server );
-    rocketnet_development_values_refused_test_enable( 0 );
-    rocketnet_quiet( 0 );
-}
-REGISTER_UNIT_TEST( test_production_env_only_test_packet_filter_refused );
-
-#endif // #if !ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );

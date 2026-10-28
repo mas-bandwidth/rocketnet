@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_WINDOW_ACK_H
-#define ROCKETNET_WINDOW_ACK_H
+#ifndef ROCKETNET_SDK_ROCKETNET_WINDOW_ACK_H
+#define ROCKETNET_SDK_ROCKETNET_WINDOW_ACK_H
 
 #include "rocketnet_window_send.h"
 #include "rocketnet_constants.h"
@@ -28,8 +28,10 @@
 //   - region->sent_index   : 2P entries of 16 bytes (open-addressed packet_id -> entry)
 //   - region->sent_refs    : 16P u32 entries (ring of referenced message numbers)
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
-//   - region->resend_fifo  : W entries of 8 bytes (intrusive prev/next links in 0..W-1),
-//                            shared by the two resend FIFOs: a number is in at most one
+//   - region->resend_fifo  : W entries of 16 bytes (flat sequence key plus generation and owner epoch),
+//                            shared by the two resend sequences: a number is in at most one.
+//                            Capacity is W. An acked hole stays sequenced until a
+//                            named removal, so a walk still counts it (tla/RNChannelQueues.tla).
 //
 // Each sent packet gets a fresh transport sequence `packet_id`, including
 // every resend. An ack of `packet_id` therefore measures the exact send that
@@ -38,7 +40,7 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
-#if defined(ROCKETNET_ACK_COST_TEST_HOOKS)
+#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 // Present only in the unit-test library; counts actual work, not ACK calls.
 struct rn_ack_cost_t
 {
@@ -47,7 +49,7 @@ struct rn_ack_cost_t
 };
 void rn_window_ack_cost_reset();
 rn_ack_cost_t rn_window_ack_cost_read();
-#endif
+#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 
 #if ROCKETNET_DEV
 
@@ -97,16 +99,16 @@ struct rn_window_ack_t
     uint16_t pad;
     int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 
-    // Two resend FIFOs over the one link array region->resend_fifo, one per
+    // Two resend sequences over the one flat array region->resend_fifo, one per
     // delay class (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla
     // SmallNeverHeldByChunk): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
-    // is ordered by last send and walked from its head while due.
-    uint32_t resend_head;           // oldest slot in the small-record FIFO (0..W-1), or RN_RESEND_NONE
-    uint32_t resend_tail;           // newest slot in the small-record FIFO (0..W-1), or RN_RESEND_NONE
-    uint32_t resend_count;          // number of slots linked in both FIFOs
-    uint32_t chunk_head;            // oldest slot in the chunk FIFO (0..W-1), or RN_RESEND_NONE
-    uint32_t chunk_tail;            // newest slot in the chunk FIFO (0..W-1), or RN_RESEND_NONE
+    // is ordered by its entries' sequence keys and walked from its head while due.
+    uint32_t resend_head;           // oldest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
+    uint32_t resend_tail;           // newest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
+    uint32_t resend_count;          // number of slots sequenced in both resend sequences
+    uint32_t chunk_head;            // oldest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
+    uint32_t chunk_tail;            // newest slot in the chunk sequence (0..W-1), or RN_RESEND_NONE
     uint32_t walk_visits;           // FIFO entries the last resend walk examined (O(due): due + acked + one stop per FIFO)
 
     uint64_t pkt_head;              // oldest live or un-reclaimed slot in sent_packets
@@ -170,11 +172,23 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
     return chunk ? rn_window_ack_chunk_resend_delay( ack ) : rn_window_ack_resend_delay( ack );
 }
 
+// The first slot of a class's flat resend sequence, or RN_RESEND_NONE, and
+// the slot after `slot` in that sequence, or RN_RESEND_NONE. Walkers order
+// the flat resend_fifo array by its sequence keys (tla/RNChannelQueues.tla).
+uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
+uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
+
 // Links a never-sent number into its class's resend FIFO right after `after`
 // (a slot of the same FIFO), or at that FIFO's head when `after` is
 // RN_RESEND_NONE. rn_ordered_write parks new numbers behind the never-sent
 // ones already waiting, ahead of every number that was sent.
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
+
+// Removes number from its resend FIFO only when the link still names generation
+// and the region's current schedule epoch. Does not free the descriptor and
+// does not mark the number acked. False leaves the FIFO unchanged
+// (tla/RNChannelQueues.tla Ack, StaleCancel).
+bool rn_window_ack_cancel_resend( rn_window_ack_t * ack, uint64_t number, uint32_t generation );
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
@@ -237,22 +251,6 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 // whether ack->error is already set.
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now );
 
-// Test-only: the product's walk is rn_ordered_write (sdk/rocketnet_channel.cpp).
-// Walks the small-record FIFO from its head while
-// now >= last_send + rn_window_ack_resend_delay( ack ), then the chunk FIFO
-// while now >= last_send + rn_window_ack_chunk_resend_delay( ack )
-// (docs/CHANNELS.md 6.4 "Resend"; tla/RNWindow.tla WriteOldest,
-// tla/RNResendTiming.tla Walk). Each walk stops at the first entry that is not
-// yet due, so the work is O(due) and O(1) when nothing is due, and a chunk
-// that is not due never holds back a small record that is. Each due number is committed in a new sent-packet entry
-// with packet_id = (*io_next_packet_id)++, its last_send is set to `now`, it is
-// moved to the tail of the resend FIFO, its number is written to `out_numbers`,
-// and MESSAGE_RESENT is incremented. The delay is the same for every pass;
-// nothing backs off.
-// Returns the number of resent message numbers written to `out_numbers` (0 if
-// none are due or if reliable_timeout has fired).
-uint32_t rn_window_ack_resend( rn_window_ack_t * ack, double now, uint64_t * io_next_packet_id, uint64_t * out_numbers, uint32_t max_numbers );
-
 // The resend gap record's clock (development builds only; a no-op otherwise):
 // called once per update before the update's packets are written, with the
 // update's time, after its acks have moved the resend delay. It keeps this update's and
@@ -269,4 +267,4 @@ uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack );
 // Span of reference slots currently occupied between ref_head and ref_tail (<= 16P).
 uint32_t rn_window_ack_refs_in_flight( const rn_window_ack_t * ack );
 
-#endif // #ifndef ROCKETNET_WINDOW_ACK_H
+#endif // ROCKETNET_SDK_ROCKETNET_WINDOW_ACK_H

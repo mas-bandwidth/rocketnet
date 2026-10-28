@@ -8,7 +8,7 @@
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
-#if defined(ROCKETNET_LOOPBACK_TEST_HOOKS)
+#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
 static void test_loopback_shutdown_send_drops_contended_without_waiting()
 {
     rocketnet_server_transport_config_t config;
@@ -26,7 +26,7 @@ static void test_loopback_shutdown_send_drops_contended_without_waiting()
     {
         packets[i].to = &b;
         packets[i].packet_data = data;
-        packets[i].packet_bytes = sizeof(data);
+        packets[i].packet_bytes = sizeof( data );
     }
     rocketnet_loopback_test_send_contention( true );
     rocketnet_unit_check( sender.operations->send_batch_shutdown );

@@ -127,13 +127,17 @@ struct spec_t
     uint16_t source_port;                       // the client's UDP source port
     uint16_t ipv4_frag_off;                     // IPv4 flags and fragment offset (RFC 791); 0 = a whole datagram
     int ipv6_fragment_field;                    // the fragment header's offset << 3 | M; -1 = 0x0001 (offset 0, more fragments)
+    int ipv6_after_fragment[5];                 // bounded extension chain after a fixed-header fragment
+    int ipv6_after_fragment_count;
+    int ipv6_after_fragment_next;               // protocol after that chain
+    int ipv6_first_extension_length;            // second byte of the first header in that chain
     int ipv4_ihl;                               // IPv4 header words, 5 to 15; the options are zero bytes
 };
 
 static spec_t spec_default( bool ipv6 )
 {
     spec_t spec;
-    memset( &spec, 0, sizeof(spec) );
+    memset( &spec, 0, sizeof( spec ) );
     spec.ipv6 = ipv6;
     spec.next_header = -1;
     spec.destination_port = server_port;
@@ -141,12 +145,14 @@ static spec_t spec_default( bool ipv6 )
     spec.packet_bytes = ROCKETNET_RECEIVE_CEILING;      // the largest packet a server accepts
     spec.packet_type = ROCKETNET_CONNECTION_PAYLOAD_PACKET;
     spec.epoch = filter_epoch;
-    memcpy( spec.filter, packet_filter, sizeof(spec.filter) );
+    memcpy( spec.filter, packet_filter, sizeof( spec.filter ) );
     spec.truncate_to = -1;
     spec.sequence = 0;
     spec.source_port = client_port;
     spec.ipv4_frag_off = 0;
     spec.ipv6_fragment_field = -1;
+    spec.ipv6_after_fragment_next = IP_UDP;
+    spec.ipv6_first_extension_length = -1;
     spec.ipv4_ihl = 5;
     return spec;
 }
@@ -163,7 +169,7 @@ static void put16( uint8_t * p, uint16_t value )
 
 static void build_frame( frame_t * frame, const spec_t & spec )
 {
-    memset( frame, 0, sizeof(*frame) );
+    memset( frame, 0, sizeof( *frame ) );
     uint8_t * p = frame->data;
 
     memset( p, 0x02, 6 );                       // destination mac
@@ -190,7 +196,12 @@ static void build_frame( frame_t * frame, const spec_t & spec )
     else
     {
         const uint8_t * destination = spec.destination_address ? spec.destination_address : server_ipv6;
-        const int extension_bytes = has_extension ? 8 : 0;
+        int extension_bytes = has_extension ? ( spec.next_header == IPV6_AH ? 12 : 8 ) : 0;
+        if ( spec.next_header == IPV6_FRAGMENT )
+        {
+            for ( int i = 0; i < spec.ipv6_after_fragment_count; i++ )
+                extension_bytes += spec.ipv6_after_fragment[i] == IPV6_AH ? 12 : 8;
+        }
         p[0] = 0x60;                            // version 6
         put16( p + 4, (uint16_t) ( extension_bytes + udp_bytes ) );
         p[6] = (uint8_t) ( spec.next_header >= 0 ? spec.next_header : IP_UDP );
@@ -200,13 +211,30 @@ static void build_frame( frame_t * frame, const spec_t & spec )
         p += ROCKETNET_IPV6_HEADER_BYTES;
         if ( has_extension )
         {
-            p[0] = IP_UDP;                      // this header is followed by UDP
+            p[0] = spec.next_header == IPV6_FRAGMENT && spec.ipv6_after_fragment_count > 0 ? (uint8_t) spec.ipv6_after_fragment[0] : IP_UDP;
+            if ( spec.next_header == IPV6_AH )
+                p[1] = 1;                      // 12 bytes: (1 + 2) * 4
             if ( spec.next_header == IPV6_FRAGMENT )
             {
                 put16( p + 2, (uint16_t) ( spec.ipv6_fragment_field >= 0 ? spec.ipv6_fragment_field : 0x0001 ) );
                 p[7] = 0x2A;                    // identification
             }
-            p += extension_bytes;
+            p += spec.next_header == IPV6_AH ? 12 : 8;
+
+            if ( spec.next_header == IPV6_FRAGMENT )
+            {
+                for ( int i = 0; i < spec.ipv6_after_fragment_count; i++ )
+                {
+                    const int type = spec.ipv6_after_fragment[i];
+                    const int next = i + 1 < spec.ipv6_after_fragment_count ? spec.ipv6_after_fragment[i + 1] : spec.ipv6_after_fragment_next;
+                    if ( type != IPV6_ESP )
+                    {
+                        p[0] = (uint8_t) next;
+                        p[1] = i == 0 && spec.ipv6_first_extension_length >= 0 ? (uint8_t) spec.ipv6_first_extension_length : ( type == IPV6_AH ? 1 : 0 );
+                    }
+                    p += type == IPV6_AH ? 12 : 8;
+                }
+            }
         }
     }
 
@@ -249,7 +277,7 @@ static char verifier_log[1 << 22];
 
 static void print_log_tail( int lines )
 {
-    const size_t length = strnlen( verifier_log, sizeof(verifier_log) );
+    const size_t length = strnlen( verifier_log, sizeof( verifier_log ) );
     if ( length == 0 )
         return;
     size_t end = length;
@@ -266,7 +294,7 @@ static void print_log_tail( int lines )
     printf( "verifier log tail:\n%.*s\n", (int) ( end - start ), verifier_log + start );
 }
 
-__attribute__(( format( printf, 2, 0 ) )) static int print_libbpf( enum libbpf_print_level level, const char * format, va_list args )
+__attribute__( ( format( printf, 2, 0 ) ) ) static int print_libbpf( enum libbpf_print_level level, const char * format, va_list args )
 {
     if ( level == LIBBPF_DEBUG )
         return 0;
@@ -277,16 +305,16 @@ __attribute__(( format( printf, 2, 0 ) )) static int print_libbpf( enum libbpf_p
 
 static bool load_filter( filter_t * filter, const char * path )
 {
-    memset( filter, 0, sizeof(*filter) );
+    memset( filter, 0, sizeof( *filter ) );
 
     libbpf_set_print( print_libbpf );
 
     struct bpf_object_open_opts options;
-    memset( &options, 0, sizeof(options) );
-    options.sz = sizeof(options);
+    memset( &options, 0, sizeof( options ) );
+    options.sz = sizeof( options );
 #if !ROCKETNET_XDP_LEGACY_LIBBPF
     options.kernel_log_buf = verifier_log;
-    options.kernel_log_size = sizeof(verifier_log);
+    options.kernel_log_size = sizeof( verifier_log );
     options.kernel_log_level = 1;
 #endif
 
@@ -380,7 +408,7 @@ static bool load_filter( filter_t * filter, const char * path )
 static bool write_config( filter_t * filter, const uint8_t * ipv4, const uint8_t * ipv6 )
 {
     struct rocketnet_server_xdp_config_t config;
-    memset( &config, 0, sizeof(config) );
+    memset( &config, 0, sizeof( config ) );
     if ( ipv4 )
         memcpy( &config.public_address, ipv4, 4 );
     config.public_port = (uint16_t) ( ( server_port >> 8 ) | ( ( server_port & 0xFF ) << 8 ) );
@@ -399,15 +427,15 @@ static bool write_config( filter_t * filter, const uint8_t * ipv4, const uint8_t
 
 static void read_counters( filter_t * filter, uint64_t * counters )
 {
-    memset( counters, 0, NUM_COUNTER_SLOTS * sizeof(uint64_t) );
+    memset( counters, 0, NUM_COUNTER_SLOTS * sizeof( uint64_t ) );
     const int stride = ( filter->stats_value_bytes + 7 ) / 8 * 8;
-    uint8_t * values = (uint8_t*) calloc( (size_t) filter->num_cpus, (size_t) stride );
+    uint8_t * values = (uint8_t *) calloc( (size_t) filter->num_cpus, (size_t) stride );
     const __u32 key = 0;
     if ( values && bpf_map_lookup_elem( filter->stats_fd, &key, values ) == 0 )
     {
         for ( int cpu = 0; cpu < filter->num_cpus; cpu++ )
         {
-            const uint64_t * value = (const uint64_t*) ( values + cpu * stride );
+            const uint64_t * value = (const uint64_t *) ( values + cpu * stride );
             for ( int i = 0; i < NUM_COUNTER_SLOTS && i < filter->stats_value_bytes / 8; i++ )
                 counters[i] += value[i];
         }
@@ -419,12 +447,12 @@ static const char * verdict_name( int verdict )
 {
     switch ( verdict )
     {
-        case XDP_ABORTED:   return "XDP_ABORTED";
-        case XDP_DROP:      return "XDP_DROP";
-        case XDP_PASS:      return "XDP_PASS";
-        case XDP_TX:        return "XDP_TX";
-        case XDP_REDIRECT:  return "XDP_REDIRECT";
-        default:            return "XDP_?";
+        case XDP_ABORTED:  return "XDP_ABORTED";
+        case XDP_DROP:     return "XDP_DROP";
+        case XDP_PASS:     return "XDP_PASS";
+        case XDP_TX:       return "XDP_TX";
+        case XDP_REDIRECT: return "XDP_REDIRECT";
+        default:           return "XDP_?";
     }
 }
 
@@ -441,12 +469,12 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
 
     static uint8_t out[4096];
     struct bpf_test_run_opts options;
-    memset( &options, 0, sizeof(options) );
-    options.sz = sizeof(options);
+    memset( &options, 0, sizeof( options ) );
+    options.sz = sizeof( options );
     options.data_in = frame.data;
     options.data_size_in = (__u32) frame.size;
     options.data_out = out;
-    options.data_size_out = sizeof(out);
+    options.data_size_out = sizeof( out );
     options.repeat = 1;
 
     const int result = bpf_prog_test_run_opts( filter->program_fd, &options );
@@ -480,7 +508,7 @@ static bool run_frame( filter_t * filter, const char * label, const spec_t & spe
 
 // the cases
 
-typedef bool (*case_function_t)( filter_t * filter );
+typedef bool ( *case_function_t )( filter_t * filter );
 
 static bool ipv4_rocketnet_packet_redirects( filter_t * filter )
 {
@@ -527,21 +555,21 @@ static bool ipv6_extension_headers( filter_t * filter )
     const int passed = ROCKETNET_SERVER_XDP_COUNTER_PASSED_IPV6_EXTENSION;
     bool ok = write_config( filter, NULL, server_ipv6 );
     char label[96];
-    for ( int i = 0; i < (int) ( sizeof(headers) / sizeof(headers[0]) ); i++ )
+    for ( int i = 0; i < (int) ( sizeof( headers ) / sizeof( headers[0] ) ); i++ )
     {
         spec_t spec = spec_default( true );
         spec.next_header = headers[i];
-        snprintf( label, sizeof(label), "ipv6 %s header to the server", names[i] );
+        snprintf( label, sizeof( label ), "ipv6 %s header to the server", names[i] );
         ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
 
         spec.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
-        snprintf( label, sizeof(label), "ipv6 %s header to the server, oversize packet behind it", names[i] );
+        snprintf( label, sizeof( label ), "ipv6 %s header to the server, oversize packet behind it", names[i] );
         ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
 
         spec_t other = spec_default( true );
         other.next_header = headers[i];
         other.destination_port = 53;
-        snprintf( label, sizeof(label), "ipv6 %s header to another port", names[i] );
+        snprintf( label, sizeof( label ), "ipv6 %s header to another port", names[i] );
         ok &= run_frame( filter, label, other, XDP_PASS, passed );
     }
 
@@ -569,11 +597,11 @@ static bool ipv4_options( filter_t * filter )
     {
         spec_t spec = spec_default( false );
         spec.ipv4_ihl = ihl;
-        snprintf( label, sizeof(label), "ipv4 options (ihl %d) to the server", ihl );
+        snprintf( label, sizeof( label ), "ipv4 options (ihl %d) to the server", ihl );
         ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
 
         spec.destination_port = 53;
-        snprintf( label, sizeof(label), "ipv4 options (ihl %d) to another port", ihl );
+        snprintf( label, sizeof( label ), "ipv4 options (ihl %d) to another port", ihl );
         ok &= run_frame( filter, label, spec, XDP_PASS, NO_COUNTER );
     }
 
@@ -622,7 +650,7 @@ static spec_t fragment_spec( bool ipv6, int offset_units, bool more )
 static bool write_unconfigured( filter_t * filter )
 {
     struct rocketnet_server_xdp_config_t config;
-    memset( &config, 0, sizeof(config) );
+    memset( &config, 0, sizeof( config ) );
     const __u32 key = 0;
     return bpf_map_update_elem( filter->config_fd, &key, &config, BPF_ANY ) == 0;
 }
@@ -635,57 +663,57 @@ static bool fragment_rows( filter_t * filter, bool ipv6 )
     char label[160];
     bool ok = ipv6 ? write_config( filter, NULL, server_ipv6 ) : write_config( filter, server_ipv4, NULL );
 
-    snprintf( label, sizeof(label), "%s first fragment to the server", family );
+    snprintf( label, sizeof( label ), "%s first fragment to the server", family );
     ok &= run_frame( filter, label, fragment_spec( ipv6, 0, true ), XDP_DROP, dropped );
 
     spec_t wrong_epoch = fragment_spec( ipv6, 0, true );
     wrong_epoch.epoch = (uint8_t) ( filter_epoch + 1 );
-    snprintf( label, sizeof(label), "%s first fragment to the server, wrong epoch", family );
+    snprintf( label, sizeof( label ), "%s first fragment to the server, wrong epoch", family );
     ok &= run_frame( filter, label, wrong_epoch, XDP_DROP, dropped );
 
     spec_t wrong_filter = fragment_spec( ipv6, 0, true );
     wrong_filter.filter[0] ^= 0xFF;
-    snprintf( label, sizeof(label), "%s first fragment to the server, wrong filter value", family );
+    snprintf( label, sizeof( label ), "%s first fragment to the server, wrong filter value", family );
     ok &= run_frame( filter, label, wrong_filter, XDP_DROP, dropped );
 
     spec_t large = fragment_spec( ipv6, 0, true );
     large.packet_bytes = ROCKETNET_RECEIVE_CEILING + 1;
-    snprintf( label, sizeof(label), "%s first fragment to the server past the ceiling", family );
+    snprintf( label, sizeof( label ), "%s first fragment to the server past the ceiling", family );
     ok &= run_frame( filter, label, large, XDP_DROP, dropped );
 
-    snprintf( label, sizeof(label), "%s middle fragment to the server's port", family );
+    snprintf( label, sizeof( label ), "%s middle fragment to the server's port", family );
     ok &= run_frame( filter, label, fragment_spec( ipv6, 185, true ), XDP_PASS, passed );
 
-    snprintf( label, sizeof(label), "%s last fragment to the server's port", family );
+    snprintf( label, sizeof( label ), "%s last fragment to the server's port", family );
     ok &= run_frame( filter, label, fragment_spec( ipv6, 370, false ), XDP_PASS, passed );
 
     spec_t other_port = fragment_spec( ipv6, 0, true );
     other_port.destination_port = 53;
-    snprintf( label, sizeof(label), "%s first fragment to another port", family );
+    snprintf( label, sizeof( label ), "%s first fragment to another port", family );
     ok &= run_frame( filter, label, other_port, XDP_PASS, passed );
 
     spec_t middle_other = fragment_spec( ipv6, 185, true );
     middle_other.destination_port = 53;
-    snprintf( label, sizeof(label), "%s middle fragment to another port", family );
+    snprintf( label, sizeof( label ), "%s middle fragment to another port", family );
     ok &= run_frame( filter, label, middle_other, XDP_PASS, passed );
 
     spec_t other_address = fragment_spec( ipv6, 0, true );
     other_address.destination_address = ipv6 ? other_ipv6 : other_ipv4;
-    snprintf( label, sizeof(label), "%s first fragment to another address", family );
+    snprintf( label, sizeof( label ), "%s first fragment to another address", family );
     ok &= run_frame( filter, label, other_address, XDP_PASS, passed );
 
     spec_t cut = fragment_spec( ipv6, 0, true );
     cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ( ipv6 ? ROCKETNET_IPV6_HEADER_BYTES + 8 : ROCKETNET_IPV4_HEADER_BYTES ) + 7;
-    snprintf( label, sizeof(label), "%s first fragment, UDP header cut by the frame end", family );
+    snprintf( label, sizeof( label ), "%s first fragment, UDP header cut by the frame end", family );
     ok &= run_frame( filter, label, cut, XDP_PASS, passed );
 
-    snprintf( label, sizeof(label), "%s unfragmented packet to the server", family );
+    snprintf( label, sizeof( label ), "%s unfragmented packet to the server", family );
     spec_t whole = spec_default( ipv6 );
     whole.packet_bytes = 100;
     ok &= run_frame( filter, label, whole, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
 
     ok &= write_unconfigured( filter );
-    snprintf( label, sizeof(label), "%s first fragment to an unconfigured server", family );
+    snprintf( label, sizeof( label ), "%s first fragment to an unconfigured server", family );
     ok &= run_frame( filter, label, fragment_spec( ipv6, 0, true ), XDP_PASS, passed );
     return ok;
 }
@@ -697,7 +725,89 @@ static bool ipv4_fragments( filter_t * filter )
 
 static bool ipv6_fragments( filter_t * filter )
 {
-    return fragment_rows( filter, true );
+    bool ok = fragment_rows( filter, true );
+    const int dropped = ROCKETNET_SERVER_XDP_COUNTER_DROPPED_FIRST_FRAGMENT;
+    const int passed = ROCKETNET_SERVER_XDP_COUNTER_PASSED_FRAGMENT;
+    static const int headers[] = { IPV6_HOP_BY_HOP, IPV6_ROUTING, IPV6_DESTINATION_OPTIONS, IPV6_AH };
+    static const char * names[] = { "hop-by-hop", "routing", "destination options", "AH" };
+    char label[160];
+
+    ok &= write_config( filter, NULL, server_ipv6 );
+    for ( int i = 0; i < (int) ( sizeof( headers ) / sizeof( headers[0] ) ); i++ )
+    {
+        spec_t spec = fragment_spec( true, 0, true );
+        spec.ipv6_after_fragment[0] = headers[i];
+        spec.ipv6_after_fragment_count = 1;
+        snprintf( label, sizeof( label ), "ipv6 first fragment with %s to the server", names[i] );
+        ok &= run_frame( filter, label, spec, XDP_DROP, dropped );
+    }
+
+    spec_t chain = fragment_spec( true, 0, true );
+    chain.ipv6_after_fragment[0] = IPV6_HOP_BY_HOP;
+    chain.ipv6_after_fragment[1] = IPV6_DESTINATION_OPTIONS;
+    chain.ipv6_after_fragment[2] = IPV6_ROUTING;
+    chain.ipv6_after_fragment[3] = IPV6_AH;
+    chain.ipv6_after_fragment_count = 4;
+    ok &= run_frame( filter, "ipv6 first fragment with four extensions to the server", chain, XDP_DROP, dropped );
+
+    spec_t other_port = chain;
+    other_port.destination_port = 53;
+    ok &= run_frame( filter, "ipv6 first fragment with extensions to another port", other_port, XDP_PASS, passed );
+
+    spec_t other_address = chain;
+    other_address.destination_address = other_ipv6;
+    ok &= run_frame( filter, "ipv6 first fragment with extensions to another address", other_address, XDP_PASS, passed );
+
+    spec_t other_service = chain;
+    other_service.ipv6_after_fragment_next = IPV6_ICMPV6;
+    ok &= run_frame( filter, "ipv6 first fragment with extensions carrying ICMPv6", other_service, XDP_PASS, passed );
+
+    spec_t middle = chain;
+    middle.ipv6_fragment_field = ( 185 << 3 ) | 1;
+    ok &= run_frame( filter, "ipv6 middle fragment with extension-looking bytes", middle, XDP_PASS, passed );
+
+    spec_t atomic = chain;
+    atomic.ipv6_fragment_field = 0;
+    ok &= run_frame( filter, "ipv6 atomic fragment with extensions", atomic, XDP_PASS, passed );
+
+    spec_t esp = fragment_spec( true, 0, true );
+    esp.ipv6_after_fragment[0] = IPV6_ESP;
+    esp.ipv6_after_fragment_count = 1;
+    ok &= run_frame( filter, "ipv6 first fragment followed by ESP", esp, XDP_PASS, passed );
+
+    spec_t nested = fragment_spec( true, 0, true );
+    nested.ipv6_after_fragment[0] = IPV6_FRAGMENT;
+    nested.ipv6_after_fragment_count = 1;
+    ok &= run_frame( filter, "ipv6 first fragment followed by another fragment header", nested, XDP_PASS, passed );
+
+    spec_t fragment_cut = fragment_spec( true, 0, true );
+    fragment_cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + 7;
+    ok &= run_frame( filter, "ipv6 fragment header cut by the frame end", fragment_cut, XDP_PASS, passed );
+
+    spec_t extension_cut = fragment_spec( true, 0, true );
+    extension_cut.ipv6_after_fragment[0] = IPV6_HOP_BY_HOP;
+    extension_cut.ipv6_after_fragment_count = 1;
+    extension_cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + 8 + 1;
+    ok &= run_frame( filter, "ipv6 first fragment with its extension header cut", extension_cut, XDP_PASS, passed );
+
+    spec_t udp_cut = extension_cut;
+    udp_cut.truncate_to = ROCKETNET_ETHERNET_HEADER_BYTES + ROCKETNET_IPV6_HEADER_BYTES + 8 + 8 + 7;
+    ok &= run_frame( filter, "ipv6 first fragment with an extension and its UDP header cut", udp_cut, XDP_PASS, passed );
+
+    spec_t overlong = extension_cut;
+    overlong.truncate_to = -1;
+    overlong.ipv6_first_extension_length = 255;
+    ok &= run_frame( filter, "ipv6 first fragment with an extension length beyond the frame", overlong, XDP_PASS, passed );
+
+    spec_t walk_limit = fragment_spec( true, 0, true );
+    walk_limit.ipv6_after_fragment[0] = IPV6_HOP_BY_HOP;
+    walk_limit.ipv6_after_fragment[1] = IPV6_DESTINATION_OPTIONS;
+    walk_limit.ipv6_after_fragment[2] = IPV6_ROUTING;
+    walk_limit.ipv6_after_fragment[3] = IPV6_DESTINATION_OPTIONS;
+    walk_limit.ipv6_after_fragment[4] = IPV6_AH;
+    walk_limit.ipv6_after_fragment_count = 5;
+    ok &= run_frame( filter, "ipv6 first fragment with five extension headers", walk_limit, XDP_PASS, passed );
+    return ok;
 }
 
 static bool ipv6_wrong_address_passes( filter_t * filter )
@@ -782,35 +892,35 @@ static bool ipv6_same_drops_as_ipv4( filter_t * filter )
 
         spec_t too_small = spec_default( ipv6 );
         too_small.packet_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1;
-        snprintf( label, sizeof(label), "%s packet below the smallest type", name );
+        snprintf( label, sizeof( label ), "%s packet below the smallest type", name );
         ok &= run_frame( filter, label, too_small, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_TOO_SMALL );
 
         spec_t wrong_epoch = spec_default( ipv6 );
         wrong_epoch.epoch = filter_epoch + 1;
-        snprintf( label, sizeof(label), "%s wrong epoch", name );
+        snprintf( label, sizeof( label ), "%s wrong epoch", name );
         ok &= run_frame( filter, label, wrong_epoch, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_EPOCH );
 
         spec_t wrong_filter = spec_default( ipv6 );
         wrong_filter.filter[3] ^= 0x80;
-        snprintf( label, sizeof(label), "%s wrong filter value", name );
+        snprintf( label, sizeof( label ), "%s wrong filter value", name );
         ok &= run_frame( filter, label, wrong_filter, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_WRONG_FILTER );
 
         spec_t denied = spec_default( ipv6 );
         denied.packet_type = ROCKETNET_CONNECTION_DENIED_PACKET;
         denied.packet_bytes = ROCKETNET_CONNECTION_DENIED_WIRE_BYTES;
-        snprintf( label, sizeof(label), "%s server-to-client type", name );
+        snprintf( label, sizeof( label ), "%s server-to-client type", name );
         ok &= run_frame( filter, label, denied, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
 
         spec_t request_wrong_size = spec_default( ipv6 );
         request_wrong_size.packet_type = ROCKETNET_CONNECTION_REQUEST_PACKET;
         request_wrong_size.packet_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES - 1;
-        snprintf( label, sizeof(label), "%s connection request one byte short", name );
+        snprintf( label, sizeof( label ), "%s connection request one byte short", name );
         ok &= run_frame( filter, label, request_wrong_size, XDP_DROP, ROCKETNET_SERVER_XDP_COUNTER_DROPPED_INVALID_TYPE );
 
         spec_t request = spec_default( ipv6 );
         request.packet_type = ROCKETNET_CONNECTION_REQUEST_PACKET;
         request.packet_bytes = ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES;
-        snprintf( label, sizeof(label), "%s connection request at its exact size", name );
+        snprintf( label, sizeof( label ), "%s connection request at its exact size", name );
         ok &= run_frame( filter, label, request, XDP_REDIRECT, ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
     }
     return ok;
@@ -823,14 +933,14 @@ static bool config_layout_matches_header( filter_t * filter )
     struct bpf_map * config_map = bpf_object__find_map_by_name( filter->object, "server_xdp_config_map" );
     struct bpf_map * stats_map = bpf_object__find_map_by_name( filter->object, "server_xdp_stats_map" );
     bool ok = true;
-    if ( bpf_map__value_size( config_map ) != sizeof(struct rocketnet_server_xdp_config_t) )
+    if ( bpf_map__value_size( config_map ) != sizeof( struct rocketnet_server_xdp_config_t ) )
     {
-        printf( "  FAIL config map value is %u bytes, the header says %u\n", bpf_map__value_size( config_map ), (unsigned) sizeof(struct rocketnet_server_xdp_config_t) );
+        printf( "  FAIL config map value is %u bytes, the header says %u\n", bpf_map__value_size( config_map ), (unsigned) sizeof( struct rocketnet_server_xdp_config_t ) );
         ok = false;
     }
-    if ( bpf_map__value_size( stats_map ) != sizeof(struct rocketnet_server_xdp_stats_t) )
+    if ( bpf_map__value_size( stats_map ) != sizeof( struct rocketnet_server_xdp_stats_t ) )
     {
-        printf( "  FAIL stats map value is %u bytes, the header says %u\n", bpf_map__value_size( stats_map ), (unsigned) sizeof(struct rocketnet_server_xdp_stats_t) );
+        printf( "  FAIL stats map value is %u bytes, the header says %u\n", bpf_map__value_size( stats_map ), (unsigned) sizeof( struct rocketnet_server_xdp_stats_t ) );
         ok = false;
     }
     return ok;
@@ -855,7 +965,7 @@ static int replay_map_fd( filter_t * filter )
 static struct rocketnet_server_xdp_replay_key_t replay_client_key( bool ipv6, uint16_t port )
 {
     struct rocketnet_address_t address;
-    memset( &address, 0, sizeof(address) );
+    memset( &address, 0, sizeof( address ) );
     if ( !ipv6 )
     {
         address.type = ROCKETNET_ADDRESS_IPV4;
@@ -891,7 +1001,7 @@ static bool replay_write( int fd, bool ipv6, uint32_t high_water )
 {
     const struct rocketnet_server_xdp_replay_key_t key = replay_client_key( ipv6, client_port );
     struct rocketnet_server_xdp_replay_value_t value;
-    memset( &value, 0, sizeof(value) );
+    memset( &value, 0, sizeof( value ) );
     value.high_water = high_water;
     if ( bpf_map_update_elem( fd, &key, &value, BPF_ANY ) != 0 )
     {
@@ -904,9 +1014,9 @@ static bool replay_write( int fd, bool ipv6, uint32_t high_water )
 static bool replay_is_session_type( uint8_t type )
 {
     return type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET ||
-           type == ROCKETNET_CONNECTION_PAYLOAD_PACKET    ||
+           type == ROCKETNET_CONNECTION_PAYLOAD_PACKET ||
            type == ROCKETNET_CONNECTION_DISCONNECT_PACKET ||
-           type == ROCKETNET_CONNECTION_ACK_PACKET        ||
+           type == ROCKETNET_CONNECTION_ACK_PACKET ||
            type == ROCKETNET_CONNECTION_FRAGMENT_PACKET;
 }
 
@@ -923,8 +1033,8 @@ struct replay_row_t
 static replay_row_t replay_row( const char * label, bool ipv6, uint8_t type, uint32_t sequence, uint32_t high_water, bool drops )
 {
     replay_row_t row;
-    memset( &row, 0, sizeof(row) );
-    snprintf( row.label, sizeof(row.label), "%s %s", ipv6 ? "ipv6" : "ipv4", label );
+    memset( &row, 0, sizeof( row ) );
+    snprintf( row.label, sizeof( row.label ), "%s %s", ipv6 ? "ipv6" : "ipv4", label );
     row.spec = spec_default( ipv6 );
     row.spec.packet_type = type;
     row.spec.packet_bytes = 100;
@@ -1047,7 +1157,7 @@ static bool replay_never_writes_the_map( filter_t * filter )
         const bool checked = replay_is_session_type( spec.packet_type ) && spec.source_port == client_port;
         const bool behind = checked && (int32_t) ( replay_high_water - spec.sequence ) >= ROCKETNET_XDP_REPLAY_WINDOW;
         char label[96];
-        snprintf( label, sizeof(label), "%s frame %d, type %d, sequence 0x%08x, entry at %u",
+        snprintf( label, sizeof( label ), "%s frame %d, type %d, sequence 0x%08x, entry at %u",
                   spec.ipv6 ? "ipv6" : "ipv4", (int) i, spec.packet_type, spec.sequence, replay_high_water );
         ok &= run_frame( filter, label, spec, behind ? XDP_DROP : XDP_REDIRECT,
                          behind ? ROCKETNET_SERVER_XDP_COUNTER_DROPPED_REPLAYED : ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED );
@@ -1058,7 +1168,7 @@ static bool replay_never_writes_the_map( filter_t * filter )
     {
         const struct rocketnet_server_xdp_replay_key_t key = replay_client_key( family == 1, client_port );
         struct rocketnet_server_xdp_replay_value_t value;
-        memset( &value, 0, sizeof(value) );
+        memset( &value, 0, sizeof( value ) );
         if ( bpf_map_lookup_elem( fd, &key, &value ) != 0 )
         {
             printf( "  FAIL the ipv%d entry is gone: %s\n", family == 1 ? 6 : 4, strerror( errno ) );
@@ -1079,7 +1189,7 @@ static bool replay_never_writes_the_map( filter_t * filter )
     while ( result == 0 )
     {
         keys++;
-        if ( memcmp( &key, &written[0], sizeof(key) ) != 0 && memcmp( &key, &written[1], sizeof(key) ) != 0 )
+        if ( memcmp( &key, &written[0], sizeof( key ) ) != 0 && memcmp( &key, &written[1], sizeof( key ) ) != 0 )
         {
             printf( "  FAIL the map holds a key the test did not write (family %d)\n", key.family );
             ok = false;
@@ -1109,14 +1219,14 @@ static bool replay_key_layout_matches_header( filter_t * filter )
         return false;
     }
     bool ok = true;
-    if ( bpf_map__key_size( replay_map ) != sizeof(struct rocketnet_server_xdp_replay_key_t) )
+    if ( bpf_map__key_size( replay_map ) != sizeof( struct rocketnet_server_xdp_replay_key_t ) )
     {
-        printf( "  FAIL replay map key is %u bytes, the header says %u\n", bpf_map__key_size( replay_map ), (unsigned) sizeof(struct rocketnet_server_xdp_replay_key_t) );
+        printf( "  FAIL replay map key is %u bytes, the header says %u\n", bpf_map__key_size( replay_map ), (unsigned) sizeof( struct rocketnet_server_xdp_replay_key_t ) );
         ok = false;
     }
-    if ( bpf_map__value_size( replay_map ) != sizeof(struct rocketnet_server_xdp_replay_value_t) )
+    if ( bpf_map__value_size( replay_map ) != sizeof( struct rocketnet_server_xdp_replay_value_t ) )
     {
-        printf( "  FAIL replay map value is %u bytes, the header says %u\n", bpf_map__value_size( replay_map ), (unsigned) sizeof(struct rocketnet_server_xdp_replay_value_t) );
+        printf( "  FAIL replay map value is %u bytes, the header says %u\n", bpf_map__value_size( replay_map ), (unsigned) sizeof( struct rocketnet_server_xdp_replay_value_t ) );
         ok = false;
     }
     return ok;
@@ -1134,7 +1244,7 @@ static bool inside_virtme_guest()
     if ( !file )
         return false;
     char line[4096];
-    const bool read = fgets( line, sizeof(line), file ) != NULL;
+    const bool read = fgets( line, sizeof( line ), file ) != NULL;
     fclose( file );
     return read && strstr( line, "virtme" ) != NULL;
 }
@@ -1169,7 +1279,7 @@ static bool xsk_raw_bind( int ifindex, const struct xsk_socket_config & config, 
     }
 
     struct xdp_umem_reg reg;
-    memset( &reg, 0, sizeof(reg) );
+    memset( &reg, 0, sizeof( reg ) );
     reg.addr = (uint64_t) (uintptr_t) area;
     reg.len = frame_size * frames;
     reg.chunk_size = (uint32_t) frame_size;
@@ -1178,11 +1288,11 @@ static bool xsk_raw_bind( int ifindex, const struct xsk_socket_config & config, 
     const int fill_size = ring_size, complete_size = ring_size;
     const int rx_size = (int) config.rx_size, tx_size = (int) config.tx_size;
 
-    if ( setsockopt( fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof(reg) ) != 0 ||
-         setsockopt( fd, SOL_XDP, XDP_UMEM_FILL_RING, &fill_size, sizeof(fill_size) ) != 0 ||
-         setsockopt( fd, SOL_XDP, XDP_UMEM_COMPLETION_RING, &complete_size, sizeof(complete_size) ) != 0 ||
-         setsockopt( fd, SOL_XDP, XDP_RX_RING, &rx_size, sizeof(rx_size) ) != 0 ||
-         setsockopt( fd, SOL_XDP, XDP_TX_RING, &tx_size, sizeof(tx_size) ) != 0 )
+    if ( setsockopt( fd, SOL_XDP, XDP_UMEM_REG, &reg, sizeof( reg ) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_UMEM_FILL_RING, &fill_size, sizeof( fill_size ) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_UMEM_COMPLETION_RING, &complete_size, sizeof( complete_size ) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_RX_RING, &rx_size, sizeof( rx_size ) ) != 0 ||
+         setsockopt( fd, SOL_XDP, XDP_TX_RING, &tx_size, sizeof( tx_size ) ) != 0 )
     {
         *errno_out = errno;
         printf( "  socket setup refused: %s\n", strerror( *errno_out ) );
@@ -1190,21 +1300,21 @@ static bool xsk_raw_bind( int ifindex, const struct xsk_socket_config & config, 
     else
     {
         struct sockaddr_xdp address;
-        memset( &address, 0, sizeof(address) );
+        memset( &address, 0, sizeof( address ) );
         address.sxdp_family = AF_XDP;
         address.sxdp_ifindex = (uint32_t) ifindex;
         address.sxdp_queue_id = 0;
         address.sxdp_flags = config.bind_flags;
 
-        if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) != 0 )
+        if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) != 0 )
         {
             *errno_out = errno;
         }
         else
         {
             struct xdp_options options;
-            memset( &options, 0, sizeof(options) );
-            socklen_t length = sizeof(options);
+            memset( &options, 0, sizeof( options ) );
+            socklen_t length = sizeof( options );
             if ( getsockopt( fd, SOL_XDP, XDP_OPTIONS, &options, &length ) != 0 )
             {
                 *errno_out = errno;
@@ -1282,7 +1392,7 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
     // a failed add means the pair is not ours (the name may already be taken), so nothing is removed
 
     char command[256];
-    snprintf( command, sizeof(command), "ip link add %s type veth peer name %s", zc_veth, zc_veth_far );
+    snprintf( command, sizeof( command ), "ip link add %s type veth peer name %s", zc_veth, zc_veth_far );
     if ( system( command ) != 0 )
     {
         printf( "  could not create the veth pair %s/%s; nothing removed\n", zc_veth, zc_veth_far );
@@ -1291,7 +1401,7 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 
     // from here the pair is ours and is removed on every exit path
 
-    snprintf( command, sizeof(command), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_far );
+    snprintf( command, sizeof( command ), "ip link set %s up && ip link set %s up", zc_veth, zc_veth_far );
     const bool up = system( command ) == 0;
     if ( !up )
         printf( "  could not bring up the veth pair %s/%s\n", zc_veth, zc_veth_far );
@@ -1300,7 +1410,7 @@ static bool xsk_bind_falls_back_to_copy( filter_t * )
 
     // deleting one end removes the pair
 
-    snprintf( command, sizeof(command), "ip link del %s", zc_veth );
+    snprintf( command, sizeof( command ), "ip link del %s", zc_veth );
     const bool removed = system( command ) == 0;
     if ( !removed )
         printf( "  could not remove the veth pair %s/%s\n", zc_veth, zc_veth_far );
@@ -1373,9 +1483,9 @@ static pid_t onlink_spawn( const char * program, const char * argument, const ch
     // the case connects one client: a message object sized for the default
     // 1000 clients does not fit the guest (server.c:872, :925)
     if ( xdp_server )
-        execl( program, program, argument, "--max-clients", ONLINK_MAX_CLIENTS, (char*) NULL );
+        execl( program, program, argument, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
     else
-        execl( program, program, argument, (char*) NULL );
+        execl( program, program, argument, (char *) NULL );
     _exit( 127 );
 }
 
@@ -1402,7 +1512,7 @@ static bool onlink_log_has( const char * path, const char * text )
         return false;
     char line[1024];
     bool found = false;
-    while ( !found && fgets( line, sizeof(line), file ) )
+    while ( !found && fgets( line, sizeof( line ), file ) )
         found = strstr( line, text ) != NULL;
     fclose( file );
     return found;
@@ -1411,7 +1521,7 @@ static bool onlink_log_has( const char * path, const char * text )
 static void onlink_print_tail( const char * label, const char * path )
 {
     char command[512];
-    snprintf( command, sizeof(command), "tail -5 %s | sed 's/^/    %s: /'", path, label );
+    snprintf( command, sizeof( command ), "tail -5 %s | sed 's/^/    %s: /'", path, label );
     if ( system( command ) != 0 )
         printf( "    %s: no log\n", label );
 }
@@ -1463,7 +1573,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
     }
 
     char exe[4096];
-    const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof(exe) - 1 );
+    const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof( exe ) - 1 );
     if ( exe_bytes <= 0 )
         return false;
     exe[exe_bytes] = '\0';
@@ -1472,8 +1582,8 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         return false;
     *slash = '\0';
     char server_path[4200], client_path[4200];
-    snprintf( server_path, sizeof(server_path), "%s/server", exe );
-    snprintf( client_path, sizeof(client_path), "%s/client", exe );
+    snprintf( server_path, sizeof( server_path ), "%s/server", exe );
+    snprintf( client_path, sizeof( client_path ), "%s/client", exe );
 
     onlink_environment_t environment;
 
@@ -1530,8 +1640,8 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
             return false;
         const int probe = socket( AF_INET, SOCK_DGRAM, 0 );
         struct ifreq ifr;
-        memset( &ifr, 0, sizeof(ifr) );
-        strncpy( ifr.ifr_name, ONLINK_FAR, sizeof(ifr.ifr_name) - 1 );
+        memset( &ifr, 0, sizeof( ifr ) );
+        strncpy( ifr.ifr_name, ONLINK_FAR, sizeof( ifr.ifr_name ) - 1 );
         const bool have_mac = probe >= 0 && ioctl( probe, SIOCGIFHWADDR, &ifr ) == 0;
         if ( have_mac )
             memcpy( client_mac, ifr.ifr_hwaddr.sa_data, 6 );
@@ -1542,11 +1652,11 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         if ( environment.capture_fd >= 0 )
         {
             struct sockaddr_ll bind_address;
-            memset( &bind_address, 0, sizeof(bind_address) );
+            memset( &bind_address, 0, sizeof( bind_address ) );
             bind_address.sll_family = AF_PACKET;
             bind_address.sll_protocol = htons( ETH_P_IP );
             bind_address.sll_ifindex = client_ifindex;
-            if ( bind( environment.capture_fd, (struct sockaddr*) &bind_address, sizeof(bind_address) ) != 0 )
+            if ( bind( environment.capture_fd, (struct sockaddr *) &bind_address, sizeof( bind_address ) ) != 0 )
             {
                 close( environment.capture_fd );
                 environment.capture_fd = -1;
@@ -1589,7 +1699,7 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         if ( poll( &fds, 1, 100 ) <= 0 )
             continue;
         uint8_t frame[2048];
-        const ssize_t bytes = recv( environment.capture_fd, frame, sizeof(frame), 0 );
+        const ssize_t bytes = recv( environment.capture_fd, frame, sizeof( frame ), 0 );
         if ( bytes < 14 + 20 + 8 )
             continue;
         if ( frame[12] != 0x08 || frame[13] != 0x00 || frame[23] != IP_UDP )
@@ -1607,8 +1717,8 @@ static bool xdp_on_link_reply_reaches_the_client( filter_t * )
         {
             if ( frames_elsewhere == 0 )
                 printf( "  FAIL a reply went to %02x:%02x:%02x:%02x:%02x:%02x, not the client's %02x:%02x:%02x:%02x:%02x:%02x\n",
-                    frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
-                    client_mac[0], client_mac[1], client_mac[2], client_mac[3], client_mac[4], client_mac[5] );
+                        frame[0], frame[1], frame[2], frame[3], frame[4], frame[5],
+                        client_mac[0], client_mac[1], client_mac[2], client_mac[3], client_mac[4], client_mac[5] );
             frames_elsewhere++;
         }
     }
@@ -1674,7 +1784,7 @@ static int isolated_cpu_count()
     if ( !file )
         return 0;
     char line[1024];
-    const bool read = fgets( line, sizeof(line), file ) != NULL;
+    const bool read = fgets( line, sizeof( line ), file ) != NULL;
     fclose( file );
     if ( !read )
         return 0;
@@ -1715,7 +1825,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
     }
 
     char exe[4096];
-    const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof(exe) - 1 );
+    const ssize_t exe_bytes = readlink( "/proc/self/exe", exe, sizeof( exe ) - 1 );
     if ( exe_bytes <= 0 )
         return false;
     exe[exe_bytes] = '\0';
@@ -1724,7 +1834,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
         return false;
     *slash = '\0';
     char server_path[4200];
-    snprintf( server_path, sizeof(server_path), "%s/server", exe );
+    snprintf( server_path, sizeof( server_path ), "%s/server", exe );
 
     char server_log[64] = "/tmp/rocketnet_teardown_server_XXXXXX";
     {
@@ -1774,7 +1884,7 @@ static bool xdp_create_fails_part_way_tears_down( filter_t * )
             setenv( "ROCKETNET_SERVER_NUM_XDP_QUEUES", "2", 1 );
             setenv( "ROCKETNET_SERVER_NUM_OS_CPUS", "2", 1 );
             setenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", "1", 1 );
-            execl( server_path, server_path, TEARDOWN_SERVER_ADDRESS, "--max-clients", ONLINK_MAX_CLIENTS, (char*) NULL );
+            execl( server_path, server_path, TEARDOWN_SERVER_ADDRESS, "--max-clients", ONLINK_MAX_CLIENTS, (char *) NULL );
             _exit( 127 );
         }
         if ( pid < 0 )
@@ -1841,8 +1951,7 @@ struct case_t
     case_function_t function;
 };
 
-static const case_t cases[] =
-{
+static const case_t cases[] = {
     { "ipv4_rocketnet_packet_redirects", ipv4_rocketnet_packet_redirects },
     { "ipv6_rocketnet_packet_redirects", ipv6_rocketnet_packet_redirects },
     { "ipv6_extension_headers", ipv6_extension_headers },
@@ -1883,7 +1992,7 @@ int main( int argc, char ** argv )
 
     if ( show_verifier )
     {
-        const size_t length = strnlen( verifier_log, sizeof(verifier_log) );
+        const size_t length = strnlen( verifier_log, sizeof( verifier_log ) );
         size_t end = length;
         while ( end > 0 && ( verifier_log[end - 1] == '\n' || verifier_log[end - 1] == ' ' ) )
             end--;
@@ -1895,7 +2004,7 @@ int main( int argc, char ** argv )
 
     int failed = 0;
     int skipped = 0;
-    for ( int i = 0; i < (int) ( sizeof(cases) / sizeof(cases[0]) ); i++ )
+    for ( int i = 0; i < (int) ( sizeof( cases ) / sizeof( cases[0] ) ); i++ )
     {
         case_skip_reason = NULL;
         const bool ok = cases[i].function( &filter );
@@ -1914,11 +2023,11 @@ int main( int argc, char ** argv )
 
     if ( failed )
     {
-        printf( "%d of %d cases failed\n", failed, (int) ( sizeof(cases) / sizeof(cases[0]) ) );
+        printf( "%d of %d cases failed\n", failed, (int) ( sizeof( cases ) / sizeof( cases[0] ) ) );
         return 1;
     }
 
-    const int total = (int) ( sizeof(cases) / sizeof(cases[0]) );
+    const int total = (int) ( sizeof( cases ) / sizeof( cases[0] ) );
     if ( skipped )
         printf( "test_xdp_filter: %d cases passed, %d skipped\n", total - skipped, skipped );
     else

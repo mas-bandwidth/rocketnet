@@ -1,10 +1,23 @@
-# CBMC proofs of the arithmetic leaves that finish, on pull requests that
-# touch the sdk. The job budget is five minutes. This workflow runs the
-# default target only. It does not run slow-unproved.
+# CBMC proofs of the arithmetic leaves that finish, on every push to main
+# (main advances by land merges and never receives pull requests, so a
+# pull_request-only trigger never fires there) and on pull requests that
+# touch the sdk. This workflow runs the default target only. It does not
+# run slow-unproved; replay-near-4096 runs nightly (nightly-proofs.yml).
+#
+# Budget: `make -C proofs/cbmc all` measured 685.59s (11:25.59) on the
+# fleet Linux runner (vision, self-hosted Linux X64 fleet) at d5dd954f in
+# proofs/cbmc/full-bounds-partition-results.md. timeout-minutes is set
+# above that measurement with margin and is never lowered below it.
 
 name: CBMC
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - 'sdk/**'
+      - 'proofs/cbmc/**'
+      - '.github/workflows/cbmc.yml'
   pull_request:
     paths:
       - 'sdk/**'
@@ -27,19 +40,27 @@ jobs:
   cbmc:
     name: cbmc (arithmetic leaf proofs)
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check the pinned CBMC is present
+      - name: Check the pinned tools are present
         shell: bash
         run: |
           set -euo pipefail
-          if ! command -v cbmc >/dev/null 2>&1; then
-            echo "TOOL-MISSING cbmc (any) (missing) on $RUNNER_NAME"
-            exit 1
-          fi
-          cbmc --version
+          pin() { awk -v k="$1" '$1==k {print $2}' proofs/cbmc/TOOL-VERSIONS; }
+          check() {
+            local tool="$1" want="$2" got
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool $want (missing) on $RUNNER_NAME"; exit 1
+            fi
+            got="$("$tool" --version 2>&1 | head -1)"
+            echo "$tool: $got (pinned $want)"
+            case "$got" in *"$want"*) ;; *) echo "TOOL-MISSING $tool $want (got: $got) on $RUNNER_NAME"; exit 1;; esac
+          }
+          check cbmc "$(pin CBMC)"
+          check cadical "$(pin CADICAL)"
+          check esbmc "$(pin ESBMC)"
 
       - name: Run the CBMC proofs
         run: make -C proofs/cbmc

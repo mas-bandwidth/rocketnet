@@ -26,8 +26,8 @@
 #                    table (header row, separator row, then one row per
 #                    area), for a CI job summary; $GITHUB_STEP_SUMMARY in a
 #                    workflow. Empty/unset by default (no summary written).
-#   SLOT             a command prefix for the heavy steps, e.g. the studio's
-#                    studio-slot.sh (default empty)
+#   SLOT             a command prefix for the heavy steps, e.g. a bench's
+#                    slot-lock script (default empty)
 #   LLVM_PROFDATA / LLVM_COV   the tools (default xcrun's on macOS, else
 #                    llvm-profdata / llvm-cov on PATH)
 #

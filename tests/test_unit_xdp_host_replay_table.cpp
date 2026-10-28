@@ -19,14 +19,14 @@
 #include "../sdk/rocketnet_xdp_limits.h"
 #include "../sdk/rocketnet_xdp_replay_marks.h"
 
-#if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#if defined( ROCKETNET_XDP_FILTER_HOST ) && ROCKETNET_XDP_FILTER_HOST
 
 #include "xdp_host/server_xdp_host.h"
 
 static struct rocketnet_address_t replay_table_ipv4_bytes( const uint8_t bytes[4], uint16_t port )
 {
     struct rocketnet_address_t a;
-    memset( &a, 0, sizeof(a) );
+    memset( &a, 0, sizeof( a ) );
     a.type = ROCKETNET_ADDRESS_IPV4;
     memcpy( a.data.ipv4, bytes, 4 );
     a.port = port;
@@ -36,7 +36,7 @@ static struct rocketnet_address_t replay_table_ipv4_bytes( const uint8_t bytes[4
 static struct rocketnet_address_t replay_table_ipv6( uint16_t port )
 {
     struct rocketnet_address_t a;
-    memset( &a, 0, sizeof(a) );
+    memset( &a, 0, sizeof( a ) );
     a.type = ROCKETNET_ADDRESS_IPV6;
     a.data.ipv6[0] = 0x2001;
     a.data.ipv6[1] = 0x0db8;
@@ -154,4 +154,4 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
 
 REGISTER_UNIT_TEST( test_xdp_transport_host_replay_table_set_get_reset );
 
-#endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST && defined(__linux__)
+#endif // #if defined(ROCKETNET_XDP_FILTER_HOST) && ROCKETNET_XDP_FILTER_HOST

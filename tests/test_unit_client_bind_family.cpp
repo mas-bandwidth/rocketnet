@@ -84,11 +84,11 @@ static void test_client_bind_family_ipv6_server()
 static void test_client_pick_server_address_by_host_capability()
 {
     struct rocketnet_signed_connect_data_t token;
-    memset( &token, 0, sizeof(token) );
+    memset( &token, 0, sizeof( token ) );
     const uint8_t loopback_ipv4[6] = { 127, 0, 0, 1, 0x40, 0x9c };
-    const uint8_t loopback_ipv6[18] = { 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0x01,0x00, 0x40,0x9c };
-    memcpy( token.ipv4_address, loopback_ipv4, sizeof(loopback_ipv4) );
-    memcpy( token.ipv6_address, loopback_ipv6, sizeof(loopback_ipv6) );
+    const uint8_t loopback_ipv6[18] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x00, 0x40, 0x9c };
+    memcpy( token.ipv4_address, loopback_ipv4, sizeof( loopback_ipv4 ) );
+    memcpy( token.ipv6_address, loopback_ipv6, sizeof( loopback_ipv6 ) );
 
     struct rocketnet_address_t ipv4_expected;
     struct rocketnet_address_t ipv6_expected;
@@ -149,6 +149,7 @@ REGISTER_UNIT_TEST( test_client_pick_server_address_by_host_capability );
 // the token's timeout. A late cookie from the IPv6 server is dropped and
 // counted as a foreign source.
 
+#if ROCKETNET_DEV
 struct bind_family_clock_t
 {
     double now;
@@ -164,7 +165,7 @@ static const int32_t bind_family_timeout_seconds = 5;
 static void bind_family_mint_both( uint8_t * token_data )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -179,7 +180,7 @@ static void bind_family_mint_both( uint8_t * token_data )
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -191,8 +192,8 @@ static void bind_family_mint_both( uint8_t * token_data )
 
 static void bind_family_server_setup( struct rocketnet_server_protocol_t * server, struct rocketnet_counters_t * counters )
 {
-    memset( server, 0, sizeof(*server) );
-    memset( counters, 0, sizeof(*counters) );
+    memset( server, 0, sizeof( *server ) );
+    memset( counters, 0, sizeof( *counters ) );
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -302,11 +303,14 @@ static void test_client_connect_keeps_the_family_that_answers()
             rocketnet_unit_check( to_ipv6 || to_ipv4 );
             if ( datagram->bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES && datagram->data[0] == ROCKETNET_CONNECTION_REQUEST_PACKET )
             {
-                if ( to_ipv6 ) requests_to_ipv6++;
+                if ( to_ipv6 )
+                    requests_to_ipv6++;
                 if ( bind_family_request_carries_cookie( datagram ) )
                 {
-                    if ( to_ipv6 ) cookie_requests_to_ipv6++;
-                    if ( to_ipv4 ) cookie_requests_to_ipv4++;
+                    if ( to_ipv6 )
+                        cookie_requests_to_ipv6++;
+                    if ( to_ipv4 )
+                        cookie_requests_to_ipv4++;
                 }
             }
             if ( destroys_at_commit >= 0 && to_ipv6 )
@@ -372,3 +376,4 @@ static void test_client_connect_keeps_the_family_that_answers()
 }
 
 REGISTER_UNIT_TEST( test_client_connect_keeps_the_family_that_answers );
+#endif // #if ROCKETNET_DEV

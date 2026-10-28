@@ -4,22 +4,82 @@
 */
 
 // The public light-client profile, pinned. A 1000-slot server and a client
-// size their create blocks within the figures USAGE.md records, and both
+// report lifecycle peaks within the figures USAGE.md records, and both
 // endpoints create and destroy on the profile without opening a socket.
 
 #include "test_unit_registry.h"
 #include "rocketnet.h"
 
 #include <stddef.h>
+#include <stdio.h>
 
 #define check rocketnet_unit_check
 
-// USAGE.md "Server memory footprint" and docs/LOAD.md record these exact
-// figures, measured with rocketnet_server_required_memory at max_clients
-// 1000 and rocketnet_client_required_memory under the profile. The bound
-// is that figure; the check is at most.
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 955710336 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 3063168 )
+// USAGE.md "Server memory footprint" and docs/LOAD.md record these figures.
+// required_memory is the lifecycle peak the caller's allocator sees (create,
+// connect or start, stop or disconnect, again, destroy) for the largest
+// transport the default ladder can grant, so it differs by platform and by
+// ROCKETNET_DEV (a development endpoint also owns its link simulator). Each
+// bound is the figure this test read, Release, for
+// rocketnet_server_required_memory at max_clients 1000 and
+// rocketnet_client_required_memory under the profile: on Linux x86-64 with
+// io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
+// host whose ladder grants fewer transports reports less; the check is at
+// most.
+#if defined( _WIN32 )
+// Windows adds, on the server, over the figures before them: the TX banks
+// sized at 16 packets per client (3 banks x 15,000 more packets x 1500 bytes
+// at 1000 clients: 67,500,000) and 231 bytes of the send handoff's per-path
+// drop counts and allocation rounding. Its sockets keep no per-errno send
+// counts, so the client figures are unchanged.
+// Re-measured 2026-10-27 on a Windows x64 host, Windows x64, MSVC 19.51.36260, Release.
+// DEV ON server was 1591206044, now 1603276694. DEV ON client was 22968879,
+// now 22967743. DEV OFF server was 1584809680, now 1596895498. DEV OFF client
+// was 22183075, now 22182883. A production build refuses the published test
+// filter and required_memory then returns 0, so the DEV OFF peaks were read
+// with a non-test filter on the light config. The filter is not sized.
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603276694 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22967743 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
+#endif
+#elif defined( __APPLE__ )
+// macOS adds, over the figures before them: per socket, the send failure
+// counts by call and errno (3 calls x 13 kinds x 8 bytes, plus the first
+// other errno: 320 bytes; the client opens 2 sockets, so 640); on the server,
+// the TX banks sized at 16 packets per client (3 banks x 15,000 more packets
+// x 1500 bytes at 1000 clients: 67,500,000), its socket's 320 bytes, and 231
+// bytes of the send handoff's per-path drop counts and allocation rounding.
+// Re-measured 2026-10-27 on macOS arm64 (studio.local), Release, clang 21,
+// ROCKETNET_DEV=ON, after merging origin/main (descriptor 80 bytes with
+// span_next plus schedule ticket/epoch): server was 1591206436, now
+// 1603277086 (grew by 12070650). Generation, owner epoch, enqueue ticket
+// and hole bound 64 stayed.
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603277086 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22746605 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
+#endif
+#else
+// Re-measured 2026-10-27 on hetzner2, Release, clang++ 18.1.3,
+// ROCKETNET_DEV=ON, head d00cf56e517dad7477ce41059d48e276c95aa970.
+// Server was 3238578316 (now 3243578316, grew by 5000000).
+// Client was 22890053 (now 22895109, grew by 5056).
+// Generation, owner epoch, enqueue ticket and hole bound 64 stayed.
+// The non-dev figures below were not re-measured: this file is not linked
+// when ROCKETNET_DEV=OFF.
+#if ROCKETNET_DEV
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3243578316ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22895109 )
+#else
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )
+#endif
+#endif
 
 static void light_message_fields_server( const struct rocketnet_server_config_t * config )
 {
@@ -68,6 +128,8 @@ static void test_light_profile_server_1000_required_memory()
     config.max_clients = 1000;
     const size_t bytes = rocketnet_server_required_memory( &config );
     check( bytes > 0 );
+    if ( bytes != LIGHT_SERVER_1000_MAX_BYTES )
+        printf( "light server lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_SERVER_1000_MAX_BYTES );
     check( bytes <= LIGHT_SERVER_1000_MAX_BYTES );
 }
 
@@ -82,6 +144,8 @@ static void test_light_profile_client_required_memory()
 
     const size_t bytes = rocketnet_client_required_memory( &config );
     check( bytes > 0 );
+    if ( bytes != LIGHT_CLIENT_MAX_BYTES )
+        printf( "light client lifecycle bytes: actual=%zu expected=%zu\n", bytes, LIGHT_CLIENT_MAX_BYTES );
     check( bytes <= LIGHT_CLIENT_MAX_BYTES );
 }
 

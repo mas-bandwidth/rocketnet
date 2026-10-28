@@ -66,7 +66,9 @@ static uint8_t rocketnet_ordered_byte( int message, int offset )
 static void rocketnet_ordered_fill( uint8_t * data, int message, int bytes )
 {
     for ( int i = 0; i < bytes; i++ )
+    {
         data[i] = rocketnet_ordered_byte( message, i );
+    }
 }
 
 static float rocketnet_ordered_loss_percent( void )
@@ -97,9 +99,9 @@ struct rocketnet_ordered_measurement_t
 };
 
 static void rocketnet_ordered_print_measurement( const char * name,
-                                                  const rocketnet_ordered_measurement_t * m,
-                                                  int client_to_server,
-                                                  const char * reason )
+                                                 const rocketnet_ordered_measurement_t * m,
+                                                 int client_to_server,
+                                                 const char * reason )
 {
     printf( "%s: %s delivered=%d/%d completion_ms=%.1f resends=%llu wire_to_server=%lld wire_to_client=%lld payload_bytes=%llu budget_min_ms=%.1f factor=%.3f\n",
             name, reason, m->delivered, rocketnet_ordered_message_count,
@@ -112,13 +114,18 @@ static void rocketnet_ordered_print_measurement( const char * name,
     {
         int bins[8] = { 0 };
         const double limits[7] = { 0.050, 0.100, 0.250, 0.500, 1.0, 2.0, 5.0 };
+
         for ( int i = 0; i < m->delivered; i++ )
         {
             int bin = 0;
             while ( bin < 7 && m->latency_seconds[i] >= limits[bin] )
+            {
                 bin++;
+            }
+
             bins[bin]++;
         }
+
         printf( "latency_histogram_ms<50:%d,50-100:%d,100-250:%d,250-500:%d,500-1000:%d,1000-2000:%d,2000-5000:%d,>=5000:%d direction=%s\n",
                 bins[0], bins[1], bins[2], bins[3], bins[4], bins[5], bins[6], bins[7],
                 client_to_server ? "client_to_server" : "server_to_client" );
@@ -172,18 +179,23 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
         return 0;
     }
 
-    // A 50 ms base delay plus [0, 50 ms] jitter permits at most 50 ms skew.
+    // A 50 ms base delay plus [0, 50 ms] jitter permits at most 50 ms skew
+
     rocketnet_channel_harness_set_link( &h, 0.050, 0.050, rocketnet_ordered_loss_percent(), 5.0f );
 
     uint8_t payload[262144];
     double send_time[64] = { 0 };
     rocketnet_ordered_measurement_t measurement;
-    memset( &measurement, 0, sizeof(measurement) );
+    memset( &measurement, 0, sizeof( measurement ) );
+
     for ( int i = 0; i < rocketnet_ordered_message_count; i++ )
+    {
         measurement.payload_bytes += (uint64_t) rocketnet_ordered_size( i );
+    }
 
     const uint32_t send_kbps = client_to_server ? 1000 : 10000;
     measurement.lower_bound_seconds = (double) measurement.payload_bytes * 8.0 / ( (double) send_kbps * 1000.0 );
+
     const double start_time = h.now;
     int next_to_send = 0;
     int updates = 0;
@@ -193,6 +205,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     {
         // Keep a small fixed pipeline so the test measures the transport's
         // budget and head-of-line progress without exhausting its send arena.
+
         while ( next_to_send < rocketnet_ordered_message_count &&
                 next_to_send < measurement.delivered + 2 )
         {
@@ -200,11 +213,10 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
             if ( bytes >= RN_SPAN_MIN_BYTES && !rocketnet_ordered_span_ring_empty( &h, client_to_server ) )
                 break;
             rocketnet_ordered_fill( payload, next_to_send, bytes );
+
             const uint32_t serial = rocketnet_ordered_send( &h, client_to_server, payload, bytes );
             if ( serial == 0 )
-            {
                 break;
-            }
             send_time[next_to_send] = h.now;
             next_to_send++;
         }
@@ -218,12 +230,16 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
             const int expected_index = measurement.delivered;
             if ( expected_index >= rocketnet_ordered_message_count )
                 break;
+
             const int expected_bytes = rocketnet_ordered_size( expected_index );
             rocketnet_ordered_fill( payload, expected_index, expected_bytes );
+
             const uint64_t expected_hash = rocketnet_channel_hash( payload, expected_bytes );
+
             const int exact = delivery.channel == 0 && delivery.bytes == expected_bytes &&
                               delivery.hash == expected_hash &&
                               memcmp( delivery.data, payload, (size_t) expected_bytes ) == 0;
+
             if ( !exact )
             {
                 measurement.completion_seconds = h.now - start_time;
@@ -234,6 +250,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
                 rocketnet_ordered_print_measurement( name, &measurement, client_to_server, "byte_or_order_mismatch" );
                 rocketnet_ordered_check( exact );
             }
+
             measurement.latency_seconds[expected_index] = h.now - send_time[expected_index];
             measurement.delivered++;
         }
@@ -249,6 +266,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     measurement.wire_to_client = h.wire_bytes_to_client;
     const int complete = next_to_send == rocketnet_ordered_message_count &&
                          measurement.delivered == rocketnet_ordered_message_count;
+
     const int within_budget = measurement.completion_seconds <= rocketnet_ordered_multiple * measurement.lower_bound_seconds;
     const int no_overflow = rocketnet_channel_harness_overflows( &h ) == 0;
     const int no_allocations = rocketnet_channel_allocator_calls == h.allocations_after_create;
@@ -256,10 +274,13 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     if ( !complete || !within_budget || !no_overflow || !no_allocations )
     {
         printf( "seed=0x%016llx\n", (unsigned long long) h.seed );
-        const char * reason = !complete ? "incomplete" : !within_budget ? "budget_multiple" :
-                             !no_overflow ? "harness_overflow" : "allocation_after_create";
+        const char * reason = !complete ? "incomplete" : !within_budget ? "budget_multiple"
+                                                     : !no_overflow     ? "harness_overflow"
+                                                                        : "allocation_after_create";
+
         const rn_message_object_t * sender = client_to_server ? &h.message_client->object : &h.message_server->object;
         const int connection = client_to_server ? 0 : h.client_slot;
+
         printf( "ordered_state next_to_send=%d sender_state=%d sender_disconnect_reason=%d memory_exhausted=%llu send_store_full=%llu\n",
                 next_to_send, sender->hot_connections[connection].state, sender->connections[connection].disconnect_reason,
                 (unsigned long long) sender->counters.values[ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED],
@@ -276,6 +297,7 @@ static int rocketnet_ordered_run( const char * name, int client_to_server )
     rocketnet_ordered_check( no_overflow );
     rocketnet_ordered_check( no_allocations );
     rocketnet_channel_harness_destroy( &h );
+
     return 1;
 }
 

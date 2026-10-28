@@ -55,7 +55,7 @@ static void test_platform_sleep_plan_exact_values()
     // a huge request clamps: no signed overflow, the fallback below INFINITE
     plan = rocketnet_platform_sleep_plan( 1.0e30 );
     rocketnet_unit_check( !plan.yield_only );
-    rocketnet_unit_check( plan.due_time == -INT64_C(9000000000000000000) );
+    rocketnet_unit_check( plan.due_time == -INT64_C( 9000000000000000000 ) );
     rocketnet_unit_check( plan.fallback_milliseconds == 0xFFFFFFFEu );
 
     plan = rocketnet_platform_sleep_plan( 0.0 );

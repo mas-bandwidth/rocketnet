@@ -46,7 +46,7 @@ struct half_open_gate_server_t
 
 static void half_open_gate_server_setup( struct half_open_gate_server_t * test )
 {
-    memset( test, 0, sizeof(*test) );
+    memset( test, 0, sizeof( *test ) );
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
@@ -83,7 +83,7 @@ static void half_open_gate_server_teardown( struct half_open_gate_server_t * tes
 static void half_open_gate_challenge( struct half_open_gate_server_t * test )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -95,7 +95,7 @@ static void half_open_gate_challenge( struct half_open_gate_server_t * test )
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -132,7 +132,7 @@ static void half_open_gate_challenge( struct half_open_gate_server_t * test )
 static int half_open_gate_send( struct half_open_gate_server_t * test, uint8_t packet_type, int packet_bytes, uint32_t sequence )
 {
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    memset( packet, 0x5A, sizeof(packet) );
+    memset( packet, 0x5A, sizeof( packet ) );
     uint8_t * p = packet;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     rocketnet_write_prefilter_header( &p, packet_type, tag );
@@ -158,8 +158,14 @@ static void test_server_half_open_session_packet_dropped_unopened()
     check( index != -1 );
     check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->client_index == -1 );
 
-    const struct { uint8_t type; int bytes; int received; int not_connected; int did_not_open; } rows[] =
+    const struct
     {
+        uint8_t type;
+        int bytes;
+        int received;
+        int not_connected;
+        int did_not_open;
+    } rows[] = {
         { ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES,
           ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED, ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN },
         { ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES + 64,

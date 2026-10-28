@@ -52,7 +52,7 @@
 static int nondet_int( void ) { return 0; }
 #else
 int nondet_int( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 #define PROOF_FRAG 8
 #define PROOF_MAX  16
@@ -76,7 +76,7 @@ void rocketnet_read_fragment_header( const uint8_t * data, uint32_t * payload_id
 /* sdk/rocketnet_fragment.cpp lines 181-197 */
 static void rocketnet_reassembly_clear_slot( struct rocketnet_reassembly_slot_t * slot )
 {
-    memset( slot, 0, sizeof(struct rocketnet_reassembly_slot_t) );
+    memset( slot, 0, sizeof( struct rocketnet_reassembly_slot_t ) );
 }
 
 // a fragment bit, and setting it: num_received tracks the set bits
@@ -202,7 +202,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     // pin is computed here, refused before anything mutates.
 
     const int stride = ( same_payload && slot->fragment_stride != 0 ) ? slot->fragment_stride
-                     : ( !is_final ? fragment_bytes : 0 );                          // 0 = still unknown: a final arriving first
+                                                                      : ( !is_final ? fragment_bytes : 0 );                          // 0 = still unknown: a final arriving first
 
     if ( same_payload && slot->fragment_stride != 0 )
     {
@@ -212,6 +212,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
             counters[table->size_mismatch]++;
             return 0;
         }
+
         if ( is_final && fragment_bytes > slot->fragment_stride )
         {
             rocketnet_spam( "reassembly refused fragment. final fragment exceeds the stride" );
@@ -244,17 +245,26 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     if ( stride != 0 )
     {
         int64_t final_contribution = 1;
+
         if ( is_final )
+        {
             final_contribution = fragment_bytes;
+        }
         else if ( same_payload && slot->final_bytes >= 0 )
+        {
             final_contribution = slot->final_bytes;
+        }
 
         if ( (int64_t) stride * ( fragment_count - 1 ) + final_contribution > (int64_t) set->max_payload_bytes )
         {
             rocketnet_spam( "reassembly refused payload. reconstructed payload too large" );
             counters[table->payload_too_large]++;
+
             if ( same_payload )
+            {
                 rocketnet_reassembly_clear_slot( slot );
+            }
+
             return 0;
         }
     }
@@ -282,6 +292,7 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
             rocketnet_spam( "reassembly abandoned incomplete payload %u", slot->payload_id );
             counters[table->abandoned]++;
         }
+
         rocketnet_reassembly_clear_slot( slot );
         slot->payload_id = payload_id;
         slot->fragment_count = fragment_count;
@@ -364,22 +375,20 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
     }
 
     return 1;
-
 }
 static int slot_unchanged( const struct rocketnet_reassembly_slot_t * slot,
                            const struct rocketnet_reassembly_slot_t * before )
 {
-    int same = slot->payload_id == before->payload_id
-            && slot->fragment_count == before->fragment_count
-            && slot->fragment_stride == before->fragment_stride
-            && slot->final_bytes == before->final_bytes
-            && slot->final_staged == before->final_staged
-            && slot->num_received == before->num_received;
+    int same = slot->payload_id == before->payload_id && slot->fragment_count == before->fragment_count && slot->fragment_stride == before->fragment_stride && slot->final_bytes == before->final_bytes && slot->final_staged == before->final_staged && slot->num_received == before->num_received;
+
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
     {
         if ( slot->received[i] != before->received[i] )
+        {
             same = 0;
+        }
     }
+
     return same;
 }
 
@@ -396,6 +405,7 @@ static int proof_slot_bits_hold( const struct rocketnet_reassembly_slot_t * slot
         return 0;
 
     int bits = 0;
+
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
     {
         const int base = i * 8;
@@ -410,17 +420,21 @@ static int proof_slot_bits_hold( const struct rocketnet_reassembly_slot_t * slot
             const int keep = slot->fragment_count - base;
             if ( keep < 1 || keep > 7 )
                 return 0;
+
             const unsigned mask = ( 1u << keep ) - 1u;
             if ( ( byte & (uint8_t) ~mask ) != 0 )
                 return 0;
         }
+
         uint8_t rest = byte;
+
         for ( int k = 0; k < 8; k++ )
         {
             bits += rest & 1;
             rest = (uint8_t) ( rest >> 1 );
         }
     }
+
     if ( bits != slot->num_received )
         return 0;
 
@@ -428,6 +442,7 @@ static int proof_slot_bits_hold( const struct rocketnet_reassembly_slot_t * slot
     {
         const int fin = slot->fragment_count - 1;
         const int bit = ( slot->received[fin / 8] >> ( fin % 8 ) ) & 1;
+
         if ( slot->final_bytes == -1 )
         {
             if ( bit || slot->final_staged )
@@ -436,27 +451,30 @@ static int proof_slot_bits_hold( const struct rocketnet_reassembly_slot_t * slot
         else if ( !bit || slot->final_bytes > slot->fragment_stride )
             return 0;
     }
+
     return 1;
 }
 
 static int arena_unchanged( const uint8_t * arena, const uint8_t * before )
 {
     int same = 1;
+
     for ( int i = 0; i < ARENA; i++ )
     {
         if ( arena[i] != before[i] )
+        {
             same = 0;
+        }
     }
+
     return same;
 }
 
 int main( void )
 {
     struct rocketnet_reassembly_slot_t slot;
-    __CPROVER_assume( slot.fragment_stride == 0
-                      || ( slot.fragment_stride >= 1 && slot.fragment_stride <= PROOF_FRAG ) );
-    __CPROVER_assume( slot.final_bytes == -1
-                      || ( slot.final_bytes >= 1 && slot.final_bytes <= PROOF_FRAG ) );
+    __CPROVER_assume( slot.fragment_stride == 0 || ( slot.fragment_stride >= 1 && slot.fragment_stride <= PROOF_FRAG ) );
+    __CPROVER_assume( slot.final_bytes == -1 || ( slot.final_bytes >= 1 && slot.final_bytes <= PROOF_FRAG ) );
     __CPROVER_assume( slot.final_staged == 0 || slot.final_staged == 1 );
     __CPROVER_assume( !slot.final_staged || ( slot.final_bytes >= 1 && slot.final_bytes <= PROOF_FRAG ) );
     __CPROVER_assume( slot.fragment_count >= 0 && slot.fragment_count <= ROCKETNET_MAX_FRAGMENTS );
@@ -470,38 +488,37 @@ int main( void )
     __CPROVER_assume( !slot.final_staged || slot.num_received == 1 );
     {
         const int fin = slot.fragment_count - 1;
-        __CPROVER_assume( !slot.final_staged
-                          || ( fin >= 0 && fin < ROCKETNET_MAX_FRAGMENTS
-                               && ( ( slot.received[fin / 8] >> ( fin % 8 ) ) & 1 ) ) );
+        __CPROVER_assume( !slot.final_staged || ( fin >= 0 && fin < ROCKETNET_MAX_FRAGMENTS && ( ( slot.received[fin / 8] >> ( fin % 8 ) ) & 1 ) ) );
     }
     __CPROVER_assume( proof_slot_bits_hold( &slot ) );
 
     uint8_t arena[ARENA];
     uint8_t delivered[PROOF_MAX];
     uint8_t type_data[TYPE_BUF];
+
     /* The stale check subtracts the ids as uint32. A payload id below the
        occupant wraps, which is defined and is how rollover stays ordered;
        --unsigned-overflow-check rejects that wrap. This instance keeps the
        difference representable: an empty slot, or a wire id at or above
        the occupant. The rollover half is not proved. */
     {
-        const uint32_t wire_id = (uint32_t) type_data[0]
-                               | ( (uint32_t) type_data[1] << 8 )
-                               | ( (uint32_t) type_data[2] << 16 )
-                               | ( (uint32_t) type_data[3] << 24 );
+        const uint32_t wire_id = (uint32_t) type_data[0] | ( (uint32_t) type_data[1] << 8 ) | ( (uint32_t) type_data[2] << 16 ) | ( (uint32_t) type_data[3] << 24 );
         __CPROVER_assume( slot.payload_id == 0 || wire_id >= slot.payload_id );
     }
+
     int type_data_bytes = nondet_int();
-    __CPROVER_assume( type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1
-                      || type_data_bytes > ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES
-                      || type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + PROOF_FRAG );
+    __CPROVER_assume( type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 || type_data_bytes > ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES || type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + PROOF_FRAG );
 
     int max_payload = nondet_int();
     __CPROVER_assume( max_payload >= 1 && max_payload <= PROOF_MAX );
 
     uint64_t counters[16];
+
     for ( int i = 0; i < 16; i++ )
+    {
         counters[i] = 0;
+    }
+
     struct rocketnet_reassembly_counters_t table;
     table.zero_payload_id = 0;
     table.stale = 1;
@@ -530,13 +547,15 @@ int main( void )
 
     struct rocketnet_reassembly_slot_t before = slot;
     uint8_t arena_before[ARENA];
+
     for ( int i = 0; i < ARENA; i++ )
+    {
         arena_before[i] = arena[i];
+    }
 
     int rc = rocketnet_reassembly_process_fragment( &set, 0, type_data, type_data_bytes, counters, &table );
 
-    const int in_size = type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1
-                     && type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
+    const int in_size = type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1 && type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
     uint32_t payload_id = 0;
     int fragment_index = 0;
     int fragment_count = 1;
@@ -553,16 +572,24 @@ int main( void )
         fragment_bytes = type_data_bytes - ROCKETNET_FRAGMENT_HEADER_BYTES;
 
         is_final = fragment_index == fragment_count - 1;
+
         const int same = before.payload_id == payload_id;
         stride = ( same && before.fragment_stride != 0 ) ? before.fragment_stride
-               : ( !is_final ? fragment_bytes : 0 );
+                                                         : ( !is_final ? fragment_bytes : 0 );
+
         if ( stride != 0 )
         {
             long long final_contribution = 1;
+
             if ( is_final )
+            {
                 final_contribution = fragment_bytes;
+            }
             else if ( same && before.final_bytes >= 0 )
+            {
                 final_contribution = before.final_bytes;
+            }
+
             const long long total = (long long) stride * ( fragment_count - 1 ) + final_contribution;
             exceeds = total > max_payload;
         }
@@ -584,7 +611,9 @@ int main( void )
     }
 
     if ( rc == 1 && in_size && stride != 0 )
+    {
         __CPROVER_assert( !exceeds, "accepted fragment does not exceed the payload maximum" );
+    }
 
     /* Completion clears the slot, so a zero stride afterwards is the clear,
        not a staged final. The staging claims are the accepts that stay open. */
@@ -594,10 +623,13 @@ int main( void )
     {
         __CPROVER_assert( slot.fragment_stride == 0, "stride 0 accept keeps the stride unknown" );
         __CPROVER_assert( slot.final_staged == 1, "stride 0 stages the final fragment" );
+
         for ( int i = 0; i < PROOF_MAX; i++ )
         {
             if ( i < max_payload )
+            {
                 __CPROVER_assert( arena[i] == arena_before[i], "stride 0 does not write the payload region" );
+            }
         }
     }
 
@@ -605,14 +637,14 @@ int main( void )
     {
         __CPROVER_assert( slot.fragment_stride >= 1, "a non-final accept fixes a stride" );
         __CPROVER_assert( (long long) fragment_index * stride + fragment_bytes <= max_payload,
-            "placed fragment stays inside the payload maximum" );
+                          "placed fragment stays inside the payload maximum" );
     }
 
     if ( rc == 1 && counters[table.reassembled] == 1 )
     {
         __CPROVER_assert( slot.payload_id == 0, "completion clears the slot" );
         __CPROVER_assert( set.completed_bytes >= 1 && set.completed_bytes <= max_payload,
-            "completed payload fits the maximum" );
+                          "completed payload fits the maximum" );
     }
 
     return 0;

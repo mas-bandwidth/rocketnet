@@ -66,11 +66,12 @@ static struct io_uring_sqe * bench_get_sqe_or_die( struct io_uring * ring, const
     if ( !sqe )
     {
         char detail[192];
-        snprintf( detail, sizeof(detail),
+        snprintf( detail, sizeof( detail ),
                   "the submission queue had no free entry for %s -- the harness has more in flight than URING_ENTRIES (%d) allows, and every number after this point would be wrong",
                   what, URING_ENTRIES );
         bench_fatal( "io_uring_get_sqe", detail );
     }
+
     return sqe;
 }
 
@@ -89,14 +90,19 @@ static void run_receiver( int port, double warmup, double window, int windows )
 {
     int fd = bench_udp_socket();
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
-    if ( bind( fd, (struct sockaddr*) &address, sizeof(address) ) < 0 )
-        bench_fatal( "bind", strerror(errno) );
+    if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) < 0 )
+    {
+        bench_fatal( "bind", strerror( errno ) );
+    }
+
     bench_report_buffers( fd );
 
     struct io_uring ring;
     int result = io_uring_queue_init( URING_ENTRIES, &ring, 0 );
     if ( result < 0 )
-        bench_fatal( "io_uring_queue_init", strerror(-result) );
+    {
+        bench_fatal( "io_uring_queue_init", strerror( -result ) );
+    }
 
     static uint8_t buffer_memory[URING_NUM_BUFFERS * URING_BUFFER_SIZE];
     int ring_error = 0;
@@ -107,19 +113,23 @@ static void run_receiver( int port, double warmup, double window, int windows )
            receiver with nothing to receive into: this run measured nothing,
            and says so rather than exiting as if it had merely failed */
         char detail[256];
-        snprintf( detail, sizeof(detail), "%s (errno %d) -- this host cannot run the io_uring multishot receiver, so nothing was measured",
-                  strerror(-ring_error), -ring_error );
+        snprintf( detail, sizeof( detail ), "%s (errno %d) -- this host cannot run the io_uring multishot receiver, so nothing was measured",
+                  strerror( -ring_error ), -ring_error );
         bench_fatal( "io_uring_setup_buf_ring", detail );
     }
+
     for ( int i = 0; i < URING_NUM_BUFFERS; i++ )
         io_uring_buf_ring_add( buf_ring, buffer_memory + i * URING_BUFFER_SIZE, URING_BUFFER_SIZE, (unsigned short) i,
                                io_uring_buf_ring_mask( URING_NUM_BUFFERS ), i );
     io_uring_buf_ring_advance( buf_ring, URING_NUM_BUFFERS );
 
     resubmit_multishot( &ring, fd );
+
     int submit_result = io_uring_submit( &ring );
     if ( submit_result < 0 )
-        bench_fatal( "io_uring_submit", strerror(-submit_result) );
+    {
+        bench_fatal( "io_uring_submit", strerror( -submit_result ) );
+    }
 
     struct bench_windows_t w;
     bench_windows_init( &w, warmup, window, windows );
@@ -138,7 +148,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
         unsigned count = io_uring_peek_batch_cqe( &ring, cqes, URING_CQE_BATCH );
         if ( count == 0 )
         {
-            /* enter the kernel so pending completions can post, then look again */
+            // enter the kernel so pending completions can post, then look again
             io_uring_get_events( &ring );
             batch_syscalls++;
             count = io_uring_peek_batch_cqe( &ring, cqes, URING_CQE_BATCH );
@@ -153,6 +163,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
         }
 
         int need_resubmit = 0;
+
         for ( unsigned i = 0; i < count; i++ )
         {
             struct io_uring_cqe * cqe = cqes[i];
@@ -164,7 +175,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
                    stopped receiving, and used to be stepped straight over. */
                 bench_receive_refused_or_empty_except( "io_uring multishot recv", -cqe->res,
                                                        uring_recv_tolerated,
-                                                       (int) ( sizeof(uring_recv_tolerated) / sizeof(uring_recv_tolerated[0]) ) );
+                                                       (int) ( sizeof( uring_recv_tolerated ) / sizeof( uring_recv_tolerated[0] ) ) );
             }
             else if ( cqe->res > 0 && ( cqe->flags & IORING_CQE_F_BUFFER ) )
             {
@@ -176,18 +187,28 @@ static void run_receiver( int port, double warmup, double window, int windows )
                                        io_uring_buf_ring_mask( URING_NUM_BUFFERS ), batch_packets );
                 batch_packets++;
             }
+
             if ( !( cqe->flags & IORING_CQE_F_MORE ) )
                 need_resubmit = 1;                  /* multishot terminated (e.g. ENOBUFS): re-arm */
         }
+
         if ( batch_packets > 0 )
+        {
             io_uring_buf_ring_advance( buf_ring, batch_packets );
+        }
+
         io_uring_cq_advance( &ring, count );
+
         if ( need_resubmit )
         {
             resubmit_multishot( &ring, fd );
+
             int submit_result = io_uring_submit( &ring );
             if ( submit_result < 0 )
-                bench_fatal( "io_uring_submit", strerror(-submit_result) );
+            {
+                bench_fatal( "io_uring_submit", strerror( -submit_result ) );
+            }
+
             batch_syscalls++;
         }
 
@@ -215,18 +236,23 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
        not, which makes every io_uring ratio against them an upper bound
        rather than like for like (#98 item 2). */
 
-    if ( connect( fd, (struct sockaddr*) &to, sizeof(to) ) < 0 )
-        bench_fatal( "connect", strerror(errno) );
+    if ( connect( fd, (struct sockaddr *) &to, sizeof( to ) ) < 0 )
+    {
+        bench_fatal( "connect", strerror( errno ) );
+    }
 
     struct io_uring ring;
     int result = io_uring_queue_init( URING_ENTRIES, &ring, 0 );
     if ( result < 0 )
-        bench_fatal( "io_uring_queue_init", strerror(-result) );
+    {
+        bench_fatal( "io_uring_queue_init", strerror( -result ) );
+    }
 
     static uint8_t buffers[BENCH_BATCH_SIZE][BENCH_MAX_PACKET];
 
     struct bench_send_health_t health;
-    memset( &health, 0, sizeof(health) );
+    memset( &health, 0, sizeof( health ) );
+
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -238,8 +264,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     for ( ;; )
     {
-        int size = bench_sizes[ batch_index % BENCH_NUM_SIZES ];
+        int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
+
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
@@ -251,16 +278,23 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 bench_fill_packet( buffers[i], size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
+
                 struct io_uring_sqe * sqe = bench_get_sqe_or_die( &ring, "a batched send" );
+
                 if ( options.zero_copy )
+                {
                     io_uring_prep_send_zc( sqe, fd, buffers[i], (size_t) size, 0, 0 );
+                }
                 else
+                {
                     io_uring_prep_send( sqe, fd, buffers[i], (size_t) size, 0 );
+                }
             }
 
-            /* one enter submits the whole batch and waits for its completions */
+            // one enter submits the whole batch and waits for its completions
             result = io_uring_submit_and_wait( &ring, BENCH_BATCH_SIZE );
             syscalls++;
+
             if ( result < 0 )
             {
                 /* a refused submission used to be stepped over in silence,
@@ -280,7 +314,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                count, which is what the other harnesses have always meant by
                a send succeeding. */
 
-            /* reap: for send_zc each send posts a completion and later a notification */
+            // reap: for send_zc each send posts a completion and later a notification
             struct io_uring_cqe * cqe;
             unsigned head;
             unsigned reaped = 0;
@@ -288,11 +322,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             io_uring_for_each_cqe( &ring, head, cqe )
             {
                 reaped++;
+
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 :
-                                                bench_fault( "send-zero" ) ? 0 : cqe->res;
+                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 : bench_fault( "send-zero" ) ? 0
+                                                                                                                    : cqe->res;
+
                     if ( completed_bytes == size )
                     {
                         sent += bench_send_ok( &health, "io_uring send completion" );
@@ -314,11 +350,13 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 if ( io_uring_wait_cqe( &ring, &cqe ) < 0 )
                     break;
                 syscalls++;
+
                 if ( !( cqe->flags & IORING_CQE_F_NOTIF ) )
                 {
                     completed++;
-                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 :
-                                                bench_fault( "send-zero" ) ? 0 : cqe->res;
+                    const int completed_bytes = bench_fault( "send-short" ) ? size - 1 : bench_fault( "send-zero" ) ? 0
+                                                                                                                    : cqe->res;
+
                     if ( completed_bytes == size )
                     {
                         sent += bench_send_ok( &health, "io_uring send completion (zc)" );
@@ -331,13 +369,14 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                         sent += bench_send_refused( &health, "io_uring send completion (zc)", completed_bytes < 0 ? -completed_bytes : EIO );
                     }
                 }
+
                 io_uring_cqe_seen( &ring, cqe );
             }
         }
-
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
+
     bench_send_validate( &health );
     printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
@@ -351,15 +390,21 @@ int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
     bench_fault_init();
+
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
+    {
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
+    }
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )
+    {
         run_sender( argv[2], atoi( argv[3] ), atof( argv[4] ), bench_parse_sender_options( argc, argv, 5 ) );
+    }
     else
     {
         fprintf( stderr, "usage: bench_uring recv <port> <warmup> <window> <windows>\n"
                          "       bench_uring send <ip> <port> <seconds> [drop-half] [zc] [pace=<pps>]\n" );
         return 1;
     }
+
     return 0;
 }

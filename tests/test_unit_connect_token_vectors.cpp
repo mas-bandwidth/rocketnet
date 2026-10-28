@@ -8,18 +8,13 @@
 // implementation of the backend's minting (a Go backend first) is checked
 // against byte for byte.
 //
-// rocketnet_write_connect_token seals the private block with crypto_box_seal,
-// which draws a fresh ephemeral key, so its output can never be a vector. The
-// vectors come from the test-only rocketnet_write_connect_token_deterministic:
-// the same layout, the sealed box built from a caller-given ephemeral secret
-// exactly as crypto_box_seal builds it (epk || crypto_box_easy, nonce =
-// blake2b-192(epk || server_pk)). Every key is a fixed test key from
-// sdk/rocketnet_test_vectors.h.
-//
-// A normal run compares the committed vectors file in memory against what the
-// inputs below mint; the file is rewritten only under the explicit regenerate
-// flag ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS=1. No case reads a clock,
-// opens a socket or touches anything outside the repository's tests/ dir.
+// The inputs and the generator live in tools/connect_token_vectors/main.cpp,
+// compiled here without its main, so the check and the tool that writes the
+// file mint from one source. The committed file is compiled into ./bin/test
+// at build time (cmake/EmbedTestFixtures.cmake) and read from memory: no case
+// reads or writes a file, reads a clock or opens a socket. The file is
+// regenerated only by running the tool, ./bin/connect_token_vectors
+// tests/connect_token_vectors.json.
 
 #include "test_unit_registry.h"
 
@@ -27,11 +22,9 @@
 #include "rocketnet_base64.h"
 #include "rocketnet_test_vectors.h"
 #include "wycheproof.h"
-#include "resource_file.h"
-#include "portable_crt.h"
 
 // Match the header to the sodium implementation linked into the SDK.
-#if defined(ROCKETNET_USE_SYSTEM_SODIUM)
+#if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
@@ -45,174 +38,16 @@
 #include <string>
 #include <vector>
 
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <dlfcn.h>
-#endif
-
-// ---------------------------------------------------------------------------
-// the vector inputs. integers are values; addresses are their wire bytes
-// (ipv4: four octets then the port little-endian; ipv6: eight uint16 groups
-// little-endian then the port little-endian), as the signed connect data
-// carries them.
-
-struct ctv_input_t
-{
-    const char * name;
-    uint64_t client_id;
-    uint64_t protocol_id;
-    uint64_t create_timestamp;
-    uint64_t expire_timestamp;
-    int32_t timeout_seconds;
-    uint8_t address_flags;
-    uint8_t ipv4_address[6];
-    uint8_t ipv6_address[18];
-    int user_data_pattern;                      // see ctv_fill_user_data
-    const uint8_t * client_to_server_key;
-    const uint8_t * server_to_client_key;
-    const uint8_t * ephemeral_secret;
-};
-
-static void ctv_fill_user_data( int pattern, uint8_t * user_data )
-{
-    static const char text[] = "rocketnet connect token vector user data ";
-    for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
-    {
-        switch ( pattern )
-        {
-            case 0:  user_data[i] = 0;                                                  break;
-            case 1:  user_data[i] = (uint8_t) i;                                        break;
-            case 2:  user_data[i] = 0xff;                                               break;
-            default: user_data[i] = (uint8_t) text[ i % ( (int) sizeof(text) - 1 ) ];   break;
-        }
-    }
-}
-
-static const struct ctv_input_t ctv_inputs[] =
-{
-    // the appendix's token inputs, ipv4 127.0.0.1:40000, empty user data
-    {
-        "ipv4_appendix_inputs",
-        ROCKETNET_TEST_CLIENT_ID, ROCKETNET_TEST_PROTOCOL_ID,
-        ROCKETNET_TEST_CREATE_TS, ROCKETNET_TEST_EXPIRE_TS, ROCKETNET_TEST_TIMEOUT,
-        ROCKETNET_ADDRESS_FLAG_IPV4,
-        { 127, 0, 0, 1, 0x40, 0x9c },
-        { 0 },
-        0,
-        rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
-        rocketnet_test_token_vector_ephemeral_secret[0],
-    },
-    // ipv6 [::1]:50000, counting user data
-    {
-        "ipv6_loopback_counting_user_data",
-        1ULL, 0xfedcba9876543210ULL,
-        0ULL, 300ULL, 5,
-        ROCKETNET_ADDRESS_FLAG_IPV6,
-        { 0 },
-        { 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 0,0, 1,0, 0x50, 0xc3 },
-        1,
-        rocketnet_test_handshake_c2s_key, rocketnet_test_handshake_s2c_key,
-        rocketnet_test_token_vector_ephemeral_secret[1],
-    },
-    // both families, 10.0.0.1:1 and [2001:db8::1]:65535, all-ones user data,
-    // a negative timeout, which both ends refuse, to pin the int32 encoding
-    {
-        "dual_stack_negative_timeout",
-        0x8000000000000001ULL, 0x0000000000000001ULL,
-        1756166400ULL, 1756170000ULL, -1,
-        ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6,
-        { 10, 0, 0, 1, 0x01, 0x00 },
-        { 0x01,0x20, 0xb8,0x0d, 0,0, 0,0, 0,0, 0,0, 0,0, 1,0, 0xff, 0xff },
-        2,
-        rocketnet_test_session_c2s_key, rocketnet_test_session_s2c_key,
-        rocketnet_test_token_vector_ephemeral_secret[2],
-    },
-    // extremes: every integer at its top, text user data, the token keys swapped
-    {
-        "extreme_values_text_user_data",
-        0xffffffffffffffffULL, 0ULL,
-        0x7fffffffffffffffULL, 0xffffffffffffffffULL, 0x7fffffff,
-        ROCKETNET_ADDRESS_FLAG_IPV4,
-        { 255, 255, 255, 255, 0xff, 0xff },
-        { 0 },
-        3,
-        rocketnet_test_token_s2c_key, rocketnet_test_token_c2s_key,
-        rocketnet_test_token_vector_ephemeral_secret[3],
-    },
-};
-
-static const int ctv_input_count = (int) ( sizeof(ctv_inputs) / sizeof(ctv_inputs[0]) );
-
-static void ctv_fields( const struct ctv_input_t * input,
-                        struct rocketnet_signed_connect_data_t * signed_fields,
-                        struct rocketnet_connect_token_private_t * private_fields )
-{
-    memset( signed_fields, 0, sizeof(*signed_fields) );
-    signed_fields->version = ROCKETNET_WIRE_VERSION;
-    signed_fields->protocol_id = input->protocol_id;
-    signed_fields->create_timestamp = input->create_timestamp;
-    signed_fields->expire_timestamp = input->expire_timestamp;
-    signed_fields->timeout_seconds = input->timeout_seconds;
-    signed_fields->address_flags = input->address_flags;
-    memcpy( signed_fields->ipv4_address, input->ipv4_address, 6 );
-    memcpy( signed_fields->ipv6_address, input->ipv6_address, 18 );
-    memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
-
-    memset( private_fields, 0, sizeof(*private_fields) );
-    private_fields->client_id = input->client_id;
-    private_fields->protocol_id = input->protocol_id;
-    private_fields->expire_timestamp = input->expire_timestamp;
-    memcpy( private_fields->client_to_server_key, input->client_to_server_key, ROCKETNET_KEY_BYTES );
-    memcpy( private_fields->server_to_client_key, input->server_to_client_key, ROCKETNET_KEY_BYTES );
-    ctv_fill_user_data( input->user_data_pattern, private_fields->user_data );
-}
-
-static int ctv_mint( const struct ctv_input_t * input, uint8_t * token )
-{
-    struct rocketnet_signed_connect_data_t signed_fields;
-    struct rocketnet_connect_token_private_t private_fields;
-    ctv_fields( input, &signed_fields, &private_fields );
-    return rocketnet_write_connect_token_deterministic( &signed_fields, &private_fields,
-                                                        rocketnet_test_backend_secret_key,
-                                                        input->ephemeral_secret, token );
-}
-
-// ---------------------------------------------------------------------------
-// hex, and the file
-
-static std::string ctv_hex( const uint8_t * bytes, int count )
-{
-    static const char digits[] = "0123456789abcdef";
-    std::string out;
-    for ( int i = 0; i < count; i++ )
-    {
-        out += digits[bytes[i] >> 4];
-        out += digits[bytes[i] & 0xf];
-    }
-    return out;
-}
-
-static std::string ctv_hex_u64( uint64_t value )
-{
-    uint8_t bytes[8];
-    for ( int i = 0; i < 8; i++ )
-        bytes[i] = (uint8_t) ( value >> ( 56 - 8 * i ) );
-    return ctv_hex( bytes, 8 );
-}
-
-static std::string ctv_hex_u32( uint32_t value )
-{
-    uint8_t bytes[4];
-    for ( int i = 0; i < 4; i++ )
-        bytes[i] = (uint8_t) ( value >> ( 24 - 8 * i ) );
-    return ctv_hex( bytes, 4 );
-}
+// the vector inputs, ctv_mint and ctv_generate_json
+#define ROCKETNET_CONNECT_TOKEN_VECTORS_NO_MAIN
+#include "../tools/connect_token_vectors/main.cpp"
 
 static int ctv_unhex_digit( char c )
 {
-    if ( c >= '0' && c <= '9' ) return c - '0';
-    if ( c >= 'a' && c <= 'f' ) return c - 'a' + 10;
+    if ( c >= '0' && c <= '9' )
+        return c - '0';
+    if ( c >= 'a' && c <= 'f' )
+        return c - 'a' + 10;
     return -1;
 }
 
@@ -223,8 +58,8 @@ static int ctv_unhex( const std::string & text, uint8_t * bytes, int count )
         return 0;
     for ( int i = 0; i < count; i++ )
     {
-        int hi = ctv_unhex_digit( text[(size_t) ( 2*i )] );
-        int lo = ctv_unhex_digit( text[(size_t) ( 2*i+1 )] );
+        int hi = ctv_unhex_digit( text[(size_t) ( 2 * i )] );
+        int lo = ctv_unhex_digit( text[(size_t) ( 2 * i + 1 )] );
         if ( hi < 0 || lo < 0 )
             return 0;
         bytes[i] = (uint8_t) ( ( hi << 4 ) | lo );
@@ -243,89 +78,16 @@ static uint64_t ctv_unhex_uint( const std::string & text, int count )
     return value;
 }
 
-static void ctv_field( std::string & out, const char * key, const std::string & value, bool last )
-{
-    out += "      \"";
-    out += key;
-    out += "\": \"";
-    out += value;
-    out += last ? "\"\n" : "\",\n";
-}
-
-static std::string ctv_generate_json()
-{
-    uint8_t backend_seed[32];
-    rocketnet_unit_check( crypto_sign_ed25519_sk_to_seed( backend_seed, rocketnet_test_backend_secret_key ) == 0 );
-
-    std::string out;
-    out += "{\n";
-    out += "  \"description\": \"RocketNet 768-byte connect token known answers, minted by rocketnet_write_connect_token_deterministic "
-           "and regenerated only with ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS=1 (test_unit_connect_token_vectors.cpp). Every field but description and name is lower-case hex. Integers are their value "
-           "as fixed-width big-endian hex (u64: 16 digits; version: 8 digits; timeout_seconds: 8 digits, int32 two's complement). "
-           "Byte fields are in wire order: ipv4_address is 4 octets then the port little-endian; ipv6_address is 8 uint16 groups "
-           "little-endian then the port little-endian. The private block is sealed as crypto_box_seal does it, with ephemeral_secret as "
-           "the ephemeral X25519 secret: epk = X25519(ephemeral_secret, basepoint), nonce = BLAKE2b-192(epk || server_public_key), "
-           "sealed = epk || crypto_box_easy(private_block, nonce, server_public_key, ephemeral_secret). The token is signed with the "
-           "Ed25519 key expanded from backend_signing_seed. All keys are the published test keys; never use them in a deployment.\",\n";
-    out += "  \"version\": \"" + ctv_hex_u32( ROCKETNET_WIRE_VERSION ) + "\",\n";
-    out += "  \"vectors\": [\n";
-
-    for ( int v = 0; v < ctv_input_count; v++ )
-    {
-        const struct ctv_input_t * input = &ctv_inputs[v];
-        uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
-        ctv_fill_user_data( input->user_data_pattern, user_data );
-        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        rocketnet_unit_check( ctv_mint( input, token ) == 1 );
-        uint8_t flags = input->address_flags;
-
-        out += "    {\n";
-        ctv_field( out, "name", input->name, false );
-        ctv_field( out, "backend_signing_seed", ctv_hex( backend_seed, 32 ), false );
-        ctv_field( out, "server_public_key", ctv_hex( rocketnet_test_server_public_key, 32 ), false );
-        ctv_field( out, "ephemeral_secret", ctv_hex( input->ephemeral_secret, 32 ), false );
-        ctv_field( out, "client_id", ctv_hex_u64( input->client_id ), false );
-        ctv_field( out, "protocol_id", ctv_hex_u64( input->protocol_id ), false );
-        ctv_field( out, "create_timestamp", ctv_hex_u64( input->create_timestamp ), false );
-        ctv_field( out, "expire_timestamp", ctv_hex_u64( input->expire_timestamp ), false );
-        ctv_field( out, "timeout_seconds", ctv_hex_u32( (uint32_t) input->timeout_seconds ), false );
-        ctv_field( out, "address_flags", ctv_hex( &flags, 1 ), false );
-        ctv_field( out, "ipv4_address", ctv_hex( input->ipv4_address, 6 ), false );
-        ctv_field( out, "ipv6_address", ctv_hex( input->ipv6_address, 18 ), false );
-        ctv_field( out, "user_data", ctv_hex( user_data, ROCKETNET_USER_DATA_BYTES ), false );
-        ctv_field( out, "client_to_server_key", ctv_hex( input->client_to_server_key, 32 ), false );
-        ctv_field( out, "server_to_client_key", ctv_hex( input->server_to_client_key, 32 ), false );
-        ctv_field( out, "token", ctv_hex( token, ROCKETNET_CONNECT_TOKEN_BYTES ), true );
-        out += ( v + 1 < ctv_input_count ) ? "    },\n" : "    }\n";
-    }
-
-    out += "  ]\n";
-    out += "}\n";
-    sodium_memzero( backend_seed, sizeof(backend_seed) );
-    return out;
-}
-
-// the vectors file, beside this source: tests/connect_token_vectors.json in
-// the repository, wherever the suite is run from
-static std::string ctv_path()
-{
-    std::string source = __FILE__;
-    size_t slash = source.find_last_of( "/\\" );
-    std::string root = ( slash == std::string::npos ) ? std::string( "." ) : source.substr( 0, slash );
-    return root + "/connect_token_vectors.json";
-}
-
-static int ctv_read_file( const std::string & path, std::string & out )
+// the committed tests/connect_token_vectors.json, compiled into this binary
+// at build time (cmake/EmbedTestFixtures.cmake); 1 when it is there
+static int ctv_read_embedded( std::string & out )
 {
     out.clear();
-    FILE * file = rocketnet_test_fopen( path, "rb" );
-    if ( !file )
+    size_t bytes = 0;
+    const unsigned char * data = rocketnet_test_fixture( "tests/connect_token_vectors.json", &bytes );
+    if ( !data )
         return 0;
-    char buffer[4096];
-    size_t n;
-    while ( ( n = fread( buffer, 1, sizeof(buffer), file ) ) > 0 )
-        out.append( buffer, n );
-    fclose( file );
+    out.assign( reinterpret_cast<const char *>( data ), bytes );
     return 1;
 }
 
@@ -368,7 +130,7 @@ struct ctv_file_vector_t
 static std::vector<ctv_file_vector_t> ctv_load()
 {
     std::string text;
-    rocketnet_unit_check( ctv_read_file( ctv_path(), text ) );
+    rocketnet_unit_check( ctv_read_embedded( text ) );
 
     std::vector<std::string> seed = ctv_values( text, "backend_signing_seed" );
     std::vector<std::string> server_pk = ctv_values( text, "server_public_key" );
@@ -420,40 +182,20 @@ static std::vector<ctv_file_vector_t> ctv_load()
 // ---------------------------------------------------------------------------
 // the cases
 
-// the file is exactly what the inputs above mint. a normal run reads the
-// committed copy and compares it in memory; the file is rewritten (via a
-// rename, so a reader never sees half a file) only when the explicit
-// ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS=1 flag is set, so a read-only
-// checkout never fails
+// the file is exactly what the inputs mint. the committed copy is compiled
+// into this binary and compared in memory; nothing here writes it. the file
+// is rewritten only by the tool, ./bin/connect_token_vectors, from the same
+// generator (tools/connect_token_vectors/main.cpp)
 static void test_vectors_regenerate_byte_identical()
 {
-    std::string generated = ctv_generate_json();
-    std::string generated_again = ctv_generate_json();
+    std::string generated;
+    std::string generated_again;
+    rocketnet_unit_check( ctv_generate_json( generated ) );
+    rocketnet_unit_check( ctv_generate_json( generated_again ) );
     rocketnet_unit_check( generated == generated_again );
 
-    std::string path = ctv_path();
-
-    char regenerate[256];
-    if ( rocketnet_test_getenv( "ROCKETNET_REGENERATE_CONNECT_TOKEN_VECTORS", regenerate, sizeof( regenerate ) ) && strcmp( regenerate, "1" ) == 0 )
-    {
-        std::string temp = path + ".tmp";
-        FILE * file = rocketnet_test_fopen( temp, "wb" );
-        rocketnet_unit_check( file != NULL );
-        rocketnet_unit_check( fwrite( generated.data(), 1, generated.size(), file ) == generated.size() );
-        rocketnet_unit_check( fclose( file ) == 0 );
-#if defined(_WIN32)
-        // The Windows CRT rename refuses to replace an existing destination.
-        const std::wstring wide_temp = rocketnet_test_wide_path( temp );
-        const std::wstring wide_path = rocketnet_test_wide_path( path );
-        rocketnet_unit_check( MoveFileExW( wide_temp.c_str(), wide_path.c_str(),
-                                           MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) != 0 );
-#else
-        rocketnet_unit_check( rename( temp.c_str(), path.c_str() ) == 0 );
-#endif
-    }
-
     std::string existing;
-    int existed = ctv_read_file( path, existing );
+    int existed = ctv_read_embedded( existing );
     rocketnet_unit_check( existed );
     rocketnet_unit_check( existing == generated );
 }
@@ -475,7 +217,7 @@ static void test_each_vector_verifies_and_opens()
         rocketnet_unit_check( crypto_sign_seed_keypair( backend_public_key, backend_secret_key, v.backend_seed ) == 0 );
         rocketnet_unit_check( memcmp( backend_public_key, rocketnet_test_backend_public_key, 32 ) == 0 );
         rocketnet_unit_check( memcmp( backend_secret_key, rocketnet_test_backend_secret_key, 64 ) == 0 );
-        sodium_memzero( backend_secret_key, sizeof(backend_secret_key) );
+        sodium_memzero( backend_secret_key, sizeof( backend_secret_key ) );
         rocketnet_unit_check( memcmp( v.server_public_key, rocketnet_test_server_public_key, 32 ) == 0 );
 
         struct rocketnet_connect_token_t token;
@@ -563,7 +305,7 @@ static void test_deterministic_seal_matches_libsodium_open()
         rocketnet_unit_check( crypto_generichash_update( &state, epk, 32 ) == 0 );
         rocketnet_unit_check( crypto_generichash_update( &state, rocketnet_test_server_public_key, 32 ) == 0 );
         rocketnet_unit_check( crypto_generichash_final( &state, nonce, crypto_box_NONCEBYTES ) == 0 );
-        memset( opened, 0, sizeof(opened) );
+        memset( opened, 0, sizeof( opened ) );
         rocketnet_unit_check( crypto_box_open_easy( opened, sealed + 32, ROCKETNET_SEALED_BLOCK_BYTES - 32, nonce,
                                                     epk, rocketnet_test_server_secret_key ) == 0 );
         rocketnet_unit_check( memcmp( opened, expected_private_block, ROCKETNET_PRIVATE_BLOCK_BYTES ) == 0 );
@@ -603,13 +345,13 @@ static void test_tampered_vector_refused()
         const ctv_file_vector_t & v = vectors[i];
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
 
-        memcpy( token, v.token, sizeof(token) );
+        memcpy( token, v.token, sizeof( token ) );
         rocketnet_unit_check( rocketnet_verify_signed_connect_data( token, token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                                                                     rocketnet_test_backend_public_key ) );
 
         for ( int b = 0; b < ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES; b++ )
         {
-            memcpy( token, v.token, sizeof(token) );
+            memcpy( token, v.token, sizeof( token ) );
             token[b] ^= 0x01;
             rocketnet_unit_check( !rocketnet_verify_signed_connect_data( token, token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                                                                          rocketnet_test_backend_public_key ) );
@@ -617,9 +359,9 @@ static void test_tampered_vector_refused()
 
         // the ephemeral public key, the first ciphertext byte, the last mac byte
         const int positions[] = { 0, 31, 32, 33 + ROCKETNET_PRIVATE_BLOCK_BYTES / 2, ROCKETNET_SEALED_BLOCK_BYTES - 1 };
-        for ( size_t p = 0; p < sizeof(positions) / sizeof(positions[0]); p++ )
+        for ( size_t p = 0; p < sizeof( positions ) / sizeof( positions[0] ); p++ )
         {
-            memcpy( token, v.token, sizeof(token) );
+            memcpy( token, v.token, sizeof( token ) );
             token[ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + positions[p]] ^= 0x01;
             rocketnet_unit_check( crypto_sign_detached( token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES, NULL, token,
                                                         ROCKETNET_SIGNED_CONNECT_DATA_BYTES, rocketnet_test_backend_secret_key ) == 0 );
@@ -633,64 +375,7 @@ static void test_tampered_vector_refused()
     }
 }
 
-// The unit suite links the release archive, whose development minter is
-// compiled out; the development shared library built beside it carries
-// rocketnet_create_dev_connect_token, so load that library and mint through
-// its own symbol.
-typedef enum rocketnet_status_t ( *ctv_dev_token_minter_t )( const char * server_address_ipv4, const char * server_address_ipv6,
-                                                             const uint8_t * server_public_key, int expire_seconds,
-                                                             int timeout_seconds, uint64_t client_id, uint64_t protocol_id,
-                                                             uint64_t unix_timestamp, const uint8_t * user_data,
-                                                             char * connect_token );
-
-static ctv_dev_token_minter_t ctv_dev_token_minter()
-{
-    ctv_dev_token_minter_t minter = NULL;
-#if defined(_WIN32)
-    HMODULE library = LoadLibraryA( ROCKETNET_DEV_LIBRARY_PATH );
-    rocketnet_unit_check( library != NULL );
-    minter = (ctv_dev_token_minter_t) (void *) GetProcAddress( library, "rocketnet_create_dev_connect_token" );
-#else
-    void * library = dlopen( ROCKETNET_DEV_LIBRARY_PATH, RTLD_NOW | RTLD_LOCAL );
-    rocketnet_unit_check( library != NULL );
-    minter = (ctv_dev_token_minter_t) dlsym( library, "rocketnet_create_dev_connect_token" );
-#endif
-    rocketnet_unit_check( minter != NULL );
-    return minter;
-}
-
-// The dev connect token carries the lifetime and connection timeout it is
-// given. Mint one with the development minter at timestamp 1000 using the
-// typical values (the named constants), decode the string and read its signed
-// fields back with the development backend key, pinning both values.
-static void test_dev_connect_token_timeout_is_the_named_constant()
-{
-    const uint64_t now = 1000;
-    char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-
-    ctv_dev_token_minter_t create_dev = ctv_dev_token_minter();
-    rocketnet_unit_check( create_dev( "127.0.0.1:40000", NULL, rocketnet_test_server_public_key,
-                                      ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS, ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS,
-                                      1, ROCKETNET_DEV_PROTOCOL_ID, now, NULL, token_string ) == ROCKETNET_STATUS_OK );
-    rocketnet_unit_check( strlen( token_string ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-    rocketnet_unit_check( rocketnet_base64_decode_data( token_string, token, sizeof( token ) ) == ROCKETNET_CONNECT_TOKEN_BYTES );
-
-    struct rocketnet_connect_token_t read_token;
-    rocketnet_read_connect_token( &read_token, token );
-    rocketnet_unit_check( rocketnet_verify_signed_connect_data( read_token.signed_connect_data, read_token.signature,
-                                                                rocketnet_dev_backend_public_key ) );
-
-    struct rocketnet_signed_connect_data_t parsed;
-    rocketnet_read_signed_connect_data( &parsed, read_token.signed_connect_data );
-    rocketnet_unit_check( parsed.create_timestamp == now );
-    rocketnet_unit_check( parsed.protocol_id == ROCKETNET_DEV_PROTOCOL_ID );
-    rocketnet_unit_check( parsed.timeout_seconds == ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS );
-    rocketnet_unit_check( parsed.expire_timestamp - parsed.create_timestamp == ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS );
-}
-
 REGISTER_UNIT_TEST( test_vectors_regenerate_byte_identical );
-REGISTER_UNIT_TEST( test_dev_connect_token_timeout_is_the_named_constant );
 REGISTER_UNIT_TEST( test_each_vector_verifies_and_opens );
 REGISTER_UNIT_TEST( test_deterministic_seal_matches_libsodium_open );
 REGISTER_UNIT_TEST( test_tampered_vector_refused );
@@ -703,7 +388,7 @@ REGISTER_UNIT_TEST( test_tampered_vector_refused );
 // subset in sodium/sodium.c that the SDK links. The vectors are
 // tests/wycheproof/ed25519_test.json at the pin the vendor card landed.
 
-#if !defined(ROCKETNET_USE_SYSTEM_SODIUM) // rocketnet-wycheproof-ed25519
+#if !defined( ROCKETNET_USE_SYSTEM_SODIUM ) // rocketnet-wycheproof-ed25519
 
 struct wp_ed25519_tally_t
 {
@@ -841,8 +526,7 @@ static void test_wycheproof_ed25519_vectors()
                                                                 rocketnet_test_backend_public_key ) == 1 );
 
     // L = 2^252 + 27742317777372353535851937790883648493, little endian
-    static const uint8_t group_order[32] =
-    {
+    static const uint8_t group_order[32] = {
         0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
         0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -850,7 +534,7 @@ static void test_wycheproof_ed25519_vectors()
     };
 
     uint8_t malleable[ROCKETNET_SIGNATURE_BYTES];
-    memcpy( malleable, signature, sizeof(malleable) );
+    memcpy( malleable, signature, sizeof( malleable ) );
     int carry = 0;
     for ( int i = 0; i < 32; i++ )
     {
@@ -863,19 +547,19 @@ static void test_wycheproof_ed25519_vectors()
                                                                  rocketnet_test_backend_public_key ) );
 
     uint8_t flipped_r[ROCKETNET_SIGNATURE_BYTES];
-    memcpy( flipped_r, signature, sizeof(flipped_r) );
+    memcpy( flipped_r, signature, sizeof( flipped_r ) );
     flipped_r[0] ^= 0x01;
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, flipped_r,
                                                                  rocketnet_test_backend_public_key ) );
 
     uint8_t flipped_data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
-    memcpy( flipped_data, data, sizeof(flipped_data) );
+    memcpy( flipped_data, data, sizeof( flipped_data ) );
     flipped_data[100] ^= 0x01;
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( flipped_data, signature,
                                                                  rocketnet_test_backend_public_key ) );
 
     uint8_t identity[32];
-    memset( identity, 0, sizeof(identity) );
+    memset( identity, 0, sizeof( identity ) );
     identity[0] = 0x01;
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, signature, identity ) );
 }

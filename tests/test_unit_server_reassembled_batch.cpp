@@ -56,7 +56,7 @@
 static void srb_mint_token( uint8_t * token_data, uint64_t client_id )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
-    memset( &signed_fields, 0, sizeof(signed_fields) );
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
     signed_fields.version = ROCKETNET_WIRE_VERSION;
     signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
@@ -68,7 +68,7 @@ static void srb_mint_token( uint8_t * token_data, uint64_t client_id )
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
 
     struct rocketnet_connect_token_private_t private_fields;
-    memset( &private_fields, 0, sizeof(private_fields) );
+    memset( &private_fields, 0, sizeof( private_fields ) );
     private_fields.client_id = client_id;
     private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     private_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
@@ -105,10 +105,10 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     // exactly as the server transport sizes it at create
 
     struct rocketnet_counters_t server_counters;
-    memset( &server_counters, 0, sizeof(server_counters) );
+    memset( &server_counters, 0, sizeof( server_counters ) );
 
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
+    memset( &server, 0, sizeof( server ) );
     server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
     memcpy( server.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -142,14 +142,14 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     static struct rocketnet_client_protocol_t clients[SRB_NUM_CLIENTS];
     struct rocketnet_address_t addresses[SRB_NUM_CLIENTS];
     struct rocketnet_counters_t client_counters;
-    memset( &client_counters, 0, sizeof(client_counters) );
+    memset( &client_counters, 0, sizeof( client_counters ) );
 
     double time = 1000.0;
 
     for ( int i = 0; i < SRB_NUM_CLIENTS; i++ )
     {
         char address_string[64];
-        snprintf( address_string, sizeof(address_string), "10.2.0.%d:56789", 1 + i );
+        snprintf( address_string, sizeof( address_string ), "10.2.0.%d:56789", 1 + i );
         check( rocketnet_address_parse( &addresses[i], address_string ) );
         rocketnet_client_protocol_init( &clients[i], &client_counters );
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -203,7 +203,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
                   got = rocketnet_network_simulator_receive( wire, &addresses[i], time, &from, packet ) )
             {
                 int client_payload_bytes = 0;
-                rocketnet_client_protocol_process_packet( &clients[i], packet, got, time, payload, (int) sizeof(payload), &client_payload_bytes );
+                rocketnet_client_protocol_process_packet( &clients[i], packet, got, time, payload, (int) sizeof( payload ), &client_payload_bytes );
             }
         }
 
@@ -287,7 +287,7 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     // delivered arena hands each completion its own room
 
     bool seen[SRB_NUM_CLIENTS][SRB_PAYLOADS_PER_CLIENT];
-    memset( seen, 0, sizeof(seen) );
+    memset( seen, 0, sizeof( seen ) );
     for ( int d = 0; d < num_delivered; d++ )
     {
         check( srb_payload_matches( delivered_data[d], delivered_client[d], delivered_k[d] ) );
@@ -328,9 +328,9 @@ static void test_server_reassembly_large_payload_small_geometry_fits_the_budget(
     {
         const int capacity = rocketnet_server_reassembly_delivered_capacity( 1, 8 );
         const uint64_t bytes = rocketnet_server_reassembly_delivered_bytes( 1, 8, 70000 );
-        check( capacity == ( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS + 8 ) / 2 );
-        check( bytes == (uint64_t) ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS * ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
-                        8ULL * 70000 + (uint64_t) capacity * ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) );
+        check( capacity == ( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE + 8 ) / 2 );
+        check( bytes == (uint64_t) ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE * ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES +
+                            8ULL * 70000 + (uint64_t) capacity * ( ROCKETNET_REASSEMBLY_DELIVERED_ALIGN - 1 ) );
         check( bytes < (uint64_t) capacity * 70000 );
         check( rocketnet_reassembly_memory_allowed_delivered( 1, 8, 70000, capacity, bytes ) );
         check( rocketnet_reassembly_memory_required_delivered( 1, 8, 70000, capacity, bytes ) < budget );
@@ -390,7 +390,8 @@ static const struct rocketnet_reassembly_counters_t srb_fragment_counters = {
     ROCKETNET_COUNTER_FRAGMENT_ACCEPTED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED,
     ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_ABANDONED,
-    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL };
+    ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL
+};
 
 static int srb_complete_payload( struct rocketnet_reassembly_set_t * set, uint32_t payload_id, int first_bytes, int final_bytes,
                                  uint64_t * counters )
@@ -408,7 +409,7 @@ static int srb_complete_payload( struct rocketnet_reassembly_set_t * set, uint32
 static void test_server_reassembly_delivered_packs_by_bytes()
 {
     struct rocketnet_counters_t counters_storage;
-    memset( &counters_storage, 0, sizeof(counters_storage) );
+    memset( &counters_storage, 0, sizeof( counters_storage ) );
     uint64_t * counters = counters_storage.values;
 
     // count 8, bytes 4096: two 1500-byte payloads pack (1500 pads to 1504),

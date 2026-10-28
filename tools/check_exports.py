@@ -83,6 +83,12 @@ DEVELOPMENT_SYMBOL_PARTS = (
     "server_transport_dev_config", "set_test_timestamp", "client_create_testing",
     "test_stall_destroy", "test_bound_port", "create_step_driven_at_timestamp",
     "create_dev_connect_token", "write_test_connect_token", "ack_visit_count",
+    "rocketnet_server_iocp_test_", "rocketnet_server_rio_test_",
+    "write_connect_token_deterministic", "box_seal_with_ephemeral",
+    "reset_inventory_matches", "dev_session_sequence_start",
+    "rn_message_payload_copy_count", "rocketnet_portable_rx_test_",
+    "rocketnet_portable_tx_test_", "rocketnet_platform_socket_set_receive_hook",
+    "rocketnet_platform_socket_send_error_hook", "rocketnet_xdp_test_",
 )
 
 
@@ -113,6 +119,8 @@ def main():
     parser.add_argument("--tests", type=Path, default=Path(__file__).parent.parent / "sdk" / "rocketnet_tests.cpp")
     parser.add_argument("--connect-token-source", type=Path,
                         default=Path(__file__).parent.parent / "sdk" / "rocketnet_connect_token.cpp")
+    parser.add_argument("--import-library", type=Path,
+                        help="Windows shared-library import archive to include in the production boundary check")
     parser.add_argument("shared", nargs="?", type=Path)
     parser.add_argument("archive", nargs="?", type=Path)
     args = parser.parse_args()
@@ -124,8 +132,11 @@ def main():
         return 0
     if args.shared is None or args.archive is None:
         parser.error("the following arguments are required: shared archive")
+    if args.import_library is not None and sys.platform != "win32":
+        parser.error("--import-library is supported only on Windows")
     expected = {line.strip() for line in Path(__file__).with_name("exports.txt").read_text().splitlines()
                 if line.strip() and not line.startswith("#")}
+    import_defined = set()
     if sys.platform == "win32":
         output = run(msvc_tool("dumpbin"), "/nologo", "/exports", str(args.shared))
         actual = set(re.findall(r"^\s+\d+\s+[0-9A-F]+\s+[0-9A-F]+\s+(\S+)", output, re.M))
@@ -133,6 +144,10 @@ def main():
         symbols = run(msvc_tool("dumpbin"), "/nologo", "/symbols", str(args.archive))
         defined = {match[1] for line in symbols.splitlines() if "UNDEF" not in line
                    for match in [re.search(r"(?:External|WeakExternal)\s+\|\s+(\S+)", line)] if match}
+        if args.import_library is not None:
+            import_symbols = run(msvc_tool("dumpbin"), "/nologo", "/symbols", str(args.import_library))
+            import_defined = {match[1] for line in import_symbols.splitlines() if "UNDEF" not in line
+                              for match in [re.search(r"(?:External|WeakExternal)\s+\|\s+(\S+)", line)] if match}
     elif sys.platform == "darwin":
         output = run("nm", "-gU", str(args.shared))
         actual = {line.split()[-1].removeprefix("_") for line in output.splitlines() if line.split()}
@@ -151,14 +166,20 @@ def main():
                         r"fe25519_|ge25519_|sc25519_|ristretto255_|chacha20_dolbeau_|poly1305_sse2_)")
     unprefixed = {symbol for symbol in defined if crypto.match(symbol.lstrip("_"))}
     missing, extra = expected - actual, actual - expected
-    development = development_symbols(defined | actual)
-    key_holders = files_holding(dev_server_secret_key(args.connect_token_source), [args.shared, args.archive])
-    if missing or extra or unprefixed or "rocketnet_tests" in members or development or key_holders:
+    development = development_symbols(defined | actual | import_defined)
+    production_files = [args.shared, args.archive]
+    if args.import_library is not None:
+        production_files.append(args.import_library)
+    key_holders = files_holding(dev_server_secret_key(args.connect_token_source), production_files)
+    test_stage_holders = files_holding(b"test stage", production_files)
+    if missing or extra or unprefixed or "rocketnet_tests" in members or development or key_holders or test_stage_holders:
         if development:
             print("Development or test code in the production library (build with -DROCKETNET_DEV=OFF):",
                   ", ".join(development), file=sys.stderr)
         if key_holders:
             print("The development server secret key bytes are in:", ", ".join(key_holders), file=sys.stderr)
+        if test_stage_holders:
+            print("Development constructor-stage logging is in:", ", ".join(test_stage_holders), file=sys.stderr)
         if missing:
             print("Missing exports:", ", ".join(sorted(missing)), file=sys.stderr)
         if extra:
@@ -169,8 +190,9 @@ def main():
         if "rocketnet_tests" in members:
             print("Test suite is present in the production archive", file=sys.stderr)
         return 1
-    print(f"C ABI: {len(actual)} exports match; static crypto namespace is private; production archive contains no test suite, "
-          "no development or test code and no development secret key")
+    boundary = "production archive contains" if args.import_library is None else "production archive, shared library and import library contain"
+    print(f"C ABI: {len(actual)} exports match; static crypto namespace is private; {boundary} no test suite, "
+          "no development or test code, constructor-stage logging or development secret key")
     return 0
 
 

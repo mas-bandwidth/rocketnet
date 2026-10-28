@@ -20,10 +20,28 @@ static void rocketnet_replay_set_bit( struct rocketnet_replay_protection_t * rep
     replay->window[bit / 64] |= 1ULL << ( bit % 64 );
 }
 
-static void rocketnet_replay_clear_bit( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
+static void rocketnet_replay_clear_range( struct rocketnet_replay_protection_t * replay, int begin, int end )
 {
-    int bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
-    replay->window[bit / 64] &= ~( 1ULL << ( bit % 64 ) );
+    if ( begin == end )
+        return;
+
+    const int offset = begin % 64;
+    if ( offset != 0 )
+    {
+        const int available = 64 - offset;
+        const int count = end - begin < available ? end - begin : available;
+        replay->window[begin / 64] &= ~( ( ( 1ULL << count ) - 1 ) << offset );
+        begin += count;
+    }
+
+    while ( end - begin >= 64 )
+    {
+        replay->window[begin / 64] = 0;
+        begin += 64;
+    }
+
+    if ( begin < end )
+        replay->window[begin / 64] &= ~( ( 1ULL << ( end - begin ) ) - 1 );
 }
 
 // tla/ReplayWindow.tla AlreadyReceived
@@ -58,15 +76,24 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
         uint64_t skipped = sequence - replay->highest_opened;
         if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
         {
-            // STANDARD.md Replay Protection and tla/ReplayWindow.tla (Cleared):
+            // TRANSPORT.md t14 Replay protection and tla/ReplayWindow.tla (Cleared):
             // a full-window skip clears the whole ring (ClearedWords = Words).
             memset( replay->window, 0, sizeof( replay->window ) );
         }
         else
         {
-            for ( uint64_t s = replay->highest_opened + 1; s < sequence; s++ )
-                rocketnet_replay_clear_bit( replay, s );
+            // tla/ReplayWindow.tla Cleared: the same skipped bits, in at most two contiguous ranges.
+            const int begin = (int) ( ( replay->highest_opened + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS );
+            const int end = begin + (int) skipped - 1;
+            if ( end <= ROCKETNET_REPLAY_WINDOW_BITS )
+                rocketnet_replay_clear_range( replay, begin, end );
+            else
+            {
+                rocketnet_replay_clear_range( replay, begin, ROCKETNET_REPLAY_WINDOW_BITS );
+                rocketnet_replay_clear_range( replay, 0, end - ROCKETNET_REPLAY_WINDOW_BITS );
+            }
         }
+
         replay->highest_opened = sequence;
     }
 

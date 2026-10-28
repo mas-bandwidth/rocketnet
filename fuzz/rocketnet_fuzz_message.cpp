@@ -94,8 +94,7 @@ struct rocketnet_fuzz_message_type_info_t
     const char * name;
 };
 
-static const struct rocketnet_fuzz_message_type_info_t rocketnet_fuzz_message_types[ROCKETNET_FUZZ_MESSAGE_TYPE_COUNT] =
-{
+static const struct rocketnet_fuzz_message_type_info_t rocketnet_fuzz_message_types[ROCKETNET_FUZZ_MESSAGE_TYPE_COUNT] = {
     { "violation_none" },
     { "violation_bad_form" },
     { "violation_truncated" },
@@ -138,7 +137,8 @@ static void rocketnet_fuzz_message_run( const uint8_t * data, size_t size );
 
 static void rocketnet_fuzz_require( bool condition, const char * property )
 {
-    if ( condition ) return;
+    if ( condition )
+        return;
     fprintf( stderr, "fuzz oracle failed: %s\n", property );
     abort();
 }
@@ -151,6 +151,7 @@ static struct rocketnet_message_limits_t rocketnet_fuzz_message_limits( int prof
     limits.reliable_messages_in_flight = 1024;
     limits.max_message_bytes = 32768;
     limits.receive_message_buffer_bytes = 65536;
+
     if ( profile == 1 )
     {
         limits.num_channels = 1024;
@@ -164,6 +165,7 @@ static struct rocketnet_message_limits_t rocketnet_fuzz_message_limits( int prof
         limits.max_message_bytes = 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 1;
         limits.receive_message_buffer_bytes = 4096;
     }
+
     return limits;
 }
 
@@ -187,6 +189,7 @@ static void rocketnet_fuzz_message_payload( const uint8_t * payload, int bytes, 
     {
         records.push_back( record );
         rocketnet_fuzz_require( records.size() <= (size_t) bytes, "next terminates" );
+
         const int code_type = rocketnet_fuzz_message_code_type( record.code );
         rocketnet_fuzz_require( code_type >= 0, "a record carries a code the wire knows" );
         rocketnet_fuzz_message_counters[code_type]++;
@@ -199,23 +202,28 @@ static void rocketnet_fuzz_message_payload( const uint8_t * payload, int bytes, 
     }
 
     rocketnet_fuzz_require( !records.empty(), "an accepted payload holds at least one record" );
+
     const uint8_t form = payload[bytes - 1];
 
     // whole, inside the body, tiling it, and each one a correct sender could write
 
     const uint8_t * cursor = payload;
+
     for ( size_t i = 0; i < records.size(); i++ )
     {
         const struct rocketnet_message_record_t & r = records[i];
         rocketnet_fuzz_require( r.bytes >= 1, "a record has data" );
         rocketnet_fuzz_require( r.data >= payload && r.data + r.bytes <= payload + bytes - 1, "a record lies inside the body" );
+
         if ( form == ROCKETNET_MESSAGE_FORM_RECORDS )
         {
             rocketnet_fuzz_require( rocketnet_message_record_valid( &r ), "an accepted record is a valid record" );
             rocketnet_fuzz_require( r.data == cursor + rocketnet_message_record_header_bytes( &r ), "records follow one another" );
             cursor = r.data + r.bytes;
             if ( r.code != ROCKETNET_MESSAGE_CODE_UNRELIABLE && r.code != ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
+            {
                 rocketnet_fuzz_require( bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, "reliable records only in unfragmented payloads" );
+            }
         }
         else
         {
@@ -223,11 +231,13 @@ static void rocketnet_fuzz_message_payload( const uint8_t * payload, int bytes, 
             cursor = payload + bytes - 1;
         }
     }
+
     rocketnet_fuzz_require( cursor == payload + bytes - 1, "the records tile the body" );
 
     // pack back: the same bytes
 
     std::vector<uint8_t> repacked( (size_t) bytes );
+
     if ( form == ROCKETNET_MESSAGE_FORM_SINGLE )
     {
         memcpy( repacked.data(), records[0].data, (size_t) records[0].bytes );
@@ -237,10 +247,15 @@ static void rocketnet_fuzz_message_payload( const uint8_t * payload, int bytes, 
     {
         struct rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, repacked.data(), bytes );
+
         for ( size_t i = 0; i < records.size(); i++ )
+        {
             rocketnet_fuzz_require( rocketnet_message_writer_add( &writer, &records[i] ) == 1, "every record repacks" );
+        }
+
         rocketnet_fuzz_require( rocketnet_message_writer_finish( &writer ) == bytes, "RECORDS repacks to its length" );
     }
+
     rocketnet_fuzz_require( memcmp( repacked.data(), payload, (size_t) bytes ) == 0, "pack(parse(x)) == x" );
 }
 
@@ -249,12 +264,14 @@ static void rocketnet_fuzz_message_config( const uint8_t * data, int bytes )
     struct rocketnet_message_config_body_t body;
     const int violation = rocketnet_message_read_config_body( data, bytes, &body );
     rocketnet_fuzz_require( violation == ROCKETNET_MESSAGE_VIOLATION_NONE || violation == ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL, "the CONFIG body names only its own violation" );
+
     const int violation_type = rocketnet_fuzz_message_violation_type( violation );
     rocketnet_fuzz_require( violation_type >= 0, "a named violation has a type" );
     rocketnet_fuzz_message_counters[violation_type]++;
     if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
         return;
     rocketnet_fuzz_require( bytes == ROCKETNET_MESSAGE_CONFIG_BYTES, "an accepted CONFIG body is 28 bytes" );
+
     if ( body.version == ROCKETNET_MESSAGE_CONFIG_VERSION )
     {
         uint8_t written[ROCKETNET_MESSAGE_CONFIG_BYTES];
@@ -298,30 +315,44 @@ static int rocketnet_fuzz_message_record( uint8_t * out, int at, uint8_t flags, 
     out[p++] = flags;
     out[p++] = (uint8_t) ( length & 0xFF );
     out[p++] = (uint8_t) ( ( length >> 8 ) & 0xFF );
+
     if ( code == 2 || code == 3 || code == 4 )
     {
-        out[p++] = 1; out[p++] = 0; out[p++] = 0;                    // the number
+        out[p++] = 1;
+        out[p++] = 0;
+        out[p++] = 0;                    // the number
     }
+
     if ( code == 3 || code == 4 || block )
     {
         out[p++] = (uint8_t) ( ring & 0xFF );
         out[p++] = (uint8_t) ( ring >> 8 );
     }
+
     if ( code == 1 || code == 4 )
     {
-        out[p++] = 2; out[p++] = 0; out[p++] = 0;                    // the sequencing
+        out[p++] = 2;
+        out[p++] = 0;
+        out[p++] = 0;                    // the sequencing
     }
+
     if ( code == 1 || code == 3 || code == 4 )
     {
-        out[p++] = 3; out[p++] = 0; out[p++] = 0;                    // the ordering
+        out[p++] = 3;
+        out[p++] = 0;
+        out[p++] = 0;                    // the ordering
+
         if ( wide )
         {
             out[p++] = (uint8_t) ( channel & 0xFF );
             out[p++] = (uint8_t) ( channel >> 8 );
         }
         else
+        {
             out[p++] = (uint8_t) channel;
+        }
     }
+
     if ( block )
     {
         out[p++] = (uint8_t) ( fragment & 0xFF );
@@ -329,8 +360,12 @@ static int rocketnet_fuzz_message_record( uint8_t * out, int at, uint8_t flags, 
         out[p++] = (uint8_t) ( fragments & 0xFF );
         out[p++] = (uint8_t) ( fragments >> 8 );
     }
+
     for ( int i = 0; i < length; i++ )
+    {
         out[p++] = 0xAA;
+    }
+
     return p;
 }
 
@@ -345,6 +380,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_NONE:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x00, 0, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -354,6 +390,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_FORM:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x00, 0, 1, 0, 0, 0, 0 );
             out[p++] = 0x02;
             return p;
@@ -372,6 +409,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_FLAGS:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x40, 0, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -381,6 +419,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_LENGTH:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x00, 0, 0, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -390,6 +429,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_CHANNEL:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x03, 3, 1, 32, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -399,6 +439,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_TYPE_NOT_ENABLED:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x01, 1, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -408,6 +449,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_BLOCK:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x0B, 3, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -417,6 +459,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_RING:
         {
             out[0] = 0;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x03, 3, 1, 0, 0xFFFF, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -426,6 +469,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_VIOLATION_BAD_SIZE:
         {
             out[0] = 2;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x02, 2, 3000, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -444,6 +488,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_CODE_UNRELIABLE:
         {
             out[0] = 1;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x00, 0, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -451,6 +496,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_CODE_UNRELIABLE_SEQUENCED:
         {
             out[0] = 1;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x01, 1, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -458,6 +504,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_CODE_RELIABLE:
         {
             out[0] = 1;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x02, 2, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -465,6 +512,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_CODE_RELIABLE_ORDERED:
         {
             out[0] = 1;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x03, 3, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -472,6 +520,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         case ROCKETNET_FUZZ_MESSAGE_CODE_RELIABLE_SEQUENCED:
         {
             out[0] = 1;
+
             int p = rocketnet_fuzz_message_record( out, 1, 0x04, 4, 1, 0, 0, 0, 0 );
             out[p++] = ROCKETNET_MESSAGE_FORM_RECORDS;
             return p;
@@ -479,6 +528,7 @@ static int rocketnet_fuzz_message_seed_build( int type, uint8_t * out, int capac
         default:
             break;
     }
+
     return 0;
 }
 
@@ -486,6 +536,7 @@ static bool rocketnet_fuzz_message_type_withheld( const char * list, const char 
 {
     if ( !list || !list[0] )
         return false;
+
     const size_t length = strlen( name );
     const char * at = list;
     while ( *at )
@@ -498,6 +549,7 @@ static bool rocketnet_fuzz_message_type_withheld( const char * list, const char 
             break;
         at = end + 1;
     }
+
     return false;
 }
 
@@ -509,16 +561,22 @@ static bool rocketnet_fuzz_message_seed_write( const char * dir, const char * na
         fprintf( stderr, "seed generator: the seed path for %s does not fit\n", name );
         return false;
     }
+
     FILE * file = rocketnet_test_fopen( path, "wb" );
     if ( !file )
     {
         fprintf( stderr, "seed generator: cannot write %s\n", path );
         return false;
     }
+
     const bool ok = fwrite( data, 1, (size_t) bytes, file ) == (size_t) bytes;
+
     fclose( file );
     if ( !ok )
+    {
         fprintf( stderr, "seed generator: cannot write %s\n", path );
+    }
+
     return ok;
 }
 
@@ -530,6 +588,7 @@ static bool rocketnet_fuzz_message_generate( const char * dir )
 
     static uint8_t seed[ROCKETNET_FUZZ_MESSAGE_SEED_MAX];
     bool complete = true;
+
     for ( int type = 0; type < ROCKETNET_FUZZ_MESSAGE_TYPE_COUNT; type++ )
     {
         const char * name = rocketnet_fuzz_message_types[type].name;
@@ -550,7 +609,9 @@ static bool rocketnet_fuzz_message_generate( const char * dir )
 
         // the seed is replayed through the target before it is written:
         // a seed that reaches no counter is no seed at all
+
         const uint64_t before = rocketnet_fuzz_message_counters[type];
+
         rocketnet_fuzz_message_run( seed, (size_t) bytes );
         if ( rocketnet_fuzz_message_counters[type] <= before )
         {
@@ -560,7 +621,9 @@ static bool rocketnet_fuzz_message_generate( const char * dir )
         }
 
         if ( !rocketnet_fuzz_message_seed_write( dir, name, seed, bytes ) )
+        {
             complete = false;
+        }
     }
 
     printf( "seed generator: %s\n", complete ? "every type the parser reads has a seed that reaches it" : "INCOMPLETE" );
@@ -579,9 +642,13 @@ static void rocketnet_fuzz_message_run( const uint8_t * data, size_t size )
 
     const int selector = data[0] & 3;
     if ( selector == 3 )
+    {
         rocketnet_fuzz_message_config( body, body_size );
+    }
     else
+    {
         rocketnet_fuzz_message_payload( body, body_size, selector );
+    }
 }
 
 extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
@@ -596,7 +663,9 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     char seed_dir[1024];
     const int have_dir = rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) );
     if ( have_dir && seed_dir[0] != '\0' )
+    {
         exit( rocketnet_fuzz_message_generate( seed_dir ) ? 0 : 1 );
+    }
 
     return 0;
 }

@@ -49,7 +49,9 @@ static uint64_t drops_over_budget( const rocketnet_channel_harness_t * h )
 static void drops_fill( uint8_t * bytes, int count, uint8_t tag )
 {
     for ( int i = 0; i < count; i++ )
+    {
         bytes[i] = (uint8_t) ( tag + i * 7 );
+    }
 }
 
 static bool drops_matches( const rocketnet_channel_delivery_t * d, int count, uint8_t tag )
@@ -59,6 +61,7 @@ static bool drops_matches( const rocketnet_channel_delivery_t * d, int count, ui
     for ( int i = 0; i < count; i++ )
         if ( d->data[i] != (uint8_t) ( tag + i * 7 ) )
             return false;
+
     return true;
 }
 
@@ -66,7 +69,9 @@ static bool drops_matches( const rocketnet_channel_delivery_t * d, int count, ui
 static void drops_idle( rocketnet_channel_harness_t * h, int ticks )
 {
     for ( int i = 0; i < ticks; i++ )
+    {
         rocketnet_channel_harness_pump( h, DROPS_TICK );
+    }
 }
 
 void unreliable_dropped_while_reliable_waits_never_arrives()
@@ -78,21 +83,26 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
 
     // the client sends at 8 kbps (a bucket of about one maximum packet); the
     // server's acks are not the subject and go at the default
+
     drops_check( rocketnet_channel_harness_set_budgets( &h, 8, ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS ) != 0, "budgets" );
     drops_idle( &h, 60 * 3 );
     rocketnet_channel_harness_read_counters( &h );
 
     // one update: two reliable messages that each fill a packet (the first
     // spends the bucket, the second waits) and then four unreliable messages
+
     uint8_t reliable[2][DROPS_RELIABLE_BYTES];
     drops_fill( reliable[0], DROPS_RELIABLE_BYTES, 0xA0 );
     drops_fill( reliable[1], DROPS_RELIABLE_BYTES, 0xB0 );
+
     uint8_t unreliable[4][DROPS_UNRELIABLE_BYTES];
     const uint64_t before = drops_over_budget( &h );
     const uint64_t budget_dropped_before = h.message_client->object.connections[0].budget.unreliable_dropped;
     const uint64_t budget_dropped_bytes_before = h.message_client->object.connections[0].budget.unreliable_dropped_bytes;
+
     drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable[0], DROPS_RELIABLE_BYTES ) != 0, "send reliable 0" );
     drops_check( rocketnet_channel_harness_client_send( &h, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, reliable[1], DROPS_RELIABLE_BYTES ) != 0, "send reliable 1" );
+
     for ( int i = 0; i < 4; i++ )
     {
         drops_fill( unreliable[i], DROPS_UNRELIABLE_BYTES, (uint8_t) ( 0x10 + i ) );
@@ -101,6 +111,7 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
 
     // the update that finds the reliable packet waiting counts every
     // unreliable message of the update as over budget
+
     rocketnet_channel_harness_pump( &h, DROPS_TICK );
     drops_check( drops_over_budget( &h ) == before + 4, "over budget counter rises by the unreliable count" );
 
@@ -109,12 +120,14 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     // Wait), so the budget's own drop tally does not move. When the shortcut
     // is absent the builder offers them and the budget drops them instead:
     // the same counter and the same deliveries, a different path
+
     const rocketnet_send_budget_t * budget = &h.message_client->object.connections[0].budget;
     drops_check( budget->unreliable_dropped == budget_dropped_before, "unreliable sends reached the budget while a reliable packet waited" );
     drops_check( budget->unreliable_dropped_bytes == budget_dropped_bytes_before, "unreliable bytes reached the budget while a reliable packet waited" );
 
     // at least two seconds of simulated time: no unreliable message ever
     // arrives; the reliable ones arrive, in order, as the bucket refills
+
     int reliable_arrived = 0;
     int unreliable_arrived = 0;
     double elapsed = DROPS_TICK;
@@ -122,17 +135,25 @@ void unreliable_dropped_while_reliable_waits_never_arrives()
     {
         rocketnet_channel_harness_pump( &h, DROPS_TICK );
         elapsed += DROPS_TICK;
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             if ( d.bytes == DROPS_UNRELIABLE_BYTES )
+            {
                 unreliable_arrived++;
+            }
             else if ( reliable_arrived < 2 && drops_matches( &d, DROPS_RELIABLE_BYTES, (uint8_t) ( reliable_arrived == 0 ? 0xA0 : 0xB0 ) ) )
+            {
                 reliable_arrived++;
+            }
             else
+            {
                 drops_check( false, "a delivery that is neither a sent reliable message nor an unreliable one" );
+            }
         }
     }
+
     drops_check( elapsed >= 2.0, "simulated two seconds" );
     drops_check( unreliable_arrived == 0, "a dropped unreliable message arrived late" );
     drops_check( reliable_arrived == 2, "both reliable messages arrive, in order" );
@@ -156,6 +177,7 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
     rocketnet_channel_harness_read_counters( &h );
 
     // unreliable messages only, more bytes in one update than the bucket pays
+
     const int sent = 12;
     uint8_t message[DROPS_BUILDER_BYTES];
     const uint64_t before = drops_over_budget( &h );
@@ -167,9 +189,13 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
 
     // the update's packets carry the messages that fit, the earliest ones, and
     // the rest are counted over budget in this update
+
     rocketnet_channel_harness_pump( &h, DROPS_TICK );
+
     const uint64_t over_budget_after_write = drops_over_budget( &h );
+
     rocketnet_channel_harness_pump( &h, DROPS_TICK );      // the wire delivers at the next update
+
     int arrived = 0;
     rocketnet_channel_delivery_t d;
     while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
@@ -177,18 +203,22 @@ void unreliable_dropped_when_builder_out_of_budget_never_arrives()
         drops_check( arrived < sent && drops_matches( &d, DROPS_BUILDER_BYTES, (uint8_t) ( 0x20 + arrived ) ), "an arrival is the next of the earliest sends" );
         arrived++;
     }
+
     drops_check( arrived >= 1, "the messages that fit arrive in the update" );
     drops_check( arrived < sent, "some messages are over budget" );
     drops_check( over_budget_after_write == before + (uint64_t) ( sent - arrived ), "over budget counter equals the messages that did not fit" );
 
     // at least two seconds: none of the dropped messages ever arrives
+
     double elapsed = 0.0;
+
     for ( int tick = 0; tick < 60 * 3; tick++ )
     {
         rocketnet_channel_harness_pump( &h, DROPS_TICK );
         elapsed += DROPS_TICK;
         drops_check( !rocketnet_channel_harness_server_collect( &h, 0, &d ), "a dropped unreliable message arrived late" );
     }
+
     drops_check( elapsed >= 2.0, "simulated two seconds" );
     drops_check( drops_over_budget( &h ) == before + (uint64_t) ( sent - arrived ), "no further drops once idle" );
     drops_check( rocketnet_channel_harness_overflows( &h ) == 0, "delivery ring overflow" );

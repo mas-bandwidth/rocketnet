@@ -1,0 +1,261 @@
+#!/usr/bin/env bash
+#
+# soak-per-transport: bin/soak once per Linux server transport, under the link
+# simulator's loss, jitter and duplication, each run held to flat fds, threads
+# and resident memory (soak --assert-flat, tests/process_resources.h).
+#
+#   scripts/soak-per-transport --seconds 120
+#   scripts/soak-per-transport --seconds 1800                 (the nightly)
+#   scripts/soak-per-transport --seconds 120 --cell xdp       (on the XDP machine, by hand)
+#
+# The cells. The server transport is pinned by ROCKETNET_SERVER_TRANSPORT and
+# every client by ROCKETNET_CLIENT_TRANSPORT=portable, as load.c's cells are:
+#   portable   ROCKETNET_SERVER_TRANSPORT=portable
+#   gso        ROCKETNET_SERVER_TRANSPORT=gso
+#   gso-plain  ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_TEST_GSO_PLAIN=1 (the
+#              development library skips the UDP_SEGMENT and UDP_GRO probes)
+#   io_uring   ROCKETNET_SERVER_TRANSPORT=io_uring; where
+#              /proc/sys/kernel/io_uring_disabled is not 0 the cell prints
+#              SKIP naming why, and does not pass
+#   xdp        ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_SERVER_NUM_XDP_QUEUES=1
+#              ROCKETNET_SERVER_NUM_OS_CPUS=1, run as root inside a virtme-ng
+#              guest of this machine's own kernel (~/vm-kernels/vmlinuz-$(uname -r)),
+#              the shape of nightly-soak.yml's many-client xdp cell: a veth
+#              pair, the far end in its own namespace, the server bound on the
+#              near end (SOAK_SERVER_ADDRESS) and every client opened in the
+#              far namespace (SOAK_CLIENT_NETNS). Nothing is attached to any
+#              interface outside the guest. XDP runs only on the dedicated XDP
+#              machine or the nightly's VM-tier runner; a machine with
+#              no VM tier fails the cell by name.
+#
+# The impairment, at both ends of the link simulator
+# (ROCKETNET_DEV_SERVER_* and ROCKETNET_DEV_CLIENT_*, which soak writes into
+# the transport configs it creates from), the values tools/macos/soak_matrix.py
+# runs: loss 5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent.
+#
+# Each cell prints one line, PASS or FAIL:
+#   SOAK cell=<name> PASS server=<granted> client=<granted> seconds=<S> verified=<n> fds=<start>/<end>/<peak> threads=... resident_bytes=... link=<impaired|clean> missing=<client to server>/<server to client> duplicates_refused=<at server>/<at client>
+#   SOAK cell=<name> FAIL <why>
+# A cell passes only when soak exits 0 (no verify failure, no counter
+# conservation failure, no unplanned disconnect, no refusal other than the
+# planted duplicates', and --assert-flat holding, which includes the
+# impairment leaving its trace: drops missing and duplicates refused in each
+# direction), the server transport it names is the one the cell pins, and
+# both ends' "soak link simulator:" lines show the setting the cell asked for.
+#
+# Options:
+#   --seconds S      seconds each cell runs (default 120)
+#   --cell NAME      run only this cell (repeatable; default all five, in order)
+#   --soak PATH      the soak binary (default ../bin/soak beside this script)
+#   --log-dir DIR    keep each cell's output as DIR/<cell>.log (default: a
+#                    temporary directory, removed at exit)
+#   --clean          run without the impairment (a diagnosis of a failing
+#                    impaired cell; the record is always impaired)
+#   --xdp-memory M   the xdp guest's memory, as vng --memory takes it (default 4G)
+#   --vm-kernel PATH the xdp guest's kernel (default ~/vm-kernels/vmlinuz-$(uname -r),
+#                    the runners' path; a kit may keep it as /opt/vm-kernels/<version>/vmlinuz)
+#
+# Exit status: 0 when every cell run passed, 1 when any failed or was skipped,
+# 2 on a malformed option.
+
+set -u
+
+NAME=soak-per-transport
+SECONDS_PER_CELL=120
+CELLS=()
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+SOAK="$SCRIPT_DIR/../bin/soak"
+LOG_DIR=
+XDP_MEMORY=4G
+CLEAN=0
+VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+
+usage()
+{
+    sed -n '2,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+refuse()
+{
+    echo "$NAME: $* (see --help)" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --seconds)    [ $# -ge 2 ] || refuse "--seconds needs a value"; SECONDS_PER_CELL=$2; shift 2 ;;
+        --cell)       [ $# -ge 2 ] || refuse "--cell needs a value"; CELLS+=("$2"); shift 2 ;;
+        --soak)       [ $# -ge 2 ] || refuse "--soak needs a value"; SOAK=$2; shift 2 ;;
+        --log-dir)    [ $# -ge 2 ] || refuse "--log-dir needs a value"; LOG_DIR=$2; shift 2 ;;
+        --xdp-memory) [ $# -ge 2 ] || refuse "--xdp-memory needs a value"; XDP_MEMORY=$2; shift 2 ;;
+        --vm-kernel)  [ $# -ge 2 ] || refuse "--vm-kernel needs a value"; VM_KERNEL=$2; shift 2 ;;
+        --clean)      CLEAN=1; shift ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            refuse "unknown option $1" ;;
+    esac
+done
+
+case "$SECONDS_PER_CELL" in
+    ''|*[!0-9]*|0) refuse "--seconds S must be a positive integer" ;;
+esac
+[ ${#CELLS[@]} -gt 0 ] || CELLS=(portable gso gso-plain io_uring xdp)
+for cell in "${CELLS[@]}"; do
+    case "$cell" in
+        portable|gso|gso-plain|io_uring|xdp) ;;
+        *) refuse "unknown cell $cell (portable, gso, gso-plain, io_uring, xdp)" ;;
+    esac
+done
+[ "$(uname -s)" = Linux ] || { echo "$NAME: Linux only" >&2; exit 1; }
+[ -x "$SOAK" ] || { echo "$NAME: $SOAK not built -- run make first" >&2; exit 1; }
+SOAK=$(cd "$(dirname "$SOAK")" && pwd)/$(basename "$SOAK")
+
+if [ -z "$LOG_DIR" ]; then
+    LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX")
+    trap 'rm -rf "$LOG_DIR"' EXIT
+else
+    mkdir -p "$LOG_DIR" || exit 1
+fi
+LOG_DIR=$(cd "$LOG_DIR" && pwd)
+
+IMPAIRMENT=()
+[ "$CLEAN" = 1 ] || for end in SERVER CLIENT; do
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_PACKET_LOSS_PERCENT=5")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_LATENCY_MS=30")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_JITTER_MS=20")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_DUPLICATE_PERCENT=2")
+done
+# the setting each end's "soak link simulator:" line must show
+if [ "$CLEAN" = 1 ]; then
+    WANT_LINK="latency_ms=0 jitter_ms=0 loss_percent=0 duplicate_percent=0"
+    LINK_NAME=clean
+else
+    WANT_LINK="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+    LINK_NAME=impaired
+fi
+
+# the bound past the run itself: soak's teardown, plus the guest's boot for xdp
+TIMEOUT=$(( SECONDS_PER_CELL + 120 ))
+
+failures=0
+
+resource_field()
+{
+    # resource_field <log> <name>: start/end/peak from "soak resources: <name> start= end= peak="
+    sed -nE "s/^soak resources: $2 start=([0-9-]+) end=([0-9-]+) peak=([0-9-]+)$/\1\/\2\/\3/p" "$1" | tail -n 1
+}
+
+summary_value()
+{
+    awk -v key="$2" '$1 == "soak" && $2 == "summary:" && $3 == key { value = $4 } END { print value }' "$1"
+}
+
+judge()
+{
+    # judge <cell> <want server transport> <log> <soak exit status>
+    local cell=$1 want=$2 log=$3 status=$4
+    local server client verified
+    server=$(summary_value "$log" server_transport_io)
+    client=$(summary_value "$log" client_transport_io)
+    verified=$(summary_value "$log" verified)
+    local fail_reason=
+    if [ "$status" -ne 0 ]; then
+        fail_reason="soak exited $status: $(grep -E '^(soak: |PAYLOAD VERIFY FAILED)' "$log" | grep -vE '^soak: ([0-9]+ iterations|conservation ok|planted duplicates)' | head -n 3 | tr '\n' ';')"
+    elif [ "$server" != "$want" ]; then
+        fail_reason="server transport granted '${server:-none}', the cell pins $want"
+    else
+        local end
+        for end in server client; do
+            if ! grep -qx "soak link simulator: $end $WANT_LINK" "$log"; then
+                fail_reason="the $end link simulator shows '$(sed -n "s/^soak link simulator: $end //p" "$log" | head -n 1)', the cell asks for '$WANT_LINK'"
+                break
+            fi
+        done
+    fi
+    if [ -n "$fail_reason" ]; then
+        echo "SOAK cell=$cell FAIL $fail_reason (log $log)"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    echo "SOAK cell=$cell PASS server=$server client=$client seconds=$SECONDS_PER_CELL verified=$verified fds=$(resource_field "$log" fds) threads=$(resource_field "$log" threads) resident_bytes=$(resource_field "$log" resident_bytes) link=$LINK_NAME missing=$(summary_value "$log" client_to_server_missing)/$(summary_value "$log" server_to_client_missing) duplicates_refused=$(summary_value "$log" duplicates_refused_at_server)/$(summary_value "$log" duplicates_refused_at_client)"
+}
+
+run_host_cell()
+{
+    # run_host_cell <cell> <want server transport> <env...>
+    local cell=$1 want=$2
+    shift 2
+    local log="$LOG_DIR/$cell.log"
+    env "$@" "${IMPAIRMENT[@]}" timeout "$TIMEOUT" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat > "$log" 2>&1
+    judge "$cell" "$want" "$log" $?
+}
+
+run_xdp_cell()
+{
+    local log="$LOG_DIR/xdp.log"
+    local vm_kernel="$VM_KERNEL"
+    if ! command -v vng > /dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+        echo "SOAK cell=xdp FAIL no VM tier on this machine: needs vng, a readable $vm_kernel and a writable /dev/kvm"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    local guest
+    guest=$(mktemp -d "$LOG_DIR/xdp-guest.XXXXXX")
+    {
+        echo 'set -u'
+        echo 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
+        echo 'ip netns add rnxdpsoak'
+        # the veth pair: the kernel names the far end, found by the near
+        # end's iflink, then renamed
+        echo 'ip link add rnxdpsoak0 mtu 1500 type veth'
+        echo 'far=$(grep -lx "$(cat /sys/class/net/rnxdpsoak0/iflink)" /sys/class/net/*/ifindex | cut -d/ -f5)'
+        echo 'ip link set "$far" name rnxdpsoak1 mtu 1500'
+        echo 'ip link set rnxdpsoak1 netns rnxdpsoak'
+        echo 'ip addr add 10.77.4.1/24 dev rnxdpsoak0'
+        echo 'ip -n rnxdpsoak addr add 10.77.4.2/24 dev rnxdpsoak1'
+        echo 'ip link set rnxdpsoak0 up'
+        echo 'echo 2 > /sys/class/net/rnxdpsoak0/napi_defer_hard_irqs'
+        echo 'echo 200000 > /sys/class/net/rnxdpsoak0/gro_flush_timeout'
+        echo 'ip -n rnxdpsoak link set lo up'
+        echo 'ip -n rnxdpsoak link set rnxdpsoak1 up'
+        printf 'env'
+        printf ' %q' ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable \
+            ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1 ROCKETNET_LOG_LEVEL=2 \
+            SOAK_SERVER_ADDRESS=10.77.4.1:40412 SOAK_CLIENT_NETNS=/var/run/netns/rnxdpsoak \
+            "${IMPAIRMENT[@]}" "$SOAK" --seconds "$SECONDS_PER_CELL" --assert-flat
+        printf ' > %q 2>&1\n' "$log"
+        printf 'echo "guest soak exit=$?" >> %q\n' "$guest/status"
+    } > "$guest/run.sh"
+    # vng from a short directory: its virtiofs socket path must stay under 108 bytes
+    local short
+    short=$(mktemp -d /tmp/rnsoak.XXXXXX)
+    ( cd "$short" && timeout "$TIMEOUT" vng --run "$vm_kernel" --memory "$XDP_MEMORY" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
+        sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the $TIMEOUT s timeout)" >> "$guest/vm.log"
+    rmdir "$short" 2>/dev/null
+    local status
+    status=$(sed -nE 's/^guest soak exit=([0-9]+)$/\1/p' "$guest/status" 2>/dev/null | tail -n 1)
+    if [ -z "$status" ]; then
+        echo "SOAK cell=xdp FAIL the guest reported no soak exit status: $(tail -n 3 "$guest/vm.log" | tr '\n' ';')"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    judge xdp xdp "$log" "$status"
+}
+
+for cell in "${CELLS[@]}"; do
+    case "$cell" in
+        portable)  run_host_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ;;
+        gso)       run_host_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ;;
+        gso-plain) run_host_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1 ;;
+        io_uring)
+            if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
+                run_host_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
+            else
+                echo "SOAK cell=io_uring SKIP this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled is not 0)"
+                failures=$(( failures + 1 ))
+            fi
+            ;;
+        xdp)       run_xdp_cell ;;
+    esac
+done
+
+[ "$failures" -eq 0 ]

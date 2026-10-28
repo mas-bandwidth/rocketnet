@@ -5,7 +5,7 @@ JOBS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$$n" -
 # ROCKETNET_DEV=OFF builds the production library (BUILDING.md, "Production builds").
 .PHONY: build
 build:
-	@mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release $(if $(ROCKETNET_DEV),-DROCKETNET_DEV=$(ROCKETNET_DEV)) .. >/dev/null && $(MAKE) $(if $(filter -j%,$(MAKEFLAGS)),,-j$(JOBS)) --no-print-directory
+	@mkdir -p build && cd build && cmake -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=$(if $(ROCKETNET_DEV),$(ROCKETNET_DEV),ON) .. && $(MAKE) $(if $(filter -j%,$(MAKEFLAGS)),,-j$(JOBS)) --no-print-directory
 
 # the end-to-end check: build the real binaries, then drive them over loopback.
 # the tool is built from its .go file because the two C programs share its
@@ -29,7 +29,7 @@ docs-undocumented:
 	@if [ ! -f build/docs/mrdocs.log ]; then sh tools/docs/mrdocs.sh >/dev/null; fi
 	@sh tools/docs/undocumented.sh build/docs/mrdocs.log
 
-# clang-format check over tracked sources; CI does not run it yet.
+# clang-format check over tracked sources; the CI format-check job runs it.
 .PHONY: format-check
 format-check:
 	@sh tools/format/check_format.sh

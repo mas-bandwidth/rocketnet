@@ -43,6 +43,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
@@ -55,6 +56,7 @@
 #include "rocketnet_message_object.h"
 #include "rocketnet_channel.h"
 #include "rocketnet_window_ack.h"
+#include "rocketnet_protocol.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -63,6 +65,7 @@
 
 #define check rocketnet_unit_check
 
+#if ROCKETNET_DEV
 #define SEQUENCE_WRAP_DT 0.01
 #define SEQUENCE_WRAP_STEPS 5000
 #define SEQUENCE_WRAP_SETTLE 100
@@ -70,13 +73,9 @@
 #define SEQUENCE_WRAP_FIELD_LIMIT 0xFFFFFFFFULL
 #define SEQUENCE_WRAP_MAX_PACKETS 16384
 
-#if defined( _WIN32 )
-static void sequence_wrap_setenv( const char * name, const char * value ) { check( _putenv_s( name, value ) == 0 ); }
-static void sequence_wrap_unsetenv( const char * name ) { check( _putenv_s( name, "" ) == 0 ); }
-#else
-static void sequence_wrap_setenv( const char * name, const char * value ) { check( setenv( name, value, 1 ) == 0 ); }
-static void sequence_wrap_unsetenv( const char * name ) { check( unsetenv( name ) == 0 ); }
-#endif
+#if ROCKETNET_DEV
+static void sequence_wrap_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
+static void sequence_wrap_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
 static double sequence_wrap_clock = 1000.0;
 static double sequence_wrap_time_callback( void * ) { return sequence_wrap_clock; }
@@ -99,8 +98,8 @@ struct sequence_wrap_seam_t
     int samples_past_wrap;
     double sample_min;
     double sample_max;
-    int (*finish_next)( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
-    int (*acked_next)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
+    int ( *finish_next )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+    int ( *acked_next )( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 };
 
 static struct sequence_wrap_seam_t sequence_wrap_seams[2];      // 0 server, 1 client
@@ -275,9 +274,7 @@ static void sequence_wrap_send( struct sequence_wrap_pair_t * pair, int from_cli
     uint8_t message[8] = { 0x5E, 0, 0, 0, 0, 0, 0, 0 };
     const uint32_t index = (uint32_t) d->sent;
     memcpy( message + 4, &index, sizeof( index ) );
-    const uint32_t id = from_client ?
-        rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) :
-        rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
+    const uint32_t id = from_client ? rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) : rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
     check( id != 0 );
     d->sent++;
 }
@@ -341,7 +338,8 @@ static void test_sequence_wrap_session_both_directions( void )
     }
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                   rocketnet_message_server_client_connected( pair.server, 0 ) ); i++ )
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
         sequence_wrap_step( &pair, false, NULL, NULL );
     if ( rocketnet_message_client_state( pair.client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
@@ -436,4 +434,129 @@ static void test_sequence_wrap_session_both_directions( void )
 #endif // #if ROCKETNET_TEST_SEAMS
 }
 
+// test_sequence_wrap_session_starts_at_wrap_edge: both sessions start at
+// 2^32 - 10 through the same seam, so every session packet's reader has a
+// highest sent sequence past 2^31 from its first packet, while the other end
+// has opened nothing and answers with the empty ack block (largest 0, first
+// range length 0, no ranges; standard/TRANSPORT.md t15). The reader
+// recognises that block on its wire fields (sdk/rocketnet_ack.cpp
+// rocketnet_ack_block_read, tla/AckBlockWrap.tla ReadBlock), the same reader
+// on client and server: the client connects, at least
+// SEQUENCE_WRAP_EDGE_PAST packets each way go past 0x100000000 and are acked,
+// and no bad ack block is counted on either transport. With the empty test
+// made on the reconstructed largest (the reader before 2026-10-24) every
+// keep-alive counts CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK and the client never
+// connects.
+
+#define SEQUENCE_WRAP_EDGE_START ( 0x100000000ULL - 10ULL )
+#define SEQUENCE_WRAP_EDGE_STEPS 400
+#define SEQUENCE_WRAP_EDGE_PAST 100
+
+static void test_sequence_wrap_session_starts_at_wrap_edge( void )
+{
+#if ROCKETNET_TEST_SEAMS
+    char start_text[32];
+    snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_EDGE_START );
+    sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
+    check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
+
+    struct sequence_wrap_pair_t pair;
+    const bool created = sequence_wrap_pair_setup( &pair );
+    check( created );
+    if ( !created )
+    {
+        sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
+        return;
+    }
+
+    struct rn_message_object_t * objects[2] = { &pair.server->object, &pair.client->object };
+    memset( sequence_wrap_seams, 0, sizeof( sequence_wrap_seams ) );
+    for ( int side = 0; side < 2; side++ )
+    {
+        sequence_wrap_seams[side].finish_next = objects[side]->link.finish_packet;
+        sequence_wrap_seams[side].acked_next = objects[side]->link.acked;
+    }
+    objects[0]->link.finish_packet = sequence_wrap_server_finish;
+    objects[0]->link.acked = sequence_wrap_server_acked;
+    objects[1]->link.finish_packet = sequence_wrap_client_finish;
+    objects[1]->link.acked = sequence_wrap_client_acked;
+
+    for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
+        sequence_wrap_step( &pair, false, NULL, NULL );
+
+    const struct rocketnet_counters_t * client_counters = rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) );
+    const struct rocketnet_counters_t * server_counters = rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) );
+    if ( rocketnet_message_client_state( pair.client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+        printf( "sequence wrap edge: client state %d after the connect steps, CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK = %llu\n",
+                rocketnet_message_client_state( pair.client ),
+                (unsigned long long) rocketnet_counter_value( client_counters, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK ) );
+    check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+    check( rocketnet_message_server_client_connected( pair.server, 0 ) );
+
+    sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
+    check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
+
+    struct sequence_wrap_direction_t to_client = { 0, 0, 1 };
+    struct sequence_wrap_direction_t to_server = { 0, 0, 1 };
+    for ( int step = 0; step < SEQUENCE_WRAP_EDGE_STEPS + SEQUENCE_WRAP_SETTLE; step++ )
+        sequence_wrap_step( &pair, step < SEQUENCE_WRAP_EDGE_STEPS, &to_client, &to_server );
+
+    for ( int side = 0; side < 2; side++ )
+    {
+        objects[side]->link.finish_packet = sequence_wrap_seams[side].finish_next;
+        objects[side]->link.acked = sequence_wrap_seams[side].acked_next;
+    }
+
+    check( to_client.sent == SEQUENCE_WRAP_EDGE_STEPS && to_server.sent == SEQUENCE_WRAP_EDGE_STEPS );
+    check( to_client.received == to_client.sent && to_client.in_order == 1 );
+    check( to_server.received == to_server.sent && to_server.in_order == 1 );
+
+    for ( int side = 0; side < 2; side++ )
+    {
+        const struct sequence_wrap_seam_t * seam = &sequence_wrap_seams[side];
+        check( !seam->packets_overflow );
+        check( seam->lowest_sequence >= SEQUENCE_WRAP_EDGE_START );
+        check( seam->packets_past_wrap >= SEQUENCE_WRAP_EDGE_PAST );
+        check( seam->acked_past_wrap >= SEQUENCE_WRAP_EDGE_PAST );
+    }
+
+    check( rocketnet_counter_value( client_counters, ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK ) == 0 );
+    check( rocketnet_counter_value( client_counters, ROCKETNET_COUNTER_CLIENT_PAYLOAD_BAD_ACK_BLOCK ) == 0 );
+    check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK ) == 0 );
+    check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK ) == 0 );
+    sequence_wrap_check_counters( "server transport", server_counters );
+    sequence_wrap_check_counters( "client transport", client_counters );
+    sequence_wrap_check_counters( "server message", &objects[0]->counters );
+    sequence_wrap_check_counters( "client message", &objects[1]->counters );
+
+    rn_test_message_client_stop_and_destroy( pair.client );
+    rn_test_message_server_stop_and_destroy( pair.server );
+#endif // #if ROCKETNET_TEST_SEAMS
+}
+#endif // #if ROCKETNET_DEV
+
+// rocketnet_reconstruct_near (sdk/rocketnet_protocol.cpp) on its own, no
+// session: of the three candidates sharing the wire value in their low 32
+// bits (expected's 2^32 block, the one below, the one above), the nearest to
+// expected wins and an exact tie takes the larger. Pins the behaviour the
+// session cases above rely on, at each edge: the same block, the block below,
+// the block above, a tie, and expected zero (no block below).
+
+#endif // #if ROCKETNET_DEV
+
+static void test_reconstruct_near_picks_nearest_and_larger_on_tie( void )
+{
+    check( rocketnet_reconstruct_near( 3, 0x100000005ULL ) == 0x100000003ULL );
+    check( rocketnet_reconstruct_near( 0xFFFFFFF0U, 0x100000010ULL ) == 0x0FFFFFFF0ULL );
+    check( rocketnet_reconstruct_near( 5, 0x1FFFFFFF0ULL ) == 0x200000005ULL );
+    check( rocketnet_reconstruct_near( 0, 0x180000000ULL ) == 0x200000000ULL );
+    check( rocketnet_reconstruct_near( 0xFFFFFFFFU, 0 ) == 0xFFFFFFFFULL );
+}
+
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_sequence_wrap_session_both_directions );
+REGISTER_UNIT_TEST( test_sequence_wrap_session_starts_at_wrap_edge );
+#endif // #if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_reconstruct_near_picks_nearest_and_larger_on_tie );

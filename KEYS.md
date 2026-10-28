@@ -88,7 +88,10 @@ of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
 connection, which the backend draws fresh for each token; they are not
 long-lived and they identify nothing outside that connection. Fetch a token
 just before connecting: a token expires (30 seconds is the recommended
-lifetime, `ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`).
+lifetime; the development token's lifetime is
+`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, defined in
+[sdk/rocketnet_connect_token.h](sdk/rocketnet_connect_token.h), an internal
+header, not in the public [sdk/rocketnet.h](sdk/rocketnet.h)).
 
 ## Development keys and production keys
 
@@ -101,8 +104,10 @@ client connect with no backend: initialize `backend_public_key` from
 and `rocketnet_server_public_key` to `rocketnet_create_dev_connect_token`. A
 server started with a development key logs a warning on every start.
 
-Both secret halves of the development keys are printed in the standard. A
-server that accepts the development backend key accepts tokens from anyone.
+The development backend key is published in the standard: its public half is
+`ROCKETNET_DEV_BACKEND_PUBLIC_KEY` ([standard/TRANSPORT.md, t19.2](standard/TRANSPORT.md#t19.2)),
+so anyone can mint a token a server accepts. A server that accepts the
+development backend key accepts tokens from anyone.
 
 A production build (`ROCKETNET_DEV=0`, CMake `-DROCKETNET_DEV=OFF`;
 [BUILDING.md, "Production builds"](BUILDING.md#production-builds)):
@@ -134,8 +139,13 @@ same token byte for byte: Go ([go/main.go](examples/backend/go/main.go),
 `generateConnectToken`) and C#
 ([csharp/Backend/ConnectToken.cs](examples/backend/csharp/Backend/ConnectToken.cs),
 `ConnectToken.Generate`). Both are checked against the known answers in
-[tests/connect_token_vectors.json](tests/connect_token_vectors.json). A real
-backend authenticates the player before it writes them a token.
+[tests/connect_token_vectors.json](tests/connect_token_vectors.json). That file
+is written only by `./bin/connect_token_vectors tests/connect_token_vectors.json`
+([tools/connect_token_vectors/main.cpp](tools/connect_token_vectors/main.cpp)),
+from the fixed test keys and inputs; the unit suite compiles the committed copy
+into `./bin/test` and checks it byte for byte against the same generator
+(`test_vectors_regenerate_byte_identical`). A real backend authenticates the
+player before it writes them a token.
 
 ## Rotation
 

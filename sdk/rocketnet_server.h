@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_H
-#define ROCKETNET_SERVER_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_H
 
 #include <stdint.h>
 #include "rocketnet_address.h"
@@ -68,4 +68,19 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
                                                        const struct rocketnet_address_t * source,
                                                        uint64_t current_timestamp );
 
-#endif // #ifndef ROCKETNET_SERVER_H
+// Finishing a server packet after its lease was reset is caller misuse.
+//
+// update, send_packets and stop each reset the server transport's packet
+// leases, and none of them may run while a fill is still open
+// (sdk/rocketnet_layers.h). start_packet's context is valid only until
+// finish, abort, or that reset. rocketnet_server_transport_finish_packet
+// on a context whose lease the reset already retired returns 0 in every
+// build, adds 1 to the process-wide api_misuses count, and logs
+// "server finish packet refused: the lease was reset by update, send_packets
+// or stop". It does not assert, and it does not seal the frame. The lease
+// does not outlive the reset: the packet is not finished later and not
+// released a second time. A finish with no start, a second finish, a finish
+// after abort, or a modified or wrong-owner context is a different refusal
+// and still asserts in a debug build.
+
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_H

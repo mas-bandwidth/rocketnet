@@ -111,21 +111,34 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     // the pools are lazy (tla/RNLazyPool.tla): their state is the free list,
     // the free count and the watermark; the bytes of a descriptor or chunk
     // link at or past the watermark are not state and are not compared
-    if ( a->descriptors_free_head != b->descriptors_free_head || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
+    if ( a->descriptors_free_top != b->descriptors_free_top || a->descriptors_free != b->descriptors_free || a->descriptors_fresh != b->descriptors_fresh )
         return false;
-    if ( memcmp( a->channel_send, b->channel_send, sizeof(rn_channel_send_t) * a->num_channels ) != 0 ) return false;
-    if ( memcmp( a->channel_receive, b->channel_receive, sizeof(rn_channel_receive_t) * a->num_channels ) != 0 ) return false;
-    if ( memcmp( a->send_numbers, b->send_numbers, sizeof(rn_send_number_t) * a->window ) != 0 ) return false;
-    if ( memcmp( a->receive_descriptors, b->receive_descriptors, sizeof(rn_receive_descriptor_t) * a->window ) != 0 ) return false;
-    if ( memcmp( a->received_bits, b->received_bits, a->window / 8 ) != 0 ) return false;
-    if ( memcmp( a->held_index, b->held_index, sizeof(rn_held_entry_t) * a->held_entries ) != 0 ) return false;
-    if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof(rn_send_descriptor_t) * a->descriptors_fresh ) != 0 ) return false;
-    if ( memcmp( a->sent_packets, b->sent_packets, sizeof(rn_sent_packet_t) * a->packets ) != 0 ) return false;
-    if ( memcmp( a->sent_index, b->sent_index, sizeof(rn_sent_index_t) * a->sent_index_entries ) != 0 ) return false;
-    if ( memcmp( a->sent_refs, b->sent_refs, sizeof(uint32_t) * a->sent_ref_entries ) != 0 ) return false;
-    if ( memcmp( a->deliveries, b->deliveries, sizeof(rn_delivery_t) * a->delivery_entries ) != 0 ) return false;
-    if ( memcmp( a->receipts, b->receipts, sizeof(rn_receipt_t) * a->receipt_entries ) != 0 ) return false;
-    if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof(rn_resend_link_t) * a->window ) != 0 ) return false;
+    if ( memcmp( a->channel_send, b->channel_send, sizeof( rn_channel_send_t ) * a->num_channels ) != 0 )
+        return false;
+    if ( memcmp( a->channel_receive, b->channel_receive, sizeof( rn_channel_receive_t ) * a->num_channels ) != 0 )
+        return false;
+    if ( memcmp( a->send_numbers, b->send_numbers, sizeof( rn_send_number_t ) * a->window ) != 0 )
+        return false;
+    if ( memcmp( a->receive_descriptors, b->receive_descriptors, sizeof( rn_receive_descriptor_t ) * a->window ) != 0 )
+        return false;
+    if ( memcmp( a->received_bits, b->received_bits, a->window / 8 ) != 0 )
+        return false;
+    if ( memcmp( a->held_index, b->held_index, sizeof( rn_held_entry_t ) * a->held_entries ) != 0 )
+        return false;
+    if ( memcmp( a->send_descriptors, b->send_descriptors, sizeof( rn_send_descriptor_t ) * a->descriptors_fresh ) != 0 )
+        return false;
+    if ( memcmp( a->sent_packets, b->sent_packets, sizeof( rn_sent_packet_t ) * a->packets ) != 0 )
+        return false;
+    if ( memcmp( a->sent_index, b->sent_index, sizeof( rn_sent_index_t ) * a->sent_index_entries ) != 0 )
+        return false;
+    if ( memcmp( a->sent_refs, b->sent_refs, sizeof( uint32_t ) * a->sent_ref_entries ) != 0 )
+        return false;
+    if ( memcmp( a->deliveries, b->deliveries, sizeof( rn_delivery_t ) * a->delivery_entries ) != 0 )
+        return false;
+    if ( memcmp( a->receipts, b->receipts, sizeof( rn_receipt_t ) * a->receipt_entries ) != 0 )
+        return false;
+    if ( memcmp( a->resend_fifo, b->resend_fifo, sizeof( rn_resend_link_t ) * a->window ) != 0 )
+        return false;
     for ( uint32_t h = 0; h < a->holds; h++ )
     {
         const rn_sequenced_hold_t * x = &a->sequenced_messages_held[h];
@@ -139,7 +152,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
         const rn_store_class_t * y = &b->store.classes[c];
         if ( x->num_chunks != y->num_chunks || x->free_head != y->free_head || x->free_count != y->free_count || x->chunk_bytes != y->chunk_bytes || x->fresh != y->fresh )
             return false;
-        if ( memcmp( x->link, y->link, sizeof(uint32_t) * x->fresh ) != 0 )
+        if ( memcmp( x->meta, y->meta, sizeof( uint32_t ) * x->fresh ) != 0 )
             return false;
         // the class's place in its region, the same offset in both
         if ( x->data - a->store_memory != y->data - b->store_memory )
@@ -158,7 +171,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
 static void test_memory_isolation_between_slots()
 {
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     // the arena lives in a zeroed block of the test's own, so the byte
     // compare of B below reads only defined bytes: a region's memory is
@@ -166,9 +179,9 @@ static void test_memory_isolation_between_slots()
 
     const uint64_t arena_bytes = rn_arena_required_bytes( NULL, 2 );
     check( arena_bytes > 0 );
-    uint8_t * raw = (uint8_t*) calloc( 1, (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
+    uint8_t * raw = (uint8_t *) calloc( 1, (size_t) arena_bytes + ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw );
-    uint8_t * block = (uint8_t*) ( ( (uintptr_t) raw + ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    uint8_t * block = (uint8_t *) ( ( (uintptr_t) raw + ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
     rn_arena_t * arena = rn_arena_create_in_block( block, arena_bytes, NULL, 2, &counters );
     check( arena );
     rn_region_t * a = rn_arena_region( arena, 0 );
@@ -183,7 +196,7 @@ static void test_memory_isolation_between_slots()
     }
 
     const rn_region_t b_before = *b;
-    uint8_t * b_memory = (uint8_t*) malloc( (size_t) b->bytes );
+    uint8_t * b_memory = (uint8_t *) malloc( (size_t) b->bytes );
     check( b_memory );
     memcpy( b_memory, b->base, (size_t) b->bytes );
 
@@ -194,7 +207,7 @@ static void test_memory_isolation_between_slots()
     check( rn_region_send_alloc( a, 10 ) == RN_DESCRIPTOR_NONE );
 
     // nothing of B moved
-    check( memcmp( &b_before, b, sizeof(*b) ) == 0 );
+    check( memcmp( &b_before, b, sizeof( *b ) ) == 0 );
     check( memcmp( b_memory, b->base, (size_t) b->bytes ) == 0 );
     check( !rn_region_exhausted( b ) );
     check( rn_connection_memory_decide( b ) == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -225,7 +238,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
     check( strcmp( rocketnet_counter_name( ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
 
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     // the client shape: one region
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
@@ -287,7 +300,7 @@ static void test_exhaustion_is_a_kick_with_its_reason()
 static void test_reused_slot_starts_clean()
 {
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 2, &counters );
     rn_arena_t * fresh_arena = rn_arena_create( NULL, NULL, 1, &counters );
@@ -348,7 +361,7 @@ static void test_user_block_is_used_and_nothing_else()
     cm_install();
 
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     const int slots = 3;
     const uint64_t required = rn_arena_required_bytes( NULL, slots );
@@ -356,9 +369,9 @@ static void test_user_block_is_used_and_nothing_else()
     check( required >= rocketnet_message_connection_bytes( NULL ) * (uint64_t) slots );
     check( rn_arena_required_bytes( NULL, 0 ) == 0 );
 
-    uint8_t * raw = (uint8_t*) malloc( (size_t) required + 2 * ROCKETNET_ALLOCATION_ALIGNMENT );
+    uint8_t * raw = (uint8_t *) malloc( (size_t) required + 2 * ROCKETNET_ALLOCATION_ALIGNMENT );
     check( raw );
-    uint8_t * block = (uint8_t*) ( ( (uintptr_t) raw + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
+    uint8_t * block = (uint8_t *) ( ( (uintptr_t) raw + ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) & ~(uintptr_t) ( ROCKETNET_ALLOCATION_ALIGNMENT - 1 ) );
 
     const uint64_t before = cm_calls();
 
@@ -369,14 +382,14 @@ static void test_user_block_is_used_and_nothing_else()
 
     rn_arena_t * arena = rn_arena_create_in_block( block, required, NULL, slots, &counters );
     check( arena );
-    check( (void*) arena == (void*) block );
+    check( (void *) arena == (void *) block );
     check( rn_arena_bytes( arena ) == required );
     check( rn_arena_num_regions( arena ) == slots );
 
     for ( int s = 0; s < slots; s++ )
     {
         rn_region_t * region = rn_arena_region( arena, s );
-        check( cm_inside( block, required, region, sizeof(*region) ) );
+        check( cm_inside( block, required, region, sizeof( *region ) ) );
         check( cm_inside( block, required, region->base, region->bytes ) );
 
         std::vector<uint32_t> taken( region->queue );
@@ -385,7 +398,7 @@ static void test_user_block_is_used_and_nothing_else()
         for ( size_t i = 0; i < (size_t) n; i++ )
         {
             const rn_send_descriptor_t * d = &region->send_descriptors[taken[i]];
-            check( cm_inside( block, required, d, sizeof(*d) ) );
+            check( cm_inside( block, required, d, sizeof( *d ) ) );
             for ( uint32_t chunk = d->chunk; chunk != RN_CHUNK_NONE; chunk = rn_send_store_chunk_next( &region->store, chunk ) )
             {
                 const uint8_t * data = rn_send_store_chunk_data( &region->store, chunk );
@@ -413,7 +426,7 @@ static void test_connection_memory_no_allocation_after_create()
     cm_install();
 
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     const uint64_t mallocs_before = cm_mallocs;
     rn_arena_t * server = rn_arena_create( NULL, NULL, 4, &counters );
@@ -466,7 +479,7 @@ static void test_connection_memory_no_allocation_after_create()
 static void test_exhausted_region_refuses_sends_until_reset()
 {
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     // Use a small queue to exhaust quickly (min is 16)
     rocketnet_message_config_t config;
@@ -531,7 +544,7 @@ static void test_exhausted_region_refuses_sends_until_reset()
 static void test_receive_without_room_exhausts_the_region()
 {
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &counters );
     check( arena );
@@ -552,11 +565,11 @@ static void test_receive_without_room_exhausts_the_region()
     // a valid unreliable record
     uint8_t payload[2048];
     struct rocketnet_message_writer_t writer;
-    rocketnet_message_writer_begin( &writer, payload, (int) sizeof(payload) );
+    rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
     struct rocketnet_message_record_t record;
-    memset( &record, 0, sizeof(record) );
+    memset( &record, 0, sizeof( record ) );
     record.code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
-    record.data = (const uint8_t*) "hi";
+    record.data = (const uint8_t *) "hi";
     record.bytes = 2;
     check( rocketnet_message_writer_add( &writer, &record ) );
     const int payload_bytes = rocketnet_message_writer_finish( &writer );
@@ -591,7 +604,7 @@ static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
         { 1, 1, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1, 1 },
         { 1, 1, MP, 0 },
     };
-    for ( size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++ )
+    for ( size_t i = 0; i < sizeof( bad ) / sizeof( bad[0] ); i++ )
     {
         check( rocketnet_reassembly_memory_required( bad[i][0], bad[i][1], bad[i][2], bad[i][3] ) == 0 );
         check( !rocketnet_reassembly_memory_allowed( bad[i][0], bad[i][1], bad[i][2], bad[i][3] ) );
@@ -628,7 +641,7 @@ static void test_reassembly_geometry_refuses_bad_arguments_and_budget()
 static void test_exhausted_region_refuses_spans()
 {
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -672,7 +685,7 @@ static void test_exhausted_region_refuses_spans()
 static void test_span_granted_after_reset()
 {
     rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof(counters) );
+    memset( &counters, 0, sizeof( counters ) );
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -706,6 +719,173 @@ static void test_span_granted_after_reset()
     rn_arena_destroy( arena );
 }
 
+// Generation-tagged slots: a descriptor's generation bumps on every take and
+// survives its free, the free stack is exact LIFO, and a chunk slot's
+// generation bumps on every take of that chunk.
+static void test_generation_tagged_slots_and_lifo_stack()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t a = rn_region_send_alloc( region, 10 );
+    const uint32_t b = rn_region_send_alloc( region, 10 );
+    const uint32_t c = rn_region_send_alloc( region, 10 );
+    check( a != RN_DESCRIPTOR_NONE && b != RN_DESCRIPTOR_NONE && c != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[a].generation == 1 );
+    const uint32_t chunk_a = region->send_descriptors[a].chunk;
+    check( rn_send_store_chunk_generation( &region->store, chunk_a ) == 1 );
+
+    // exact LIFO: free b then a; the next takes are a then b
+    rn_region_send_free( region, b );
+    rn_region_send_free( region, a );
+    check( region->descriptors_free_top == 2 );
+    check( rn_region_send_alloc( region, 10 ) == a );
+    check( region->send_descriptors[a].generation == 2 );
+    check( rn_send_store_chunk_generation( &region->store, region->send_descriptors[a].chunk ) >= 1 );
+    check( rn_region_send_alloc( region, 10 ) == b );
+    check( region->send_descriptors[b].generation == 2 );
+
+    // a stale chunk handle's generation never matches the slot's live take:
+    // freeing the live chain, then freeing it again, is refused whole
+    const uint32_t live_chunk = region->send_descriptors[a].chunk;
+    const uint32_t gen_before = rn_send_store_chunk_generation( &region->store, live_chunk );
+    rn_region_send_free( region, a );
+    check( rn_send_store_chunk_generation( &region->store, live_chunk ) == gen_before );
+    check( !rn_send_store_free_checked( &region->store, live_chunk ) );
+    const uint32_t a2 = rn_region_send_alloc( region, 10 );
+    check( a2 == a );
+    check( rn_send_store_chunk_generation( &region->store, region->send_descriptors[a2].chunk ) != gen_before ||
+           region->send_descriptors[a2].chunk != live_chunk );
+
+    rn_arena_destroy( arena );
+}
+
+// Live spans order by allocation ticket: the oldest live span pins the
+// reclaim floor while interior spans churn, holes are never overwritten, and
+// the floor advances only when the oldest span is freed.
+static void test_span_tickets_pin_oldest_live()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+    check( region->span_bytes >= 4 * 4096 );
+
+    const int span_bytes = 2048;
+    const uint32_t s0 = rn_region_send_alloc_span( region, span_bytes );
+    const uint32_t s1 = rn_region_send_alloc_span( region, span_bytes );
+    const uint32_t s2 = rn_region_send_alloc_span( region, span_bytes );
+    check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE && s2 != RN_DESCRIPTOR_NONE );
+    check( region->span_first == s0 && region->span_last == s2 );
+    check( region->send_descriptors[s0].span_ticket < region->send_descriptors[s1].span_ticket );
+    check( region->send_descriptors[s1].span_ticket < region->send_descriptors[s2].span_ticket );
+    const uint32_t floor = region->span_head;
+    check( floor == region->send_descriptors[s0].span_start );
+
+    // interior churn: free and retake the middle span; the floor stays pinned
+    rn_region_send_free( region, s1 );
+    check( region->span_first == s0 && region->span_head == floor );
+    const uint32_t s1b = rn_region_send_alloc_span( region, span_bytes );
+    check( s1b != RN_DESCRIPTOR_NONE );
+    check( region->span_first == s0 && region->span_head == floor );
+    check( region->send_descriptors[s1b].span_ticket > region->send_descriptors[s2].span_ticket );
+    check( region->span_last == s1b );
+
+    // freeing the oldest advances the floor to the next-oldest live span
+    rn_region_send_free( region, s0 );
+    check( region->span_first == s2 );
+    check( region->span_head == region->send_descriptors[s2].span_start );
+
+    rn_region_send_free( region, s2 );
+    rn_region_send_free( region, s1b );
+    check( region->span_first == RN_DESCRIPTOR_NONE && region->span_head == 0 && region->span_tail == 0 );
+
+    rn_arena_destroy( arena );
+}
+
+// Near ticket exhaustion: tickets renumber in order instead of wrapping onto
+// a live span's ticket, so oldest-live order survives the wrap.
+static void test_span_ticket_wraparound_renumbers()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t s0 = rn_region_send_alloc_span( region, 2048 );
+    const uint32_t s1 = rn_region_send_alloc_span( region, 2048 );
+    check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE );
+    region->span_ticket_next = 0xFFFFFFFFu;
+    const uint32_t s2 = rn_region_send_alloc_span( region, 2048 );
+    check( s2 != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[s2].span_ticket == 0xFFFFFFFFu );
+    const uint32_t s3 = rn_region_send_alloc_span( region, 2048 );
+    check( s3 != RN_DESCRIPTOR_NONE );
+    // renumbered 1..3 in allocation order, the new span last
+    check( region->send_descriptors[s0].span_ticket == 1 );
+    check( region->send_descriptors[s1].span_ticket == 2 );
+    check( region->send_descriptors[s2].span_ticket == 3 );
+    check( region->send_descriptors[s3].span_ticket == 4 );
+    check( region->span_first == s0 && region->span_last == s3 );
+
+    rn_arena_destroy( arena );
+}
+
+// Freeing a fragment follows only the block's own references: an index past
+// the chain's end frees nothing and returns at the chain's end, never after a
+// numeric-gap-proportional walk.
+static void test_fragment_free_bounded_by_chain()
+{
+    rocketnet_counters_t counters;
+    memset( &counters, 0, sizeof( counters ) );
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.client_send_kbps = config.server_send_kbps = 0;
+    config.send_queue_messages = 16;
+
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena );
+    rn_region_t * region = rn_arena_region( arena, 0 );
+
+    const uint32_t large_free = rn_send_store_free_chunks( &region->store, RN_STORE_LARGE );
+    const uint32_t d = rn_region_send_alloc( region, 3000 );
+    check( d != RN_DESCRIPTOR_NONE );
+    check( region->send_descriptors[d].fragments == 3 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free - 3 );
+
+    rn_region_send_free_fragment( region, d, 1000000 );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free - 3 );
+
+    rn_region_send_free( region, d );
+    check( rn_send_store_free_chunks( &region->store, RN_STORE_LARGE ) == large_free );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( test_memory_isolation_between_slots );
 REGISTER_UNIT_TEST( test_reassembly_geometry_refuses_bad_arguments_and_budget );
 REGISTER_UNIT_TEST( test_exhaustion_is_a_kick_with_its_reason );
@@ -716,3 +896,7 @@ REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
+REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
+REGISTER_UNIT_TEST( test_span_tickets_pin_oldest_live );
+REGISTER_UNIT_TEST( test_span_ticket_wraparound_renumbers );
+REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );

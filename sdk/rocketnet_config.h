@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CONFIG_H
-#define ROCKETNET_CONFIG_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CONFIG_H
+#define ROCKETNET_SDK_ROCKETNET_CONFIG_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_driver.h"
@@ -47,6 +47,7 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 
 // the mechanical environment-name derivation used by source utilities and
 // tests. Returns false when the buffer cannot hold the derived name.
+// only a unit case calls it.
 
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
 
@@ -75,10 +76,10 @@ struct rocketnet_client_config_t;
 struct rocketnet_server_config_t;
 
 bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
-                                     struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+                                      struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
-                                     struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+                                      struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 // the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
 // "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->
@@ -106,27 +107,25 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
 // field's kind, log the override loudly with the displaced value (secret
 // fields redacted), and assign. each field is read under its PER-ENDPOINT
 // name, ROCKETNET_<TRANSPORT>_<FIELD> (ruling 11); an old process-wide
-// ROCKETNET_<FIELD> that is set is never applied and logs one error naming
-// its replacement, once per create, so an operator is never silently
-// ignored. an env var set to the empty string is ignored as unset, with a
+// ROCKETNET_<FIELD> is not read and nothing is logged for it. an env var set
+// to the empty string is ignored as unset, with a
 // log line. returns false -- loudly -- on any value that does not parse.
 // transport_name flavors the log lines and the derived names ("client",
 // "server").
 
 bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
-// validate a config struct against the descriptors: numeric ranges (zero
-// admitted where the field declares ZERO_MEANS_DEFAULT), string
-// termination. refuses loudly, never clamps. transport list content is
-// validated by the ladder parse below, at create.
-
 void rocketnet_client_transport_default_config_current( struct rocketnet_client_transport_config_t * config );
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time );
+
 // the current-size creates with the section-2.1 code written to *status (NULL skips it)
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_current_ex( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status );
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address, const struct rocketnet_server_transport_config_t * config, int * status );
+#if ROCKETNET_DEV
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
+#endif // #if ROCKETNET_DEV
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address, const struct rocketnet_server_transport_config_t * config );
+
 // the creates behind public connect and start: config is the one the public
 // create resolved (DEFAULT < STRUCT < ENV, rn_client_split and
 // rn_server_split in sdk/rocketnet_api.cpp) and memory_budget_bytes the
@@ -144,6 +143,11 @@ struct rocketnet_message_server_t * rocketnet_message_server_create_resolved( vo
                                                                               void * memory, uint64_t memory_bytes, uint32_t per_client_send_kbps, int * status, int reserve_unlimited,
                                                                               uint64_t memory_budget_bytes );
 void rocketnet_server_transport_default_config_current( struct rocketnet_server_transport_config_t * config );
+
+// validate a config struct against the descriptors: numeric ranges (zero
+// admitted where the field declares ZERO_MEANS_DEFAULT), string
+// termination. refuses loudly, never clamps. transport list content is
+// validated by the ladder parse below, at create.
 
 bool rocketnet_config_validate( const char * transport_name, const void * config, const struct rocketnet_config_field_t * fields, int num_fields );
 
@@ -164,9 +168,9 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 
 bool rocketnet_public_link_simulator_development( void );
 
-#if defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
+#if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
 void rocketnet_public_link_simulator_test_development( int enabled );
-#endif
+#endif // #if defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
 
 // The development values: the published test packet filter
 // (ROCKETNET_TEST_FILTER_VALUE) and a connect token sealed to the published
@@ -176,14 +180,9 @@ void rocketnet_public_link_simulator_test_development( int enabled );
 // a development token at connect with
 // ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION. True when this library
 // refuses them: a production library always, a development library never,
-// and the unit suite's production-posture hook library only once the suite
-// has enabled it, so its other cases keep the default test filter.
+// always in a production library.
 
 bool rocketnet_development_values_refused( void );
-
-#if ROCKETNET_TEST_SEAMS && !ROCKETNET_DEV
-void rocketnet_development_values_refused_test_enable( int enabled );
-#endif
 
 // True (and one error line naming side) when the library refuses the
 // development values and filter is the published test filter.
@@ -228,6 +227,9 @@ struct rocketnet_transport_ladder_t
     int skipped[ROCKETNET_MAX_TRANSPORT_CANDIDATES];
 };
 
+// the ladder must hold every transport the registry can put in an auto order
+static_assert( ROCKETNET_NUM_TRANSPORTS <= ROCKETNET_MAX_TRANSPORT_CANDIDATES, "ROCKETNET_MAX_TRANSPORT_CANDIDATES is smaller than the transport registry" );
+
 // parse a candidate list against an explicit availability order --
 // explicit so tests can exercise any platform's table anywhere. value
 // NULL, empty, or "auto" expands to the availability order itself (which
@@ -256,4 +258,4 @@ const int * rocketnet_server_transport_io_availability( int * num_available );
 
 const int * rocketnet_client_transport_io_availability( int * num_available );
 
-#endif // #ifndef ROCKETNET_CONFIG_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONFIG_H

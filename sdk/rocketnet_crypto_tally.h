@@ -3,8 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-#ifndef ROCKETNET_CRYPTO_TALLY_H
-#define ROCKETNET_CRYPTO_TALLY_H
+#pragma once
+
+#ifndef ROCKETNET_SDK_ROCKETNET_CRYPTO_TALLY_H
+#define ROCKETNET_SDK_ROCKETNET_CRYPTO_TALLY_H
 
 #include <stdint.h>
 
@@ -28,9 +30,4 @@ static inline struct rocketnet_crypto_tally_t rocketnet_crypto_tally_get( void )
     return rocketnet_crypto_tally;
 }
 
-static inline void rocketnet_crypto_tally_set( const struct rocketnet_crypto_tally_t t )
-{
-    rocketnet_crypto_tally = t;
-}
-
-#endif
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CRYPTO_TALLY_H

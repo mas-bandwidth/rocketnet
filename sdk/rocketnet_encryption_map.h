@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_ENCRYPTION_MAP_H
-#define ROCKETNET_ENCRYPTION_MAP_H
+#ifndef ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H
+#define ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H
 
 #include <stdint.h>
 #include "rocketnet_history.h"
@@ -19,10 +19,10 @@
 
 // The encryption mapping table: the server's per-address record of derived
 // keys and handshake state, created only for a request that carried a valid
-// backend signature. Constant time by address: chained buckets under a
-// per-run SipHash of the canonical address bytes, parallel fixed arrays,
-// the hot address array split from the cold mapping payload and walked
-// alone by find.
+// backend signature. Expected constant time by address: a flat open-addressed
+// index under a per-run SipHash of the canonical address bytes points to
+// generation-tagged fixed slots. Every probe validates the full slot handle
+// and full canonical address; a hash or physical index is never identity.
 //
 // A mapping is bound by two independent deadlines: a handshake deadline
 // fixed at creation and never refreshed -- connect within it or be
@@ -30,9 +30,10 @@
 // mapping in either state and governs alone once the connection is
 // established.
 
-// STANDARD.md _Half-open state_: a half-open mapping dies at whichever of
-// its idle and handshake deadlines comes first. The idle clock starts when
-// the mapping is created and every request from its address refreshes it.
+// TRANSPORT.md t12 rule 14 and t17 rule 4: a half-open mapping dies at
+// whichever of its idle and handshake deadlines comes first. The idle clock
+// starts at creation. A request refreshes it only when its salt matches,
+// and a response that opens under the mapping refreshes it too.
 #define ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS 10.0
 
 struct rocketnet_replay_protection_t
@@ -57,7 +58,8 @@ struct rocketnet_encryption_mapping_control_t
     ROCKETNET_ENCRYPTION_MAPPING_CONTROL_LAYOUT_FIELDS( ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE )
 #undef ROCKETNET_ENCRYPTION_MAPPING_CONTROL_DECLARE
 };
-static_assert( sizeof(struct rocketnet_encryption_mapping_control_t) == 32, "timeout control stays compact" );
+
+static_assert( sizeof( struct rocketnet_encryption_mapping_control_t ) == 32, "timeout control stays compact" );
 
 /*
     The declaration manifest: the struct is declared from this list, so a
@@ -82,7 +84,7 @@ static_assert( sizeof(struct rocketnet_encryption_mapping_control_t) == 32, "tim
     X( send_sequence_handshake, uint64_t send_sequence_handshake ) /* next handshake-phase sequence to send */                                                     \
     X( send_sequence_session, uint64_t send_sequence_session ) /* next session-phase sequence to send */                                                           \
     X( send_fragment_payload_id, uint64_t send_fragment_payload_id ) /* next fragmented payload id to send, per _Fragmentation_ */                                 \
-    X( replay_handshake, struct rocketnet_replay_protection_t replay_handshake )                                                                                   \
+    X( handshake_highest_opened, uint64_t handshake_highest_opened )                                                                                              \
     X( replay_session, struct rocketnet_replay_protection_t replay_session )                                                                                       \
     X( accepted_session, struct rocketnet_replay_protection_t accepted_session ) \
     X( integrity_failures, uint64_t integrity_failures ) /* sealed packets that did not open under either key; ROCKETNET_INTEGRITY_LIMIT tears the mapping down */
@@ -100,8 +102,14 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
 
 void rocketnet_encryption_map_destroy( struct rocketnet_encryption_map_t * map );
 
-// returns the mapping index for this address, or -1. one keyed hash, one
-// short chain walk over the hot address array.
+// Wipes every live mapping and reconstructs the index and free-handle
+// sequence. The full-width generation stream never restarts, so every old
+// handle stays stale. Refuses without mutation only after it is exhausted.
+
+bool rocketnet_encryption_map_reset( struct rocketnet_encryption_map_t * map );
+
+// returns the mapping index for this address, or -1. one keyed hash, then a
+// bounded flat-index probe that validates the complete stored address.
 
 int rocketnet_encryption_map_find( const struct rocketnet_encryption_map_t * map, const struct rocketnet_address_t * address );
 
@@ -128,9 +136,24 @@ struct rocketnet_encryption_mapping_control_t * rocketnet_encryption_map_control
 
 const struct rocketnet_address_t * rocketnet_encryption_map_address( const struct rocketnet_encryption_map_t * map, int index );
 
-// Removes a mapping, zeroing all key material before the slot is freed.
+// The exact nonzero generation that owns a live mapping index. Client slots
+// retain this value with the index so a delayed reset cannot remove a reused
+// mapping.
 
-void rocketnet_encryption_map_remove( struct rocketnet_encryption_map_t * map, int index );
+uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encryption_map_t * map, int index );
+
+// Removes a mapping only when index and owner_generation still name the same
+// live mapping. A stale owner is a no-op and returns false.
+
+bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * map,
+                                            int index,
+                                            uint64_t owner_generation );
+
+// Removes a mapping whose index was obtained synchronously from the current
+// add, find or iterator operation. Persisted indices must use remove_owned.
+// All key material is zeroed before the slot is freed.
+
+void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index );
 
 // Iterates the live mappings: start with iterator = -1, call until it
 // returns 0; each call yields the next live index. Removing the yielded
@@ -146,4 +169,19 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#endif // #ifndef ROCKETNET_ENCRYPTION_MAP_H
+#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+// Deterministic probe accounting and handle access for the DEV-only
+// collision/stale-generation oracles. Probes are counted at the actual index
+// cell inspection. The home slot exposes no key material; it lets a test
+// discover real collisions under the map's random keyed hash.
+uint64_t rocketnet_encryption_map_test_probes( const struct rocketnet_encryption_map_t * map );
+uint64_t rocketnet_encryption_map_test_probe_bound( const struct rocketnet_encryption_map_t * map );
+int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t * map,
+                                        const struct rocketnet_address_t * address );
+bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map_t * map, int index,
+                                           struct rn_sequence_buffer_handle_t * handle );
+bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_map_t * map,
+                                                  const struct rn_sequence_buffer_handle_t * handle );
+#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H

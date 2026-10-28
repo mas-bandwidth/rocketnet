@@ -52,14 +52,10 @@ static void test_rio_transport_layout_slices_tile_the_region()
 
     // consecutive elements of one sub-region are exactly one rounded element
     // apart.
-    rocketnet_unit_check( rocketnet_rio_send_frame_offset( &p, 1 )
-        == rocketnet_rio_send_frame_offset( &p, 0 ) + 1536 );
-    rocketnet_unit_check( rocketnet_rio_send_address_offset( &p, 1 )
-        == rocketnet_rio_send_address_offset( &p, 0 ) + 64 );
-    rocketnet_unit_check( rocketnet_rio_receive_slice_offset( &p, 1 )
-        == rocketnet_rio_receive_slice_offset( &p, 0 ) + 2048 );
-    rocketnet_unit_check( rocketnet_rio_receive_address_offset( &p, 1 )
-        == rocketnet_rio_receive_address_offset( &p, 0 ) + 64 );
+    rocketnet_unit_check( rocketnet_rio_send_frame_offset( &p, 1 ) == rocketnet_rio_send_frame_offset( &p, 0 ) + 1536 );
+    rocketnet_unit_check( rocketnet_rio_send_address_offset( &p, 1 ) == rocketnet_rio_send_address_offset( &p, 0 ) + 64 );
+    rocketnet_unit_check( rocketnet_rio_receive_slice_offset( &p, 1 ) == rocketnet_rio_receive_slice_offset( &p, 0 ) + 2048 );
+    rocketnet_unit_check( rocketnet_rio_receive_address_offset( &p, 1 ) == rocketnet_rio_receive_address_offset( &p, 0 ) + 64 );
 
     // no two sub-regions overlap: each region's start is at least the end
     // of the previous one.
@@ -166,15 +162,23 @@ static void test_rio_transport_context_round_trips()
     rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 0 );
     rocketnet_unit_check( (uint32_t) rocketnet_rio_context_index( c ) == 0xffffffffu );
 
-    rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 )
-        != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 ) );
-    rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 )
-        != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 255, 0 ) );
-    rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 )
-        != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0xffffffff ) );
+    rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 ) != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, 0 ) );
+    rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 ) != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 255, 0 ) );
+    rocketnet_unit_check( rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0 ) != rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_SEND, 0, 0xffffffff ) );
+}
+
+static void test_rio_transport_context_phase_never_reaches_kind()
+{
+    // the phase owns bits 48..55 only: a phase wider than a byte must not
+    // spill into the kind byte at bits 56..63.
+    const uint64_t c = rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0x1FF, 7 );
+    rocketnet_unit_check( rocketnet_rio_context_kind( c ) == ROCKETNET_RIO_CONTEXT_RECEIVE );
+    rocketnet_unit_check( rocketnet_rio_context_phase( c ) == 0xFF );
+    rocketnet_unit_check( rocketnet_rio_context_index( c ) == 7 );
 }
 
 REGISTER_UNIT_TEST( test_rio_transport_layout_slices_tile_the_region );
 REGISTER_UNIT_TEST( test_rio_transport_layout_refuses_bad_geometry );
 REGISTER_UNIT_TEST( test_rio_transport_layout_index_bounds );
 REGISTER_UNIT_TEST( test_rio_transport_context_round_trips );
+REGISTER_UNIT_TEST( test_rio_transport_context_phase_never_reaches_kind );

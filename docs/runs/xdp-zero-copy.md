@@ -1,16 +1,16 @@
-# AF_XDP zero-copy qualification (rn-xdp-zero-copy-line-rate-a)
+# AF_XDP zero-copy qualification
 
-Verdict: HOLD. hulk's NIC refuses the zero-copy bind; no machine available
+Verdict: HOLD. The XDP bench NIC refuses the zero-copy bind; no machine available
 to this card negotiates zero copy. The load_split ladder was not made.
 
 ## Run
 
 - Date (`date -u`): Sat Oct 24 02:33:34 AM UTC 2026
 - Head: 010c8167de062d24dafcdf9153577b2b8e078760 (`git log --oneline -1`:
-  `010c8167 land rn-iocp-one-completion-worker (sprint stream rocketnet-final)`)
+  `010c8167`, the land commit)
 - Build: `make -j4` (Release, ROCKETNET_DEV=ON default, ROCKETNET_XDP=ON);
   last build line `[100%] Built target test`
-- Machine: `hostname` hulk, `uname -r` 6.8.0-142-generic, NIC Intel X540-AT2
+- Machine: `hostname` <XDP bench>, `uname -r` 6.8.0-142-generic, NIC Intel X540-AT2
   (0000:09:00.0 and 0000:09:00.1)
 
 ## The NIC
@@ -43,7 +43,7 @@ No `xsk-zerocopy` bit (nor basic, redirect or ndo-xmit) is advertised.
 
 ## The port
 
-hulk has no dedicated cabled test port today: enp9s0f1 carries the default
+The XDP bench has no dedicated cabled test port today: enp9s0f1 carries the default
 route (192.168.1.42/24, the uplink) and enp9s0f0 has no carrier. The bind
 probe below ran on enp9s0f0 (not the uplink; a zero-copy bind is negotiated
 with the driver and needs no link), with a test address and a fixed gateway
@@ -84,10 +84,10 @@ Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 
 | Case | Result |
 |---|---|
-| hulk enp9s0f0, ixgbe 6.2.5 out-of-tree, queue 0 zero-copy bind | refused, EOPNOTSUPP ("Operation not supported"); bound copy |
-| hulk enp9s0f0, ixgbe 6.2.5 out-of-tree, queue 1 zero-copy bind | refused, EOPNOTSUPP ("Operation not supported"); bound copy |
-| hulk negotiated mode | copy mode on all queues |
-| space (out-of-tree i40e) | not tried: held for the game server |
+| XDP bench enp9s0f0, ixgbe 6.2.5 out-of-tree, queue 0 zero-copy bind | refused, EOPNOTSUPP ("Operation not supported"); bound copy |
+| XDP bench enp9s0f0, ixgbe 6.2.5 out-of-tree, queue 1 zero-copy bind | refused, EOPNOTSUPP ("Operation not supported"); bound copy |
+| XDP bench negotiated mode | copy mode on all queues |
+| production game server machine (out-of-tree i40e) | not tried: held for the game server |
 | load_split plan-server / plan-client-shard | not made |
 | load_split ladder 10/100/250/500/1000, zero copy | not made: no zero-copy server |
 
@@ -95,12 +95,12 @@ Create log (sdk/rocketnet_server_socket_linux.cpp:1760 and :1898-1903):
 
 Which machine qualifies zero copy:
 
-1. space's out-of-tree i40e, the NIC zero copy is known to bind on, today
+1. the production game server machine's out-of-tree i40e, the NIC zero copy is known to bind on, today
    held for the game server; or
-2. a driver on hulk that negotiates zero copy (the X540's ixgbe with
+2. a driver on the XDP bench that negotiates zero copy (the X540's ixgbe with
    xdp_features carrying xsk-zerocopy, for example the in-tree ixgbe of a
    newer kernel or a fixed out-of-tree release), plus a dedicated cabled port
-   on hulk, since enp9s0f0 has no carrier and enp9s0f1 is the uplink.
+   on the XDP bench, since enp9s0f0 has no carrier and enp9s0f1 is the uplink.
 
 The roadmap rows stay open: docs/roadmap.sexp line 382 (zero-copy half) and
 row 157's note ("zero-copy remains unqualified") are unchanged by this run.

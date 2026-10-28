@@ -53,16 +53,24 @@
 static uint64_t decode_u64( const uint8_t * p )
 {
     uint64_t v = 0;
+
     for ( int i = 0; i < 8; i++ )
+    {
         v |= (uint64_t) p[i] << ( 8 * i );
+    }
+
     return v;
 }
 
 static uint32_t decode_u32( const uint8_t * p )
 {
     uint32_t v = 0;
+
     for ( int i = 0; i < 4; i++ )
+    {
         v |= (uint32_t) p[i] << ( 8 * i );
+    }
+
     return v;
 }
 
@@ -78,12 +86,13 @@ static int64_t s64( int64_t v )
         return DIFFERENTIAL_MAX_OFFSET;
     if ( v < -DIFFERENTIAL_MAX_OFFSET )
         return -DIFFERENTIAL_MAX_OFFSET;
+
     return v;
 }
 
 static void decode_case( const uint8_t * data, size_t size, struct differential_case_t * c )
 {
-    memset( c, 0, sizeof(*c) );
+    memset( c, 0, sizeof( *c ) );
     if ( size < 25 )
         return;
     c->address_mode = data[0] % 4;
@@ -101,7 +110,7 @@ static void report_case( const struct differential_case_t * c, const struct deci
 {
     fprintf( stderr, "differential finding: verdict %s\n", v );
     fprintf( stderr, "  case: create=%+lld expire=%+lld timeout=%d prot_wrong=%u "
-                      "addr=%u flip=%u occ=%u replay=%u\n",
+                     "addr=%u flip=%u occ=%u replay=%u\n",
              (long long) c->create_offset, (long long) c->expire_offset,
              c->timeout_seconds, c->protocol_wrong, c->address_mode,
              c->flip_authenticator, c->occupied_slots, c->replay );
@@ -115,12 +124,19 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     (void) argv;
 
     if ( sodium_init() < 0 )
+    {
         abort();
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     netcode_log_level( NETCODE_LOG_LEVEL_DEBUG );
     netcode_set_printf_function( netcode_log_sink );
+
     if ( netcode_init() != NETCODE_OK )
+    {
         abort();
+    }
+
     return 0;
 }
 
@@ -137,6 +153,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     // a mint/capture failure on either side is an encoding artifact, not a
     // decision; skip the verdict
+
     if ( strcmp( rn.reason, "mint" ) == 0 ||
          strncmp( nc_reason, "refuse:mint", 11 ) == 0 ||
          strcmp( nc_reason, "refuse:unclassified" ) == 0 )
@@ -148,17 +165,20 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         report_case( &c, &rn, nc_reason, v );
         abort();
     }
+
     if ( strcmp( v, "rocketnet-stricter" ) == 0 )
     {
         // a permitted stricter class (timeout, future) is documented in
         // README and tolerated; any other stricter class is a finding and
         // is listed with its reason before aborting
+
         if ( !stricter_class_permitted( rn.reason ) )
         {
             report_case( &c, &rn, nc_reason, v );
             abort();
         }
     }
+
     return 0;
 }
 
@@ -172,4 +192,4 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     return 0;
 }
 
-#endif
+#endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )

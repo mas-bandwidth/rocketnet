@@ -47,14 +47,34 @@ Run the unit suite with:
 
     ./bin/test
 
+The repository text audits that used to be unit cases run in the static
+source-audit binary `./bin/source_audit` instead: the client/server
+"says messages, not packets" scan
+(`test_client_server_say_messages_not_packets`), the environment-name
+documentation check (`test_config_env_every_name_read_is_documented`), the
+counter-named-by-a-test check (`test_counters_every_counter_is_named_by_a_test`),
+the one-family-per-outcome check
+(`test_counters_every_outcome_in_at_most_one_family`) and the XDP counter-row
+check (`test_xdp_transport_host_every_counter_has_a_case`). It reads
+source, header and doc files through `ROCKETNET_SOURCE_DIR`, opens no socket
+and starts no thread; CI runs it on a Linux leg beside
+`tools/check_client_server_words.py`.
+
 `./bin/test` does not open a socket and does not start a transport. It drives the
-state machines and the in-memory network simulator. Tests run in parallel
+state machines and the in-memory network simulator, and reads and writes no
+file: the known-answer fixtures it checks (`tests/connect_token_vectors.json`
+and `tests/wycheproof/*_test.json`) are compiled into it at build time by
+`cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
+regenerated only by the tool `./bin/connect_token_vectors <path>`
+(tools/connect_token_vectors/main.cpp), which writes the path it is given. Tests run in parallel
 (at most eight, or `ROCKETNET_TEST_JOBS` when that is smaller). In a Release
 build a test over 120 seconds is killed and the suite fails. Debug and
 sanitizer builds scale the limit by 5. A passing run prints each test's
 name and then `*** ALL TESTS PASSED ***`; `ROCKETNET_TEST_REPORT=1` adds the
 ten slowest cases and the ten largest peak resident sets after the results
-(tests/README.md).
+(tests/README.md). Peak resident set is telemetry in this unit run: an
+over-bound line names the measured peak and bound without changing the unit
+verdict.
 
 A test that calls `socket`, `bind`, `sendto`, `recvfrom`, `select`, `epoll`,
 IOCP, or AF_XDP, or that starts a real transport (`rocketnet_server_create`,
@@ -75,6 +95,12 @@ case, including sibling binaries, runs alone on every platform. Setting
 unit cases may still run in parallel. Run separate functional invocations and
 other network workloads separately on the same test host as well.
 
+The functional suite enforces peak-resident-set bounds. Its
+`test_unit_case_memory` sibling row runs the complete unit binary in enforcement
+mode, so the bound declarations beside unit cases and the suite-wide fallback
+are reused directly. The row and every unit case inside it retain the
+existing time limits.
+
 Functional assertions check delivery, ordering, state transitions and eventual
 recovery. Wall-clock latency and receive gaps are diagnostics, not pass/fail
 performance thresholds. Generous deadlines catch missing progress or hangs.
@@ -90,7 +116,8 @@ cannot run without a socket is functional, and it keeps its assertions.
 The functional-only sibling binaries are `test_serialize` (a real clock and
 `rocketnet_sleep`), `test_xdp_filter` (a kernel, root or CAP_BPF, and
 `usleep`), `test_transport`, `test_transport_control`, `test_lifecycle`,
-`test_msgx` and `test_iocp`; they are functional tests, never `./bin/test`.
+`test_production_client_lifecycle` (DEV=0 only), `test_msgx` and `test_iocp`;
+they are functional tests, never `./bin/test`.
 Where the same rule is already covered by a simulator or state-machine test,
 that unit test stays beside it. The connect path's unit twin is
 `test_client_server_connect` (and the simulator loss walks). Fragment and
@@ -162,25 +189,52 @@ clock starts at 1000.0). A binary that opens a real socket, starts a thread,
 sleeps or reads the wall clock is functional, and CI runs it only in a step
 named functional, never as a unit step.
 
+Unit cases feed SDK environment parsing through the in-memory source compiled
+only into `rocketnet_test_hooks`; they never read or mutate the process
+environment. `functional/environment_wiring.cpp` sets and restores real
+variables and pins the SDK wiring, precedence, and refusal paths.
+
 | Binary | Tier | Why | Where it runs |
 | --- | --- | --- | --- |
 | `test` | unit | state machines and the in-memory simulator | CI `Run unit tests` |
-| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt) | by hand |
+| `test_wide` | unit | `test.cpp` built with 512 channels (the `test_wide` target in CMakeLists.txt; `EXCLUDE_FROM_ALL`, built by name with `cmake --build build --target test_wide`) | by hand |
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
-| `functional` | functional | real sockets and transports | CI `Run functional suite` |
+| `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
 | `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
-| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | by hand |
+| `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | `nightly-soak.yml` (`tools/run_xdp_filter_guest.sh`) and by hand |
 | `test_msgx` | functional | a loopback socket and sleep-wait loops (test_msgx.cpp) | `./bin/functional` on macOS |
 | `test_iocp` | functional | loopback sockets, threads and sleep-wait loops (test_iocp.cpp) | `functional.exe` on Windows |
 | `test_lifecycle` | functional | threads, `time(NULL)` tokens, and real server and client transports (test_lifecycle.cpp) | CI `Functional: lifecycle binary` |
+| `test_production_client_lifecycle` | functional | DEV=0 public client/server create, connect, update, disconnect and destroy over portable worker threads | production (`ROCKETNET_DEV=OFF`) gates |
 | `test_transport` | functional | netlink route reads, and the portable transport on loopback sockets with sleep-wait loops (`test_driver.cpp`) | CI `Functional: native driver contract and external backend` |
+| `test_server_stats_creates_no_thread` | functional | reads the process thread count from `/proc/self/task` and checks a loopback server create/update adds none (process_thread_counts.cpp) | `./bin/functional` |
+| `test_public_step_driven_client_connects_without_a_thread` | functional | reads the process thread count from `/proc/self/task` and checks a step-driven loopback client create adds none (process_thread_counts.cpp) | `./bin/functional` |
+
+The shared-library export cases are functional because they load the built
+libraries through the OS loader: `test_api_polish_dev_token_string`,
+`test_dev_connect_token_timeout_is_the_named_constant`, and
+`test_dev_token_minting_absent_in_release`. They run from `./bin/functional`,
+not `./bin/test`.
 
 The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
 `rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
 simulator and the test clock, with no socket and no sleep.
+
+The corpus-consistency cases in `./bin/functional`
+(functional/corpus_consistency.cpp: `test_pcapng_corpus_replay`,
+`test_pcapng_corpus_witness_unread_packet_goes_red`,
+`test_pcapng_corpus_covers_control_packet_types` and
+`test_fuzz_prefilter_seed_names_match_outcomes`) read `tests/pcapng/`,
+`tests/pcapng/regress/` and `fuzz/corpus/` at run time, directories that grow
+as findings land, so they are functional cases, never unit ones.
+
+The two process thread-count cases live in `functional/process_thread_counts.cpp`
+and count the process's threads from `/proc/self/task`, which Linux has and
+the other platforms do not: off Linux the count reads -1 and the case pins
+nothing, so neither case is unit logic.
 
 Dependencies, per platform, as CI installs them:
 
@@ -364,6 +418,28 @@ the BPF target, or no libbpf and AF_XDP development files, is not an error: it
 says why and builds exactly as `-DROCKETNET_XDP=OFF` does
 (`tools/check_xdp_compiled_out.py --absent` checks the built library).
 
+### Building a Linux client without the server libraries
+
+liburing, libbpf and libxdp are server-only: the io_uring and XDP server
+transports link them, and no client code does. A Linux client build therefore
+needs none of their headers or libraries. Configure with both
+`-DROCKETNET_XDP=OFF` and `-DROCKETNET_IO_URING=OFF` and build the two
+libraries:
+
+    cmake -S . -B build-client -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_IO_URING=OFF
+    cmake --build build-client --target rocketnet rocketnet_shared --parallel 4
+    cmake --install build-client --prefix /your/sdk/prefix
+
+The shared library then carries no `liburing`, `libbpf` or `libxdp` link
+(`readelf -d` shows no such `NEEDED` entry), a transport list naming `xdp`
+refuses with `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` and one naming `io_uring`
+refuses at create, and the installed CMake package requires none of the
+three: `find_package(RocketNet)`
+succeeds on a machine without their development headers, and a game links
+`RocketNet::rocketnet` or `RocketNet::rocketnet_shared` as usual. CI builds
+exactly this configuration on Linux and runs a C client against both
+installed libraries through it (`tools/check_package.py --client`).
+
 ## Pinned sodium
 
 The default build uses the committed `sodium/sodium.c` and `sodium/sodium.h`
@@ -392,16 +468,24 @@ production build sets `ROCKETNET_DEV` to 0, one setting:
     make ROCKETNET_DEV=OFF                      # the Makefile front door
 
 or `#define ROCKETNET_DEV 0` (`-DROCKETNET_DEV=0`) when compiling the sources
-into your own build. The CMake option sets the value on `rocketnet`,
-`rocketnet_shared` and the unit suite's hook library, and the targets hand it
-to every consumer, so the header a game compiles matches its library.
+into your own build. The CMake option sets the value on `rocketnet` and
+`rocketnet_shared`, and the targets hand it to every consumer, so the header a
+game compiles matches its library. `rocketnet_test_hooks` is built only when
+`ROCKETNET_DEV=ON`; in a production build (`-DROCKETNET_DEV=OFF`) no hook
+library is built, `./bin/test` links `rocketnet` directly to run the
+production-compatible unit suites, and enabling `ROCKETNET_TEST_SEAMS` or any
+`*_TEST_HOOKS` / `*_TESTS` macro is refused at both CMake configure time and
+C/C++ compile time ([docs/TEST-SCAFFOLDING.md](docs/TEST-SCAFFOLDING.md)).
 `rocketnet_dev` and `rocketnet_shared_dev` are `ROCKETNET_DEV=1` in every
-build, for the examples, the functional suite and the tools.
+build when `ROCKETNET_BUILD_DEV_LIBRARIES=ON`, for the examples, the functional
+suite and the tools.
 
 A production library contains no network simulator, no test seam, no
+deterministic connect-token fixture writer, no reset-inventory walker, no
 `rocketnet_server_transport_dev_config`, no development token minting and no
-development server secret key (`tools/check_exports.py` checks the archive and
-the shared library). It refuses the development values: the published test
+development server secret key (`tools/check_exports.py` and
+`tools/check_test_scaffolding_boundary.py` check the headers, build tree,
+static archive, shared library and Windows import library). It refuses the development values: the published test
 packet filter at client and server create
 (`ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION`), the published
 development keys at server start (`ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`),
@@ -440,9 +524,14 @@ target_link_libraries(game PRIVATE RocketNet::rocketnet)        # static
 ```
 
 When linking the static archive (`librocketnet.a`) directly in a C project
-without CMake, link against the C++ standard library runtime (`-lstdc++` on
-Linux, `-lc++` on macOS) and the required platform libraries (on Linux:
-`-lbpf -lxdp -luring -lstdc++ -lpthread -lm`; on macOS: `-lc++ -lpthread -lm`).
+without CMake, compile with `-DROCKETNET_DEV=0` for a production archive (and
+`-DROCKETNET_MAX_CLIENTS=<n>` when the library was built with a non-default
+value) so `rocketnet.h` matches the archive, and link against the C++ standard
+library runtime (`-lstdc++` on Linux, `-lc++` on macOS) and the required
+platform libraries (on Linux: `-lbpf -lxdp -luring -lstdc++ -lpthread -lm`,
+where `-lbpf -lxdp` apply only when the library was built with XDP and
+`-luring` applies only when the library was built with `io_uring`; on macOS:
+`-lc++ -lpthread -lm`).
 
 Supply the install prefix through `CMAKE_PREFIX_PATH`. The package resolves
 Threads and the Linux bpf/xdp dependencies on the consuming machine. Sodium
@@ -453,8 +542,10 @@ The package accepts a request for any earlier or equal version of the same major
 version (`COMPATIBILITY SameMajorVersion`), so `find_package(RocketNet 1.0)`
 finds every later 1.x patch. The imported targets
 hand a consumer no floating-point option and no memory-budget definition: the
-only compile definitions they carry are `ROCKETNET_DEV`, the value the library
-was built with, and `ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py` checks both.
+only compile definitions they carry are `ROCKETNET_DEV` and
+`ROCKETNET_MAX_CLIENTS`, the values the library was built with, and
+`ROCKETNET_SHARED` on `RocketNet::rocketnet_shared`. `tools/check_package.py`
+checks all three.
 The Unix shared-library soname follows the major version.
 Use a separate install prefix for each build configuration. With Visual Studio
 or another multi-config generator, pass `--config Debug` or `--config Release`
@@ -464,10 +555,35 @@ so toolchains do not try to generate other configurations requiring uninstalled
 Release artifacts. Installing another configuration into the same prefix
 overwrites the libraries; side-by-side Debug/Release installation is not supported.
 
-`add_subdirectory(path/to/rocketnet)` exposes the same two namespaced targets.
-Examples, tests and tools default off when embedded, and the parent's
-`BUILD_SHARED_LIBS` does not change the static target. Explicit
+`add_subdirectory(path/to/rocketnet)` exposes the same two namespaced targets when
+shared libraries are enabled. Examples, tests and tools default off when embedded,
+and the parent's `BUILD_SHARED_LIBS` does not change the static target. Explicit
 `ROCKETNET_BUILD_*` options override those defaults.
+
+By default, a top-level or embedded configure builds all four library variants:
+production static (`rocketnet` / `RocketNet::rocketnet`), production shared
+(`rocketnet_shared` / `RocketNet::rocketnet_shared`), build-tree development
+static (`rocketnet_dev`), and build-tree development shared
+(`rocketnet_shared_dev`). SDK consumers that only link a subset of these variants
+can omit the unused shared and/or build-tree development libraries at configure
+time:
+
+| `-DROCKETNET_BUILD_SHARED` | `-DROCKETNET_BUILD_DEV_LIBRARIES` | Build-tree targets | Installed / exported targets |
+|---|---|---|---|
+| `ON` (default) | `ON` (default) | `rocketnet`, `rocketnet_shared`, `rocketnet_dev`, `rocketnet_shared_dev` | `RocketNet::rocketnet`, `RocketNet::rocketnet_shared` |
+| `ON` | `OFF` | `rocketnet`, `rocketnet_shared` | `RocketNet::rocketnet`, `RocketNet::rocketnet_shared` |
+| `OFF` | `ON` | `rocketnet`, `rocketnet_dev` | `RocketNet::rocketnet` |
+| `OFF` | `OFF` | `rocketnet` | `RocketNet::rocketnet` |
+
+When `-DROCKETNET_BUILD_SHARED=OFF` is set, only `RocketNet::rocketnet` is
+exported and installed (`find_package(RocketNet CONFIG REQUIRED COMPONENTS static)`
+succeeds, while requesting component `shared` or `rocketnet_shared` fails at
+configure time). Because tests link both shared and development targets, and
+examples and tools link `rocketnet_dev`, CMake rejects incompatible combinations
+at configure time: `-DROCKETNET_BUILD_TESTS=ON` requires both
+`-DROCKETNET_BUILD_SHARED=ON` and `-DROCKETNET_BUILD_DEV_LIBRARIES=ON`, while
+`-DROCKETNET_BUILD_EXAMPLES=ON` and `-DROCKETNET_BUILD_TOOLS=ON` require
+`-DROCKETNET_BUILD_DEV_LIBRARIES=ON`.
 
 An SDK installed from a production build (`-DROCKETNET_DEV=OFF`) has no
 development token minting by design. `rocketnet_create_dev_connect_token` and
@@ -570,10 +686,11 @@ staging per client; the asserts check that the most queues can. The XDP
 replay window (16 packets per client) is unchanged.
 
 Memory grows with the clients a server asks for, at the per-client depth the
-config sets: `rocketnet_server_required_memory` gives the block before create.
-The default per-client config needs about 18.3 GB at 1000 clients and 183 GB at
-10000, so a 10000-client server sets lighter per-client limits (send and
-receive buffers, queues, windows, receipts and reassembly slots) for its game.
+config sets: `rocketnet_server_required_memory` gives the lifecycle allocator
+peak before create, including the largest planned built-in transport in the
+configured ladder. Query the exact build and configuration for its requirement;
+a 10000-client server can set lighter per-client limits (send and receive
+buffers, queues, windows, receipts and reassembly slots) for its game.
 A build for more clients also carries larger fixed per-server tables (the
 receive arrays and payload batches above), about 0.6 GB more at 10000 whatever
 the server's `max_clients`.
@@ -603,9 +720,12 @@ still requires roughly 4.2 GiB; select fewer queues or provision that explicitly
 
 ## Pre-allocation server resource plans
 
-`rocketnet_server_required_memory(config)` returns the bytes of the one block
-`rocketnet_server_create` allocates through the allocator for `config` at its
-`max_clients`. It works before
+`rocketnet_server_required_memory(config)` returns the peak bytes held by the
+allocator over create, start, stop, restart and destroy for `config` at its
+`max_clients`, including planned built-in transport allocations and the
+development link simulator in development builds. The bound assumes unchanged
+configuration and environment overrides; OS-owned memory and custom-transport
+allocations are excluded. It works before
 `rocketnet_init`, opens no sockets, starts no workers and allocates no memory.
 Pass `NULL` config for defaults. The query reads the supplied configuration and
 applies environment overrides (matching create), but does not check keys, probe
@@ -720,12 +840,13 @@ or a frame/send/ACK cadence requirement.
 ## Runtime environment inventory
 
 These are the environment variables read by the SDK. Each setting has one name;
-the client and server forms are separate settings. The unit inventory checks this
-list in both directions against the SDK reads and the public header.
+the client and server forms are separate settings. Entries marked development
+only are absent from a production library. The unit inventory checks this list
+in both directions against the SDK reads and the public header.
 
 * Environment: ROCKETNET_CLIENT_PACKET_FILTER
 * Environment: ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES
-* Environment: ROCKETNET_CLIENT_STEP_DRIVEN
+* Environment: ROCKETNET_CLIENT_STEP_DRIVEN (development only)
 * Environment: ROCKETNET_CLIENT_TRANSPORT
 * Environment: ROCKETNET_CLIENT_SEND_KBPS
 * Environment: ROCKETNET_CLIENT_NUM_CHANNELS
@@ -756,6 +877,7 @@ list in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES
 * Environment: ROCKETNET_SERVER_MAX_TIMEOUT_SECONDS
 * Environment: ROCKETNET_SERVER_HANDSHAKE_DEADLINE_SECONDS
+* Environment: ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE
 * Environment: ROCKETNET_SERVER_TRANSPORT
 * Environment: ROCKETNET_SERVER_IPV4_ADDRESS
 * Environment: ROCKETNET_SERVER_IPV6_ADDRESS
@@ -945,7 +1067,11 @@ isolated range for queues plus one there.
 
 Honest labels: CI runs the committing xdp path (BPF program build/load/attach,
 AF_XDP binds) only inside a virtme-ng guest, in the `xdp portable` cell of the
-transport matrix. No CI leg attaches XDP to a real NIC, so that tier's claims
+transport matrix, and `.github/workflows/nightly-soak.yml` runs
+`bash tools/run_xdp_filter_guest.sh` inside a four-CPU virtme-ng guest on the
+built `server_xdp.o` and `test_xdp_filter`, requiring all 18 `BPF_PROG_TEST_RUN`
+and guest XDP cases to print `ok` with zero skips (`test_xdp_filter: 18 cases passed`;
+see `ROOTGATE.md`). No CI leg attaches XDP to a real NIC, so that tier's claims
 rest on a provisioned server. The pre-flight
 supports both Ubuntu 22.04's stock libbpf 0.5 and newer libbpf/libxdp.
 On 22.04 the build selects `bpf/xsk.h`, loads the embedded BPF object directly,

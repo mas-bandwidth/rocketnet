@@ -32,9 +32,6 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
     rocketnet_write_bytes( p, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 }
 
-// maps a refusal code to its counter, so both receive paths attribute the
-// reason identically and neither invents its own mapping
-
 // The keyed filter value, from STANDARD.md "The keyed filter value":
 // SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
 // packet length as a little-endian uint16, then the four bytes following the
@@ -66,6 +63,9 @@ void rocketnet_keyed_filter_value( const uint8_t * magic,
     out_filter_value[3] = hash[3];
 }
 
+// maps a refusal code to its counter, so both receive paths attribute the
+// reason identically and neither invents its own mapping
+
 int rocketnet_prefilter_counter( int refusal_code )
 {
     switch ( refusal_code )
@@ -74,7 +74,7 @@ int rocketnet_prefilter_counter( int refusal_code )
         case ROCKETNET_PREFILTER_TOO_LARGE:   return ROCKETNET_COUNTER_PREFILTER_TOO_LARGE;
         case ROCKETNET_PREFILTER_WRONG_EPOCH: return ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH;
         case ROCKETNET_PREFILTER_WRONG_VALUE: return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
-        default: break;
+        default:                              break;
     }
 
     // every refusal code has a case above. a code arriving here is a caller
@@ -83,6 +83,7 @@ int rocketnet_prefilter_counter( int refusal_code )
     // which is the failure the observability rules name directly.
 
     rocketnet_assert( 0 );
+
     return ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE;
 }
 
@@ -147,12 +148,14 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
         return ROCKETNET_AD_BYTES;
 
     rocketnet_write_bytes( &p, client_ephemeral_public_key, ROCKETNET_KEY_BYTES );
+
     return ROCKETNET_AD_WITH_EPHEMERAL_BYTES;
 }
 
 static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )
 {
     memset( nonce, 0, 4 );
+
     uint8_t * p = nonce + 4;
     rocketnet_write_uint64( &p, sequence );
 }
@@ -317,6 +320,7 @@ int rocketnet_open_sealed_packet( uint8_t * out_data,
         return -1;
 
     // Refuse if the output buffer is too small for the plaintext
+
     int plaintext_bytes = packet_bytes - header_bytes - ROCKETNET_PACKET_TAG_BYTES;
     if ( out_capacity < plaintext_bytes )
         return -1;
@@ -416,10 +420,7 @@ uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
         uint64_t above = ( base + 0x100000000ULL ) | wire_value;
         uint64_t distance = above > expected ? above - expected : expected - above;
         if ( distance < best_distance || ( distance == best_distance && above > best ) )
-        {
             best = above;
-            best_distance = distance;
-        }
     }
 
     return best;
@@ -495,4 +496,3 @@ int rocketnet_generate_cookie_mac( uint8_t * mac,
 
     return 1;
 }
-

@@ -1,10 +1,12 @@
 # THE NIGHTLY FULL-SUITE LEAK CHECK.
 #
-# The per-commit sanitizers job in ci.yml runs ./bin/test and ./bin/functional
-# with ASAN_OPTIONS=detect_leaks=0 and enables LeakSanitizer only for
-# ./bin/test_lifecycle, ./bin/test_transport, and ./bin/test_sodium. This workflow
-# runs the full unit suite (default and portable-pinned) and the full
-# functional suite under ASAN_OPTIONS=detect_leaks=1 with
+# The per-commit sanitizers job in ci.yml runs both full unit rows and exact
+# reconnect-isolation, send-ring-recovery and loopback-UDP functional cases
+# with ASAN_OPTIONS=detect_leaks=0. It then runs the lifecycle, driver, sodium
+# and XDP-negative controls, enabling LeakSanitizer for test_lifecycle,
+# test_transport and test_sodium. This workflow retains the full unit suite
+# (default and portable-pinned) and the exhaustive full functional suite under
+# ASAN_OPTIONS=detect_leaks=1 with
 # LSAN_OPTIONS=suppressions=tools/lsan.supp:print_suppressions=1.
 #
 # print_suppressions=1 prints every suppression that matches during the run so
@@ -28,6 +30,7 @@ jobs:
     name: asan + ubsan + lsan (full suite)
     runs-on: [self-hosted, Linux, X64, fleet]
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:

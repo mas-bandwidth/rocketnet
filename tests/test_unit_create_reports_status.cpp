@@ -20,10 +20,13 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #include "portable_crt.h"
 
 #include "rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_layers.h"
+#include "rocketnet_memory.h"
 #include "rocketnet_connect_token.h"
 
 #include <stdint.h>
@@ -45,22 +48,23 @@ static void create_status_dev_server_config( struct rocketnet_server_config_t * 
     memcpy( config->backend_public_key, rocketnet_dev_backend_public_key, 32 );
 }
 
-#if defined( _WIN32 )
-static int create_status_setenv( const char * name, const char * value ) { return _putenv_s( name, value ); }
-static int create_status_unsetenv( const char * name ) { return _putenv_s( name, "" ); }
-#else
-static int create_status_setenv( const char * name, const char * value ) { return setenv( name, value, 1 ); }
-static int create_status_unsetenv( const char * name ) { return unsetenv( name ); }
-#endif
+#if ROCKETNET_DEV
+static int create_status_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
+static int create_status_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
+#endif // #if ROCKETNET_DEV
 
 // Whether the variable is set; its value, or empty, in value.
+#if ROCKETNET_DEV
 static bool create_status_getenv( const char * name, std::string & value )
 {
     char buffer[4096];
-    const bool present = rocketnet_test_getenv( name, buffer, sizeof( buffer ) ) != 0;
+    const bool present = rocketnet_test_env_getenv( name, buffer, sizeof( buffer ) ) != 0;
     value = buffer;
     return present;
 }
+#endif // #if ROCKETNET_DEV
 
 // ---- the fault-injecting allocator -----------------------------------------
 
@@ -69,12 +73,17 @@ struct create_status_allocator_t
     int live;
     int calls;
     int fail_at;
+    size_t last_bytes;
+    size_t max_bytes;
 };
 
 static void * create_status_allocate( void * context, size_t bytes )
 {
     create_status_allocator_t * state = (create_status_allocator_t *) context;
     const int call = ++state->calls;
+    state->last_bytes = bytes;
+    if ( bytes > state->max_bytes )
+        state->max_bytes = bytes;
     if ( state->fail_at == call )
         return NULL;
     void * base = malloc( bytes + 128 );
@@ -313,6 +322,7 @@ static void test_create_reports_status_config_refusals()
     // A value supplied by the caller is a config-range refusal, even though
     // create also checks environment overrides. Keep the environment absent
     // for this distinction, then restore it for the process running the suite.
+#if ROCKETNET_DEV
     std::string saved_client_env;
     std::string saved_server_env;
     const bool had_client_env = create_status_getenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env );
@@ -320,6 +330,7 @@ static void test_create_reports_status_config_refusals()
     check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
     check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
 
+#endif // #if ROCKETNET_DEV
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     // ROCKETNET_SEND_KBPS_UNLIMITED is no budget: accepted, with no ceiling
     client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
@@ -360,10 +371,16 @@ static void test_create_reports_status_config_refusals()
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
-    if ( had_client_env ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
-    if ( had_server_env ) check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+#if ROCKETNET_DEV
+    if ( had_client_env )
+        check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", saved_client_env.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    if ( had_server_env )
+        check( create_status_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", saved_server_env.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" ) == 0 );
+#endif // #if ROCKETNET_DEV
 
     // a transport list that does not parse
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
@@ -403,6 +420,7 @@ static void test_create_reports_status_config_refusals()
     check( status == ROCKETNET_STATUS_OK );
     rn_test_client_stop_and_destroy( budget_client );
 
+#if ROCKETNET_DEV
     // a malformed environment override: CONFIG_ENV_INVALID, client and server
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     std::string prior_client;
@@ -411,8 +429,10 @@ static void test_create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_client_present ) check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
+    if ( prior_client_present )
+        check( create_status_setenv( "ROCKETNET_CLIENT_SEND_KBPS", prior_client.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" ) == 0 );
 
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
@@ -422,8 +442,11 @@ static void test_create_reports_status_config_refusals()
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
     check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
-    if ( prior_server_present ) check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
-    else check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+    if ( prior_server_present )
+        check( create_status_setenv( "ROCKETNET_SERVER_MAX_CLIENTS", prior_server.c_str() ) == 0 );
+    else
+        check( create_status_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" ) == 0 );
+#endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_create_reports_status_config_refusals );
 
@@ -446,7 +469,7 @@ static void test_create_reports_status_out_of_memory()
 
     // walk every allocation client create makes: each failure is
     // OUT_OF_MEMORY with nothing left allocated, then success
-    for ( int fail_at = 1; ; fail_at++ )
+    for ( int fail_at = 1;; fail_at++ )
     {
         check( fail_at < 64 );
         state.calls = 0;
@@ -464,7 +487,7 @@ static void test_create_reports_status_out_of_memory()
         check( state.live == 0 );
     }
 
-    for ( int fail_at = 1; ; fail_at++ )
+    for ( int fail_at = 1;; fail_at++ )
     {
         check( fail_at < 64 );
         state.calls = 0;
@@ -488,6 +511,125 @@ static void test_create_reports_status_out_of_memory()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_create_reports_status_out_of_memory );
+
+// ---- the block allocation's refusal is one error line -----------------------
+
+struct create_status_log_t
+{
+    int errors;
+    char last[256];
+};
+
+static void create_status_count_errors( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) length;
+    create_status_log_t * log = (create_status_log_t *) context;
+    if ( level != ROCKETNET_LOG_LEVEL_ERROR )
+        return;
+    log->errors++;
+    snprintf( log->last, sizeof( log->last ), "%s", message );
+}
+
+static void create_oom_log_one_side( create_status_allocator_t * state, create_status_log_t * log, bool server,
+                                     const struct rocketnet_client_config_t * client_config, const struct rocketnet_server_config_t * server_config,
+                                     size_t block_bytes, const char * side )
+{
+    int block_fail = 0;
+    for ( int fail_at = 1; fail_at < 64; fail_at++ )
+    {
+        state->calls = 0;
+        state->fail_at = fail_at;
+        state->last_bytes = 0;
+        log->errors = 0;
+        log->last[0] = '\0';
+        enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+        if ( !server )
+        {
+            struct rocketnet_client_t * client = rocketnet_client_create( state, client_config, &status );
+            if ( client )
+            {
+                check( status == ROCKETNET_STATUS_OK );
+                rn_test_client_stop_and_destroy( client );
+                check( state->live == 0 );
+                break;
+            }
+        }
+        else
+        {
+            struct rocketnet_server_t * created = rocketnet_server_create( state, "127.0.0.1:0", NULL, server_config, &status );
+            if ( created )
+            {
+                check( status == ROCKETNET_STATUS_OK );
+                rn_test_server_stop_and_destroy( created );
+                check( state->live == 0 );
+                break;
+            }
+        }
+        check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        check( state->live == 0 );
+        if ( state->last_bytes == block_bytes )
+        {
+            block_fail = fail_at;
+            check( log->errors == 1 );
+            check( strstr( log->last, side ) != NULL );
+        }
+    }
+    check( block_fail != 0 );
+}
+
+static void test_create_out_of_memory_logs_one_error()
+{
+    create_status_allocator_t state;
+    memset( &state, 0, sizeof( state ) );
+    create_status_log_t log;
+    memset( &log, 0, sizeof( log ) );
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_log_function( create_status_count_errors, &log );
+
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    int init_status = -1;
+    check( rocketnet_init_ex( &state, create_status_allocate, create_status_release, &init_status ) );
+    check( init_status == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    struct rocketnet_server_config_t server_config;
+    create_status_dev_server_config( &server_config );
+    server_config.max_clients = 4;
+    // required_memory is the lifecycle peak (create plus the transport connect
+    // or start takes), so create's one block is read off a clean create: the
+    // largest single allocation it makes, never above that peak
+    state.max_bytes = 0;
+    enum rocketnet_status_t sized_status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_client_t * sized_client = rocketnet_client_create( &state, &client_config, &sized_status );
+    check( sized_client != NULL );
+    check( sized_status == ROCKETNET_STATUS_OK );
+    const size_t client_block = state.max_bytes;
+    rn_test_client_stop_and_destroy( sized_client );
+    check( state.live == 0 );
+    state.max_bytes = 0;
+    sized_status = ROCKETNET_TEST_STATUS_UNSET;
+    struct rocketnet_server_t * sized_server = rocketnet_server_create( &state, "127.0.0.1:0", NULL, &server_config, &sized_status );
+    check( sized_server != NULL );
+    check( sized_status == ROCKETNET_STATUS_OK );
+    const size_t server_block = state.max_bytes;
+    rn_test_server_stop_and_destroy( sized_server );
+    check( state.live == 0 );
+    check( client_block != 0 && client_block <= rocketnet_client_required_memory( &client_config ) );
+    check( server_block != 0 && server_block <= rocketnet_server_required_memory( &server_config ) );
+
+    create_oom_log_one_side( &state, &log, false, &client_config, &server_config, client_block, "client create refused" );
+    create_oom_log_one_side( &state, &log, true, &client_config, &server_config, server_block, "server create refused" );
+
+    state.fail_at = 0;
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( saved_level );
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( state.live == 0 );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+REGISTER_UNIT_TEST( test_create_out_of_memory_logs_one_error );
 
 // ---- a NULL status, on a refusal and on a success ---------------------------
 

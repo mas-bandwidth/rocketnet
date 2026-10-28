@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_REPLAY_H
-#define ROCKETNET_REPLAY_H
+#ifndef ROCKETNET_SDK_ROCKETNET_REPLAY_H
+#define ROCKETNET_SDK_ROCKETNET_REPLAY_H
 
 #include <stdint.h>
 #include "rocketnet_encryption_map.h"
@@ -26,7 +26,7 @@
 #define ROCKETNET_REPLAY_WINDOW_BITS ROCKETNET_HISTORY_PACKETS
 
 static_assert( ROCKETNET_REPLAY_WINDOW_BITS ==
-               64 * (int) ( sizeof( ((struct rocketnet_replay_protection_t*) 0)->window ) / sizeof(uint64_t) ),
+                   64 * (int) ( sizeof( ( (struct rocketnet_replay_protection_t *) 0 )->window ) / sizeof( uint64_t ) ),
                "the window constant must match the replay struct's storage" );
 
 // returns 1 when this sequence has already been received, or is too old to
@@ -40,4 +40,4 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
 
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence );
 
-#endif // #ifndef ROCKETNET_REPLAY_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_REPLAY_H

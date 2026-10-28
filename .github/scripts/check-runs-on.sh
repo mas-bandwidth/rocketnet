@@ -1,7 +1,7 @@
 #!/bin/sh
 # check-runs-on.sh: refuse a GitHub-hosted runner in any workflow of this repository.
 #
-# Glenn, 2026-10-18: "all CI should run on our fleet, not github." Every job's runs-on must select
+# Owner, 2026-10-18: "all CI should run on our fleet, not github." Every job's runs-on must select
 # the fleet: its value names `self-hosted`, names no hosted image (ubuntu-*, macos-*, windows-*),
 # and, when it is an expression, never falls through to a bare matrix or inputs value (which could
 # carry a hosted label). ${{ fromJSON(matrix.runner) }} is accepted when every matrix include row
@@ -75,5 +75,5 @@ if [ $# -eq 0 ]; then
   [ $# -gt 0 ] || { echo "check-runs-on: no workflows"; exit 0; }
 fi
 if check "$@"; then echo "check-runs-on: every runs-on selects the fleet ($# workflow files)"; exit 0; fi
-echo "check-runs-on: GitHub-hosted runners are refused (Glenn 2026-10-18: \"all CI should run on our fleet, not github\")"
+echo "check-runs-on: GitHub-hosted runners are refused (owner, 2026-10-18: \"all CI should run on our fleet, not github\")"
 exit 1

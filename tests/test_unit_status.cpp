@@ -27,8 +27,7 @@ static const struct
 {
     int code;
     const char * name;
-} status_expected[] =
-{
+} status_expected[] = {
     { ROCKETNET_STATUS_OK, "OK" },
     { ROCKETNET_STATUS_ALREADY_INITIALIZED, "ALREADY_INITIALIZED" },
     { ROCKETNET_STATUS_NOT_INITIALIZED, "NOT_INITIALIZED" },
@@ -90,12 +89,36 @@ REGISTER_UNIT_TEST( test_status_names_cover_every_code );
 static void test_status_name_out_of_range_is_unknown()
 {
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) -32 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( ( enum rocketnet_status_t ) - 32 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MIN ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) INT_MAX ), "UNKNOWN" ) == 0 );
 }
 
 REGISTER_UNIT_TEST( test_status_name_out_of_range_is_unknown );
+
+// The name functions are a C surface: a caller may pass any int for the enum
+// (the header says "UNKNOWN" for other values), so an out-of-range value must
+// be read as the int it is, not loaded as a C++ enum outside its range of
+// values (which is undefined; UBSan's -fsanitize=enum reports it). Each of
+// the three is exercised with far out-of-range values and the small 100/-100
+// (through an int variable, as a C caller would pass them), plus one in-range
+// value that must still name itself.
+static void test_name_functions_take_any_int()
+{
+    const int out_of_range[] = { 100, -100, INT_MIN, INT_MAX };
+    for ( int i = 0; i < 4; i++ )
+    {
+        const int v = out_of_range[i];
+        check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) v ), "UNKNOWN" ) == 0 );
+        check( strcmp( rocketnet_client_state_name( (enum rocketnet_client_state_t) v ), "UNKNOWN" ) == 0 );
+        check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) v ), "UNKNOWN" ) == 0 );
+    }
+    check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
+    check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_DISCONNECTED ), "DISCONNECTED" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );
+}
+
+REGISTER_UNIT_TEST( test_name_functions_take_any_int );
 
 // An env override is parsed as a 32-bit integer, refused past INT32 range
 // or on ERANGE, leaving the output untouched on refusal

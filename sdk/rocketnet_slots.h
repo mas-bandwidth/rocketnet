@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SLOTS_H
-#define ROCKETNET_SLOTS_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SLOTS_H
+#define ROCKETNET_SDK_ROCKETNET_SLOTS_H
 
 // The slots machine (CHANNELS.md 10.2, tla/RNSlots.tla Observe and Admit).
 // It holds the connection each slot is bound to and the per-update changed
@@ -50,4 +50,4 @@ int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_i
 // id is that binding; DISCARD otherwise, a free slot included.
 int rn_slots_admit( const struct rn_slots_t * slots, int slot, uint64_t entry_connection_id );
 
-#endif // #ifndef ROCKETNET_SLOTS_H
+#endif // ROCKETNET_SDK_ROCKETNET_SLOTS_H

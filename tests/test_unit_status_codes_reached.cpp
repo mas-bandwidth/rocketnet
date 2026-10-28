@@ -13,7 +13,9 @@
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
 //   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect under a
-//     fault-injecting allocator fails when allocating the worker thread;
+//     fault-injecting allocator fails when allocating the worker thread's
+//     record, before the OS thread create; the sweep stops at that first
+//     refusal, so no attempt reaches the OS create and no thread starts;
 //   * ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT and
 //     ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT: a step-driven
 //     loopback client on a test clock starting at 1000.0 reaches handshake
@@ -81,20 +83,28 @@ static void reached_token( rocketnet_server_t * server, const reached_identity_t
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
-        REACHED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, REACHED_TIMEOUT_SECONDS, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     REACHED_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, REACHED_TIMEOUT_SECONDS, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
+#if ROCKETNET_DEV
 static int refuse_platform_start( void )
 {
     return 1;
 }
 
-static void* refuse_waitable_timer( unsigned flags )
+static int refuse_waitable_timer_calls;
+static unsigned refuse_waitable_timer_flags[4];
+
+static void * refuse_waitable_timer( unsigned flags )
 {
-    (void) flags;
-    return NULL;
+    if ( refuse_waitable_timer_calls < 4 )
+        refuse_waitable_timer_flags[refuse_waitable_timer_calls] = flags;
+    ++refuse_waitable_timer_calls;
+    if ( flags == 0x00000002u )
+        return NULL;
+    return (void *) 1;
 }
 
 static int refuse_mutex( rocketnet_platform_mutex_t * mutex )
@@ -108,8 +118,9 @@ static void test_platform_init_failed_reached()
 {
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
 
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
-    fake = *rocketnet_platform_priority_calls_real();
+    fake = *saved;
     fake.platform_start = refuse_platform_start;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
@@ -117,24 +128,34 @@ static void test_platform_init_failed_reached()
     check( !rocketnet_init_ex( NULL, NULL, NULL, &status ) );
     check( status == ROCKETNET_STATUS_PLATFORM_INIT_FAILED );
 
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    rocketnet_platform_set_priority_calls_for_testing( saved );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_platform_init_failed_reached );
 
-// a refused timer create fails frame sync with TIMER_CREATE_FAILED across all platforms
+// a refused high-resolution timer create fails frame sync with TIMER_CREATE_FAILED after one request
 static void test_timer_create_failed_reached()
 {
+    refuse_waitable_timer_calls = 0;
+    memset( refuse_waitable_timer_flags, 0, sizeof( refuse_waitable_timer_flags ) );
+
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
-    fake = *rocketnet_platform_priority_calls_real();
+    fake = *saved;
     fake.create_waitable_timer = refuse_waitable_timer;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
     int status = -1;
     check( rocketnet_frame_sync_create_ex( NULL, 60.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TIMER_CREATE_FAILED );
+    check( refuse_waitable_timer_calls == 1 );
+    check( refuse_waitable_timer_flags[0] == 0x00000002u );
 
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    check( rocketnet_frame_sync_create( NULL, 60.0 ) == NULL );
+    check( refuse_waitable_timer_calls == 2 );
+    check( refuse_waitable_timer_flags[1] == 0x00000002u );
+
+    rocketnet_platform_set_priority_calls_for_testing( saved );
 }
 REGISTER_UNIT_TEST( test_timer_create_failed_reached );
 
@@ -158,20 +179,22 @@ static void test_client_mutex_create_failed_reached()
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
     struct rocketnet_platform_priority_calls_t fake;
-    fake = *rocketnet_platform_priority_calls_real();
+    fake = *saved;
     fake.mutex_init = refuse_mutex;
     rocketnet_platform_set_priority_calls_for_testing( &fake );
 
     const enum rocketnet_status_t status = rocketnet_client_connect( client, token );
     check( status == ROCKETNET_STATUS_MUTEX_CREATE_FAILED );
 
-    rocketnet_platform_set_priority_calls_for_testing( NULL );
+    rocketnet_platform_set_priority_calls_for_testing( saved );
 
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
 }
 REGISTER_UNIT_TEST( test_client_mutex_create_failed_reached );
+#endif // #if ROCKETNET_DEV
 
 // the fault-injecting allocator: fails exactly the fail_at-th call
 struct reached_allocator_t
@@ -183,7 +206,7 @@ struct reached_allocator_t
 
 static void * reached_allocate( void * context, size_t bytes )
 {
-    reached_allocator_t * state = (reached_allocator_t*) context;
+    reached_allocator_t * state = (reached_allocator_t *) context;
     const int call = ++state->calls;
     if ( state->fail_at == call )
         return NULL;
@@ -195,7 +218,7 @@ static void * reached_allocate( void * context, size_t bytes )
 
 static void reached_release( void * context, void * pointer )
 {
-    reached_allocator_t * state = (reached_allocator_t*) context;
+    reached_allocator_t * state = (reached_allocator_t *) context;
     if ( !pointer )
         return;
     --state->live;
@@ -259,6 +282,7 @@ static void test_client_connect_thread_create_failed_reached()
 }
 REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
 
+#if ROCKETNET_DEV
 static double reached_now = 1000.0;
 static double reached_clock( void * ) { return reached_now; }
 
@@ -343,3 +367,4 @@ static void test_client_connection_response_timed_out_state_reached()
     check( ended_at - stalled_at < REACHED_TIMEOUT_SECONDS + 1.0 );
 }
 REGISTER_UNIT_TEST( test_client_connection_response_timed_out_state_reached );
+#endif // #if ROCKETNET_DEV

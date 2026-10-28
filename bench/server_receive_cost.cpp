@@ -28,7 +28,7 @@
 #include <time.h>
 #include <vector>
 
-#define CHECK(x) do { if (!(x)) { fprintf(stderr, "server receive cost bench failed: %s, line %d\n", #x, __LINE__); exit(1); } } while (0)
+#define CHECK( x ) do { if (!(x)) { fprintf(stderr, "server receive cost bench failed: %s, line %d\n", #x, __LINE__); exit(1); } } while (0)
 
 // ---- the arena -------------------------------------------------------------
 
@@ -47,27 +47,35 @@ static receive_cost_arena_t receive_cost_arena;
 static void * receive_cost_allocate( void *, size_t bytes )
 {
     if ( receive_cost_arena.in_window )
+    {
         receive_cost_arena.window_allocations++;
+    }
+
     const size_t aligned = ( bytes + 63 ) & ~(size_t) 63;
     if ( receive_cost_arena.used + aligned > receive_cost_arena.capacity )
     {
         fprintf( stderr, "server receive cost bench: arena exhausted at %zu bytes; raise arena_gib\n", receive_cost_arena.used );
         exit( 1 );
     }
+
     void * p = receive_cost_arena.memory + receive_cost_arena.used;
+
     receive_cost_arena.used += aligned;
+
     return p;
 }
 
 static void receive_cost_free( void *, void * p )
 {
     if ( p && receive_cost_arena.in_window )
+    {
         receive_cost_arena.window_frees++;
+    }
 }
 
 // ---- the capture and replay receive ------------------------------------------
 
-typedef int (*receive_cost_receive_batch_t)( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
+typedef int ( *receive_cost_receive_batch_t )( void *, rocketnet_address_t *, uint8_t *, int, int *, int );
 
 struct receive_cost_capture_t
 {
@@ -97,11 +105,16 @@ static int receive_cost_receive_batch( void * instance, rocketnet_address_t * fr
             memcpy( capture->data + (size_t) capture->count * ROCKETNET_RECEIVE_CEILING, data + (size_t) i * (size_t) stride, (size_t) packet_bytes[i] );
             capture->count++;
         }
+
         return 0;
     }
+
     int n = capture->count - capture->cursor;
     if ( n > capacity )
+    {
         n = capacity;
+    }
+
     for ( int i = 0; i < n; i++ )
     {
         const int index = capture->cursor + i;
@@ -109,6 +122,7 @@ static int receive_cost_receive_batch( void * instance, rocketnet_address_t * fr
         packet_bytes[i] = capture->packet_bytes[index];
         memcpy( data + (size_t) i * (size_t) stride, capture->data + (size_t) index * ROCKETNET_RECEIVE_CEILING, (size_t) capture->packet_bytes[index] );
     }
+
     capture->cursor += n;
     return n;
 }
@@ -125,12 +139,23 @@ static double receive_cost_time_callback( void * )
 static double percentile( std::vector<double> samples, double p )
 {
     std::sort( samples.begin(), samples.end() );
+
     const size_t n = samples.size();
-    if ( n == 0 ) return 0.0;
+    if ( n == 0 )
+        return 0.0;
+
     const double rank = ( p / 100.0 ) * (double) n;
     size_t index = (size_t) rank;
-    if ( (double) index < rank ) index++;
-    if ( index > 0 ) index--;
+    if ( (double) index < rank )
+    {
+        index++;
+    }
+
+    if ( index > 0 )
+    {
+        index--;
+    }
+
     return samples[index < n ? index : n - 1];
 }
 
@@ -155,6 +180,7 @@ int main( int argc, char ** argv )
     CHECK( rocketnet_init( NULL, receive_cost_allocate, receive_cost_free ) == ROCKETNET_STATUS_OK );
 
     const int budget = num_clients * packets_per_client;
+
     receive_cost_capture.capacity = 2 * ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
     receive_cost_capture.from = (rocketnet_address_t *) receive_cost_allocate( NULL, sizeof( rocketnet_address_t ) * (size_t) receive_cost_capture.capacity );
     receive_cost_capture.packet_bytes = (int *) receive_cost_allocate( NULL, sizeof( int ) * (size_t) receive_cost_capture.capacity );
@@ -164,6 +190,7 @@ int main( int argc, char ** argv )
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = num_clients;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+
     int status = 0;
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
     CHECK( server );
@@ -177,6 +204,7 @@ int main( int argc, char ** argv )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         CHECK( rocketnet_write_test_connect_token( address, (uint64_t) ( 1000 + i ), (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
         rocketnet_client_transport_config_t client_config;
         rocketnet_client_transport_default_config( &client_config );
         snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
@@ -187,6 +215,7 @@ int main( int argc, char ** argv )
     }
 
     // connect every client, stepped by 10 ms of simulated time
+
     int connected = 0;
     for ( int step = 0; step < 3000 && connected < num_clients; step++ )
     {
@@ -194,18 +223,23 @@ int main( int argc, char ** argv )
         rocketnet_server_transport_update( server, receive_cost_clock );
         rocketnet_server_transport_send_packets( server );
         connected = 0;
+
         for ( int i = 0; i < num_clients; i++ )
         {
             rocketnet_client_transport_update( clients[(size_t) i], receive_cost_clock );
             rocketnet_client_transport_send_packets( clients[(size_t) i] );
             if ( rocketnet_client_transport_state( clients[(size_t) i] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
+            {
                 connected++;
+            }
         }
     }
+
     CHECK( connected == num_clients );
     CHECK( rocketnet_server_transport_num_connected_clients( server ) == num_clients );
 
     // the capture receive in front of the loopback transport's own
+
     static rocketnet_server_transport_io_operations_t operations;
     const rocketnet_server_transport_io_operations_t * loopback_operations = server->io.operations;
     operations = *loopback_operations;
@@ -215,11 +249,13 @@ int main( int argc, char ** argv )
 
     std::vector<double> update_us;
     update_us.reserve( (size_t) updates );
+
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     memset( payload, 0x5a, sizeof( payload ) );
 
     // the loopback queue holds ROCKETNET_LOOPBACK_QUEUE_PACKETS: clients send
     // in groups that fit it, each group captured by one server update
+
     const int clients_per_group = std::max( 1, ( ROCKETNET_LOOPBACK_QUEUE_PACKETS / 2 ) / packets_per_client );
     const int warmup = 5;
     int short_updates = 0;
@@ -232,23 +268,33 @@ int main( int argc, char ** argv )
         receive_cost_capture.replay = false;
         receive_cost_capture.count = 0;
         receive_cost_capture.cursor = 0;
+
         for ( int first = 0; first < num_clients; first += clients_per_group )
         {
             const int last = std::min( num_clients, first + clients_per_group );
             for ( int i = first; i < last; i++ )
                 for ( int p = 0; p < packets_per_client; p++ )
+                {
                     rocketnet_client_transport_send_packet( clients[(size_t) i], payload, payload_bytes );
+                }
+
             receive_cost_clock += 0.0001;
             rocketnet_server_transport_update( server, receive_cost_clock );
         }
 
         receive_cost_capture.replay = true;
         receive_cost_clock += 0.01;
+
         const uint64_t packets_before = server_counters[ROCKETNET_COUNTER_PACKETS_RECEIVED];
+
         receive_cost_arena.in_window = true;
+
         const auto start = std::chrono::steady_clock::now();
+
         rocketnet_server_transport_update( server, receive_cost_clock );
+
         const auto end = std::chrono::steady_clock::now();
+
         receive_cost_arena.in_window = false;
 
         const int * client_index;
@@ -256,12 +302,17 @@ int main( int argc, char ** argv )
         const int * received_bytes;
         const int delivered = rocketnet_server_transport_payloads( server, &client_index, &payload_data, &received_bytes );
         const uint64_t packets_processed = server_counters[ROCKETNET_COUNTER_PACKETS_RECEIVED] - packets_before;
+
         if ( u >= 0 )
         {
             // the update is judged on a full budget: every packet it may
             // process this update, the clients' acks among them
+
             if ( packets_processed < (uint64_t) budget )
+            {
                 short_updates++;
+            }
+
             min_packets_processed = std::min( min_packets_processed, packets_processed );
             min_payloads_delivered = std::min( min_payloads_delivered, delivered );
             update_us.push_back( std::chrono::duration<double, std::micro>( end - start ).count() );
@@ -269,9 +320,13 @@ int main( int argc, char ** argv )
 
         // drain, outside the window: the server's acks and keep-alives to
         // the clients, and theirs back into the next capture
+
         rocketnet_server_transport_send_packets( server );
+
         for ( int i = 0; i < num_clients; i++ )
+        {
             rocketnet_client_transport_update( clients[(size_t) i], receive_cost_clock );
+        }
     }
 
     CHECK( receive_cost_arena.window_allocations == 0 );
@@ -287,10 +342,15 @@ int main( int argc, char ** argv )
             short_updates, (unsigned long long) receive_cost_arena.window_allocations, receive_cost_arena.used >> 20 );
 
     server->io.operations = loopback_operations;
+
     for ( int i = 0; i < num_clients; i++ )
+    {
         rn_native_client_transport_stop_and_destroy( clients[(size_t) i] );
+    }
+
     rn_native_server_transport_stop_and_destroy( server );
     rocketnet_term();
     free( receive_cost_arena.memory );
+
     return 0;
 }

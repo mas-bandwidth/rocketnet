@@ -5,15 +5,15 @@
 
 #pragma once
 
-#ifndef ROCKETNET_SERVER_GSO_H
-#define ROCKETNET_SERVER_GSO_H
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
 
 #include "rocketnet_address.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
-// The GSO transport transport (#97): the best non-root path Linux has, per the
+// The GSO transport (#97): the best non-root path Linux has, per the
 // #81 measurements -- an SO_REUSEPORT socket group with one worker thread
 // per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
 // with zero shared state between queues, recvmmsg/sendmmsg batching on both
@@ -39,7 +39,7 @@ struct rocketnet_server_gso_t;
 
 #ifndef ROCKETNET_GSO_DEFAULT_QUEUES
 #define ROCKETNET_GSO_DEFAULT_QUEUES                                         4
-#endif
+#endif // #ifndef ROCKETNET_GSO_DEFAULT_QUEUES
 
 #define ROCKETNET_GSO_MAX_QUEUES                                            32
 
@@ -58,7 +58,7 @@ struct rocketnet_server_gso_t;
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_RECV_QUEUE_SIZE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: GSO receive queue holds at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_GSO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the GSO send queue" );
 
 // the send staging is per queue and does not derive from ROCKETNET_MAX_CLIENTS:
@@ -163,7 +163,7 @@ void rocketnet_server_gso_receive_packets( struct rocketnet_server_gso_t * gso )
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_packets( struct rocketnet_server_gso_t * gso );
 
-#if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 // development library only. force_create_flags ORs flags (the DISABLE set)
 // into every following create. fail_receives makes the next count recvmmsg
 // calls on any worker answer -1 with error without reaching the kernel;
@@ -177,6 +177,6 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 // Deterministic ownership/full/contended/stop and retained-RX-tail regression.
 bool rocketnet_server_gso_test_worker_handoff();
-#endif
+#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#endif // #ifndef ROCKETNET_SERVER_GSO_H
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

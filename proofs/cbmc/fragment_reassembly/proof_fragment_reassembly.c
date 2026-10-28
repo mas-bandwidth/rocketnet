@@ -29,15 +29,15 @@
 
 #ifndef PROOF_MAX_FRAGMENT
 #define PROOF_MAX_FRAGMENT ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES
-#endif
+#endif // #ifndef PROOF_MAX_FRAGMENT
 
 #ifndef PROOF_MAX_PAYLOAD
 #define PROOF_MAX_PAYLOAD ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES
-#endif
+#endif // #ifndef PROOF_MAX_PAYLOAD
 
 #ifndef PROOF_DELIVERED_CAPACITY
 #define PROOF_DELIVERED_CAPACITY 64
-#endif
+#endif // #ifndef PROOF_DELIVERED_CAPACITY
 
 /* PROOF_SLOT_CASE splits harness_process_fragment by the slot's state
    before the call and the fragment that arrives, so each run is a smaller
@@ -49,7 +49,7 @@
 
 #ifndef PROOF_SLOT_CASE
 #define PROOF_SLOT_CASE 0
-#endif
+#endif // #ifndef PROOF_SLOT_CASE
 
 /* The memcpy model. The reader's copies run up to a whole payload
    (ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES bytes at completion), far past
@@ -81,6 +81,7 @@ static int proof_span_in_region( const uint8_t * p, size_t bytes )
 {
     if ( proof_arena == NULL || !__CPROVER_same_object( p, proof_arena ) )
         return 1;
+
     const size_t offset = (size_t) ( p - proof_arena );
     if ( offset == proof_payload_region )
         return bytes <= proof_staging_region;
@@ -91,12 +92,14 @@ static void * proof_memcpy( void * destination, const void * source, size_t byte
 {
     if ( bytes == 0 )
         return destination;
+
     uint8_t * d = (uint8_t *) destination;
     const uint8_t * s = (const uint8_t *) source;
     __CPROVER_assert( proof_span_in_region( d, bytes ), "a copy into the slot arena stays inside the payload region or the staging buffer" );
     __CPROVER_assert( proof_span_in_region( s, bytes ), "a copy out of the slot arena stays inside the payload region or the staging buffer" );
     d[0] = s[0];
     d[bytes - 1] = s[bytes - 1];
+
     return destination;
 }
 #define memcpy proof_memcpy
@@ -106,7 +109,7 @@ static void * proof_memcpy( void * destination, const void * source, size_t byte
 #define ROCKETNET_ASSERTS 1
 #define rn_assert_function( condition, function, file, line ) __CPROVER_assert( 0, condition )
 
-#endif
+#endif // #ifdef __CPROVER__
 
 #include "rocketnet_fragment.cpp"
 
@@ -122,7 +125,7 @@ int nondet_int( void );
 unsigned nondet_uint( void );
 uint8_t nondet_uint8( void );
 uint64_t nondet_uint64( void );
-#endif
+#endif // #ifndef __CPROVER__
 
 void rocketnet_error( const char * format, ... )
 {
@@ -139,8 +142,11 @@ void rocketnet_spam( const char * format, ... )
 void harness_header_and_plan( void )
 {
     uint8_t data[ROCKETNET_FRAGMENT_HEADER_BYTES];
+
     for ( int i = 0; i < ROCKETNET_FRAGMENT_HEADER_BYTES; i++ )
+    {
         data[i] = nondet_uint8();
+    }
 
     uint32_t payload_id;
     int fragment_index;
@@ -150,7 +156,7 @@ void harness_header_and_plan( void )
     /* the header is 6 bytes: the id little-endian, the index byte, the
        count byte plus one */
     __CPROVER_assert( payload_id == ( (uint32_t) data[0] | ( (uint32_t) data[1] << 8 ) | ( (uint32_t) data[2] << 16 ) | ( (uint32_t) data[3] << 24 ) ),
-        "payload id is the first four bytes, little-endian" );
+                      "payload id is the first four bytes, little-endian" );
     __CPROVER_assert( fragment_index == data[4], "fragment index is the fifth byte" );
     __CPROVER_assert( fragment_count == data[5] + 1, "fragment count is the sixth byte plus one" );
 
@@ -198,16 +204,14 @@ static int slot_ok( const struct rocketnet_reassembly_slot_t * slot, int max_pay
 {
     int bits = 0;
     int high_bits = 0;
+
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
     {
         bits += popcount8( slot->received[i] );
     }
 
     if ( slot->payload_id == 0 )
-    {
-        return slot->fragment_count == 0 && slot->fragment_stride == 0 && slot->final_bytes == 0
-            && slot->final_staged == 0 && slot->num_received == 0 && bits == 0;
-    }
+        return slot->fragment_count == 0 && slot->fragment_stride == 0 && slot->final_bytes == 0 && slot->final_staged == 0 && slot->num_received == 0 && bits == 0;
 
     const int count = slot->fragment_count;
     if ( count < 2 || count > ROCKETNET_MAX_FRAGMENTS )
@@ -215,11 +219,13 @@ static int slot_ok( const struct rocketnet_reassembly_slot_t * slot, int max_pay
 
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
     {
-        /* bits at or above the count are never set */
+        // bits at or above the count are never set
         const int low = i * 8;
         const int mask = count <= low ? 0xff : ( count >= low + 8 ? 0 : ( 0xff << ( count - low ) ) & 0xff );
         if ( slot->received[i] & mask )
+        {
             high_bits++;
+        }
     }
 
     const int stride = slot->fragment_stride;
@@ -234,9 +240,10 @@ static int slot_ok( const struct rocketnet_reassembly_slot_t * slot, int max_pay
         return 0;
     if ( slot->final_staged != ( stride == 0 && final_seen ) )
         return 0;
+
     if ( stride == 0 )
     {
-        /* no non-final fragment yet: at most the final is held */
+        // no non-final fragment yet: at most the final is held
         if ( bits != final_seen )
             return 0;
     }
@@ -249,6 +256,7 @@ static int slot_ok( const struct rocketnet_reassembly_slot_t * slot, int max_pay
         if ( (int64_t) stride * ( count - 1 ) + ( final_seen ? final_bytes : 1 ) > (int64_t) max_payload_bytes )
             return 0;
     }
+
     return 1;
 }
 
@@ -260,25 +268,28 @@ static void nondet_slot( struct rocketnet_reassembly_slot_t * slot, int max_payl
     slot->final_bytes = nondet_int();
     slot->final_staged = nondet_int();
     slot->num_received = nondet_int();
+
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
+    {
         slot->received[i] = nondet_uint8();
+    }
+
     __CPROVER_assume( slot_ok( slot, max_payload_bytes ) );
 }
 
 static int slot_same( const struct rocketnet_reassembly_slot_t * slot,
                       const struct rocketnet_reassembly_slot_t * before )
 {
-    int same = slot->payload_id == before->payload_id
-            && slot->fragment_count == before->fragment_count
-            && slot->fragment_stride == before->fragment_stride
-            && slot->final_bytes == before->final_bytes
-            && slot->final_staged == before->final_staged
-            && slot->num_received == before->num_received;
+    int same = slot->payload_id == before->payload_id && slot->fragment_count == before->fragment_count && slot->fragment_stride == before->fragment_stride && slot->final_bytes == before->final_bytes && slot->final_staged == before->final_staged && slot->num_received == before->num_received;
+
     for ( int i = 0; i < ROCKETNET_MAX_FRAGMENTS / 8; i++ )
     {
         if ( slot->received[i] != before->received[i] )
+        {
             same = 0;
+        }
     }
+
     return same;
 }
 
@@ -302,7 +313,7 @@ void harness_process_fragment( void )
     __CPROVER_assume( slot->payload_id != 0 && slot->fragment_stride == 0 );
 #elif PROOF_SLOT_CASE >= 3
     __CPROVER_assume( slot->payload_id != 0 && slot->fragment_stride != 0 );
-#endif
+#endif // #if PROOF_SLOT_CASE == 1
     uint32_t * newest_completed = (uint32_t *) ( (uint8_t *) slot + sizeof( struct rocketnet_reassembly_slot_t ) );
     *newest_completed = nondet_uint();
 
@@ -315,19 +326,22 @@ void harness_process_fragment( void )
     proof_arena = arena;
     proof_payload_region = (size_t) max_payload;
     proof_staging_region = ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
-#endif
+#endif // #ifdef __CPROVER__
 
     /* the delivered arena: at least one maximum payload, the caller's byte
        bound, with an arbitrary part already used this update */
     const int delivered_capacity = nondet_int();
     __CPROVER_assume( delivered_capacity >= 1 && delivered_capacity <= PROOF_DELIVERED_CAPACITY );
+
     const uint64_t delivered_bytes = nondet_uint64();
-    __CPROVER_assume( delivered_bytes >= (uint64_t) max_payload
-                      && delivered_bytes <= (uint64_t) PROOF_DELIVERED_CAPACITY * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( PROOF_MAX_PAYLOAD ) );
+    __CPROVER_assume( delivered_bytes >= (uint64_t) max_payload && delivered_bytes <= (uint64_t) PROOF_DELIVERED_CAPACITY * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( PROOF_MAX_PAYLOAD ) );
+
     uint8_t * delivered = (uint8_t *) malloc( (size_t) delivered_bytes );
     __CPROVER_assume( delivered != NULL );
+
     const int num_delivered = nondet_int();
     __CPROVER_assume( num_delivered >= 0 && num_delivered <= delivered_capacity );
+
     const uint64_t delivered_used = nondet_uint64();
     __CPROVER_assume( delivered_used <= delivered_bytes );
 
@@ -335,12 +349,17 @@ void harness_process_fragment( void )
        from empty to one byte past the largest the reader accepts */
     const int type_data_bytes = nondet_int();
     __CPROVER_assume( type_data_bytes >= 0 && type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + PROOF_MAX_FRAGMENT + 1 );
+
     uint8_t * type_data = (uint8_t *) malloc( (size_t) type_data_bytes );
     __CPROVER_assume( type_data != NULL );
 
     uint64_t counters[12];
+
     for ( int i = 0; i < 12; i++ )
+    {
         counters[i] = 0;
+    }
+
     struct rocketnet_reassembly_counters_t table;
     table.zero_payload_id = 0;
     table.stale = 1;
@@ -372,9 +391,8 @@ void harness_process_fragment( void )
     const struct rocketnet_reassembly_slot_t before = *slot;
     const uint32_t before_reference = *newest_completed;
 
-    /* the header fields as the reader will see them */
-    const int in_size = type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1
-                     && type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
+    // the header fields as the reader will see them
+    const int in_size = type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1 && type_data_bytes <= ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES;
     uint32_t payload_id = 0;
     int fragment_index = 0;
     int fragment_count = 1;
@@ -386,6 +404,7 @@ void harness_process_fragment( void )
         fragment_count = type_data[5] + 1;
         fragment_bytes = type_data_bytes - ROCKETNET_FRAGMENT_HEADER_BYTES;
     }
+
     const int is_final = fragment_index == fragment_count - 1;
 #if PROOF_SLOT_CASE == 3
     __CPROVER_assume( !in_size || payload_id != before.payload_id );
@@ -393,7 +412,7 @@ void harness_process_fragment( void )
     __CPROVER_assume( in_size && payload_id == before.payload_id && !is_final );
 #elif PROOF_SLOT_CASE == 5
     __CPROVER_assume( in_size && payload_id == before.payload_id && is_final );
-#endif
+#endif // #if PROOF_SLOT_CASE == 3
 
     int rc = rocketnet_reassembly_process_fragment( &set, 0, type_data, type_data_bytes, counters, &table );
 
@@ -408,26 +427,48 @@ void harness_process_fragment( void )
 
     {
         uint64_t refusals = 0;
+
         for ( int i = 0; i <= 7; i++ )
+        {
             refusals += counters[i];
+        }
+
         __CPROVER_assert( refusals == (uint64_t) ( 1 - rc ), "a refusal fires exactly one refusal counter, an acceptance none" );
     }
 
     if ( in_size && payload_id != 0 )
     {
         const int same = payload_id == before.payload_id;
+
         if ( payload_id - before_reference > ROCKETNET_REASSEMBLY_REACH && before_reference - payload_id > ROCKETNET_REASSEMBLY_REACH )
+        {
             __CPROVER_assert( rc == 0 && counters[table.stale] == 1, "an id beyond reach of the newest completed is refused stale" );
+        }
+
         if ( before.payload_id != 0 && !same && before.payload_id - payload_id <= ROCKETNET_REASSEMBLY_BEHIND )
+        {
             __CPROVER_assert( rc == 0 && counters[table.stale] == 1, "an id just behind the occupant is refused stale" );
+        }
+
         if ( same && fragment_count != before.fragment_count )
+        {
             __CPROVER_assert( rc == 0, "a count that differs from the pinned count is refused" );
+        }
+
         if ( same && before.fragment_stride != 0 && !is_final && fragment_bytes != before.fragment_stride )
+        {
             __CPROVER_assert( rc == 0, "a non-final fragment off the stride is refused" );
+        }
+
         if ( same && before.fragment_stride != 0 && is_final && fragment_bytes > before.fragment_stride )
+        {
             __CPROVER_assert( rc == 0, "a final fragment over the stride is refused" );
+        }
+
         if ( same && fragment_index < fragment_count && bit_of( &before, fragment_index ) )
+        {
             __CPROVER_assert( rc == 0, "a fragment index already held is refused" );
+        }
     }
 
     if ( rc == 0 )
@@ -440,13 +481,14 @@ void harness_process_fragment( void )
     if ( rc == 1 )
     {
         __CPROVER_assert( in_size && payload_id != 0 && fragment_count >= 2 && fragment_index < fragment_count, "only a well-formed fragment is accepted" );
+
         if ( counters[table.reassembled] == 0 )
         {
             __CPROVER_assert( *newest_completed == before_reference, "an acceptance short of completion leaves the reference" );
             /* still assembling: where this fragment landed is inside the
                slot's payload region, or the staging buffer for an early final */
             __CPROVER_assert( slot->payload_id == payload_id && slot->fragment_count == fragment_count,
-                "the accepted fragment's payload holds the slot" );
+                              "the accepted fragment's payload holds the slot" );
             __CPROVER_assert( bit_of( slot, fragment_index ), "the accepted index is marked" );
             if ( slot->fragment_stride != 0 )
             {
@@ -464,23 +506,23 @@ void harness_process_fragment( void )
             __CPROVER_assert( counters[table.reassembled] == 1, "one completion per call" );
             __CPROVER_assert( slot->payload_id == 0, "completion clears the slot" );
             __CPROVER_assert( *newest_completed == before_reference || *newest_completed == payload_id,
-                "completion moves the reference only to the completed id" );
+                              "completion moves the reference only to the completed id" );
             __CPROVER_assert( before.payload_id == payload_id && before.num_received == before.fragment_count - 1,
-                "only the last missing fragment completes a payload" );
+                              "only the last missing fragment completes a payload" );
+
             if ( set.completed_payload != NULL )
             {
                 __CPROVER_assert( set.completed_bytes >= 1 && set.completed_bytes <= max_payload, "completed payload fits the maximum" );
-                __CPROVER_assert( set.completed_payload >= delivered
-                                  && (uint64_t) ( set.completed_payload - delivered ) + (uint64_t) set.completed_bytes <= delivered_bytes,
-                    "the completed payload's span is inside the delivered arena" );
+                __CPROVER_assert( set.completed_payload >= delivered && (uint64_t) ( set.completed_payload - delivered ) + (uint64_t) set.completed_bytes <= delivered_bytes,
+                                  "the completed payload's span is inside the delivered arena" );
                 __CPROVER_assert( set.delivered_used <= set.delivered_bytes && set.num_delivered <= delivered_capacity,
-                    "the delivered arena stays inside its bounds" );
+                                  "the delivered arena stays inside its bounds" );
                 __CPROVER_assert( counters[table.batch_full] == 0, "a delivered completion is not batch full" );
             }
             else
             {
                 __CPROVER_assert( counters[table.batch_full] == 1 && set.num_delivered == num_delivered && set.delivered_used == delivered_used,
-                    "a completion that does not fit counts batch full and packs nothing" );
+                                  "a completion that does not fit counts batch full and packs nothing" );
             }
         }
     }
@@ -493,7 +535,7 @@ void harness_process_fragment( void )
    transports can pass: up to PROOF_SIZING_MAX_CONNECTIONS connections
    (ROCKETNET_MAX_CLIENTS by default; the client passes one), up to
    PROOF_SIZING_MAX_CAPACITY completions (by default the server's drain,
-   ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS: both delivered-capacity
+   ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE: both delivered-capacity
    functions return at most their drain, and the client's drain is
    smaller), a delivered byte bound up to that capacity at the aligned
    largest payload (the most rocketnet_server_reassembly_delivered_bytes
@@ -501,11 +543,11 @@ void harness_process_fragment( void )
 
 #ifndef PROOF_SIZING_MAX_CONNECTIONS
 #define PROOF_SIZING_MAX_CONNECTIONS ROCKETNET_MAX_CLIENTS
-#endif
+#endif // #ifndef PROOF_SIZING_MAX_CONNECTIONS
 
 #ifndef PROOF_SIZING_MAX_CAPACITY
-#define PROOF_SIZING_MAX_CAPACITY ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS
-#endif
+#define PROOF_SIZING_MAX_CAPACITY ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
+#endif // #ifndef PROOF_SIZING_MAX_CAPACITY
 
 void harness_memory_sizing( void )
 {
@@ -518,16 +560,14 @@ void harness_memory_sizing( void )
     __CPROVER_assume( num_connections <= PROOF_SIZING_MAX_CONNECTIONS );
     __CPROVER_assume( delivered_capacity <= PROOF_SIZING_MAX_CAPACITY );
     __CPROVER_assume( bytes <= (uint64_t) PROOF_SIZING_MAX_CAPACITY * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES ) );
-#endif
+#endif // #ifndef PROOF_SIZING_FULL
 
     const uint64_t required = rocketnet_reassembly_memory_required( num_connections, num_slots, max_payload, delivered_capacity );
     const uint64_t required_d = rocketnet_reassembly_memory_required_delivered( num_connections, num_slots, max_payload, delivered_capacity, bytes );
     const bool allowed = rocketnet_reassembly_memory_allowed( num_connections, num_slots, max_payload, delivered_capacity );
     const bool allowed_d = rocketnet_reassembly_memory_allowed_delivered( num_connections, num_slots, max_payload, delivered_capacity, bytes );
 
-    const int documented = num_connections >= 1 && num_slots >= 1 && num_slots <= ROCKETNET_MAX_FRAGMENTS
-                        && max_payload >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && max_payload <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES
-                        && delivered_capacity >= 1;
+    const int documented = num_connections >= 1 && num_slots >= 1 && num_slots <= ROCKETNET_MAX_FRAGMENTS && max_payload >= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES && max_payload <= ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES && delivered_capacity >= 1;
 
     __CPROVER_assert( documented || ( required == 0 && required_d == 0 && !allowed && !allowed_d ), "invalid geometry is refused" );
     __CPROVER_assert( bytes >= (uint64_t) max_payload || required_d == 0, "a delivered bound below one payload is refused" );
@@ -542,6 +582,7 @@ void harness_memory_sizing( void )
         __CPROVER_assert( required_d >= slots * ( (uint64_t) max_payload + ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES ), "delivered required bytes cover the slot arenas" );
         __CPROVER_assert( required_d > bytes, "delivered required bytes cover the delivered arena" );
     }
+
     if ( required != 0 )
     {
         const uint64_t slots = (uint64_t) num_connections * (uint64_t) num_slots;

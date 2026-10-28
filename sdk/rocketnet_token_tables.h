@@ -5,8 +5,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_TOKEN_TABLES_H
-#define ROCKETNET_TOKEN_TABLES_H
+#ifndef ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H
+#define ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H
 
 #include <stdint.h>
 #include "rocketnet_address.h"
@@ -23,9 +23,12 @@
 // claim pressure cannot consume or evict response-binding capacity. Each
 // table is fixed-capacity with bound-first eviction for bindings, no
 // eviction of a live claim, and entries that expire with their deadlines.
-// Lookup is constant time in the number of clients: chained buckets under a
-// per-run SipHash of the identifier, so an attacker cannot craft identifiers
-// that collide. The one-live-connection rule needs no table of its own: the
+// Lookup uses a full-identifier open-addressed index under a per-run SipHash,
+// with at most twice capacity probes. Free slots are a dense array stack; the
+// claim table also keeps a generation-tagged chronological array, so its
+// common free-or-expired capacity query reads only the stack or oldest claim.
+// Removing an interior claim may shift at most capacity tagged entries. The
+// one-live-connection rule needs no table of its own: the
 // claim and the history refuse a token from a second address before the
 // signature verify, a connected address is refused at the top of the request
 // path, and the client-id check refuses a second live connection for a
@@ -95,4 +98,9 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
                                                  const uint8_t * token_identifier,
                                                  const struct rocketnet_address_t * address );
 
-#endif // #ifndef ROCKETNET_TOKEN_TABLES_H
+// the number of claim-table slots on the free list: a count kept on every
+// push and pop, O(1), read by the unit tests.
+
+int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history );
+
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TOKEN_TABLES_H

@@ -13,7 +13,7 @@ in-memory `loopback` transport, so it needs no socket and no network.
    `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`; server create generates the server key.
    Read its public key and bound address after start, then create an opaque
    base64 development token with `rocketnet_create_dev_connect_token`.
-3. Send a 200 KB `ROCKETNET_RELIABILITY_RELIABLE` message with `rocketnet_client_start_message`, a
+3. Send a 200 KB `ROCKETNET_RELIABILITY_RELIABLE` message with `rocketnet_client_can_send_message`, `rocketnet_client_start_message`, a
    known pattern written byte by byte straight into the returned buffer, and
    `rocketnet_client_finish_message`. The server receives one reassembled message,
    checks every byte, and prints its size and the time it took to arrive.

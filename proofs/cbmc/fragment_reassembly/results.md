@@ -172,7 +172,7 @@ The functions checked are `rocketnet_reassembly_memory_required`,
 
 - `num_connections` up to `ROCKETNET_MAX_CLIENTS`. The server passes its
   client count, and the client passes one.
-- `delivered_capacity` up to `ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS`.
+- `delivered_capacity` up to `ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE`.
   Both delivered-capacity functions return at most their drain, and the
   client's drain is smaller.
 - The delivered byte bound up to that capacity times the aligned largest

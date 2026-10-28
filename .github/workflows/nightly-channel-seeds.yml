@@ -1,5 +1,8 @@
 # The nightly channel seed sweep: every functional channel case
-# (functional/channel_*.cpp) over simulator seeds 1-2000. Each functional case
+# (functional/channel_*.cpp) over a rolling range of 2000 simulator seeds.
+# The range start is derived from the run number (run 1 starts at seed 1),
+# so consecutive nights cover different ranges of the same length; the log
+# prints the range with its replay line. Each functional case
 # runs on one deterministic seed on the per-push tier (the pinned seed), so a
 # case that holds only on that seed is green there; this sweep walks the other
 # seeds so a seed-fragile case shows at night and not in a landing. It lives
@@ -22,6 +25,7 @@ jobs:
     runs-on: ["self-hosted", "Linux", "X64", "fleet", "long"]
     timeout-minutes: 60
     strategy:
+      fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
@@ -52,10 +56,16 @@ jobs:
       - name: Build
         run: make
 
-      - name: Sweep every channel case over seeds 1-2000
+      - name: Sweep every channel case over a rolling seed range
+        env:
+          CHANNEL_RUN_NUMBER: ${{ github.run_number }}
         run: |
           set -o pipefail
-          scripts/channel-seed-sweep --all --seeds 1-2000 --timeout 120 | tee channel-seed-sweep.log
+          length=2000
+          sweep_start=$(( 1 + (CHANNEL_RUN_NUMBER - 1) * length ))
+          sweep_end=$(( sweep_start + length - 1 ))
+          echo "channel seed sweep seeds=$sweep_start-$sweep_end length=$length run_number=$CHANNEL_RUN_NUMBER replay: scripts/channel-seed-sweep --all --seeds $sweep_start-$sweep_end --timeout 120"
+          scripts/channel-seed-sweep --all --seeds "$sweep_start-$sweep_end" --timeout 120 | tee channel-seed-sweep.log
 
       # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
       - name: Artifact name for the ref

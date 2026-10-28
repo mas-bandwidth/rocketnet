@@ -13,9 +13,9 @@ connect tokens use only the published development keys from
 |---|---|---|---|
 | `rocketnet_fuzz` | the stateless wire parsers: prefilter, fragment header and reassembly, base64, config values (`input[0] & 3` picks one) | `corpus/` | `dict/rocketnet_fuzz.dict` |
 | `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `dict/rocketnet_fuzz_message.dict` |
-| `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `rocketnet.dict` |
+| `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `dict/rocketnet_fuzz_connect_token.dict` |
 | `rocketnet_fuzz_token_private` | the token layouts behind the signature and the sealed block, reached directly | `corpus_token_private/` | `dict/rocketnet_fuzz_token_private.dict` |
-| `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `rocketnet.dict` |
+| `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `dict/rocketnet_fuzz_receive_structured.dict` |
 | `rocketnet_fuzz_round_trip` | every wire form encoded then decoded; the values read must equal the values written | `corpus_round_trip/` | `dict/rocketnet_fuzz_round_trip.dict` |
 | `rocketnet_fuzz_config` | `rocketnet_config_apply_env` over every env-backed config field | `corpus_config/` | `dict/rocketnet_fuzz_config.dict` |
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
@@ -82,6 +82,49 @@ libFuzzer runtime, for example
 Makefile links the CoreFoundation and SystemConfiguration frameworks in
 place of the Linux bpf, xdp and io_uring libraries.
 
+### With libFuzzer (Windows)
+
+On Windows the libFuzzer runtime ships with Visual Studio's ClangCL toolset
+(the "C++ Clang tools for Windows" component): `clang-cl.exe` under
+`VC/Tools/Llvm/x64/bin`, and `clang_rt.fuzzer-x86_64.lib` with the
+AddressSanitizer runtime in `lib/windows` of its resource directory
+(`clang-cl -print-resource-dir`). Build the development library once with
+that toolset, instrumented, on the static release C runtime (`/MT`) with
+the STL's ASan string and vector annotations off: Visual Studio's
+`clang_rt.fuzzer-x86_64.lib` is built that way, and its link refuses any
+object that differs (`/failifmismatch` on `RuntimeLibrary` and
+`annotate_string`). Then compile each target the same way at the tree's
+warning floor and link it against the library. CMake's compiler check
+builds a static library, since a test program linked with the sanitizer
+flags has no runtime. From Git Bash at the checkout root:
+
+```sh
+cmake -B build-fuzz -T ClangCL -A x64 -DCMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY \
+    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded \
+    "-DCMAKE_C_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -fsanitize=address -fsanitize=fuzzer-no-link" \
+    "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
+cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
+CLANG_CL="$(cygpath "$(vswhere -latest -property installationPath)")/VC/Tools/Llvm/x64/bin/clang-cl.exe"
+"$CLANG_CL" -nologo -Zi -O1 -MT -std:c++17 -EHsc -utf-8 -fp:precise \
+    -W4 -WX -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wformat=2 -Wundef -Wdouble-promotion \
+    -DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -DROCKETNET_DEV=1 \
+    -fsanitize=fuzzer,address \
+    -Isodium -Isdk -Itest fuzz/rocketnet_fuzz_session.cpp build-fuzz/Debug/rocketnet_dev.lib \
+    -fuse-ld=lld -Fe:bin/rocketnet_fuzz_session.exe
+cp "$("$CLANG_CL" -print-resource-dir)/lib/windows/clang_rt.asan_dynamic-x86_64.dll" bin/
+mkdir -p corpus_session
+ASAN_OPTIONS=detect_leaks=0 ./bin/rocketnet_fuzz_session.exe \
+    -dict=fuzz/dict/rocketnet_fuzz_session.dict -max_total_time=60 corpus_session fuzz/corpus_session
+```
+
+The link set is the replay drivers' one: `rocketnet_dev.lib` alone, since
+the platform source names `WS2_32`, `IPHLPAPI`, `Qwave` and `winmm` itself.
+LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
+checker), so the Windows leg runs with `detect_leaks=0` and leaks are
+checked on Linux. The nightly `fuzz-windows` job in
+`.github/workflows/fuzz-nightly.yml` runs exactly these commands for every
+target in the table above; the netcode differential target stays Linux only.
+
 ### Without libFuzzer: the replay drivers
 
 CMake builds a `fuzz_replay_<target>` binary for every target. Each one is
@@ -108,6 +151,21 @@ mkdir -p /tmp/corpus_session && cp fuzz/corpus_session/* /tmp/corpus_session/
 ./fuzz/rocketnet_fuzz_session -dict=fuzz/dict/rocketnet_fuzz_session.dict \
     -max_total_time=60 /tmp/corpus_session
 ```
+
+### The campaigns
+
+| campaign | where | library | harness | what it runs |
+|---|---|---|---|---|
+| nightly fuzz | `fuzz-nightly.yml` job `fuzz` (and `fuzz-macos`, `fuzz-msan`) | Debug, asserts live | asserts live | every target for `max_total_time` seconds |
+| NDEBUG | `fuzz-nightly.yml` job `fuzz-ndebug`, or `tools/fuzz_ndebug.sh` by hand | Release (`-DNDEBUG`), `rocketnet_assert` compiled out | `-DNDEBUG` | every target, so a bound only an assert holds is fuzzed as a release build runs it |
+| NDEBUG smoke | `ci.yml` job `fuzz-smoke-ndebug` | Debug, asserts live | `-DNDEBUG` | corpus replay only |
+
+`tools/fuzz_ndebug.sh --seconds 30 --jobs 8` builds the Release library and
+all eleven targets in `build-fuzz-ndebug/`, checks that every `sdk/` compile
+line carries `-DNDEBUG` and that no library object references the assert
+callback, and fuzzes each target; `--target <name>` runs one. Reproducers
+land in `build-fuzz-ndebug/out/crashes/<target>/` and the script exits 1
+naming them.
 
 Targets without their own dictionary use `fuzz/rocketnet.dict`. Leak
 checking stays on. The pair targets keep their pair in statics, so what they
@@ -243,9 +301,10 @@ commit the minimized input to its corpus as `regress_<name>`.
 
 - `ci.yml` `fuzz-smoke` replays the committed corpora through the
   `fuzz_replay_*` drivers on every push.
-- `fuzz-nightly.yml` builds the libFuzzer targets, restores each target's
-  growing corpus from the cache, runs a bounded campaign
-  (`max_total_time`, 900 s by default) and uploads any reproducer.
+- `fuzz-nightly.yml` builds the libFuzzer targets on Linux, macOS and
+  Windows, restores each target's growing corpus from the cache (one cache
+  per platform), runs a bounded campaign (`max_total_time`, 900 s by
+  default) and uploads any reproducer.
 - `fuzz-nightly.yml` also runs the same ten-target matrix under
   MemorySanitizer on Linux (`fuzz-msan`): the development library, vendored
   sodium included, is built with the MSan flags and the instrumented libc++

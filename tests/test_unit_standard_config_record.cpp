@@ -18,8 +18,7 @@
 #include "rocketnet_channel.h"
 #include "rocketnet_message.h"
 
-static const rn_standard_vector_t standard_config_record_table[] =
-{
+static const rn_standard_vector_t standard_config_record_table[] = {
     RN_STANDARD_VECTOR( "m11.config-defaults", "221c000000000101ff0020000000000400000000100000001000800400000000000001" ),
     RN_STANDARD_VECTOR( "m11.version-mismatch", "221c000000000102ff0020000000000400000000100000001000800400000000000001" ),
     RN_STANDARD_VECTOR( "m11.enabled-mismatch", "221c000000000101010020000000000400000000100000001000800400000000000001" ),
@@ -96,12 +95,12 @@ static int standard_config_record_generate( const char * id, uint8_t * out, int 
 static int standard_config_record_body_equal( const struct rocketnet_message_config_body_t * a, const struct rocketnet_message_config_body_t * b )
 {
     return a->version == b->version &&
-        a->enabled == b->enabled &&
-        a->num_channels == b->num_channels &&
-        a->reliable_messages_in_flight == b->reliable_messages_in_flight &&
-        a->receive_message_buffer_bytes == b->receive_message_buffer_bytes &&
-        a->max_message_bytes == b->max_message_bytes &&
-        a->fragment_bytes == b->fragment_bytes;
+           a->enabled == b->enabled &&
+           a->num_channels == b->num_channels &&
+           a->reliable_messages_in_flight == b->reliable_messages_in_flight &&
+           a->receive_message_buffer_bytes == b->receive_message_buffer_bytes &&
+           a->max_message_bytes == b->max_message_bytes &&
+           a->fragment_bytes == b->fragment_bytes;
 }
 
 static void test_standard_config_record_vectors()
@@ -111,8 +110,7 @@ static void test_standard_config_record_vectors()
 
     struct rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
-    const struct rocketnet_message_limits_t limits =
-    {
+    const struct rocketnet_message_limits_t limits = {
         config.num_channels,
         rocketnet_message_enabled_codes( ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION ),
         config.reliable_messages_in_flight,

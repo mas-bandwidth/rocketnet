@@ -1,0 +1,40 @@
+# clang-tidy configuration for the sdk, read by tools/run_tidy.py and the
+# `static analysis (clang-tidy, cppcheck)` job in .github/workflows/static.yml.
+#
+# The bugprone-*, cert-*, concurrency-* and performance-* families stay on.
+# The clang analyzer adds its stable correctness, dead-code, security, C++,
+# nullability and Unix checks; opt-in layout advice is outside this defect
+# gate because it asks for ABI and style changes rather than demonstrated
+# correctness repairs.
+# A check is turned off here only when it restates the project's chosen style
+# rather than finding a defect; each one is named with its reason:
+#
+#   -bugprone-easily-swappable-parameters
+#       the sdk is a C-style API in the netcode/Next style: functions take
+#       several adjacent parameters of one type (sizes, indexes, times) by
+#       design, and the check flags every such signature, not a misuse.
+#   -performance-enum-size
+#       enums are plain int-sized throughout, in the netcode style, and the
+#       public ones cross the C ABI where a narrower type would change it; the
+#       check flags every enum whose values fit a byte, not a hot-path cost.
+#
+# Everything else in these families stays on. What it finds today is
+# recorded in tools/tidy_baseline.txt; triage is a separate card.
+Checks: >-
+  -*,
+  bugprone-*,
+  cert-*,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-deadcode.*,
+  clang-analyzer-nullability.*,
+  clang-analyzer-security.*,
+  clang-analyzer-unix.*,
+  concurrency-*,
+  performance-*,
+  -bugprone-easily-swappable-parameters,
+  -performance-enum-size
+WarningsAsErrors: ''
+# only the sdk's own headers; vendored sodium and system headers are not ours
+HeaderFilterRegex: '/sdk/[^/]+\.h$'
+FormatStyle: none

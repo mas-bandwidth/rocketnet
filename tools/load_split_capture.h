@@ -1,5 +1,7 @@
-#ifndef ROCKETNET_LOAD_SPLIT_CAPTURE_H
-#define ROCKETNET_LOAD_SPLIT_CAPTURE_H
+#pragma once
+
+#ifndef ROCKETNET_TOOLS_LOAD_SPLIT_CAPTURE_H
+#define ROCKETNET_TOOLS_LOAD_SPLIT_CAPTURE_H
 
 /* The load_split delivery capture: per connection and per counter evidence
  * for a failed start or a kick, printed in the split_* line format the
@@ -47,8 +49,7 @@
 
 /* The counters every capture names, zero or not: the delivery and refusal
  * evidence the start barrier failure is decided by. */
-static const int split_capture_named_counters[] =
-{
+static const int split_capture_named_counters[] = {
     ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE,
     ROCKETNET_COUNTER_ACKED_BATCH_FULL,
     ROCKETNET_COUNTER_SEND_HISTORY_LOST,
@@ -110,17 +111,17 @@ struct split_capture_source_t
 {
     void * context;
     /* one connection's sample at now; returns 0 when the connection does not exist */
-    int (*sample)( void * context, int index, double now, struct split_capture_sample_t * out );
+    int ( *sample )( void * context, int index, double now, struct split_capture_sample_t * out );
     /* a counter's value: index -1 the side's whole block, otherwise that
      * connection's own block (a side with one block per connection) */
-    uint64_t (*counter)( void * context, int index, int counter );
+    uint64_t ( *counter )( void * context, int index, int counter );
     int counters_per_connection;                /* 1 on a client shard */
 };
 
 struct split_capture_emit_t
 {
     void * context;
-    void (*line)( void * context, const char * line );
+    void ( *line )( void * context, const char * line );
 };
 
 struct split_capture_t
@@ -139,7 +140,8 @@ struct split_capture_t
 static inline int split_capture_is_named( int counter )
 {
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
-        if ( split_capture_named_counters[i] == counter ) return 1;
+        if ( split_capture_named_counters[i] == counter )
+            return 1;
     return 0;
 }
 
@@ -156,8 +158,11 @@ static inline void split_capture_init( struct split_capture_t * capture, const c
     capture->entries = entries;
     capture->source = *source;
     capture->emit = *emit;
+
     if ( entries && count > 0 )
+    {
         memset( entries, 0, (size_t) count * sizeof( *entries ) );
+    }
 }
 
 /* The age of a time at now, or -1 for never (0). */
@@ -176,28 +181,35 @@ static inline int split_capture_format( char * buffer, size_t bytes, const struc
     const struct rocketnet_delivery_capture_t * d = &sample->delivery;
     const int run_marked = capture->entries[index].run_sequence > 0;
     char server_slot[24];
-    if ( d->server_mapping_known ) snprintf( server_slot, sizeof( server_slot ), "%d", d->server_slot );
-    else snprintf( server_slot, sizeof( server_slot ), "na" );
+    if ( d->server_mapping_known )
+    {
+        snprintf( server_slot, sizeof( server_slot ), "%d", d->server_slot );
+    }
+    else
+    {
+        snprintf( server_slot, sizeof( server_slot ), "na" );
+    }
+
     return snprintf( buffer, bytes,
-        "split_capture: role=%s run_id=%016" PRIx64 " client=%d why=%s state_now=%d sample_age_s=%.3f state=%d connected=%d"
-        " server_slot=%s remote_endpoint=%s"
-        " packets_sent=%" PRIu64 " packets_received=%" PRIu64 " messages_resent=%s%" PRIu64
-        " last_receive_age_s=%.3f received_sequence=%" PRIu64 " sent_sequence=%" PRIu64 " acked_sequence=%" PRIu64
-        " keep_alive_acked=%d run_age_s=%.3f run_sequence=%" PRIu64 " acked_past_run=%s"
-        " reliable_unacked=%" PRIu64 " resend_queued=%" PRIu64 " oldest_unacked_age_s=%.3f"
-        " srtt_ms=%.3f resend_delay_ms=%.3f window_stalled=%d budget_reliable_waiting=%d budget_tokens=%.1f",
-        capture->role, capture->run_id, capture->first + index, why, state_now, split_capture_age( now, sample->time ),
-        sample->state, d->connected, server_slot,
-        d->server_mapping_known ? d->remote_endpoint : "na", sample->packets_sent, sample->packets_received,
-        sample->resends_known ? "" : "na:", sample->messages_resent,
-        d->connected ? d->last_receive_age_seconds : -1.0,
-        d->highest_received_sequence, d->highest_sent_sequence, d->largest_acked_sequence,
-        d->keep_alive_acked, split_capture_age( sample->time, entry->run_time ), entry->run_sequence,
-        !run_marked ? "na" : ( d->largest_acked_sequence >= entry->run_sequence ? "yes" : "no" ),
-        d->reliable_unacked, d->reliable_resend_queued,
-        d->connected ? d->reliable_oldest_unacked_age_seconds : -1.0,
-        d->srtt_seconds * 1000.0, d->resend_delay_seconds * 1000.0, d->window_stalled,
-        d->budget_reliable_waiting, d->budget_tokens );
+                     "split_capture: role=%s run_id=%016" PRIx64 " client=%d why=%s state_now=%d sample_age_s=%.3f state=%d connected=%d"
+                     " server_slot=%s remote_endpoint=%s"
+                     " packets_sent=%" PRIu64 " packets_received=%" PRIu64 " messages_resent=%s%" PRIu64
+                     " last_receive_age_s=%.3f received_sequence=%" PRIu64 " sent_sequence=%" PRIu64 " acked_sequence=%" PRIu64
+                     " keep_alive_acked=%d run_age_s=%.3f run_sequence=%" PRIu64 " acked_past_run=%s"
+                     " reliable_unacked=%" PRIu64 " resend_queued=%" PRIu64 " oldest_unacked_age_s=%.3f"
+                     " srtt_ms=%.3f resend_delay_ms=%.3f window_stalled=%d budget_reliable_waiting=%d budget_tokens=%.1f",
+                     capture->role, capture->run_id, capture->first + index, why, state_now, split_capture_age( now, sample->time ),
+                     sample->state, d->connected, server_slot,
+                     d->server_mapping_known ? d->remote_endpoint : "na", sample->packets_sent, sample->packets_received,
+                     sample->resends_known ? "" : "na:", sample->messages_resent,
+                     d->connected ? d->last_receive_age_seconds : -1.0,
+                     d->highest_received_sequence, d->highest_sent_sequence, d->largest_acked_sequence,
+                     d->keep_alive_acked, split_capture_age( sample->time, entry->run_time ), entry->run_sequence,
+                     !run_marked ? "na" : ( d->largest_acked_sequence >= entry->run_sequence ? "yes" : "no" ),
+                     d->reliable_unacked, d->reliable_resend_queued,
+                     d->connected ? d->reliable_oldest_unacked_age_seconds : -1.0,
+                     d->srtt_seconds * 1000.0, d->resend_delay_seconds * 1000.0, d->window_stalled,
+                     d->budget_reliable_waiting, d->budget_tokens );
 }
 
 static inline void split_capture_emit_entry( struct split_capture_t * capture, int index, const char * why, double now,
@@ -212,8 +224,16 @@ static inline void split_capture_emit_counter( struct split_capture_t * capture,
 {
     char line[SPLIT_CAPTURE_LINE_BYTES];
     char client[16];
-    if ( index < 0 ) snprintf( client, sizeof( client ), "all" );
-    else snprintf( client, sizeof( client ), "%d", capture->first + index );
+
+    if ( index < 0 )
+    {
+        snprintf( client, sizeof( client ), "all" );
+    }
+    else
+    {
+        snprintf( client, sizeof( client ), "%d", capture->first + index );
+    }
+
     snprintf( line, sizeof( line ), "split_counter: role=%s run_id=%016" PRIx64 " client=%s name=%s value=%" PRIu64,
               capture->role, capture->run_id, client, rocketnet_counter_name( counter ), value );
     capture->emit.line( capture->emit.context, line );
@@ -223,10 +243,13 @@ static inline void split_capture_emit_counter( struct split_capture_t * capture,
  * nonzero ones; a side with one block for all connections has none. */
 static inline void split_capture_connection_counters( struct split_capture_t * capture, int index )
 {
-    if ( !capture->source.counters_per_connection ) return;
+    if ( !capture->source.counters_per_connection )
+        return;
     for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
         if ( capture->entries[index].named[i] )
+        {
             split_capture_emit_counter( capture, index, split_capture_named_counters[i], capture->entries[index].named[i] );
+        }
 }
 
 /* Takes a connected sample as the connection's last, with its own named
@@ -239,7 +262,9 @@ static inline void split_capture_keep( struct split_capture_t * capture, int ind
     entry->ended = 0;
     if ( capture->source.counters_per_connection )
         for ( int i = 0; i < SPLIT_CAPTURE_NUM_NAMED; ++i )
+        {
             entry->named[i] = capture->source.counter( capture->source.context, index, split_capture_named_counters[i] );
+        }
 }
 
 /* The side's counters: the named set always, then every other nonzero one;
@@ -254,13 +279,23 @@ static inline void split_capture_counters( struct split_capture_t * capture, int
     const int n = rocketnet_num_counters();
     for ( int counter = 0; counter < n; ++counter )
     {
-        if ( split_capture_is_named( counter ) ) continue;
+        if ( split_capture_is_named( counter ) )
+            continue;
+
         const uint64_t value = capture->source.counter( capture->source.context, -1, counter );
-        if ( value ) split_capture_emit_counter( capture, -1, counter, value );
+        if ( value )
+        {
+            split_capture_emit_counter( capture, -1, counter, value );
+        }
     }
-    if ( !with_connections || !capture->source.counters_per_connection ) return;
+
+    if ( !with_connections || !capture->source.counters_per_connection )
+        return;
+
     for ( int index = 0; index < capture->count; ++index )
+    {
         split_capture_connection_counters( capture, index );
+    }
 }
 
 /* Samples every connection when the interval is due. A connection that was
@@ -269,20 +304,25 @@ static inline void split_capture_counters( struct split_capture_t * capture, int
  * once per tick that saw a kick. Returns the kicks this tick found. */
 static inline int split_capture_tick( struct split_capture_t * capture, double now )
 {
-    if ( now < capture->next_sample ) return 0;
+    if ( now < capture->next_sample )
+        return 0;
     capture->next_sample = now + SPLIT_CAPTURE_INTERVAL_S;
+
     int kicks = 0;
+
     for ( int index = 0; index < capture->count; ++index )
     {
         struct split_capture_entry_t * entry = &capture->entries[index];
         struct split_capture_sample_t sample;
         memset( &sample, 0, sizeof( sample ) );
+
         const int exists = capture->source.sample( capture->source.context, index, now, &sample );
         if ( exists && sample.delivery.connected )
         {
             split_capture_keep( capture, index, &sample );
             continue;
         }
+
         if ( entry->seen_connected && !entry->ended )
         {
             entry->ended = 1;
@@ -292,7 +332,12 @@ static inline int split_capture_tick( struct split_capture_t * capture, double n
             split_capture_connection_counters( capture, index );
         }
     }
-    if ( kicks ) split_capture_counters( capture, 0 );
+
+    if ( kicks )
+    {
+        split_capture_counters( capture, 0 );
+    }
+
     return kicks;
 }
 
@@ -300,7 +345,8 @@ static inline int split_capture_tick( struct split_capture_t * capture, double n
  * server, the first sequence sent after it was queued (0 on a client). */
 static inline void split_capture_mark_run( struct split_capture_t * capture, int index, double time, uint64_t sequence )
 {
-    if ( index < 0 || index >= capture->count ) return;
+    if ( index < 0 || index >= capture->count )
+        return;
     capture->entries[index].run_time = time;
     capture->entries[index].run_sequence = sequence;
 }
@@ -314,6 +360,7 @@ static inline void split_capture_end( struct split_capture_t * capture, double n
         struct split_capture_entry_t * entry = &capture->entries[index];
         struct split_capture_sample_t sample;
         memset( &sample, 0, sizeof( sample ) );
+
         const int exists = capture->source.sample( capture->source.context, index, now, &sample );
         if ( exists && sample.delivery.connected )
         {
@@ -321,9 +368,12 @@ static inline void split_capture_end( struct split_capture_t * capture, double n
             split_capture_emit_entry( capture, index, "end", now, sample.state, &sample );
         }
         else
+        {
             split_capture_emit_entry( capture, index, entry->seen_connected ? "end_ended" : "end_never", now, sample.state, &entry->last );
+        }
     }
+
     split_capture_counters( capture, 1 );
 }
 
-#endif
+#endif // ROCKETNET_TOOLS_LOAD_SPLIT_CAPTURE_H

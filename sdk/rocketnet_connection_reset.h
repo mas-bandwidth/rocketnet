@@ -5,16 +5,19 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CONNECTION_RESET_H
-#define ROCKETNET_CONNECTION_RESET_H
+#ifndef ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H
+#define ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H
 
 #include <stddef.h>
+#include "rocketnet_test_seams.h"
 
 struct rocketnet_client_protocol_t;
 struct rocketnet_server_protocol_t;
 struct rocketnet_client_transport_t;
 struct rocketnet_server_transport_t;
 struct rn_message_object_t;
+
+#if ROCKETNET_DEV
 
 /*
     The inventory is deliberately beside the reset declarations. A change to
@@ -34,7 +37,7 @@ struct rn_message_object_t;
     X( RESET, session_nonce ) X( RESET, keys ) X( RESET, stored_response ) \
     X( RESET, client_index ) X( RESET, max_clients ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
-    X( RESET, next_fragment_payload_id ) X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, accepted_session ) \
+    X( RESET, next_fragment_payload_id ) X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) \
     X( RESET, integrity_failures ) X( RESET, attempt_start_time ) X( RESET, last_send_time ) \
     X( RESET, last_receive_time ) X( RESET, total_deadline_seconds ) X( RESET, timeout_seconds ) \
     X( RESET, state_first_send_time ) X( RESET, rtt_estimate ) X( RESET, rtt_session_sampled ) \
@@ -45,7 +48,7 @@ struct rn_message_object_t;
 
 #define ROCKETNET_CLIENT_SLOTS_OWNER_FIELDS( X ) \
     X( KEEP, context ) X( KEEP, max_clients ) X( KEEP, num_connected ) X( KEEP, hash_key ) \
-    X( KEEP, bucket_head ) X( KEEP, next ) X( KEEP, num_buckets ) X( KEEP, free_stack ) \
+    X( KEEP, index_table ) X( KEEP, slot_generation ) X( KEEP, num_buckets ) X( KEEP, free_stack ) \
     X( KEEP, free_stack_count ) X( KEEP, client_id ) X( KEEP, connected ) \
     X( KEEP, mapping_index ) X( KEEP, confirmed ) X( KEEP, user_data )
 
@@ -58,13 +61,12 @@ struct rn_message_object_t;
     X( KEEP, stop_requested ) X( KEEP, stopped ) X( KEEP, stop_burst ) \
     X( KEEP, stop_burst_count ) X( KEEP, stop_burst_pending ) X( KEEP, stop_burst_bytes ) X( KEEP, stop_address ) \
     X( KEEP, receive_buffer_index ) X( RESET, received_packets ) X( KEEP, receive_buffer ) \
-    X( KEEP, time ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
+    X( KEEP, time ) X( KEEP, raw_time ) X( KEEP, time_offset ) X( KEEP, frame ) X( KEEP, last_state ) X( KEEP, config ) \
     X( KEEP, max_payload_bytes ) X( KEEP, send_arena ) X( KEEP, reassembly ) \
     X( RESET, payload_ring ) X( KEEP, io_thread ) X( KEEP, step_driven ) X( KEEP, step_in_update ) X( KEEP, client_io ) \
     X( RESET, stats_counted ) X( KEEP, time_callback ) X( KEEP, link_simulator ) X( KEEP, link_simulator_from ) \
     X( KEEP, counters ) X( RESET, protocol ) \
-    X( KEEP, client_stats ) X( KEEP, stats_frame_time ) X( KEEP, stats_frame_number ) X( KEEP, stats_frames ) X( KEEP, current_stats_index ) \
-    X( RESET, packet_loss_tracker ) X( RESET, jitter_tracker )
+    X( KEEP, client_stats ) X( KEEP, stats_frames ) X( KEEP, current_stats_index )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONNECTION_FIELDS( X ) \
     X( KEEP, control ) X( RESET, keys ) X( RESET, connection_salt ) X( RESET, session_nonce ) \
@@ -73,7 +75,7 @@ struct rn_message_object_t;
     X( RESET, token_identifier ) X( RESET, token_expire_timestamp ) \
     X( RESET, last_send_time ) X( RESET, last_keep_alive_send_time ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) X( RESET, send_fragment_payload_id ) \
-    X( RESET, replay_handshake ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures )
+    X( RESET, handshake_highest_opened ) X( RESET, replay_session ) X( RESET, accepted_session ) X( RESET, integrity_failures )
 
 #define ROCKETNET_ENCRYPTION_MAPPING_CONTROL_CONNECTION_FIELDS( X ) \
     X( RESET, handshake_deadline ) X( RESET, last_receive_time ) \
@@ -87,7 +89,7 @@ struct rn_message_object_t;
     X( RESET, pending_type ) X( RESET, pending_descriptor ) X( RESET, pending_bytes ) \
     X( RESET, pending_in_place ) X( RESET, pending_channel ) X( RESET, pending_header ) \
     X( RESET, in_place_serial ) X( RESET, in_place_receipt ) X( RESET, in_place_admitted ) \
-    X( RESET, unreliable_head ) X( RESET, unreliable_tail ) X( RESET, unreliable_count ) \
+    X( RESET, unreliable_head ) X( RESET, unreliable_tail ) X( RESET, unreliable_count ) X( RESET, unreliable_holes ) \
     X( RESET, write_phase ) X( RESET, written ) X( RESET, packet_kind ) X( RESET, packet_written ) \
     X( RESET, large_bytes ) X( RESET, large_admitted ) X( RESET, large_descriptor ) \
     X( RESET, packet_records ) X( RESET, receipt_count ) X( RESET, receipt_serials )
@@ -96,8 +98,10 @@ struct rn_message_object_t;
     X( KEEP, hot ) X( KEEP, disconnect_reason ) X( RESET, unreliable_build )
 
 #define ROCKETNET_MESSAGE_CONNECTION_HOT_FIELDS( X ) \
-    X( RESET, connection_id ) X( KEEP, views ) X( KEEP, cursors ) \
+    X( RESET, connection_id ) X( KEEP, views ) X( RESET, receive_cursor ) \
     X( RESET, held ) X( RESET, state )
+
+#endif // #if ROCKETNET_DEV
 
 /*
     Reset order is part of the contract:
@@ -119,6 +123,7 @@ struct rn_message_object_t;
 */
 
 void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * client );
+
 // the client protocol's secrets, and only those: the session keys, the
 // token (its private connect data holds the keys), the ephemeral secret and
 // the session nonce. Every terminal state and the transport's destroy run it.
@@ -128,6 +133,8 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
 
 void rocketnet_client_connection_reset( struct rn_message_object_t * client );
 void rocketnet_server_connection_reset( struct rn_message_object_t * server, int client_index );
+
+#if ROCKETNET_DEV
 
 /*
     The field walk. members is a struct's declaration manifest (its
@@ -173,4 +180,6 @@ bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketne
 bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_transport_t * server, int client_index,
                                                      char * failure, size_t failure_bytes );
 
-#endif // #ifndef ROCKETNET_CONNECTION_RESET_H
+#endif // #if ROCKETNET_DEV
+
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H

@@ -37,6 +37,7 @@
 #define FAIR_CHANNEL_RELIABLE    0
 #define FAIR_CHANNEL_UNRELIABLE  1
 
+#if ROCKETNET_DEV
 static double fair_now = 1000.0;
 static double fair_clock( void * ) { return fair_now; }
 
@@ -154,8 +155,8 @@ static void fair_token( fair_world_t * world, uint64_t client_id, char * token_s
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( world->identity.backend_secret, world->identity.server_public,
-        FAIR_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
-        token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     FAIR_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL,
+                                                     token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 }
 
@@ -437,7 +438,7 @@ static void test_server_send_cap_two_multi_packet_service()
         {
             before[c] = rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent;
             uint8_t * out = rocketnet_server_start_message( world.server, (uint64_t) world.server_index[c], FAIR_CHANNEL_RELIABLE,
-                                                           ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 3000 );
+                                                            ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 3000 );
             check( out != NULL );
             memset( out, tick, 3000 );
             check( rocketnet_server_finish_message( world.server, 3000 ) != 0 );
@@ -479,6 +480,7 @@ REGISTER_UNIT_TEST( test_server_send_capacity_spare_slots_keep_in_place );
 REGISTER_UNIT_TEST( test_server_send_cap_two_three_clients );
 REGISTER_UNIT_TEST( test_server_send_cap_one_two_clients );
 REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
+#endif // #if ROCKETNET_DEV
 
 // The configuration test_server_send_capacity_default_covers_clients creates: the
 // default, at ROCKETNET_MAX_CLIENTS clients, on the loopback transport. The case

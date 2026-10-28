@@ -6,8 +6,8 @@
 // The unit-file registry: the registrar behind the test_unit_<topic>.cpp
 // convention in tests/. A unit test file includes this header
 // and calls REGISTER_UNIT_TEST(name) at namespace scope; the registrar's
-// constructor appends the test to a linked list before main runs. test.cpp
-// enumerates the list into ./bin/test (the CMake glob for test_unit_*.cpp
+// constructor inserts the test into a fixed registry before main runs. test.cpp
+// enumerates the registry into ./bin/test (the CMake glob for test_unit_*.cpp
 // builds every file) and runs a test by name in its worker subprocess, after
 // its own sdk and channels tests.
 //
@@ -21,8 +21,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_UNIT_TEST_REGISTRY_H
-#define ROCKETNET_UNIT_TEST_REGISTRY_H
+#ifndef ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H
+#define ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -37,16 +37,53 @@ struct rocketnet_unit_file_test_t
     const char * name;
     const char * expected_fail_card;    // NULL: ordinary test; else: the defect card that must still fail today
     void ( *function )();
-    struct rocketnet_unit_file_test_t * next;
 };
 
-// the shared head of the registered list. one instance across every
-// translation unit that includes this header (inline function static).
+// The tree had 1,029 registrations when this fixed registry replaced the
+// pointer chain. 2,048 is the next power of two and leaves the same amount of
+// explicit growth again. Registration needs no allocation before main; a tree
+// that exceeds the bound aborts with the omitted test's name instead of
+// silently dropping it. Entries are inserted at the front to preserve the
+// linked registry's established reverse-construction enumeration order.
 
-inline struct rocketnet_unit_file_test_t ** rocketnet_unit_file_head()
+#define ROCKETNET_UNIT_FILE_TEST_CAPACITY 2048
+
+struct rocketnet_unit_file_registry_t
 {
-    static struct rocketnet_unit_file_test_t * head = NULL;
-    return &head;
+    struct rocketnet_unit_file_test_t tests[ROCKETNET_UNIT_FILE_TEST_CAPACITY];
+    int count;
+};
+
+inline struct rocketnet_unit_file_registry_t * rocketnet_unit_file_registry()
+{
+    static struct rocketnet_unit_file_registry_t registry = {};
+    return &registry;
+}
+
+enum rocketnet_unit_file_register_result_t
+{
+    ROCKETNET_UNIT_FILE_REGISTERED,
+    ROCKETNET_UNIT_FILE_DUPLICATE,
+    ROCKETNET_UNIT_FILE_FULL
+};
+
+inline enum rocketnet_unit_file_register_result_t rocketnet_unit_file_register(
+    struct rocketnet_unit_file_registry_t * registry, int capacity,
+    const char * name, void ( *function )(), const char * expected_fail_card )
+{
+    for ( int i = 0; i < registry->count; i++ )
+        if ( strcmp( registry->tests[i].name, name ) == 0 )
+            return ROCKETNET_UNIT_FILE_DUPLICATE;
+    if ( registry->count == capacity )
+        return ROCKETNET_UNIT_FILE_FULL;
+    if ( registry->count > 0 )
+        memmove( &registry->tests[1], &registry->tests[0],
+                 (size_t) registry->count * sizeof( registry->tests[0] ) );
+    registry->tests[0].name = name;
+    registry->tests[0].function = function;
+    registry->tests[0].expected_fail_card = expected_fail_card;
+    registry->count++;
+    return ROCKETNET_UNIT_FILE_REGISTERED;
 }
 
 // set by the expected-fail harness while it runs a test, so a failing
@@ -74,23 +111,24 @@ inline bool * rocketnet_unit_expected_fail_active()
 
 struct rocketnet_unit_file_registrar_t
 {
-    struct rocketnet_unit_file_test_t test;
     rocketnet_unit_file_registrar_t( const char * name, void ( *function )(), const char * expected_fail_card )
     {
-        for ( struct rocketnet_unit_file_test_t * t = *rocketnet_unit_file_head(); t != NULL; t = t->next )
+        struct rocketnet_unit_file_registry_t * registry = rocketnet_unit_file_registry();
+        const enum rocketnet_unit_file_register_result_t result = rocketnet_unit_file_register(
+            registry, ROCKETNET_UNIT_FILE_TEST_CAPACITY, name, function, expected_fail_card );
+        if ( result == ROCKETNET_UNIT_FILE_DUPLICATE )
         {
-            if ( strcmp( t->name, name ) == 0 )
-            {
-                fprintf( stderr, "error: unit test %s is registered twice; unit test names must be unique\n", name );
-                fflush( stderr );
-                abort();
-            }
+            fprintf( stderr, "error: unit test %s is registered twice; unit test names must be unique\n", name );
+            fflush( stderr );
+            abort();
         }
-        test.name = name;
-        test.function = function;
-        test.expected_fail_card = expected_fail_card;
-        test.next = *rocketnet_unit_file_head();
-        *rocketnet_unit_file_head() = &test;
+        if ( result == ROCKETNET_UNIT_FILE_FULL )
+        {
+            fprintf( stderr, "error: unit test registry capacity %d exceeded while registering %s\n",
+                     ROCKETNET_UNIT_FILE_TEST_CAPACITY, name );
+            fflush( stderr );
+            abort();
+        }
     }
 };
 
@@ -124,28 +162,21 @@ do                                                                              
 
 inline int rocketnet_unit_tests_count()
 {
-    int count = 0;
-    for ( struct rocketnet_unit_file_test_t * t = *rocketnet_unit_file_head(); t != NULL; t = t->next )
-        count++;
-    return count;
+    return rocketnet_unit_file_registry()->count;
 }
 
 inline const char * rocketnet_unit_tests_name( int index )
 {
-    struct rocketnet_unit_file_test_t * t = *rocketnet_unit_file_head();
-    while ( t != NULL && index > 0 )
-    {
-        t = t->next;
-        index--;
-    }
-    return t != NULL ? t->name : NULL;
+    const struct rocketnet_unit_file_registry_t * registry = rocketnet_unit_file_registry();
+    return index >= 0 && index < registry->count ? registry->tests[index].name : NULL;
 }
 
 inline struct rocketnet_unit_file_test_t * rocketnet_unit_file_find( const char * name )
 {
-    for ( struct rocketnet_unit_file_test_t * t = *rocketnet_unit_file_head(); t != NULL; t = t->next )
-        if ( strcmp( t->name, name ) == 0 )
-            return t;
+    struct rocketnet_unit_file_registry_t * registry = rocketnet_unit_file_registry();
+    for ( int i = 0; i < registry->count; i++ )
+        if ( strcmp( registry->tests[i].name, name ) == 0 )
+            return &registry->tests[i];
     return NULL;
 }
 
@@ -185,15 +216,6 @@ inline int rocketnet_unit_tests_run_named( const char * name )
     return 1;
 }
 
-// runs every registered test in this process, in list order. the suite runs
-// through run_named in worker subprocesses; this is the whole-list form.
-
-inline void rocketnet_unit_tests_run()
-{
-    for ( int i = 0; i < rocketnet_unit_tests_count(); i++ )
-        rocketnet_unit_tests_run_named( rocketnet_unit_tests_name( i ) );
-}
-
 // Key and seed sizes the SDK's internal key makers (sdk/rocketnet_connect_token.h)
 // write: an Ed25519 backend secret is 64 bytes and its seed 32; an X25519
 // server secret is 32. The public header carries only the public-key sizes.
@@ -201,4 +223,4 @@ inline void rocketnet_unit_tests_run()
 #define RN_TEST_BACKEND_SEED_BYTES 32
 #define RN_TEST_SERVER_SECRET_KEY_BYTES 32
 
-#endif // #ifndef ROCKETNET_UNIT_TEST_REGISTRY_H
+#endif // ROCKETNET_TESTS_TEST_UNIT_REGISTRY_H

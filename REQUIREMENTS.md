@@ -54,6 +54,10 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
 - Reliable work is retained until delivery or the reliable timeout. Unreliable
   work may be dropped only at documented bounded resources and is counted.
 - Receipt serials report terminal ACK or loss for receipt-bearing messages.
+  The outcomes recorded for a connection remain readable after that
+  connection ends, until its next update begins. A receipt-bearing send,
+  reliable or unreliable, that is still in flight when its connection ends
+  gets no terminal outcome.
 
 ## Platforms and transports
 
@@ -69,6 +73,40 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   ownership requirement.
 - The caller can supply allocation, logging and assertion hooks. Ordinary
   memory uses the caller allocator.
+
+## Configuration, memory planning, and scale qualification
+
+- Neither `rocketnet_*_default_config` nor `rocketnet_*_light_config` is a
+  universally suitable preset for every game. Callers size channels, message
+  arenas, fragment reassembly slots, reliable windows, per-update packet and
+  unreliable budgets, compile-time caps, and runtime memory budgets to match
+  their game's concrete tick rate, payload distribution, and player count using
+  the tradeoffs and formulas documented in [`docs/LOAD.md`](docs/LOAD.md) and
+  [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+- Callers query deterministic worst-case allocator requirements through
+  `rocketnet_client_required_memory` and `rocketnet_server_required_memory`
+  (or `LOAD_PLAN_ONLY=1 ./bin/load` and `bin/transport_memory`) and account
+  separately for OS and kernel resources outside the user-space allocator
+  (thread stacks, AF_XDP page-aligned UMEM and kernel rings, `io_uring` mapped
+  rings, and kernel socket buffers).
+- The default compile-time `ROCKETNET_MAX_CLIENTS` ceiling (`1000`) and the
+  recorded 1,000-client results in
+  [`docs/runs/lan-1000-proof.md`](docs/runs/lan-1000-proof.md)
+  ([Linux gso and io_uring](docs/runs/lan-1000-proof-linux.md),
+  [AF_XDP](docs/runs/lan-1000-proof-xdp.md)) (1,000 clients
+  for 600 s, 300 s for AF_XDP, against Linux `gso`, `io_uring`, and AF_XDP
+  copy-mode servers and a macOS `msgx` server; minimum per-client rates of
+  276–283 kbps) and
+  [`docs/QUALIFICATION-v1.0.0-preview-2.md`](docs/QUALIFICATION-v1.0.0-preview-2.md)
+  (60-second non-timing correctness rungs at 1–1,000 clients)
+  apply only under those records' exact message profile, tick rate, and
+  deployment assumptions. Above 1,000 players, callers research, stabilize, and
+  qualify their own configuration, memory budget, and host/NIC deployment; no
+  arbitrary client count or validated-above-1000 guarantee is provided.
+- Operational diagnostics and recovery follow the public status, state, and
+  counter contracts in [`docs/ERRORS-AND-LOGGING.md`](docs/ERRORS-AND-LOGGING.md),
+  preserving refusal and drop semantics without infinite retry loops, unchecked
+  message completion, early context destruction, or forced shutdown.
 
 ## First-deliverable boundary
 

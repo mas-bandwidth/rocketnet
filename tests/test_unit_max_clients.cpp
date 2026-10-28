@@ -28,6 +28,7 @@
 #include "rocketnet_xdp_limits.h"
 #include "rocketnet_xdp_replay_marks.h"
 #include "rocketnet_slots.h"
+#include "rocketnet_client_slots.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -151,3 +152,138 @@ static void test_server_create_at_max_clients()
 }
 
 REGISTER_UNIT_TEST( test_server_create_at_max_clients );
+
+#if ROCKETNET_DEV
+
+// The flat index is deliberately tested through its development-only probe
+// seam. Sixteen distinct full-width IDs start twelve cells before the end of
+// the table. Removing the middle entry then shifts survivors across the end
+// through zero, and must not hide any later member; a stale generation handle
+// must not remove the replacement that reuses its client slot.
+static void test_client_slots_hostile_collision_and_stale_generation()
+{
+    const int capacity = 32;
+    const int collision_count = 16;
+    const uint64_t probe_bound = (uint64_t) capacity * 2;
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, capacity );
+    check( slots != NULL );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0xC7, sizeof( user_data ) );
+
+    uint64_t ids[collision_count];
+    const uint64_t wanted = probe_bound - 12;
+    check( rocketnet_client_slots_test_force_hash_index( slots, (int) wanted ) );
+    for ( int i = 0; i < collision_count; ++i )
+    {
+        ids[i] = UINT64_C( 0x80000000A5A5A5A5 ) | ( (uint64_t) (uint32_t) i << 32 );
+        check( rocketnet_client_slots_test_hash_index( slots, ids[i] ) == wanted );
+    }
+
+    struct rocketnet_client_slot_handle_t handles[collision_count];
+    const uint64_t probes_before = rocketnet_client_slots_test_total_probes( slots );
+    for ( int i = 0; i < collision_count; ++i )
+    {
+        check( rocketnet_client_slots_assign( slots, ids[i], i, ids[i], user_data ) == i );
+        check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
+        check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
+        check( rocketnet_client_slots_handle( slots, i, &handles[i] ) );
+        check( handles[i].client_id == ids[i] );
+        check( handles[i].client_index == i );
+    }
+    for ( int i = 0; i < collision_count; ++i )
+    {
+        check( rocketnet_client_slots_find( slots, ids[i] ) == i );
+        check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
+        check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
+    }
+    check( rocketnet_client_slots_test_total_probes( slots ) > probes_before );
+
+    const int middle = collision_count / 2;
+    const struct rocketnet_client_slot_handle_t stale = handles[middle];
+    check( rocketnet_client_slots_release_handle( slots, &handles[middle] ) );
+    check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
+    check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
+    check( rocketnet_client_slots_find( slots, ids[middle] ) == -1 );
+    for ( int i = middle + 1; i < collision_count; ++i )
+        check( rocketnet_client_slots_find( slots, ids[i] ) == i );
+
+    const uint64_t replacement = UINT64_C( 0xF0000010A5A5A5A5 );
+    check( rocketnet_client_slots_test_hash_index( slots, replacement ) == wanted );
+    check( rocketnet_client_slots_assign( slots, replacement, 99, replacement, user_data ) == middle );
+    check( rocketnet_client_slots_handle( slots, middle, &handles[middle] ) );
+    check( handles[middle].client_id == replacement );
+    check( handles[middle].generation != stale.generation );
+
+    // The stale release names the old full ID and generation. It is refused
+    // without disturbing the replacement or any member behind it.
+    check( !rocketnet_client_slots_release_handle( slots, &stale ) );
+    check( rocketnet_client_slots_find( slots, replacement ) == middle );
+    check( rocketnet_client_slots_mapping_index( slots, middle ) == 99 );
+    check( memcmp( rocketnet_client_slots_user_data( slots, middle ), user_data, sizeof( user_data ) ) == 0 );
+    for ( int i = 0; i < collision_count; ++i )
+    {
+        if ( i != middle )
+            check( rocketnet_client_slots_find( slots, ids[i] ) == i );
+    }
+
+    for ( int i = 0; i < collision_count; ++i )
+        check( rocketnet_client_slots_release_handle( slots, &handles[i] ) );
+    check( rocketnet_client_slots_num_connected( slots ) == 0 );
+    check( rocketnet_client_slots_num_free( slots ) == capacity );
+    rocketnet_client_slots_destroy( slots );
+}
+
+REGISTER_UNIT_TEST( test_client_slots_hostile_collision_and_stale_generation );
+
+#endif // #if ROCKETNET_DEV
+
+// Exercise the runtime maximum rather than a small fixture: initial indices
+// remain ascending, identities which share their low 32 bits remain distinct,
+// the dense free stack stays LIFO, a full table refuses without mutation, and
+// repeated arbitrary reuse leaves every untouched identity reachable.
+static void test_client_slots_full_capacity_reuse_and_full_width_ids()
+{
+    const int capacity = ROCKETNET_MAX_CLIENTS;
+    struct rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, capacity );
+    check( slots != NULL );
+
+    uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+    memset( user_data, 0x5A, sizeof( user_data ) );
+    for ( int i = 0; i < capacity; ++i )
+    {
+        const uint64_t id = ( (uint64_t) (uint32_t) ( i + 1 ) << 32 ) | UINT64_C( 0xA5A5A5A5 );
+        check( rocketnet_client_slots_assign( slots, id, i, id, user_data ) == i );
+    }
+    check( rocketnet_client_slots_num_connected( slots ) == capacity );
+    check( rocketnet_client_slots_num_free( slots ) == 0 );
+    check( rocketnet_client_slots_assign( slots, UINT64_MAX, -1, UINT64_MAX, user_data ) == -1 );
+
+    for ( int i = 0; i < capacity; ++i )
+    {
+        const uint64_t id = ( (uint64_t) (uint32_t) ( i + 1 ) << 32 ) | UINT64_C( 0xA5A5A5A5 );
+        check( rocketnet_client_slots_find( slots, id ) == i );
+    }
+
+    int released[8];
+    const int released_count = capacity < 8 ? capacity : 8;
+    for ( int i = 0; i < released_count; ++i )
+    {
+        released[i] = ( capacity / 3 + i ) % capacity;
+        rocketnet_client_slots_release( slots, released[i] );
+    }
+    check( rocketnet_client_slots_num_free( slots ) == released_count );
+
+    for ( int i = 0; i < released_count; ++i )
+    {
+        const int expected = released[released_count - 1 - i];
+        const uint64_t id = UINT64_C( 0xF000000000000000 ) | (uint64_t) (uint32_t) i;
+        check( rocketnet_client_slots_assign( slots, id, 10000 + i, id, user_data ) == expected );
+        check( rocketnet_client_slots_find( slots, id ) == expected );
+    }
+    check( rocketnet_client_slots_num_connected( slots ) == capacity );
+    check( rocketnet_client_slots_num_free( slots ) == 0 );
+    rocketnet_client_slots_destroy( slots );
+}
+
+REGISTER_UNIT_TEST( test_client_slots_full_capacity_reuse_and_full_width_ids );

@@ -50,7 +50,7 @@ PHASE_SUMMARY = (SUMMARY.replace("fds_start=4 fds_end=4 threads_start=1 threads_
                  .replace(" verdict=PASS", PHASE_COUNTS + " verdict=PASS"))
 
 
-# captain 2026-10-22: after the warm cycle the counts still move with the
+# Windows x64 MSVC 2026-10-22: after the warm cycle the counts still move with the
 # operating system's thread pool (97/101/103/99 handles, 4/4/6/6 threads);
 # the census found no survivor, so the receipt passes
 CENSUS_COUNTS = (" fds_pre_init=97 fds_post_init=101 fds_pre_term=103 fds_post_term=99"
@@ -133,7 +133,7 @@ class ReceiptTests(unittest.TestCase):
     def test_exact_binary_plan_and_headroom_are_recorded(self):
         plan = ("load_plan: clients=64 profile=default client_public_required_bytes=100 "
                 "server_public_required_bytes=1000 total_public_required_bytes=7400 "
-                "public_memory_scope=create_only transport_selection=unresolved_before_start "
+                "public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start "
                 "term_status_code=0 reason=none verdict=PASS\n")
         result = profile.parse_memory_plan(plan, 64, "default")
         self.assertEqual(result["total_public_required_bytes"], 7400)
@@ -142,7 +142,8 @@ class ReceiptTests(unittest.TestCase):
         for invalid in (plan.replace("clients=64", "clients=63"),
                         plan.replace("total_public_required_bytes=7400", "total_public_required_bytes=7401"),
                         plan.replace("profile=default", "profile=light"),
-                        plan.replace("public_memory_scope=create_only", "public_memory_scope=all_runtime"),
+                        plan.replace("public_memory_scope=lifecycle_allocator_peak", "public_memory_scope=all_runtime"),
+                        plan.replace("public_memory_scope=lifecycle_allocator_peak", "public_memory_scope=create_only"),
                         plan.replace("verdict=PASS", "verdict=FAIL")):
             with self.subTest(plan=invalid), self.assertRaises(ValueError):
                 profile.parse_memory_plan(invalid, 64, "default")
@@ -285,7 +286,7 @@ class ProvenanceTests(unittest.TestCase):
                             f"client_public_required_bytes={client_bytes} "
                             f"server_public_required_bytes={server_bytes} "
                             f"total_public_required_bytes={total_bytes} "
-                            "public_memory_scope=create_only transport_selection=unresolved_before_start "
+                            "public_memory_scope=lifecycle_allocator_peak transport_selection=unresolved_before_start "
                             "term_status_code=0 reason=none verdict=PASS\n")
                     return 0, plan, "", False
                 summary = SUMMARY.replace("connected=1000", f"connected={connected}")

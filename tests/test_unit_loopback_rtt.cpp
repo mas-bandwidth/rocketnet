@@ -51,8 +51,13 @@
 #define LOOPBACK_RTT_SETTLE 60
 #define LOOPBACK_RTT_MAX_PACKETS 1024
 
-enum loopback_rtt_side_t { LOOPBACK_RTT_SERVER = 0, LOOPBACK_RTT_CLIENT = 1 };
+enum loopback_rtt_side_t
+{
+    LOOPBACK_RTT_SERVER = 0,
+    LOOPBACK_RTT_CLIENT = 1
+};
 
+#if ROCKETNET_DEV
 static double loopback_rtt_clock = 1000.0;
 static double loopback_rtt_time_callback( void * ) { return loopback_rtt_clock; }
 
@@ -65,8 +70,8 @@ static struct
     int samples;
     double sample_min;
     double sample_max;
-    int (*finish_next)( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
-    int (*acked_next)( void * transport, const int ** client_index, const uint64_t ** packet_ids );
+    int ( *finish_next )( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes );
+    int ( *acked_next )( void * transport, const int ** client_index, const uint64_t ** packet_ids );
 } loopback_rtt_seam;
 
 static int loopback_rtt_finish( void * transport, struct rocketnet_packet_context_t * context, int payload_bytes )
@@ -210,9 +215,7 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
         uint8_t message[8] = { 0xE7, 0, 0, 0, 0, 0, 0, 0 };
         const uint32_t index = (uint32_t) m->sent;
         memcpy( message + 4, &index, sizeof( index ) );
-        const uint32_t id = side == LOOPBACK_RTT_SERVER ?
-            rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) :
-            rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
+        const uint32_t id = side == LOOPBACK_RTT_SERVER ? rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) : rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
         rocketnet_unit_check( id != 0 );
         m->sent++;
     }
@@ -229,7 +232,8 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
     rocketnet_unit_check( loopback_rtt_pair_setup( &pair ) );
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
-                                   rocketnet_message_server_client_connected( pair.server, 0 ) ); i++ )
+                                   rocketnet_message_server_client_connected( pair.server, 0 ) );
+          i++ )
         loopback_rtt_step( &pair, side, false, NULL );
     rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
     rocketnet_unit_check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -293,6 +297,7 @@ static void test_loopback_transport_rtt_client_sends( void ) { loopback_rtt_chec
 
 REGISTER_UNIT_TEST( test_loopback_transport_rtt_server_sends );
 REGISTER_UNIT_TEST( test_loopback_transport_rtt_client_sends );
+#endif // #if ROCKETNET_DEV
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.
 // Exercise each documented typical fixed-pool size and the large-span path.
@@ -306,7 +311,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
         rocketnet_message_default_config( &config );
         config.client_send_kbps = config.server_send_kbps = budgets[side];
         rocketnet_counters_t counters;
-        memset( &counters, 0, sizeof(counters) );
+        memset( &counters, 0, sizeof( counters ) );
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
         rn_region_t * region = rn_arena_region( arena, 0 );
@@ -318,7 +323,7 @@ static void test_max_resend_delay_payload_reserve_without_acks()
             uint64_t held = 0;
             while ( held < budget )
             {
-                const int bytes = budget - held < (uint64_t) payloads[p] ? (int) (budget - held) : payloads[p];
+                const int bytes = budget - held < (uint64_t) payloads[p] ? (int) ( budget - held ) : payloads[p];
                 const uint32_t descriptor = bytes >= RN_SPAN_MIN_BYTES ? rn_region_send_alloc_span( region, bytes ) : rn_region_send_alloc( region, bytes );
                 rocketnet_unit_check( descriptor != RN_DESCRIPTOR_NONE );
                 held += (uint64_t) bytes;

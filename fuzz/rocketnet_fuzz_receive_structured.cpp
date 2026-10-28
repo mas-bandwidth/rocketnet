@@ -114,22 +114,31 @@ static uint16_t fuzz_u16( struct rocketnet_fuzz_reader * r )
 static void fuzz_bytes( struct rocketnet_fuzz_reader * r, uint8_t * out, int count )
 {
     for ( int i = 0; i < count; i++ )
+    {
         out[i] = fuzz_u8( r );
+    }
 }
 
 static void generate_payload( uint8_t * payload_data, int payload_bytes )
 {
     const int start = payload_bytes % 256;
+
     for ( int i = 0; i < payload_bytes; i++ )
+    {
         payload_data[i] = (uint8_t) ( start + i );
+    }
 }
 
 extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
 {
     (void) argc;
     (void) argv;
+
     if ( sodium_init() < 0 )
+    {
         abort();
+    }
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
 
     char seed_dir[1024];
@@ -154,6 +163,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     // the wire's seed and its abuse profile come from the input's head, so a
     // reproducer replays the exact wire
+
     const uint64_t simulator_seed = (uint64_t) fuzz_u16( &r ) | ( (uint64_t) fuzz_u16( &r ) << 16 );
     const float loss_percent = (float) ( fuzz_u8( &r ) % 61 );          // up to 60% loss
     const float duplicate_percent = (float) ( fuzz_u8( &r ) % 21 );     // up to 20% duplicates
@@ -161,12 +171,13 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     // -------- the server, on the development keys, at the vector address --------
 
     struct rocketnet_counters_t server_counters;
-    memset( &server_counters, 0, sizeof(server_counters) );
+    memset( &server_counters, 0, sizeof( server_counters ) );
 
     struct rocketnet_server_protocol_t server;
-    memset( &server, 0, sizeof(server) );
+    memset( &server, 0, sizeof( server ) );
     server.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server.send_rate = 10.0;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server.backend_public_key, rocketnet_dev_backend_public_key, 32 );
@@ -187,6 +198,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     struct rocketnet_address_t server_address;
     rocketnet_address_parse( &server_address, "203.0.113.10:40000" );
+
     struct rocketnet_address_t client_address;
     rocketnet_address_parse( &client_address, "198.51.100.10:56789" );
 
@@ -194,24 +206,28 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
     rocketnet_network_simulator_config( simulator, 0.05, 0.02, loss_percent, duplicate_percent );
 
     struct rocketnet_counters_t client_counters;
-    memset( &client_counters, 0, sizeof(client_counters) );
+    memset( &client_counters, 0, sizeof( client_counters ) );
+
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &client_counters );
     memcpy( client.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
 
     // the token the client connects with, minted with the real path
+
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+
     {
         struct rocketnet_signed_connect_data_t signed_fields;
         struct rocketnet_connect_token_private_t private_fields;
-        memset( &signed_fields, 0, sizeof(signed_fields) );
-        memset( &private_fields, 0, sizeof(private_fields) );
+        memset( &signed_fields, 0, sizeof( signed_fields ) );
+        memset( &private_fields, 0, sizeof( private_fields ) );
         signed_fields.version = ROCKETNET_WIRE_VERSION;
         signed_fields.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
         signed_fields.create_timestamp = ROCKETNET_TEST_CREATE_TS;
         signed_fields.expire_timestamp = ROCKETNET_TEST_CREATE_TS + 300;
         signed_fields.timeout_seconds = 30;
         signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
         const uint8_t server_address_bytes[6] = { 203, 0, 113, 10, 0x40, 0x9c };
         memcpy( signed_fields.ipv4_address, server_address_bytes, 6 );
         memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, 32 );
@@ -219,7 +235,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         randombytes_buf( private_fields.client_to_server_key, 32 );
         randombytes_buf( private_fields.server_to_client_key, 32 );
         if ( !rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_dev_backend_secret_key, token_data ) )
+        {
             abort();
+        }
     }
 
     double time = 100.0;
@@ -228,6 +246,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
 
     // the last real client->server datagram, kept so the stream can corrupt a
     // genuine envelope rather than only inject pure garbage
+
     uint8_t last_c2s[ROCKETNET_RECEIVE_CEILING];
     int last_c2s_bytes = 0;
 
@@ -251,31 +270,40 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                     memcpy( last_c2s, packet, (size_t) packet_bytes );
                     last_c2s_bytes = packet_bytes;
                 }
+
                 rocketnet_network_simulator_send( simulator, &client_address, &server_address, packet, packet_bytes, time );
             }
         }
 
         // a connected client sends fuzz-sized traffic when the stream asks
+
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && ( action & 3 ) == 1 )
         {
             uint8_t packet[ROCKETNET_RECEIVE_CEILING];
             uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
             generate_payload( payload, payload_size );
+
             const int bytes = rocketnet_client_protocol_write_payload( &client, payload, payload_size, time, packet );
             if ( bytes > 0 )
+            {
                 rocketnet_network_simulator_send( simulator, &client_address, &server_address, packet, bytes, time );
+            }
+
             payload_size = payload_size < ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ? payload_size + 1 : 1;
         }
 
         // occasionally a fragmented payload, so reassembly soaks under the
         // same hostile wire and the fragment sequence paths are reached
+
         if ( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED && ( action & 3 ) == 2 )
         {
             static uint8_t fragmented_payload[16384];
             const int fragmented_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 + ( fuzz_u16( &r ) % 4096 );
             generate_payload( fragmented_payload, fragmented_bytes );
+
             static uint8_t fragment_packets[16 * ROCKETNET_SEND_BUDGET];
             int fragment_packet_bytes[16];
+
             const int fragment_count = rocketnet_client_protocol_write_fragments( &client, fragmented_payload, fragmented_bytes,
                                                                                   time, fragment_packets, fragment_packet_bytes, 16 );
             for ( int i = 0; i < fragment_count; i++ )
@@ -289,6 +317,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         // the wire and a datagram off the wire is always within those bounds;
         // the too-short and too-large rejections are the prefilter's, gated by
         // the stateless target's corpus, not something the wire can carry here.
+
         if ( ( action & 0x30 ) == 0x10 )
         {
             const int garbage_bytes = 1 + fuzz_u16( &r ) % ROCKETNET_RECEIVE_CEILING;
@@ -300,6 +329,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         // inject a datagram at the client, mirroring the server-side injection
         // above: the server's answers (and hostile junk) ride back over the
         // wire, so the client-side receive types are reachable in the same run
+
         if ( ( action & 0xc0 ) == 0x40 )
         {
             const int garbage_bytes = 1 + fuzz_u16( &r ) % ROCKETNET_RECEIVE_CEILING;
@@ -312,10 +342,12 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         // datagram, flip fuzz-chosen bytes inside its sealed body (past the
         // 6-byte prefilter and the 4-byte sequence, so the filter and mapping
         // still admit it and the damage lands at the AEAD open / replay)
+
         if ( ( action & 0x30 ) == 0x20 && last_c2s_bytes > ROCKETNET_PREFILTER_BYTES + 4 )
         {
             uint8_t corrupt[ROCKETNET_RECEIVE_CEILING];
             memcpy( corrupt, last_c2s, (size_t) last_c2s_bytes );
+
             const int flips = 1 + ( fuzz_u8( &r ) % 4 );
             for ( int f = 0; f < flips; f++ )
             {
@@ -323,6 +355,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                 const int position = ROCKETNET_PREFILTER_BYTES + 4 + ( fuzz_u16( &r ) % body_span );
                 corrupt[position] ^= fuzz_u8( &r );
             }
+
             rocketnet_network_simulator_send( simulator, &client_address, &server_address, corrupt, last_c2s_bytes, time );
         }
 
@@ -330,6 +363,7 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
         {
             rocketnet_reassembly_set_begin_update( server.reassembly );
             server.acks->num_acked = 0;
+
             struct rocketnet_address_t from;
             uint8_t packet[ROCKETNET_RECEIVE_CEILING];
             int bytes;
@@ -340,16 +374,24 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
                 int delivered_client_index = -1;
+
                 rocketnet_server_protocol_process_packet( &server, &from, packet, bytes, timestamp, time,
                                                           response, &response_bytes, delivered, &delivered_bytes, &delivered_client_index );
+
                 if ( response_bytes > 0 )
                 {
                     if ( response_bytes > ROCKETNET_RECEIVE_CEILING )
+                    {
                         abort();
+                    }
+
                     rocketnet_network_simulator_send( simulator, &server_address, &from, response, response_bytes, time );
                 }
+
                 if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
+                {
                     abort();
+                }
             }
 
             rocketnet_server_protocol_update( &server, time );
@@ -363,7 +405,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                     const int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
                     const struct rocketnet_address_t * to = rocketnet_encryption_map_address( server.encryption_map, mapping_index );
                     if ( to )
+                    {
                         rocketnet_network_simulator_send( simulator, &server_address, to, keep_alive, keep_alive_bytes, time );
+                    }
                 }
 
                 uint8_t ack[ROCKETNET_RECEIVE_CEILING];
@@ -373,7 +417,9 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
                     const int mapping_index = rocketnet_client_slots_mapping_index( server.client_slots, i );
                     const struct rocketnet_address_t * to = rocketnet_encryption_map_address( server.encryption_map, mapping_index );
                     if ( to )
+                    {
                         rocketnet_network_simulator_send( simulator, &server_address, to, ack, ack_bytes, time );
+                    }
                 }
             }
         }
@@ -387,49 +433,96 @@ extern "C" int LLVMFuzzerTestOneInput( const uint8_t * data, size_t size )
             {
                 uint8_t delivered[ROCKETNET_RECEIVE_CEILING];
                 int delivered_bytes = 0;
-                rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof(delivered), &delivered_bytes );
+                rocketnet_client_protocol_process_packet( &client, packet, bytes, time, delivered, sizeof( delivered ), &delivered_bytes );
                 if ( delivered_bytes > 0 && delivered_bytes > ROCKETNET_RECEIVE_PAYLOAD_BYTES )
+                {
                     abort();
+                }
             }
         }
 
         // time and the token clock advance by a fuzz-chosen small step, so
         // deadlines, key rotation and the replay window all move
+
         const double step = 0.005 + ( fuzz_u8( &r ) % 32 ) * 0.01;
         time += step;
         timestamp = ROCKETNET_TEST_CREATE_TS + (uint64_t) ( time - 100.0 );
     }
 
     if ( server_counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_REQUEST;
+    }
+
     if ( server_counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_RESPONSE;
+    }
+
     if ( server_counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_KEEP_ALIVE;
+    }
+
     if ( server_counters.values[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_PAYLOAD;
+    }
+
     if ( server_counters.values[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_DISCONNECT;
+    }
+
     if ( server_counters.values[ROCKETNET_COUNTER_ACK_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_ACK;
+    }
+
     if ( server_counters.values[ROCKETNET_COUNTER_FRAGMENT_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_SERVER_FRAGMENT;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_COOKIE;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_CHALLENGE_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_CHALLENGE;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_DENIED;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_KEEP_ALIVE;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_PAYLOAD;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_DISCONNECT;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_ACK_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_ACK;
+    }
+
     if ( client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED] > 0 )
+    {
         rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_CLIENT_FRAGMENT;
+    }
 
     rocketnet_encryption_map_destroy( server.encryption_map );
     rocketnet_used_token_history_destroy( server.used_token_history );
@@ -471,8 +564,7 @@ struct rocketnet_fuzz_receive_seed_spec_t
     int kind;
 };
 
-static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_seed_specs[] =
-{
+static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_seed_specs[] = {
     { "seed_type_server_connection_request", ROCKETNET_FUZZ_RECEIVE_SERVER_REQUEST, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_server_connection_response", ROCKETNET_FUZZ_RECEIVE_SERVER_RESPONSE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
     { "seed_type_server_keep_alive", ROCKETNET_FUZZ_RECEIVE_SERVER_KEEP_ALIVE, ROCKETNET_FUZZ_RECEIVE_SEED_HANDSHAKE },
@@ -516,10 +608,12 @@ static void rocketnet_fuzz_receive_append_injection( uint8_t * output, size_t * 
 {
     rocketnet_fuzz_receive_append_u8( output, size, action );
     rocketnet_fuzz_receive_append_u16( output, size, (uint16_t) ( packet_bytes - 1 ) );
+
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
-    memset( packet, 0, sizeof(packet) );
+    memset( packet, 0, sizeof( packet ) );
     packet[0] = packet_type;
     packet[1] = ROCKETNET_FILTER_EPOCH_UNKEYED;
+
     const uint8_t filter_value[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( packet + ROCKETNET_PREFILTER_BYTES - ROCKETNET_FILTER_VALUE_BYTES, filter_value, sizeof( filter_value ) );
     memcpy( output + *size, packet, (size_t) packet_bytes );
@@ -641,9 +735,11 @@ static int rocketnet_fuzz_receive_generate_seed_dir( const char * directory )
 
         char path[1024];
         snprintf( path, sizeof( path ), "%s/%s", directory, spec->name );
+
         FILE * f = rocketnet_test_fopen( path, "wb" );
         if ( !f )
             return 0;
+
         const size_t written = fwrite( data, 1, size, f );
         if ( fclose( f ) != 0 || written != size )
             return 0;

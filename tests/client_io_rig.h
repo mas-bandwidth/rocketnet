@@ -9,8 +9,8 @@
 
 #pragma once
 
-#ifndef ROCKETNET_CLIENT_IO_RIG_H
-#define ROCKETNET_CLIENT_IO_RIG_H
+#ifndef ROCKETNET_TESTS_CLIENT_IO_RIG_H
+#define ROCKETNET_TESTS_CLIENT_IO_RIG_H
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
@@ -56,7 +56,7 @@ static inline rocketnet_client_io_rig_t * rocketnet_client_io_rig_create()
 }
 
 static inline void rocketnet_client_io_rig_init( rocketnet_client_io_rig_t * rig, rocketnet_client_io_t * io,
-    const rocketnet_client_transport_io_t * transport, double (*time)( void * context ), void * time_context )
+                                                 const rocketnet_client_transport_io_t * transport, double ( *time )( void * context ), void * time_context )
 {
     rocketnet_client_io_init( io, transport, &rig->mutex, rig->view, rig->buffers, time, time_context );
 }
@@ -75,4 +75,4 @@ static inline void rocketnet_client_io_rig_destroy( rocketnet_client_io_rig_t * 
     delete rig;
 }
 
-#endif // #ifndef ROCKETNET_CLIENT_IO_RIG_H
+#endif // ROCKETNET_TESTS_CLIENT_IO_RIG_H

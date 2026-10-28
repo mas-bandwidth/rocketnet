@@ -4,6 +4,9 @@
 */
 #pragma once
 
+#ifndef ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
+#define ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
+
 #include "rocketnet_constants.h"
 #include "rocketnet_packet_batch.h"
 #include "rocketnet_wire.h"
@@ -48,29 +51,33 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_RIO_RECEIVES >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
                          "receive budget twice send: RIO receives hold at least twice the send queue" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_SOCKET_MAX_PROCESS_PACKETS >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_RIO_SEND_QUEUE_SIZE,
                          "receive budget twice send: server process batch holds at least twice the RIO send queue" );
 #define ROCKETNET_RIO_RECEIVE_SLICE_BYTES 2048
 
 struct rocketnet_server_rio_t;
 
 // bind_address is updated with the actual port. IPv6 binds are dual stack
-// and normalize mapped IPv4 sources to IPv4. fail_stage is a constructor test
-// control: 1 after the socket, 2 after the RIO function table, 3 after the
-// region is registered, 4 after the completion queues, 5 after the request
-// queue, 6 after the first posted receive. Production passes zero.
+// and normalize mapped IPv4 sources to IPv4.
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
-    rocketnet_address_t * bind_address, int fail_stage = 0 );
+                                                      rocketnet_address_t * bind_address
+#if ROCKETNET_DEV
+    // Development constructor control: fail after the socket, RIO table,
+    // region, completion queues, request queue or first posted receive.
+                                                      ,
+                                                      int fail_stage = 0
+#endif // #if ROCKETNET_DEV
+);
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio );
 
 uint8_t * rocketnet_server_rio_start_packet( rocketnet_server_rio_t * rio,
-    const rocketnet_address_t * to, uint64_t * packet_id );
+                                             const rocketnet_address_t * to, uint64_t * packet_id );
 void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio,
-    uint64_t packet_id, uint8_t * frame, int packet_bytes );
+                                         uint64_t packet_id, uint8_t * frame, int packet_bytes );
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio,
-    uint64_t packet_id, uint8_t * frame );
+                                        uint64_t packet_id, uint8_t * frame );
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio );
 rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets( rocketnet_server_rio_t * rio );
@@ -84,6 +91,8 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that kept the fill phase open: the next phase not yet idle
     ROCKETNET_RIO_COUNTER_RECEIVE_FAILED,           // receive completions with a failed status
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE,     // datagrams outside the wire's size bounds
+    ROCKETNET_RIO_COUNTER_RECEIVE_TOO_SHORT,        // datagrams below the wire's minimum size
+    ROCKETNET_RIO_COUNTER_RECEIVE_TOO_LARGE,        // datagrams past the receive ceiling
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW, // datagrams past the fill bank's capacity (the bounded dequeue keeps it zero)
     ROCKETNET_RIO_COUNTER_RECEIVE_REPOST_FAILED,    // slices retired by a refused re-post
     ROCKETNET_RIO_COUNTER_COMMITS,                  // RIO_MSG_COMMIT_ONLY calls
@@ -95,11 +104,9 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 // not yet dequeued
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
-// Historical diagnostic retained for internal consumers. Pending shutdowns
-// now retain their caller-owned handle until completion rather than leaking.
-uint64_t rocketnet_server_rio_leaked_regions();
 
-#if defined(ROCKETNET_RIO_TESTS)
+#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or
 // receive completion reports status as its completion status; a send or
@@ -120,14 +127,20 @@ int rocketnet_server_rio_test_faults_left( rocketnet_server_rio_t * rio, int fau
 // receive slices whose re-post was refused and that wait for the worker's
 // next pass to re-post them
 int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio );
+// Hold worker send pickup and stop processing until released.
+void rocketnet_server_rio_test_hold_send( rocketnet_server_rio_t * rio, bool hold );
+// Observe the FIFO under the mutex while the test holds send pickup.
+int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio );
 // nothing is staged in the fill phase, no handed phase waits for the I/O
 // worker and no posted phase has a send outstanding (takes the transport
 // mutex: the main test thread only)
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
-#endif
+#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
 
-#if defined(_WIN32)
+#if defined( _WIN32 )
 bool rocketnet_server_rio_available();
 #else
 inline bool rocketnet_server_rio_available() { return false; }
-#endif
+#endif // #if defined( _WIN32 )
+
+#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H

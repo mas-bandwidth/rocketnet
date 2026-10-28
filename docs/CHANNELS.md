@@ -25,12 +25,17 @@ There is no release call and no per-channel receive call.
 
 ## Sending
 
-`start_message` reserves up to the declared byte count. The caller writes into
-the returned storage and calls `finish_message` with the number written, or
-`abort_message`. Only one reservation may be open on an endpoint object.
-Finishing returns a nonzero receipt serial. A refused start returns NULL; a
-refused finish (a byte count outside 1 to the bytes started) returns zero and
-aborts the pending reservation, so the next start is never blocked.
+`start_message` reserves up to the declared byte count. The caller checks that
+the returned pointer is non-NULL, writes into the returned storage, and calls
+`finish_message` with the number written, or `abort_message`. Only one
+reservation may be open on an endpoint object. Finishing returns a nonzero
+receipt serial. A refused start returns NULL; calling `finish_message` without
+a live reservation (including after `start_message` returned NULL or after a
+disconnect or slot reset cancelled the reservation) is an application error
+that asserts in a debug build and returns zero in a release build. A refused
+finish with a live reservation (a byte count outside 1 to the bytes started)
+returns zero and aborts the pending reservation, so the next start is never
+blocked.
 
 The server start call takes a `uint64_t` destination id; the server finish and
 abort calls take none, acting on the one pending start. Values below
@@ -89,6 +94,39 @@ reads `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`. Unreliable work may be
 dropped at its documented bounded queues; reliable work is retained until it
 is delivered or the connection reaches its timeout.
 
+## Queue scheduling
+
+Reliable resend, the per-channel descriptor FIFO, ready-channel membership, and
+the unreliable endpoint FIFO name an entry by descriptor generation and the
+connection's schedule epoch (`tla/RNChannelQueues.tla`). A carve restarts that
+epoch at 1 and clears tickets, flags, and resend sequence keys, so a reused slot matches
+a slot carved once. Inside the connection, freeing a descriptor bumps its
+generation, and ACK, cancel, and expiry remove only the named generation. A resend slot is in at most one
+flat resend sequence; capacity is W, and an acked resend hole stays sequenced so a walk
+still counts it. The per-channel and unreliable FIFOs are the flat
+send-descriptor array ordered by enqueue ticket, ready membership is the flat
+channel array ordered by ready ticket, and each resend sequence is the flat
+resend array ordered by its entries' sequence keys: no queue element points
+at another. A channel or unreliable cancel of an interior entry marks a
+hole in O(1). Holes compact in one pass when more than 64 are outstanding, or
+once at the start of a write, never once per emitted record. That pass is
+O(C + queued), not O(C times Q). Channel enqueue tickets are distinct because
+reliable numbers are assigned later. CONFIG is spliced at the front of channel
+0 and that one channel's tickets are rebased so CONFIG holds the smallest
+ticket. Ready membership is one ticket per channel.
+
+The sized terms are 16W for the resend sequence entry, 40C for channel send state, and
+64C (40 bytes of channel send state plus 24 bytes of channel receive state).
+A send descriptor is 80 bytes (`rn_send_descriptor_t`). `docs/LOAD.md` prints
+`64C + 120.125W + B + 80Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
+
+`rn_channels_cancel_queued`, `rn_endpoint_cancel_unreliable`,
+`rn_endpoint_expire_unreliable`, and `rn_window_ack_cancel_resend` are test
+seams. The unit cases call them. Nothing under `sdk/` does, so a production
+connection leaves `queue_holes` at 0 and does not run the hole compact from
+the product path. The generation check those seams perform is the cancel and
+expiry behaviour the model names.
+
 ## Verification
 
 The executable message invariants are split by concern:
@@ -103,4 +141,4 @@ The executable message invariants are split by concern:
   capacity and cross-endpoint behavior.
 
 The model configurations and `tla/RUNS.tsv` are the maintained execution
-inventory. Long stress and profiling campaigns are planned hardening work.
+inventory.

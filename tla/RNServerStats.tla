@@ -16,15 +16,12 @@
 (* sequences, the earliest and latest times, and, for loss, the records    *)
 (* in its loss-eligible part (sequence <= highest - H) and how many of     *)
 (* those are unacknowledged. The running aggregates keep the same numbers  *)
-(* without the walk. Every edge is a function of highest, so when a write  *)
-(* raises highest the window moves in one step, before anything is         *)
-(* overwritten: the counted records below the new base leave (all of them  *)
-(* at once, in O(1), when the new base is past the old top), the counted   *)
-(* survivors crossing into the eligible part are counted there, and the    *)
-(* present records between the old top and the new one (no higher than    *)
-(* the old highest: nothing above it is written yet) enter. Then the write *)
-(* retires the record it replaces if that one is counted, writes, and      *)
-(* counts the new record if it lands in the window.                        *)
+(* without the walk. The received implementation lazily clears physical   *)
+(* slot ranges that leave the retained full window, point-writes the exact *)
+(* full-width sequence generation, and reduces the older-half range from  *)
+(* fixed 32-slot blocks. A move never reinserts every newly counted record *)
+(* in the older half. The sent implementation retains incremental counters*)
+(* for loss and acknowledgment state.                                     *)
 (*                                                                         *)
 (* Two sides share the machine. The sent side (Late = FALSE) writes above  *)
 (* highest, with gaps (burned sequences) and jumps; with Reorder = TRUE it *)
@@ -36,9 +33,9 @@
 (* write-count clock does not, so the Reorder instance checks the counts   *)
 (* and bounds, not the spans. The received side (Late = TRUE) writes any   *)
 (* sequence at any time: reordered, late, duplicate, or older than the     *)
-(* window. Its times do not follow its sequences, so the counted records   *)
-(* are kept on a list ordered by write time (inserted by walking back from *)
-(* the tail) and the span is read from the list's ends (SeqTimes = FALSE). *)
+(* window. Its times do not follow its sequences, so the received blocks   *)
+(* reduce minimum and maximum time over exact-tagged leaves                *)
+(* (SeqTimes = FALSE); it never infers time order from sequence order.     *)
 (* Times are the write count: one clock, in call order.                    *)
 (*                                                                         *)
 (* A write runs as two micro-steps (Slide, then Write) under the           *)
@@ -49,6 +46,12 @@
 (* the record entering the window's top edge is never counted, so the      *)
 (* window drains. BrokenCrossing forgets the survivors crossing into the   *)
 (* loss-eligible part, so loss is counted over too few records.            *)
+(* BrokenAlias is the received write before its floor: replay admits a     *)
+(* sequence up to its own window (wider than the ring) behind the          *)
+(* high-water mark, and a write more than a ring behind replaced the       *)
+(* newer, counted record sharing its slot. The fixed write refuses any     *)
+(* sequence below the window base and leaves the ring and the aggregates   *)
+(* unchanged (rocketnet_ack_endpoint_record_received).                     *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets, Sequences
 
@@ -60,12 +63,13 @@ CONSTANTS
     Reorder,            \* TRUE: sent side writes below highest too
     SeqTimes,           \* TRUE: spans read from sequence bounds, not the list
     BrokenEntering,     \* defect switch: the entering records are never counted
-    BrokenCrossing      \* defect switch: survivors never cross into the eligible part
+    BrokenCrossing,     \* defect switch: survivors never cross into the eligible part
+    BrokenAlias         \* defect switch: a late write below the base replaces a newer record
 
 ASSUME N \in Nat /\ N >= 2 /\ N % 2 = 0
 ASSUME MaxSeq \in Nat /\ MaxSeq >= 1 /\ MaxWrites \in Nat
 ASSUME Late \in BOOLEAN /\ Reorder \in BOOLEAN /\ SeqTimes \in BOOLEAN
-ASSUME BrokenEntering \in BOOLEAN /\ BrokenCrossing \in BOOLEAN
+ASSUME BrokenEntering \in BOOLEAN /\ BrokenCrossing \in BOOLEAN /\ BrokenAlias \in BOOLEAN
 
 H == N \div 2
 Seqs == 1..MaxSeq
@@ -77,9 +81,10 @@ VARIABLES
     writes,     \* writes so far, also the clock
     agg,        \* the running aggregates
     pc,         \* "idle", "slide" or "write"
-    pending     \* the sequence being written
+    pending,    \* the sequence being written
+    written     \* history: every sequence handed to Write
 
-vars == <<ring, highest, base, writes, agg, pc, pending>>
+vars == <<ring, highest, base, writes, agg, pc, pending, written>>
 
 Min(S) == CHOOSE x \in S : \A y \in S : x <= y
 Max(S) == CHOOSE x \in S : \A y \in S : x >= y
@@ -91,22 +96,17 @@ Present(r, s) == s >= 1 /\ r[s % N].seq = s
 InWin(s, b, h) == s >= b /\ s <= b + H - 1 /\ s <= h
 T(r, s) == r[s % N].time
 
-Empty == [counted |-> {}, cnt |-> 0, unacked |-> 0, ecnt |-> 0, eunacked |-> 0,
-          lo |-> 0, hi |-> 0, alo |-> 0, ahi |-> 0, order |-> << >>]
+Empty == [counted |-> {}, leaves |-> {}, cnt |-> 0, unacked |-> 0, ecnt |-> 0, eunacked |-> 0,
+          lo |-> 0, hi |-> 0, alo |-> 0, ahi |-> 0]
 
 AckedCount(a) == a.cnt - a.unacked
-
-\* insert after the last list entry written no later than s (the walk back
-\* from the tail stops at the first such entry)
-InsertByTime(o, r, s) ==
-    LET k == Max({0} \cup {i \in 1..Len(o) : T(r, o[i]) <= T(r, s)})
-    IN SubSeq(o, 1, k) \o << s >> \o SubSeq(o, k + 1, Len(o))
 
 Ins(a, r, b, h, s) ==
     IF ~InWin(s, b, h) THEN a
     ELSE LET ak == r[s % N].acked
              el == s <= Eligible(h)
          IN [counted  |-> a.counted \cup {s},
+             leaves   |-> a.leaves \cup {s},
              cnt      |-> a.cnt + 1,
              unacked  |-> IF ak THEN a.unacked ELSE a.unacked + 1,
              ecnt     |-> IF el THEN a.ecnt + 1 ELSE a.ecnt,
@@ -114,8 +114,7 @@ Ins(a, r, b, h, s) ==
              lo       |-> IF a.cnt = 0 \/ s < a.lo THEN s ELSE a.lo,
              hi       |-> IF a.cnt = 0 \/ s > a.hi THEN s ELSE a.hi,
              alo      |-> IF ak /\ ( AckedCount(a) = 0 \/ s < a.alo ) THEN s ELSE a.alo,
-             ahi      |-> IF ak /\ ( AckedCount(a) = 0 \/ s > a.ahi ) THEN s ELSE a.ahi,
-             order    |-> InsertByTime(a.order, r, s)]
+             ahi      |-> IF ak /\ ( AckedCount(a) = 0 \/ s > a.ahi ) THEN s ELSE a.ahi]
 
 \* the record s is still in the ring while it is removed
 Rem(a, r, b, h, s) ==
@@ -137,6 +136,7 @@ Rem(a, r, b, h, s) ==
                      ELSE IF s # a.alo /\ s = a.ahi THEN Max({x \in 1..(s - 1) : AckedAt(x)})
                      ELSE a.ahi
          IN [counted  |-> a.counted \ {s},
+             leaves   |-> a.leaves \ {s},
              cnt      |-> a.cnt - 1,
              unacked  |-> u2,
              ecnt     |-> IF el THEN a.ecnt - 1 ELSE a.ecnt,
@@ -144,8 +144,7 @@ Rem(a, r, b, h, s) ==
              lo       |-> lo2,
              hi       |-> hi2,
              alo      |-> alo2,
-             ahi      |-> ahi2,
-             order    |-> SelectSeq(a.order, LAMBDA x : x # s)]
+             ahi      |-> ahi2]
 
 \* a counted survivor crossing into the loss-eligible part
 Cross(a, r, s) ==
@@ -167,6 +166,11 @@ CrossAll(a, r, S) ==
     IF S = {} THEN a
     ELSE LET x == Min(S) IN CrossAll(Cross(a, r, x), r, S \ {x})
 
+\* Abstract fixed-block range reduction. The implementation maintains this
+\* result with one point-block rebuild, bounded edge rebuilds and summaries.
+Reduce(r, b, h) ==
+    InsAll(Empty, r, b, h, {x \in Seqs : InWin(x, b, h) /\ Present(r, x)})
+
 Init ==
     /\ ring = [i \in 0..(N - 1) |-> [seq |-> 0, acked |-> FALSE, time |-> 0]]
     /\ highest = 0
@@ -175,6 +179,7 @@ Init ==
     /\ agg = Empty
     /\ pc = "idle"
     /\ pending = 0
+    /\ written = {}
 
 \* a send writes past the high-water mark (gaps and jumps allowed), or with
 \* Reorder anywhere above the retained floor whose record is older (the
@@ -187,7 +192,7 @@ Send(s) ==
        ELSE s > highest
     /\ pending' = s
     /\ pc' = "slide"
-    /\ UNCHANGED <<ring, highest, base, writes, agg>>
+    /\ UNCHANGED <<ring, highest, base, writes, agg, written>>
 
 \* rocketnet_ack_stats_sent_advance / rocketnet_ack_stats_received_advance
 Slide ==
@@ -209,17 +214,25 @@ Slide ==
                                 {x \in Seqs : x > t0 /\ x >= b1 /\ x <= t1 /\ x <= h0 /\ Present(ring, x)})
        IN /\ highest' = h1
           /\ base' = b1
-          /\ agg' = IF h1 = h0 THEN agg ELSE enter
+          /\ agg' = IF h1 = h0 THEN agg
+                    ELSE IF Late THEN Reduce(ring, b1, h1) ELSE enter
     /\ pc' = "write"
-    /\ UNCHANGED <<ring, writes, pending>>
+    /\ UNCHANGED <<ring, writes, pending, written>>
 
+\* the received side refuses a sequence below the window base (at least one
+\* ring behind highest): it is never counted, and its record holds a newer
+\* sequence of [base, highest]; BrokenAlias writes it anyway
 Write ==
     /\ pc = "write"
-    /\ LET i  == pending % N
-           a1 == IF Present(ring, ring[i].seq) THEN Rem(agg, ring, base, highest, ring[i].seq) ELSE agg
-           r2 == [ring EXCEPT ![i] = [seq |-> pending, acked |-> FALSE, time |-> writes + 1]]
-       IN /\ ring' = r2
-          /\ agg' = Ins(a1, r2, base, highest, pending)
+    /\ IF Late /\ ~BrokenAlias /\ pending < base
+       THEN UNCHANGED <<ring, agg>>
+       ELSE LET i  == pending % N
+                a1 == IF Present(ring, ring[i].seq) THEN Rem(agg, ring, base, highest, ring[i].seq) ELSE agg
+                r2 == [ring EXCEPT ![i] = [seq |-> pending, acked |-> FALSE, time |-> writes + 1]]
+            IN /\ ring' = r2
+               /\ agg' = IF Late THEN Reduce(r2, base, highest)
+                          ELSE Ins(a1, r2, base, highest, pending)
+    /\ written' = written \cup {pending}
     /\ writes' = writes + 1
     /\ pc' = "idle"
     /\ pending' = 0
@@ -239,7 +252,7 @@ Ack(s) ==
                                !.eunacked = IF s <= Eligible(highest) THEN @ - 1 ELSE @,
                                !.alo = IF AckedCount(agg) = 0 \/ s < @ THEN s ELSE @,
                                !.ahi = IF AckedCount(agg) = 0 \/ s > @ THEN s ELSE @]
-    /\ UNCHANGED <<highest, base, writes, pc, pending>>
+    /\ UNCHANGED <<highest, base, writes, pc, pending, written>>
 
 Done ==
     /\ pc = "idle"
@@ -266,6 +279,7 @@ TypeOK ==
     /\ writes \in 0..MaxWrites
     /\ pc \in {"idle", "slide", "write"}
     /\ pending \in 0..MaxSeq
+    /\ written \subseteq Seqs
     /\ agg.cnt \in 0..MaxSeq /\ agg.unacked \in 0..agg.cnt
     /\ agg.ecnt \in 0..agg.cnt /\ agg.eunacked \in 0..agg.ecnt
 
@@ -292,21 +306,34 @@ BoundsExact ==
         /\ AckedWin # {} => agg.alo = Min(AckedWin) /\ agg.ahi = Max(AckedWin)
         /\ AckedWin = {} => AckedCount(agg) = 0
 
-\* the list holds the counted records once each, in write-time order
-OrderedByTime ==
-    Settled =>
-        /\ {agg.order[i] : i \in 1..Len(agg.order)} = agg.counted
-        /\ Len(agg.order) = Cardinality(agg.counted)
-        /\ \A i \in 1..(Len(agg.order) - 1) : T(ring, agg.order[i]) <= T(ring, agg.order[i + 1])
+\* Historical invariant name retained by the checked configurations. It now
+\* states that the queried exact-tagged block leaves are precisely the
+\* reference window; there is no receive-time list.
+RangeAggregateExact ==
+    Settled => agg.leaves = Win /\ Cardinality(agg.leaves) = agg.cnt
 
-\* the published spans are the reference's earliest and latest times
+OrderedByTime ==
+    RangeAggregateExact
+
+\* The range reduction publishes the reference extrema. SeqTimes is the
+\* reversed witness for incorrectly reading the sequence-bound records.
 PublishedSpanExact ==
-    Settled /\ Win # {} /\ Len(agg.order) > 0 =>
-        LET lt == IF SeqTimes THEN T(ring, agg.lo) ELSE T(ring, agg.order[1])
-            ht == IF SeqTimes THEN T(ring, agg.hi) ELSE T(ring, agg.order[Len(agg.order)])
+    Settled /\ Win # {} =>
+        LET lt == IF SeqTimes THEN T(ring, agg.lo) ELSE MinT(agg.leaves)
+            ht == IF SeqTimes THEN T(ring, agg.hi) ELSE MaxT(agg.leaves)
         IN lt = MinT(Win) /\ ht = MaxT(Win)
 
 AckedSpanExact ==
     Settled /\ SeqTimes /\ AckedWin # {} =>
         T(ring, agg.alo) = MinT(AckedWin) /\ T(ring, agg.ahi) = MaxT(AckedWin)
+
+\* every sequence written inside the retained window is still in the ring:
+\* no late write erases a newer record of [base, highest]
+RetainedIsNewest ==
+    Settled => \A s \in written : s >= base => Present(ring, s)
+
+\* a write at or below the high-water mark never lowers the counted total
+\* (bytes follow the count one to one in the code)
+LateNeverShrinks ==
+    [][pc = "write" /\ pending <= highest => agg'.cnt >= agg.cnt]_vars
 =============================================================================

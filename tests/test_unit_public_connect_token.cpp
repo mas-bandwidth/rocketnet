@@ -34,14 +34,12 @@ static const uint64_t public_token_create_timestamp = 1756166400ULL;
 static const uint64_t public_token_expire_timestamp = 1756166700ULL;
 static const int32_t public_token_timeout_seconds = 10;
 
-static const char * const public_token_addresses[] =
-{
+static const char * const public_token_addresses[] = {
     "203.0.113.10:40000",
     "[2001:db8::1]:65535",
 };
 
-static const char * const public_token_one_address[] =
-{
+static const char * const public_token_one_address[] = {
     "203.0.113.10:40000",
 };
 
@@ -87,7 +85,7 @@ static void public_token_server_setup( struct public_token_server_t * t, uint64_
                                        const uint8_t * server_public_key,
                                        const uint8_t * server_secret_key )
 {
-    memset( t, 0, sizeof(*t) );
+    memset( t, 0, sizeof( *t ) );
     struct rocketnet_server_protocol_t * server = &t->server;
     server->protocol_id = protocol_id;
     memcpy( server->packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
@@ -136,13 +134,13 @@ void test_public_connect_token_round_trip()
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
-                                             token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+                                             token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_connect_token_t parsed;
     rocketnet_read_connect_token( &parsed, token );
 
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature,
-                                                               backend_public_key ) == 1 );
+                                                                backend_public_key ) == 1 );
 
     struct rocketnet_signed_connect_data_t signed_fields;
     rocketnet_read_signed_connect_data( &signed_fields, parsed.signed_connect_data );
@@ -156,16 +154,15 @@ void test_public_connect_token_round_trip()
     rocketnet_unit_check( memcmp( signed_fields.server_public_key, server_public_key, ROCKETNET_KEY_BYTES ) == 0 );
 
     static const uint8_t expected_ipv4[6] = { 203, 0, 113, 10, 0x40, 0x9c };
-    static const uint8_t expected_ipv6[18] =
-    {
+    static const uint8_t expected_ipv6[18] = {
         0x01, 0x20, 0xb8, 0x0d, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0xff, 0xff
     };
-    rocketnet_unit_check( memcmp( signed_fields.ipv4_address, expected_ipv4, sizeof(expected_ipv4) ) == 0 );
-    rocketnet_unit_check( memcmp( signed_fields.ipv6_address, expected_ipv6, sizeof(expected_ipv6) ) == 0 );
+    rocketnet_unit_check( memcmp( signed_fields.ipv4_address, expected_ipv4, sizeof( expected_ipv4 ) ) == 0 );
+    rocketnet_unit_check( memcmp( signed_fields.ipv6_address, expected_ipv6, sizeof( expected_ipv6 ) ) == 0 );
 
     struct rocketnet_connect_token_private_t opened;
     rocketnet_unit_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data,
-                                                               server_public_key, server_secret_key ) == 1 );
+                                                                server_public_key, server_secret_key ) == 1 );
     rocketnet_unit_check( opened.client_id == public_token_client_id );
     rocketnet_unit_check( opened.protocol_id == public_token_protocol_id );
     rocketnet_unit_check( opened.expire_timestamp == public_token_expire_timestamp );
@@ -192,18 +189,18 @@ void test_public_connect_token_wrong_server_key_refused()
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
-                                             token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+                                             token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_connect_token_t parsed;
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature,
-                                                               backend_public_key ) == 1 );
+                                                                backend_public_key ) == 1 );
 
     struct rocketnet_connect_token_private_t opened;
     rocketnet_unit_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data,
-                                                               server_public_key, server_secret_key ) == 1 );
+                                                                server_public_key, server_secret_key ) == 1 );
     rocketnet_unit_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data,
-                                                               other_server_public_key, other_server_secret_key ) == 0 );
+                                                                other_server_public_key, other_server_secret_key ) == 0 );
 }
 
 void test_public_connect_token_wrong_protocol_id_refused()
@@ -216,10 +213,10 @@ void test_public_connect_token_wrong_protocol_id_refused()
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, 0,
-                                             token, sizeof(token) ) == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
+                                             token, sizeof( token ) ) == ROCKETNET_STATUS_INVALID_PROTOCOL_ID );
 
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
-                                             token, sizeof(token) ) == ROCKETNET_STATUS_OK );
+                                             token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     // the same keys, a server listening for a different protocol id: the
     // request is ignored before any crypto runs and the counter names why
@@ -275,7 +272,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
     public_token_fill_user_data( user_data );
 
 #if ROCKETNET_ASSERTS
-    void (*saved_assert)( const char *, const char *, const char *, int ) = rn_assert_function;
+    void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     public_token_expected_null_asserts = 0;
     rocketnet_assert_function( public_token_expected_null_assert );
 #endif
@@ -291,14 +288,14 @@ void test_public_connect_token_null_or_short_buffer_refused()
 #endif
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    memset( token, 0xa5, sizeof(token) );
+    memset( token, 0xa5, sizeof( token ) );
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_addresses, 2,
                                                                     public_token_client_id, public_token_create_timestamp,
                                                                     public_token_expire_timestamp, public_token_timeout_seconds,
                                                                     user_data, token,
                                                                     ROCKETNET_CONNECT_TOKEN_BYTES - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    for ( int i = 0; i < (int) sizeof(token); i++ )
+    for ( int i = 0; i < (int) sizeof( token ); i++ )
         rocketnet_unit_check( token[i] == 0xa5 );
 
 #if ROCKETNET_ASSERTS
@@ -311,7 +308,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     public_token_client_id, public_token_create_timestamp,
                                                                     public_token_expire_timestamp, public_token_timeout_seconds,
                                                                     user_data, token,
-                                                                    sizeof(token) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+                                                                    sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
@@ -322,14 +319,14 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     public_token_client_id, public_token_create_timestamp,
                                                                     public_token_expire_timestamp, public_token_timeout_seconds,
                                                                     user_data, token,
-                                                                    sizeof(token) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
+                                                                    sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 1,
                                                                     public_token_client_id, public_token_create_timestamp,
                                                                     public_token_expire_timestamp, public_token_timeout_seconds,
                                                                     user_data, token,
-                                                                    sizeof(token) ) == ROCKETNET_STATUS_OK );
+                                                                    sizeof( token ) ) == ROCKETNET_STATUS_OK );
 }
 
 // two mints of the same inputs draw fresh sealing and session material: a
@@ -347,9 +344,9 @@ void test_public_connect_token_sealed_block_varies()
     uint8_t token_a[ROCKETNET_CONNECT_TOKEN_BYTES];
     uint8_t token_b[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
-                                             token_a, sizeof(token_a) ) == ROCKETNET_STATUS_OK );
+                                             token_a, sizeof( token_a ) ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( public_token_mint( backend_secret_key, server_public_key, public_token_protocol_id,
-                                             token_b, sizeof(token_b) ) == ROCKETNET_STATUS_OK );
+                                             token_b, sizeof( token_b ) ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_connect_token_t parsed_a;
     struct rocketnet_connect_token_t parsed_b;

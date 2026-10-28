@@ -4,31 +4,24 @@
 */
 
 // RNWindow and RNRing operation sequences (tla/README-RNWindow.md,
-// tla/README-RNRing.md) against the sender and receiver window operations.
-// A tree that already has sdk/rocketnet_window_send.h drives that code. This
-// base does not, so the landed admit, U' and receive rules are compiled here
-// and are the code under test: the count bound and the ring floor both read
-// U', not U. An independent reference of count, U', ring occupancy, descriptor
-// ownership and delivery is compared after every action. A failed check prints
-// a replayable seed and the action list.
+// tla/README-RNRing.md) against the production sender and receiver window
+// operations (sdk/rocketnet_window_send.h and sdk/rocketnet_window_receive.h):
+// the count bound and the ring floor both read U', not U. An independent
+// reference of count, U', ring occupancy, descriptor ownership and delivery is
+// compared after every action. A failed check prints a replayable seed and the
+// action list.
 
 #include "test_unit_registry.h"
 
 #include "rocketnet_allocator.h"
 #include "rocketnet_message.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_window_send.h"
+#include "rocketnet_window_receive.h"
 
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-
-#if defined( __has_include )
-#if __has_include( "rocketnet_window_send.h" )
-#include "rocketnet_window_send.h"
-#include "rocketnet_window_receive.h"
-#define SEQ_SDK_WINDOW 1
-#endif
-#endif
 
 // ---------------------------------------------------------------------------
 // Replay log. The seed alone replays a walk; the action list is the tail.
@@ -94,248 +87,10 @@ do                                                                              
 }                                                                                                                 \
 while ( 0 )
 
-// ---------------------------------------------------------------------------
-// The landed sender and receiver (sdk/rocketnet_window_send.cpp and
-// sdk/rocketnet_window_receive.cpp). Count and ring both key off U'.
-// ---------------------------------------------------------------------------
-
-#if !SEQ_SDK_WINDOW
-
-enum
-{
-    RN_WINDOW_SEND_STALL = 0,
-    RN_WINDOW_SEND_NUMBERED = 1,
-    RN_WINDOW_SEND_UNRELIABLE = 2
-};
-
-enum
-{
-    RN_WINDOW_RECEIVE_ACCEPT = 0,
-    RN_WINDOW_RECEIVE_DUPLICATE = 1,
-    RN_WINDOW_RECEIVE_VIOLATION = 2
-};
-
-#define ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW 11
-#define ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION 12
-
-struct rn_window_send_t
-{
-    rn_region_t * region;
-    uint64_t next;
-    uint64_t U;
-    uint64_t U_prime;
-    uint64_t ring_next;
-    uint8_t stalled;
-};
-
-struct rn_window_receive_t
-{
-    rn_region_t * region;
-    uint64_t R;
-    int violation;
-};
-
 static uint64_t seq_round16( uint32_t bytes )
 {
     return ( (uint64_t) bytes + 15 ) & ~(uint64_t) 15;
 }
-
-static uint64_t seq_position( const rn_window_send_t * send, uint64_t span )
-{
-    const uint64_t B = send->region->ring_bytes;
-    const uint64_t remaining = B - send->ring_next % B;
-    return span > remaining ? send->ring_next + remaining : send->ring_next;
-}
-
-// Count bound n < U' + W, and the ring floor at ring_start(U') (6.2).
-static int seq_admit( rn_window_send_t * send, uint32_t count, uint64_t span, int holdable, uint64_t * position )
-{
-    const uint64_t W = send->region->window;
-    const uint64_t B = send->region->ring_bytes;
-    int fits = send->next - send->U_prime <= W - count;
-    uint64_t p = send->ring_next;
-    if ( holdable )
-    {
-        p = seq_position( send, span );
-        const uint64_t base = send->U_prime;
-        const uint64_t floor = base < send->next ? send->region->send_numbers[base % W].ring_start : p;
-        fits = fits && span <= B && p >= floor && p - floor <= B - span;
-    }
-    if ( !fits )
-    {
-        send->stalled = 1;
-        return 0;
-    }
-    *position = p;
-    send->stalled = 0;
-    return 1;
-}
-
-static void seq_set_number( rn_window_send_t * send, uint64_t number, uint32_t descriptor,
-                             uint16_t fragment, uint64_t ring_start, uint64_t bytes16 )
-{
-    rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
-    entry->number = number;
-    entry->ring_start = ring_start;
-    entry->last_send = RN_SEND_NUMBER_NEVER_SENT;
-    entry->descriptor = descriptor;
-    entry->fragment = fragment;
-    entry->ring_units = (uint8_t) ( bytes16 / 16 );
-    entry->acked = 0;
-}
-
-static void rn_window_send_init( rn_window_send_t * send, rn_region_t * region, uint64_t first_number )
-{
-    send->region = region;
-    send->next = first_number;
-    send->U = first_number;
-    send->U_prime = first_number;
-    send->ring_next = 0;
-    send->stalled = 0;
-}
-
-static int rn_window_send_first_write( rn_window_send_t * send, int code, uint32_t bytes,
-                                       uint32_t descriptor, uint64_t * number, uint64_t * ring_start )
-{
-    if ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED )
-        return RN_WINDOW_SEND_UNRELIABLE;
-    const int holdable = code != ROCKETNET_MESSAGE_CODE_RELIABLE;
-    const uint64_t span = holdable ? seq_round16( bytes ) : 0;
-    uint64_t p;
-    if ( !seq_admit( send, 1, span, holdable, &p ) )
-        return RN_WINDOW_SEND_STALL;
-    const uint64_t n = send->next;
-    seq_set_number( send, n, descriptor, 0, p, span );
-    send->next++;
-    if ( holdable )
-        send->ring_next = p + span;
-    *number = n;
-    *ring_start = p;
-    return RN_WINDOW_SEND_NUMBERED;
-}
-
-static uint32_t rn_window_send_first_write_block( rn_window_send_t * send, int code, uint32_t bytes,
-                                                  uint32_t descriptor, uint64_t * first_number, uint64_t * ring_start )
-{
-    (void) code;
-    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
-    const uint32_t count = ( bytes + F - 1 ) / F;
-    const uint32_t last = bytes - ( count - 1 ) * F;
-    const uint64_t last16 = seq_round16( last );
-    const uint64_t span = (uint64_t) ( count - 1 ) * F + last16;
-    uint64_t p;
-    if ( !seq_admit( send, count, span, 1, &p ) )
-        return 0;
-    const uint64_t first = send->next;
-    for ( uint32_t i = 0; i < count; i++ )
-        seq_set_number( send, first + i, descriptor, (uint16_t) i, p + (uint64_t) i * F, i + 1 == count ? last16 : F );
-    send->next += count;
-    send->ring_next = p + span;
-    *first_number = first;
-    *ring_start = p;
-    return count;
-}
-
-// U advances over a contiguous acked prefix. U' stays at a partial block's first
-// fragment until that block is fully acked.
-static int rn_window_send_mark_acked( rn_window_send_t * send, uint64_t number )
-{
-    if ( number < send->U || number >= send->next )
-        return 0;
-    rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
-    if ( entry->number != number || entry->acked )
-        return 0;
-    entry->acked = 1;
-    while ( send->U < send->next )
-    {
-        const rn_send_number_t * oldest = &send->region->send_numbers[send->U % send->region->window];
-        if ( oldest->number != send->U || !oldest->acked )
-            break;
-        send->U++;
-    }
-    if ( send->U == send->next )
-        send->U_prime = send->U;
-    else
-    {
-        const rn_send_number_t * oldest = &send->region->send_numbers[send->U % send->region->window];
-        send->U_prime = send->U - oldest->fragment;
-    }
-    return 1;
-}
-
-static void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region, uint64_t first_number )
-{
-    receive->region = region;
-    receive->R = first_number;
-    receive->violation = ROCKETNET_MESSAGE_VIOLATION_NONE;
-}
-
-static int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_message_record_t * record, uint32_t * slot )
-{
-    if ( receive->violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
-        return RN_WINDOW_RECEIVE_VIOLATION;
-    *slot = RN_DESCRIPTOR_NONE;
-    const uint32_t W = receive->region->window;
-    const uint32_t wire = record->number & ROCKETNET_MESSAGE_U24_MASK;
-    const uint32_t reference = (uint32_t) receive->R & ROCKETNET_MESSAGE_U24_MASK;
-    const uint32_t unsigned_delta = ( wire - reference ) & ROCKETNET_MESSAGE_U24_MASK;
-    const int32_t delta = unsigned_delta >= ( 1u << 23 ) ? (int32_t) unsigned_delta - ( 1 << 24 ) : (int32_t) unsigned_delta;
-    if ( delta < 0 )
-        return RN_WINDOW_RECEIVE_DUPLICATE;
-    if ( (uint32_t) delta >= W )
-    {
-        receive->violation = ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW;
-        return RN_WINDOW_RECEIVE_VIOLATION;
-    }
-    const uint64_t number = receive->R + (uint32_t) delta;
-    const uint32_t index = (uint32_t) ( number & ( W - 1 ) );
-    const uint64_t bit = 1ULL << ( index & 63 );
-    uint64_t * word = &receive->region->received_bits[index >> 6];
-    if ( *word & bit )
-        return RN_WINDOW_RECEIVE_DUPLICATE;
-    rn_receive_descriptor_t * descriptor = &receive->region->receive_descriptors[index];
-    if ( descriptor->live && descriptor->number != number )
-    {
-        receive->violation = ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION;
-        return RN_WINDOW_RECEIVE_VIOLATION;
-    }
-    descriptor->number = number;
-    descriptor->ring = record->ring;
-    descriptor->bytes = (uint32_t) record->bytes;
-    descriptor->channel = (uint16_t) record->channel;
-    descriptor->code = (uint8_t) record->code;
-    descriptor->live = 1;
-    *word |= bit;
-    *slot = index;
-    for ( ;; )
-    {
-        const uint32_t floor_index = (uint32_t) ( receive->R & ( W - 1 ) );
-        const uint64_t floor_bit = 1ULL << ( floor_index & 63 );
-        uint64_t * floor_word = &receive->region->received_bits[floor_index >> 6];
-        if ( !( *floor_word & floor_bit ) )
-            break;
-        *floor_word &= ~floor_bit;
-        receive->R++;
-    }
-    return RN_WINDOW_RECEIVE_ACCEPT;
-}
-
-static void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number )
-{
-    const uint32_t index = (uint32_t) ( number & ( receive->region->window - 1 ) );
-    rn_receive_descriptor_t * descriptor = &receive->region->receive_descriptors[index];
-    if ( descriptor->live && descriptor->number == number )
-        descriptor->live = 0;
-}
-
-#else
-
-static uint64_t seq_round16( uint32_t bytes )
-{
-    return ( (uint64_t) bytes + 15 ) & ~(uint64_t) 15;
-}
-
-#endif
 
 // ---------------------------------------------------------------------------
 // Independent reference. It does not call the operations under test.
@@ -582,7 +337,7 @@ static int world_take_descriptor( world_t * w, uint32_t bytes, uint32_t * descri
 }
 
 static void world_commit( world_t * w, uint64_t first, uint32_t count, uint32_t descriptor,
-                           uint64_t ring, uint32_t stride, uint32_t last_len, uint32_t payload )
+                          uint64_t ring, uint32_t stride, uint32_t last_len, uint32_t payload )
 {
     for ( uint32_t f = 0; f < count; f++ )
     {

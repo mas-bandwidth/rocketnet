@@ -1,0 +1,26 @@
+/*
+    RocketNet. Copyright 2026 Más Bandwidth LLC.
+    Licensed under the GNU Affero General Public License v3.0
+*/
+
+#include "test_unit_registry.h"
+
+#include "../sdk/rocketnet_server_gso.h"
+
+#include <stdint.h>
+#include <stdio.h>
+
+#define check rocketnet_unit_check
+
+#if defined( __linux__ ) && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+
+// The GSO worker's handoffs (tla/RNGsoHandoff.tla), stepped on this thread
+// with a faked transport: no socket, no worker thread, no clock.
+static void test_server_gso_worker_handoff()
+{
+    check( rocketnet_server_gso_test_worker_handoff() );
+}
+
+REGISTER_UNIT_TEST( test_server_gso_worker_handoff );
+
+#endif

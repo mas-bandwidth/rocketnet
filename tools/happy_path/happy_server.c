@@ -13,7 +13,7 @@
 
 #if !defined( ROCKETNET_DEV )
 #define ROCKETNET_DEV 1
-#endif
+#endif // #if !defined( ROCKETNET_DEV )
 
 #include "../../examples/shutdown.h"
 #include "rocketnet.h"
@@ -24,8 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char * reliability_names[8] =
-{
+static const char * reliability_names[8] = {
     "ROCKETNET_RELIABILITY_UNRELIABLE",
     "ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED",
     "ROCKETNET_RELIABILITY_RELIABLE",
@@ -47,11 +46,15 @@ int main( int argc, char ** argv )
     }
 
     // ROCKETNET_SERVER_IPV4_ADDRESS, when set, overrides this address in create
+
     const char * address = argc > 1 ? argv[1] : "127.0.0.1:0";
 
     struct rocketnet_server_config_t config;
+
     // the published development backend key (rocketnet.h, development builds); a real server brings its own backend's key, recommended through ROCKETNET_SERVER_BACKEND_PUBLIC_KEY, or set in code
+
     static const uint8_t dev_backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
+
     rocketnet_server_default_config( &config );
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( config.backend_public_key, dev_backend_public_key, sizeof( config.backend_public_key ) );
@@ -65,6 +68,7 @@ int main( int argc, char ** argv )
         rn_cli_server_stop_and_destroy( server );
         server = NULL;
     }
+
     if ( !server )
     {
         printf( "error: failed to create server: %s\n", rocketnet_status_name( create_status ) );
@@ -73,11 +77,16 @@ int main( int argc, char ** argv )
     }
 
     // the server makes its own keypair: the client needs its public key to mint a token
+
     uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, server_key );
     printf( "server public key " );
+
     for ( int i = 0; i < ROCKETNET_SERVER_PUBLIC_KEY_BYTES; i++ )
+    {
         printf( "%02x", server_key[i] );
+    }
+
     printf( "\n" );
     printf( "server started\n" );
     printf( "server transport %s\n", rocketnet_server_transport_name( server ) );
@@ -95,6 +104,7 @@ int main( int argc, char ** argv )
         const double now = 1000.0 + ( rocketnet_time() - wall_start );
 
         // (1) update pumps the transport and takes in what arrived
+
         rocketnet_server_update( server, now );
 
         // (2) receive and process every received message for this update
@@ -111,13 +121,17 @@ int main( int argc, char ** argv )
                     const int ok = mode >= 0 && mode < 8 &&
                                    bytes == payload_bytes &&
                                    memcmp( data + 1, happy_pattern, (size_t) pattern_bytes ) == 0;
+
                     if ( ok )
+                    {
                         printf( "received mode %d %s ok\n", mode, reliability_names[mode] );
+                    }
                     else
                     {
                         printf( "received mode %d BAD\n", mode );
                         bad = 1;
                     }
+
                     fflush( stdout );
                 }
             }
@@ -132,8 +146,12 @@ int main( int argc, char ** argv )
             printf( "client connected\n" );
             fflush( stdout );
         }
+
         if ( num_connected > 0 )
+        {
             had_client = 1;
+        }
+
         if ( had_client && num_connected == 0 )
         {
             printf( "client disconnected\n" );
@@ -144,6 +162,7 @@ int main( int argc, char ** argv )
         // (5) send_packets is last,
         // after this frame's messages are queued, so this frame's messages
         // leave this frame
+
         rocketnet_server_send_packets( server );
 
         if ( rocketnet_time() - wall_start > 30.0 )

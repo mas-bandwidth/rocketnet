@@ -122,10 +122,14 @@ static int capture_count( const capture_fake_t * fake, const char * prefix, cons
     for ( int i = 0; i < fake->num_lines; i++ )
     {
         const char * line = fake->lines[i];
-        if ( strncmp( line, prefix, strlen( prefix ) ) != 0 ) continue;
-        if ( a && !strstr( line, a ) ) continue;
-        if ( b && !strstr( line, b ) ) continue;
-        if ( c && !strstr( line, c ) ) continue;
+        if ( strncmp( line, prefix, strlen( prefix ) ) != 0 )
+            continue;
+        if ( a && !strstr( line, a ) )
+            continue;
+        if ( b && !strstr( line, b ) )
+            continue;
+        if ( c && !strstr( line, c ) )
+            continue;
         found++;
     }
     return found;
@@ -136,7 +140,8 @@ static int capture_count( const capture_fake_t * fake, const char * prefix, cons
 static int capture_line_well_formed( const char * line )
 {
     const char * colon = strchr( line, ':' );
-    if ( !colon || colon[1] != ' ' ) return 0;
+    if ( !colon || colon[1] != ' ' )
+        return 0;
     char keys[64][48];
     int num_keys = 0;
     const char * p = colon + 2;
@@ -145,13 +150,16 @@ static int capture_line_well_formed( const char * line )
         const char * end = strchr( p, ' ' );
         const size_t length = end ? (size_t) ( end - p ) : strlen( p );
         const char * equals = (const char *) memchr( p, '=', length );
-        if ( !equals || equals == p || equals == p + length - 1 ) return 0;
+        if ( !equals || equals == p || equals == p + length - 1 )
+            return 0;
         const size_t key_length = (size_t) ( equals - p );
-        if ( key_length >= sizeof( keys[0] ) || num_keys == 64 ) return 0;
+        if ( key_length >= sizeof( keys[0] ) || num_keys == 64 )
+            return 0;
         memcpy( keys[num_keys], p, key_length );
         keys[num_keys][key_length] = '\0';
         for ( int k = 0; k < num_keys; k++ )
-            if ( strcmp( keys[k], keys[num_keys] ) == 0 ) return 0;
+            if ( strcmp( keys[k], keys[num_keys] ) == 0 )
+                return 0;
         num_keys++;
         p = end ? end + 1 : p + length;
     }
@@ -361,7 +369,7 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public, CAPTURE_PROTOCOL, addresses, 1,
-        0x5EED, 1000, 1ULL << 40, 300, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+                                                     0x5EED, 1000, 1ULL << 40, 300, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 
@@ -380,17 +388,24 @@ static void capture_pair_pump( capture_pair_t * pair )
     capture_now = pair->time;
     // every delivery is received before the next update (standard/MESSAGES.md m1.6)
     rocketnet_client_update( pair->client, pair->time );
-    while ( rocketnet_client_receive_messages( pair->client ) != NULL ) {}
+    while ( rocketnet_client_receive_messages( pair->client ) != NULL )
+    {
+    }
     rocketnet_client_send_packets( pair->client );
     rocketnet_server_update( pair->server, pair->time );
-    while ( rocketnet_server_receive_messages( pair->server ) != NULL ) {}
+    while ( rocketnet_server_receive_messages( pair->server ) != NULL )
+    {
+    }
     rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
 }
 
 static void capture_quiet_assert( const char * condition, const char * function, const char * file, int line )
 {
-    (void) condition; (void) function; (void) file; (void) line;
+    (void) condition;
+    (void) function;
+    (void) file;
+    (void) line;
 }
 
 static void test_load_split_capture_sdk_reads_both_ends()
@@ -408,7 +423,8 @@ static void test_load_split_capture_sdk_reads_both_ends()
     check( !client_side.connected && client_side.highest_sent_sequence == 0 );
 
     for ( int i = 0; i < 400 && ( rocketnet_client_state( pair.client ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
-                                  !rocketnet_server_client_connected( pair.server, 0 ) ); i++ )
+                                  !rocketnet_server_client_connected( pair.server, 0 ) );
+          i++ )
         capture_pair_pump( &pair );
     check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
@@ -463,7 +479,8 @@ static void test_load_split_capture_sdk_reads_both_ends()
     check( rocketnet_client_transport_counter_block( pair.client ) != NULL );
     check( rocketnet_client_message_counter_block( pair.client ) != NULL );
     check( rocketnet_counter_value( rocketnet_server_transport_counter_block( pair.server ), ROCKETNET_COUNTER_KEEP_ALIVE_ACCEPTED ) +
-           rocketnet_counter_value( rocketnet_server_transport_counter_block( pair.server ), ROCKETNET_COUNTER_PAYLOAD_RECEIVED ) > 0 );
+               rocketnet_counter_value( rocketnet_server_transport_counter_block( pair.server ), ROCKETNET_COUNTER_PAYLOAD_RECEIVED ) >
+           0 );
 
     rn_test_client_stop_and_destroy( pair.client );
     rn_test_server_stop_and_destroy( pair.server );
