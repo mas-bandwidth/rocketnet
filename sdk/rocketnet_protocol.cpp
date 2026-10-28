@@ -11,6 +11,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_address.h"
 #include "rocketnet_crypto_tally.h"
+#include "rocketnet_fragment.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -393,6 +394,42 @@ uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected )
     }
 
     return best;
+}
+
+int rocketnet_session_min_wire_bytes( uint8_t packet_type )
+{
+    switch ( packet_type )
+    {
+        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET: return ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    return ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_DISCONNECT_PACKET: return ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_ACK_PACKET:        return ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES;
+        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   return ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES;
+        default:                                     return 0;
+    }
+}
+
+bool rocketnet_session_type_data_fits( uint8_t packet_type, int type_data_bytes )
+{
+    switch ( packet_type )
+    {
+        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET: return type_data_bytes == 8;
+        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    return type_data_bytes >= 1 && type_data_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+        case ROCKETNET_CONNECTION_DISCONNECT_PACKET: return type_data_bytes == 0;
+        case ROCKETNET_CONNECTION_ACK_PACKET:        return type_data_bytes == 0;
+        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   return type_data_bytes >= ROCKETNET_FRAGMENT_HEADER_BYTES + 1;
+        default:                                     return false;
+    }
+}
+
+bool rocketnet_session_ack_eligible_on_open( uint8_t packet_type )
+{
+    return packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET && packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET;
+}
+
+bool rocketnet_session_elicits_ack( uint8_t packet_type )
+{
+    return packet_type != ROCKETNET_CONNECTION_ACK_PACKET && rocketnet_session_ack_eligible_on_open( packet_type );
 }
 
 uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highest_opened )

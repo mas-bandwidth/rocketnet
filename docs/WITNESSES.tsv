@@ -8,7 +8,7 @@ t10	A connection response that opens and whose padding is not all zero is `CONNE
 t11.1	A client that accepts a cookie MUST store its last 24 bytes and MUST send nothing in response.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	-	none
 t11.1	A cookie accepted in sending connection request (2) MUST replace only the latest cookie	HandshakeNeverRewinds	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	tests/test_unit_client_trusts_only_server.cpp:test_client_forged_cookie_never_displaces_kept_cookie	unit
 t11.1	MUST ignore one whose echoed connection salt is not the attempt's salt	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	sdk/rocketnet_tests.cpp:test_client_cookie_injection	unit
-t11.2	a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_open_session_packet	-	none
+t11.2	a denial in sending connection response (3) MUST open under the handshake server-to-client key the client already holds	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_open_session	-	none
 t8.4	The connection response is sealed and carries 24 zero bytes of padding.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	sdk/rocketnet_tests.cpp:test_integrity_limit	unit
 t10	A receiver MUST reject a packet type at or above the first reserved packet type as `RESERVED_TYPE`.	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_protocol_process_packet	sdk/rocketnet_tests.cpp:test_server_receive_refusals	unit
 t5.1	It MUST compare the computed value with the packet's filter value in constant time.	-	sdk/rocketnet_protocol.cpp:rocketnet_prefilter_check	-	none
