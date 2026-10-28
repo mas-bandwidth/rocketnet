@@ -326,11 +326,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     // arithmetic is what keeps the packet inside the send budget, whatever
     // the replay window's depth
 
-    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - type_data_bytes;
-    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
-        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->accepted_session );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, type_data_bytes, &client->accepted_session );
 
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
@@ -1466,11 +1462,7 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     // the application's bytes come first: the block truncates to the budget's remaining room, oldest entries dropped first. the 7-byte minimum always fits.
 
     uint8_t ack_block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
-    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
-    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
-        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-
-    int ack_block_bytes = rocketnet_ack_block_build( ack_block, block_capacity, &client->accepted_session );
+    int ack_block_bytes = rocketnet_session_ack_block_build( ack_block, payload_bytes, &client->accepted_session );
 
     int wire_bytes = rocketnet_write_sealed_payload_in_place( wire_start, client->packet_filter, sequence,
                                                               ack_block, ack_block_bytes,
@@ -1510,11 +1502,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
 
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
-    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - payload_bytes;
-    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
-        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->accepted_session );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, payload_bytes, &client->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
     uint64_t sequence = client->send_sequence_session;
@@ -1601,11 +1589,7 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
 
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
 
-    int block_capacity = ROCKETNET_SEND_BUDGET - ROCKETNET_PACKET_OVERHEAD_BYTES - ROCKETNET_FRAGMENT_HEADER_BYTES - fragment_bytes;
-    if ( block_capacity > ROCKETNET_ACK_BLOCK_MAX_BYTES )
-        block_capacity = ROCKETNET_ACK_BLOCK_MAX_BYTES;
-
-    int block_bytes = rocketnet_ack_block_build( plaintext, block_capacity, &client->accepted_session );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, ROCKETNET_FRAGMENT_HEADER_BYTES - fragment_bytes, &client->accepted_session );
 
     rocketnet_write_fragment_header( plaintext + block_bytes, payload_id, fragment_index, fragment_count );
 
