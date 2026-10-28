@@ -160,6 +160,108 @@ static void test_client_cookie_takes_no_rtt_sample()
     check( client.state_first_send_time == 1000.2 );
 }
 
+// a cookie echoing the attempt's salt with a mac of the caller's choosing
+static void client_trusts_deliver_cookie_mac( struct rocketnet_client_protocol_t * client, const uint8_t * mac, double time )
+{
+    uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
+    rocketnet_write_connection_cookie_packet( cookie, client->packet_filter, client->connection_salt,
+                                              ROCKETNET_TEST_CREATE_TS + 3, mac );
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    check( rocketnet_client_protocol_process_packet( client, cookie, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES, time,
+                                                     payload, sizeof( payload ), &payload_bytes ) );
+}
+
+// sends the next scheduled request at *time and returns the mac it carries
+static void client_trusts_next_request_mac( struct rocketnet_client_protocol_t * client, double * time, uint8_t * mac )
+{
+    *time += 1.0 / client->send_rate + 0.001;
+    uint8_t packet[ROCKETNET_RECEIVE_CEILING];
+    int packet_bytes = 0;
+    rocketnet_client_protocol_update( client, *time, packet, &packet_bytes );
+    check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+    memcpy( mac, packet + ROCKETNET_PREFILTER_BYTES + 8, ROCKETNET_COOKIE_MAC_BYTES );
+}
+
+// a forged cookie, the attempt's salt and a mac the client cannot check,
+// never takes the server's cookie off the wire. The first accepted cookie is
+// kept for the attempt; a later one alternates with it, so the kept cookie
+// goes out on at least every second request however many forgeries arrive
+// between requests, and the handshake is never rewound by a packet that
+// does not open under the attempt's keys (tla/ClientConnection.tla
+// HandshakeNeverRewinds). A genuine fresh cookie arriving later still goes
+// out on its turn.
+static void test_client_forged_cookie_never_displaces_kept_cookie()
+{
+    static struct rocketnet_client_protocol_t client;
+    struct rocketnet_counters_t counters;
+    client_trusts_connect( &client, &counters );
+
+    uint8_t server_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    memcpy( server_mac, rocketnet_test_cookie_mac, sizeof( server_mac ) );
+    uint8_t forged_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    memcpy( forged_mac, server_mac, sizeof( forged_mac ) );
+    forged_mac[0] ^= 0xFF;
+
+    double time = 1000.0;
+    client_trusts_deliver_cookie_mac( &client, server_mac, time + 0.05 );
+    check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
+    // a forgery after every genuine cookie: the next request still carries
+    // the server's cookie
+    client_trusts_deliver_cookie_mac( &client, forged_mac, time + 0.06 );
+    check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+    check( counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_STORED] == 2 );
+
+    uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES];
+    client_trusts_next_request_mac( &client, &time, mac );
+    check( memcmp( mac, server_mac, sizeof( mac ) ) == 0 );
+
+    // a forgery before every request: the server's cookie is never off the
+    // wire for two requests in a row
+    int server_mac_sent = 1;
+    int forged_mac_sent = 0;
+    int since_server_mac = 0;
+    for ( int i = 0; i < 16; i++ )
+    {
+        client_trusts_deliver_cookie_mac( &client, forged_mac, time + 0.01 );
+        client_trusts_next_request_mac( &client, &time, mac );
+        if ( memcmp( mac, server_mac, sizeof( mac ) ) == 0 )
+        {
+            server_mac_sent++;
+            since_server_mac = 0;
+        }
+        else
+        {
+            check( memcmp( mac, forged_mac, sizeof( mac ) ) == 0 );
+            forged_mac_sent++;
+            since_server_mac++;
+        }
+        check( since_server_mac <= 1 );
+    }
+    check( server_mac_sent >= 8 );
+    check( forged_mac_sent >= 1 );
+    check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+    check( client.last_receive_time == 1000.0 );
+
+    // a genuine fresh cookie (the server's answer once the kept one expired)
+    // replaces the latest and goes out on its turn
+    uint8_t fresh_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    memcpy( fresh_mac, server_mac, sizeof( fresh_mac ) );
+    fresh_mac[1] ^= 0x5A;
+    client_trusts_deliver_cookie_mac( &client, fresh_mac, time + 0.01 );
+    int fresh_mac_sent = 0;
+    for ( int i = 0; i < 2; i++ )
+    {
+        client_trusts_next_request_mac( &client, &time, mac );
+        if ( memcmp( mac, fresh_mac, sizeof( mac ) ) == 0 )
+            fresh_mac_sent++;
+        else
+            check( memcmp( mac, server_mac, sizeof( mac ) ) == 0 );
+    }
+    check( fresh_mac_sent == 1 );
+}
+
 #if ROCKETNET_DEV
 struct client_trusts_clock_t
 {
@@ -254,7 +356,9 @@ REGISTER_UNIT_TEST( test_client_cookie_does_not_refresh_idle_timer );
 REGISTER_UNIT_TEST( test_client_transport_connects_socket_to_server );
 REGISTER_UNIT_TEST( test_client_transport_refuses_when_connect_fails );
 REGISTER_UNIT_TEST( test_client_cookie_takes_no_rtt_sample );
+REGISTER_UNIT_TEST( test_client_forged_cookie_never_displaces_kept_cookie );
 #else
 REGISTER_UNIT_TEST( test_client_cookie_does_not_refresh_idle_timer );
 REGISTER_UNIT_TEST( test_client_cookie_takes_no_rtt_sample );
+REGISTER_UNIT_TEST( test_client_forged_cookie_never_displaces_kept_cookie );
 #endif // #if ROCKETNET_DEV
