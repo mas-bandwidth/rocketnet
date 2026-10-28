@@ -259,7 +259,7 @@ static void live_verify_generate_and_check()
 static void live_verify_tiny_prefix()
 {
     const rocketnet_live_config_t config = live_verify_default_config( 0 );
-    uint8_t buffer[16];
+    uint8_t buffer[16] = {};
 
     // channel 0, r = 0 at s = 0..6 x 32: B[0..6] = 1..7
 

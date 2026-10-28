@@ -785,6 +785,8 @@ static void check_server_memory_budget( allocator_state & state )
     const char * transport = "msgx";
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const char * transport = "iocp";
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+    const char * transport = "portable";   // the BSDs' one server transport
 #else
 #error "server memory budget lifecycle test needs a production server transport"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
