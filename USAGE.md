@@ -372,11 +372,13 @@ qualify their own configuration.
 
 ### Server memory footprint
 
-A default 1,000-client server requires approximately 20.9 GB (20,908,851,166 bytes)
-of memory, which scales to approximately 19.0 MB (19,033,780 bytes) per client slot.
-This is the lifecycle peak the server's allocator sees over create, start, stop,
-restart and destroy, for the largest transport the default ladder can grant
-(see `rocketnet.h`). This memory figure can be measured directly using
+A default 1,000-client server requires approximately 21.3 GB (21,324,627,055 bytes)
+of memory, which scales to approximately 19.4 MB (19,391,040 bytes) per client slot
+(Linux x86-64, development build). This is the one block the server's create
+takes from its allocator, and the most that allocator holds over create, start,
+stop, restart and destroy: the block holds the server's heap, sized for the
+largest transport the default ladder can grant, and start takes its transport
+from there (see `rocketnet.h`). This memory figure can be measured directly using
 `rocketnet_server_required_memory`:
 
 ```c

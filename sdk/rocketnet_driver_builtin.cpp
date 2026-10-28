@@ -1911,10 +1911,13 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 
     if ( strcmp( transport, "loopback" ) == 0 )
     {
-        // one endpoint's queue; the endpoint record is in the process-wide
-        // table, and loopback starts no worker and opens no socket
+        // the server endpoint's queue, sized for max_clients as
+        // loopback_server_create sizes it (a client endpoint's queue is the
+        // smaller ROCKETNET_LOOPBACK_QUEUE_PACKETS); the endpoint record is in
+        // the process-wide table, and loopback starts no worker and opens no
+        // socket
 
-        plan.transport_io_bytes = rocketnet_memory_allocations( { rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) } );
+        plan.transport_io_bytes = rocketnet_memory_allocations( { rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( config ? config->max_clients : ROCKETNET_MAX_CLIENTS ) ) } );
         plan.worker_threads = 0;
         plan.sockets = 0;
     }

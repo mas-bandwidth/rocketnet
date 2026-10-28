@@ -597,9 +597,15 @@ static void test_create_out_of_memory_logs_one_error()
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
-    // required_memory is the lifecycle peak (create plus the transport connect
-    // or start takes), so create's one block is read off a clean create: the
-    // largest single allocation it makes, never above that peak
+    // the refusal is create's own, whatever the transport; create's one block
+    // holds the heap for the largest transport the list can grant, and this
+    // allocator writes every byte it hands out, so loopback keeps the block
+    // the case touches small
+    client_config.transport = "loopback";
+    server_config.transport = "loopback";
+    // required_memory is the lifecycle peak, create's one block, so the
+    // block is read off a clean create: the largest single allocation it
+    // makes, never above that peak
     state.max_bytes = 0;
     enum rocketnet_status_t sized_status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * sized_client = rocketnet_client_create( &state, &client_config, &sized_status );

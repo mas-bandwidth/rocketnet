@@ -59,9 +59,10 @@
 // and hole bound 64 stayed.
 // 2026-10-28, mini-m5, the client's heap in its create-time block (tlsf's
 // size-class rounding of the transport plan and its 16 bytes per block):
-// client was 22746605, now 23369135.
+// client was 22746605, now 23369135; the server's the same: server was
+// 1603277086, now 1623111919.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603277086 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1623111919 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23369135 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
@@ -72,13 +73,14 @@
 // ROCKETNET_DEV=ON, head d00cf56e517dad7477ce41059d48e276c95aa970.
 // Server was 3238578316 (now 3243578316, grew by 5000000).
 // Client was 22890053 (now 22895109, grew by 5056).
-// 2026-10-28, amd-1, gcc, the client's heap in its create-time block:
-// client was 22895109, now 23523439.
+// 2026-10-28, amd-1, gcc, the client's and the server's heap in their
+// create-time blocks: client was 22895109, now 23523439; server was
+// 3243578316, now 3314672559.
 // Generation, owner epoch, enqueue ticket and hole bound 64 stayed.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3243578316ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3314672559ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23523439 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )

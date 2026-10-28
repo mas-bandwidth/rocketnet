@@ -360,6 +360,9 @@ static void test_instance_heap_server_start_allocates_nothing_after_create()
         check( server_counts.frees == 0 );
     }
 
+    check( rocketnet_heap_refusals( rocketnet_server_heap( server ) ) == 0 );
+    check( rocketnet_heap_check( rocketnet_server_heap( server ) ) );
+
     rocketnet_server_destroy( server );
     check( server_counts.mallocs == 1 );
     check( server_counts.frees == 1 );

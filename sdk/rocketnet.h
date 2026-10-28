@@ -1461,24 +1461,20 @@ struct rocketnet_server_config_t
 /// Messages
 
 /// Create allocates the client or server as one block through the configured
-/// allocator. A client's block also holds its own heap, sized for the largest
-/// transport its config's list can grant, and connect takes the transport's
-/// memory from that heap: a client calls the configured allocator at create
-/// and destroy only. A server's start allocates its transport through the
-/// configured allocator. Either way the transport's memory is taken before
-/// any traffic: sockets, worker threads, I/O rings and buffers, and on the
-/// server its per-client protocol tables. Nothing in the frame loop below
+/// allocator, and that is the object's only allocation: destroy frees it, and
+/// nothing between calls the configured allocator. The block holds the
+/// object's own heap, sized for the largest transport its config's list can
+/// grant, and connect and start take the transport's memory from that heap,
+/// before any traffic: sockets, worker threads, I/O rings and buffers, and on
+/// the server its per-client protocol tables. Nothing in the frame loop below
 /// allocates. Disconnect and stop retire the transport; the next connect or
-/// start frees it before it builds the next, and destroy frees it, so a
-/// reconnect or restart takes the same bytes again and the peak never grows
-/// across cycles. The required_memory calls report that peak: the most the
-/// allocator holds over create, connect or start, disconnect or stop,
-/// reconnect or restart, and destroy, each allocation with its alignment
-/// header, for whichever transport of the config's list is granted (the
-/// largest of them). For the planned built-in transports, with unchanged
-/// configuration and environment overrides, an allocator over a region of
-/// that size never runs out, and a client's heap never does; if it did,
-/// connect would return ROCKETNET_STATUS_OUT_OF_MEMORY. The development
+/// start returns it to the heap before it builds the next, and destroy returns
+/// it, so a reconnect or restart takes the same bytes again. The
+/// required_memory calls report the block's size, which is the most the
+/// allocator holds over the whole lifecycle. For the planned built-in
+/// transports, with unchanged configuration and environment overrides, the
+/// heap never runs out; if it did, connect or start would return
+/// ROCKETNET_STATUS_OUT_OF_MEMORY and allocate nothing more. The development
 /// link simulator is included in development builds.
 ///
 /// Not counted, because the operating system owns it: each worker thread's
@@ -2151,9 +2147,9 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
 }
 
 /// Returns the most memory the allocator holds for this config and
-/// max_clients over the server's lifecycle: create's block plus the
-/// transport and per-client tables each start allocates (see Messages above).
-/// It is at least the block create needs.
+/// max_clients over the server's lifecycle: create's one block, which holds
+/// the heap the transport and per-client tables each start creates come from
+/// (see Messages above).
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0, including the
 /// defaults' test filter in a production build. A named transport memory
