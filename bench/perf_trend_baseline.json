@@ -1,0 +1,5 @@
+{
+  "linux": null,
+  "macos": null,
+  "policy": "Wall-clock pps from bench/run_all.sh, report-only: a median inside the baseline min/max spread is tied (bench/PROTOCOL.md). Instruction counts are gated by bench/instruction_baseline.json, not here. Re-pin with tools/perf_trend.py repin --record <record.json> --reason <text>."
+}

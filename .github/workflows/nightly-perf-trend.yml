@@ -1,0 +1,326 @@
+# Nightly performance trend.
+#
+# Runs the two measurements the repository already has, on fixed hardware,
+# every night, and keeps their numbers as a trend:
+#
+#   - the deterministic instruction-count gate (bench/instruction_count.cpp,
+#     tools/check_instructions.py, bench/instruction_count.md) against the
+#     committed bench/instruction_baseline.json. Instruction counts do not
+#     depend on load, so the gate is tight: +2.0% over the baseline on either
+#     region fails the night. The threshold is the baseline file's own
+#     threshold_pct; this workflow does not restate it.
+#
+#   - the transport bench campaign (bench/run_all.sh, bench/PROTOCOL.md): the
+#     harness-honesty pace plants, then 30 s warm-up and five 60 s windows per
+#     harness. Wall-clock pps is REPORT-ONLY. Each row is compared with the
+#     committed bench/perf_trend_baseline.json the way PROTOCOL.md compares two
+#     sittings: a median inside the other's min/max spread is tied, and outside
+#     it the row is said to be above or below the spread. It never fails the
+#     night, because the Linux host also carries a second fleet runner and the
+#     Mac is not reserved quiet, so a loose threshold would still fire on the
+#     machine rather than the code. The campaign's own refusals (a failed pace
+#     plant, an invalid window, a harness that aborts) do fail the night.
+#
+# Where:
+#   - Linux: one named host, the quiet runner on amd-2
+#     ([self-hosted, Linux, X64, rocketnet-quiet, amd-2]). The bench pair is
+#     pinned the way PROTOCOL.md says: taskset to cores 15 (receive) and 14
+#     (send), two different physical cores, both at nice 10 (run_pair.sh).
+#     The toolchain is pinned to the baseline's: gcc-15/g++-15 explicitly, and
+#     the job refuses to run unless they report the compiler_id and valgrind
+#     reports the valgrind_version that bench/instruction_baseline.json was
+#     pinned with.
+#   - macOS: mini-m5 ([self-hosted, macOS, ARM64, rocketnet-macos, mini-m5]),
+#     the darwin harnesses (make -C bench darwin), unpinned because macOS has
+#     no userspace affinity API. No instruction count: valgrind does not run
+#     on Apple silicon.
+#   - Windows: none. The bench harnesses and run_all.sh are Linux and darwin
+#     only, and the instruction count needs valgrind.
+#
+# The trend: each leg uploads perf-trend-<os>-<ref> holding perf-trend.jsonl
+# (every night so far, one JSON record per line), this night's record.json,
+# the instruction report and the full campaign directory. The next night
+# downloads the newest such artifact and appends to it. Re-pin the wall-clock
+# baseline from a record with:
+#   python3 tools/perf_trend.py repin --record record.json --reason "<why>"
+#
+# Wall time: about 30 minutes per leg (four matrix rows of 5.5 minutes each on
+# Linux, portable, gso, io_uring and io_uring zc; four on macOS, portable,
+# msgx, kqueue and nw).
+#
+# Hosted minutes budget:
+#   - linux-perf-trend: 0 hosted minutes (self-hosted rocketnet-quiet, amd-2)
+#   - macos-perf-trend: 0 hosted minutes (self-hosted rocketnet-macos, mini-m5)
+
+name: Nightly Perf Trend
+
+on:
+  schedule:
+    - cron: "10 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: nightly-perf-trend-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux-perf-trend:
+    name: perf trend (${{ matrix.ref }} / linux amd-2 pinned)
+    runs-on: [self-hosted, Linux, X64, rocketnet-quiet, amd-2]
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    env:
+      CC: gcc-15
+      CXX: g++-15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc-15 g++-15 make xxd pkg-config valgrind python3 taskset; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      # instruction counts are comparable only on the exact compiler and
+      # valgrind the baseline was pinned with; read both from the baseline so
+      # a re-pin moves the pin with it
+      - name: Pin the toolchain to bench/instruction_baseline.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          want_compiler=$(python3 -c "import json; print(json.load(open('bench/instruction_baseline.json'))['compiler_id'])")
+          want_valgrind=$(python3 -c "import json; print(json.load(open('bench/instruction_baseline.json'))['valgrind_version'])")
+          have_cc="GNU-$(gcc-15 -dumpfullversion)"
+          have_cxx="GNU-$(g++-15 -dumpfullversion)"
+          have_valgrind=$(valgrind --version)
+          echo "pinned compiler_id=$want_compiler valgrind_version=$want_valgrind"
+          echo "host   gcc-15=$have_cc g++-15=$have_cxx valgrind=$have_valgrind on $RUNNER_NAME"
+          if [ "$have_cc" != "$want_compiler" ] || [ "$have_cxx" != "$want_compiler" ] || [ "$have_valgrind" != "$want_valgrind" ]; then
+            echo "TOOLCHAIN-MISMATCH the baseline is pinned to $want_compiler / $want_valgrind"
+            exit 1
+          fi
+
+      - name: Test the trend recorder and the instruction-count checker
+        run: |
+          python3 tools/test_perf_trend.py
+          python3 tools/test_check_instructions.py
+
+      - name: Build instruction_count (Release)
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc-15 -DCMAKE_CXX_COMPILER=g++-15
+          cmake --build build --target instruction_count --parallel
+
+      # the gate's verdict is enforced by the last step, after the campaign
+      # and the trend record, so a red gate still records the night
+      - name: Run the cachegrind instruction gate
+        id: gate
+        shell: bash
+        run: |
+          mkdir -p perf
+          set +e
+          python3 tools/check_instructions.py --bin ./build/instruction_count > perf/instructions.txt 2>&1
+          echo "$?" > perf/instructions.exit
+          set -e
+          cat perf/instructions.txt
+          echo "check_instructions.py exit $(cat perf/instructions.exit)"
+
+      - name: Build the bench harnesses
+        run: make -C bench bench_portable bench_gso bench_uring_system CC=gcc-15
+
+      - name: Run the bench campaign (pinned 15/14, nice 10)
+        id: campaign
+        working-directory: bench
+        run: ./run_all.sh "$GITHUB_WORKSPACE/perf/bench" 15 14
+
+      - name: Name the trend artifact
+        id: trend
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "name=perf-trend-linux-${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Find the previous trend
+        id: previous
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          TREND_NAME: ${{ steps.trend.outputs.name }}
+        with:
+          script: |
+            const { data } = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, name: process.env.TREND_NAME, per_page: 20 });
+            const prev = data.artifacts.find(a => !a.expired && a.workflow_run && a.workflow_run.id !== context.runId);
+            core.setOutput('run-id', prev ? String(prev.workflow_run.id) : '');
+            core.info(prev ? `previous trend: run ${prev.workflow_run.id}` : 'no previous trend: this is the first night');
+
+      - name: Download the previous trend
+        if: always() && steps.previous.outputs.run-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.trend.outputs.name }}
+          path: perf/previous
+          run-id: ${{ steps.previous.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      # carry the history forward first, so a night whose record cannot be
+      # written still hands every earlier night to the next one
+      - name: Record the night
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p perf
+          if [ -f perf/previous/perf-trend.jsonl ]; then cp perf/previous/perf-trend.jsonl perf/perf-trend.jsonl; fi
+          python3 tools/perf_trend.py record --os linux --host "$RUNNER_NAME" --ref "$REF" \
+            --commit "$(git rev-parse HEAD)" --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --bench perf/bench/run.txt \
+            --instructions perf/instructions.txt --instructions-exit "$(cat perf/instructions.exit)" \
+            --history perf/previous/perf-trend.jsonl \
+            --out perf/perf-trend.jsonl --record-out perf/record.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the trend
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.trend.outputs.name }}
+          path: |
+            perf/perf-trend.jsonl
+            perf/record.json
+            perf/instructions.txt
+            perf/bench/
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Enforce the instruction gate
+        if: always() && steps.gate.outcome == 'success'
+        shell: bash
+        run: |
+          code=$(cat perf/instructions.exit)
+          if [ "$code" != "0" ]; then
+            echo "instruction gate failed: tools/check_instructions.py exited $code (report above, and in perf/instructions.txt)"
+            exit 1
+          fi
+          echo "instruction gate passed"
+
+  macos-perf-trend:
+    name: perf trend (${{ matrix.ref }} / macos mini-m5 report-only)
+    # Report-only throughout: the fleet Mac is not reserved quiet and macOS
+    # has no affinity API, so the darwin rows are recorded, never gated.
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos, mini-m5]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+          persist-credentials: false
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in clang make python3; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Test the trend recorder
+        run: python3 tools/test_perf_trend.py
+
+      - name: Build the darwin bench harnesses
+        run: make -C bench darwin
+
+      - name: Run the bench campaign (unpinned, nice 10)
+        working-directory: bench
+        run: ./run_all.sh "$GITHUB_WORKSPACE/perf/bench"
+
+      - name: Name the trend artifact
+        id: trend
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "name=perf-trend-macos-${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Find the previous trend
+        id: previous
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          TREND_NAME: ${{ steps.trend.outputs.name }}
+        with:
+          script: |
+            const { data } = await github.rest.actions.listArtifactsForRepo({
+              owner: context.repo.owner, repo: context.repo.repo, name: process.env.TREND_NAME, per_page: 20 });
+            const prev = data.artifacts.find(a => !a.expired && a.workflow_run && a.workflow_run.id !== context.runId);
+            core.setOutput('run-id', prev ? String(prev.workflow_run.id) : '');
+            core.info(prev ? `previous trend: run ${prev.workflow_run.id}` : 'no previous trend: this is the first night');
+
+      - name: Download the previous trend
+        if: always() && steps.previous.outputs.run-id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ steps.trend.outputs.name }}
+          path: perf/previous
+          run-id: ${{ steps.previous.outputs.run-id }}
+          github-token: ${{ github.token }}
+
+      - name: Record the night
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p perf
+          if [ -f perf/previous/perf-trend.jsonl ]; then cp perf/previous/perf-trend.jsonl perf/perf-trend.jsonl; fi
+          python3 tools/perf_trend.py record --os macos --host "$RUNNER_NAME" --ref "$REF" \
+            --commit "$(git rev-parse HEAD)" --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --bench perf/bench/run.txt \
+            --history perf/previous/perf-trend.jsonl \
+            --out perf/perf-trend.jsonl --record-out perf/record.json | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the trend
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.trend.outputs.name }}
+          path: |
+            perf/perf-trend.jsonl
+            perf/record.json
+            perf/bench/
+          retention-days: 90
+          if-no-files-found: warn
