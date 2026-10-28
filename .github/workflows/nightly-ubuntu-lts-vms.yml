@@ -47,10 +47,11 @@
 # nightly-bigendian-system.yml gives its guest). The kernel is the image's
 # own and is not changed.
 #
-# Timeout: a leg measured at about 15 minutes (boot about 1, packages about
-# 2, two builds, then the suites); 60 minutes is that with room, the same
-# cap nightly-channel-seeds.yml and nightly-channels-stress.yml give a build
-# plus a suite run on this runner label.
+# Timeout: measured 2026-10-28, a leg takes 7 to 7.5 minutes on the fleet
+# (boot under a minute, packages, two builds, unit about 21 s, functional
+# about 270 s). 30 minutes is about four times that, room for a cold image
+# download and a loaded host; nightly.yml gives its Linux build-and-suites
+# job the same 30 on this runner label.
 #
 # Schedule: 30 4 * * * UTC, before the first nightly of the day (05:30), so
 # the three legs do not hold fleet runners the other nightlies need.
@@ -61,10 +62,6 @@ on:
   schedule:
     - cron: "30 4 * * *"
   workflow_dispatch:
-  # Temporary: workflow_dispatch needs the file on the default branch, so the
-  # first trial runs on push to this branch. Reverted before review.
-  push:
-    branches: [ci/nightly-ubuntu-lts-vms]
 
 permissions:
   contents: read
@@ -73,11 +70,11 @@ jobs:
   ubuntu-lts-vm:
     name: ubuntu ${{ matrix.version }} vm
     runs-on: [self-hosted, Linux, X64, fleet]
-    timeout-minutes: 60
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         series: [jammy, noble, resolute]
         include:
           - series: jammy
