@@ -23,6 +23,7 @@
 #include "rocketnet_endpoint.h"
 #include "rocketnet_message_object.h"
 
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -426,6 +427,58 @@ static void test_finish_requires_start_public_client_and_server()
         finish_assert_scope_t scope;
         check( rocketnet_server_finish_message( server, 8 ) == 0 );
         check_asserted_once();
+    }
+
+    finish_world_destroy( &world );
+}
+
+// The reliability argument of the four send calls is a C surface: a caller
+// may pass any int for the enum, and a value that is not a mode is refused
+// (NULL from start, false from the room query) with no reservation left. The
+// value must be read as the int it is, not loaded as a C++ enum outside its
+// range of values (undefined; UBSan's -fsanitize=enum reports it in
+// rocketnet_client_start_message, rocketnet_client_can_send_message,
+// rocketnet_server_start_message and rocketnet_server_can_send_message). Each
+// is called through an int variable, as a C caller passes it, with values
+// just past the modes, far past them and negative; a valid mode still starts
+// afterwards.
+
+static void test_send_calls_take_any_reliability_int()
+{
+    finish_world_t world;
+    finish_world_create( &world, 2, 1 );
+    rocketnet_client_t * client = world.clients[0];
+    rocketnet_server_t * server = world.server;
+
+    finish_world_connect( &world, 0, 104 );
+    const int slot = rocketnet_client_index( client );
+
+    {
+        finish_assert_scope_t scope;
+
+        const int out_of_range[] = { 8, 100, -1, -100, INT_MIN, INT_MAX };
+        for ( int i = 0; i < (int) ( sizeof( out_of_range ) / sizeof( out_of_range[0] ) ); i++ )
+        {
+            const int value = out_of_range[i];
+
+            check( !rocketnet_client_can_send_message( client, 0, (enum rocketnet_reliability_t) value, 4 ) );
+            check( rocketnet_client_start_message( client, 0, (enum rocketnet_reliability_t) value, 4 ) == NULL );
+            check_not_asserted();
+
+            check( !rocketnet_server_can_send_message( server, slot, 0, (enum rocketnet_reliability_t) value, 4 ) );
+            check( rocketnet_server_start_message( server, (uint64_t) slot, 0, (enum rocketnet_reliability_t) value, 4 ) == NULL );
+            check_not_asserted();
+        }
+
+        check( rocketnet_client_can_send_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) );
+        check( rocketnet_client_start_message( client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) != NULL );
+        rocketnet_client_abort_message( client );
+
+        check( rocketnet_server_can_send_message( server, slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) );
+        check( rocketnet_server_start_message( server, (uint64_t) slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 ) != NULL );
+        rocketnet_server_abort_message( server );
+
+        check_not_asserted();
     }
 
     finish_world_destroy( &world );
@@ -1028,5 +1081,6 @@ static void test_finish_requires_start_transport_packets()
 }
 
 REGISTER_UNIT_TEST( test_finish_requires_start_public_client_and_server );
+REGISTER_UNIT_TEST( test_send_calls_take_any_reliability_int );
 REGISTER_UNIT_TEST( test_finish_requires_start_message_objects_and_endpoint );
 REGISTER_UNIT_TEST( test_finish_requires_start_transport_packets );

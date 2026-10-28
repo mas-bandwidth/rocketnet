@@ -2460,6 +2460,16 @@ void rocketnet_test_receive_drops_oversize_datagram()
     // over-ceiling datagram is sent through that admitted client socket. No
     // OS connect and no new seam. This leg exists only in the DEV functional
     // target; the raw-wrapper production coverage above always runs.
+    //
+    // The leg is a portable server and client whatever transport the suite
+    // pins: a pin in ROCKETNET_SERVER_TRANSPORT or ROCKETNET_CLIENT_TRANSPORT
+    // overrides the config's transport, so both are cleared for the leg and
+    // restored after it. The darwin msgx receive is covered below by
+    // rocketnet_test_darwin_oversize_receive.
+
+    struct rocketnet_test_env_guard_t server_guard, client_guard;
+    rocketnet_test_env_clear( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_guard, "ROCKETNET_CLIENT_TRANSPORT" );
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -2555,6 +2565,9 @@ void rocketnet_test_receive_drops_oversize_datagram()
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+
+    rocketnet_test_env_restore( &client_guard );
+    rocketnet_test_env_restore( &server_guard );
 #endif // #if ROCKETNET_DEV && defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
 
     rocketnet_platform_socket_destroy( socket );

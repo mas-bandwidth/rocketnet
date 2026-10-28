@@ -41,6 +41,7 @@
 #include <new>
 
 #if !defined( _WIN32 )
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #endif
@@ -1621,6 +1622,28 @@ static void test_channels_allocator_sizing()
     check( strstr( rn_log_last, "16 connections" ) != NULL );
 }
 
+#if !defined( _WIN32 )
+
+// Waits for a witness child to end. A child stopped by a signal is continued
+// and waited on again: macOS `leaks --atExit` (docs/MACOS.md, "Sanitizers and
+// leaks") interposes _Exit with a hook that stops the process for its
+// inspection, and nothing inspects a forked child, so a plain waitpid would
+// wait forever on it.
+
+static pid_t rn_trap_wait_child( pid_t pid, int * status )
+{
+    for ( ;; )
+    {
+        const pid_t result = waitpid( pid, status, WUNTRACED );
+        if ( result != pid || !WIFSTOPPED( *status ) )
+            return result;
+
+        kill( pid, SIGCONT );
+    }
+}
+
+#endif // #if !defined( _WIN32 )
+
 static void test_channels_allocator_trap_witness()
 {
     // the trap fires: each net, armed in a child, ends it with exit 1
@@ -1666,9 +1689,30 @@ static void test_channels_allocator_trap_witness()
             _Exit( 0 );
         }
         int status = 0;
-        check( waitpid( pid, &status, 0 ) == pid );
+        check( rn_trap_wait_child( pid, &status ) == pid );
         check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
     }
+
+    // a child stopped on its way out, as leaks --atExit stops one, is
+    // continued and still ends with the trap's exit 1
+
+    fflush( stdout );
+    fflush( stderr );
+    const pid_t pid = fork();
+    check( pid >= 0 );
+    if ( pid == 0 )
+    {
+        FILE * devnull = freopen( "/dev/null", "w", stderr );
+        (void) devnull;
+        rn_trap_phase = "witness";
+        rn_trap_armed = 1;
+        kill( getpid(), SIGSTOP );
+        rocketnet_free( NULL, rocketnet_malloc( NULL, 8 ) );
+        _Exit( 0 );
+    }
+    int status = 0;
+    check( rn_trap_wait_child( pid, &status ) == pid );
+    check( WIFEXITED( status ) && WEXITSTATUS( status ) == 1 );
 #endif // #if !defined(_WIN32)
 }
 
