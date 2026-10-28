@@ -33,14 +33,14 @@
 # guest boots from a throwaway qcow2 overlay, so the cached image is never
 # written. The teardown step always runs and stops the guest.
 #
-# Guest memory: 16 GiB. A server of 1000 slots plans its memory up front, and
-# its largest single block is about 11.3 GiB (12119216128 bytes, traced on
-# test_server_stats_current_every_update; almost none of it is touched). The
-# stock kernel's heuristic overcommit (vm.overcommit_memory=0, unchanged
-# here) refuses one block larger than RAM plus swap, and the cloud images
-# have no swap, so an 8 GiB guest refuses the create. 16 GiB is the
-# smallest power of two above that block. The host backs only the pages the
-# guest touches.
+# Guest memory: 24 GiB. A server plans its memory up front, and the suites'
+# largest single blocks are about 17.4 GiB (18731433984 bytes, a 1000-slot
+# message server; traced with strace over ./bin/test and ./bin/functional,
+# 2026-10-28). Almost none of a block is touched. The stock kernel's
+# heuristic overcommit (vm.overcommit_memory=0, left as it is) refuses one
+# block larger than RAM plus swap, and the cloud images have no swap, so an
+# 8 or 16 GiB guest refuses those creates. 24 GiB clears the largest block
+# with room. The host backs only the pages the guest touches.
 #
 # Guest settings: net.core.rmem_max and wmem_max are raised to 4 MiB, the
 # ceiling the fleet hosts that run the native suite grant (the same setting
@@ -205,12 +205,12 @@ jobs:
           [ "$CPUS" -ge 2 ] || CPUS=2
           PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
           echo "$PORT" > "$WORK/port"
-          echo "guest ssh port ${PORT}, ${CPUS} vcpus, 16 GiB"
+          echo "guest ssh port ${PORT}, ${CPUS} vcpus, 24 GiB"
           : > "$WORK/serial.log"
           qemu-system-x86_64 \
             -machine q35,accel=kvm \
             -cpu host \
-            -m 16384 \
+            -m 24576 \
             -smp "$CPUS" \
             -display none \
             -daemonize \
