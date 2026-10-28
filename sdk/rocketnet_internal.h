@@ -687,4 +687,4 @@ int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_so
 void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
 void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_INTERNAL_H
+#endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

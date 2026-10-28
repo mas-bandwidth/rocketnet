@@ -179,4 +179,4 @@ bool rocketnet_server_gso_test_send_idle( struct rocketnet_server_gso_t * gso );
 bool rocketnet_server_gso_test_worker_handoff();
 #endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

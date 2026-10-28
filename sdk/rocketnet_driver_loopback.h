@@ -68,4 +68,4 @@ void rocketnet_loopback_test_send_contention( bool busy );
 void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, uint32_t * tail, uint32_t * capacity );
 #endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H
+#endif // ROCKETNET_SDK_ROCKETNET_DRIVER_LOOPBACK_H

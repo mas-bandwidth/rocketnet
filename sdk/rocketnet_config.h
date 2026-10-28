@@ -258,4 +258,4 @@ const int * rocketnet_server_transport_io_availability( int * num_available );
 
 const int * rocketnet_client_transport_io_availability( int * num_available );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONFIG_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONFIG_H

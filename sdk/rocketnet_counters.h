@@ -542,4 +542,4 @@ void rocketnet_counters_apply_prefilter( struct rocketnet_counters_t * counters,
 
 #include "rocketnet_internal.h"                  // rocketnet_counter_name lives in the forest header
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_COUNTERS_H
+#endif // ROCKETNET_SDK_ROCKETNET_COUNTERS_H

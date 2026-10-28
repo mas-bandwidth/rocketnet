@@ -2052,4 +2052,4 @@ void rocketnet_server_transport_accept_payload( struct rocketnet_server_transpor
 }
 #endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_LAYERS_H
+#endif // ROCKETNET_SDK_ROCKETNET_LAYERS_H

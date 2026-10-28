@@ -992,4 +992,4 @@ static inline const uint8_t * rocketnet_xdp_reply_mac( struct rocketnet_xdp_repl
     return NULL;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_FRAME_H

@@ -265,4 +265,4 @@ inline bool rocketnet_server_transport_io_has( const rocketnet_server_transport_
     return ( transport.operations->flags & flag ) != 0;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_DRIVER_H
+#endif // ROCKETNET_SDK_ROCKETNET_DRIVER_H

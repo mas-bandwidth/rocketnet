@@ -289,4 +289,4 @@ static inline int rocketnet_uring_gso_message(
 
 #endif // #ifdef IORING_RECV_MULTISHOT
 #endif // #if defined( __linux__ )
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_URING_CODEC_H
+#endif // ROCKETNET_SDK_ROCKETNET_URING_CODEC_H
