@@ -36,7 +36,7 @@ struct fake_dual_stack_kernel_t
 
 static int fake_reserve_ipv4( void * context, uint16_t port, uint16_t * reserved_port )
 {
-    fake_dual_stack_kernel_t * kernel = (fake_dual_stack_kernel_t*) context;
+    fake_dual_stack_kernel_t * kernel = (fake_dual_stack_kernel_t *) context;
     kernel->num_reserves++;
     if ( kernel->refuse_reservations )
         return -1;
@@ -55,7 +55,7 @@ static int fake_reserve_ipv4( void * context, uint16_t port, uint16_t * reserved
 
 static int fake_bind_ipv6( void * context, uint16_t port )
 {
-    fake_dual_stack_kernel_t * kernel = (fake_dual_stack_kernel_t*) context;
+    fake_dual_stack_kernel_t * kernel = (fake_dual_stack_kernel_t *) context;
     kernel->num_binds++;
     rocketnet_unit_check( port >= FAKE_FIRST_PORT && port < FAKE_FIRST_PORT + FAKE_NUM_PORTS );
     rocketnet_unit_check( kernel->reserved[port - FAKE_FIRST_PORT] );     // the reservation is held across the bind
@@ -69,7 +69,7 @@ static int fake_bind_ipv6( void * context, uint16_t port )
 
 static void fake_release_ipv4( void * context, int reservation )
 {
-    fake_dual_stack_kernel_t * kernel = (fake_dual_stack_kernel_t*) context;
+    fake_dual_stack_kernel_t * kernel = (fake_dual_stack_kernel_t *) context;
     rocketnet_unit_check( reservation >= 0 && reservation < FAKE_NUM_PORTS );
     rocketnet_unit_check( kernel->reserved[reservation] );
     kernel->reserved[reservation] = false;
@@ -79,7 +79,7 @@ static void fake_release_ipv4( void * context, int reservation )
 
 static void fake_ops( fake_dual_stack_kernel_t * kernel, rocketnet_platform_dual_stack_bind_ops_t * ops )
 {
-    memset( kernel, 0, sizeof(*kernel) );
+    memset( kernel, 0, sizeof( *kernel ) );
     ops->context = kernel;
     ops->reserve_ipv4 = fake_reserve_ipv4;
     ops->bind_ipv6 = fake_bind_ipv6;

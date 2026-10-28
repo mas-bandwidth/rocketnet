@@ -861,10 +861,10 @@ void rocketnet_test_darwin_dual_stack_bind_under_ipv6_pressure()
         held[i] = ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
         posix_check( held[i] >= 0 );
         sockaddr_in6 loopback;
-        memset( &loopback, 0, sizeof(loopback) );
+        memset( &loopback, 0, sizeof( loopback ) );
         loopback.sin6_family = AF_INET6;
         loopback.sin6_addr = in6addr_loopback;
-        posix_check( bind( held[i], (sockaddr*) &loopback, sizeof(loopback) ) == 0 );
+        posix_check( bind( held[i], (sockaddr *) &loopback, sizeof( loopback ) ) == 0 );
     }
     const int num_held = DARWIN_DUAL_STACK_HELD;
 
@@ -872,7 +872,7 @@ void rocketnet_test_darwin_dual_stack_bind_under_ipv6_pressure()
     for ( int i = 0; i < DARWIN_DUAL_STACK_CREATES; i++ )
     {
         rocketnet_address_t address;
-        memset( &address, 0, sizeof(address) );
+        memset( &address, 0, sizeof( address ) );
         address.type = ROCKETNET_ADDRESS_IPV6;
         rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_with_pump(
             NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 65536, 65536, "portable" );

@@ -455,11 +455,11 @@ struct rocketnet_platform_dual_stack_bind_ops_t
     /** @brief Passed to every call below. */
     void * context;
     /** @brief Reserves port in IPv4 (0 for any), writes the reserved port, and returns a handle of 0 or more, or -1. */
-    int (*reserve_ipv4)( void * context, uint16_t port, uint16_t * reserved_port );
+    int ( *reserve_ipv4 )( void * context, uint16_t port, uint16_t * reserved_port );
     /** @brief Binds the IPv6 socket to port: returns BIND_OK, BIND_IN_USE, or BIND_FAILED. */
-    int (*bind_ipv6)( void * context, uint16_t port );
+    int ( *bind_ipv6 )( void * context, uint16_t port );
     /** @brief Releases a reservation handle reserve_ipv4 returned. */
-    void (*release_ipv4)( void * context, int reservation );
+    void ( *release_ipv4 )( void * context, int reservation );
 };
 
 /**

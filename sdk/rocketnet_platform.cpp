@@ -3149,7 +3149,7 @@ struct rocketnet_platform_darwin_dual_stack_t
 
 static int rocketnet_platform_darwin_reserve_ipv4( void * context, uint16_t port, uint16_t * reserved_port )
 {
-    rocketnet_platform_darwin_dual_stack_t * dual_stack = (rocketnet_platform_darwin_dual_stack_t*) context;
+    rocketnet_platform_darwin_dual_stack_t * dual_stack = (rocketnet_platform_darwin_dual_stack_t *) context;
     const int reservation = ::socket( AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     if ( reservation < 0 )
     {
@@ -3157,13 +3157,13 @@ static int rocketnet_platform_darwin_reserve_ipv4( void * context, uint16_t port
         return -1;
     }
     sockaddr_in reservation_address;
-    memset( &reservation_address, 0, sizeof(reservation_address) );
+    memset( &reservation_address, 0, sizeof( reservation_address ) );
     reservation_address.sin_family = AF_INET;
     reservation_address.sin_addr.s_addr = INADDR_ANY;
     reservation_address.sin_port = rocketnet_platform_htons( port );
-    socklen_t reservation_length = sizeof(reservation_address);
-    if ( bind( reservation, (sockaddr*) &reservation_address, sizeof(reservation_address) ) < 0 ||
-         getsockname( reservation, (sockaddr*) &reservation_address, &reservation_length ) < 0 )
+    socklen_t reservation_length = sizeof( reservation_address );
+    if ( bind( reservation, (sockaddr *) &reservation_address, sizeof( reservation_address ) ) < 0 ||
+         getsockname( reservation, (sockaddr *) &reservation_address, &reservation_length ) < 0 )
     {
         dual_stack->error = errno;
         close( reservation );
@@ -3175,13 +3175,13 @@ static int rocketnet_platform_darwin_reserve_ipv4( void * context, uint16_t port
 
 static int rocketnet_platform_darwin_bind_ipv6( void * context, uint16_t port )
 {
-    rocketnet_platform_darwin_dual_stack_t * dual_stack = (rocketnet_platform_darwin_dual_stack_t*) context;
+    rocketnet_platform_darwin_dual_stack_t * dual_stack = (rocketnet_platform_darwin_dual_stack_t *) context;
     sockaddr_in6 socket_address;
     memset( &socket_address, 0, sizeof( sockaddr_in6 ) );
     socket_address.sin6_family = AF_INET6;
     socket_address.sin6_addr = in6addr_any;
     socket_address.sin6_port = rocketnet_platform_htons( port );
-    if ( bind( dual_stack->handle, (sockaddr*) &socket_address, sizeof( socket_address ) ) == 0 )
+    if ( bind( dual_stack->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) == 0 )
         return ROCKETNET_PLATFORM_DUAL_STACK_BIND_OK;
     dual_stack->error = errno;
     return errno == EADDRINUSE ? ROCKETNET_PLATFORM_DUAL_STACK_BIND_IN_USE : ROCKETNET_PLATFORM_DUAL_STACK_BIND_FAILED;
@@ -3338,11 +3338,11 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         socket_address.sin6_family = AF_INET6;
         for ( int i = 0; i < 8; ++i )
         {
-            ( (uint16_t*) &socket_address.sin6_addr ) [i] = rocketnet_platform_htons( address->data.ipv6[i] );
+            ( (uint16_t *) &socket_address.sin6_addr )[i] = rocketnet_platform_htons( address->data.ipv6[i] );
         }
         socket_address.sin6_port = rocketnet_platform_htons( address->port );
 
-        if ( bind( socket->handle, (sockaddr*) &socket_address, sizeof( socket_address ) ) < 0 )
+        if ( bind( socket->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 0 )
         {
             rocketnet_error( "failed to bind socket (ipv6): %s", strerror( errno ) );
             rocketnet_platform_socket_destroy( socket );
