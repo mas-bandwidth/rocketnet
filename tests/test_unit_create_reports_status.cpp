@@ -466,6 +466,12 @@ static void test_create_reports_status_out_of_memory()
     struct rocketnet_server_config_t server_config;
     create_status_dev_server_config( &server_config );
     server_config.max_clients = 4;
+    // the refusals are create's own, whatever the transport; create's one
+    // block holds the heap for the largest transport the list can grant, and
+    // this allocator writes every byte it hands out, so loopback keeps the
+    // block the case touches small
+    client_config.transport = "loopback";
+    server_config.transport = "loopback";
 
     // walk every allocation client create makes: each failure is
     // OUT_OF_MEMORY with nothing left allocated, then success

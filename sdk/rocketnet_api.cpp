@@ -2242,10 +2242,29 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
     server->owns_block = memory ? 0 : 1;
     server->block = base + rn_server_header_bytes;
     server->block_bytes = running_bytes;
+
+    // tla/RNInstanceHeap.tla Create: the one block from the installed
+    // allocator holds the heap every later allocation comes from. A heap tlsf
+    // cannot hold in one pool is refused here, so a start never falls back
+    // to the installed allocator
+
     server->heap = rocketnet_heap_create( base + heap_offset, heap_bytes );
-    rocketnet_assert( server->heap );
 
     sodium_memzero( &transport, sizeof( transport ) );
+
+    if ( !server->heap )
+    {
+        rocketnet_error( "server create refused: a %llu byte heap is past the allocator's pool limit", (unsigned long long) heap_bytes );
+
+        sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
+        if ( !memory )
+            rocketnet_free( context, base );
+
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+
+        return NULL;
+    }
 
     return server;
 }
@@ -2479,14 +2498,18 @@ void rocketnet_server_destroy( struct rocketnet_server_t * server )
 
     rn_server_finish_stop( server );
 
-    // every allocation went back to the heap with its transport: a live one
-    // is a leak, refused like the library's own at rocketnet_term
+    // every allocation went back to the heap with its transport
+    // (tla/RNInstanceHeap.tla Destroy, NothingLiveAtFree). One still live is
+    // one a transport kept on purpose, a buffer the kernel may yet write, so
+    // the block it lives in is kept, not freed, with its secret wiped, and
+    // rocketnet_term reports it as LIVE_ALLOCATIONS
 
     if ( rocketnet_heap_live_allocations( server->heap ) != 0 )
     {
-        rocketnet_error( "rocketnet_server_destroy: %llu allocations are still live in the server's heap", (unsigned long long) rocketnet_heap_live_allocations( server->heap ) );
+        rocketnet_error( "rocketnet_server_destroy: %llu allocations are still live in the server's heap; the server is kept, not freed", (unsigned long long) rocketnet_heap_live_allocations( server->heap ) );
 
-        rocketnet_assert( false );
+        sodium_memzero( server->transport.server_secret_key, sizeof( server->transport.server_secret_key ) );
+        return;
     }
 
     // the server's secret key is the header's one secret: it is wiped, and
