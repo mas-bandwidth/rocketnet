@@ -21,6 +21,17 @@ the bytes, the cookie and the handshake are `ClientConnection.tla`'s and
   on the caller's thread, joins it and frees both families' memory and the
   race block (`CallerJoin`, `CallerDestroy`).
 
+What the model leaves to the code, each guarded the same way: the I/O
+thread's sends through the ring path and the shutdown drain go through the
+race's send and send_batch, which check the commit as the caller's sends do;
+the caller's wake and send_failures reach the losing family only before
+its commit. A close the reading thread cannot finish (the Windows lifecycle
+tracker refusing a handle, an iocp drain with receives still posted) leaves
+those handles to destroy, which closes them on the caller's thread before
+it frees. A backend with no close operation keeps the losing socket open
+until destroy; every built-in backend that races has one (loopback never
+races).
+
 ## Properties
 
 | name | kind | meaning |

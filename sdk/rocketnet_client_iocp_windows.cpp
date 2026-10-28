@@ -465,14 +465,12 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
 }
 
 // tla/RNClientIocp.tla Close and the drain, then the port: every handle,
-// and no memory. The family race closes its losing family here, on the
-// reading thread (tla/RNClientRace.tla ReaderStep); destroy frees it later
-// on the caller's thread. A drain that does not finish keeps the port open,
-// and destroy drains again.
+// and no memory. A drain that does not finish within max_waits keeps the
+// port open, and destroy drains again.
 
-static bool rocketnet_client_iocp_close_handles( rocketnet_client_iocp_io_t * client )
+static bool rocketnet_client_iocp_close_handles( rocketnet_client_iocp_io_t * client, int max_waits, double wait_seconds )
 {
-    if ( !rocketnet_client_iocp_close( &client->core, ROCKETNET_CLIENT_IOCP_DRAIN_WAITS, ROCKETNET_CLIENT_IOCP_DRAIN_SECONDS ) )
+    if ( !rocketnet_client_iocp_close( &client->core, max_waits, wait_seconds ) )
         return false;
 
     if ( client->port )
@@ -484,9 +482,16 @@ static bool rocketnet_client_iocp_close_handles( rocketnet_client_iocp_io_t * cl
     return true;
 }
 
+// The family race closes its losing family here, on the reading thread
+// (tla/RNClientRace.tla ReaderStep): the socket closes and the receives it
+// aborted are taken as far as they have already completed, with no wait,
+// so the kept family's I/O never stalls behind the drain; the port stays
+// open until they all have, and destroy, on the caller's thread, drains
+// the rest within its bound and frees.
+
 static void rocketnet_client_iocp_close_operation( void * transport )
 {
-    rocketnet_client_iocp_close_handles( (rocketnet_client_iocp_io_t *) transport );
+    rocketnet_client_iocp_close_handles( (rocketnet_client_iocp_io_t *) transport, 0, 0.0 );
 }
 
 // RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the I/O thread is
@@ -501,7 +506,7 @@ static void rocketnet_client_iocp_destroy( void * transport )
 
     void * context = client->context;
 
-    if ( !rocketnet_client_iocp_close_handles( client ) )
+    if ( !rocketnet_client_iocp_close_handles( client, ROCKETNET_CLIENT_IOCP_DRAIN_WAITS, ROCKETNET_CLIENT_IOCP_DRAIN_SECONDS ) )
     {
         // the kernel may still write these buffers: leak them, never free
         rocketnet_error( "iocp client: %d posted receives did not complete after close; leaking the transport", client->core.num_posted );
