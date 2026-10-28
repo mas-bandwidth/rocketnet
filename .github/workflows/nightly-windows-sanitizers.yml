@@ -56,6 +56,9 @@ on:
   schedule:
     - cron: "10 7 * * *"
   workflow_dispatch:
+  # TEMPORARY: the first run of this branch (dispatch needs the file on the default branch); removed before merge
+  push:
+    branches: [nightly/windows-sanitizers]
 
 permissions:
   contents: read
@@ -69,7 +72,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg: [msvc-asan, clangcl-asan, appverif]
     concurrency:
       group: nightly-windows-sanitizers-${{ matrix.ref }}-${{ matrix.leg }}
