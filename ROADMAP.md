@@ -590,7 +590,7 @@ The last pass before v1.0.0: the library shrunk to the size and readability of n
 | Layer 3, platform (threads, mutexes, clocks, sockets): contracted, with far fewer preprocessor branches | ❌ | ❌ | ❌ |
 | Layer 4, transport protocol (token, cookie, handshake, keys, replay, acks, packets): contracted | ❌ | ❌ | ❌ |
 | Layer 5, message layer (reliability, ordering, fragmentation, receipts, receive queue): contracted | ❌ | ❌ | ❌ |
-| Layer 6, runtime transports: one seam, no separate driver layer, each transport as small as its platform allows | ❌ | ❌ | ❌ |
+| Layer 6, runtime transports: there is no driver; a driver is the transport. The sdk/rocketnet_driver* files and names are folded into the transports, each as small as its platform allows | ❌ | ❌ | ❌ |
 | Layer 7, public C API: contracted, with no change to rocketnet.h behaviour | ❌ | ❌ | ❌ |
 | Comments say what the code does, not why a review was satisfied | ❌ | ❌ | ❌ |
 | Tests and tools contracted alongside: library tests out of sdk/, no case kept only for a deleted mechanism | ❌ | ❌ | ❌ |

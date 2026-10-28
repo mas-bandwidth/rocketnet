@@ -490,7 +490,7 @@
     (:feature "Layer 3, platform (threads, mutexes, clocks, sockets): contracted, with far fewer preprocessor branches" :cells (n n n) :note "planned for the final deliverable; sdk/rocketnet_platform.cpp is 6,568 lines with 108 conditional blocks at f981340d")
     (:feature "Layer 4, transport protocol (token, cookie, handshake, keys, replay, acks, packets): contracted" :cells (n n n) :note "planned for the final deliverable")
     (:feature "Layer 5, message layer (reliability, ordering, fragmentation, receipts, receive queue): contracted" :cells (n n n) :note "planned for the final deliverable")
-    (:feature "Layer 6, runtime transports: one seam, no separate driver layer, each transport as small as its platform allows" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Layer 6, runtime transports: there is no driver; a driver is the transport. The sdk/rocketnet_driver* files and names are folded into the transports, each as small as its platform allows" :cells (n n n) :note "owner, 2026-10-28: \"I cut the concept of driver. A driver *is* the transport. There should be no driver.\" Six sdk/rocketnet_driver* files remain at f981340d")
     (:feature "Layer 7, public C API: contracted, with no change to rocketnet.h behaviour" :cells (n n n) :note "planned for the final deliverable")
     (:feature "Comments say what the code does, not why a review was satisfied" :cells (n n n) :note "planned for the final deliverable")
     (:feature "Tests and tools contracted alongside: library tests out of sdk/, no case kept only for a deleted mechanism" :cells (n n n) :note "planned for the final deliverable; sdk/rocketnet_tests.cpp is 16,426 lines at f981340d")
