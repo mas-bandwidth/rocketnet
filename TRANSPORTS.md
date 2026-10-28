@@ -825,11 +825,6 @@ Elsewhere, and with `--committed-only`, it checks only that every listed input
 exists, which needs no compiler.
 Neither check loads a program or attaches to a network interface.
 
-The Linux connection-type label is an IPv4 main-table heuristic. It does not
-model policy routing or multipath entries without a direct output-interface
-attribute, and may report the wired fallback for those configurations. This
-label does not choose the transport route or limit IPv6 endpoint support.
-
 ## Bounded server payload sends
 
 Unstaged server transports reserve at least one payload slot per configured

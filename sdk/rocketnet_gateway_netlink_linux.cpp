@@ -518,23 +518,16 @@ static int rocketnet_gateway_netlink_dump( uint16_t request_type, int family, ro
     return result;
 }
 
-struct rocketnet_gateway_netlink_route_query_t
-{
-    int family;
-    int interface_index;
-    uint8_t * gateway;
-};
-
 static int rocketnet_gateway_netlink_route_parse( const uint8_t * data, size_t bytes, uint32_t sequence, uint32_t port_id, void * context, int * error )
 {
-    const rocketnet_gateway_netlink_route_query_t * query = (const rocketnet_gateway_netlink_route_query_t *) context;
+    const rocketnet_gateway_netlink_route_context_t * query = (const rocketnet_gateway_netlink_route_context_t *) context;
     return rocketnet_gateway_netlink_parse_route( data, bytes, sequence, port_id, query->family, query->interface_index, query->gateway, error );
 }
 
 int rocketnet_gateway_netlink_route( int family, int interface_index, uint8_t * gateway, int * error )
 {
     rocketnet_assert( error );
-    rocketnet_gateway_netlink_route_query_t query = { family, interface_index, gateway };
+    rocketnet_gateway_netlink_route_context_t query = { family, interface_index, gateway };
     return rocketnet_gateway_netlink_dump( RTM_GETROUTE, family, rocketnet_gateway_netlink_route_parse, &query, error );
 }
 

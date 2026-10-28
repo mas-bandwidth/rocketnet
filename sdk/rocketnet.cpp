@@ -655,20 +655,6 @@ const char * rocketnet_platform_name( int platform_id )
     return "unknown";
 }
 
-const char * rocketnet_connection_name( int connection_type )
-{
-    switch ( connection_type )
-    {
-        case ROCKETNET_CONNECTION_TYPE_WIRED:    return "wired";
-        case ROCKETNET_CONNECTION_TYPE_WIFI:     return "wi-fi";
-        case ROCKETNET_CONNECTION_TYPE_CELLULAR: return "cellular";
-        default:
-            break;
-    }
-
-    return "unknown";
-}
-
 void * rocketnet_global_context = NULL;
 
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )

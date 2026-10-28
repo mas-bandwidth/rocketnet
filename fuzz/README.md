@@ -118,7 +118,7 @@ ASAN_OPTIONS=detect_leaks=0 ./bin/rocketnet_fuzz_session.exe \
 ```
 
 The link set is the replay drivers' one: `rocketnet_dev.lib` alone, since
-the platform source names `WS2_32`, `IPHLPAPI`, `Qwave` and `winmm` itself.
+the platform source names `WS2_32`, `Qwave` and `winmm` itself.
 LeakSanitizer does not exist on Windows (AddressSanitizer there has no leak
 checker), so the Windows leg runs with `detect_leaks=0` and leaks are
 checked on Linux. The nightly `fuzz-windows` job in

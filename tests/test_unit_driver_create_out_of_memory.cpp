@@ -17,15 +17,9 @@
 //     first of two candidates;
 //   * test_transport_create_client_ladder_stops_on_out_of_memory: the same for
 //     rocketnet_client_transport_create_ex;
-//   * test_platform_adapters_fetch_is_bounded: the buffer loop of the Windows
-//     connection-type query (rocketnet_platform_adapters_fetch,
-//     sdk/rocketnet_platform.cpp), over a fake query on every platform, asks
-//     the allocator no more than its bound when it refuses, and runs the
-//     query no more than its bound when the query keeps overflowing;
 //   * test_platform_init_survives_a_refusing_allocator: rocketnet_init_ex under an
 //     allocator that refuses its first TRANSPORT_OOM_GIVE_WAY requests completes,
-//     and platform init asks no more than the bound; on Windows this walks
-//     get_connection_type.
+//     and platform init asks the allocator for nothing.
 //
 // The socket transports (portable, msgx, gso, iocp) and the kernel-object
 // transports (xdp, io_uring, rio) open a socket or a kernel object in their
@@ -89,15 +83,12 @@ struct transport_oom_allocator_t
     int calls;
     int fail_at;
     int refuse_through;
-    size_t asked_bytes[2]; // the sizes of the last two requests, newest last
 };
 
 static void * transport_oom_allocate( void * context, size_t bytes )
 {
     transport_oom_allocator_t * state = (transport_oom_allocator_t *) context;
     const int call = ++state->calls;
-    state->asked_bytes[0] = state->asked_bytes[1];
-    state->asked_bytes[1] = bytes;
     if ( state->fail_at == call || call <= state->refuse_through )
         return NULL;
 
@@ -464,149 +455,15 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
 }
 #endif // #if ROCKETNET_DEV
 
-// ---- the connection-type buffer loop -----------------------------------------
-
-// rocketnet_platform_adapters_fetch, with its answers and its bound mirrored
-// from the ROCKETNET_PLATFORM_ADAPTERS_* names beside it (the overflow case
-// below counts the attempts, so a changed bound turns it red)
-enum
-{
-    TRANSPORT_OOM_ADAPTERS_OK,
-    TRANSPORT_OOM_ADAPTERS_OVERFLOW,
-    TRANSPORT_OOM_ADAPTERS_ERROR,
-};
-enum
-{
-    TRANSPORT_OOM_ADAPTERS_ATTEMPTS = 3
-};
-extern void * rocketnet_platform_adapters_fetch( void * context, unsigned long bytes, int ( *query )( void * buffer, unsigned long * bytes ) );
-
-// a refusing allocator gives way after this many refusals, so a loop with no
-// bound ends and its count is read, rather than hanging the suite
+// a refusing allocator gives way after this many refusals, rather than hanging
+// the suite
 enum
 {
     TRANSPORT_OOM_GIVE_WAY = 64
 };
 
-// the fake query: the scripted answer, with the size it asks for on overflow.
-// The fetch never passes a NULL buffer; if it did, the fake answers overflow,
-// as GetAdaptersAddresses answers a NULL buffer, so a fetch with its NULL
-// check removed loops until the allocator gives way and the count is read
-static int transport_oom_query_calls = 0;
-static int transport_oom_query_answer = TRANSPORT_OOM_ADAPTERS_OK;
-static int transport_oom_query_overflows = 0;
-static unsigned long transport_oom_query_needs = 0;
-
-static int transport_oom_query( void * buffer, unsigned long * bytes )
-{
-    ++transport_oom_query_calls;
-
-    if ( !buffer || transport_oom_query_overflows > 0 )
-    {
-        if ( buffer )
-        {
-            --transport_oom_query_overflows;
-        }
-        *bytes = transport_oom_query_needs;
-        return TRANSPORT_OOM_ADAPTERS_OVERFLOW;
-    }
-
-    return transport_oom_query_answer;
-}
-
-static void transport_oom_query_script( int answer, int overflows, unsigned long needs )
-{
-    transport_oom_query_calls = 0;
-    transport_oom_query_answer = answer;
-    transport_oom_query_overflows = overflows;
-    transport_oom_query_needs = needs;
-}
-
-static void test_platform_adapters_fetch_is_bounded()
-{
-    transport_oom_allocator_t state;
-    transport_oom_begin( &state );
-
-    // an allocator that refuses: the fetch ends at the first refusal, with
-    // nothing live and the query never run
-    {
-        transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_OK, 0, 15000 );
-
-        const int before = state.calls;
-        state.refuse_through = before + TRANSPORT_OOM_GIVE_WAY;
-
-        void * buffer = rocketnet_platform_adapters_fetch( &state, 15000, transport_oom_query );
-        const int asked = state.calls - before;
-        state.refuse_through = 0;
-        if ( asked != 1 )
-        {
-            printf( "test_platform_adapters_fetch_is_bounded: a refusing allocator was asked %d times (one expected, bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
-        }
-        check( asked == 1 );
-        if ( buffer )
-        {
-            rocketnet_free( &state, buffer );
-        }
-        check( buffer == NULL );
-        check( transport_oom_query_calls == 0 );
-        check( state.live == 0 );
-    }
-
-    // a query that keeps overflowing: the bound ends the retry, every
-    // buffer freed
-    {
-        transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_OK, TRANSPORT_OOM_GIVE_WAY, 256 );
-
-        const int before = state.calls;
-        void * buffer = rocketnet_platform_adapters_fetch( &state, 128, transport_oom_query );
-        if ( buffer )
-        {
-            rocketnet_free( &state, buffer );
-        }
-        check( buffer == NULL );
-        check( transport_oom_query_calls == TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
-        check( state.calls - before == TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
-        check( state.live == 0 );
-    }
-
-    // one overflow, then success at the size the query asked for
-    {
-        transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_OK, 1, 256 );
-
-        void * buffer = rocketnet_platform_adapters_fetch( &state, 128, transport_oom_query );
-        check( buffer != NULL );
-        check( transport_oom_query_calls == 2 );
-        check( state.live == 1 );
-
-        // the retry asks for the size the query named: 128 more bytes than the
-        // first attempt, whatever overhead rocketnet_malloc adds to both
-
-        check( state.asked_bytes[1] - state.asked_bytes[0] == 256 - 128 );
-        memset( buffer, 0, 256 );
-        rocketnet_free( &state, buffer );
-        check( state.live == 0 );
-    }
-
-    // an error answer ends the fetch with nothing live
-    {
-        transport_oom_query_script( TRANSPORT_OOM_ADAPTERS_ERROR, 0, 128 );
-
-        void * buffer = rocketnet_platform_adapters_fetch( &state, 128, transport_oom_query );
-        check( buffer == NULL );
-        check( transport_oom_query_calls == 1 );
-        check( state.live == 0 );
-    }
-
-    transport_oom_end( &state );
-    printf( "test_platform_adapters_fetch_is_bounded\n" );
-}
-
 // platform init under an allocator that refuses every request (until it gives
-// way): init completes, and platform discovery asks no more than the bound. On
-// Windows the one allocator request in rocketnet_init_ex is the first attempt
-// of get_connection_type, made from rocketnet_platform_init, so the count is
-// exactly one and the connection type is unknown; elsewhere the case checks
-// the bound only.
+// way): init completes, and platform discovery asks for nothing.
 
 static void test_platform_init_survives_a_refusing_allocator()
 {
@@ -621,15 +478,7 @@ static void test_platform_init_survives_a_refusing_allocator()
     state.refuse_through = 0;
     check( initialized );
     check( status == ROCKETNET_STATUS_OK );
-    if ( asked > TRANSPORT_OOM_ADAPTERS_ATTEMPTS )
-    {
-        printf( "test_platform_init_survives_a_refusing_allocator: platform init asked a refusing allocator %d times (bound %d)\n", asked, TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
-    }
-    check( asked <= TRANSPORT_OOM_ADAPTERS_ATTEMPTS );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    check( asked == 1 );
-    check( rocketnet_platform_connection_type() == ROCKETNET_CONNECTION_TYPE_UNKNOWN );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    check( asked == 0 );
     transport_oom_end( &state );
     printf( "test_platform_init_survives_a_refusing_allocator\n" );
 }
@@ -639,5 +488,4 @@ REGISTER_UNIT_TEST( test_transport_open_reports_out_of_memory );
 REGISTER_UNIT_TEST( test_transport_create_server_ladder_stops_on_out_of_memory );
 REGISTER_UNIT_TEST( test_transport_create_client_ladder_stops_on_out_of_memory );
 #endif // #if ROCKETNET_DEV
-REGISTER_UNIT_TEST( test_platform_adapters_fetch_is_bounded );
 REGISTER_UNIT_TEST( test_platform_init_survives_a_refusing_allocator );

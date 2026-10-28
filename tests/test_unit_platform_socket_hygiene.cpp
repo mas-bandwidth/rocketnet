@@ -31,29 +31,10 @@
 #include <arpa/inet.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-#include <CoreFoundation/CoreFoundation.h>
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-
 static void test_platform_id_is_the_build_platform()
 {
     rocketnet_unit_check( rocketnet_platform_id() == ROCKETNET_PLATFORM );
 }
-
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-static void test_platform_mac_primary_interface_refuses_null()
-{
-    const int number_value = 1;
-    CFNumberRef number = CFNumberCreate( kCFAllocatorDefault, kCFNumberIntType, &number_value );
-    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( NULL, CFSTR( "en0" ) ) );
-    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), NULL ) );
-    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( number, CFSTR( "en0" ) ) );
-    rocketnet_unit_check( !rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), number ) );
-    rocketnet_unit_check( rocketnet_platform_mac_primary_interface_matches( CFSTR( "en0" ), CFSTR( "en0" ) ) );
-
-    CFRelease( number );
-}
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 static void test_platform_socket_hygiene_mapped_source_decision()
 {
@@ -74,7 +55,7 @@ static void test_platform_socket_hygiene_mapped_source_decision()
     struct rocketnet_address_t refused = mapped;
     rocketnet_unit_check( !rocketnet_address_accept_received_source( &refused, false ) );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     // on the receive path with a non-dual-stack socket:
     struct rocketnet_platform_socket_t s;
     memset( &s, 0, sizeof( s ) );
@@ -95,23 +76,7 @@ static void test_platform_socket_hygiene_mapped_source_decision()
     // With the fix, it calls rocketnet_address_accept_received_source and refuses it (accepted == false).
 
     rocketnet_unit_check( !accepted );
-#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
-    struct rocketnet_platform_socket_t s;
-    memset( &s, 0, sizeof( s ) );
-    s.ipv6 = false; // non-dual-stack
-
-    struct sockaddr_storage storage;
-    memset( &storage, 0, sizeof( storage ) );
-    struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) &storage;
-    in6->sin6_family = AF_INET6;
-    in6->sin6_port = htons( 40000 );
-    inet_pton( AF_INET6, "::ffff:1.2.3.4", &in6->sin6_addr );
-
-    struct rocketnet_address_t from;
-    memset( &from, 0, sizeof( from ) );
-    bool accepted = rocketnet_msgx_read_sockaddr( &s, &storage, &from );
-    rocketnet_unit_check( !accepted );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 }
 
 static void test_platform_socket_hygiene_timeout_timeval()
@@ -384,6 +349,3 @@ REGISTER_UNIT_TEST( test_platform_msgx_receive_weather_drain_is_bounded );
 REGISTER_UNIT_TEST( test_platform_single_receive_weather_drain_is_bounded );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_id_is_the_build_platform );
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-REGISTER_UNIT_TEST( test_platform_mac_primary_interface_refuses_null );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC

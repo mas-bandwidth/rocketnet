@@ -10,7 +10,6 @@
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "transport check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
-#include "route_checks.h"
 
 struct lifecycle_t
 {
@@ -307,10 +306,6 @@ int main()
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
-    test_route_prefixes();
-#if defined( __linux__ )
-    test_route_netlink();
-#endif // #if defined( __linux__ )
     test_transport_registry();
     test_transport_pin_only();
     test_transport_lifecycle();

@@ -15691,42 +15691,6 @@ void rocketnet_test_response_wrong_size_counted()
     rocketnet_test_server_teardown( &test );
 }
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-#include <errno.h>
-
-// a receive that always fails with EBADF; the probe must end and report the
-// route table was not read in full, not spin.
-static ssize_t rocketnet_test_fake_receive_error( int, struct msghdr *, int )
-{
-    errno = EBADF;
-    return -1;
-}
-
-// a receive that returns zero; same requirement
-static ssize_t rocketnet_test_fake_receive_empty( int, struct msghdr *, int )
-{
-    return 0;
-}
-
-void rocketnet_test_connection_type_probe_ends_on_receive_error()
-{
-    struct sockaddr_nl kernel;
-    memset( &kernel, 0, sizeof( kernel ) );
-
-    // a persistent receive error ends the probe with no full route table
-
-    rocketnet_check( rocketnet_platform_read_route_table( -1, &kernel, NULL,
-                                                          rocketnet_test_fake_receive_error ) == false );
-
-    // an empty receive ends the probe the same way
-
-    rocketnet_check( rocketnet_platform_read_route_table( -1, &kernel, NULL,
-                                                          rocketnet_test_fake_receive_empty ) == false );
-}
-
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
 // the whole-host estimate bounds the constructor plan: every component is a
 // request the transport makes (never a grant), the total is their sum, the total
 // covers required_memory, and an XDP estimate's UMEM is the plan's UMEM.
@@ -16086,7 +16050,6 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
 #if ROCKETNET_XDP
     { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
 #endif // #if ROCKETNET_XDP
-    { "test_connection_type_probe_ends_on_receive_error", rocketnet_test_connection_type_probe_ends_on_receive_error },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 };
 
