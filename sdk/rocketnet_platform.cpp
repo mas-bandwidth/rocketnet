@@ -5221,7 +5221,13 @@ struct rocketnet_platform_sleep_timer_t
     }
 };
 
-static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = { NULL, false };
+static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = {
+    NULL,
+    false,
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+    0,
+#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+};
 
 void rocketnet_platform_sleep( double time )
 {
