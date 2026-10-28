@@ -16,6 +16,8 @@ sockets, no network.
    refuses an empty reason and an incomplete campaign.
 """
 
+import contextlib
+import io
 import json
 import os
 import sys
@@ -138,7 +140,8 @@ class RecordAndRepinTests(unittest.TestCase):
                 "--instructions-exit", "1", "--baseline", base, "--history", hist_in,
                 "--out", hist_out, "--record-out", rec_out,
             ]
-            self.assertEqual(pt.main(args), 0)
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(pt.main(args), 0)
             with open(hist_out, encoding="utf-8") as f:
                 lines = [json.loads(x) for x in f if x.strip()]
             self.assertEqual(len(lines), 3)
