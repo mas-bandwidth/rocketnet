@@ -80,15 +80,21 @@ def parse_instructions(text: str) -> Dict[str, Any]:
 def parse_campaign(text: str) -> Dict[str, Any]:
     """
     Parse bench/run_all.sh run.txt. Returns {"rows": {row: {median,min,max}},
-    "host": str, "cores": str, "complete": bool}. Raises if the campaign did
-    not complete or produced no rows.
+    "host": str, "cores": str, "complete": bool, "refused": str}. A campaign
+    that refused (run_all.sh's own REFUSED line) is returned incomplete with
+    whatever rows it finished, so the night's instruction counts are still
+    recorded; the campaign step has already failed the night. Raises on a
+    malformed summary row, or a complete campaign with no rows.
     """
     rows: Dict[str, Dict[str, float]] = {}
     host = ""
     cores = ""
+    refused = ""
     complete = False
     for raw in text.splitlines():
         line = raw.strip()
+        if line.startswith("REFUSED:") and not refused:
+            refused = line
         if line.startswith("host "):
             host = line[len("host "):].strip()
         elif line.startswith("cores "):
@@ -101,11 +107,11 @@ def parse_campaign(text: str) -> Dict[str, Any]:
             if not (0 < low <= median <= high):
                 raise ValueError(f"inconsistent pps summary: {line!r}")
             rows[m.group(1)] = {"median": median, "min": low, "max": high}
-    if not complete:
-        raise ValueError("bench campaign did not complete (no 'campaign complete' line)")
-    if not rows:
-        raise ValueError("bench campaign produced no pps summary rows")
-    return {"rows": rows, "host": host, "cores": cores, "complete": complete}
+    if complete and not rows:
+        raise ValueError("bench campaign completed with no pps summary rows")
+    if not complete and not refused:
+        refused = "campaign did not complete (no 'campaign complete' line)"
+    return {"rows": rows, "host": host, "cores": cores, "complete": complete, "refused": refused}
 
 
 def compare_row(today: Dict[str, float], base: Optional[Dict[str, float]]) -> Tuple[str, Optional[float]]:
@@ -139,7 +145,13 @@ def build_record(
         "host": host,
         "ref": ref,
         "commit": commit,
-        "bench": {"cores": campaign["cores"], "uname": campaign["host"], "rows": campaign["rows"]},
+        "bench": {
+            "cores": campaign["cores"],
+            "uname": campaign["host"],
+            "complete": campaign["complete"],
+            "refused": campaign["refused"],
+            "rows": campaign["rows"],
+        },
     }
     if instructions is not None:
         record["instructions"] = {
@@ -177,6 +189,8 @@ def report(record: Dict[str, Any], baseline: Dict[str, Any], previous: Optional[
                 f"instructions region={region} ir={r['ir']} vs_baseline={r['delta_pct']:+.2f}%{nightly} verdict={r['verdict']} (gated, +2.0%)"
             )
 
+    if not record["bench"].get("complete", True):
+        lines.append(f"bench INCOMPLETE: {record['bench']['refused']}")
     base_rows = ((baseline.get(os_name) or {}).get("bench") or {})
     prev_rows = ((previous or {}).get("bench") or {}).get("rows", {})
     for row, today in sorted(record["bench"]["rows"].items()):
@@ -200,6 +214,8 @@ def repin(baseline: Dict[str, Any], record: Dict[str, Any], reason: str) -> Dict
     os_name = record.get("os")
     if os_name not in OS_NAMES:
         raise ValueError(f"record has unknown os {os_name!r}")
+    if not record["bench"].get("complete", False):
+        raise ValueError("refusing to repin from an incomplete campaign")
     out = dict(baseline)
     out[os_name] = {
         "host": record["host"],

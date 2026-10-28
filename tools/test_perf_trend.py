@@ -6,13 +6,14 @@ sockets, no network.
 1. The instruction report parses per region, and a not-comparable report is
    recorded as such rather than as missing regions.
 2. The campaign summary parses the matrix rows and ignores the honesty plants;
-   an incomplete campaign or a malformed row is refused.
+   a refused or truncated campaign is recorded incomplete (its instruction
+   counts are kept), and a malformed row is refused.
 3. A wall-clock row inside the baseline spread is tied; outside it is above or
    below the spread; with no baseline it says so. Nothing here fails.
 4. record appends to the history and reports the change since the previous
    night of the same OS.
 5. repin writes one OS's rows with its reason and keeps the other OS; it
-   refuses an empty reason.
+   refuses an empty reason and an incomplete campaign.
 """
 
 import json
@@ -67,9 +68,21 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(got["rows"]["bench_gso"]["median"], 3e6)
         self.assertEqual(got["cores"], "recv=15 send=14")
 
-    def test_campaign_incomplete_refused(self) -> None:
+    def test_campaign_refused_is_incomplete_not_lost(self) -> None:
+        text = CAMPAIGN.replace("campaign complete -- /tmp/x\n", "REFUSED: bench_uring control process failed; see x\n")
+        got = pt.parse_campaign(text)
+        self.assertFalse(got["complete"])
+        self.assertEqual(got["refused"], "REFUSED: bench_uring control process failed; see x")
+        self.assertEqual(sorted(got["rows"]), ["bench_gso", "bench_portable"])
+
+    def test_campaign_truncated_is_incomplete(self) -> None:
+        got = pt.parse_campaign(CAMPAIGN.replace("campaign complete -- /tmp/x\n", ""))
+        self.assertFalse(got["complete"])
+        self.assertIn("did not complete", got["refused"])
+
+    def test_campaign_complete_without_rows_refused(self) -> None:
         with self.assertRaises(ValueError):
-            pt.parse_campaign(CAMPAIGN.replace("campaign complete -- /tmp/x\n", ""))
+            pt.parse_campaign("campaign complete -- /tmp/x\n")
 
     def test_campaign_inconsistent_row_refused(self) -> None:
         with self.assertRaises(ValueError):
@@ -142,12 +155,17 @@ class RecordAndRepinTests(unittest.TestCase):
     def test_repin_keeps_other_os(self) -> None:
         record = {
             "os": "linux", "host": "h", "commit": "abc", "date": "d",
-            "bench": {"cores": "recv=15 send=14", "rows": {"bench_portable": {"median": 1.0, "min": 1.0, "max": 1.0}}},
+            "bench": {"cores": "recv=15 send=14", "complete": True, "rows": {"bench_portable": {"median": 1.0, "min": 1.0, "max": 1.0}}},
         }
         out = pt.repin({"linux": None, "macos": {"bench": {}}}, record, "first night")
         self.assertEqual(out["linux"]["reason"], "first night")
         self.assertEqual(out["linux"]["bench"]["bench_portable"]["median"], 1.0)
         self.assertEqual(out["macos"], {"bench": {}})
+
+    def test_repin_refuses_incomplete_campaign(self) -> None:
+        record = {"os": "linux", "bench": {"complete": False, "rows": {}}}
+        with self.assertRaises(ValueError):
+            pt.repin({}, record, "first night")
 
     def test_repin_refuses_empty_reason(self) -> None:
         with self.assertRaises(ValueError):
