@@ -473,7 +473,7 @@ Correctness work that follows v1.0.0-preview-1.
 
 [Source data](docs/roadmap.sexp)
 
-## Preview-2 known issues (deferred to preview-3)
+## Preview-2 known issues (carried into preview-3 where still open)
 
 Current limits accepted for the preview-2 cut. These rows describe preview-2; the historical preview-1 table below is retained only as history.
 
@@ -586,8 +586,9 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 | Reproducible vendored sources | ✅ | ❌ | ❌ |
 | An integrating application vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
 | Supported-platform policy | ❌ | — | — |
+| v1.0.0-preview-3 release candidate: shipping label, release notes and qualification record | ✅ | ✅ | ✅ |
 | Security disclosure and release process | ✅ | — | — |
 | Independent review of the connection layer repair diff, received | ❌ | — | — |
-| complete | 33% | 0% | 0% |
+| complete | 43% | 25% | 25% |
 
 [Source data](docs/roadmap.sexp)
