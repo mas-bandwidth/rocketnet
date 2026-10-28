@@ -329,11 +329,8 @@ pass.
 - **Tag commit reconciliation**: the merged `main` commit compared with the
   inputs recorded here, and the version, wire-change and tag checks run on it
   (RELEASING.md steps 5 and 7).
-- **Space vendor gate**: the integrating application re-vendored at the
-  release commit and the `space vendors the release` job passing on it
-  (RELEASING.md step 6). Not run.
-- **Space soak gate**: the `space builds and soaks on the release` job on the
-  same dispatch. Not run.
+- **Space vendor and space soak gates**: the release owner removed both gates
+  on 2026-10-28, so they are no longer release requirements.
 - **Windows suites at the candidate head `13b82655`**: the Windows unit and
   functional suites ran at the suite head `126ef062` and at the tag candidate
   `471b3fbc`, not at `13b82655`.
