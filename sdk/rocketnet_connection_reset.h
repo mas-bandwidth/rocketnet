@@ -182,4 +182,4 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
 
 #endif // #if ROCKETNET_DEV
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H

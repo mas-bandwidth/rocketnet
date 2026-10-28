@@ -263,7 +263,7 @@ jobs:
           rm -f "$timing_receipt"
           timing_python=python3
           command -v "$timing_python" >/dev/null 2>&1 || timing_python=python
-          timing_start_ns=$($timing_python -c 'import time; print(time.monotonic_ns())')
+          timing_start_ns=$($timing_python -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           if [[ ! "$timing_start_ns" =~ ^[0-9]+$ ]]; then
             echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"
             exit 1
@@ -396,7 +396,7 @@ jobs:
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
-        run: python3 tools/check_test_environment.py ./bin/test
+        run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }}
 
       # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
       # on the host at once: the check prints the limit, the per-server need
@@ -800,7 +800,7 @@ jobs:
           fi
           timing_python=python3
           command -v "$timing_python" >/dev/null 2>&1 || timing_python=python
-          timing_end_ns=$($timing_python -c 'import time; print(time.monotonic_ns())')
+          timing_end_ns=$($timing_python -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           if [[ ! "$timing_end_ns" =~ ^[0-9]+$ ]] || (( timing_end_ns <= timing_start_ns )); then
             echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_end"
             exit 1
@@ -886,7 +886,7 @@ jobs:
           GUEST
           timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
           rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
@@ -1117,7 +1117,7 @@ jobs:
 
       - name: Ambient config isolation and passing output
         if: matrix.leg == 'b'
-        run: python tools/check_test_environment.py ./bin/Release/test.exe
+        run: python tools/check_test_environment.py ./bin/Release/test.exe --production
 
       - name: "Functional: native driver contract"
         if: matrix.leg == 'b'
@@ -1394,7 +1394,7 @@ jobs:
           go vet ./...
           timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
           rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           go test -count=1 ./...
@@ -1408,7 +1408,7 @@ jobs:
           dotnet build Backend -c Release
           timing_receipt="$RUNNER_TEMP/rocketnet-unit-functional.start"
           rm -f "$timing_receipt"
-          timing_start_ns=$(python3 -c 'import time; print(time.monotonic_ns())')
+          timing_start_ns=$(python3 -c 'import time; print(time.clock_gettime_ns(time.CLOCK_MONOTONIC) if hasattr(time, "CLOCK_MONOTONIC") else time.monotonic_ns())')
           [[ "$timing_start_ns" =~ ^[0-9]+$ ]] || { echo "CI_UNIT_FUNCTIONAL_TIMING=FAIL reason=invalid_start"; exit 1; }
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
           dotnet run --project Tests -c Release

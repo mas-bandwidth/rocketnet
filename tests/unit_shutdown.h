@@ -151,4 +151,4 @@ static inline void rn_test_message_server_stop_and_destroy( struct rocketnet_mes
     rocketnet_message_server_destroy( message );
 }
 
-#endif // #ifndef ROCKETNET_TESTS_UNIT_SHUTDOWN_H
+#endif // ROCKETNET_TESTS_UNIT_SHUTDOWN_H

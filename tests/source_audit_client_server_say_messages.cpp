@@ -119,7 +119,7 @@ static const allowlist_row_t allowlist[] = {
 
     // FRAGMENT PACKING: how messages are packed into packets.
     { F_O, "rn_message_packet_build_t", "FRAGMENT PACKING" },
-    { F_O, "One open outgoing packet per connection", "FRAGMENT PACKING" },
+    { F_O, "one open outgoing packet per connection", "FRAGMENT PACKING" },
     { F_S, "rn_message_packet_build_t", "FRAGMENT PACKING" },
     { F_S, "whole-packet send cannot overtake", "FRAGMENT PACKING" },
     { F_O, "one record in one packet", "FRAGMENT PACKING" },
@@ -177,7 +177,7 @@ static const allowlist_row_t allowlist[] = {
     { F_O, "start_packet", "LINK CALLBACK TO THE TRANSPORT" },
     { F_O, "finish_packet", "LINK CALLBACK TO THE TRANSPORT" },
     { F_O, "abort_packet", "LINK CALLBACK TO THE TRANSPORT" },
-    { F_O, "(*send_packets)", "LINK CALLBACK TO THE TRANSPORT" },
+    { F_O, "( *send_packets )", "LINK CALLBACK TO THE TRANSPORT" },
 
     // PACKET BUILDER AND ENDPOINT PACKET PLANNING: assembles the packet the
     // transport sends and reads acks of packets the transport sent.

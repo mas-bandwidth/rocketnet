@@ -185,4 +185,4 @@ static inline int rocketnet_rio_context_index( uint64_t context )
     return (int) ( context & 0xFFFFFFFF );
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H
+#endif // ROCKETNET_SDK_ROCKETNET_RIO_LAYOUT_H

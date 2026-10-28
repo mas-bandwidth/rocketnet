@@ -911,10 +911,15 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
 #endif // #if !defined(CLOCK_MONOTONIC_RAW)
 
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+static bool connection_type_probed = false;
 
 static int get_connection_type();
 
 static double time_start;
+
+// The connection-type probe opens an AF_INET and a netlink socket, so init
+// leaves it to the first rocketnet_platform_connection_type call and opens no
+// socket itself.
 
 bool rocketnet_platform_init()
 {
@@ -925,13 +930,8 @@ bool rocketnet_platform_init()
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
-#if ROCKETNET_DEV
-    const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
-    if ( lookups )
-        connection_type = lookups->connection_type();
-    else
-#endif // #if ROCKETNET_DEV
-        connection_type = get_connection_type();
+    connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+    connection_type_probed = false;
     return true;
 }
 
@@ -970,6 +970,17 @@ int rocketnet_platform_id()
 
 int rocketnet_platform_connection_type()
 {
+    if ( !connection_type_probed )
+    {
+        connection_type_probed = true;
+#if ROCKETNET_DEV
+        const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
+        if ( lookups )
+            connection_type = lookups->connection_type();
+        else
+#endif // #if ROCKETNET_DEV
+            connection_type = get_connection_type();
+    }
     return connection_type;
 }
 
@@ -5221,7 +5232,13 @@ struct rocketnet_platform_sleep_timer_t
     }
 };
 
-static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = { NULL, false };
+static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = {
+    NULL,
+    false,
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+    0,
+#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+};
 
 void rocketnet_platform_sleep( double time )
 {

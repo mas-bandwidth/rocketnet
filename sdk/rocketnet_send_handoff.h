@@ -106,4 +106,4 @@ inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, 
     return index;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SEND_HANDOFF_H
+#endif // ROCKETNET_SDK_ROCKETNET_SEND_HANDOFF_H

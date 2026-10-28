@@ -1757,14 +1757,16 @@ static void rn_soak_reset( rn_soak_side_t * side )
 }
 
 // The soak's own copy of layer 6's flat FIFO: live descriptors of one channel
-// ordered by enqueue_ticket over the flat descriptor array.
+// ordered by enqueue_ticket over the flat descriptor array. A descriptor at
+// or past the lazy pool's watermark was never taken, so its bytes are not
+// state (tla/RNLazyPool.tla): the scan stops there, as layer 6's does.
 static void rn_soak_queue_sync( rn_region_t * region, uint32_t channel_index )
 {
     rn_channel_send_t * channel = &region->channel_send[channel_index];
     channel->queue_head = RN_DESCRIPTOR_NONE;
     channel->queue_tail = RN_DESCRIPTOR_NONE;
     uint32_t head_ticket = 0, tail_ticket = 0;
-    for ( uint32_t d = 0; d < region->queue; d++ )
+    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->channel != channel_index )

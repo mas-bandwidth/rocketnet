@@ -26,4 +26,4 @@ static inline bool rocketnet_xdp_free_list_push( uint64_t * frames, int * count,
     return true;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_FREE_LIST_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_FREE_LIST_H

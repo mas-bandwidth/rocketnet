@@ -259,7 +259,7 @@ inline void suite_case_rss_bound_overflow_abort( const char * name, int capacity
 
 struct suite_case_rss_bound_registrar_t
 {
-    suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() )
+    suite_case_rss_bound_registrar_t( const char * name, long ( *bound_mb )() ) noexcept
     {
         suite_case_rss_bound_add( suite_case_rss_bound_registry(), SUITE_CASE_RSS_BOUND_CAPACITY, name, bound_mb,
                                   suite_case_rss_bound_overflow_abort );

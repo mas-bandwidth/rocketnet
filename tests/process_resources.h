@@ -399,9 +399,22 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
 // [vdso] and [vsyscall] are left alone; a mapping the kernel refuses (no
 // read permission, for one) is skipped.
 
+// A shadow-memory sanitizer (tsan, asan, msan) reserves terabytes of private
+// mappings for its shadow; populating them faults the reservation in (111 GB
+// resident, then a SEGV in madvise, under the tsan soak), so a sanitized build
+// reports the touch as not available.
+
+#if defined( __SANITIZE_THREAD__ ) || defined( __SANITIZE_ADDRESS__ )
+#define PROCESS_RESOURCES_SANITIZER_SHADOW 1
+#elif defined( __has_feature )
+#if __has_feature( thread_sanitizer ) || __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
+#define PROCESS_RESOURCES_SANITIZER_SHADOW 1
+#endif // #if __has_feature( thread_sanitizer ) || __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
+#endif // #if defined( __SANITIZE_THREAD__ ) || defined( __SANITIZE_ADDRESS__ )
+
 static inline int64_t process_resources_touch_all( void )
 {
-#if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ )
+#if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ ) && !defined( PROCESS_RESOURCES_SANITIZER_SHADOW )
     FILE * file = fopen( "/proc/self/maps", "r" );
     if ( !file )
         return -1;

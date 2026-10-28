@@ -161,7 +161,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Lean CI configured, execution unqualified: authenticated token handling with test_token_time_refusals_are_distinct; signed requests refuse expiry and future creation and accept both boundaries | ❌ |
 | Lean CI configured, execution unqualified: sequence, ACK and replay with test_small_in_order_exactly_once_under_loss_and_reorder; bidirectional ACKs suppress replayed duplicates and drain exactly once | ❌ |
 | Lean CI configured, execution unqualified: reliable ordering and receipts with test_ordered_receipt_after_all_chunks; no receipt precedes every ordered chunk ACK | ❌ |
-| Lean CI configured, execution unqualified: timeout recovery with test_message_config_never_received_is_reliable_timeout; lost peer CONFIG disconnects both endpoints and tears down cleanly | ❌ |
+| Lean CI configured, execution unqualified: timeout recovery with test_message_config_never_received_is_reliable_timeout; lost CONFIG from the other side disconnects both endpoints and tears down cleanly | ❌ |
 | Lean CI configured, execution unqualified: resource-exhaustion recovery with test_transport_ring_exhaustion; portable send-ring refusal regains exact capacity and delivers fresh payload before shutdown; the functional target links the DEV library, so this proves portable behavior but not the production library | ❌ |
 | Lean CI configured, execution unqualified: disconnect and reconnect isolation with test_session_reconnect_isolation_portable; three portable socket generations isolate stale traffic through worker shutdown; the functional target links the DEV library, so this proves portable behavior but not the production library | ❌ |
 | Lean CI configured, execution unqualified: DEV=0 boundary with test_production_client_refuses_dev_connect_token; development key refusal, production key acceptance and destroy | ❌ |
@@ -229,6 +229,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnupdateclock (2 required) | planned for the final deliverable |
 | TLA+ model check: rnwrittenring (3 required) | planned for the final deliverable |
 | TLA+ model check: rngsohandoff (2 required) | planned for the final deliverable |
+| TLA+ model check: rnchannelqueues (2 required) | planned for the final deliverable |
 | CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | planned for the final deliverable |
 | Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |
 | Holistic review: six independent whole-system reviewers | planned for the final deliverable |

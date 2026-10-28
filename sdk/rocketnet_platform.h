@@ -1619,4 +1619,4 @@ bool rocketnet_platform_read_route_table(
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __cplusplus )
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PLATFORM_H
+#endif // ROCKETNET_SDK_ROCKETNET_PLATFORM_H

@@ -8,6 +8,47 @@ import check_test_environment as checker
 
 
 class RegisterNameTests(unittest.TestCase):
+    def _guards(self, source):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "test_unit_guards.cpp"
+            path.write_text(source)
+            return checker._register_guards(path)
+
+    def test_dev_and_production_twins_are_exclusive(self):
+        guards = self._guards("""\
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_twin );
+#else
+REGISTER_UNIT_TEST( test_other_twin );
+#endif
+#if !ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_twin );
+#endif
+#ifndef ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_other_twin );
+#endif
+""")
+        dev, production = guards[0][1], guards[2][1]
+        self.assertTrue(checker._guards_exclusive(dev, production))
+        else_branch, ifndef = guards[1][1], guards[3][1]
+        self.assertEqual(else_branch, frozenset([("ROCKETNET_DEV", False)]))
+        self.assertEqual(ifndef, frozenset([("defined ROCKETNET_DEV", False)]))
+
+    def test_repeat_under_compatible_or_opaque_guards_is_not_exclusive(self):
+        guards = self._guards("""\
+#if ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_repeat );
+#endif
+#if defined(__linux__) && ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_repeat );
+#elif ROCKETNET_DEV
+REGISTER_UNIT_TEST( test_repeat );
+#endif
+REGISTER_UNIT_TEST( test_repeat );
+""")
+        for _, guard in guards[1:]:
+            self.assertFalse(checker._guards_exclusive(guards[0][1], guard))
+
     def test_guarded_registration_is_conditional(self):
         source = """\
 #if defined(__linux__)

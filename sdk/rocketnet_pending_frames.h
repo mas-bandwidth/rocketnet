@@ -50,4 +50,4 @@ template <size_t Capacity> struct rocketnet_pending_frames_t
     }
 };
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H
+#endif // ROCKETNET_SDK_ROCKETNET_PENDING_FRAMES_H
