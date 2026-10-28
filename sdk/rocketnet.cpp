@@ -390,11 +390,17 @@ void rocketnet_default_free_function( void * context, void * p )
     free( p );
 }
 
-// The installed allocator pair, fixed while any allocation of it is live:
-// install publishes a whole pair with one release store, into the slot the
-// live pair is not in, and only with no allocation outstanding, so
-// rocketnet_malloc reads a matching allocate and release with one acquire
-// load and no lock (lens 14: the allocator needs no mutex).
+// The installed allocator pair, fixed while any allocation of it is live,
+// read by rocketnet_malloc with no lock (lens 14: the allocator needs no
+// mutex). Install closes the door first: it publishes the installing
+// sentinel, then reads the live count, all sequentially consistent with
+// rocketnet_malloc's count and load. Either install sees the call counted
+// and refuses with LIVE_ALLOCATIONS, putting the pair back, or the call
+// sees the sentinel, uncounts itself and tries again once the new pair is
+// published, whole, in the slot the old pair is not in. A call copies the
+// pair it read, so its allocate and the release its header keeps are one
+// pair's (tla/RNAllocatorInstall.tla: ReleasedThroughItsPair,
+// CountCoversCalls, InstallOnlyWhenIdle).
 
 struct rocketnet_allocator_pair_t
 {
@@ -406,6 +412,8 @@ static rocketnet_allocator_pair_t rocketnet_allocator_pairs[2] = {
     { rocketnet_default_malloc_function, rocketnet_default_free_function },
     { rocketnet_default_malloc_function, rocketnet_default_free_function },
 };
+
+static const rocketnet_allocator_pair_t rocketnet_allocator_installing = { NULL, NULL };
 
 static std::atomic<const rocketnet_allocator_pair_t *> rocketnet_allocator_pair{ &rocketnet_allocator_pairs[0] };
 
@@ -534,16 +542,25 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
 
     if ( rocketnet_initialized || rocketnet_transitioning )
         return ROCKETNET_STATUS_ALREADY_INITIALIZED;
-    const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_acquire );
+    const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
     if ( malloc_function == installed->allocate && free_function == installed->release )
         return ROCKETNET_STATUS_OK;
-    if ( rocketnet_allocations.load( std::memory_order_acquire ) != 0 )
+
+    // tla/RNAllocatorInstall.tla InstallBegin, InstallCheck and
+    // InstallPublish: the door closes, the count is read, then the pair
+    // goes back or the new one is published
+
+    rocketnet_allocator_pair.store( &rocketnet_allocator_installing, std::memory_order_seq_cst );
+    if ( rocketnet_allocations.load( std::memory_order_seq_cst ) != 0 )
+    {
+        rocketnet_allocator_pair.store( installed, std::memory_order_seq_cst );
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
+    }
 
     rocketnet_allocator_pair_t * next = &rocketnet_allocator_pairs[installed == &rocketnet_allocator_pairs[0] ? 1 : 0];
     next->allocate = malloc_function;
     next->release = free_function;
-    rocketnet_allocator_pair.store( next, std::memory_order_release );
+    rocketnet_allocator_pair.store( next, std::memory_order_seq_cst );
 
     return ROCKETNET_STATUS_OK;
 }
@@ -604,12 +621,26 @@ void * rocketnet_malloc( void * context, size_t bytes )
     }
 
     // the installed allocator: counted first, so install and term see the
-    // call in flight, then the pair read whole, with no lock
+    // call in flight, then the pair read and copied whole, with no lock; an
+    // install in progress is waited out uncounted (tla/RNAllocatorInstall.tla
+    // CallCount, CallRead, then CallAllocate)
 
-    rocketnet_allocations.fetch_add( 1, std::memory_order_acq_rel );
+    rocketnet_allocator_pair_t installed;
+    for ( ;; )
+    {
+        rocketnet_allocations.fetch_add( 1, std::memory_order_seq_cst );
 
-    const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_acquire );
-    void * base = installed->allocate( context, bytes + overhead );
+        const rocketnet_allocator_pair_t * pair = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
+        if ( pair != &rocketnet_allocator_installing )
+        {
+            installed = *pair;
+            break;
+        }
+
+        rocketnet_allocations.fetch_sub( 1, std::memory_order_seq_cst );
+    }
+
+    void * base = installed.allocate( context, bytes + overhead );
     if ( !base )
     {
         ++rocketnet_allocation_refusals_on_this_thread;
@@ -620,7 +651,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
 
     const uintptr_t aligned = ( (uintptr_t) base + overhead ) & ~(uintptr_t) ( alignment - 1 );
     auto * header = new ( (void *) ( aligned - sizeof( rocketnet_allocation_header_t ) ) )
-        rocketnet_allocation_header_t{ base, context, installed->release, false };
+        rocketnet_allocation_header_t{ base, context, installed.release, false };
     (void) header;
 
     return (void *) aligned;
@@ -647,6 +678,9 @@ void rocketnet_free( void * context, void * p )
         allocation.free_function( allocation.context, allocation.base );
         return;
     }
+
+    // tla/RNAllocatorInstall.tla CallFree: through the header's release,
+    // then uncounted
 
     allocation.free_function( allocation.context, allocation.base );
 
