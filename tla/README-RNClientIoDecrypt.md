@@ -6,7 +6,7 @@ buffer it fills, before `IoPublish`, with its own copy of the open key and its
 own replay window; `update` consumes the records in arrival order and keeps
 every counter, the integrity limit, the session state and `replay_session`.
 The code the design changes is in `sdk/rocketnet_client_protocol.cpp`:
-`rocketnet_client_open_session_packet` (the state check, the sequence
+`rocketnet_client_open_session` (the state check, the sequence
 reconstruction, `rocketnet_replay_already_received` on `replay_session`, the
 open with `rocketnet_open_sealed_packet`, `rocketnet_replay_advance` right
 after it), `rocketnet_client_integrity_failure` (the limit, the state change
@@ -219,7 +219,7 @@ runs it after the AEAD. TLC exits 12: **`Invariant CheapRefusalsFirst is violate
   too-old sequence ... before the AEAD", and The replay window and the
   receive order says an I/O thread that opened first would spend an AEAD on
   every replayed datagram. Today's order is the same:
-  `rocketnet_client_open_session_packet` calls
+  `rocketnet_client_open_session` calls
   `rocketnet_replay_already_received` before `rocketnet_open_sealed_packet`.
   With the rule, step 4's `IoCheck` gives the verdict replay and the copy
   never reaches `IoOpen`.

@@ -467,7 +467,7 @@ ClientRecvDeniedKeepsKeys(p) ==
     /\ UNCHANGED <<cookieVars, cKeys, cEph, cIndex, cSinceRecv, cSeen, cReasm>>
     /\ UNCHANGED <<cFam, clientRecvUnchanged>>
 
-\* rocketnet_client_open_session_packet then the per-type action: states 3
+\* rocketnet_client_open_session then the per-type action: states 3
 \* and 4, the session keys, the replay window; an accepted packet refreshes
 \* the timeout; a keep-alive in 3 sets the index and connects; a disconnect
 \* is state 0 immediately. A payload is accepted only in 4, as netcode.io's

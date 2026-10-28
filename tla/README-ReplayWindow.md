@@ -55,7 +55,7 @@ builder's floor is `largest - W + 1` (`sdk/rocketnet_ack.cpp`); the two agree.
 | `Connect` | `sdk/rocketnet_server_protocol.cpp` | the connection response opens and the mapping takes a slot; once |
 
 The client is the same pair on a window that is always connected
-(`rocketnet_client_open_session_packet` in `sdk/rocketnet_client_protocol.cpp`); `Receive` with `connected`
+(`rocketnet_client_open_session` in `sdk/rocketnet_client_protocol.cpp`); `Receive` with `connected`
 covers it. The model is `replay_session` only. The handshake window (`replay_handshake`)
 is the same struct, but handshake packets are exempt from replay marking and only raise
 its `highest_opened` (`rocketnet_server_process_sealed_packet` in `sdk/rocketnet_server_protocol.cpp`;

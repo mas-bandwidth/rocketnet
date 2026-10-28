@@ -8,7 +8,7 @@
 (* limit, the session state and replay_session.                            *)
 (*                                                                         *)
 (* The code the design changes: sdk/rocketnet_client_protocol.cpp,         *)
-(* rocketnet_client_open_session_packet (the state check, the sequence     *)
+(* rocketnet_client_open_session (the state check, the sequence     *)
 (* reconstruction, rocketnet_replay_already_received on replay_session,    *)
 (* the AEAD open, rocketnet_replay_advance right after it),                *)
 (* rocketnet_client_integrity_failure (the limit, the state change and the *)
