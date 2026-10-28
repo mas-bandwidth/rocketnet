@@ -32,37 +32,6 @@ void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const 
     rocketnet_write_bytes( p, packet_filter, ROCKETNET_FILTER_VALUE_BYTES );
 }
 
-// The keyed filter value, from STANDARD.md "The keyed filter value":
-// SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
-// packet length as a little-endian uint16, then the four bytes following the
-// prefilter header; the low 4 bytes of the 64-bit result, little-endian, are
-// the filter value.
-
-void rocketnet_keyed_filter_value( const uint8_t * magic,
-                                   uint8_t packet_type,
-                                   uint16_t packet_length,
-                                   const uint8_t * four_bytes,
-                                   uint8_t * out_filter_value )
-{
-    rocketnet_assert( magic );
-    rocketnet_assert( four_bytes );
-    rocketnet_assert( out_filter_value );
-
-    uint8_t input[7];
-    uint8_t * p = input;
-    rocketnet_write_uint8( &p, packet_type );
-    rocketnet_write_uint16( &p, packet_length );
-    rocketnet_write_bytes( &p, four_bytes, 4 );
-
-    uint8_t hash[8];
-    crypto_shorthash_siphash24( hash, input, sizeof( input ), magic );
-
-    out_filter_value[0] = hash[0];
-    out_filter_value[1] = hash[1];
-    out_filter_value[2] = hash[2];
-    out_filter_value[3] = hash[3];
-}
-
 // maps a refusal code to its counter, so both receive paths attribute the
 // reason identically and neither invents its own mapping
 

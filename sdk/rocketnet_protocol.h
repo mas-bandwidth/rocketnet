@@ -22,18 +22,6 @@
 
 void rocketnet_write_prefilter_header( uint8_t ** p, uint8_t packet_type, const uint8_t * packet_filter );
 
-// The keyed filter value, from STANDARD.md "The keyed filter value":
-// SipHash-2-4 under the 16-byte magic over the 7-byte input of packet type,
-// packet length as a little-endian uint16, then the four bytes following the
-// prefilter header; the low 4 bytes of the 64-bit result, little-endian, are
-// written to out_filter_value. Internal, not exported.
-
-void rocketnet_keyed_filter_value( const uint8_t * magic,
-                                   uint8_t packet_type,
-                                   uint16_t packet_length,
-                                   const uint8_t * four_bytes,
-                                   uint8_t * out_filter_value );
-
 // The prefilter structural check from the standard's reading order: the
 // packet is at least a prefilter header, no larger than the receive ceiling,
 // and carries this title's tag. Returns the packet type on success, -1 on

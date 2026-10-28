@@ -1056,6 +1056,13 @@ struct rocketnet_sealed_type_counters_t
     int wrong_opened_size;
 };
 
+// the established types count the same reasons; the handshake response counts fewer, so its row is spelled out
+#define ROCKETNET_SEALED_TYPE_COUNTERS( type ) \
+    { ROCKETNET_COUNTER_##type##_RECEIVED, ROCKETNET_COUNTER_##type##_WRONG_SIZE, ROCKETNET_COUNTER_##type##_NO_MAPPING, \
+      ROCKETNET_COUNTER_##type##_ZERO_SEQUENCE, ROCKETNET_COUNTER_##type##_ALREADY_RECEIVED, \
+      ROCKETNET_COUNTER_##type##_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_##type##_NOT_CONNECTED, ROCKETNET_COUNTER_##type##_BAD_ACK_BLOCK, \
+      ROCKETNET_COUNTER_##type##_WRONG_OPENED_SIZE }
+
 // The sealed types. known_mapping_index is the caller's lookup for this
 // address, or ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP. The packet opens into
 // opened (ROCKETNET_RECEIVE_CEILING bytes, the caller's): an accepted
@@ -1094,27 +1101,14 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         { ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED, ROCKETNET_COUNTER_CONNECTION_RESPONSE_WRONG_SIZE, ROCKETNET_COUNTER_CONNECTION_RESPONSE_NO_MAPPING,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_ZERO_SEQUENCE, -1,
           ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN, ROCKETNET_COUNTER_CONNECTION_RESPONSE_PADDING_NOT_ZERO, -1, -1, -1 },
-        { ROCKETNET_COUNTER_KEEP_ALIVE_RECEIVED, ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_SIZE, ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING,
-          ROCKETNET_COUNTER_KEEP_ALIVE_ZERO_SEQUENCE, ROCKETNET_COUNTER_KEEP_ALIVE_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_KEEP_ALIVE_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED, ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK,
-          ROCKETNET_COUNTER_KEEP_ALIVE_WRONG_OPENED_SIZE },
-        { ROCKETNET_COUNTER_PAYLOAD_RECEIVED, ROCKETNET_COUNTER_PAYLOAD_WRONG_SIZE, ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING,
-          ROCKETNET_COUNTER_PAYLOAD_ZERO_SEQUENCE, ROCKETNET_COUNTER_PAYLOAD_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_PAYLOAD_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED, ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK,
-          ROCKETNET_COUNTER_PAYLOAD_WRONG_OPENED_SIZE },
-        { ROCKETNET_COUNTER_DISCONNECT_RECEIVED, ROCKETNET_COUNTER_DISCONNECT_WRONG_SIZE, ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING,
-          ROCKETNET_COUNTER_DISCONNECT_ZERO_SEQUENCE, ROCKETNET_COUNTER_DISCONNECT_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_DISCONNECT_NOT_CONNECTED, ROCKETNET_COUNTER_DISCONNECT_BAD_ACK_BLOCK,
-          ROCKETNET_COUNTER_DISCONNECT_WRONG_OPENED_SIZE },
-        { ROCKETNET_COUNTER_ACK_RECEIVED, ROCKETNET_COUNTER_ACK_WRONG_SIZE, ROCKETNET_COUNTER_ACK_NO_MAPPING,
-          ROCKETNET_COUNTER_ACK_ZERO_SEQUENCE, ROCKETNET_COUNTER_ACK_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_ACK_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_ACK_NOT_CONNECTED, ROCKETNET_COUNTER_ACK_BAD_ACK_BLOCK,
-          ROCKETNET_COUNTER_ACK_WRONG_OPENED_SIZE },
-        { ROCKETNET_COUNTER_FRAGMENT_RECEIVED, ROCKETNET_COUNTER_FRAGMENT_WRONG_SIZE, ROCKETNET_COUNTER_FRAGMENT_NO_MAPPING,
-          ROCKETNET_COUNTER_FRAGMENT_ZERO_SEQUENCE, ROCKETNET_COUNTER_FRAGMENT_ALREADY_RECEIVED,
-          ROCKETNET_COUNTER_FRAGMENT_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_FRAGMENT_NOT_CONNECTED, ROCKETNET_COUNTER_FRAGMENT_BAD_ACK_BLOCK,
-          ROCKETNET_COUNTER_FRAGMENT_WRONG_OPENED_SIZE },
+        ROCKETNET_SEALED_TYPE_COUNTERS( KEEP_ALIVE ),
+        ROCKETNET_SEALED_TYPE_COUNTERS( PAYLOAD ),
+        ROCKETNET_SEALED_TYPE_COUNTERS( DISCONNECT ),
+        ROCKETNET_SEALED_TYPE_COUNTERS( ACK ),
+        ROCKETNET_SEALED_TYPE_COUNTERS( FRAGMENT ),
     };
+
+#undef ROCKETNET_SEALED_TYPE_COUNTERS
 
     const int table_index = packet_type == ROCKETNET_CONNECTION_ACK_PACKET ? 4 : packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET ? 5
                                                                                                                                      : packet_type - ROCKETNET_CONNECTION_RESPONSE_PACKET;
@@ -1722,22 +1716,13 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
     if ( !rocketnet_client_slots_connected( server->client_slots, client_index ) )
         return NULL;
 
-    // A connected slot USUALLY has a live mapping behind it, and must never be
-    // assumed to. rocketnet_client_slots_assign accepts -1 as a mapping index,
-    // so a connected slot without one is a state this API permits rather than
-    // an invariant violation -- and the only thing that stood here was an
-    // assert, which is absent from every shipping build. Release then indexed
-    // the mapping array at -1 and wrote eight bytes in front of it.
+    // rocketnet_client_slots_assign accepts -1 as a mapping index, so a connected
+    // slot without a mapping is a state the API permits, and an assert is absent from release
 
     int mapping_index = rocketnet_client_slots_mapping_index( server->client_slots, client_index );
     if ( mapping_index < 0 )
     {
-        // in the shipped protocol this cannot happen: the only production
-        // assignment passes an index that came from a live mapping. it is
-        // counted rather than merely handled because the consequence of a
-        // future regression producing it is a client that quietly stops
-        // receiving keep-alives and times out -- a silent failure needs a
-        // name, or the first person to hit it has nothing to look at.
+        // cannot happen in the shipped protocol; counted so a future regression is not silent
 
         rocketnet_server_protocol_note_missing_mapping( server );
         return NULL;
@@ -1928,16 +1913,11 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     // whether it has said so.
     //
     // UNTIL IT HAS, generation runs off the keep-alive's own clock and
-    // ordinary traffic does not suppress it. Reading last_send_time there is
-    // what let a continuous payload stream starve establishment forever
-    // (#90): every payload restamped the clock the repair was waiting on,
-    // and the loss walkthrough's recurrence guarantee became false. (That
-    // walkthrough then read "at most a send interval away"; this PR replaced
-    // the numeric bound, which the discrete check cannot support, with the
-    // recurrence the invariant actually needs.) The keep-alive is the only
-    // packet carrying the client index, and a client that lacks its index
-    // cannot re-provoke one, so this is the one repair that must not be
-    // suppressible.
+    // ordinary traffic does not suppress it: reading last_send_time here let
+    // a continuous payload stream starve establishment forever. The
+    // keep-alive is the only packet carrying the client index, and a client
+    // that lacks its index cannot re-provoke one, so this is the one repair
+    // that must not be suppressible.
     //
     // ONCE IT HAS, the client has claimed to hold its index and be
     // connected. If the claim is true nothing is waiting on a keep-alive,
