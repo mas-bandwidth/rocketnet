@@ -2747,8 +2747,6 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 #include <ws2tcpip.h>
 #include <ws2ipdef.h>
 #include <malloc.h>
-#include <wininet.h>
-#include <qos2.h>
 #include <mswsock.h>
 #include <stdlib.h>
 
@@ -2937,7 +2935,6 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result )
 #endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
 
 #pragma comment( lib, "WS2_32.lib" )
-#pragma comment( lib, "Qwave.lib" )
 
 #ifdef SetPort
 #undef SetPort
