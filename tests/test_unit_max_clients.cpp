@@ -40,12 +40,14 @@ static void test_max_clients_derived_limits()
     const int clients = ROCKETNET_MAX_CLIENTS;
 
     // the default config asks for 1000, or fewer when the build holds fewer
+
     rocketnet_server_config_t config;
     check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.max_clients == ( clients < 1000 ? clients : 1000 ) );
     check( ROCKETNET_DEFAULT_MAX_CLIENTS == config.max_clients );
 
     // the server-wide tables hold every client
+
     check( (int) ( sizeof( ( (rn_slots_t *) 0 )->connection_id ) / sizeof( uint64_t ) ) == clients );
     check( ROCKETNET_LOOPBACK_MAX_ENDPOINTS == clients + 1 );
     check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES >= clients );
@@ -59,6 +61,7 @@ static void test_max_clients_derived_limits()
 
     // the server-wide send staging holds two packets for every client, and
     // each receive side twice that
+
     check( ROCKETNET_SERVER_SEND_STAGING_PACKETS >= 2 * clients );
     check( ROCKETNET_LOOPBACK_QUEUE_PACKETS == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
     check( ROCKETNET_IOCP_SEND_QUEUE_SIZE == ROCKETNET_SERVER_SEND_STAGING_PACKETS );
@@ -67,14 +70,17 @@ static void test_max_clients_derived_limits()
     check( ROCKETNET_RIO_RECEIVES == 2 * ROCKETNET_SERVER_SEND_STAGING_PACKETS );
 
     // the per-queue rings: the most queues stage two packets for every client
+
     check( ROCKETNET_GSO_MAX_QUEUES * ROCKETNET_GSO_SEND_QUEUE_SIZE >= 2 * clients );
     check( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE_SIZE >= 2 * clients );
 
     // the reassembly budget scales at 512 MiB per 1000 clients
+
     check( ROCKETNET_REASSEMBLY_MEMORY_MIB >= 512 * ( ( clients + 999 ) / 1000 ) );
 
     // the default build is unchanged: these are the values every limit had
     // when ROCKETNET_MAX_CLIENTS was a fixed 1000
+
     if ( clients == 1000 )
     {
         check( ROCKETNET_SERVER_SEND_STAGING_PACKETS == 2048 );
@@ -97,6 +103,7 @@ REGISTER_UNIT_TEST( test_max_clients_derived_limits );
 // A light per-client config, so a server of ROCKETNET_MAX_CLIENTS slots stays
 // small enough for the unit suite (about 370 MB at 1000 clients, 3.7 GB at
 // 10000). The slot count is what the case is about, not the per-client depth.
+
 static void max_clients_server_config( rocketnet_server_config_t * config )
 {
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
@@ -131,6 +138,7 @@ SUITE_CASE_RSS_BOUND( test_server_create_at_max_clients, max_clients_server_rss_
 // The public API creates a server of every slot the build holds: create
 // plans and allocates the one block for ROCKETNET_MAX_CLIENTS clients and
 // opens no socket (start binds). One more client is refused.
+
 static void test_server_create_at_max_clients()
 {
     rocketnet_server_config_t config;
@@ -160,6 +168,7 @@ REGISTER_UNIT_TEST( test_server_create_at_max_clients );
 // the table. Removing the middle entry then shifts survivors across the end
 // through zero, and must not hide any later member; a stale generation handle
 // must not remove the replacement that reuses its client slot.
+
 static void test_client_slots_hostile_collision_and_stale_generation()
 {
     const int capacity = 32;
@@ -174,6 +183,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     uint64_t ids[collision_count];
     const uint64_t wanted = probe_bound - 12;
     check( rocketnet_client_slots_test_force_hash_index( slots, (int) wanted ) );
+
     for ( int i = 0; i < collision_count; ++i )
     {
         ids[i] = UINT64_C( 0x80000000A5A5A5A5 ) | ( (uint64_t) (uint32_t) i << 32 );
@@ -182,6 +192,7 @@ static void test_client_slots_hostile_collision_and_stale_generation()
 
     struct rocketnet_client_slot_handle_t handles[collision_count];
     const uint64_t probes_before = rocketnet_client_slots_test_total_probes( slots );
+
     for ( int i = 0; i < collision_count; ++i )
     {
         check( rocketnet_client_slots_assign( slots, ids[i], i, ids[i], user_data ) == i );
@@ -191,12 +202,14 @@ static void test_client_slots_hostile_collision_and_stale_generation()
         check( handles[i].client_id == ids[i] );
         check( handles[i].client_index == i );
     }
+
     for ( int i = 0; i < collision_count; ++i )
     {
         check( rocketnet_client_slots_find( slots, ids[i] ) == i );
         check( rocketnet_client_slots_test_last_probes( slots ) >= 1 );
         check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
     }
+
     check( rocketnet_client_slots_test_total_probes( slots ) > probes_before );
 
     const int middle = collision_count / 2;
@@ -206,7 +219,9 @@ static void test_client_slots_hostile_collision_and_stale_generation()
     check( rocketnet_client_slots_test_last_probes( slots ) <= probe_bound );
     check( rocketnet_client_slots_find( slots, ids[middle] ) == -1 );
     for ( int i = middle + 1; i < collision_count; ++i )
+    {
         check( rocketnet_client_slots_find( slots, ids[i] ) == i );
+    }
 
     const uint64_t replacement = UINT64_C( 0xF0000010A5A5A5A5 );
     check( rocketnet_client_slots_test_hash_index( slots, replacement ) == wanted );
@@ -217,18 +232,24 @@ static void test_client_slots_hostile_collision_and_stale_generation()
 
     // The stale release names the old full ID and generation. It is refused
     // without disturbing the replacement or any member behind it.
+
     check( !rocketnet_client_slots_release_handle( slots, &stale ) );
     check( rocketnet_client_slots_find( slots, replacement ) == middle );
     check( rocketnet_client_slots_mapping_index( slots, middle ) == 99 );
     check( memcmp( rocketnet_client_slots_user_data( slots, middle ), user_data, sizeof( user_data ) ) == 0 );
+
     for ( int i = 0; i < collision_count; ++i )
     {
         if ( i != middle )
+        {
             check( rocketnet_client_slots_find( slots, ids[i] ) == i );
+        }
     }
 
     for ( int i = 0; i < collision_count; ++i )
+    {
         check( rocketnet_client_slots_release_handle( slots, &handles[i] ) );
+    }
     check( rocketnet_client_slots_num_connected( slots ) == 0 );
     check( rocketnet_client_slots_num_free( slots ) == capacity );
     rocketnet_client_slots_destroy( slots );
@@ -242,6 +263,7 @@ REGISTER_UNIT_TEST( test_client_slots_hostile_collision_and_stale_generation );
 // remain ascending, identities which share their low 32 bits remain distinct,
 // the dense free stack stays LIFO, a full table refuses without mutation, and
 // repeated arbitrary reuse leaves every untouched identity reachable.
+
 static void test_client_slots_full_capacity_reuse_and_full_width_ids()
 {
     const int capacity = ROCKETNET_MAX_CLIENTS;
@@ -250,11 +272,13 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0x5A, sizeof( user_data ) );
+
     for ( int i = 0; i < capacity; ++i )
     {
         const uint64_t id = ( (uint64_t) (uint32_t) ( i + 1 ) << 32 ) | UINT64_C( 0xA5A5A5A5 );
         check( rocketnet_client_slots_assign( slots, id, i, id, user_data ) == i );
     }
+
     check( rocketnet_client_slots_num_connected( slots ) == capacity );
     check( rocketnet_client_slots_num_free( slots ) == 0 );
     check( rocketnet_client_slots_assign( slots, UINT64_MAX, -1, UINT64_MAX, user_data ) == -1 );
@@ -272,6 +296,7 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
         released[i] = ( capacity / 3 + i ) % capacity;
         rocketnet_client_slots_release( slots, released[i] );
     }
+
     check( rocketnet_client_slots_num_free( slots ) == released_count );
 
     for ( int i = 0; i < released_count; ++i )
@@ -281,6 +306,7 @@ static void test_client_slots_full_capacity_reuse_and_full_width_ids()
         check( rocketnet_client_slots_assign( slots, id, 10000 + i, id, user_data ) == expected );
         check( rocketnet_client_slots_find( slots, id ) == expected );
     }
+
     check( rocketnet_client_slots_num_connected( slots ) == capacity );
     check( rocketnet_client_slots_num_free( slots ) == 0 );
     rocketnet_client_slots_destroy( slots );

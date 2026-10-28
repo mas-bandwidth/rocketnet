@@ -26,6 +26,7 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
 // one client table for both names: the pump is the socket's, chosen at create
+
 static void test_msgx_client_shares_the_portable_client_table()
 {
     const rocketnet_transport_definition_t * msgx = rocketnet_transport_definition( ROCKETNET_TRANSPORT_MSGX );
@@ -37,6 +38,7 @@ static void test_msgx_client_shares_the_portable_client_table()
 
 // the table fills the client I/O thread's callbacks: the batches go through
 // the socket's pump seam, and the wait and the wake are the kqueue wake
+
 static void test_msgx_client_table_runs_the_io_thread()
 {
     const rocketnet_client_transport_io_operations_t * operations = rocketnet_transport_definition( ROCKETNET_TRANSPORT_MSGX )->backend->client;
@@ -48,11 +50,13 @@ static void test_msgx_client_table_runs_the_io_thread()
 
 // the client ladder on macOS: msgx (rank 10) above portable (rank 30), so an
 // unpinned client is the msgx client
+
 static void test_msgx_client_is_the_macos_auto_choice()
 {
     const rocketnet_transport_definition_t * msgx = rocketnet_transport_definition( ROCKETNET_TRANSPORT_MSGX );
     const rocketnet_transport_definition_t * portable = rocketnet_transport_definition( ROCKETNET_TRANSPORT_PORTABLE );
     check( msgx->client_preference > 0 && msgx->client_preference < portable->client_preference );
+
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
     check( num_available >= 2 );

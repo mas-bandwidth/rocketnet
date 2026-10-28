@@ -132,6 +132,7 @@ static const rocketnet_reset_member_t message_connection_hot_fields[] = {
 #define RESET_COUNT( array ) ( sizeof(array) / sizeof((array)[0]) )
 
 // one inventory field walk: a failure names <struct>.<member>
+
 static void reset_walk_passes( bool passed, const char * failure )
 {
     if ( !passed )
@@ -139,18 +140,21 @@ static void reset_walk_passes( bool passed, const char * failure )
         printf( "reset inventory: %s\n", failure );
         fflush( stdout );
     }
+
     check( passed );
 }
 
 // one RESET or KEEP comparison after a reset: a failure names <struct>.<member>
+
 static void reset_field_holds( const char * structure, const char * member, const char * decision,
                                const void * value, const void * expected, size_t bytes )
 {
-    // Two RESET members are reset by their state, never their bytes: the ack
+    // two RESET members are reset by their state, never their bytes: the ack
     // history's record rings by its written bits (its state compares through
     // rocketnet_ack_endpoint_state_equal), and the acked packet ids by
     // num_acked, which is compared as its own member; the ids' bytes are
-    // unreachable below a zero count and are not state.
+    // unreachable below a zero count and are not state
+
     bool holds;
     if ( strcmp( structure, "rocketnet_client_protocol_t" ) == 0 && strcmp( member, "ack" ) == 0 )
         holds = rocketnet_ack_endpoint_state_equal( (const rocketnet_ack_endpoint_t *) value, (const rocketnet_ack_endpoint_t *) expected );
@@ -158,11 +162,13 @@ static void reset_field_holds( const char * structure, const char * member, cons
         holds = true;
     else
         holds = memcmp( value, expected, bytes ) == 0;
+
     if ( !holds )
     {
         printf( "reset %s field %s.%s does not hold after the reset\n", decision, structure, member );
         fflush( stdout );
     }
+
     check( holds );
 }
 
@@ -175,8 +181,10 @@ static void test_connection_reset_inventory_covers_every_field()
                                                           client_protocol_fields, RESET_COUNT( client_protocol_fields ), 0,
                                                           sizeof( rocketnet_client_protocol_t ), alignof( rocketnet_client_protocol_t ), failure, sizeof( failure ) ),
                        failure );
+
     int reset_fields = 0;
     int keep_fields = 0;
+
     for ( size_t i = 0; i < RESET_COUNT( client_protocol_fields ); i++ )
     {
         if ( client_protocol_fields[i].reset )
@@ -184,6 +192,7 @@ static void test_connection_reset_inventory_covers_every_field()
         else
             keep_fields++;
     }
+
     check( reset_fields == 34 );
     check( keep_fields == 9 );
 
@@ -205,10 +214,12 @@ static void test_connection_reset_inventory_covers_every_field()
     reset_walk_passes( rocketnet_client_slots_inventory_matches_for_test( failure, sizeof( failure ) ), failure );
     reset_walk_passes( rocketnet_server_replay_marks_inventory_matches_for_test( failure, sizeof( failure ) ), failure );
 
-    // Poison every RESET decision, preserve every KEEP decision, and compare
-    // the result field-by-field with a freshly initialized protocol object.
+    // poison every RESET decision, preserve every KEEP decision, and compare
+    // the result field-by-field with a freshly initialized protocol object
+
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
+
     rocketnet_client_protocol_t value;
     rocketnet_client_protocol_init( &value, &counters );
     value.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
@@ -220,6 +231,7 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef POISON_KEEP
 #undef POISON_RESET
     value.state = ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED;
+
     const rocketnet_client_protocol_t before = value;
     rocketnet_client_connection_reset( &value );
 
@@ -236,15 +248,19 @@ static void test_connection_reset_inventory_covers_every_field()
     check( rocketnet_client_slots_reset_witness_for_test() );
     check( rocketnet_server_replay_marks_reset_witness_for_test() );
 
-    // A mapping removal and same-index reuse must reproduce its exact fresh
+    // a mapping removal and same-index reuse must reproduce its exact fresh
     // initializer for every mapping field, including the nonzero sequence and
-    // fragment seeds and the -1 client index.
+    // fragment seeds and the -1 client index
+
     rocketnet_encryption_map_t * map = rocketnet_encryption_map_create( NULL, 1 );
     check( map );
+
     rocketnet_address_t address;
     check( rocketnet_address_parse( &address, "198.51.100.90:4090" ) );
+
     const int mapping_index = rocketnet_encryption_map_add( map, &address, 1005.0 );
     check( mapping_index == 0 );
+
     rocketnet_encryption_mapping_t fresh_mapping = *rocketnet_encryption_map_entry( map, mapping_index );
     rocketnet_encryption_mapping_control_t fresh_control = *rocketnet_encryption_map_control( map, mapping_index );
 #define POISON_MAPPING_RESET( field ) memset( &rocketnet_encryption_map_entry( map, mapping_index )->field, 0xA5, sizeof(rocketnet_encryption_map_entry( map, mapping_index )->field) );
@@ -263,6 +279,7 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef POISON_CONTROL_RESET
     rocketnet_encryption_map_remove_current( map, mapping_index );
     check( rocketnet_encryption_map_add( map, &address, 1005.0 ) == mapping_index );
+
     rocketnet_encryption_mapping_t * reused_mapping = rocketnet_encryption_map_entry( map, mapping_index );
 #define CHECK_MAPPING_RESET( field ) reset_field_holds( "rocketnet_encryption_mapping_t", #field, "RESET", &reused_mapping->field, &fresh_mapping.field, sizeof(reused_mapping->field) );
 #define CHECK_MAPPING_KEEP( field )
@@ -285,11 +302,14 @@ static void test_connection_reset_inventory_covers_every_field()
     // to this internal test. Capture a fresh initializer over one region,
     // poison every RESET field, then require byte equality after the central
     // message reset while every KEEP byte and its allocation stays unchanged.
+
     rn_message_link_t link;
     memset( &link, 0, sizeof( link ) );
+
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
                                                              ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 1000.0 );
     check( object );
+
     rn_message_connection_t * connection = &object->connections[0];
     check( connection->hot == object->hot_connections );
 #define HOT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rn_message_connection_hot_t, field, -1 ),
@@ -310,8 +330,10 @@ static void test_connection_reset_inventory_covers_every_field()
                                                           sizeof( rn_message_connection_t ), alignof( rn_message_connection_t ), failure, sizeof( failure ) ),
                        failure );
     rocketnet_client_connection_reset( object );
+
     const rn_message_connection_t fresh_connection = *connection;
     const rn_endpoint_t & fresh_endpoint = fresh_connection;
+
     const rn_message_connection_hot_t fresh_hot = *connection->hot;
     connection->disconnect_reason = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
     memset( connection->hot->views, 0xA5, connection->region->delivery_entries );
@@ -361,7 +383,9 @@ static void test_connection_reset_inventory_covers_every_field()
 #undef CHECK_HOT_KEEP
 #undef CHECK_HOT_RESET
     for ( uint32_t i = 0; i < connection->region->delivery_entries; i++ )
+    {
         check( connection->hot->views[i] == 0 );
+    }
     check( connection->hot->receive_cursor == 0 );
     rn_message_object_destroy( object );
 }
@@ -377,12 +401,14 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
         LIVE = 8,
         CHURN = 4096
     };
+
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, CAPACITY );
     check( slots );
 
     // These identities deliberately agree in their low bits across 32-bit and
     // signed boundaries.  An index entry is identified by the complete id and
     // its current slot generation, never by a truncated key or bucket alone.
+
     const uint64_t initial[LIVE] = {
         UINT64_C( 0x0000000000000001 ),
         UINT64_C( 0x0000000100000001 ),
@@ -395,19 +421,23 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
     };
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0xA5, sizeof( user_data ) );
+
     int index[LIVE];
+
     for ( int i = 0; i < LIVE; ++i )
     {
         index[i] = rocketnet_client_slots_assign( slots, initial[i], 100 + i, initial[i], user_data );
         check( index[i] == i );
         check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
     }
+
     check( rocketnet_client_slots_num_connected( slots ) == LIVE );
     check( rocketnet_client_slots_num_free( slots ) == CAPACITY - LIVE );
 
     // Remove an interior set and insert replacements in the dense free
     // stack's LIFO order.  Deleting one open-addressed entry must not make a
     // later entry in the same probe cluster unreachable.
+
     rocketnet_client_slots_release( slots, index[2] );
     rocketnet_client_slots_release( slots, index[5] );
     check( rocketnet_client_slots_find( slots, initial[2] ) == -1 );
@@ -428,7 +458,9 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
     // stays absent, the replacement is exact, and the retained clients never
     // move or disappear.  Confirmation, mapping and user data are connection
     // state and must be reset/replaced on every reuse.
+
     uint64_t current = replacement_5;
+
     for ( uint64_t generation = 1; generation <= CHURN; ++generation )
     {
         rocketnet_client_slots_confirm( slots, index[5] );
@@ -438,6 +470,7 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
 
         uint8_t next_user_data[ROCKETNET_USER_DATA_BYTES];
         memset( next_user_data, (int) ( generation & 0xFF ), sizeof( next_user_data ) );
+
         const uint64_t next = ( generation << 32 ) | UINT64_C( 0xa5a50007 );
         check( rocketnet_client_slots_assign( slots, next, (int) generation, next, next_user_data ) == index[5] );
         check( rocketnet_client_slots_find( slots, next ) == index[5] );
@@ -446,12 +479,14 @@ static void test_connection_reset_client_slots_reuse_keeps_full_identity()
         check( !rocketnet_client_slots_confirmed( slots, index[5] ) );
         check( memcmp( rocketnet_client_slots_user_data( slots, index[5] ), next_user_data,
                        sizeof( next_user_data ) ) == 0 );
+
         for ( int i = 0; i < LIVE; ++i )
         {
             if ( i == 2 || i == 5 )
                 continue;
             check( rocketnet_client_slots_find( slots, initial[i] ) == index[i] );
         }
+
         check( rocketnet_client_slots_find( slots, replacement_2 ) == index[2] );
         check( rocketnet_client_slots_num_connected( slots ) == LIVE );
         current = next;
@@ -467,6 +502,7 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
 {
     rocketnet_client_slots_t * slots = rocketnet_client_slots_create( NULL, 1 );
     check( slots );
+
     uint8_t old_user_data[ROCKETNET_USER_DATA_BYTES];
     uint8_t new_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( old_user_data, 0x37, sizeof( old_user_data ) );
@@ -475,6 +511,7 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
     const uint64_t old_id = UINT64_C( 0x00000001ffffffff );
     const uint64_t new_id = UINT64_C( 0xffffffff00000001 );
     check( rocketnet_client_slots_assign( slots, old_id, 17, 1, old_user_data ) == 0 );
+
     rocketnet_client_slot_handle_t stale;
     check( rocketnet_client_slots_handle( slots, 0, &stale ) );
     check( stale.client_id == old_id );
@@ -482,6 +519,7 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
     check( rocketnet_client_slots_release_handle( slots, &stale ) );
 
     check( rocketnet_client_slots_assign( slots, new_id, 23, 2, new_user_data ) == 0 );
+
     rocketnet_client_slot_handle_t current;
     check( rocketnet_client_slots_handle( slots, 0, &current ) );
     check( current.client_id == new_id );
@@ -491,6 +529,7 @@ static void test_connection_reset_client_slots_stale_handle_cannot_release_reuse
     // The delayed release still names the same physical slot, but its full id
     // and generation belong to the prior occupant.  It must be a no-op: the
     // replacement remains findable with all of its connection state intact.
+
     check( !rocketnet_client_slots_release_handle( slots, &stale ) );
     check( rocketnet_client_slots_num_connected( slots ) == 1 );
     check( rocketnet_client_slots_find( slots, old_id ) == -1 );
@@ -523,11 +562,14 @@ static const reset_loopback_keys_t * reset_loopback_keys()
     {
         uint8_t seed[32];
         for ( int i = 0; i < 32; i++ )
+        {
             seed[i] = (uint8_t) ( 0x5A ^ i );
+        }
         check( rocketnet_generate_backend_keypair_from_seed( seed, keys.backend_public, keys.backend_secret ) == ROCKETNET_STATUS_OK );
         check( rocketnet_generate_server_keypair( keys.server_public, keys.server_secret ) == ROCKETNET_STATUS_OK );
         keys.initialized = 1;
     }
+
     return &keys;
 }
 
@@ -559,6 +601,7 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
     memcpy( config.server_public_key, keys->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof( config.server_secret_key ) );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+
     int status = -1;
 #if ROCKETNET_DEV
     reset_env_pin_t pin;
@@ -570,8 +613,10 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
 #endif // #if ROCKETNET_DEV
     check( transport && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
+
     rn_message_link_t link;
     rn_message_server_link( &link, transport );
+
     return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, RESET_LOOPBACK_MAX_CLIENTS,
                                                                     message_config, NULL, 0,
                                                                     ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
@@ -584,12 +629,14 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u",
               (unsigned) rocketnet_server_transport_port( rocketnet_message_server_transport( server ) ) );
+
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( keys->backend_secret, keys->server_public,
                                                      RESET_LOOPBACK_PROTOCOL_ID, addresses, 1,
                                                      client_id, 1000, 1030, 10, NULL,
                                                      token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
+
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
@@ -604,8 +651,10 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
     check( transport );
+
     rn_message_link_t link;
     rn_message_client_link( &link, transport );
+
     return (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, message_config, NULL, 0,
                                                                     ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
 }
@@ -619,7 +668,9 @@ static void reset_loopback_drain_client( rocketnet_message_client_t * client )
     const uint8_t * data = NULL;
     int bytes = 0;
     while ( rocketnet_message_client_receive( client, NULL, &data, &bytes ) )
+    {
         rocketnet_message_client_release( client, data );
+    }
 }
 
 static void reset_loopback_drain_server( rocketnet_message_server_t * server )
@@ -627,12 +678,15 @@ static void reset_loopback_drain_server( rocketnet_message_server_t * server )
     const uint8_t * data = NULL;
     int bytes = 0;
     while ( rocketnet_message_server_receive( server, NULL, NULL, &data, &bytes ) )
+    {
         rocketnet_message_server_release( server, data );
+    }
 }
 
 static void reset_loopback_step( reset_loopback_t * f )
 {
     f->now += 0.01;
+
     for ( int i = 0; i < RESET_LOOPBACK_MAX_CLIENTS; i++ )
     {
         if ( !f->clients[i] )
@@ -640,6 +694,7 @@ static void reset_loopback_step( reset_loopback_t * f )
         check( rocketnet_message_client_update( f->clients[i], f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f->clients[i] );
     }
+
     check( rocketnet_message_server_update( f->server, f->now ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_server_send_packets( f->server );
 }
@@ -648,9 +703,11 @@ static int reset_loopback_connect( reset_loopback_t * f, int which, uint64_t cli
                                    const rocketnet_message_config_t * message_config = NULL )
 {
     f->clients[which] = reset_loopback_client_create( f->server, client_id, message_config );
+
     for ( int i = 0; i < 400; i++ )
     {
         reset_loopback_step( f );
+
         if ( rocketnet_message_client_state( f->clients[which] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             const int slot = rocketnet_client_transport_client_index( rocketnet_message_client_transport( f->clients[which] ) );
@@ -659,7 +716,9 @@ static int reset_loopback_connect( reset_loopback_t * f, int which, uint64_t cli
                 return slot;
         }
     }
+
     check( false );
+
     return -1;
 }
 
@@ -677,6 +736,7 @@ static int reset_loopback_advance_client_to_state( reset_loopback_t * f, int whi
         check( rocketnet_message_server_update( f->server, f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f->server );
     }
+
     return 0;
 }
 
@@ -691,6 +751,7 @@ static void reset_loopback_wait_for_server_connection_state_clean( reset_loopbac
         check( rocketnet_message_server_update( f->server, f->now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f->server );
     }
+
     check( false );
 }
 
@@ -709,10 +770,12 @@ static void reset_loopback_slot_reuse_scenario()
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     const int a_slot = reset_loopback_connect( &f, 0, 0xA001 );
 
     uint8_t fragment[4096];
     memset( fragment, 0xA1, sizeof( fragment ) );
+
     const uint32_t a_receipt = rocketnet_message_client_send( f.clients[0], 0,
                                                               ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, fragment, sizeof( fragment ) );
     check( a_receipt != 0 );
@@ -735,9 +798,11 @@ static void reset_loopback_slot_reuse_scenario()
 
     rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
+
     const int b_slot = reset_loopback_connect( &f, 1, 0xB001 );
     check( b_slot == a_slot );
     check( rocketnet_message_server_disconnect_reason( f.server, b_slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+
     rocketnet_server_transport_client_stats_t b_stats;
     memset( &b_stats, 0, sizeof( b_stats ) );
     rocketnet_server_transport_client_stats( rocketnet_message_server_transport( f.server ), b_slot, &b_stats );
@@ -745,10 +810,12 @@ static void reset_loopback_slot_reuse_scenario()
     check( b_stats.packets_received != 0xA5A5A5A5A5A5A5A5ULL );
     check( b_stats.bytes_sent != 0xA5A5A5A5A5A5A5A5ULL );
     check( b_stats.bytes_received != 0xA5A5A5A5A5A5A5A5ULL );
+
     const uint8_t * stale = NULL;
     int stale_bytes = 0;
     check( !rocketnet_message_server_receive( f.server, NULL, NULL, &stale, &stale_bytes ) );
     check( !rocketnet_message_client_receive( f.clients[1], NULL, &stale, &stale_bytes ) );
+
     rocketnet_message_receipt_t stale_receipts[8];
     check( rocketnet_message_client_receipts( f.clients[1], stale_receipts, 8 ) == 0 );
 
@@ -764,6 +831,7 @@ static void reset_loopback_slot_reuse_scenario()
     for ( int i = 0; i < 400 && !( got_c2s && got_s2c && got_receipt ); i++ )
     {
         reset_loopback_step( &f );
+
         const uint8_t * data = NULL;
         int bytes = 0;
         int from = -1;
@@ -775,6 +843,7 @@ static void reset_loopback_slot_reuse_scenario()
             rocketnet_message_server_release( f.server, data );
             got_c2s = 1;
         }
+
         if ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
         {
             check( channel == 1 );
@@ -782,16 +851,21 @@ static void reset_loopback_slot_reuse_scenario()
             rocketnet_message_client_release( f.clients[1], data );
             got_s2c = 1;
         }
+
         rocketnet_message_receipt_t receipts[8];
         const int n = rocketnet_message_client_receipts( f.clients[1], receipts, 8 );
         check( n >= 0 && n <= 8 );
+
         for ( int r = 0; r < n; r++ )
         {
             check( receipts[r].serial == b_receipt );
             if ( receipts[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
+            {
                 got_receipt = 1;
+            }
         }
     }
+
     check( got_c2s && got_s2c && got_receipt );
     reset_loopback_destroy( &f );
 }
@@ -803,7 +877,9 @@ static int reset_key_nonzero( const uint8_t * key )
 {
     int nonzero = 0;
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+    {
         nonzero += key[i] != 0;
+    }
     return nonzero;
 }
 
@@ -811,7 +887,9 @@ static void reset_wipe_key( uint8_t * key )
 {
     volatile uint8_t * bytes = key;
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
+    {
         bytes[i] = 0;
+    }
 }
 
 static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slot()
@@ -833,6 +911,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     memcpy( server_config.server_public_key, keys->server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, keys->server_secret, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+
     int status = -1;
 #if ROCKETNET_DEV
     reset_env_pin_t pin;
@@ -847,41 +926,53 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
 
     rn_message_link_t server_link;
     rn_message_server_link( &server_link, transport );
+
     rocketnet_message_server_t * server = (rocketnet_message_server_t *) rn_message_object_create(
         NULL, &server_link, 1, DEFERRED_MAX_CLIENTS, NULL, NULL, 0,
         ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS, now );
     check( server );
 
     rocketnet_message_client_t * initial[DEFERRED_INITIAL_CLIENTS];
+
     for ( int i = 0; i < DEFERRED_INITIAL_CLIENTS; i++ )
     {
         initial[i] = reset_loopback_client_create( server, (uint64_t) 0xA100u + (uint64_t) (unsigned) i );
         check( initial[i] );
+
         int ticks = 0;
+
         while ( rocketnet_message_client_state( initial[i] ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
                 rocketnet_server_transport_num_connected_clients( transport ) < i + 1 )
         {
             now += 0.01;
             for ( int j = 0; j <= i; j++ )
+            {
                 rocketnet_message_client_update( initial[j], now );
+            }
             rocketnet_message_server_update( server, now );
             for ( int j = 0; j <= i; j++ )
+            {
                 rocketnet_message_client_send_packets( initial[j] );
+            }
             rocketnet_message_server_send_packets( server );
             ticks++;
             check( ticks < 200 );
         }
+
         check( rocketnet_message_server_client_connected( server, i ) );
     }
 
-    // Prepare replacement client B so its CONNECTION_RESPONSE datagram is
+    // prepare replacement client B so its CONNECTION_RESPONSE datagram is
     // already waiting in the server's loopback receive ring before the
     // single update that will both assign B to the reused slot and drain
-    // the deferred disconnect burst.
+    // the deferred disconnect burst
+
     rocketnet_message_client_t * replacement = reset_loopback_client_create( server, 0xB003 );
     check( replacement );
+
     rocketnet_client_transport_t * replacement_transport = rocketnet_message_client_transport( replacement );
     int handshake_ticks = 0;
+
     while ( rocketnet_client_transport_state( replacement_transport ) != ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
     {
         now += 0.01;
@@ -894,6 +985,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
         handshake_ticks++;
         check( handshake_ticks < 200 );
     }
+
     check( rocketnet_client_transport_state( replacement_transport ) == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
     now += 0.11;
     rocketnet_message_client_update( replacement, now );
@@ -909,12 +1001,14 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     rocketnet_server_transport_stats( transport, &server_before_disconnects );
     check( immediate_before.packets_sent >= 1 && immediate_before.bytes_sent > 0 );
     check( deferred_before.packets_sent >= 1 && deferred_before.bytes_sent > 0 );
+
     const uint64_t seals_before = rocketnet_server_transport_disconnect_seals_for_test( transport );
 
-    // Disconnect slots 0..5 within one update's 64-seal allowance (6 * 10 = 60
+    // disconnect slots 0..5 within one update's 64-seal allowance (6 * 10 = 60
     // immediate seals), then disconnect slot 6 with only 4 seals remaining so
     // slot 6's 10-packet disconnect burst is deferred while slot 6 is pushed to
-    // the top of the LIFO free stack.
+    // the top of the LIFO free stack
+
     for ( int i = 0; i < DEFERRED_INITIAL_CLIENTS; i++ )
     {
         rocketnet_server_transport_disconnect_client( transport, i );
@@ -928,6 +1022,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     // The one deferred burst copied its session key into the ring. The ring
     // head is not the reused client slot. The client-slot index of the key
     // array was never written.
+
     uint8_t populated_key[ROCKETNET_KEY_BYTES];
     uint8_t slot_key[ROCKETNET_KEY_BYTES];
     int burst_head = -1;
@@ -947,7 +1042,8 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     check( server_after_immediate.bytes_sent > server_before_disconnects.bytes_sent );
 
     // Empty-slot stats queries return zero for both immediately disconnected
-    // and deferred-disconnect slots.
+    // and deferred-disconnect slots
+
     rocketnet_server_transport_client_stats_t empty_immediate = {};
     rocketnet_server_transport_client_stats_t empty_deferred = {};
     rocketnet_server_transport_client_stats( transport, immediate_slot, &empty_immediate );
@@ -958,13 +1054,16 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     check( empty_deferred.packets_received == 0 && empty_deferred.bytes_received == 0 );
 
     for ( int i = 0; i < DEFERRED_INITIAL_CLIENTS; i++ )
+    {
         rn_test_message_client_stop_and_destroy( initial[i] );
+    }
 
-    // One server update first processes replacement client B's queued
+    // one server update first processes replacement client B's queued
     // CONNECTION_RESPONSE (assigning B to LIFO top slot 6, clearing slot 6's
     // per-client wire totals on assignment, and committing B's 1 establishing
     // keep-alive) and then drains ended client 6's 10 deferred disconnect
-    // frames in the same update.
+    // frames in the same update
+
     now += 0.01;
     rocketnet_message_server_update( server, now );
 
@@ -985,6 +1084,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     // mapping still had client_index == -1 before slot assignment). Reused
     // slot 6's per-client totals were cleared on assignment and include only
     // B's 1 establishing keep-alive.
+
     check( server_after_drain.packets_received - server_after_immediate.packets_received == (uint64_t) 1u );
     check( server_after_drain.bytes_received > server_after_immediate.bytes_received );
     check( server_after_drain.packets_sent - server_after_immediate.packets_sent ==
@@ -999,6 +1099,7 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     // Drain wipes the key at the ring head that held it, then advances the
     // head. The client slot's key entry stays empty: the wipe is not by
     // client index.
+
     uint8_t wiped_key[ROCKETNET_KEY_BYTES];
     int head_after = -1;
     int count_after = -1;
@@ -1025,17 +1126,21 @@ static void reset_loopback_other_slot_scenario()
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     const int a = reset_loopback_connect( &f, 0, 0xA002 );
     const int b = reset_loopback_connect( &f, 1, 0xB002 );
     check( a != b );
+
     const uint8_t payload[] = { 's', 'u', 'r', 'v', 'i', 'v', 'e' };
     check( rocketnet_message_client_send( f.clients[1], 2, ROCKETNET_RELIABILITY_RELIABLE_ORDERED,
                                           payload, sizeof( payload ) ) != 0 );
     rn_message_object_kick( &f.server->object, a, ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
+
     int delivered = 0;
     for ( int i = 0; i < 400 && !delivered; i++ )
     {
         reset_loopback_step( &f );
+
         const uint8_t * data = NULL;
         int bytes = 0;
         int from = -1;
@@ -1048,6 +1153,7 @@ static void reset_loopback_other_slot_scenario()
             delivered = 1;
         }
     }
+
     check( !rocketnet_message_server_client_connected( f.server, a ) );
     check( rocketnet_message_server_client_connected( f.server, b ) );
     check( delivered );
@@ -1081,18 +1187,22 @@ static int reset_server_assign( reset_server_fixture_t * f, const char * address
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, (int) client_id, sizeof( user_data ) );
     check( rocketnet_address_parse( &a, address ) );
+
     const int mapping_index = rocketnet_encryption_map_add( f->server.encryption_map, &a, 1005.0 );
     check( mapping_index >= 0 );
+
     const uint64_t owner_generation =
         rocketnet_encryption_map_owner_generation( f->server.encryption_map, mapping_index );
     const int slot = rocketnet_client_slots_assign( f->server.client_slots, client_id, mapping_index,
                                                     owner_generation, user_data );
     check( slot >= 0 );
+
     rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( f->server.encryption_map, mapping_index );
     mapping->control->client_index = slot;
     mapping->control->established = 1;
     mapping->send_sequence_session = 17;
     f->connection_ids[slot] = client_id + 100;
+
     return slot;
 }
 
@@ -1115,6 +1225,7 @@ static void reset_client_transport_clean( rocketnet_client_transport_t * transpo
         printf( "reset: %s\n", failure );
         fflush( stdout );
     }
+
     check( clean );
 }
 
@@ -1128,6 +1239,7 @@ static void reset_server_slot_clean( rocketnet_message_server_t * server, int cl
         printf( "reset: %s\n", failure );
         fflush( stdout );
     }
+
     check( clean );
 }
 
@@ -1135,6 +1247,7 @@ static void reset_server_slot_clean( rocketnet_message_server_t * server, int cl
 // transport's own timeout (rocketnet_server_protocol_update), not a message
 // layer kick. The slot is clean the moment the sweep ends it, and the next
 // client given that slot index connects and delivers both ways.
+
 static void reset_loopback_server_sweep_timeout_scenario()
 {
     reset_loopback_t f;
@@ -1142,10 +1255,12 @@ static void reset_loopback_server_sweep_timeout_scenario()
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     const int a_slot = reset_loopback_connect( &f, 0, 0xA003 );
     const uint8_t a_payload[] = { 'A', '-', 'i', 'd', 'l', 'e' };
     check( rocketnet_message_client_send( f.clients[0], 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, a_payload, sizeof( a_payload ) ) != 0 );
     check( rocketnet_message_server_send( f.server, a_slot, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, a_payload, sizeof( a_payload ) ) != 0 );
+
     for ( int i = 0; i < 40; i++ )
     {
         reset_loopback_step( &f );
@@ -1154,32 +1269,40 @@ static void reset_loopback_server_sweep_timeout_scenario()
     }
 
     // the client goes silent: only the server runs from here
+
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
     const uint64_t timed_out_before = rocketnet_server_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT];
+
     for ( int i = 0; i < 400 && rocketnet_server_transport_is_client_connected( transport, a_slot ); i++ )
     {
         f.now += 0.05;
         check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f.server );
     }
+
     check( !rocketnet_server_transport_is_client_connected( transport, a_slot ) );
     check( rocketnet_server_transport_counters( transport )->values[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timed_out_before + 1 );
     reset_server_slot_clean( f.server, a_slot );
 
     rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
+
     const int b_slot = reset_loopback_connect( &f, 1, 0xB003 );
     check( b_slot == a_slot );
+
     const uint8_t c2s[] = { 'B', '-', 'u', 'p' };
     const uint8_t s2c[] = { 'B', '-', 'd', 'n' };
     check( rocketnet_message_client_send( f.clients[1], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, c2s, sizeof( c2s ) ) != 0 );
     check( rocketnet_message_server_send( f.server, b_slot, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, s2c, sizeof( s2c ) ) != 0 );
+
     int got_c2s = 0, got_s2c = 0;
     for ( int i = 0; i < 400 && !( got_c2s && got_s2c ); i++ )
     {
         reset_loopback_step( &f );
+
         const uint8_t * data = NULL;
         int bytes = 0;
+
         {
             int from = -1;
             int channel = -1;
@@ -1190,6 +1313,7 @@ static void reset_loopback_server_sweep_timeout_scenario()
                 rocketnet_message_server_release( f.server, data );
                 got_c2s = 1;
             }
+
             if ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
             {
                 check( channel == 1 && bytes == (int) sizeof( s2c ) && memcmp( data, s2c, sizeof( s2c ) ) == 0 );
@@ -1198,6 +1322,7 @@ static void reset_loopback_server_sweep_timeout_scenario()
             }
         }
     }
+
     check( got_c2s && got_s2c );
     reset_loopback_destroy( &f );
 }
@@ -1212,9 +1337,11 @@ static void test_connection_reset_server_slot_reuse_is_clean()
 #endif // #if ROCKETNET_DEV
     reset_server_fixture_t f;
     reset_server_setup( &f );
+
     const int a = reset_server_assign( &f, "198.51.100.1:4000", 1 );
     const rocketnet_ack_endpoint_t fresh_ack = f.server.acks->endpoints[a];
     memset( &f.server.acks->endpoints[a], 0xA5, sizeof( f.server.acks->endpoints[a] ) );
+
     rocketnet_reassembly_slot_t fresh_slots[2];
     memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof( fresh_slots ) );
     memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof( fresh_slots ) );
@@ -1226,6 +1353,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     check( memcmp( f.server.reassembly->slots + a * f.server.reassembly->num_slots,
                    fresh_slots, sizeof( fresh_slots ) ) == 0 );
     check( f.server.reassembly->newest_completed[a] == 0 );
+
     const int b = reset_server_assign( &f, "198.51.100.2:4000", 2 );
     check( b == a );
     check( f.server.acks->endpoints[b].highest_sequence == 0 );
@@ -1238,6 +1366,7 @@ REGISTER_UNIT_TEST( test_connection_reset_server_slot_reuse_is_clean );
 // client slot was assigned. If that numeric mapping index has since been
 // reused, reset must release the stale client slot without removing or wiping
 // the replacement mapping.
+
 static void test_connection_reset_stale_mapping_owner_preserves_reuse()
 {
     reset_server_fixture_t f;
@@ -1250,19 +1379,24 @@ static void test_connection_reset_stale_mapping_owner_preserves_reuse()
 
     const int mapping_index = rocketnet_encryption_map_add( f.server.encryption_map, &old_address, 1005.0 );
     check( mapping_index >= 0 );
+
     const uint64_t old_generation =
         rocketnet_encryption_map_owner_generation( f.server.encryption_map, mapping_index );
     uint8_t slot_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( slot_user_data, 0x31, sizeof( slot_user_data ) );
+
     const int slot = rocketnet_client_slots_assign( f.server.client_slots, 91, mapping_index,
                                                     old_generation, slot_user_data );
     check( slot >= 0 );
 
     // Simulate a delayed owner: the old mapping leaves, but its slot reset has
     // not yet run. LIFO reuse gives the replacement the same numeric index.
+
     rocketnet_encryption_map_remove_current( f.server.encryption_map, mapping_index );
+
     const int replacement_index = rocketnet_encryption_map_add( f.server.encryption_map, &new_address, 1006.0 );
     check( replacement_index == mapping_index );
+
     const uint64_t replacement_generation =
         rocketnet_encryption_map_owner_generation( f.server.encryption_map, replacement_index );
     check( replacement_generation != old_generation );
@@ -1271,6 +1405,7 @@ static void test_connection_reset_stale_mapping_owner_preserves_reuse()
         rocketnet_encryption_map_entry( f.server.encryption_map, replacement_index );
     rocketnet_connection_keys_t expected_keys;
     memset( &expected_keys, 0xA7, sizeof( expected_keys ) );
+
     uint8_t expected_nonce[ROCKETNET_SESSION_NONCE_BYTES];
     uint8_t expected_user_data[ROCKETNET_USER_DATA_BYTES];
     memset( expected_nonce, 0xB8, sizeof( expected_nonce ) );
@@ -1324,12 +1459,14 @@ static void test_connection_reset_slot_clean_fails_closed_on_allocation_failure(
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     rocketnet_server_transport_t * transport = rocketnet_message_server_transport( f.server );
 
     char failure[256];
     reset_alloc_failure_armed = false;
     check( rocketnet_server_transport_slot_clean_for_test( transport, 0, failure, sizeof( failure ) ) );
     reset_alloc_failure_armed = true;
+
     const bool clean = rocketnet_server_transport_slot_clean_for_test( transport, 0, failure, sizeof( failure ) );
     reset_alloc_failure_armed = false;
     check( !clean );
@@ -1350,12 +1487,14 @@ static void test_connection_reset_server_reset_touches_only_its_slot()
 #endif // #if ROCKETNET_DEV
     reset_server_fixture_t f;
     reset_server_setup( &f );
+
     const int a = reset_server_assign( &f, "198.51.100.3:4000", 3 );
     const int b = reset_server_assign( &f, "198.51.100.4:4000", 4 );
     f.server.acks->endpoints[a].highest_sequence = 11;
     f.server.acks->endpoints[b].highest_sequence = 22;
     f.server.reassembly->newest_completed[a] = 33;
     f.server.reassembly->newest_completed[b] = 44;
+
     const uint64_t b_id = f.connection_ids[b];
     rocketnet_server_connection_reset( &f.server, a );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
@@ -1373,6 +1512,7 @@ REGISTER_UNIT_TEST( test_connection_reset_server_reset_touches_only_its_slot );
 // silent and only the client runs. The transport state a connection leaves
 // behind is marked first, so the reset on the transport's update path is the
 // only thing that can make it clean.
+
 static void reset_loopback_client_timeout_scenario()
 {
     reset_loopback_t f;
@@ -1382,15 +1522,20 @@ static void reset_loopback_client_timeout_scenario()
     check( f.server );
     reset_loopback_connect( &f, 0, 0xF001 );
     for ( int i = 0; i < 20; i++ )
+    {
         reset_loopback_step( &f );
+    }
+
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( f.clients[0] );
     rocketnet_client_transport_mark_connection_state_for_test( transport );
+
     for ( int i = 0; i < 400 && rocketnet_message_client_state( f.clients[0] ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
         f.now += 0.05;
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
     }
+
     check( rocketnet_message_client_state( f.clients[0] ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_TIMED_OUT );
     reset_client_transport_clean( transport );
     reset_loopback_destroy( &f );
@@ -1398,6 +1543,7 @@ static void reset_loopback_client_timeout_scenario()
 
 // The client's connection ends by a denial: both slots are taken, so the
 // server denies a third client mid-handshake.
+
 static void reset_loopback_client_denied_scenario()
 {
     reset_loopback_t f;
@@ -1407,16 +1553,20 @@ static void reset_loopback_client_denied_scenario()
     check( f.server );
     reset_loopback_connect( &f, 0, 0xF101 );
     reset_loopback_connect( &f, 1, 0xF102 );
+
     rocketnet_message_client_t * denied = reset_loopback_client_create( f.server, 0xF103 );
     check( denied );
+
     rocketnet_client_transport_t * transport = rocketnet_message_client_transport( denied );
     rocketnet_client_transport_mark_connection_state_for_test( transport );
+
     for ( int i = 0; i < 400 && rocketnet_message_client_state( denied ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED; i++ )
     {
         reset_loopback_step( &f );
         check( rocketnet_message_client_update( denied, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( denied );
     }
+
     check( rocketnet_message_client_state( denied ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED );
     reset_client_transport_clean( transport );
     rn_test_message_client_stop_and_destroy( denied );
@@ -1433,6 +1583,7 @@ static void test_connection_reset_client_disconnect_is_clean()
 #endif // #if ROCKETNET_DEV
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
+
     rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
     client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
@@ -1448,17 +1599,22 @@ static void test_connection_reset_client_disconnect_is_clean()
     client.replay_session.highest_opened = 100;
     client.ack.highest_sequence = 101;
     client.num_acked = 2;
+
     rocketnet_reassembly_slot_t fresh_slots[2];
     memcpy( fresh_slots, client.reassembly->slots, sizeof( fresh_slots ) );
     memset( client.reassembly->slots, 0xA5, sizeof( fresh_slots ) );
     client.reassembly->newest_completed[0] = 8;
     rocketnet_client_connection_reset( &client );
+
     rocketnet_connection_keys_t zero_keys;
     memset( &zero_keys, 0, sizeof( zero_keys ) );
+
     rocketnet_connect_token_t zero_token;
     memset( &zero_token, 0, sizeof( zero_token ) );
+
     uint8_t zero_eph[ROCKETNET_KEY_BYTES];
     memset( zero_eph, 0, sizeof( zero_eph ) );
+
     uint8_t zero_nonce[ROCKETNET_SESSION_NONCE_BYTES];
     memset( zero_nonce, 0, sizeof( zero_nonce ) );
     check( memcmp( &client.keys, &zero_keys, sizeof( zero_keys ) ) == 0 );
@@ -1484,6 +1640,7 @@ REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 // at one, and what the client keeps across attempts (counters, filter, send
 // rate, reassembly set) is kept. tla/ClientConnection.tla
 // FreshAttemptFromFailure, MCClientConnectionRetryFromFailure.cfg.
+
 static void test_connection_reset_connect_from_each_failure_state()
 {
     const reset_loopback_keys_t * keys = reset_loopback_keys();
@@ -1499,24 +1656,30 @@ static void test_connection_reset_connect_from_each_failure_state()
     {
         rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
+
         rocketnet_client_protocol_t client;
         rocketnet_client_protocol_init( &client, &counters );
         client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 2, 8192, 4 );
         check( client.reassembly );
+
         rocketnet_reassembly_set_t * const reassembly = client.reassembly;
         rocketnet_reassembly_slot_t fresh_slots[2];
         memcpy( fresh_slots, client.reassembly->slots, sizeof( fresh_slots ) );
 
         // what the client keeps across attempts
+
         counters.values[0] = 17;
         memset( client.packet_filter, 0x3C, sizeof( client.packet_filter ) );
         client.send_rate = 20.0;
+
         rocketnet_counters_t kept_counters;
         memcpy( &kept_counters, &counters, sizeof( kept_counters ) );
+
         uint8_t kept_filter[ROCKETNET_FILTER_VALUE_BYTES];
         memcpy( kept_filter, client.packet_filter, sizeof( kept_filter ) );
 
         // every per-connection field of the earlier attempt dirtied
+
         memset( &client.keys, 0xA5, sizeof( client.keys ) );
         memset( client.session_nonce, 0xA5, sizeof( client.session_nonce ) );
         memset( client.connection_salt, 0xA5, sizeof( client.connection_salt ) );
@@ -1539,8 +1702,10 @@ static void test_connection_reset_connect_from_each_failure_state()
         client.num_acked = 2;
         memset( client.reassembly->slots, 0xA5, sizeof( fresh_slots ) );
         client.reassembly->newest_completed[0] = 8;
+
         uint8_t dirty_salt[ROCKETNET_CONNECTION_SALT_BYTES];
         memcpy( dirty_salt, client.connection_salt, sizeof( dirty_salt ) );
+
         uint8_t dirty_public[ROCKETNET_KEY_BYTES];
         memcpy( dirty_public, client.client_ephemeral_public_key, sizeof( dirty_public ) );
         client.state = state;
@@ -1549,9 +1714,11 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
 
         // nothing of the earlier attempt
+
         rocketnet_connection_keys_t no_keys;
         memset( &no_keys, 0, sizeof( no_keys ) );
         check( memcmp( &client.keys, &no_keys, sizeof( no_keys ) ) == 0 );
+
         uint8_t zeros[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         memset( zeros, 0, sizeof( zeros ) );
         check( memcmp( client.session_nonce, zeros, sizeof( client.session_nonce ) ) == 0 );
@@ -1559,6 +1726,7 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( client.has_cookie == 0 );
         check( memcmp( client.stored_response, zeros, sizeof( client.stored_response ) ) == 0 );
         check( client.client_index == -1 );
+
         rocketnet_replay_protection_t no_replay;
         memset( &no_replay, 0, sizeof( no_replay ) );
         check( client.handshake_highest_opened == 0 );
@@ -1574,12 +1742,14 @@ static void test_connection_reset_connect_from_each_failure_state()
 
         // a fresh attempt: new salt and ephemeral keypair, sequences at one,
         // timers from the connect time
+
         check( client.send_sequence_handshake == 1 && client.send_sequence_session == 1 );
         check( memcmp( client.connection_salt, dirty_salt, sizeof( dirty_salt ) ) != 0 );
         check( memcmp( client.client_ephemeral_public_key, dirty_public, sizeof( dirty_public ) ) != 0 );
         check( client.attempt_start_time == 1000.0 && client.last_receive_time == 1000.0 );
 
         // kept across attempts
+
         check( client.counters == &counters );
         check( memcmp( &counters, &kept_counters, sizeof( counters ) ) == 0 );
         check( memcmp( client.packet_filter, kept_filter, sizeof( kept_filter ) ) == 0 );
@@ -1628,6 +1798,7 @@ static void reset_loopback_client_disconnect_state_scenario( int state, int mid_
     // Before a session exists the server owns only half-open mapping state;
     // once connected it owns a slot as well. The real sweep/disconnect paths
     // must leave both collections empty in every case.
+
     reset_loopback_wait_for_server_connection_state_clean( &f );
     reset_loopback_destroy( &f );
 }
@@ -1639,6 +1810,7 @@ static void reset_loopback_server_disconnect_state_scenario( int mid_fragment )
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     const int slot = reset_loopback_connect( &f, 0, mid_fragment ? 0xD002 : 0xD001 );
 
     if ( mid_fragment )
@@ -1666,6 +1838,7 @@ static void reset_loopback_server_disconnect_state_scenario( int mid_fragment )
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
     }
+
     check( rocketnet_message_client_state( f.clients[0] ) <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
     check( f.clients[0]->object.hot_connections[0].state == RN_MESSAGE_CONNECTION_FREE );
     check( rocketnet_client_transport_reset_witness_for_test(
@@ -1682,10 +1855,13 @@ static void test_connection_reset_each_state_leaves_a_clean_slot()
         ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED,
     };
     for ( size_t i = 0; i < sizeof( handshake_and_connected ) / sizeof( handshake_and_connected[0] ); i++ )
+    {
         reset_loopback_client_disconnect_state_scenario( handshake_and_connected[i], 0 );
+    }
 
     // Mid-fragment is a connected state with fragments already flushed into
-    // the loopback wire but not yet consumed by the server.
+    // the loopback wire but not yet consumed by the server
+
     reset_loopback_client_disconnect_state_scenario( ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED, 1 );
     reset_loopback_server_disconnect_state_scenario( 0 );
     reset_loopback_server_disconnect_state_scenario( 1 );
@@ -1695,7 +1871,9 @@ REGISTER_UNIT_TEST( test_connection_reset_each_state_leaves_a_clean_slot );
 static void reset_loopback_settle_messages( reset_loopback_t * f )
 {
     for ( int i = 0; i < 20; i++ )
+    {
         reset_loopback_step( f );
+    }
 }
 
 static void reset_loopback_explicit_server_disconnect_reason_scenario()
@@ -1705,12 +1883,14 @@ static void reset_loopback_explicit_server_disconnect_reason_scenario()
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     const int slot = reset_loopback_connect( &f, 0, 0xE001 );
     check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( rocketnet_message_server_disconnect_reason( f.server, 1 - slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // The public explicit-disconnect mechanism has no error argument; NONE is
     // its known reason. It still takes the real protocol reset path.
+
     rocketnet_server_transport_disconnect_client( rocketnet_message_server_transport( f.server ), slot );
     f.now += 0.01;
     check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
@@ -1719,6 +1899,7 @@ static void reset_loopback_explicit_server_disconnect_reason_scenario()
 
     rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
+
     const int reused = reset_loopback_connect( &f, 1, 0xE002 );
     check( reused == slot );
     check( rocketnet_message_server_disconnect_reason( f.server, reused ) == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -1732,6 +1913,7 @@ static void reset_loopback_server_reliable_timeout_reason_scenario( const rocket
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now, config );
     check( f.server );
+
     const int slot = reset_loopback_connect( &f, 0, 0xE101, config );
     reset_loopback_settle_messages( &f );
 
@@ -1742,13 +1924,15 @@ static void reset_loopback_server_reliable_timeout_reason_scenario( const rocket
     check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_server_send_packets( f.server );
 
-    // Do not update the client: the real endpoint resend window expires.
+    // do not update the client: the real endpoint resend window expires
+
     for ( int i = 0; i < 40 && rocketnet_message_server_disconnect_reason( f.server, slot ) != ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT; i++ )
     {
         f.now += 0.05;
         check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f.server );
     }
+
     check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( rocketnet_message_server_disconnect_reason( f.server, 1 - slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
     f.now += 0.01;
@@ -1757,6 +1941,7 @@ static void reset_loopback_server_reliable_timeout_reason_scenario( const rocket
 
     rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
+
     const int reused = reset_loopback_connect( &f, 1, 0xE102, config );
     check( reused == slot );
     check( rocketnet_message_server_disconnect_reason( f.server, reused ) == ROCKETNET_DISCONNECT_REASON_NONE );
@@ -1780,13 +1965,15 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( f.clients[0] );
 
-    // Do not update the server: the client endpoint ends the connection.
+    // do not update the server: the client endpoint ends the connection
+
     for ( int i = 0; i < 40 && rocketnet_message_client_disconnect_reason( f.clients[0] ) != ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT; i++ )
     {
         f.now += 0.05;
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
     }
+
     check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     f.now += 0.01;
     check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
@@ -1795,6 +1982,7 @@ static void reset_loopback_client_reliable_timeout_reason_scenario( const rocket
     // BASE has no reconnect operation on an existing client object. A newly
     // established real client starts with NONE; the retained old object above
     // is kept separate so this does not pretend a same-object reconnect.
+
     rn_test_message_client_stop_and_destroy( f.clients[0] );
     f.clients[0] = NULL;
     reset_loopback_wait_for_server_connection_state_clean( &f );
@@ -1819,18 +2007,26 @@ REGISTER_UNIT_TEST( test_connection_reset_disconnect_reason_kept_until_next_conn
 // Reuse the same server slot with deliberately dirty payload storage and an
 // unsealed aggregate from the former client. Reset must clear ownership/state,
 // not the payload bytes. Each delivery mode must work for the replacement.
+
 static void test_connection_reset_dirty_slot_discards_open_aggregate()
 {
     reset_loopback_t f = {};
     f.now = 1000.0;
     f.server = reset_loopback_server_create( f.now );
     check( f.server );
+
     const int slot = reset_loopback_connect( &f, 0, 0xA010 );
-    // Settle CONFIG before reserving an in-place unreliable packet.
+
+    // settle CONFIG before reserving an in-place unreliable packet
+
     for ( int i = 0; i < 20; ++i )
+    {
         reset_loopback_step( &f );
+    }
+
     rn_message_object_t * object = &f.server->object;
     rn_region_t * region = object->connections[slot].region;
+
     for ( int i = 0; i < 4; ++i )
     {
         uint8_t * out = rn_message_object_start( object, slot, 0,
@@ -1839,13 +2035,17 @@ static void test_connection_reset_dirty_slot_discards_open_aggregate()
         memset( out, 0xA7, 64 );
         check( rn_message_object_finish( object, slot, 64 ) );
     }
+
     check( object->connections[slot].unreliable_build.writer.records == 4 );
+
     uint8_t * pending = rn_message_object_start( object, slot, 0,
                                                  ROCKETNET_RELIABILITY_UNRELIABLE, 64 );
     check( pending );
     memset( pending, 0xA8, 64 );
+
     // These buffers belong only to this idle receive path and to an empty
     // send store. Their dirty bytes must survive metadata reset unchanged.
+
     memset( region->receive_ring, 0xB9, region->ring_bytes );
     memset( region->store_memory, 0xCA, (size_t) region->store_bytes );
     rn_message_object_kick( object, slot, ROCKETNET_DISCONNECT_REASON_NONE );
@@ -1861,19 +2061,24 @@ static void test_connection_reset_dirty_slot_discards_open_aggregate()
     check( object->connections[slot].pending_type == -1 );
     check( region->receive_ring[region->ring_bytes - 1] == 0xB9 );
     check( region->store_memory[region->store_bytes - 1] == 0xCA );
+
     rocketnet_message_receipt_t receipts[16];
     check( rocketnet_message_server_receipts( f.server, slot, receipts, 16 ) == 0 );
     check( rocketnet_message_client_receipts( f.clients[1], receipts, 16 ) == 0 );
+
     for ( int mode = 0; mode < 8; ++mode )
     {
         uint8_t payload[128];
         memset( payload, 0xD0 + mode, sizeof( payload ) );
         check( rocketnet_message_client_send( f.clients[1], 0, mode, payload, sizeof( payload ) ) );
         check( rocketnet_message_server_send( f.server, slot, 0, mode, payload, sizeof( payload ) ) );
+
         int c2s = 0, s2c = 0;
+
         for ( int step = 0; step < 40; ++step )
         {
             reset_loopback_step( &f );
+
             const uint8_t * data = NULL;
             int bytes = 0, from = -1, channel = -1;
             while ( rocketnet_message_server_receive( f.server, &from, &channel, &data, &bytes ) )
@@ -1883,6 +2088,7 @@ static void test_connection_reset_dirty_slot_discards_open_aggregate()
                 check( ++c2s == 1 );
                 rocketnet_message_server_release( f.server, data );
             }
+
             while ( rocketnet_message_client_receive( f.clients[1], &channel, &data, &bytes ) )
             {
                 check( channel == 0 );
@@ -1891,13 +2097,16 @@ static void test_connection_reset_dirty_slot_discards_open_aggregate()
                 rocketnet_message_client_release( f.clients[1], data );
             }
         }
+
         check( c2s == 1 && s2c == 1 );
     }
+
     reset_loopback_destroy( &f );
 }
 REGISTER_UNIT_TEST( test_connection_reset_dirty_slot_discards_open_aggregate );
 // A transport with no send capacity left this update: the send pass goes
 // straight to its flush and no connection's write pass runs.
+
 static int reset_loopback_no_send_capacity( void * transport )
 {
     (void) transport;
@@ -1909,6 +2118,7 @@ static int reset_loopback_no_send_capacity( void * transport )
 // The message is sent once; then every send pass is starved and the receiver
 // never acks. The connection ends RELIABLE_TIMED_OUT at the first update at
 // or past first send + reliable_message_timeout_ms, and not before.
+
 static void test_reliable_timeout_fires_while_send_pass_starved()
 {
     rocketnet_message_config_t config;
@@ -1916,6 +2126,7 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
     config.message_resend_delay_initial_ms = 100;
     config.message_resend_delay_max_ms = 1000;
     config.reliable_message_timeout_ms = 1000;
+
     const double timeout = (double) config.reliable_message_timeout_ms / 1000.0;
     const uint8_t payload[] = { 's', 't', 'a', 'r', 'v', 'e', 'd' };
 
@@ -1926,6 +2137,7 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
         f.now = 1000.0;
         f.server = reset_loopback_server_create( f.now, &config );
         check( f.server );
+
         const int slot = reset_loopback_connect( &f, 0, 0xE301, &config );
         reset_loopback_settle_messages( &f );
 
@@ -1934,17 +2146,21 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
         f.now += 0.01;
         check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_server_send_packets( f.server );
+
         const double first_send = f.now;
 
         f.server->object.link.send_capacity_available = reset_loopback_no_send_capacity;
+
         for ( int i = 0; i < 30; i++ )
         {
             f.now = first_send + 0.025 + 0.05 * i;
             check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
             rocketnet_message_server_send_packets( f.server );
+
             const int expected = f.now - first_send < timeout ? ROCKETNET_DISCONNECT_REASON_NONE : ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
             check( rocketnet_message_server_disconnect_reason( f.server, slot ) == expected );
         }
+
         check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
         reset_loopback_destroy( &f );
     }
@@ -1964,17 +2180,21 @@ static void test_reliable_timeout_fires_while_send_pass_starved()
         f.now += 0.01;
         check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
         rocketnet_message_client_send_packets( f.clients[0] );
+
         const double first_send = f.now;
 
         f.clients[0]->object.link.send_capacity_available = reset_loopback_no_send_capacity;
+
         for ( int i = 0; i < 30; i++ )
         {
             f.now = first_send + 0.025 + 0.05 * i;
             check( rocketnet_message_client_update( f.clients[0], f.now ) == ROCKETNET_UPDATE_OK );
             rocketnet_message_client_send_packets( f.clients[0] );
+
             const int expected = f.now - first_send < timeout ? ROCKETNET_DISCONNECT_REASON_NONE : ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
             check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == expected );
         }
+
         check( rocketnet_message_client_disconnect_reason( f.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
         reset_loopback_destroy( &f );
     }

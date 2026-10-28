@@ -29,6 +29,7 @@ static void test_iocp_server_has_one_completion_worker()
     rocketnet_unit_check( rocketnet_builtin_server_memory_plan( &config, "iocp", plan ) );
     rocketnet_unit_check( plan.worker_threads == 2 );
     rocketnet_unit_check( plan.sockets == 1 );
+
     const uint64_t transport_io_bytes = plan.transport_io_bytes;
 
     config.num_xdp_queues = 4;

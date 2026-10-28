@@ -26,7 +26,7 @@
 #include <io.h>
 #else
 #include <unistd.h>
-#endif
+#endif // #ifdef _WIN32
 
 #include <ctype.h>
 #include <stdio.h>
@@ -46,7 +46,9 @@ static std::string ascii_lower( const std::string & text )
 {
     std::string out = text;
     for ( size_t i = 0; i < out.size(); i++ )
+    {
         out[i] = (char) tolower( (unsigned char) out[i] );
+    }
     return out;
 }
 
@@ -56,12 +58,16 @@ static bool read_source_file( const std::string & relative_path, std::string & c
     FILE * file = rocketnet_test_fopen( path.c_str(), "rb" );
     if ( !file )
         return false;
+
     char buffer[4096];
     size_t n;
     contents.clear();
     while ( ( n = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+    {
         contents.append( buffer, n );
+    }
     fclose( file );
+
     return true;
 }
 
@@ -234,22 +240,27 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
 
     size_t line_start = 0;
     size_t line_no = 1;
+
     for ( size_t i = 0; i <= text.size(); i++ )
     {
         if ( i == text.size() || text[i] == '\n' )
         {
             std::string line = text.substr( line_start, i - line_start );
             if ( !line.empty() && line[line.size() - 1] == '\r' )
+            {
                 line.erase( line.size() - 1 );
+            }
 
             std::string lower = ascii_lower( line );
             if ( lower.find( "packet" ) != std::string::npos )
             {
                 bool covered = false;
+
                 for ( size_t r = 0; r < allowlist_count; r++ )
                 {
                     if ( strcmp( allowlist[r].file, relative_path ) != 0 )
                         continue;
+
                     if ( line.find( allowlist[r].phrase ) != std::string::npos )
                     {
                         covered = true;
@@ -257,6 +268,7 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
                         per_reason_hits[r]++;
                     }
                 }
+
                 if ( !covered )
                 {
                     char buf[32];
@@ -269,19 +281,23 @@ static bool scan_file( const char * relative_path, std::vector<std::string> & fa
             line_no++;
         }
     }
+
     return true;
 }
 
 static void test_client_server_say_messages_not_packets()
 {
     rocketnet_example_send_safety_audit_run();
+
     std::vector<std::string> failures;
     std::vector<size_t> used_rows( allowlist_count, 0 );
     std::vector<int> per_reason_hits( allowlist_count, 0 );
 
     const char * files[] = { F_H, F_API, F_C, F_S, F_O, F_M, "sdk/rocketnet_message.h" };
     for ( size_t f = 0; f < sizeof( files ) / sizeof( files[0] ); f++ )
+    {
         scan_file( files[f], failures, used_rows, per_reason_hits );
+    }
 
     for ( size_t r = 0; r < allowlist_count; r++ )
     {
@@ -297,7 +313,9 @@ static void test_client_server_say_messages_not_packets()
     if ( !failures.empty() )
     {
         for ( size_t i = 0; i < failures.size(); i++ )
+        {
             printf( "%s\n", failures[i].c_str() );
+        }
         printf( "test_client_server_say_messages_not_packets: %zu unallowlisted or unused line(s)\n", failures.size() );
         fflush( stdout );
         exit( 1 );
@@ -305,12 +323,14 @@ static void test_client_server_say_messages_not_packets()
 
     // a passing run prints its name only; ROCKETNET_TEST_VERBOSE adds the
     // per-reason report
+
     char verbose[4096];
     if ( !rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) )
         return;
 
     std::vector<std::string> reasons;
     std::vector<int> counts;
+
     for ( size_t r = 0; r < allowlist_count; r++ )
     {
         size_t existing = reasons.size();
@@ -322,15 +342,19 @@ static void test_client_server_say_messages_not_packets()
                 break;
             }
         }
+
         if ( existing == reasons.size() )
         {
             reasons.push_back( allowlist[r].reason );
             counts.push_back( per_reason_hits[r] );
         }
     }
+
     printf( "test_client_server_say_messages_not_packets: pass; allowlisted packet lines per reason:\n" );
     for ( size_t i = 0; i < reasons.size(); i++ )
+    {
         printf( "  %s: %d\n", reasons[i].c_str(), counts[i] );
+    }
 }
 
 REGISTER_UNIT_TEST( test_client_server_say_messages_not_packets );

@@ -62,6 +62,7 @@ static void crb_mint_token( uint8_t * token_data, uint64_t client_id )
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = 10;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -85,7 +86,9 @@ static void crb_fill_payload( uint8_t * data, int k )
     data[0] = (uint8_t) ( k & 0xFF );
     data[1] = (uint8_t) ( ( k >> 8 ) & 0xFF );
     for ( int b = 2; b < CRB_PAYLOAD_BYTES; b++ )
+    {
         data[b] = (uint8_t) ( k * 31 + b );
+    }
 }
 
 static bool crb_payload_matches( const uint8_t * data, int k )
@@ -112,6 +115,7 @@ static void test_client_reassembled_batch_holds_half_received_load()
     memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server.server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server.server_secret_key, rocketnet_test_server_secret_key, 32 );
+
     struct rocketnet_address_t server_address;
     check( rocketnet_address_parse( &server_address, "203.0.113.10:40000" ) );
     server.advertised_ipv4 = server_address;
@@ -122,6 +126,7 @@ static void test_client_reassembled_batch_holds_half_received_load()
     server.used_token_history = rocketnet_used_token_history_create( NULL, 8 );
     server.client_slots = rocketnet_client_slots_create( NULL, 1 );
     server.acks = rocketnet_server_acks_create( NULL, 1 );
+
     const int server_capacity = rocketnet_server_reassembly_delivered_capacity( 1, num_slots );
     const uint64_t server_bytes = rocketnet_server_reassembly_delivered_bytes( 1, num_slots, max_payload_bytes );
     server.reassembly = rocketnet_reassembly_set_create_delivered( NULL, 1, num_slots, max_payload_bytes, server_capacity, server_bytes );
@@ -142,6 +147,7 @@ static void test_client_reassembled_batch_holds_half_received_load()
 
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &client_counters );
+
     const int client_capacity = rocketnet_client_reassembly_delivered_capacity( ROCKETNET_DEFAULT_REASSEMBLY_SLOTS );
     check( client_capacity == 516 );
     client.reassembly = rocketnet_reassembly_set_create( NULL, 1, num_slots, max_payload_bytes, client_capacity );
@@ -179,7 +185,9 @@ static void test_client_reassembled_batch_holds_half_received_load()
         int packet_bytes = 0;
         rocketnet_client_protocol_update( &client, time, packet, &packet_bytes );
         if ( packet_bytes > 0 )
+        {
             rocketnet_network_simulator_send( wire, &client_address, &server_address, packet, packet_bytes, time );
+        }
 
         struct rocketnet_address_t from;
         for ( int got = rocketnet_network_simulator_receive( wire, &server_address, time, &from, packet ); got > 0;
@@ -189,7 +197,9 @@ static void test_client_reassembled_batch_holds_half_received_load()
             rocketnet_server_protocol_process_packet( &server, &from, packet, got, ROCKETNET_TEST_CREATE_TS, time,
                                                       response, &response_bytes, payload, &payload_bytes, &payload_client_index );
             if ( response_bytes > 0 )
+            {
                 rocketnet_network_simulator_send( wire, &server_address, &from, response, response_bytes, time );
+            }
         }
 
         for ( int got = rocketnet_network_simulator_receive( wire, &client_address, time, &from, packet ); got > 0;
@@ -219,6 +229,7 @@ static void test_client_reassembled_batch_holds_half_received_load()
     {
         uint8_t data[CRB_PAYLOAD_BYTES];
         crb_fill_payload( data, k );
+
         int fragment_packet_bytes[2];
         check( rocketnet_server_protocol_write_fragments( &server, 0, data, CRB_PAYLOAD_BYTES, time,
                                                           fragment_packets, fragment_packet_bytes, 2 ) == 2 );
@@ -230,14 +241,17 @@ static void test_client_reassembled_batch_holds_half_received_load()
     {
         struct rocketnet_address_t from;
         int drained_one = 0;
+
         for ( int got = rocketnet_network_simulator_receive( wire, &client_address, time, &from, packet ); got > 0;
               got = rocketnet_network_simulator_receive( wire, &client_address, time, &from, packet ) )
         {
             drained_one++;
+
             int client_payload_bytes = 0;
             check( rocketnet_client_protocol_process_packet( &client, packet, got, time, payload, (int) sizeof( payload ), &client_payload_bytes ) );
             check( client.reassembly->completed_bytes == 0 );
         }
+
         check( drained_one == num_slots );
     }
 
@@ -251,12 +265,15 @@ static void test_client_reassembled_batch_holds_half_received_load()
     const uint64_t batch_full_before = client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL];
 
     for ( int k = 0; k < num_slots; k++ )
+    {
         rocketnet_network_simulator_send( wire, &server_address, &client_address, held_packets[k], held_bytes[k], time );
+    }
 
     for ( int k = 0; k < CRB_FRESH_PAYLOADS; k++ )
     {
         uint8_t data[CRB_PAYLOAD_BYTES];
         crb_fill_payload( data, num_slots + k );
+
         int fragment_packet_bytes[2];
         check( rocketnet_server_protocol_write_fragments( &server, 0, data, CRB_PAYLOAD_BYTES, time,
                                                           fragment_packets, fragment_packet_bytes, 2 ) == 2 );
@@ -267,17 +284,21 @@ static void test_client_reassembled_batch_holds_half_received_load()
 
     int drained = 0;
     int delivered = 0;
+
     {
         struct rocketnet_address_t from;
         for ( int got = rocketnet_network_simulator_receive( wire, &client_address, time, &from, packet ); got > 0;
               got = rocketnet_network_simulator_receive( wire, &client_address, time, &from, packet ) )
         {
             drained++;
+
             int client_payload_bytes = 0;
             check( rocketnet_client_protocol_process_packet( &client, packet, got, time, payload, (int) sizeof( payload ), &client_payload_bytes ) );
+
             if ( client.reassembly->completed_bytes > 0 )
             {
                 check( client.reassembly->completed_bytes == CRB_PAYLOAD_BYTES );
+
                 const uint8_t * data = client.reassembly->completed_payload;
                 const int k = (int) data[0] | ( (int) data[1] << 8 );
                 check( k < CRB_TOTAL_PAYLOADS );

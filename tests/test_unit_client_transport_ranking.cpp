@@ -49,6 +49,7 @@
 
 // the native client of each platform the registry names one for; NULL: the
 // platform has none, and portable is its whole automatic order
+
 static const char * ranking_native_client( int platform )
 {
     switch ( platform )
@@ -65,26 +66,32 @@ static const char * ranking_native_client( int platform )
 // the automatic client order the registry gives one platform: rows on that
 // platform with a client rank below pin-only, lowest rank first, ties in
 // row order (the insertion order of sdk/rocketnet_driver.cpp)
+
 static int ranking_client_order( int platform, int * order )
 {
     int count = 0;
+
     for ( int id = 0; id < ROCKETNET_NUM_TRANSPORTS; id++ )
     {
         const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( id );
         check( definition != NULL );
         if ( !( definition->platforms & ( 1u << platform ) ) )
             continue;
+
         const int rank = definition->client_preference;
         if ( rank == 0 || rank >= ROCKETNET_TRANSPORT_PIN_ONLY )
             continue;
+
         int index = count++;
         while ( index > 0 && rocketnet_transport_definition( order[index - 1] )->client_preference > rank )
         {
             order[index] = order[index - 1];
             index--;
         }
+
         order[index] = id;
     }
+
     return count;
 }
 
@@ -96,6 +103,7 @@ static void test_client_ranking_portable_is_last_everywhere()
         const int count = ranking_client_order( platform, order );
         check( count >= 1 );
         check( order[count - 1] == ROCKETNET_TRANSPORT_PORTABLE );
+
         const char * native = ranking_native_client( platform );
         if ( native )
         {
@@ -109,22 +117,27 @@ static void test_client_ranking_portable_is_last_everywhere()
     }
 
     // loopback is chosen by a pin only, on the client as on the server
+
     check( rocketnet_transport_definition( ROCKETNET_TRANSPORT_LOOPBACK )->client_preference == ROCKETNET_TRANSPORT_PIN_ONLY );
     check( rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_LOOPBACK, false ) );
 
     // the native clients rank in the automatic order: none is pin-only
+
     check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_GSO, false ) );
     check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_MSGX, false ) );
 
     // this build's own availability list is the registry order for its
     // platform, then the pin-only rows
+
     int expected[ROCKETNET_NUM_TRANSPORTS];
     const int expected_count = ranking_client_order( ROCKETNET_PLATFORM, expected );
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
     check( num_available == expected_count + 1 );
     for ( int i = 0; i < expected_count; i++ )
+    {
         check( available[i] == expected[i] );
+    }
     check( available[num_available - 1] == ROCKETNET_TRANSPORT_LOOPBACK );
 
     printf( "test_client_ranking_portable_is_last_everywhere\n" );
@@ -159,6 +172,7 @@ static void * ranking_create( void * context, const rocketnet_client_transport_i
     for ( int i = 0; i < 2; i++ )
         if ( ranking_record.refuse[i] && strcmp( ranking_record.refuse[i], config->name ) == 0 )
             return NULL;    // a refusal: no allocation failed, so the ladder falls
+
     return rocketnet_fake_client_create( context, config, bind );
 }
 
@@ -174,7 +188,9 @@ static struct
 static void ranking_log_capture( void *, enum rocketnet_log_level_t, const char * message, size_t )
 {
     if ( ranking_log.num_lines < RANKING_LOG_LINES )
+    {
         snprintf( ranking_log.lines[ranking_log.num_lines++], sizeof( ranking_log.lines[0] ), "%s", message );
+    }
 }
 
 static int ranking_log_count( const char * text )
@@ -183,6 +199,7 @@ static int ranking_log_count( const char * text )
     for ( int i = 0; i < ranking_log.num_lines; i++ )
         if ( strstr( ranking_log.lines[i], text ) )
             count++;
+
     return count;
 }
 
@@ -191,6 +208,7 @@ static double ranking_time( void * ) { return ranking_clock; }
 
 // a connect token naming 127.0.0.1:40000, IPv4 only, so no family race opens a
 // second endpoint
+
 static void ranking_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -201,6 +219,7 @@ static void ranking_token( uint8_t * token )
     signed_fields.expire_timestamp = 1ULL << 40;
     signed_fields.timeout_seconds = 300;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 127, 0, 0, 1, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
@@ -239,6 +258,7 @@ struct ranking_result_t
 
 // one create with the transport list given, on the recording fake, its log
 // captured at info; the client is destroyed before returning
+
 static ranking_result_t ranking_create_client( const char * transport, const char * refuse_first, const char * refuse_second )
 {
     ranking_record_reset( refuse_first, refuse_second );
@@ -246,10 +266,12 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
 
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.create = ranking_create;
+
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     ranking_token( token );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
@@ -263,19 +285,23 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
     memset( &result, 0, sizeof( result ) );
     result.status = -1;
     ranking_clock = 1000.0;
+
     rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_ex( NULL, token, &config, ranking_clock, &operations, fake, &result.status );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
 
     result.created = client != NULL;
+
     if ( client )
     {
         snprintf( result.name, sizeof( result.name ), "%s", rocketnet_client_transport_io_name( client ) );
         rn_test_client_transport_stop_and_destroy( client );
     }
+
     result.destroy_calls = fake->destroy_calls;
     delete fake;
+
     return result;
 }
 
@@ -288,13 +314,16 @@ static void test_client_ranking_auto_picks_native_client()
     const char * expected = native ? native : "portable";
 
     const char * lists[] = { "auto", "", " auto " };
+
     for ( int i = 0; i < 3; i++ )
     {
         const ranking_result_t result = ranking_create_client( lists[i], NULL, NULL );
         check( result.created );
         check( result.status == ROCKETNET_STATUS_OK );
         check( strcmp( result.name, expected ) == 0 );
+
         // the first rung grants: one create, and it is the native client
+
         check( ranking_record.num_creates == 1 );
         check( strcmp( ranking_record.creates[0], expected ) == 0 );
         check( ranking_log_count( "refused" ) == 0 );
@@ -324,9 +353,11 @@ static void test_client_ranking_falls_back_to_portable()
         check( result.destroy_calls == 1 );
 
         // the refusal is logged once, and the grant names it once
+
         char refused[64];
         snprintf( refused, sizeof( refused ), "client transport %s refused", native );
         check( ranking_log_count( refused ) == 1 );
+
         char granted[96];
         snprintf( granted, sizeof( granted ), "client transport ladder granted portable after refusals: %s", native );
         check( ranking_log_count( granted ) == 1 );
@@ -341,7 +372,9 @@ static void test_client_ranking_falls_back_to_portable()
         check( ranking_record.num_creates == ( native ? 2 : 1 ) );
         check( strcmp( ranking_record.creates[ranking_record.num_creates - 1], "portable" ) == 0 );
         for ( int i = 0; i < ranking_record.num_creates; i++ )
+        {
             check( strcmp( ranking_record.creates[i], "loopback" ) != 0 );
+        }
         check( result.destroy_calls == 0 );
     }
 
@@ -356,8 +389,10 @@ static void test_client_ranking_pin_is_honoured()
 
     // every client this build has, pinned alone, gives that client and
     // opens nothing else
+
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
+
     for ( int i = 0; i < num_available; i++ )
     {
         const char * name = rocketnet_transport_name( available[i] );
@@ -369,6 +404,7 @@ static void test_client_ranking_pin_is_honoured()
         check( strcmp( ranking_record.creates[0], name ) == 0 );
 
         // the same pin refused is a status, never the next client in the order
+
         const ranking_result_t refused = ranking_create_client( name, name, NULL );
         check( !refused.created );
         check( refused.status == ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED );
@@ -381,6 +417,7 @@ static void test_client_ranking_pin_is_honoured()
         const char * native = ranking_native_client( ROCKETNET_PLATFORM );
         char list[64];
         snprintf( list, sizeof( list ), "portable,%s", native ? native : "portable" );
+
         const ranking_result_t result = ranking_create_client( list, NULL, NULL );
         check( result.created );
         check( strcmp( result.name, "portable" ) == 0 );
@@ -402,6 +439,7 @@ static void test_client_ranking_pin_is_honoured()
         const char * elsewhere = ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC ? "gso" : "msgx";
         const ranking_result_t result = ranking_create_client( elsewhere, NULL, NULL );
         check( result.created );
+
         const char * native = ranking_native_client( ROCKETNET_PLATFORM );
         check( strcmp( result.name, native ? native : "portable" ) == 0 );
         check( ranking_log_count( "names no transport for this endpoint on this platform. using auto" ) == 1 );
@@ -418,7 +456,7 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // "iocp" is a known Windows client: on a Linux client it is skipped, the
-    // list names no candidate, and the endpoint falls back to auto (gso,portable).
+    // list names no candidate, and the endpoint falls back to auto (gso,portable)
     {
         int num_available = 0;
         const int * available = rocketnet_client_transport_io_availability( &num_available );
@@ -430,6 +468,7 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
         check( ladder.candidates[0] == ROCKETNET_TRANSPORT_GSO );
         check( ladder.candidates[1] == ROCKETNET_TRANSPORT_PORTABLE );
     }
+
     {
         const ranking_result_t result = ranking_create_client( "iocp", NULL, NULL );
         check( result.created );

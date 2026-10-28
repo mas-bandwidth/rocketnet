@@ -68,6 +68,7 @@ static void budgets_server_setup( struct budgets_server_t * test )
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -90,6 +91,7 @@ static void budgets_server_setup( struct budgets_server_t * test )
 
     // the update resets the per-update handshake work budget, exactly as the
     // transport does at the top of every update
+
     rocketnet_server_protocol_update( server, 1000.0 );
 
     check( rocketnet_address_parse( &test->client_address, "198.51.100.7:56789" ) );
@@ -132,6 +134,7 @@ static void budgets_build_request( uint8_t * request, int index,
     const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
     check( rocketnet_generate_cookie_mac( cookie_mac, address, rocketnet_test_salt, cookie_expire, cookie_key ) );
+
     uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
     rocketnet_write_uint64( &cookie, cookie_expire );
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
@@ -168,6 +171,7 @@ static void budgets_check_signature_budget()
         mutated[signature_offset] ^= 1;
 
         response_bytes = 0;
+
         int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
                                                                            mutated, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
                                                                            ROCKETNET_TEST_CREATE_TS, 1000.0,
@@ -175,6 +179,7 @@ static void budgets_check_signature_budget()
 
         // a refused request is never answered, whether the verify failed or
         // the budget refused it before the verify
+
         check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
         check( response_bytes == 0 );
     }
@@ -210,10 +215,12 @@ static void test_handshake_budgets_pinned()
         budgets_build_request( request, i, &address, test.server.cookie_key );
 
         response_bytes = 0;
+
         int result = rocketnet_server_protocol_process_connection_request( &test.server, &address,
                                                                            request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
                                                                            ROCKETNET_TEST_CREATE_TS, 1000.0,
                                                                            response, &response_bytes );
+
         if ( i < budget )
         {
             check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
@@ -244,6 +251,7 @@ static void budgets_client_response_from_challenge( const uint8_t * challenge, i
 {
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     check( rocketnet_prefilter_check( challenge, challenge_bytes, tag ) == ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+
     const uint8_t * p = challenge + ROCKETNET_PREFILTER_BYTES;
     uint64_t sequence = rocketnet_reconstruct_sequence( rocketnet_read_uint32( &p ), 0 );
 
@@ -303,6 +311,7 @@ static int budgets_send_forged( struct budgets_server_t * test, const struct roc
                                                                        ROCKETNET_TEST_CREATE_TS, 1000.0,
                                                                        response, &response_bytes );
     check( response_bytes == 0 );
+
     return result;
 }
 
@@ -326,18 +335,23 @@ static void test_handshake_failure_budget_no_global_lockout()
 
     // every slot of the table takes one forging source, then the first
     // sources fail again until the window's budget is spent
+
     int index = 0;
+
     for ( int i = 0; i < budget; i++ )
     {
         struct rocketnet_address_t address;
         budgets_forged_address( &address, i % slots );
         check( budgets_send_forged( &test, &address, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     }
+
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) budget );
     check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == 0 );
     check( test.server.signature_verify_budget.failure_count == (uint32_t) budget );
     for ( int i = 0; i < slots; i++ )
+    {
         check( test.server.signature_verify_budget.sources[i].fail_count > 0 );
+    }
 
     // a source that has failed this window is refused before the verify
     {
@@ -351,8 +365,10 @@ static void test_handshake_failure_budget_no_global_lockout()
     // the honest client, from a 65th address with a valid token and a valid
     // cookie for that address: it has no recorded failure, so the full table
     // does not refuse it, and it gets the challenge
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     budgets_build_request( request, 0x70000, &test.client_address, test.server.cookie_key );
+
     uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
     int challenge_bytes = 0;
     int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
@@ -367,6 +383,7 @@ static void test_handshake_failure_budget_no_global_lockout()
     {
         uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
         budgets_client_response_from_challenge( challenge, challenge_bytes, response );
+
         uint8_t out[ROCKETNET_RECEIVE_CEILING];
         int out_bytes = 0;
         uint8_t payload[ROCKETNET_RECEIVE_CEILING];
@@ -394,6 +411,7 @@ static void test_handshake_failure_budget_no_global_lockout()
             budgets_forged_address( &address, slots + i );
             budgets_send_forged( &test, &address, ++index );
         }
+
         const uint64_t failed = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] - failed_before;
         const uint64_t exceeded = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] - exceeded_before;
         check( failed == work_budget - processed );

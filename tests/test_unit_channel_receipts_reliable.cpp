@@ -62,6 +62,7 @@ static uint8_t * reliable_link_start( void * context, int, int bytes, rocketnet_
     packet->payload_index = 16;
     packet->payload_capacity = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     packet->packet_id = ++t->next_packet;
+
     return t->frame;
 }
 
@@ -69,10 +70,12 @@ static int reliable_link_finish( void * context, rocketnet_packet_context_t * pa
 {
     reliable_receipt_transport_t * t = (reliable_receipt_transport_t *) context;
     rocketnet_unit_check( t->sent_count < 16 && bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
     const int slot = t->sent_count++;
     t->sent_packets[slot] = packet->packet_id;
     t->sent_bytes[slot] = bytes;
     memcpy( t->sent_payloads[slot], packet->frame + packet->payload_index, (size_t) bytes );
+
     return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes );
 }
 
@@ -111,25 +114,31 @@ static uint64_t reliable_receipt_allocations;
 static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, int bytes, uint64_t * allocations_after_create = NULL )
 {
     memset( f, 0, sizeof( *f ) );
+
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.reliable_messages_in_flight = 1024;
     config.receive_message_buffer_bytes = 262144;
     config.max_message_bytes = 262144;
     config.send_message_buffer_bytes = 800000;
+
     rn_message_link_t link = reliable_link( &f->transport );
     f->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &link, 0, 1, &config, NULL, 0,
                                                                          ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( f->client != NULL );
     if ( allocations_after_create )
+    {
         *allocations_after_create = reliable_receipt_allocations;
+    }
     rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( f->client );                            // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
     f->transport.ack_packet = f->transport.sent_packets[0];
     rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
     f->transport.sent_count = 0;
+
     uint8_t * payload = rocketnet_message_client_start( f->client, 0, type, bytes );
     rocketnet_unit_check( payload != NULL );
+
     const rn_message_connection_t * connection = &f->client->object.connections[0];
     rocketnet_unit_check( payload == rn_region_send_write_pointer( connection->region, connection->pending_descriptor ) );
     memset( payload, 0xA7, (size_t) bytes );
@@ -137,6 +146,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
     rocketnet_unit_check( f->serial != 0 );
     rocketnet_message_client_send_packets( f->client );
     rocketnet_unit_check( f->transport.sent_count > 0 );
+
     for ( int i = 0; i < f->transport.sent_count; i++ )
     {
         rocketnet_message_reader_t reader;
@@ -170,9 +180,11 @@ static void test_reliable_receipt_acked_never_loss()
                           ROCKETNET_CHANNEL_TYPE_RELIABLE );
     rocketnet_unit_check( ROCKETNET_CHANNEL_RECEIPT_BASE( ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT ) ==
                           ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED );
+
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 3 );
     rocketnet_unit_check( f.transport.sent_count == 1 );
+
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     reliable_fixture_ack( &f, 0, 1.01 );
@@ -190,6 +202,7 @@ static void test_ordered_receipt_after_all_chunks()
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17 );
     rocketnet_unit_check( f.transport.sent_count == 3 );
+
     rocketnet_message_receipt_t out[16];
     reliable_fixture_ack( &f, 2, 1.01 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
@@ -206,16 +219,20 @@ static void test_reliable_receipt_waits_for_every_number()
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 1412 );
     rocketnet_unit_check( f.transport.sent_count == 2 );
+
     rocketnet_message_receipt_t out[16];
     reliable_fixture_ack( &f, 1, 1.01 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
     reliable_fixture_ack( &f, 1, 1.02 );
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 0 );
+
     // The first packet's ACK is lost. Its number is resent with a new
     // transport packet id, and only that ACK completes the receipt.
+
     rocketnet_unit_check( rocketnet_message_client_update( f.client, 1.50 ) == ROCKETNET_UPDATE_OK );
     rocketnet_message_client_send_packets( f.client );
     rocketnet_unit_check( f.transport.sent_count >= 3 );
+
     rocketnet_message_reader_t first_reader, retry_reader;
     rocketnet_message_record_t first_record, retry_record;
     const rn_message_connection_t * connection = &f.client->object.connections[0];
@@ -237,10 +254,12 @@ static void test_reliable_receipt_waits_for_every_number()
 static void test_rnreceipts_reliable_witness_replays()
 {
     // BrokenLastIndexAck and BrokenReliableLoss: neither a last-index ACK nor
-    // a resend delay sweep completes or loses a still-incomplete reliable block.
+    // a resend delay sweep completes or loses a still-incomplete reliable block
+
     reliable_receipt_fixture_t f;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT, 1412 );
     rocketnet_unit_check( f.transport.sent_count == 2 );
+
     rocketnet_message_receipt_t out[16];
     reliable_fixture_ack( &f, 1, 1.01 );
     rn_window_ack_receipt_sweep( &f.client->object.connections[0].ordered.ack, 10.0 );
@@ -272,6 +291,7 @@ static void test_no_allocation_after_create_reliable_receipts()
     uint64_t after_create = 0;
     reliable_fixture_create( &f, ROCKETNET_RELIABILITY_RELIABLE_WITH_ACK_RECEIPT, 3, &after_create );
     reliable_fixture_ack( &f, 0, 1.01 );
+
     rocketnet_message_receipt_t out[16];
     rocketnet_unit_check( reliable_fixture_receipts( &f, out ) == 1 );
     rocketnet_unit_check( reliable_receipt_allocations == after_create );

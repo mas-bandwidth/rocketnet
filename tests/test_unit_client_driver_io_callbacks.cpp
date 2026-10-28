@@ -56,8 +56,10 @@ static void test_client_transport_io_open_refuses_wait_without_wake()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
+
     rocketnet_client_transport_io_operations_t ops = base_table();
     ops.wait = fake_wait;
+
     const rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_client_transport_io_t transport = {};
@@ -72,8 +74,10 @@ static void test_client_transport_io_open_refuses_wake_without_wait()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
+
     rocketnet_client_transport_io_operations_t ops = base_table();
     ops.wake = fake_wake;
+
     const rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_client_transport_io_t transport = {};
@@ -88,9 +92,11 @@ static void test_client_transport_io_open_accepts_wait_and_wake()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
+
     rocketnet_client_transport_io_operations_t ops = base_table();
     ops.wait = fake_wait;
     ops.wake = fake_wake;
+
     const rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_client_transport_io_t transport = {};
@@ -107,6 +113,7 @@ static void test_client_transport_io_open_accepts_base_four()
 {
     g_create_calls = 0;
     g_destroy_calls = 0;
+
     rocketnet_client_transport_io_operations_t ops = base_table();
     const rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};

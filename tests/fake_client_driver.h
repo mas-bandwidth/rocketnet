@@ -55,6 +55,7 @@ struct rocketnet_fake_client_transport_io_t
 
 // create returns its context argument (the test passes the fake as the
 // context) and leaves bind unchanged.
+
 static void * rocketnet_fake_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     (void) config;
@@ -63,6 +64,7 @@ static void * rocketnet_fake_client_create( void * context, const rocketnet_clie
 }
 
 // destroy counts.
+
 static void rocketnet_fake_client_destroy( void * transport )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
@@ -70,11 +72,13 @@ static void rocketnet_fake_client_destroy( void * transport )
 }
 
 // send appends to sent.
+
 static void rocketnet_fake_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->send_calls++;
     assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+
     rocketnet_fake_client_datagram_t * dg = &fake->sent[fake->num_sent++];
     dg->address = *to;
     dg->bytes = bytes;
@@ -83,29 +87,36 @@ static void rocketnet_fake_client_send( void * transport, const rocketnet_addres
 
 // receive pops one inbound datagram into the caller's buffer, copying at most
 // the capacity, and returns its bytes, or 0 when drained.
+
 static int rocketnet_fake_client_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int capacity )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->receive_calls++;
     if ( fake->inbound_count == 0 )
         return 0;
+
     rocketnet_fake_client_datagram_t * dg = &fake->inbound[fake->inbound_head];
     fake->inbound_head = ( fake->inbound_head + 1 ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS;
     fake->inbound_count--;
     *from = dg->address;
+
     int n = dg->bytes < capacity ? dg->bytes : capacity;
     memcpy( data, dg->data, (size_t) n );
+
     return n;
 }
 
 // send_batch appends each send.
+
 static void rocketnet_fake_client_send_batch( void * transport, const rocketnet_platform_send_t * sends, int count )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->send_batch_calls++;
+
     for ( int i = 0; i < count; i++ )
     {
         assert( fake->num_sent < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+
         rocketnet_fake_client_datagram_t * dg = &fake->sent[fake->num_sent++];
         dg->address = *sends[i].to;
         dg->bytes = sends[i].packet_bytes;
@@ -115,10 +126,12 @@ static void rocketnet_fake_client_send_batch( void * transport, const rocketnet_
 
 // receive_batch pops up to max_packets into packet_data + i * packet_stride,
 // writing from[i] and packet_bytes[i], and returns the count.
+
 static int rocketnet_fake_client_receive_batch( void * transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_stride, int * packet_bytes, int max_packets )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->receive_batch_calls++;
+
     int got = 0;
     while ( got < max_packets && fake->inbound_count > 0 )
     {
@@ -126,29 +139,35 @@ static int rocketnet_fake_client_receive_batch( void * transport, rocketnet_addr
         fake->inbound_head = ( fake->inbound_head + 1 ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS;
         fake->inbound_count--;
         from[got] = dg->address;
+
         int n = dg->bytes < packet_stride ? dg->bytes : packet_stride;
         memcpy( packet_data + got * packet_stride, dg->data, (size_t) n );
         packet_bytes[got] = n;
         got++;
     }
+
     return got;
 }
 
 // wait counts, records the timeout and readable, returns
 // wake || ( readable && inbound_count > 0 ) (a datagram counts only when
 // readable is true), and clears wake; it never blocks.
+
 static bool rocketnet_fake_client_wait( void * transport, bool readable, double timeout_seconds )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
     fake->wait_calls++;
     fake->last_wait_timeout = timeout_seconds;
     fake->last_wait_readable = readable;
+
     bool ready = fake->wake || ( readable && fake->inbound_count > 0 );
     fake->wake = false;
+
     return ready;
 }
 
 // wake sets wake and counts.
+
 static void rocketnet_fake_client_wake( void * transport )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
@@ -159,6 +178,7 @@ static void rocketnet_fake_client_wake( void * transport )
 // connect counts, records the server address and how many sends and
 // receives came before it, and answers !refuse_connect. No table below has
 // it: a case that wants it sets operations.connect on its own copy.
+
 static inline bool rocketnet_fake_client_connect( void * transport, const rocketnet_address_t * server_address )
 {
     rocketnet_fake_client_transport_io_t * fake = (rocketnet_fake_client_transport_io_t *) transport;
@@ -200,6 +220,7 @@ static const rocketnet_client_transport_io_operations_t rocketnet_fake_client_op
 inline void rocketnet_fake_client_push( rocketnet_fake_client_transport_io_t * fake, const rocketnet_address_t * from, const uint8_t * data, int bytes )
 {
     assert( fake->inbound_count < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS );
+
     rocketnet_fake_client_datagram_t * dg = &fake->inbound[( fake->inbound_head + fake->inbound_count ) % ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS];
     dg->address = *from;
     dg->bytes = bytes;

@@ -47,6 +47,7 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
     signed_fields.expire_timestamp = expire;
     signed_fields.timeout_seconds = timeout;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -72,10 +73,12 @@ static void handshake_deadline_mint( uint8_t * token_data, uint64_t create, uint
 // the token's own clock; the update at five seconds is connect token expired
 // (-7). These are sdk/rocketnet_client_protocol.cpp:148, :187 and :205-206,
 // and netcode.c:3254-3262 at tag v1.2.1.
+
 static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
+
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
 
@@ -103,10 +106,12 @@ static void test_client_attempt_runs_the_token_lifetime_from_its_start()
 // wire: connect at C + 5 for a token that expires at C + 5. These are
 // sdk/rocketnet_client_protocol.cpp:148, :187 and :205-206, and
 // netcode.c:3254-3262 at tag v1.2.1.
+
 static void test_client_connect_at_the_expire_timestamp_is_refused()
 {
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
+
     struct rocketnet_client_protocol_t client;
     rocketnet_client_protocol_init( &client, &counters );
 

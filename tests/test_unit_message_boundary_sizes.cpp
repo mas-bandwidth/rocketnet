@@ -79,16 +79,22 @@ static void boundary_update( void * transport, double time )
     e->batch_slot.clear();
     e->batch.reserve( e->inbound.size() );
     if ( e->is_server )
+    {
         rocketnet_reassembly_set_begin_update( e->net->reassembly );
+    }
+
     for ( size_t i = 0; i < e->inbound.size(); ++i )
     {
         const boundary_packet_t & p = e->inbound[i];
         if ( ( e->is_server && e->net->slot_connection == 0 ) || ( !e->is_server && !e->connected ) )
             continue;
+
         boundary_endpoint_t * sender = e->is_server ? e->net->client : e->net->server;
+
         if ( p.fragment && e->is_server )
         {
             check( rocketnet_reassembly_process_fragment( e->net->reassembly, 0, p.data, p.bytes, e->net->fragment_counters, &boundary_fragment_counter_table ) );
+
             if ( e->net->reassembly->completed_payload )
             {
                 boundary_packet_t complete = {};
@@ -105,7 +111,9 @@ static void boundary_update( void * transport, double time )
             sender->acks_inbox_slot.push_back( p.slot );
         }
     }
+
     e->inbound.clear();
+
     for ( size_t i = 0; i < e->batch.size(); ++i )
     {
         e->batch_data.push_back( e->batch[i].data );
@@ -119,6 +127,7 @@ static int boundary_payloads( void * transport, const int ** client_index, uint8
     *client_index = e->is_server ? e->batch_slot.data() : NULL;
     *payload_data = e->batch_data.data();
     *payload_bytes = e->batch_bytes.data();
+
     return (int) e->batch.size();
 }
 static int boundary_acked( void * transport, const int ** client_index, const uint64_t ** packet_ids )
@@ -154,6 +163,7 @@ static uint8_t * boundary_start_packet( void * transport, int client_index, int 
             context->client_index = client_index;
             return e->frames[f];
         }
+
     return NULL;
 }
 static int boundary_frame_of( boundary_endpoint_t * e, const rocketnet_packet_context_t * context )
@@ -170,8 +180,10 @@ static int boundary_finish_packet( void * transport, rocketnet_packet_context_t 
     check( f >= 0 );
     check( payload_bytes >= 1 && payload_bytes <= context->payload_capacity );
     e->frame_used[f] = false;
+
     boundary_endpoint_t * receiver = e->is_server ? e->net->client : e->net->server;
     const uint8_t * payload = e->frames[f] + BOUNDARY_PAYLOAD_INDEX;
+
     if ( payload_bytes <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
     {
         boundary_packet_t p = {};
@@ -182,10 +194,13 @@ static int boundary_finish_packet( void * transport, rocketnet_packet_context_t 
         receiver->inbound.push_back( p );
         return rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, payload_bytes );
     }
+
     int fragments = 0, stride = 0;
     check( rocketnet_fragment_plan( payload_bytes, &fragments, &stride ) );
+
     const uint32_t payload_id = e->net->next_payload_id++;
     int total_wire_bytes = 0;
+
     for ( int i = 0; i < fragments; ++i )
     {
         const int bytes = i + 1 < fragments ? stride : payload_bytes - stride * ( fragments - 1 );
@@ -197,10 +212,12 @@ static int boundary_finish_packet( void * transport, rocketnet_packet_context_t 
         memcpy( fragment.data + ROCKETNET_FRAGMENT_HEADER_BYTES, payload + stride * i, (size_t) bytes );
         fragment.bytes = ROCKETNET_FRAGMENT_HEADER_BYTES + bytes;
         receiver->inbound.push_back( fragment );
+
         const int wire_bytes = rocketnet_send_budget_max_wire_bytes( fragment.bytes );
         check( wire_bytes > 0 );
         total_wire_bytes += wire_bytes;
     }
+
     return total_wire_bytes;
 }
 static void boundary_abort_packet( void * transport, rocketnet_packet_context_t * context )
@@ -208,7 +225,9 @@ static void boundary_abort_packet( void * transport, rocketnet_packet_context_t 
     boundary_endpoint_t * e = (boundary_endpoint_t *) transport;
     const int f = boundary_frame_of( e, context );
     if ( f >= 0 )
+    {
         e->frame_used[f] = false;
+    }
 }
 static void boundary_send_packets( void * transport ) { (void) transport; }
 static uint64_t boundary_connection( void * transport, int client_index )
@@ -308,6 +327,7 @@ static void boundary_setup_max( boundary_pair_t * pair, int max_message_bytes )
     pair->net->client->disconnects = 0;
     pair->net->server->time = 1000.0;
     pair->net->client->time = 1000.0;
+
     rn_message_link_t sl = boundary_link( pair->net->server ), cl = boundary_link( pair->net->client );
     pair->server = (rocketnet_message_server_t *) rn_message_object_create( NULL, &sl, 1, 1, &config, NULL, 0, 100000, 1000.0 );
     pair->client = (rocketnet_message_client_t *) rn_message_object_create( NULL, &cl, 0, 1, &config, NULL, 0, 100000, 1000.0 );
@@ -328,15 +348,18 @@ static void boundary_teardown( boundary_pair_t * pair )
 static void boundary_drain( boundary_pair_t * pair, std::vector<boundary_received_t> * got )
 {
     // the one receive queue, in batches: each entry names the channel it was delivered on
+
     for ( ;; )
     {
         static rocketnet_message_batch_t batch;     // 1.5 MB: never on the stack (Windows gives 1 MB)
         const int count = rocketnet_message_server_receive_messages( pair->server, &batch );
         if ( count == 0 )
             break;
+
         for ( int i = 0; i < batch.num_messages; ++i )
         {
             check( batch.client_index[i] == 0 );
+
             boundary_received_t r;
             r.channel = batch.channel[i];
             r.data.assign( batch.data[i], batch.data[i] + batch.bytes[i] );
@@ -357,16 +380,19 @@ static std::vector<uint8_t> boundary_data( uint32_t sequence, int bytes )
 {
     std::vector<uint8_t> data( (size_t) bytes );
     for ( int i = 0; i < bytes; ++i )
+    {
         data[(size_t) i] = (uint8_t) ( (uint32_t) i + sequence );
+    }
     return data;
 }
 static void boundary_check_counter( const rocketnet_counters_t * counters, int index ) { check( rocketnet_counter_value( counters, index ) == 0 ); }
 static void test_message_boundary_sizes_every_mode_every_channel()
 {
     const int sizes[] = { 1404, 16, 1405, 16, 1406, 16 };
+
     for ( int reliability = 0; reliability < ROCKETNET_CHANNEL_NUM_TYPES; ++reliability )
     {
-        // Only channel-bearing wire codes route across the configured channel set.
+        // only channel-bearing wire codes route across the configured channel set
         const int channels = reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ||
                                      reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED || reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED ||
                                      reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT
@@ -376,29 +402,43 @@ static void test_message_boundary_sizes_every_mode_every_channel()
         {
             boundary_pair_t pair;
             boundary_setup( &pair );
+
             std::vector<boundary_received_t> got;
             boundary_step( &pair, &got );
             std::vector<std::vector<uint8_t>> expected;
+
             for ( int i = 0; i < 6; ++i )
             {
                 const uint32_t sequence = (uint32_t) ( 1 + reliability * 32 + channel * 8 + i );
                 expected.push_back( boundary_data( sequence, sizes[i] ) );
+
                 const uint32_t serial = rocketnet_message_client_send( pair.client, channel, reliability, expected.back().data(), (int) expected.back().size() );
                 if ( serial == 0 )
+                {
                     fprintf( stderr, "boundary send refused mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[i] );
+                }
                 check( serial != 0 );
             // let each send land before the next, so a promoted twin never
             // overtakes an older unreliable sequenced message in one batch
                 for ( int flush = 0; flush < 8; ++flush )
+                {
                     boundary_step( &pair, &got );
+                }
             }
+
             for ( int step = 0; step < 512 && got.size() < expected.size(); ++step )
+            {
                 boundary_step( &pair, &got );
+            }
             for ( int step = 0; step < 16; ++step )
+            {
                 boundary_step( &pair, &got );
+            }
+
             if ( got.size() != expected.size() )
             {
                 fprintf( stderr, "boundary count mode=%d channel=%d got=%zu expected=%zu\n", reliability, channel, got.size(), expected.size() );
+
                 for ( int j = 0; j < 6; ++j )
                 {
                     bool seen = false;
@@ -406,18 +446,26 @@ static void test_message_boundary_sizes_every_mode_every_channel()
                         if ( got[k].data == expected[(size_t) j] )
                             seen = true;
                     if ( !seen )
+                    {
                         fprintf( stderr, "boundary missing mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[j] );
+                    }
                 }
             }
+
             check( got.size() == expected.size() );
+
             const bool ordered = reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED || reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED ||
                                  reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED || reliability == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED_WITH_RECEIPT;
             bool matched[6] = { false, false, false, false, false, false };
+
             for ( size_t i = 0; i < got.size(); ++i )
             {
                 if ( got[i].channel != channel )
+                {
                     fprintf( stderr, "boundary channel mode=%d expected=%d got=%d bytes=%zu first=%d\n", reliability, channel, got[i].channel, got[i].data.size(), got[i].data.empty() ? -1 : got[i].data[0] );
+                }
                 check( got[i].channel == channel );
+
                 int found = -1;
                 for ( int j = 0; j < 6; ++j )
                     if ( !matched[j] && got[i].data == expected[(size_t) j] )
@@ -426,21 +474,30 @@ static void test_message_boundary_sizes_every_mode_every_channel()
                         break;
                     }
                 if ( found < 0 )
+                {
                     fprintf( stderr, "boundary data mode=%d channel=%d received=%zu\n", reliability, channel, got[i].data.size() );
+                }
                 check( found >= 0 );
                 matched[found] = true;
                 if ( ordered && found >= 0 )
+                {
                     check( (int) i == found );
+                }
             }
+
             for ( int i = 0; i < 6; ++i )
             {
                 if ( !matched[i] )
+                {
                     fprintf( stderr, "boundary missing mode=%d channel=%d bytes=%d\n", reliability, channel, sizes[i] );
+                }
                 check( matched[i] );
             }
+
             check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
             check( pair.net->client->disconnects == 0 && pair.net->server->disconnects == 0 );
+
             const rocketnet_counters_t * cc = rocketnet_message_client_counters( pair.client );
             const rocketnet_counters_t * sc = rocketnet_message_server_counters( pair.server );
             boundary_check_counter( cc, ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL );
@@ -461,6 +518,7 @@ static void test_message_boundary_sizes_every_mode_every_channel()
             check( pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_ACCEPTED] == 0 );
             check( pair.net->fragment_counters[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] == 0 );
         // Code 1 promotes 1406, the first size past one packet's record.
+
             const uint32_t promoted = (uint32_t) rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED );
             check( promoted == ( reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED ? 1u : 0u ) );
             check( rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE ) == 0 );
@@ -475,8 +533,10 @@ static void test_message_boundary_oversize_unreliable_counts_failed_not_refused(
 {
     boundary_pair_t pair;
     boundary_setup( &pair );
+
     std::vector<boundary_received_t> got;
     boundary_step( &pair, &got );
+
     const rocketnet_counters_t * cc = rocketnet_message_client_counters( pair.client );
     const uint64_t failed_before = rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
     const uint64_t refused_before = rocketnet_counter_value( cc, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
@@ -494,30 +554,42 @@ REGISTER_UNIT_TEST( test_message_boundary_oversize_unreliable_counts_failed_not_
 // whose message fits one payload of this transport (16384 bytes, carried in
 // fragments): with a 1416-byte limit, 1417 and 2000 bytes are refused and
 // never reach the server, and 1416 bytes is delivered whole.
+
 static void test_message_boundary_every_mode_refuses_over_max_message_bytes()
 {
     const int limit = 1416;
+
     for ( int reliability = 0; reliability < ROCKETNET_CHANNEL_NUM_TYPES; ++reliability )
     {
         boundary_pair_t pair;
         boundary_setup_max( &pair, limit );
+
         std::vector<boundary_received_t> got;
         boundary_step( &pair, &got );
+
         const int over[2] = { limit + 1, 2000 };
+
         for ( int i = 0; i < 2; ++i )
         {
             const std::vector<uint8_t> data = boundary_data( (uint32_t) ( reliability * 4 + i ), over[i] );
             check( rocketnet_message_client_send( pair.client, 0, reliability, data.data(), over[i] ) == 0 );
         }
+
         const std::vector<uint8_t> at_limit = boundary_data( (uint32_t) ( reliability * 4 + 3 ), limit );
         check( rocketnet_message_client_send( pair.client, 0, reliability, at_limit.data(), limit ) != 0 );
         for ( int step = 0; step < 64 && got.empty(); ++step )
+        {
             boundary_step( &pair, &got );
+        }
         for ( int step = 0; step < 8; ++step )
+        {
             boundary_step( &pair, &got );
+        }
         check( got.size() == 1 );
         if ( !got.empty() )
+        {
             check( got[0].data == at_limit );
+        }
         check( rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) == 0 );
         check( pair.net->client->disconnects == 0 && pair.net->server->disconnects == 0 );
         boundary_teardown( &pair );

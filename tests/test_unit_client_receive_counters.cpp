@@ -80,6 +80,7 @@ static void rcr_mint_token( uint8_t * token_data, uint64_t client_id )
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = 10;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -180,10 +181,12 @@ static void rcr_pair_setup( struct rcr_pair_t * pair, int stage )
     {
         int packet_bytes = 0;
         rocketnet_client_protocol_update( &pair->client, time, packet, &packet_bytes );
+
         if ( packet_bytes > 0 )
         {
             int response_bytes = 0;
             rcr_pump_client_packet( pair, packet, packet_bytes, time, response, &response_bytes );
+
             if ( response_bytes > 0 )
             {
                 if ( stage == RCR_STAGE_CHALLENGE_HELD && response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES )
@@ -193,15 +196,18 @@ static void rcr_pair_setup( struct rcr_pair_t * pair, int stage )
                     pair->time = time + 0.01;
                     return;
                 }
+
                 rocketnet_client_protocol_process_packet( &pair->client, response, response_bytes, time + 0.01,
                                                           payload, (int) sizeof( payload ), &payload_bytes );
             }
         }
+
         if ( stage == RCR_STAGE_HALF_OPEN && pair->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE )
         {
             pair->time = time + 0.02;
             return;
         }
+
         if ( stage == RCR_STAGE_CONNECTED && pair->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
         {
             check( pair->client.client_index == 0 );
@@ -209,6 +215,7 @@ static void rcr_pair_setup( struct rcr_pair_t * pair, int stage )
             return;
         }
     }
+
     check( 0 && "the handshake did not reach the stage" );
 }
 
@@ -279,6 +286,7 @@ static int rcr_block_ranged( uint8_t * out )
     rocketnet_write_uint16( &p, 1 );
     rocketnet_write_uint16( &p, 1 );
     rocketnet_write_uint16( &p, 1 );
+
     return (int) ( p - out );
 }
 
@@ -290,6 +298,7 @@ static int rcr_block_bad( uint8_t * out )
     rocketnet_write_uint32( &p, 5 );
     rocketnet_write_uint8( &p, 0 );
     rocketnet_write_uint16( &p, 0 );
+
     return (int) ( p - out );
 }
 
@@ -314,6 +323,7 @@ static int rcr_floor( uint8_t type )
 static int rcr_plaintext_valid( uint8_t type, uint8_t * out )
 {
     uint8_t * p = out + rcr_block_fresh( out );
+
     switch ( type )
     {
         case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET:
@@ -332,6 +342,7 @@ static int rcr_plaintext_valid( uint8_t type, uint8_t * out )
         default:
             break;
     }
+
     return (int) ( p - out );
 }
 
@@ -350,6 +361,7 @@ static int rcr_plaintext_bad_block( uint8_t type, uint8_t * out )
 static int rcr_plaintext_wrong_opened_size( uint8_t type, uint8_t * out )
 {
     memset( out, 0, 64 );
+
     switch ( type )
     {
         case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET:
@@ -382,7 +394,10 @@ static int rcr_seal( struct rcr_pair_t * pair, int to_server, uint8_t type, uint
                                                      NULL, key );
     check( bytes > 0 );
     if ( sequence == 0 )
+    {
         memset( out + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_SEQUENCE_BYTES );
+    }
+
     return bytes;
 }
 
@@ -546,7 +561,9 @@ static void rcr_run_row( const rcr_row_t * row )
 
     // a prior valid keep-alive, for the replay row: delivered, accepted, and
     // its sequence reused by the packet under test
+
     const uint64_t sequence = pair.next_sequence++;
+
     if ( row->defect == RCR_ALREADY_RECEIVED )
     {
         const int prior_bytes = rcr_plaintext_valid( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, plaintext );
@@ -663,6 +680,7 @@ do                                                                              
 static int rcr_header_only( struct rcr_pair_t * pair, uint8_t type, int bytes, uint8_t * out )
 {
     memset( out, 0, (size_t) bytes );
+
     uint8_t * p = out;
     rocketnet_write_prefilter_header( &p, type, pair->client.packet_filter );
     return bytes;
@@ -678,6 +696,7 @@ static void test_client_handshake_receive_counters_move_exactly()
     // the cookie: stored in the requesting-cookie state, refused anywhere else
 
     rcr_pair_setup( &pair, RCR_STAGE_REQUESTING_COOKIE );
+
     {
         const uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
         rocketnet_write_connection_cookie_packet( packet, pair.client.packet_filter, pair.client.connection_salt, 0, mac );
@@ -687,9 +706,11 @@ static void test_client_handshake_receive_counters_move_exactly()
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_COOKIE_STORED, 1 } } );
         check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
     }
+
     rcr_pair_teardown( &pair );
 
     rcr_pair_setup( &pair, RCR_STAGE_DISCONNECTED );
+
     {
         const uint8_t mac[ROCKETNET_COOKIE_MAC_BYTES] = { 0 };
         rocketnet_write_connection_cookie_packet( packet, pair.client.packet_filter, pair.client.connection_salt, 0, mac );
@@ -699,6 +720,7 @@ static void test_client_handshake_receive_counters_move_exactly()
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_COOKIE_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE, 1 } } );
 
         // denied is also a handshake packet: to a client with no attempt it is wrong state
+
         bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_DENIED_PACKET, ROCKETNET_CONNECTION_DENIED_WIRE_BYTES, packet );
         before = pair.client_counters;
         check( !rcr_to_client( &pair, packet, bytes ) );
@@ -706,6 +728,7 @@ static void test_client_handshake_receive_counters_move_exactly()
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_STATE, 1 } } );
 
         // wrong-size challenge and denied are refused before the state gate
+
         bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_CHALLENGE_PACKET, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES - 1, packet );
         before = pair.client_counters;
         check( !rcr_to_client( &pair, packet, bytes ) );
@@ -718,10 +741,12 @@ static void test_client_handshake_receive_counters_move_exactly()
         RCR_EXPECT( "wrong-size denied to a client that is not connecting", &before, &pair.client_counters,
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_DENIED_WRONG_SIZE, 1 } } );
     }
+
     rcr_pair_teardown( &pair );
 
     // the challenge and the denied while the request is out: the held
     // challenge is the server's own answer to the client's request
+
     rcr_pair_setup( &pair, RCR_STAGE_CHALLENGE_HELD );
     check( pair.held_challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
     check( pair.client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
@@ -743,9 +768,11 @@ static void test_client_handshake_receive_counters_move_exactly()
     {
         uint8_t session_nonce[ROCKETNET_SESSION_NONCE_BYTES];
         memset( session_nonce, 0x11, sizeof( session_nonce ) );
+
         struct rocketnet_connection_keys_t handshake;
         rocketnet_derive_handshake_keys( &handshake, pair.client.token.client_to_server_key, pair.client.token.server_to_client_key,
                                          pair.client.connection_salt, session_nonce );
+
         const uint8_t small_order_point[ROCKETNET_KEY_BYTES] = { 0 };
         bytes = rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_PACKET, pair.client.packet_filter, 1,
                                                session_nonce, small_order_point, ROCKETNET_KEY_BYTES,
@@ -761,6 +788,7 @@ static void test_client_handshake_receive_counters_move_exactly()
 
     // the real challenge is accepted, and its retransmission has no question
     // left to answer
+
     before = pair.client_counters;
     check( rcr_to_client( &pair, pair.held_challenge, pair.held_challenge_bytes ) );
     RCR_EXPECT( "challenge accepted", &before, &pair.client_counters,
@@ -789,6 +817,7 @@ static int rcr_craft_fragment( struct rcr_pair_t * pair, uint32_t payload_id, in
 {
     static uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
     check( body_bytes >= 1 && body_bytes <= ROCKETNET_MAX_FRAGMENT_BYTES );
+
     uint8_t * p = plaintext + rcr_block_fresh( plaintext );
     rocketnet_write_uint32( &p, payload_id );
     rocketnet_write_uint8( &p, (uint8_t) index );
@@ -806,6 +835,7 @@ static void test_client_fragment_receive_counters_move_exactly()
     int packet_bytes[ROCKETNET_MAX_FRAGMENTS];
     static uint8_t payload_data[3000];
     memset( payload_data, 0x5A, sizeof( payload_data ) );
+
     struct rocketnet_counters_t before;
     int bytes;
 
@@ -826,6 +856,7 @@ static void test_client_fragment_receive_counters_move_exactly()
         { "index at count", 1, 3, 2, ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE },
         { "index past count", 1, 200, 100, ROCKETNET_COUNTER_CLIENT_FRAGMENT_INDEX_OUT_OF_RANGE },
     };
+
     for ( size_t i = 0; i < sizeof( refusals ) / sizeof( refusals[0] ); i++ )
     {
         bytes = rcr_craft_fragment( &pair, refusals[i].payload_id, refusals[i].index, refusals[i].count_minus_one, 1, packet );
@@ -837,6 +868,7 @@ static void test_client_fragment_receive_counters_move_exactly()
 
     // payload id 1 is the server's first fragmented send: its first fragment
     // lands and pins the count at 3 and the stride
+
     check( rocketnet_server_protocol_write_fragments( &pair.server, 0, payload_data, 3000, pair.time,
                                                       packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );
     before = pair.client_counters;
@@ -845,6 +877,7 @@ static void test_client_fragment_receive_counters_move_exactly()
                 { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_FRAGMENT_ACCEPTED, 1 } } );
 
     // the count-widening attack: count 4 against the pinned 3
+
     bytes = rcr_craft_fragment( &pair, 1, 1, 3, 1, packet );
     before = pair.client_counters;
     check( !rcr_to_client( &pair, packet, bytes ) );
@@ -852,6 +885,7 @@ static void test_client_fragment_receive_counters_move_exactly()
                 { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_FRAGMENT_RECEIVED, 1 }, { ROCKETNET_COUNTER_CLIENT_FRAGMENT_COUNT_MISMATCH, 1 } } );
 
     // a non-final fragment off the pinned stride
+
     bytes = rcr_craft_fragment( &pair, 1, 1, 2, 1, packet );
     before = pair.client_counters;
     check( !rcr_to_client( &pair, packet, bytes ) );
@@ -861,6 +895,7 @@ static void test_client_fragment_receive_counters_move_exactly()
     // index 0 again, stride-sized (3000 bytes in three fragments is a stride
     // of 1000): the replay window never saw this packet, so the refusal is
     // reassembly's own
+
     bytes = rcr_craft_fragment( &pair, 1, 0, 2, 1000, packet );
     before = pair.client_counters;
     check( !rcr_to_client( &pair, packet, bytes ) );
@@ -870,6 +905,7 @@ static void test_client_fragment_receive_counters_move_exactly()
     // a stale payload id: ids 2 through 4 are sent and dropped, 5 lands in the
     // slot id 1 held (abandoning it), 6 through 8 are dropped, 9 takes the
     // slot from 5, and a crafted 5 is then older than the occupant
+
     for ( int spin = 2; spin <= 4; spin++ )
         check( rocketnet_server_protocol_write_fragments( &pair.server, 0, payload_data, 3000, pair.time,
                                                           packets, packet_bytes, ROCKETNET_MAX_FRAGMENTS ) == 3 );
@@ -898,6 +934,7 @@ static void test_client_fragment_receive_counters_move_exactly()
 
     // a full-stride first fragment claiming 256 fragments overruns the
     // configured payload maximum
+
     bytes = rcr_craft_fragment( &pair, 100, 0, 255, ROCKETNET_MAX_FRAGMENT_BYTES, packet );
     before = pair.client_counters;
     check( !rcr_to_client( &pair, packet, bytes ) );
@@ -924,6 +961,7 @@ static int rcr_craft_fragment_toward( struct rcr_pair_t * pair, int to_server, u
 {
     static uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
     check( body_bytes >= 1 && body_bytes <= ROCKETNET_MAX_FRAGMENT_BYTES );
+
     uint8_t * p = plaintext + rcr_block_fresh( plaintext );
     rocketnet_write_uint32( &p, payload_id );
     rocketnet_write_uint8( &p, (uint8_t) index );
@@ -931,6 +969,7 @@ static int rcr_craft_fragment_toward( struct rcr_pair_t * pair, int to_server, u
     memset( p, 0x77, (size_t) body_bytes );
     p += body_bytes;
     *out_sequence = pair->next_sequence++;
+
     return rcr_seal( pair, to_server, ROCKETNET_CONNECTION_FRAGMENT_PACKET, *out_sequence, plaintext, (int) ( p - plaintext ), NULL, out );
 }
 
@@ -950,7 +989,6 @@ static void test_fragment_refused_by_reassembly_is_not_acknowledged()
     const uint32_t stale_payload_id = 0x80000000u;
 
     // the client
-
     {
         uint64_t debt_before = pair.client.ack.ack_debt;
         uint64_t stale_before = pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_STALE];
@@ -961,6 +999,7 @@ static void test_fragment_refused_by_reassembly_is_not_acknowledged()
         check( pair.client.ack.ack_debt == debt_before );
 
         // the control: a fragment reassembly accepts is eligible and owed
+
         debt_before = pair.client.ack.ack_debt;
         bytes = rcr_craft_fragment_toward( &pair, 0, 1, 0, 2, 1000, &sequence, packet );
         check( rcr_to_client( &pair, packet, bytes ) );
@@ -969,7 +1008,6 @@ static void test_fragment_refused_by_reassembly_is_not_acknowledged()
     }
 
     // the server
-
     {
         const int mapping_index = rocketnet_client_slots_mapping_index( pair.server.client_slots, 0 );
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( pair.server.encryption_map, mapping_index );
@@ -1007,6 +1045,7 @@ static void test_server_response_and_slot_counters_move_exactly()
     int bytes;
 
     // a response with a zero sequence, to a mapping whose handshake is in flight
+
     rcr_pair_setup( &pair, RCR_STAGE_HALF_OPEN );
     bytes = rcr_header_only( &pair, ROCKETNET_CONNECTION_RESPONSE_PACKET, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, packet );
     before = pair.server_counters;
@@ -1021,8 +1060,10 @@ static void test_server_response_and_slot_counters_move_exactly()
         struct rocketnet_client_protocol_t other;
         struct rocketnet_counters_t other_counters;
         rcr_client_init( &other, &other_counters );
+
         struct rocketnet_address_t other_address;
         check( rocketnet_address_parse( &other_address, "198.51.100.8:56789" ) );
+
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
         rcr_mint_token( token_data, 0x1400ULL );                    // the same client id, a different token
         check( rocketnet_client_protocol_connect( &other, token_data, pair.time, ROCKETNET_TEST_CREATE_TS ) );
@@ -1039,6 +1080,7 @@ static void test_server_response_and_slot_counters_move_exactly()
             rocketnet_client_protocol_update( &other, time, out_packet, &out_bytes );
             if ( out_bytes == 0 )
                 continue;
+
             int response_bytes = 0;
             rocketnet_server_protocol_process_packet( &pair.server, &other_address, out_packet, out_bytes,
                                                       ROCKETNET_TEST_CREATE_TS, time, response, &response_bytes,
@@ -1047,10 +1089,12 @@ static void test_server_response_and_slot_counters_move_exactly()
                 rocketnet_client_protocol_process_packet( &other, response, response_bytes, time + 0.01,
                                                           payload, (int) sizeof( payload ), &payload_bytes );
         }
+
         check( other.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         pair.time = time + 0.2;
 
         // now the first client's response arrives
+
         int out_bytes = 0;
         rocketnet_client_protocol_update( &pair.client, pair.time, out_packet, &out_bytes );
         check( out_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
@@ -1062,14 +1106,18 @@ static void test_server_response_and_slot_counters_move_exactly()
         rocketnet_counters_assert_conserved( &other_counters );
         rocketnet_reassembly_set_destroy( other.reassembly );
     }
+
     rcr_pair_teardown( &pair );
 
     // a slot that holds no mapping: the three send-side entries that look
     // the mapping up count the state and refuse
+
     rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
+
     {
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
         memset( user_data, 0, sizeof( user_data ) );
+
         const int slot = rocketnet_client_slots_assign( pair.server.client_slots, 0xBEEFULL, -1,
                                                         0xBEEFULL, user_data );
         check( slot != -1 );
@@ -1085,26 +1133,34 @@ static void test_server_response_and_slot_counters_move_exactly()
                     { { ROCKETNET_COUNTER_SLOT_WITHOUT_MAPPING, 3 } } );
         rocketnet_client_slots_release( pair.server.client_slots, slot );
     }
+
     rcr_pair_teardown( &pair );
 
     // the delivery batch fills: three packets sent with packet ids, one ack
     // block acknowledging all three against a batch that holds two. the third
     // is deferred, never dropped
+
     rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
+
     {
         pair.server.acks->acked_capacity = 2;
+
         uint64_t first_sequence = 0;
+
         for ( int i = 0; i < 3; i++ )
         {
             struct rocketnet_address_t to;
             uint64_t sequence = 0;
             check( rocketnet_server_protocol_start_payload( &pair.server, 0, &to, &sequence ) );
             if ( i == 0 )
+            {
                 first_sequence = sequence;
+            }
             alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
             memset( frame, 0xCD, sizeof( frame ) );
             check( rocketnet_server_protocol_seal_payload_frame( &pair.server, 0, sequence, (uint64_t) ( 100 + i ), frame, 4, pair.time ) > 0 );
         }
+
         uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES];
         uint8_t * p = plaintext;
         rocketnet_write_uint32( &p, (uint32_t) ( first_sequence + 2 ) );        // the largest sequence sent
@@ -1117,6 +1173,7 @@ static void test_server_response_and_slot_counters_move_exactly()
                     { { ROCKETNET_COUNTER_PACKETS_RECEIVED, 1 }, { ROCKETNET_COUNTER_ACK_RECEIVED, 1 }, { ROCKETNET_COUNTER_ACK_ACCEPTED, 1 }, { ROCKETNET_COUNTER_ACKED_BATCH_FULL, 1 } } );
         check( pair.server.acks->num_acked == 2 );
     }
+
     rcr_pair_teardown( &pair );
 }
 
@@ -1140,7 +1197,9 @@ static void rcr_assert_no_refusals( const struct rocketnet_counters_t * counters
     char report[4096];
     const int refusals = rocketnet_counters_refusals( counters, NULL, report, (int) sizeof( report ) );
     if ( refusals )
+    {
         printf( "%s", report );
+    }
     check( refusals == 0 );
 }
 
@@ -1159,17 +1218,23 @@ static void test_session_end_races_move_only_expected_counters()
     // the client ends the session with the server's packets in flight
 
     rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
+
     for ( int i = 0; i < 4; i++ )
     {
         const int plaintext_bytes = rcr_plaintext_valid( session_types[i], plaintext );
         in_flight_bytes[i] = rcr_seal( &pair, 0, session_types[i], pair.next_sequence++, plaintext, plaintext_bytes, NULL, in_flight[i] );
     }
+
     rocketnet_client_protocol_disconnect( &pair.client, burst, &burst_count, &burst_bytes );
     check( burst_count == ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
     for ( int i = 0; i < burst_count; i++ )
+    {
         check( rcr_to_server( &pair, burst + i * ROCKETNET_SEND_BUDGET, burst_bytes ) == ( i == 0 ? ROCKETNET_SERVER_PROCESS_ACCEPTED : ROCKETNET_SERVER_PROCESS_IGNORED ) );
+    }
     for ( int i = 0; i < 4; i++ )
+    {
         check( !rcr_to_client( &pair, in_flight[i], in_flight_bytes[i] ) );
+    }
 
     check( pair.server_counters.values[ROCKETNET_COUNTER_DISCONNECT_NO_MAPPING] == (uint64_t) ( burst_count - 1 ) );
     check( pair.client_counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] == 1 );
@@ -1183,18 +1248,24 @@ static void test_session_end_races_move_only_expected_counters()
     // the server ends the session with the client's packets in flight
 
     rcr_pair_setup( &pair, RCR_STAGE_CONNECTED );
+
     for ( int i = 0; i < 4; i++ )
     {
         const int plaintext_bytes = rcr_plaintext_valid( session_types[i], plaintext );
         in_flight_bytes[i] = rcr_seal( &pair, 1, session_types[i], pair.next_sequence++, plaintext, plaintext_bytes, NULL, in_flight[i] );
     }
+
     static uint8_t server_burst[ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS * ROCKETNET_SEND_BUDGET];
     rocketnet_server_protocol_disconnect_client( &pair.server, 0, server_burst, &burst_count, &burst_bytes );
     check( burst_count == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     for ( int i = 0; i < 4; i++ )
+    {
         check( rcr_to_server( &pair, in_flight[i], in_flight_bytes[i] ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    }
     for ( int i = 0; i < burst_count; i++ )
+    {
         check( rcr_to_client( &pair, server_burst + i * ROCKETNET_SEND_BUDGET, burst_bytes ) == ( i == 0 ) );
+    }
 
     check( pair.server_counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] == 1 );
     check( pair.server_counters.values[ROCKETNET_COUNTER_PAYLOAD_NO_MAPPING] == 1 );
@@ -1208,7 +1279,6 @@ static void test_session_end_races_move_only_expected_counters()
 
 REGISTER_UNIT_TEST( test_session_end_races_move_only_expected_counters );
 
-
 // netcode.io's client: a payload is processed only once connected. The
 // server's first payloads to a newly connected client can beat the
 // keep-alive that connects it (the xdp server sent CONFIG and ARM ahead of
@@ -1217,6 +1287,7 @@ REGISTER_UNIT_TEST( test_session_end_races_move_only_expected_counters );
 // SEND_NOT_CONNECTED and lost. A payload or fragment there is ignored,
 // counted WRONG_STATE, and the server's reliable resend carries it after
 // the keep-alive. The standalone ack keeps its carve-out.
+
 static void test_client_ignores_payloads_before_connected()
 {
     static struct rcr_pair_t pair;
