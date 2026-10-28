@@ -29,11 +29,11 @@
 #include <errno.h>
 #include <stdio.h>
 
-#if defined( __APPLE__ )
-#include <sys/ioctl.h>
-#elif defined( __linux__ )
+#if defined( __linux__ )
 #include <linux/sock_diag.h>
-#endif // #if defined( __APPLE__ )
+#elif !defined( _WIN32 )
+#include <sys/ioctl.h>
+#endif // #if defined( __linux__ )
 
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
@@ -2733,7 +2733,7 @@ void rocketnet_test_platform_batch_pump_degraded()
 // queued datagram adds its skb truesize, overhead included), never a
 // payload byte count: it is used only as a strict-growth signal, waited
 // on after each individual send before the next send, so a growth is
-// attributable to that one datagram. On macOS, FIONREAD is waited on
+// attributable to that one datagram. On macOS and the BSDs, FIONREAD is waited on
 // until it reaches the cumulative payload of the real datagrams sent
 // so far; zero-length chaff adds no payload there, and its arrival is
 // carried by the single injector's FIFO order once the following real
@@ -2742,21 +2742,18 @@ void rocketnet_test_platform_batch_pump_degraded()
 // only ends a hung harness and says so.
 static int rocketnet_test_queue_accounting( rocketnet_platform_socket_t * socket )
 {
-#if defined( __APPLE__ )
-    int queued = 0;
-    if ( ioctl( socket->handle, FIONREAD, &queued ) != 0 )
-        return -1;
-    return queued;
-#elif defined( __linux__ )
+#if defined( __linux__ )
     uint32_t mem[SK_MEMINFO_VARS];
     socklen_t len = sizeof( mem );
     if ( getsockopt( socket->handle, SOL_SOCKET, SO_MEMINFO, mem, &len ) != 0 )
         return -1;
     return (int) mem[SK_MEMINFO_RMEM_ALLOC];
-#else
-    (void) socket;
-    return -1;
-#endif // #if defined( __APPLE__ )
+#else // #if defined( __linux__ )
+    int queued = 0;
+    if ( ioctl( socket->handle, FIONREAD, &queued ) != 0 )
+        return -1;
+    return queued;
+#endif // #if defined( __linux__ )
 }
 
 struct rocketnet_test_queue_wait_t
@@ -2787,13 +2784,9 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
     const int target_accounting = wait->accounting;
 
     (void) target_payload;
-#elif defined( __APPLE__ )
+#else // #if defined( __linux__ )
     if ( datagram_bytes == 0 )
         return;
-#else
-    fprintf( stderr, "harness error: %s has no queue completion observation on this platform\n", phase );
-    rocketnet_check( 0 );
-    return;
 #endif // #if defined( __linux__ )
     for ( ;; )
     {

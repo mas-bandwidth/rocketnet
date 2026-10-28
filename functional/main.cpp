@@ -87,8 +87,6 @@ static int rocketnet_functional_worker( const char * name )
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
 suite_exec rocketnet_unit_case_memory_exec();
 
-#if defined( _WIN32 ) || defined( __APPLE__ ) || defined( __linux__ )
-
 // The nightly tier: exact names, or a prefix ending in '*'. On macOS the
 // hard-killed client cells on the portable server wait out the real 10 s
 // token timeout, and the connect/disconnect x1000 pairs other than msgx/msgx
@@ -134,8 +132,6 @@ static int rocketnet_functional_test_group( const char * name )
 
     return 0;
 }
-
-#endif // #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
 
 // test_transport_control (a sibling binary, test_transport_control.cpp) runs
 // test_buffered_control_pressure at 300 and then at ROCKETNET_MAX_CLIENTS
@@ -237,6 +233,6 @@ int main( int argc, char ** argv )
         { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #endif // #if !ROCKETNET_DEV
 }
