@@ -7,7 +7,6 @@ clang-tidy	sdk/rocketnet.cpp	cert-err33-c	da1aa6d949f7e5b0
 clang-tidy	sdk/rocketnet.cpp	performance-no-int-to-ptr	3ab34197c638f27c
 clang-tidy	sdk/rocketnet.cpp	performance-no-int-to-ptr	7fd99072c7417c25
 clang-tidy	sdk/rocketnet_abi.cpp	bugprone-macro-parentheses	fc0604c655b601f5
-clang-tidy	sdk/rocketnet_ack.cpp	bugprone-narrowing-conversions	6d61a0fd957160e2
 clang-tidy	sdk/rocketnet_ack.cpp	bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c	b28aaea8e261fc44
 clang-tidy	sdk/rocketnet_allocator.cpp	cert-dcl50-cpp	ea8860165c227751
 clang-tidy	sdk/rocketnet_api.cpp	bugprone-branch-clone	6934c2676d115b09

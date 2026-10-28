@@ -135,8 +135,7 @@ to appease an analyzer.
 | same file `clang-analyzer-core.CallAndMessage` `63d75dab0ed93b0a` | A frame's `packet_id` is initialized exactly when the immutable backend dispatch is staged; commit checks that same staged predicate. The analyzer mixes a nonstaged reserve with a staged commit. |
 | same file/check `cc2e6d2f4e4b18ff` | Same immutable-dispatch invariant for the second commit use. |
 | same file/check `e3a4dfe675c1addc` | Same immutable-dispatch invariant for abort. |
-| `rocketnet_tests.cpp` `cert-err58-cpp` `678ad276c9cb76a7` | The static test registrar constructor only assigns primitive fields/function pointers and links the list; it cannot throw. |
-| same file `clang-analyzer-security.FloatLoopCounter` `03238a92bb2cdcfc` | Synthetic-clock test loop; the floating bound is a time deadline, not an iteration count. |
+| `rocketnet_tests.cpp` `clang-analyzer-security.FloatLoopCounter` `03238a92bb2cdcfc` | Synthetic-clock test loop; the floating bound is a time deadline, not an iteration count. |
 | same file/check `2d5362edbbd2b319` | Same bounded simulated-time pattern. |
 | same file/check `3f4f072b19b30f81` | Same bounded simulated-time pattern. |
 | same file/check `4f8411d8cac2b264` | Same bounded simulated-time pattern. |
