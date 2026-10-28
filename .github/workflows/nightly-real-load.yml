@@ -44,6 +44,11 @@ on:
   schedule:
     - cron: "0 3 * * *"
   workflow_dispatch:
+  # A change to this file runs it once on its own pull request, since
+  # workflow_dispatch reaches a workflow only once it is on the default branch.
+  pull_request:
+    paths:
+      - .github/workflows/nightly-real-load.yml
 
 permissions:
   contents: read
@@ -56,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name == 'pull_request' && fromJSON(format('["{0}"]', github.event.pull_request.head.sha)) || github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     concurrency:
       group: nightly-real-load
       cancel-in-progress: false
