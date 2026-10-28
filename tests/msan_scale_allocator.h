@@ -131,4 +131,4 @@ struct msan_scale_allocator_scope_t
 #endif // #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
 };
 
-#endif // #ifndef ROCKETNET_TESTS_MSAN_SCALE_ALLOCATOR_H
+#endif // ROCKETNET_TESTS_MSAN_SCALE_ALLOCATOR_H
