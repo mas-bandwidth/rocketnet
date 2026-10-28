@@ -67,6 +67,7 @@ static void rocketnet_rotation_server_setup( struct rocketnet_rotation_server_t 
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -75,6 +76,7 @@ static void rocketnet_rotation_server_setup( struct rocketnet_rotation_server_t 
     rocketnet_unit_check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
     server->cookie_rotation_seconds = period_seconds;
     server->cookie_key_rotation_time = ROCKETNET_ROTATION_TEST_START_TIME + (double) period_seconds;
     server->previous_cookie_key_expire_time = 0.0;
@@ -155,7 +157,9 @@ static void rocketnet_rotation_clear_mapping( struct rocketnet_rotation_server_t
 {
     int index = rocketnet_encryption_map_find( test->server.encryption_map, &test->client_address );
     if ( index != -1 )
+    {
         rocketnet_encryption_map_remove_current( test->server.encryption_map, index );
+    }
 }
 
 static void rocketnet_rotation_build_request_no_cookie( uint8_t * request, uint64_t client_id )
@@ -188,6 +192,7 @@ static int rocketnet_rotation_process_from_client_address( struct rocketnet_rota
 {
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
+
     return rocketnet_server_protocol_process_connection_request( &test->server,
                                                                  &test->client_address,
                                                                  request,
@@ -199,6 +204,7 @@ static int rocketnet_rotation_process_from_client_address( struct rocketnet_rota
 }
 
 // 1. A cookie minted under the server's current cookie key passes the gate.
+
 static void test_cookie_rotation_current_key_accepted()
 {
     struct rocketnet_rotation_server_t test;
@@ -217,6 +223,7 @@ static void test_cookie_rotation_current_key_accepted()
 
 // 2. A cookie minted under K0 passes after one rotation at start + period
 // and at start + 2 * period minus a small step.
+
 static void test_cookie_rotation_previous_key_accepted_in_window()
 {
     struct rocketnet_rotation_server_t test;
@@ -249,12 +256,13 @@ static void test_cookie_rotation_previous_key_accepted_in_window()
 // second update at start + 2 * period, after a single update that jumps from
 // start to start + 2 * period (the stall branch), and when presented at
 // current_time >= previous_cookie_key_expire_time with no update in between.
+
 static void test_cookie_rotation_previous_key_rejected_after_window()
 {
     const double start = ROCKETNET_ROTATION_TEST_START_TIME;
     const double period = (double) ROCKETNET_ROTATION_TEST_PERIOD_SECONDS;
 
-    // Case A: normal rotation at start + period, then second rotation at start + 2 * period.
+    // case A: normal rotation at start + period, then second rotation at start + 2 * period
     {
         struct rocketnet_rotation_server_t test;
         rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
@@ -275,7 +283,7 @@ static void test_cookie_rotation_previous_key_rejected_after_window()
         rocketnet_rotation_server_teardown( &test );
     }
 
-    // Case B: stall branch — a single update jumps from start to start + 2 * period.
+    // case B: stall branch — a single update jumps from start to start + 2 * period
     {
         struct rocketnet_rotation_server_t test;
         rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
@@ -296,8 +304,8 @@ static void test_cookie_rotation_previous_key_rejected_after_window()
         rocketnet_rotation_server_teardown( &test );
     }
 
-    // Case C: rotation at start + period, then presented at current_time >= previous_cookie_key_expire_time
-    // with no update in between.
+    // case C: rotation at start + period, then presented at current_time >= previous_cookie_key_expire_time
+    // with no update in between
     {
         struct rocketnet_rotation_server_t test;
         rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
@@ -322,6 +330,7 @@ static void test_cookie_rotation_previous_key_rejected_after_window()
 
 // 4. A cookie minted under a key the server never held is refused both before
 // any rotation and while a previous key is live.
+
 static void test_cookie_rotation_never_used_key_rejected()
 {
     struct rocketnet_rotation_server_t test;
@@ -352,6 +361,7 @@ static void test_cookie_rotation_never_used_key_rejected()
 
 // 5. Each rotation draws a fresh key different from previous_cookie_key and
 // from the key before, and with a period of 0 update never changes the key.
+
 static void test_cookie_rotation_draws_a_fresh_key()
 {
     const double start = ROCKETNET_ROTATION_TEST_START_TIME;
@@ -396,14 +406,17 @@ static void test_cookie_rotation_draws_a_fresh_key()
 
 // The transport receives before its sweep. A receive near the end of a
 // delayed rotation window or after a stall must issue a usable cookie.
+
 static void test_cookie_rotation_receive_before_update_keeps_fresh_cookie()
 {
     const double boundary = ROCKETNET_ROTATION_TEST_START_TIME + 2.0 * ROCKETNET_ROTATION_TEST_PERIOD_SECONDS;
     const double receive_times[] = { boundary - 0.1, boundary + 0.1 };
+
     for ( int i = 0; i < 2; ++i )
     {
         struct rocketnet_rotation_server_t test;
         rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
+
         uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
         rocketnet_rotation_build_request_with_key( &test, request, 0x5001ULL, test.server.cookie_key );
         memset( request + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_COOKIE_FIELD_BYTES );
@@ -419,8 +432,10 @@ static void test_cookie_rotation_receive_before_update_keeps_fresh_cookie()
                 ROCKETNET_COOKIE_FIELD_BYTES );
 
         rocketnet_server_protocol_update( &test.server, receive_times[i] );
+
         const double return_time = receive_times[i] + 0.2;
         rocketnet_server_protocol_update( &test.server, return_time );
+
         const uint64_t bad_mac_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY];
         rocketnet_unit_check( rocketnet_rotation_process_at( &test, request, return_time ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
         rocketnet_unit_check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY] == bad_mac_before );
@@ -432,8 +447,10 @@ static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, ROCKETNET_ROTATION_TEST_PERIOD_SECONDS );
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     rocketnet_rotation_build_request_with_key( &test, request, 0x5002ULL, test.server.cookie_key );
+
     const double after_stall = ROCKETNET_ROTATION_TEST_START_TIME + 2.0 * ROCKETNET_ROTATION_TEST_PERIOD_SECONDS;
     const uint64_t bad_mac_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COOKIE_DID_NOT_VERIFY];
     rocketnet_unit_check( rocketnet_rotation_process_at( &test, request, after_stall ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
@@ -446,12 +463,13 @@ static void test_cookie_rotation_receive_after_stall_rejects_outgoing_key()
 // rocketnet_server_protocol_update) and is spent only after the cookie
 // validates (the check under "the handshake budget check" in
 // rocketnet_server_protocol_process_connection_request).
+
 static void test_handshake_budget_reopens_after_update()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
 
-    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+    const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
 
@@ -459,6 +477,7 @@ static void test_handshake_budget_reopens_after_update()
     {
         rocketnet_rotation_set_client_address( &test, i );
         rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test.server.cookie_key );
+
         int result = rocketnet_rotation_process_from_client_address( &test, request );
         rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
     }
@@ -482,12 +501,13 @@ static void test_handshake_budget_reopens_after_update()
 // the cookie gate (no return cookie) is answered with a cookie and spends no
 // handshake budget (sdk/rocketnet_server_protocol.cpp,
 // rocketnet_server_protocol_process_connection_request).
+
 static void test_cookie_requests_spend_no_handshake_budget()
 {
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
 
-    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+    const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
 
@@ -495,6 +515,7 @@ static void test_cookie_requests_spend_no_handshake_budget()
     {
         rocketnet_rotation_set_client_address( &test, i );
         rocketnet_rotation_build_request_with_key( &test, request, UINT64_C( 0x10000 ) + (uint64_t) i, test.server.cookie_key );
+
         int result = rocketnet_rotation_process_from_client_address( &test, request );
         rocketnet_unit_check( result != ROCKETNET_SERVER_PROCESS_BUDGET_EXCEEDED );
     }

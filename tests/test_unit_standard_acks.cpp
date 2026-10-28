@@ -37,12 +37,14 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
         if ( capacity < 6 )
             return -1;
         memset( out, 0, 6 );
+
         struct rocketnet_ack_block_t decoded;
         return rocketnet_ack_block_read( &decoded, out, 6, 0 ) == 0 ? 6 : -1;
     }
 
     struct rocketnet_ack_block_t block;
     memset( &block, 0, sizeof( block ) );
+
     uint64_t highest_sent = 0;
     bool invalid = false;
 
@@ -148,14 +150,19 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
     {
         struct rocketnet_replay_protection_t replay;
         memset( &replay, 0, sizeof( replay ) );
+
         for ( uint64_t sequence = 1; sequence <= 5; sequence++ )
+        {
             rocketnet_replay_advance( &replay, sequence );
+        }
+
         rocketnet_replay_advance( &replay, 7 );
         rocketnet_replay_advance( &replay, 8 );
         rocketnet_replay_advance( &replay, 10 );
         rocketnet_replay_advance( &replay, 11 );
         if ( capacity < 11 )
             return -1;
+
         const int bytes = rocketnet_ack_block_build( out, 11, &replay );
         struct rocketnet_ack_block_t decoded;
         if ( bytes != 11 || rocketnet_ack_block_read( &decoded, out, bytes, 11 ) != bytes ||
@@ -170,6 +177,7 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
 
     if ( capacity < ROCKETNET_ACK_BLOCK_MAX_BYTES )
         return -1;
+
     const int bytes = rocketnet_ack_block_write( out, &block );
     const int actual_bytes = strcmp( id, "t15.invalid-geometry" ) == 0 ? bytes - 1 : bytes;
     struct rocketnet_ack_block_t decoded;
@@ -178,6 +186,7 @@ static int standard_acks_generate( const char * id, uint8_t * out, int capacity 
         return -1;
     if ( strcmp( id, "t15.sequence-wrap" ) == 0 && decoded.largest != 0x100000000ULL )
         return -1;
+
     return actual_bytes;
 }
 

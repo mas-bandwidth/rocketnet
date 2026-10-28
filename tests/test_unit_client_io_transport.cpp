@@ -41,6 +41,7 @@ static double client_io_transport_time( void * context )
 
 // a connect token naming 127.0.0.1:40000; the client reads the signed fields
 // at connect, so the signed data is enough to create and send requests
+
 static void client_io_transport_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -67,12 +68,15 @@ static rocketnet_client_transport_t * client_io_transport_create( rocketnet_fake
 {
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_io_transport_token( token );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     check( config.time_callback == NULL );
     config.time_callback = client_io_transport_time;
+
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( clock, token, &config, clock->now, operations, fake );
     check( transport != NULL );
+
     return transport;
 }
 
@@ -113,6 +117,7 @@ static int client_io_completed_batch_receive( void * context, rocketnet_address_
         rocketnet_fake_client_push( fake, &fake->source, datagram, sizeof( datagram ) );
         --fake->remaining;
     }
+
     return rocketnet_fake_client_receive( fake, from, data, capacity );
 }
 
@@ -121,17 +126,21 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     auto * fake = new client_io_completed_batch_t();
     auto operations = rocketnet_fake_client_operations_base;
     operations.receive = client_io_completed_batch_receive;
+
     client_io_transport_clock_t clock = { 1000.0, 0 };
     auto * transport = client_io_transport_create( fake, &operations, &clock );
     rocketnet_address_t server;
     check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
+
     uint8_t datagram[64] = {};
     int fill, ready, free_count;
+
     for ( int i = 0; i < 2; ++i )
     {
         rocketnet_fake_client_push( fake, &server, datagram, sizeof( datagram ) );
         rocketnet_client_transport_step_legacy_for_test( transport, 1000.0 );
     }
+
     rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
     check( fill >= 0 && ready == 2 && free_count == 0 );
     rocketnet_client_transport_legacy_busy_for_test( transport, 1 );
@@ -149,8 +158,10 @@ static void test_client_legacy_receive_handoff_and_backpressure()
     rocketnet_client_transport_update( transport, 1000.3 );
     rocketnet_client_transport_legacy_receive_state_for_test( transport, &fill, &ready, &free_count );
     check( ready == 0 && free_count == 2 );
+
     // Fill all three buffers; the producer must retain its full buffer and
     // leave further datagrams unread. Each update has only 1024 packet slots.
+
     for ( int batch = 0; batch < 3; ++batch )
     {
         fake->source = server;
@@ -158,6 +169,7 @@ static void test_client_legacy_receive_handoff_and_backpressure()
         rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
         check( fake->remaining == 0 && fake->inbound_count == 0 );
     }
+
     rocketnet_fake_client_push( fake, &server, datagram, sizeof( datagram ) );
     rocketnet_client_transport_step_legacy_for_test( transport, 1000.4 );
     check( fake->inbound_count == 1 );
@@ -183,6 +195,7 @@ REGISTER_UNIT_TEST( test_client_legacy_receive_handoff_and_backpressure );
 // The helper: false for the base table, true for the io and batch tables. A
 // step-driven transport on the base table has no I/O core and sends the
 // protocol packet from update on the main thread, as at BASE.
+
 static void test_client_io_backend_without_wait_uses_base_path()
 {
     check( !rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_base ) );
@@ -213,6 +226,7 @@ REGISTER_UNIT_TEST( test_client_io_backend_without_wait_uses_base_path );
 // seals its protocol packet into the Filling ring and hands it off (one wake),
 // and the I/O step sends it to the server address. Destroy stops and exits the
 // core, then closes the transport once.
+
 static void test_client_io_backend_with_wait_uses_io_thread()
 {
     check( rocketnet_client_transport_uses_io_thread( &rocketnet_fake_client_operations_io ) );
@@ -234,6 +248,7 @@ static void test_client_io_backend_with_wait_uses_io_thread()
     check( rocketnet_client_io_step( io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     check( fake->send_calls == 1 );
     check( fake->num_sent == 1 );
+
     rocketnet_address_t server;
     check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
     check( rocketnet_address_equal( &fake->sent[0].address, &server ) );
@@ -255,6 +270,7 @@ REGISTER_UNIT_TEST( test_client_io_backend_with_wait_uses_io_thread );
 // 1; the next update hands off the deferred packet with its own in ring 2, and
 // the step after that sends both. RNBufferHandoff MainNeverWaits. The stats
 // count each packet once, the deferred one included: four sent, not five.
+
 static void test_client_io_handoff_never_waits()
 {
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
@@ -290,8 +306,10 @@ static void test_client_io_handoff_never_waits()
     check( fake->send_batch_calls == 3 );
 
     // inside the protocol's send interval: no packet, nothing to hand off
+
     rocketnet_client_transport_update( transport, 1000.65 );
     check( client_io_transport_counter( transport, ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED ) == 1 );
+
     struct rocketnet_client_transport_stats_t stats;
     rocketnet_client_transport_stats( transport, &stats );
     check( stats.packets_sent_per_second == 4 );
@@ -308,6 +326,7 @@ REGISTER_UNIT_TEST( test_client_io_handoff_never_waits );
 // to the core with the quit store; the core sends rings 0 and 1, then it,
 // then exits; nothing committed is dropped (RNBufferHandoff StopSendsAll,
 // ExitSentAll; RNClientIo FreedOnlyAfterJoin).
+
 static void test_client_io_destroy_hands_off_deferred_slots()
 {
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
@@ -333,6 +352,7 @@ REGISTER_UNIT_TEST( test_client_io_destroy_hands_off_deferred_slots );
 // the next update and reaches the protocol (PACKETS_RECEIVED moves by one);
 // update returns the buffer at its end (Expose, Return). An update with
 // nothing Ready processes nothing.
+
 static void test_client_io_update_exposes_published_batch()
 {
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
@@ -348,6 +368,7 @@ static void test_client_io_update_exposes_published_batch()
 
     rocketnet_address_t server;
     check( rocketnet_address_parse( &server, "127.0.0.1:40000" ) );
+
     uint8_t datagram[64];
     memset( datagram, 0, sizeof( datagram ) );
     rocketnet_fake_client_push( fake, &server, datagram, (int) sizeof( datagram ) );
@@ -371,17 +392,21 @@ REGISTER_UNIT_TEST( test_client_io_update_exposes_published_batch );
 
 // Stop must not run backend sends, including packets waiting in the link
 // simulator. The fake worker remains paused until explicitly stepped below.
+
 static void test_client_simulator_stop_defers_backend_send()
 {
     rocketnet_public_link_simulator_test_development( 1 );
+
     auto * fake = new rocketnet_fake_client_transport_io_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_io_transport_token( token );
+
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.time_callback = client_io_transport_time;
     config.simulated_latency_ms = 500;
+
     auto * transport = rocketnet_client_transport_create_step_driven_current( &clock, token, &config,
                                                                               clock.now, &rocketnet_fake_client_operations_base, fake );
     check( transport );
@@ -390,12 +415,14 @@ static void test_client_simulator_stop_defers_backend_send()
     rocketnet_client_transport_stop( transport );
     check( fake->send_calls == 0 );
     check( !rocketnet_client_transport_network_simulator( transport, 0, 0, 100, 0 ) );
+
     for ( int i = 0; i < 16; ++i )
     {
         rocketnet_client_transport_stop( transport );
         check( !rocketnet_client_transport_stopped( transport ) );
         check( fake->send_calls == 0 && fake->destroy_calls == 0 );
     }
+
     rocketnet_client_transport_step_legacy_for_test( transport, clock.now );
     check( rocketnet_client_transport_stopped( transport ) );
     check( fake->send_calls == 1 );

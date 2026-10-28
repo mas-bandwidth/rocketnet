@@ -25,7 +25,7 @@ stale cppcheck entries were removed. The GCC baseline remains empty.
 The staged source was
 `ef0229e87240cadf6e3b2376d2f72782d5fd7c97` on
 `sprint/rn-static-analysis-zero-unresolved.w1.g1.e1`. Analysis and builds ran
-on the allocated `hetzner2` Linux bench, one `benchslot` at a time and at most
+on an allocated Linux x64 bench, one `benchslot` at a time and at most
 four compile/analyzer jobs. Tool versions were:
 
 - GCC/G++ 13.3.0;
@@ -135,8 +135,7 @@ to appease an analyzer.
 | same file `clang-analyzer-core.CallAndMessage` `63d75dab0ed93b0a` | A frame's `packet_id` is initialized exactly when the immutable backend dispatch is staged; commit checks that same staged predicate. The analyzer mixes a nonstaged reserve with a staged commit. |
 | same file/check `cc2e6d2f4e4b18ff` | Same immutable-dispatch invariant for the second commit use. |
 | same file/check `e3a4dfe675c1addc` | Same immutable-dispatch invariant for abort. |
-| `rocketnet_tests.cpp` `cert-err58-cpp` `678ad276c9cb76a7` | The static test registrar constructor only assigns primitive fields/function pointers and links the list; it cannot throw. |
-| same file `clang-analyzer-security.FloatLoopCounter` `03238a92bb2cdcfc` | Synthetic-clock test loop; the floating bound is a time deadline, not an iteration count. |
+| `rocketnet_tests.cpp` `clang-analyzer-security.FloatLoopCounter` `03238a92bb2cdcfc` | Synthetic-clock test loop; the floating bound is a time deadline, not an iteration count. |
 | same file/check `2d5362edbbd2b319` | Same bounded simulated-time pattern. |
 | same file/check `3f4f072b19b30f81` | Same bounded simulated-time pattern. |
 | same file/check `4f8411d8cac2b264` | Same bounded simulated-time pattern. |
@@ -155,6 +154,15 @@ visible only through `count`; `publish` writes the selected slot before
 incrementing `count`, and `front`, `reopen` and `retire` read only a slot made
 visible by that count. Zero-initializing the whole queue would add behavior
 cost without changing the invariant.
+
+`rocketnet_server_uring_linux.cpp` `preprocessorErrorDirective`
+`c208577b92a8d27b` is the intended refusal of a hand build that defines
+`ROCKETNET_IO_URING` against a liburing without `IORING_RECV_MULTISHOT`
+(liburing before 2.3, as on Ubuntu 22.04). cppcheck does not read the system
+`liburing.h`, so it evaluates the configuration in which that macro is absent
+and reports the `#error`. Configure checks the macro and leaves
+`ROCKETNET_IO_URING` unset in that case (cmake/RocketNetDependencies.cmake),
+so no CMake build reaches the directive.
 
 ## Baseline shrinkage
 

@@ -102,7 +102,9 @@ static mb_net_t * mb_net_new()
     net->server->finishes = 0;
     net->server->time = 0.0;
     for ( int i = 0; i < MB_MAX_SLOTS; i++ )
+    {
         net->clients[i] = NULL;
+    }
     net->next_connection = 100;
     net->next_packet_id = 1000;
     return net;
@@ -119,6 +121,7 @@ static mb_endpoint_t * mb_net_client( mb_net_t * net, int slot )
     client->finishes = 0;
     client->time = 0.0;
     net->clients[slot] = client;
+
     return client;
 }
 
@@ -126,20 +129,26 @@ static void mb_net_connect( mb_net_t * net, int slot )
 {
     net->slot_connection[slot] = net->next_connection++;
     if ( net->clients[slot] )
+    {
         net->clients[slot]->connected = true;
+    }
 }
 
 static void mb_net_drop_slot( mb_net_t * net, int slot )
 {
     net->slot_connection[slot] = 0;
     if ( net->clients[slot] )
+    {
         net->clients[slot]->connected = false;
+    }
 }
 
 static void mb_net_free( mb_net_t * net )
 {
     for ( int i = 0; i < MB_MAX_SLOTS; i++ )
+    {
         delete net->clients[i];
+    }
     delete net->server;
     delete net;
 }
@@ -160,6 +169,7 @@ static void mb_update( void * transport, double time )
     e->batch_bytes.clear();
     e->batch_slot.clear();
     e->batch.reserve( e->inbound.size() );
+
     for ( size_t i = 0; i < e->inbound.size(); i++ )
     {
         const mb_packet_t & p = e->inbound[i];
@@ -168,6 +178,7 @@ static void mb_update( void * transport, double time )
         if ( !e->is_server && !e->connected )
             continue;
         e->batch.push_back( p );
+
         mb_endpoint_t * sender = e->is_server ? net->clients[p.slot] : net->server;
         if ( sender )
         {
@@ -175,7 +186,9 @@ static void mb_update( void * transport, double time )
             sender->acks_inbox_slot.push_back( p.slot );
         }
     }
+
     e->inbound.clear();
+
     for ( size_t i = 0; i < e->batch.size(); i++ )
     {
         e->batch_data.push_back( e->batch[i].data );
@@ -190,6 +203,7 @@ static int mb_payloads( void * transport, const int ** client_index, uint8_t * c
     *client_index = e->is_server ? e->batch_slot.data() : NULL;
     *payload_data = e->batch_data.data();
     *payload_bytes = e->batch_bytes.data();
+
     return (int) e->batch.size();
 }
 
@@ -209,6 +223,7 @@ static uint8_t * mb_start_packet( void * transport, int client_index, int reques
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
+
     for ( int f = 0; f < MB_MAX_FRAMES; f++ )
     {
         if ( e->frame_used[f] )
@@ -223,6 +238,7 @@ static uint8_t * mb_start_packet( void * transport, int client_index, int reques
         context->client_index = client_index;
         return e->frames[f];
     }
+
     return NULL;
 }
 
@@ -250,11 +266,14 @@ static int mb_finish_packet( void * transport, rocketnet_packet_context_t * cont
     memcpy( packet.data, e->frames[f] + MB_PAYLOAD_INDEX, (size_t) payload_bytes );
 
     mb_net_t * net = e->net;
+
     if ( e->is_server )
     {
         mb_endpoint_t * to = net->clients[packet.slot];
         if ( to )
+        {
             to->inbound.push_back( packet );
+        }
     }
     else
     {
@@ -269,7 +288,9 @@ static void mb_abort_packet( void * transport, rocketnet_packet_context_t * cont
     mb_endpoint_t * e = (mb_endpoint_t *) transport;
     const int f = mb_frame_of( e, context );
     if ( f >= 0 )
+    {
         e->frame_used[f] = false;
+    }
 }
 
 static void mb_send_packets( void * transport )
@@ -366,6 +387,7 @@ struct mb_pair_t
 static rocketnet_message_server_t * mb_server_create_seam( mb_net_t * net, const rocketnet_message_config_t * config, int slots, int32_t kbps )
 {
     (void) slots;
+
     rn_message_link_t link = mb_link( net->server );
     return (rocketnet_message_server_t *) rn_message_object_create( NULL, &link, 1, MB_MAX_SLOTS, config, NULL, 0, kbps, MB_T0 );
 }
@@ -381,29 +403,35 @@ static void mb_pair_setup( mb_pair_t * pair, int num_clients, const rocketnet_me
                            int32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, int32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
+
     if ( !config )
     {
         mb_config( &defaults );
         config = &defaults;
     }
+
     memset( pair, 0, sizeof( *pair ) );
     pair->net = mb_net_new();
     pair->num_clients = num_clients;
     pair->server = mb_server_create_seam( pair->net, config, MB_MAX_SLOTS, server_kbps );
     check( pair->server );
+
     for ( int i = 0; i < num_clients; i++ )
     {
         pair->clients[i] = mb_client_create( pair->net, i, config, client_kbps );
         check( pair->clients[i] );
         mb_net_connect( pair->net, i );
     }
+
     pair->time = MB_T0;
 }
 
 static void mb_pair_teardown( mb_pair_t * pair )
 {
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         rocketnet_message_client_destroy( pair->clients[i] );
+    }
     rocketnet_message_server_destroy( pair->server );
     mb_net_free( pair->net );
 }
@@ -443,22 +471,30 @@ static void mb_step( mb_pair_t * pair, std::vector<mb_received_t> * got = NULL, 
         pair->time += 0.01;
         check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
         for ( int i = 0; i < pair->num_clients; i++ )
+        {
             check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
+        }
         if ( got )
             for ( int i = 0; i < pair->num_clients; i++ )
                 mb_drain_client( pair->clients[i], &got[i] );
         rocketnet_message_server_send_packets( pair->server );
         for ( int i = 0; i < pair->num_clients; i++ )
+        {
             rocketnet_message_client_send_packets( pair->clients[i] );
+        }
     }
 }
 
 static void mb_fill( uint8_t * data, int bytes, uint32_t id )
 {
     for ( int i = 0; i < bytes; i++ )
+    {
         data[i] = (uint8_t) ( id * 131 + (uint32_t) i * 7 + 5 );
+    }
     if ( bytes >= 4 )
+    {
         memcpy( data, &id, 4 );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +513,7 @@ static void test_message_server_broadcast_reaches_every_connected()
     mb_fill( message, (int) sizeof( message ), 4100 );
 
     // one broadcast, the copying convenience per connected connection
+
     check( rocketnet_message_server_broadcast( pair.server, 2, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 3 );
 
     std::vector<mb_received_t> got[MB_MAX_SLOTS];
@@ -491,6 +528,7 @@ static void test_message_server_broadcast_reaches_every_connected()
     }
 
     // all three slots are still connected after the broadcast
+
     check( rocketnet_message_server_client_connected( pair.server, 0 ) == 1 );
     check( rocketnet_message_server_client_connected( pair.server, 1 ) == 1 );
     check( rocketnet_message_server_client_connected( pair.server, 2 ) == 1 );
@@ -508,18 +546,22 @@ static void test_message_server_broadcast_skips_free_and_exhausted()
     rocketnet_message_config_t config;
     mb_small_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0; // isolate explicit capacity
+
     mb_pair_t pair;
     mb_pair_setup( &pair, 3, &config, 0, 0 );
     mb_step( &pair );
 
     // slot 1 is free: its transport connection is gone before the broadcast
+
     mb_net_drop_slot( pair.net, 1 );
     mb_step( &pair );
     check( rocketnet_message_server_client_connected( pair.server, 1 ) == 0 );
 
     // slot 2 is exhausted: queue to it until its region finds no room, which
     // kicks the connection with the named reason
+
     int started = 0;
+
     for ( ;; )
     {
         uint8_t * q = rocketnet_message_server_start( pair.server, 2, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 100 );
@@ -530,6 +572,7 @@ static void test_message_server_broadcast_skips_free_and_exhausted()
         started++;
         check( started <= 1000 );
     }
+
     check( started > 0 );
     check( rocketnet_message_server_client_connected( pair.server, 2 ) == 0 );
     check( rocketnet_message_server_disconnect_reason( pair.server, 2 ) == ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED );
@@ -542,6 +585,7 @@ static void test_message_server_broadcast_skips_free_and_exhausted()
 
     // only slot 0 is connected; slots 1 (free), 2 (exhausted) and 3 (free) are
     // skipped, each dropped through the same send path that counts it
+
     check( rocketnet_message_server_broadcast( pair.server, 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, (int) sizeof( message ) ) == 1 );
     check( rocketnet_counter_value( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_SEND_NOT_CONNECTED ) == drops + 3 );
 
@@ -597,6 +641,7 @@ static void test_message_client_create_refuses_budget_and_config()
     // a config whose required memory is zero: num_channels = 0 fails
     // rocketnet_message_validate_config (1..ROCKETNET_MAX_CHANNELS), so
     // rocketnet_message_client_required_memory returns 0
+
     rocketnet_message_config_t bad;
     rocketnet_message_default_config( &bad );
     bad.num_channels = 0;
@@ -608,8 +653,11 @@ static void test_message_client_create_refuses_budget_and_config()
     const uint64_t before = mcr_mallocs;
 
     // a send budget above the maximum: refused before any allocation
+
     check( rocketnet_message_client_create( NULL, token, NULL, NULL, NULL, 0, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1 ) == NULL );
+
     // an invalid message config (zero required memory): refused before any allocation
+
     check( rocketnet_message_client_create( NULL, token, NULL, &bad, NULL, 0, 0 ) == NULL );
 
     check( mcr_mallocs == before );
@@ -638,8 +686,11 @@ static void test_message_server_create_refuses_budget_and_config()
     const uint64_t before = mcr_mallocs;
 
     // a send budget above the maximum: refused before any allocation
+
     check( rocketnet_message_server_create( NULL, "127.0.0.1:40000", NULL, NULL, NULL, 0, ROCKETNET_SEND_BUDGET_MAX_KBPS + 1 ) == NULL );
+
     // an invalid message config (zero required memory): refused before any allocation
+
     check( rocketnet_message_server_create( NULL, "127.0.0.1:40000", NULL, &bad, NULL, 0, 0 ) == NULL );
 
     check( mcr_mallocs == before );

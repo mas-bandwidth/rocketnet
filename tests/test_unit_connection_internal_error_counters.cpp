@@ -57,6 +57,7 @@ static void internal_error_server_setup( struct internal_error_server_t * test )
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 4 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 8 );

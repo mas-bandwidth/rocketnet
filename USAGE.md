@@ -974,8 +974,12 @@ while CONNECTED, and `-1` in any other state.
 the state becomes DISCONNECTED. Worker completion is separate and is reported
 by `rocketnet_client_disconnected`. On the server,
 `rocketnet_server_client_connected` and `rocketnet_server_client_id` identify a
-slot and its client, `rocketnet_server_num_connected_clients` counts them, and
-`rocketnet_server_disconnect_client` ends one deliberately.
+slot and its client, `rocketnet_server_client_user_data` copies the
+`ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` of user data the backend put in that
+client's connect token, `rocketnet_server_num_connected_clients` counts them, and
+`rocketnet_server_disconnect_client` ends one deliberately. The user data is
+readable from connect until the slot is released; release wipes it, and a slot
+without a connected client reads zeros and returns false.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
 `rocketnet_disconnect_reason_name`.

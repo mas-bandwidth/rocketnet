@@ -66,6 +66,7 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
         out[0] = 2;
         return 1;
     }
+
     if ( strcmp( id, "m4.check-2-truncated" ) == 0 )
     {
         if ( capacity < 2 )
@@ -73,6 +74,7 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
         out[0] = 0;
         return emit_records( out, 1 );
     }
+
     if ( strcmp( id, "m4.check-3-bad-flags" ) == 0 )
     {
         const uint8_t bytes[] = { 0x05, 0x01, 0x00, 0xAA, 0x01 };
@@ -81,6 +83,7 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
+
     if ( strcmp( id, "m4.check-4-bad-length" ) == 0 )
     {
         const uint8_t bytes[] = { 0x00, 0x00, 0x00, 0x01 };
@@ -89,6 +92,7 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
         memcpy( out, bytes, sizeof( bytes ) );
         return (int) sizeof( bytes );
     }
+
     if ( strcmp( id, "m4.check-9-over-maximum" ) == 0 )
     {
         if ( capacity < 1417 )
@@ -96,6 +100,7 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
         memset( out, 0, 1416 );
         return rocketnet_message_single_finish( out, capacity, 1416 );
     }
+
     if ( strcmp( id, "m4.check-7-bad-block" ) == 0 )
     {
         const uint8_t bytes[] = { 0x0A, 0x01, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xAA, 0x01 };
@@ -151,6 +156,7 @@ static int standard_receiver_checks_generate( const char * id, uint8_t * out, in
     {
         return -1;
     }
+
     return write_one( &record, out, capacity );
 }
 
@@ -190,10 +196,13 @@ static int standard_receiver_check_run( const char * id, const uint8_t * payload
         region.max_message_bytes = 262144;
         region.receive_descriptors = descriptors;
         region.received_bits = bits;
+
         rn_window_receive_t receive;
         rn_window_receive_init( &receive, &region, 0 );
+
         rocketnet_unit_check( rocketnet_message_reader_begin( &reader, payload, bytes, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) );
+
         uint32_t slot = RN_DESCRIPTOR_NONE;
         rocketnet_unit_check( rn_window_receive_accept( &receive, &record, &slot ) == RN_WINDOW_RECEIVE_VIOLATION );
         return receive.violation;
@@ -203,21 +212,28 @@ static int standard_receiver_check_run( const char * id, const uint8_t * payload
     {
         rocketnet_message_config_t config;
         rocketnet_message_default_config( &config );
+
         rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
+
         rn_region_t * region = rn_arena_region( arena, 0 );
         rn_channels_t channels;
         rocketnet_unit_check( rn_channels_init( &channels, region, 1, 0 ) );
+
         region->channel_receive[0].ordered_read = 100;
+
         rocketnet_unit_check( rocketnet_message_reader_begin( &reader, payload, bytes, &limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) );
+
         rn_delivery_t delivery;
         const int dispatch = rn_channels_dispatch_ordered( &channels, &record, &delivery );
         rocketnet_unit_check( dispatch == ROCKETNET_CHANNEL_DISPATCH_NONE );
+
         const int violations = (int) counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_BEHIND];
         rn_arena_destroy( arena );
+
         rocketnet_unit_check( violations == 1 );
         return RN_STANDARD_ORDERING_BEHIND;
     }
@@ -227,9 +243,11 @@ static int standard_receiver_check_run( const char * id, const uint8_t * payload
     {
         rocketnet_unit_check( violation == ROCKETNET_MESSAGE_VIOLATION_NONE );
         rocketnet_unit_check( rocketnet_message_reader_next( &reader, &record ) );
+
         rocketnet_message_config_body_t body;
         return rocketnet_message_read_config_body( record.data, record.bytes, &body );
     }
+
     return violation;
 }
 
@@ -263,6 +281,7 @@ static void test_standard_receiver_checks_vectors()
         uint8_t payload[RN_STANDARD_VECTOR_MAX_BYTES];
         const int bytes = rn_standard_hex_decode( standard_receiver_checks_table[i].hex, payload, (int) sizeof( payload ) );
         rocketnet_unit_check( bytes > 0 );
+
         const int actual = standard_receiver_check_run( expected[i].id, payload, bytes );
         if ( actual != expected[i].violation )
             printf( "vector %s: counter %s, expected %s\n", expected[i].id,

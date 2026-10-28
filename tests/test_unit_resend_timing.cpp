@@ -53,11 +53,14 @@ struct resend_timing_fixture_t
 static void resend_timing_open( resend_timing_fixture_t * f )
 {
     check( rocketnet_message_validate_config( &f->config ) );
+
     f->arena = rn_arena_create( NULL, &f->config, 1, NULL );
     check( f->arena != NULL );
+
     f->region = rn_arena_region( f->arena, 0 );
     rn_region_carve( f->region );
     check( rn_ordered_init( &f->ordered, f->region, &f->config, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, ROCKETNET_MESSAGE_SINGLE_BYTES ) );
+
     f->next_packet_id = 1;
 }
 
@@ -73,12 +76,18 @@ static uint64_t resend_timing_send( resend_timing_fixture_t * f, double now, uin
 {
     const uint32_t d = rn_region_send_alloc( f->region, 16 );
     check( d != RN_DESCRIPTOR_NONE );
+
     uint64_t number = 0, ring_start = 0;
     check( rn_window_send_first_write( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 16, d, &number, &ring_start ) == RN_WINDOW_SEND_NUMBERED );
+
     const uint64_t packet_id = f->next_packet_id++;
     rn_window_ack_commit_packet( &f->ack, packet_id, &number, 1, now );
+
     if ( out_number )
+    {
         *out_number = number;
+    }
+
     return packet_id;
 }
 
@@ -89,7 +98,10 @@ static uint32_t resend_timing_write( resend_timing_fixture_t * f, double now, ui
     alignas( 16 ) static uint8_t frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint8_t * payloads[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
     for ( int i = 0; i < ROCKETNET_PACKET_BUILDER_MAX_PACKETS; i++ )
+    {
         payloads[i] = frames[i];
+    }
+
     const int written = rn_ordered_write( &f->ordered, now, payloads, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
     uint32_t resent = 0;
     for ( int p = 0; p < written; p++ )
@@ -99,9 +111,13 @@ static uint32_t resend_timing_write( resend_timing_fixture_t * f, double now, ui
         check( numbers != NULL || count == 0 );
         check( resent + count <= max_numbers );
         for ( uint32_t i = 0; i < count; i++ )
+        {
             out[resent++] = numbers[i];
+        }
+
         rn_ordered_commit( &f->ordered, p, f->next_packet_id++, now );
     }
+
     return resent;
 }
 
@@ -119,6 +135,7 @@ static void test_resend_delay_is_adaptive_resend_delay()
         resend_timing_fixture_t f;
         rocketnet_message_default_config( &f.config );
         resend_timing_open( &f );
+
         const double t0 = resend_timing_start;
         resend_timing_send( &f, t0, NULL );
         const uint64_t other = resend_timing_send( &f, t0, NULL );
@@ -127,6 +144,7 @@ static void test_resend_delay_is_adaptive_resend_delay()
         check( fabs( f.ack.resend_delay - 0.150 ) < 0.0005 );
         check( resend_timing_pass( &f, t0 + 0.149 ) == 0 );     // not before the resend delay
         check( resend_timing_pass( &f, t0 + 0.151 ) == 1 );     // the adaptive resend delay is due
+
         resend_timing_close( &f );
     }
 
@@ -135,15 +153,19 @@ static void test_resend_delay_is_adaptive_resend_delay()
         resend_timing_fixture_t f;
         rocketnet_message_default_config( &f.config );
         resend_timing_open( &f );
+
         const double t0 = resend_timing_start;
         resend_timing_send( &f, t0, NULL );
         const uint64_t other = resend_timing_send( &f, t0, NULL );
         check( rn_window_ack_on_ack( &f.ack, other, t0 + 0.400 ) == 1 );
         check( fabs( f.ack.resend_delay - 2.000 ) < 0.0005 );
+
         // the record is not due at its RTT sample; it resends at the resend delay
+
         check( resend_timing_pass( &f, t0 + 0.400 ) == 0 );
         check( resend_timing_pass( &f, t0 + 1.999 ) == 0 );
         check( resend_timing_pass( &f, t0 + 2.001 ) == 1 );
+
         resend_timing_close( &f );
     }
 }
@@ -184,16 +206,19 @@ static void test_rtt_estimator_moves_five_percent()
     check( fabs( f.ack.srtt - 0.210 ) < 1e-12 );
     check( fabs( f.ack.rttvar - 0.200 ) < 1e-12 );
     check( fabs( f.ack.resend_delay - 1.250 ) < 1e-12 );
+
     resend_timing_close( &f );
 
     rocketnet_message_default_config( &f.config );
     f.config.message_resend_delay_min_ms = 200;
     resend_timing_open( &f );
+
     const double floored_start = resend_timing_start;
     resend_timing_send( &f, floored_start, NULL );
     const uint64_t short_sample = resend_timing_send( &f, floored_start, NULL );
     check( rn_window_ack_on_ack( &f.ack, short_sample, floored_start + 0.020 ) == 1 );
     check( fabs( f.ack.resend_delay - 0.200 ) < 1e-12 );
+
     resend_timing_close( &f );
 }
 
@@ -223,6 +248,7 @@ static void test_no_backoff_between_resends()
             const double gap = now - last;
             check( gap >= 0.1 - 1e-9 );
             check( gap <= 0.1 + resend_timing_tick + 1e-9 );       // the walk did not double the delay
+
             last = now;
             resends++;
         }
@@ -231,8 +257,10 @@ static void test_no_backoff_between_resends()
             check( now - last < 0.1 + 1e-9 );                      // due and not resent is a failure too
         }
     }
+
     check( resends >= 17 );                                        // 2 s of 100 ms gaps rounded to 60 Hz ticks
     check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
     resend_timing_close( &f );
 }
 
@@ -254,6 +282,7 @@ static void test_first_resend_before_any_sample_at_resend_delay_initial()
     check( resend_timing_pass( &f, t0 + 0.099 ) == 0 );
     check( resend_timing_pass( &f, t0 + 2.0001 ) == 1 );
     check( f.ack.has_rtt == 0 );
+
     resend_timing_close( &f );
 }
 
@@ -270,6 +299,7 @@ static void test_config_refuses_fewer_than_four_attempts()
     check( rocketnet_message_validate_config( &config ) );
 
     // resend_delay_initial 2 s and a 5 s timeout: two and a half first delays
+
     rocketnet_message_default_config( &config );
     config.message_resend_delay_min_ms = 10;
     config.message_resend_delay_initial_ms = 2000;
@@ -279,12 +309,15 @@ static void test_config_refuses_fewer_than_four_attempts()
     check( rocketnet_message_connection_bytes( &config ) == 0 );
 
     // one millisecond short of four is refused; exactly four is accepted
+
     config.reliable_message_timeout_ms = 7999;
     check( !rocketnet_message_validate_config( &config ) );
+
     config.reliable_message_timeout_ms = 8000;
     check( rocketnet_message_validate_config( &config ) );
 
     // the config is not repaired by validation
+
     check( config.message_resend_delay_initial_ms == 2000 && config.reliable_message_timeout_ms == 8000 );
 }
 
@@ -321,13 +354,16 @@ static void test_resend_timing_witness_replays()
         if ( !sampled && now >= t0 + 0.5 )
         {
             check( rn_window_ack_on_ack( &f.ack, other, t0 + 0.5 ) == 1 );
+
             sampled = true;
         }
+
         if ( rn_window_ack_check_timeout( &f.ack, now ) )
         {
             timed_out = true;
             break;
         }
+
         uint64_t out[4];
         const uint32_t resent = resend_timing_write( &f, now, out, 4 );
         for ( uint32_t k = 0; k < resent; k++ )
@@ -339,6 +375,7 @@ static void test_resend_timing_witness_replays()
     check( timed_out );                                            // every send lost: the timeout ends it
     check( f.ack.error == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( attempts >= 4 );                                        // ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
+
     resend_timing_close( &f );
 }
 
@@ -375,6 +412,7 @@ static uint32_t resend_timing_send_block( resend_timing_fixture_t * f, double no
 {
     const uint32_t d = rn_region_send_take( f->region, bytes );
     check( d != RN_DESCRIPTOR_NONE );
+
     uint64_t first = 0, ring_start = 0;
     const uint32_t fragments = rn_window_send_first_write_block( &f->send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, (uint32_t) bytes, d, &first, &ring_start );
     check( fragments > 1 && fragments <= max_numbers );
@@ -385,6 +423,7 @@ static uint32_t resend_timing_send_block( resend_timing_fixture_t * f, double no
         rn_window_ack_commit_packet( &f->ack, f->next_packet_id++, &number, 1, now );
         out_numbers[i] = number;
     }
+
     return fragments;
 }
 
@@ -430,23 +469,29 @@ static void test_chunk_resend_paced_by_rtt_not_interval()
     uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.229, out );
     check( resent == 0 );                                          // not at the 100 ms cap
     check( resend_timing_pass_numbers( &f, t1 + 1.229, out ) == 0 );
+
     resent = resend_timing_pass_numbers( &f, t1 + 1.231, out );
     check( resent == n );                                          // at the resend delay, every chunk
     for ( uint32_t i = 0; i < n; i++ )
+    {
         check( resend_timing_contains( out, resent, chunks[i] ) );
+    }
 
     // the same delay again: no back-off
+
     check( resend_timing_pass_numbers( &f, t1 + 1.231 + 0.101, out ) == 0 );
     check( resend_timing_pass_numbers( &f, t1 + 1.231 + 1.229, out ) == 0 );
     check( resend_timing_pass_numbers( &f, t1 + 1.231 + 1.231, out ) == n );
 
     // a single-packet record on the same path also waits the adaptive resend delay
+
     uint64_t small = 0;
     const double t2 = t1 + 2.0;
     resend_timing_send( &f, t2, &small );
     resent = resend_timing_pass_numbers( &f, t2 + 1.231, out );
     check( resend_timing_contains( out, resent, small ) );
     check( f.ack.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
     resend_timing_close( &f );
 }
 
@@ -472,9 +517,13 @@ static void test_small_record_behind_a_chunk_not_held()
     uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.231, out );
     check( resent == n );                                          // chunks at their resend delay
     for ( uint32_t i = 0; i < n; i++ )
+    {
         check( resend_timing_contains( out, resent, chunks[i] ) );
+    }
+
     resent = resend_timing_pass_numbers( &f, t1 + 1.251, out );
     check( resent == 1 && out[0] == small );                       // small record is not held by chunk FIFO
+
     resend_timing_close( &f );
 }
 
@@ -500,13 +549,16 @@ static void test_both_fifos_walk_only_what_is_due()
     // chunks c0..c2 and small s1 at t1, small s2 at +20 ms; at +30 ms a small
     // tripwire s3 and a two-chunk block c3, c4 whose first chunk is the chunk
     // tripwire
+
     uint64_t c[8];
     check( resend_timing_send_block( &f, t1, 2500, c, 8 ) == 3 );
+
     uint64_t s1 = 0, s2 = 0, s3 = 0;
     resend_timing_send( &f, t1, &s1 );
     resend_timing_send( &f, t1 + 0.020, &s2 );
     resend_timing_send( &f, t1 + 0.030, &s3 );
     check( resend_timing_send_block( &f, t1 + 0.030, 1500, c + 3, 5 ) == 2 );
+
     const uint32_t W = f.region->window;
     f.region->send_numbers[s3 & ( W - 1 )].acked = 1;              // tripwires: acked, still linked
     f.region->send_numbers[c[3] & ( W - 1 )].acked = 1;
@@ -515,43 +567,55 @@ static void test_both_fifos_walk_only_what_is_due()
 
     uint64_t out[64];
 
-    // No record is due before the 1230 ms resend delay.
+    // no record is due before the 1230 ms resend delay
+
     uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.229, out );
     check( resent == 0 );
     check( f.ack.resend_count == linked );                         // no tripwire reached
     check( f.ack.walk_visits == 2 );                               // both heads, neither due
 
-    // The walks stop at their heads before the resend delay
+    // the walks stop at their heads before the resend delay
+
     check( resend_timing_pass_numbers( &f, t1 + 1.229, out ) == 0 );
     check( f.ack.resend_count == linked );
     check( f.ack.walk_visits == 2 );
 
-    // Still no record is due
+    // still no record is due
+
     resent = resend_timing_pass_numbers( &f, t1 + 1.229, out );
     check( resent == 0 );
     check( f.ack.resend_count == linked );
     check( f.ack.walk_visits == 2 );
 
-    // +1231 ms: s1 and c0..c2 are due. s2 is due at +1250 ms; c3 is due at +1260 ms.
+    // +1231 ms: s1 and c0..c2 are due. s2 is due at +1250 ms; c3 is due at +1260 ms
+
     resent = resend_timing_pass_numbers( &f, t1 + 1.231, out );
     check( resent == 4 );
     check( resend_timing_contains( out, resent, s1 ) && !resend_timing_contains( out, resent, s2 ) );
+
     for ( int i = 0; i < 3; i++ )
+    {
         check( resend_timing_contains( out, resent, c[i] ) );
+    }
+
     check( !resend_timing_contains( out, resent, c[4] ) );
     check( f.ack.resend_count == linked );                  // acked entries stay linked
     check( f.ack.walk_visits == 7 );                        // s1, s2 (stop), c0, c1, c2, c3 (acked), c4 (stop)
 
     // small records come out of the walk before chunks (R6 retransmit order)
+
     check( out[0] == s1 );
+
     resent = resend_timing_pass_numbers( &f, t1 + 1.251, out );
     check( resent == 1 && out[0] == s2 );
     check( f.ack.resend_count == linked );
     check( f.ack.walk_visits == 5 );                        // s2, s3 (acked), s1 (stop); c3 (acked), c4 (stop)
+
     resent = resend_timing_pass_numbers( &f, t1 + 1.261, out );
     check( resent == 1 && out[0] == c[4] );              // the next chunk is now due
     check( f.ack.resend_count == linked );
     check( f.ack.walk_visits == 5 );                        // s3 (acked), s1 (stop); c3 (acked), c4
+
     resend_timing_close( &f );
 }
 
@@ -564,6 +628,7 @@ static void test_resend_named_generation_and_park()
     resend_timing_fixture_t f;
     rocketnet_message_default_config( &f.config );
     resend_timing_open( &f );
+
     const double now = resend_timing_start;
     uint64_t n0 = 0, n1 = 0;
     resend_timing_send( &f, now, &n0 );
@@ -579,21 +644,27 @@ static void test_resend_named_generation_and_park()
     check( f.region->resend_fifo[s0].generation != 0 );
     check( f.region->resend_fifo[s0].generation == f.region->send_descriptors[f.region->send_numbers[s0].descriptor].generation );
     check( f.region->resend_fifo[s0].owner_epoch == f.region->schedule_epoch );
+
     const uint32_t generation = f.region->resend_fifo[s0].generation;
     const uint32_t epoch = f.region->schedule_epoch;
     check( rn_window_ack_cancel_resend( &f.ack, n0, generation + 1 ) == false );
     check( f.ack.resend_head == s0 );
+
     f.region->schedule_epoch = epoch + 1;
     check( rn_window_ack_cancel_resend( &f.ack, n0, generation ) == false );
+
     f.region->schedule_epoch = epoch;
     check( f.ack.resend_head == s0 );
+
     const uint64_t wide = n0 + ( 1ULL << 32 );
     check( rn_window_ack_cancel_resend( &f.ack, wide, generation ) == false );
+
     f.region->send_numbers[s0].number = wide;
     check( rn_window_ack_cancel_resend( &f.ack, n0, generation ) == false );
     check( rn_window_ack_cancel_resend( &f.ack, wide, generation ) == true );
     check( f.ack.resend_head == s1 );
     check( f.region->resend_fifo[s1].generation == f.region->send_descriptors[f.region->send_numbers[s1].descriptor].generation );
+
     resend_timing_close( &f );
 }
 

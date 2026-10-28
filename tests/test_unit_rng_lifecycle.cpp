@@ -9,7 +9,7 @@
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 #include <sodium.h>
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 // The bundled-RNG descriptor lifecycle case reads the live process's open
 // descriptors through proc_pidinfo, which is OS state, so it is a functional
@@ -27,8 +27,11 @@ static void rng_lifecycle_buf( void * p, size_t bytes )
 {
     unsigned char * out = (unsigned char *) p;
     for ( size_t i = 0; i < bytes; ++i )
+    {
         out[i] = (unsigned char) ( i + 1 );
+    }
 }
+
 static int rng_lifecycle_close()
 {
     ++rng_lifecycle_system_close_calls;
@@ -45,11 +48,15 @@ static void test_system_sodium_rng_remains_application_owned()
     check( randombytes_set_implementation( &rng ) == 0 );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( rng_lifecycle_system_close_calls == 0 );
+
     unsigned char output[4] = {};
     randombytes_buf( output, sizeof( output ) );
     check( output[0] == 1 && output[1] == 2 && output[2] == 3 && output[3] == 4 );
-    // Keep the implementation alive through the worker's final term.
+
+    // keep the implementation alive through the worker's final term
+
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
+
 REGISTER_UNIT_TEST( test_system_sodium_rng_remains_application_owned );
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )

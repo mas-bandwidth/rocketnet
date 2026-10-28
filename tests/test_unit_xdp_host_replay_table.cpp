@@ -92,6 +92,7 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
     high_water = 0;
     rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key6, &high_water ) == 1 );
     rocketnet_unit_check( high_water == 7 );
+
     high_water = 0;
     rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
     rocketnet_unit_check( high_water == 100 );
@@ -102,6 +103,7 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
     high_water = 0;
     rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key, &high_water ) == 1 );
     rocketnet_unit_check( high_water == 200 );
+
     high_water = 0;
     rocketnet_unit_check( rocketnet_xdp_host_get_replay_entry( &key6, &high_water ) == 1 );
     rocketnet_unit_check( high_water == 7 );
@@ -110,6 +112,7 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
     // ports 1 up), each high_water its port
 
     rocketnet_xdp_host_reset();
+
     for ( uint32_t i = 1; i <= ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
     {
         struct rocketnet_address_t addr = replay_table_ipv4_bytes( replay_table_fill, (uint16_t) i );
@@ -117,6 +120,7 @@ static void test_xdp_transport_host_replay_table_set_get_reset()
         rocketnet_xdp_replay_key_from_address( &addr, &k );
         rocketnet_xdp_host_set_replay_entry( &k, i );
     }
+
     for ( uint32_t i = 1; i <= ROCKETNET_XDP_REPLAY_MAX_ENTRIES; i++ )
     {
         struct rocketnet_address_t addr = replay_table_ipv4_bytes( replay_table_fill, (uint16_t) i );

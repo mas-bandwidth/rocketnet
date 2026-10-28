@@ -350,4 +350,4 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
 }
 #endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONNECT_TOKEN_H

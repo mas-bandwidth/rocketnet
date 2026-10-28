@@ -106,14 +106,17 @@ static void reply_server_setup( struct reply_server_t * test )
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
     rocketnet_unit_check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -124,6 +127,7 @@ static void reply_server_setup( struct reply_server_t * test )
     server->counters = &test->counters;
     rocketnet_unit_check( server->encryption_map && server->used_token_history &&
                           server->client_slots && server->acks && server->reassembly );
+
     rocketnet_reassembly_set_begin_update( server->reassembly );
 
     rocketnet_server_protocol_update( server, ROCKETNET_TEST_CREATE_TS );
@@ -186,13 +190,20 @@ static void reply_pass_cookie_gate( struct reply_server_t * test, const struct r
     rocketnet_unit_check( reply_process_at( test, from, request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
                                             response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+
     memcpy( request + ROCKETNET_PREFILTER_BYTES,
             response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
             ROCKETNET_COOKIE_FIELD_BYTES );
+
     if ( cookie )
+    {
         memcpy( cookie, response, (size_t) response_bytes );
+    }
+
     if ( cookie_bytes )
+    {
         *cookie_bytes = response_bytes;
+    }
 }
 
 // the client's own half of the handshake, driven with time passed in: connect,
@@ -230,6 +241,7 @@ static int reply_client_to_response( struct reply_server_t * test,
              packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES )
         {
             rocketnet_unit_check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+
             memcpy( response_out, packet, (size_t) packet_bytes );
             return packet_bytes;
         }
@@ -244,8 +256,12 @@ static int reply_client_to_response( struct reply_server_t * test,
                                                                    response, &response_bytes,
                                                                    payload, &payload_bytes, &payload_client_index );
             (void) result;
+
             if ( response_bytes > 0 && response[0] == ROCKETNET_CONNECTION_CHALLENGE_PACKET )
+            {
                 challenge_bytes = response_bytes;
+            }
+
             if ( response_bytes > 0 )
                 rocketnet_client_protocol_process_packet( client, response, response_bytes,
                                                           1000.0 + 0.1 * step,
@@ -268,7 +284,8 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
 
-    // request -> cookie. 710 provoking, 38 answering.
+    // request -> cookie. 710 provoking, 38 answering
+
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     reply_build_standard_request( request, 0xA100ULL, rocketnet_test_salt );
     rocketnet_unit_check( reply_process_at( &test, &test.client_address, request, sizeof( request ),
@@ -276,7 +293,8 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
     rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
     rocketnet_unit_check( response_bytes <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
 
-    // the same request again, now carrying the cookie -> a fresh challenge.
+    // the same request again, now carrying the cookie -> a fresh challenge
+
     memcpy( request + ROCKETNET_PREFILTER_BYTES,
             response + ROCKETNET_PREFILTER_BYTES + ROCKETNET_CONNECTION_SALT_BYTES,
             ROCKETNET_COOKIE_FIELD_BYTES );
@@ -290,6 +308,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
 
     // the stored challenge is resent byte-identical for as long as the mapping
     // lives, still 66 bytes against the 710-byte request.
+
     rocketnet_unit_check( reply_process_at( &test, &test.client_address, request, sizeof( request ),
                                             response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     rocketnet_unit_check( response_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
@@ -329,7 +348,9 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
         rocketnet_unit_check( response_bytes <= ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
 
         for ( int i = 0; i < 4; i++ )
+        {
             rocketnet_client_slots_release( test.server.client_slots, i );
+        }
     }
 
     // cookie -> nothing. the cookie is server-to-client only, so a server sees
@@ -350,7 +371,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
 
     reply_server_teardown( &test );
 
-    // challenge -> the client's response. 66 provoking, 50 answering.
+    // challenge -> the client's response. 66 provoking, 50 answering
     {
         struct reply_server_t keep_alive_test;
         reply_server_setup( &keep_alive_test );
@@ -365,6 +386,7 @@ static void test_reply_never_larger_than_request_every_unauthenticated_type()
 
         // response -> the first keep-alive, fresh block. 50 provoking, 41
         // answering.
+
         rocketnet_unit_check( reply_process_at( &keep_alive_test, &keep_alive_test.client_address,
                                                 client_response, client_response_bytes,
                                                 response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
@@ -423,13 +445,16 @@ static uint8_t reply_rng_next()
 static void reply_fill_random( uint8_t * bytes, int count )
 {
     for ( int i = 0; i < count; i++ )
+    {
         bytes[i] = reply_rng_next();
+    }
 }
 
 static void reply_write_header( uint8_t * packet, int packet_bytes, uint8_t type )
 {
     if ( packet_bytes < ROCKETNET_PREFILTER_BYTES )
         return;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     uint8_t * p = packet;
     rocketnet_write_prefilter_header( &p, type, tag );
@@ -469,13 +494,15 @@ static void test_reply_never_larger_than_request_hostile_inputs()
         memset( packet, 0, sizeof( packet ) );
         reply_write_header( packet, size, type );
 
-        // truncated by one byte: no answer, and never a longer one.
+        // truncated by one byte: no answer, and never a longer one
+
         rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, size - 1,
                                                 response, &response_bytes ) == ROCKETNET_SERVER_PROCESS_IGNORED );
         rocketnet_unit_check( response_bytes == 0 );
         rocketnet_unit_check( response_bytes <= size - 1 );
 
-        // extended by one byte: no answer, and never a longer one.
+        // extended by one byte: no answer, and never a longer one
+
         memset( packet, 0, sizeof( packet ) );
         reply_write_header( packet, size + 1, type );
         rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, size + 1,
@@ -485,6 +512,7 @@ static void test_reply_never_larger_than_request_hostile_inputs()
 
         // a wrong type byte at the type's own size: no answer, and never a
         // longer one.
+
         memset( packet, 0, sizeof( packet ) );
         reply_write_header( packet, size, wrong_type );
         rocketnet_unit_check( reply_process_at( &test, &test.client_address, packet, size,
@@ -496,7 +524,9 @@ static void test_reply_never_larger_than_request_hostile_inputs()
     // fixed-seed random bytes at every length from one to the largest
     // provoking size, with the type and filter header set so each length
     // reaches its type's reader. No answer may be longer than its provoker.
+
     reply_rng_state = 0x9E3779B97F4A7C15ULL;
+
     for ( int t = 0; t < type_count; t++ )
     {
         const uint8_t type = types[t];

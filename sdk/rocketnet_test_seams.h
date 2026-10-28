@@ -140,4 +140,4 @@ uint64_t rocketnet_dev_session_sequence_start( void );
 
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H
+#endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H

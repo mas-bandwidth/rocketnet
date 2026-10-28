@@ -121,7 +121,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
 
 #if ROCKETNET_DEV
     if ( pinned )
+    {
         public_not_released_setenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin );
+    }
 #endif // #if ROCKETNET_DEV
     check( status == ROCKETNET_STATUS_OK );
     if ( !server_transport )
@@ -161,6 +163,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
                                                      token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     public_not_released_client_operations_init();
+
     struct rocketnet_client_transport_config_t client_transport_config;
     rocketnet_client_transport_default_config( &client_transport_config );
     client_transport_config.time_callback = public_not_released_time_callback;
@@ -181,7 +184,9 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     pair->server = rocketnet_server_adopt( NULL, server );
     pair->client = rocketnet_client_adopt( NULL, client );
     check( pair->server != NULL && pair->client != NULL );
+
     pair->client_transport = client_transport;
+
     return true;
 }
 
@@ -223,6 +228,7 @@ static bool public_not_released_connect( struct public_not_released_pair_t * pai
             return true;
         public_not_released_pump( pair );
     }
+
     return false;
 }
 
@@ -230,7 +236,9 @@ static void public_not_released_send_from_server( struct public_not_released_pai
 {
     uint8_t * out = rocketnet_server_start_message( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 );
     check( out != NULL );
+
     memset( out, value, 16 );
+
     check( rocketnet_server_finish_message( pair->server, 16 ) != 0 );
 }
 
@@ -238,7 +246,9 @@ static void public_not_released_send_from_client( struct public_not_released_pai
 {
     uint8_t * out = rocketnet_client_start_message( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 16 );
     check( out != NULL );
+
     memset( out, value, 16 );
+
     check( rocketnet_client_finish_message( pair->client, 16 ) != 0 );
 }
 
@@ -248,10 +258,12 @@ static bool public_not_released_receive_client( struct public_not_released_pair_
     {
         // the public receive is a batch the next update releases, so a view
         // held across an update is taken through the client's message layer
+
         if ( rocketnet_message_client_receive( rocketnet_client_message_client( pair->client ), NULL, data, bytes ) )
             return true;
         public_not_released_pump( pair );
     }
+
     return false;
 }
 
@@ -265,8 +277,10 @@ static bool public_not_released_receive_server( struct public_not_released_pair_
             check( sender == 0 );
             return true;
         }
+
         public_not_released_pump( pair );
     }
+
     return false;
 }
 
@@ -292,9 +306,12 @@ static void test_public_not_released_counter_client()
     check( public_not_released_client_count( &pair ) == 1 );
 
     // a later message is released normally, and the refusal's count stays
+
     public_not_released_send_from_server( &pair, 8 );
+
     const uint8_t * next = NULL;
     check( public_not_released_receive_client( &pair, &next, &bytes ) );
+
     rocketnet_message_client_release( rocketnet_client_message_client( pair.client ), next );
     pair.time += 0.01;
     rocketnet_client_update( pair.client, pair.time );
@@ -303,6 +320,7 @@ static void test_public_not_released_counter_client()
     rocketnet_assert_function( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
+
 REGISTER_UNIT_TEST( test_public_not_released_counter_client );
 
 static void test_public_not_released_counter_server()
@@ -327,9 +345,12 @@ static void test_public_not_released_counter_server()
     check( public_not_released_server_count( &pair ) == 1 );
 
     // a later message is released normally, and the refusal's count stays
+
     public_not_released_send_from_client( &pair, 10 );
+
     const uint8_t * next = NULL;
     check( public_not_released_receive_server( &pair, &next, &bytes ) );
+
     rocketnet_message_server_release( rocketnet_server_message_server( pair.server ), next );
     pair.time += 0.01;
     rocketnet_server_update( pair.server, pair.time );
@@ -338,6 +359,7 @@ static void test_public_not_released_counter_server()
     rocketnet_assert_function( saved_assert );
     public_not_released_pair_teardown( &pair );
 }
+
 REGISTER_UNIT_TEST( test_public_not_released_counter_server );
 
 static void test_public_not_released_counter_starts_at_zero()
@@ -346,8 +368,10 @@ static void test_public_not_released_counter_starts_at_zero()
     check( public_not_released_pair_setup( &pair ) );
     check( public_not_released_client_count( &pair ) == 0 );
     check( public_not_released_server_count( &pair ) == 0 );
+
     public_not_released_pair_teardown( &pair );
 }
+
 REGISTER_UNIT_TEST( test_public_not_released_counter_starts_at_zero );
 
 // the public receive's batch is released by the next update: holding it
@@ -357,8 +381,10 @@ static void test_public_not_released_batch_released_by_update()
     struct public_not_released_pair_t pair;
     check( public_not_released_pair_setup( &pair ) );
     check( public_not_released_connect( &pair ) );
+
     public_not_released_send_from_server( &pair, 11 );
     public_not_released_send_from_client( &pair, 12 );
+
     const struct rocketnet_message_batch_t * at_client = NULL;
     const struct rocketnet_message_batch_t * at_server = NULL;
     bool client_got = false, server_got = false;
@@ -368,12 +394,16 @@ static void test_public_not_released_batch_released_by_update()
         client_got = client_got || ( ( at_client = rocketnet_client_receive_messages( pair.client ) ) != NULL );
         server_got = server_got || ( ( at_server = rocketnet_server_receive_messages( pair.server ) ) != NULL );
     }
+
     check( client_got && server_got );
+
     pair.time += 0.01;
     rocketnet_client_update( pair.client, pair.time );
     rocketnet_server_update( pair.server, pair.time );
     check( public_not_released_client_count( &pair ) == 0 );
     check( public_not_released_server_count( &pair ) == 0 );
+
     public_not_released_pair_teardown( &pair );
 }
+
 REGISTER_UNIT_TEST( test_public_not_released_batch_released_by_update );

@@ -91,6 +91,7 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
         salt[i] = (uint8_t) ( 0x30 + i );
         session_nonce[i] = (uint8_t) ( 0x40 + i );
     }
+
     for ( int i = 0; i < ROCKETNET_KEY_BYTES; i++ )
     {
         client_ephemeral[i] = (uint8_t) ( 0x20 + i );
@@ -100,12 +101,21 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
         session_c2s[i] = (uint8_t) ( 0xa0 + i );
         session_s2c[i] = (uint8_t) ( 0xc0 + i );
     }
+
     for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
+    {
         signed_data[i] = (uint8_t) i;
+    }
+
     for ( int i = 0; i < ROCKETNET_SIGNATURE_BYTES; i++ )
+    {
         signature[i] = (uint8_t) ( 0xff - i );
+    }
+
     for ( int i = 0; i < ROCKETNET_COOKIE_MAC_BYTES; i++ )
+    {
         cookie_mac[i] = (uint8_t) ( 0xd0 + i );
+    }
 
     if ( capacity < ROCKETNET_SEND_BUDGET )
         return -1;
@@ -138,7 +148,9 @@ static int standard_packet_formats_generate( const char * id, uint8_t * out, int
 
     uint8_t plaintext[ROCKETNET_SEND_BUDGET];
     for ( int i = 0; i < ROCKETNET_ACK_BLOCK_MIN_BYTES; i++ )
+    {
         plaintext[i] = 0;
+    }
 
     if ( strcmp( id, "t8.keep-alive" ) == 0 )
     {
@@ -197,6 +209,7 @@ static void test_standard_packet_formats_vectors()
 
     // the generator refuses an id it does not know and a capacity too small
     // for the largest packet, so a missing twin cannot pass silently
+
     static uint8_t scratch[64];
     rocketnet_unit_check( standard_packet_formats_generate( "t8.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
     rocketnet_unit_check( standard_packet_formats_generate( "t8.request", scratch, (int) sizeof( scratch ) ) == -1 );

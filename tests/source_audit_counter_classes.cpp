@@ -59,24 +59,27 @@ static int counters_find( const char * name )
 
 #ifndef ROCKETNET_SOURCE_DIR
 #error "the build passes ROCKETNET_SOURCE_DIR to this file"
-#endif
+#endif // #ifndef ROCKETNET_SOURCE_DIR
 #ifndef ROCKETNET_COUNTER_TEST_SOURCES
 #error "the build passes ROCKETNET_COUNTER_TEST_SOURCES to this file"
-#endif
+#endif // #ifndef ROCKETNET_COUNTER_TEST_SOURCES
 #ifndef ROCKETNET_COUNTER_SDK_SOURCES
 #error "the build passes ROCKETNET_COUNTER_SDK_SOURCES to this file"
-#endif
+#endif // #ifndef ROCKETNET_COUNTER_SDK_SOURCES
 
 static std::vector<std::string> counters_split_list( const char * list )
 {
     std::vector<std::string> out;
     std::string item;
+
     for ( const char * c = list;; c++ )
     {
         if ( *c == '|' || *c == '\0' )
         {
             if ( !item.empty() )
+            {
                 out.push_back( item );
+            }
             item.clear();
             if ( *c == '\0' )
                 break;
@@ -84,6 +87,7 @@ static std::vector<std::string> counters_split_list( const char * list )
         else
             item += *c;
     }
+
     return out;
 }
 
@@ -93,12 +97,16 @@ static bool counters_read_file( const std::string & relative_path, std::string &
     FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
         return false;
+
     char buffer[65536];
     size_t n;
     contents.clear();
     while ( ( n = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+    {
         contents.append( buffer, n );
+    }
     fclose( file );
+
     return true;
 }
 
@@ -119,9 +127,13 @@ static void counters_collect_names( const std::string & text, std::set<std::stri
         const bool starts_word = at == 0 || !counters_is_identifier_char( text[at - 1] );
         size_t end = at + prefix_bytes;
         while ( end < text.size() && counters_is_identifier_char( text[end] ) )
+        {
             end++;
+        }
         if ( starts_word && end > at + prefix_bytes )
+        {
             names.insert( text.substr( at + prefix_bytes, end - at - prefix_bytes ) );
+        }
         at = end;
     }
 }
@@ -138,14 +150,17 @@ static std::set<std::string> counters_named_by_tests()
     std::set<std::string> names;
     const std::vector<std::string> files = counters_split_list( ROCKETNET_COUNTER_TEST_SOURCES );
     check( !files.empty() );
+
     for ( size_t i = 0; i < files.size(); i++ )
     {
         if ( files[i] == "tests/test_unit_counter_classes.cpp" )
             continue;
+
         std::string text;
         check( counters_read_file( files[i], text ) );
         counters_collect_names( text, names );
     }
+
     return names;
 }
 
@@ -156,12 +171,14 @@ static std::set<std::string> counters_named_by_sdk()
     std::set<std::string> names;
     const std::vector<std::string> files = counters_split_list( ROCKETNET_COUNTER_SDK_SOURCES );
     check( !files.empty() );
+
     for ( size_t i = 0; i < files.size(); i++ )
     {
         std::string text;
         check( counters_read_file( files[i], text ) );
         counters_collect_names( text, names );
     }
+
     return names;
 }
 
@@ -201,45 +218,61 @@ static void test_counters_every_counter_is_named_by_a_test()
 
     int missed = 0;
     int not_done = 0;
+
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
         const std::string name = rocketnet_counter_name( i );
         if ( named.count( name ) || counters_in_list( counters_no_code_path, name ) )
             continue;
+
         if ( counters_in_list( counters_reachable_not_done, name ) )
         {
             printf( "NOT-DONE: reachable counter named by no test: ROCKETNET_COUNTER_%s\n", name.c_str() );
             not_done++;
             continue;
         }
+
         printf( "counter named by no test: ROCKETNET_COUNTER_%s\n", name.c_str() );
         missed++;
     }
+
     if ( missed )
+    {
         printf( "%d of %d counters are named by no test\n", missed, ROCKETNET_NUM_COUNTERS );
+    }
     if ( not_done )
+    {
         printf( "NOT-DONE: %d reachable counters are named by no test and are reported, not exempted\n", not_done );
+    }
     check( missed == 0 );
 
     // a listed counter that gained a code path is a counter a test can reach
+
     for ( int i = 0; counters_no_code_path[i].name; i++ )
     {
         if ( counted.count( counters_no_code_path[i].name ) )
+        {
             printf( "counter listed as having no code path now has one: ROCKETNET_COUNTER_%s\n", counters_no_code_path[i].name );
+        }
         check( !counted.count( counters_no_code_path[i].name ) );
         check( rocketnet_counter_name( counters_find( counters_no_code_path[i].name ) ) != NULL );
     }
 
     // a not-done counter has its code path, and no test names it yet; the
     // reason is printed beside the NOT-DONE line
+
     for ( int i = 0; counters_reachable_not_done[i].name; i++ )
     {
         const char * name = counters_reachable_not_done[i].name;
         if ( !counted.count( name ) )
+        {
             printf( "counter listed as not done has no code path: ROCKETNET_COUNTER_%s\n", name );
+        }
         check( counted.count( name ) );
         if ( named.count( name ) )
+        {
             printf( "counter listed as not done is named by a test now: ROCKETNET_COUNTER_%s\n", name );
+        }
         check( !named.count( name ) );
         printf( "NOT-DONE: ROCKETNET_COUNTER_%s: %s\n", name, counters_reachable_not_done[i].why );
     }
@@ -287,7 +320,9 @@ static bool counters_function_body( const std::string & text, const char * funct
     {
         const size_t line_start = text.rfind( '\n', at ) + 1;
         const char first = text[line_start];
+
         // a definition starts a line with its return type; a call or a prototype does not
+
         if ( first != ' ' && first != '\t' && first != '/' && first != '#' && first != '\n' )
         {
             const size_t open = text.find( "\n{\n", at );
@@ -301,8 +336,10 @@ static bool counters_function_body( const std::string & text, const char * funct
                 return true;
             }
         }
+
         at += needle.size();
     }
+
     return false;
 }
 
@@ -318,35 +355,51 @@ static std::vector<std::string> counters_incremented( const std::string & text )
     {
         size_t end = at + prefix_bytes;
         while ( end < text.size() && counters_is_identifier_char( text[end] ) )
+        {
             end++;
+        }
+
         size_t after = end;
         while ( after < text.size() && text[after] == ' ' )
+        {
             after++;
+        }
+
         if ( after < text.size() && text[after] == ']' )
         {
             after++;
             while ( after < text.size() && text[after] == ' ' )
+            {
                 after++;
+            }
             if ( text.compare( after, 2, "++" ) == 0 )
+            {
                 names.push_back( text.substr( at + prefix_bytes, end - at - prefix_bytes ) );
+            }
         }
+
         at = end;
     }
+
     return names;
 }
 
 static void test_counters_every_outcome_in_at_most_one_family()
 {
     int shared = 0;
+
     for ( size_t i = 0; i < sizeof( counters_ladders ) / sizeof( counters_ladders[0] ); i++ )
     {
         const counters_ladder_t & ladder = counters_ladders[i];
 
         std::string text;
         check( counters_read_file( ladder.file, text ) );
+
         std::string body;
         if ( !counters_function_body( text, ladder.function, body ) )
+        {
             printf( "ladder function not found: %s in %s\n", ladder.function, ladder.file );
+        }
         check( counters_function_body( text, ladder.function, body ) );
 
         const int received = counters_find( ladder.received );
@@ -355,12 +408,14 @@ static void test_counters_every_outcome_in_at_most_one_family()
         const std::vector<std::string> counted = counters_incremented( body );
 
         // a function that counts nothing is a function this audit lost
+
         check( !counted.empty() );
 
         for ( size_t j = 0; j < counted.size(); j++ )
         {
             const int counter = counters_find( counted[j].c_str() );
             check( counter >= 0 );
+
             const int family = counters_rows[counter].family;
             if ( counter == received || family == ROCKETNET_COUNTER_NONE || family == received )
                 continue;
@@ -369,9 +424,11 @@ static void test_counters_every_outcome_in_at_most_one_family()
             shared++;
         }
     }
+
     check( shared == 0 );
 
     // the two connection ladders each have an internal error of their own
+
     check( counters_rows[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR].family == ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED );
     check( counters_rows[ROCKETNET_COUNTER_CONNECTION_RESPONSE_INTERNAL_ERROR].family == ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED );
 }

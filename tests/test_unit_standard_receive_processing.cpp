@@ -220,6 +220,7 @@ static int standard_bad_block_plaintext( uint8_t * out )
     rocketnet_write_uint32( &p, 5 );
     rocketnet_write_uint8( &p, 0 );
     rocketnet_write_uint16( &p, 0 );
+
     return bytes;
 }
 
@@ -265,15 +266,18 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, standard_filter );
         return ROCKETNET_PREFILTER_BYTES - 1;
     }
+
     if ( strcmp( id, "t10.prefilter-too-large" ) == 0 )
     {
         if ( capacity < ROCKETNET_RECEIVE_CEILING + 1 )
             return -1;
+
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, standard_filter );
         memset( p, 0, (size_t) ( ROCKETNET_RECEIVE_CEILING + 1 - ROCKETNET_PREFILTER_BYTES ) );
         return ROCKETNET_RECEIVE_CEILING + 1;
     }
+
     if ( strcmp( id, "t10.prefilter-wrong-epoch" ) == 0 )
     {
         uint8_t * p = out;
@@ -281,6 +285,7 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         out[1] = 1;
         return ROCKETNET_PREFILTER_BYTES;
     }
+
     if ( strcmp( id, "t10.prefilter-wrong-value" ) == 0 )
     {
         uint8_t * p = out;
@@ -288,30 +293,35 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, no_value );
         return ROCKETNET_PREFILTER_BYTES;
     }
+
     if ( strcmp( id, "t10.reserved-type" ) == 0 )
     {
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_FRAGMENT_PACKET + 1, standard_filter );
         return ROCKETNET_PREFILTER_BYTES;
     }
+
     if ( strcmp( id, "t10.server-wrong-direction" ) == 0 )
     {
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_DENIED_PACKET, standard_filter );
         return ROCKETNET_PREFILTER_BYTES;
     }
+
     if ( strcmp( id, "t10.client-wrong-direction" ) == 0 )
     {
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_REQUEST_PACKET, standard_filter );
         return ROCKETNET_PREFILTER_BYTES;
     }
+
     if ( strcmp( id, "t10.client-session-wrong-size" ) == 0 )
     {
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, standard_filter );
         return ROCKETNET_PREFILTER_BYTES;
     }
+
     if ( strcmp( id, "t10.client-cookie-state-before-size" ) == 0 )
     {
         memset( out, 0, (size_t) ( ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES - 1 ) );
@@ -319,6 +329,7 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_COOKIE_PACKET, standard_filter );
         return ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES - 1;
     }
+
     if ( strcmp( id, "t10.server-no-mapping" ) == 0 )
     {
         memset( out, 0, ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES );
@@ -326,6 +337,7 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, standard_filter );
         return ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES;
     }
+
     if ( strcmp( id, "t10.client-wrong-state" ) == 0 ||
          strcmp( id, "t10.server-not-connected" ) == 0 ||
          strcmp( id, "t10.zero-sequence" ) == 0 ||
@@ -335,21 +347,27 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         const uint8_t * key = strcmp( id, "t10.server-not-connected" ) == 0 ? standard_client_to_server_key : standard_server_to_client_key;
         int bytes = standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext, plaintext_bytes, key, out );
         if ( strcmp( id, "t10.zero-sequence" ) == 0 )
+        {
             memset( out + ROCKETNET_PREFILTER_BYTES, 0, ROCKETNET_SEQUENCE_BYTES );
+        }
+
         return bytes;
     }
+
     if ( strcmp( id, "t10.did-not-open" ) == 0 )
     {
         const int plaintext_bytes = standard_keep_alive_plaintext( plaintext );
         return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext, plaintext_bytes,
                               standard_wrong_key, out );
     }
+
     if ( strcmp( id, "t10.bad-ack-block" ) == 0 )
     {
         const int plaintext_bytes = standard_bad_block_plaintext( plaintext );
         return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext, plaintext_bytes,
                               standard_server_to_client_key, out );
     }
+
     if ( strcmp( id, "t10.keep-alive-invalid-index" ) == 0 )
     {
         uint8_t * p = plaintext + standard_fresh_block( plaintext );
@@ -358,18 +376,21 @@ static int standard_receive_processing_generate( const char * id, uint8_t * out,
         return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext,
                               (int) ( p - plaintext ), standard_server_to_client_key, out );
     }
+
     if ( strcmp( id, "t10.wrong-opened-size" ) == 0 )
     {
         const int plaintext_bytes = standard_wrong_opened_size_plaintext( plaintext );
         return standard_seal( ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, 1000, plaintext, plaintext_bytes,
                               standard_server_to_client_key, out );
     }
+
     if ( strcmp( id, "t10.fragment-zero-payload-id" ) == 0 )
     {
         const int plaintext_bytes = standard_fragment_plaintext( plaintext );
         return standard_seal( ROCKETNET_CONNECTION_FRAGMENT_PACKET, 1000, plaintext, plaintext_bytes,
                               standard_server_to_client_key, out );
     }
+
     return -1;
 }
 
@@ -392,6 +413,7 @@ static void standard_client_setup( struct standard_client_t * fixture, int state
     fixture->client.send_sequence_session = 1;
     fixture->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
     rocketnet_unit_check( fixture->client.reassembly != NULL );
+
     rocketnet_reassembly_set_begin_update( fixture->client.reassembly );
 }
 
@@ -423,16 +445,19 @@ static void standard_server_setup( struct standard_server_t * fixture, bool add_
     memset( &fixture->server, 0, sizeof( fixture->server ) );
     memset( &fixture->counters, 0, sizeof( fixture->counters ) );
     rocketnet_unit_check( rocketnet_address_parse( &fixture->from, "198.51.100.7:56789" ) );
+
     fixture->server.protocol_id = standard_protocol_id;
     memcpy( fixture->server.packet_filter, standard_filter, ROCKETNET_FILTER_VALUE_BYTES );
     fixture->server.encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     fixture->server.client_slots = rocketnet_client_slots_create( NULL, 4 );
     fixture->server.counters = &fixture->counters;
     rocketnet_unit_check( fixture->server.encryption_map != NULL && fixture->server.client_slots != NULL );
+
     if ( add_mapping )
     {
         const int index = rocketnet_encryption_map_add( fixture->server.encryption_map, &fixture->from, 5000.0 );
         rocketnet_unit_check( index >= 0 );
+
         struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( fixture->server.encryption_map, index );
         memcpy( mapping->keys.session_client_to_server, standard_client_to_server_key, ROCKETNET_KEY_BYTES );
         memcpy( mapping->connection_salt, standard_salt, ROCKETNET_CONNECTION_SALT_BYTES );
@@ -480,6 +505,7 @@ static void standard_receive_processing_counters()
             { "t10.prefilter-wrong-epoch", ROCKETNET_PREFILTER_WRONG_EPOCH, ROCKETNET_COUNTER_PREFILTER_WRONG_EPOCH },
             { "t10.prefilter-wrong-value", ROCKETNET_PREFILTER_WRONG_VALUE, ROCKETNET_COUNTER_PREFILTER_WRONG_VALUE },
         };
+
         for ( size_t i = 0; i < sizeof( rows ) / sizeof( rows[0] ); i++ )
         {
             const int bytes = standard_receive_processing_generate( rows[i].id, packet, (int) sizeof( packet ) );
@@ -493,9 +519,11 @@ static void standard_receive_processing_counters()
     {
         static struct standard_server_t server;
         standard_server_setup( &server, false, false );
+
         int bytes = standard_receive_processing_generate( "t10.reserved-type", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_RESERVED_TYPE] == 1 );
+
         standard_server_teardown( &server );
     }
     {
@@ -504,6 +532,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.server-wrong-direction", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == 1 );
+
         standard_server_teardown( &server );
     }
     {
@@ -512,6 +541,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.client-wrong-direction", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_WRONG_DIRECTION] == 1 );
+
         standard_client_teardown( &client );
     }
 
@@ -522,6 +552,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.server-no-mapping", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NO_MAPPING] == 1 );
+
         standard_server_teardown( &server );
     }
     {
@@ -532,6 +563,7 @@ static void standard_receive_processing_counters()
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_SIZE] == 1 );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN] == 0 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
+
         standard_client_teardown( &client );
     }
 
@@ -543,6 +575,7 @@ static void standard_receive_processing_counters()
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE] == 1 );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE] == 0 );
+
         standard_client_teardown( &client );
     }
 
@@ -553,6 +586,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.client-wrong-state", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_STATE] == 1 );
+
         standard_client_teardown( &client );
     }
 
@@ -563,6 +597,7 @@ static void standard_receive_processing_counters()
         int bytes = standard_receive_processing_generate( "t10.server-not-connected", packet, (int) sizeof( packet ) );
         standard_server_process( &server, packet, bytes );
         rocketnet_unit_check( server.counters.values[ROCKETNET_COUNTER_KEEP_ALIVE_NOT_CONNECTED] == 1 );
+
         standard_server_teardown( &server );
     }
 
@@ -571,61 +606,75 @@ static void standard_receive_processing_counters()
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.zero-sequence", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ZERO_SEQUENCE] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
+
         standard_client_teardown( &client );
     }
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.already-received", packet, (int) sizeof( packet ) );
         rocketnet_unit_check( standard_client_process( &client, packet, bytes ) );
         rocketnet_unit_check( standard_client_process( &client, packet, bytes ) == 0 );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_ALREADY_RECEIVED] == 1 );
+
         standard_client_teardown( &client );
     }
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.did-not-open", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_DID_NOT_OPEN] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 1 );
+
         standard_client_teardown( &client );
     }
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.bad-ack-block", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_BAD_ACK_BLOCK] == 1 );
+
         standard_client_teardown( &client );
     }
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.wrong-opened-size", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
+
         standard_client_teardown( &client );
     }
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.keep-alive-invalid-index", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE] == 1 );
         rocketnet_unit_check( client.client.integrity_failures == 0 );
+
         standard_client_teardown( &client );
     }
     {
         static struct standard_client_t client;
         standard_client_setup( &client, ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         int bytes = standard_receive_processing_generate( "t10.fragment-zero-payload-id", packet, (int) sizeof( packet ) );
         standard_client_process( &client, packet, bytes );
         rocketnet_unit_check( client.counters.values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_ZERO_PAYLOAD_ID] == 1 );
+
         standard_client_teardown( &client );
     }
 }

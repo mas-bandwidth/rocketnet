@@ -20,21 +20,21 @@
 #include "../sdk/rocketnet_server_uring.h"
 #if defined( _WIN32 )
 #include "../sdk/rocketnet_server_rio.h"
-#endif
+#endif // #if defined( _WIN32 )
 #if defined( __linux__ )
 #include "../sdk/rocketnet_uring_codec.h"
-#endif
+#endif // #if defined( __linux__ )
 
 #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 #define DIRECT_COUNT_URING_CASE 1
 #else
 #define DIRECT_COUNT_URING_CASE 0
-#endif
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 #if defined( _WIN32 ) && defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS )
 #define DIRECT_COUNT_RIO_CASE 1
 #else
 #define DIRECT_COUNT_RIO_CASE 0
-#endif
+#endif // #if defined( _WIN32 ) && defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS )
 
 #include <stdint.h>
 #include <stdio.h>
@@ -54,11 +54,13 @@ static size_t g_direct_allocation_calls;
 static void * direct_count_malloc( void * context, size_t bytes )
 {
     ++g_direct_allocation_calls;
+
     uint8_t * block = (uint8_t *) rocketnet_default_malloc_function( context, bytes + DIRECT_COUNT_HEADER );
     if ( !block )
         return NULL;
     memcpy( block, &bytes, sizeof( bytes ) );
     g_direct_live_bytes += bytes;
+
     return block + DIRECT_COUNT_HEADER;
 }
 
@@ -66,6 +68,7 @@ static void direct_count_free( void * context, void * memory )
 {
     if ( !memory )
         return;
+
     uint8_t * block = (uint8_t *) memory - DIRECT_COUNT_HEADER;
     size_t bytes;
     memcpy( &bytes, block, sizeof( bytes ) );
@@ -85,7 +88,7 @@ static void direct_count_uninstall()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
-#endif
+#endif // #if DIRECT_COUNT_URING_CASE || DIRECT_COUNT_RIO_CASE
 
 // the count itself: an add then its remove leaves it where it started
 
@@ -111,6 +114,7 @@ REGISTER_UNIT_TEST( test_direct_allocation_count_returns_to_start );
 static void test_io_uring_fake_create_destroy_counted()
 {
     direct_count_install();
+
     const size_t live_before = g_direct_live_bytes;
     const size_t calls_before = g_direct_allocation_calls;
     const uint64_t direct_before = rocketnet_direct_allocation_bytes();
@@ -133,7 +137,7 @@ static void test_io_uring_fake_create_destroy_counted()
 
 REGISTER_UNIT_TEST( test_io_uring_fake_create_destroy_counted );
 
-#endif
+#endif // #if DIRECT_COUNT_URING_CASE
 
 #if DIRECT_COUNT_RIO_CASE
 
@@ -147,6 +151,7 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
 static void test_rio_fixture_create_destroy_counted()
 {
     direct_count_install();
+
     const size_t live_before = g_direct_live_bytes;
     const size_t calls_before = g_direct_allocation_calls;
     const uint64_t direct_before = rocketnet_direct_allocation_bytes();
@@ -166,4 +171,4 @@ static void test_rio_fixture_create_destroy_counted()
 
 REGISTER_UNIT_TEST( test_rio_fixture_create_destroy_counted );
 
-#endif
+#endif // #if DIRECT_COUNT_RIO_CASE

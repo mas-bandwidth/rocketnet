@@ -370,6 +370,7 @@ inline bool wycheproof_hex( const std::string & text, std::vector<uint8_t> & out
             return false;
         out.push_back( (uint8_t) ( ( hi << 4 ) | lo ) );
     }
+
     return true;
 }
 
@@ -384,18 +385,21 @@ const unsigned char * rocketnet_test_fixture( const char * path, size_t * bytes 
 inline bool wycheproof_read_file( const char * file_name, std::string & out )
 {
     out.clear();
+
     const std::string path = std::string( "tests/wycheproof/" ) + file_name;
     size_t bytes = 0;
     const unsigned char * data = rocketnet_test_fixture( path.c_str(), &bytes );
     if ( !data )
         return false;
     out.assign( reinterpret_cast<const char *>( data ), bytes );
+
     return true;
 }
 
 inline void wycheproof_fill_group_map( const wyj::node_t & g, std::map<std::string, std::string> & m )
 {
     m.clear();
+
     for ( size_t k = 0; k < g.obj.size(); k++ )
     {
         const std::string & key = g.obj[k].first;
@@ -426,7 +430,10 @@ inline bool wycheproof_fill_test( const wyj::node_t & t, wycheproof_test_t & tes
     test.comment.clear();
     const wyj::node_t * comment = wyj::find_member( t, "comment" );
     if ( comment && comment->type == wyj::NODE_STR )
+    {
         test.comment = comment->text;
+    }
+
     test.flags.clear();
     const wyj::node_t * flags = wyj::find_member( t, "flags" );
     if ( flags && flags->type == wyj::NODE_ARR )
@@ -434,15 +441,20 @@ inline bool wycheproof_fill_test( const wyj::node_t & t, wycheproof_test_t & tes
             if ( flags->arr[i].type == wyj::NODE_STR )
                 test.flags.push_back( flags->arr[i].text );
     test.fields.clear();
+
     for ( size_t i = 0; i < t.obj.size(); i++ )
     {
         const std::string & key = t.obj[i].first;
         const wyj::node_t & v = t.obj[i].second;
         if ( key == "result" || key == "comment" )
             continue;
+
         if ( v.type == wyj::NODE_STR )
+        {
             test.fields[key] = v.text;
+        }
     }
+
     return true;
 }
 
@@ -472,11 +484,13 @@ inline bool wycheproof_load( const char * file_name,
     const size_t num_groups = groups_node->arr.size();
     int total = 0;
     (void) total;
+
     for ( size_t gi = 0; gi < num_groups; gi++ )
     {
         const wyj::node_t & g = groups_node->arr[gi];
         if ( g.type != wyj::NODE_OBJ )
             return false;
+
         std::map<std::string, std::string> group_map;
         wycheproof_fill_group_map( g, group_map );
         const wyj::node_t * tg = wyj::find_member( g, "tests" );
@@ -487,6 +501,7 @@ inline bool wycheproof_load( const char * file_name,
             const wyj::node_t & t = tg->arr[ti];
             if ( t.type != wyj::NODE_OBJ )
                 return false;
+
             wycheproof_test_t test;
             if ( !wycheproof_fill_test( t, test ) )
                 return false;
@@ -497,11 +512,13 @@ inline bool wycheproof_load( const char * file_name,
     }
 
     *number_of_groups = (int) num_groups;
+
     const wyj::node_t * nt = wyj::find_member( root, "numberOfTests" );
     if ( nt && nt->type == wyj::NODE_INT )
         *number_of_tests = std::atoi( nt->text.c_str() );
     else
         *number_of_tests = (int) tests.size();
+
     return true;
 }
 

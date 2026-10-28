@@ -28,6 +28,7 @@ static void test_wide_path_prefix_forward_slashes()
     const std::wstring expected_long =
         L"\\\\?\\C:\\" + wsegment + L"\\" + wsegment + L"\\" + wsegment + L"\\" + wsegment + L"\\resource.bin";
     rocketnet_unit_check( long_forward.size() > 260 );
+
     const std::wstring actual_long = rocketnet_test_wide_path( long_forward );
     rocketnet_unit_check( actual_long.compare( 0, 4, L"\\\\?\\" ) == 0 );
     rocketnet_unit_check( actual_long.find( L'/' ) == std::wstring::npos );
@@ -53,6 +54,7 @@ static void test_wide_path_prefix_unc()
     const std::wstring expected_long_unc =
         L"\\\\?\\UNC\\server\\share\\" + wsegment + L"\\" + wsegment + L"\\" + wsegment + L"\\" + wsegment + L"\\x";
     rocketnet_unit_check( long_unc.size() > 260 );
+
     const std::wstring actual_long_unc = rocketnet_test_wide_path( long_unc );
     rocketnet_unit_check( actual_long_unc.compare( 0, 21, L"\\\\?\\UNC\\server\\share\\" ) == 0 );
     rocketnet_unit_check( actual_long_unc.find( L'/' ) == std::wstring::npos );

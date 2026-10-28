@@ -90,6 +90,7 @@ static int delivery_step( rn_channels_t * channels, rocketnet_counters_t * count
 
     const uint32_t appended = channels->deliveries - before;
     rocketnet_unit_check( appended <= 255 );
+
     const uint8_t count = (uint8_t) appended;
 
     if ( trace_byte( trace, outcome ) < 0 || trace_byte( trace, count ) < 0 )
@@ -100,6 +101,7 @@ static int delivery_step( rn_channels_t * channels, rocketnet_counters_t * count
         const rn_delivery_t * delivery = &channels->region->deliveries[i];
         rocketnet_unit_check( delivery->channel <= 255 && delivery->code <= 255 );
         rocketnet_unit_check( delivery->bytes >= 0 && delivery->bytes <= 65535 );
+
         const uint8_t header[4] = { (uint8_t) delivery->channel, (uint8_t) delivery->code,
                                     (uint8_t) ( delivery->bytes & 0xFF ), (uint8_t) ( ( delivery->bytes >> 8 ) & 0xFF ) };
         if ( trace_bytes( trace, header, 4 ) < 0 || trace_bytes( trace, delivery->data, delivery->bytes ) < 0 )
@@ -120,8 +122,12 @@ static int run_trace( const rocketnet_message_config_t * config, const rn_delive
     rn_channels_t channels;
     int result = rn_channels_init( &channels, region, region->num_channels, 0 ) ? 0 : -1;
     for ( int i = 0; result == 0 && i < count; i++ )
+    {
         result = delivery_step( &channels, &counters, &steps[i], trace );
+    }
+
     rn_arena_destroy( arena );
+
     return result;
 }
 
@@ -156,6 +162,7 @@ static int code1_sequenced_trace( rn_delivery_trace_t * trace )
     static const uint8_t k[] = { 0x6b }, x[] = { 0x78 };
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+
     const rn_delivery_step_t steps[] = {
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, 0, a, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 1, 0, b, 1 },
@@ -183,6 +190,7 @@ static int code1_hold_full_trace( rn_delivery_trace_t * trace )
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.sequenced_messages_held = 1;
+
     const rn_delivery_step_t steps[] = {
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, 0, x, 1 },
         { ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 1, 1, 0, 0, y, 1 },

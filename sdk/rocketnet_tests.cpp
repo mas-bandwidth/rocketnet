@@ -2619,6 +2619,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
 
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -3298,7 +3299,7 @@ void rocketnet_test_cookie_bounds_signature_verifies()
         const int slots = ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS;
         rocketnet_check( failures == (uint64_t) ( num_sources + ( rounds - 1 ) * ( num_sources - slots ) ) );
         rocketnet_check( refused == (uint64_t) ( ( rounds - 1 ) * slots ) );
-        rocketnet_check( test.server.counters->handshakes_processed_this_update <= (uint64_t) ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
+        rocketnet_check( test.server.counters->handshakes_processed_this_update <= (uint64_t) ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE );
 
         rocketnet_test_server_teardown( &test );
     }
@@ -4321,7 +4322,7 @@ void rocketnet_test_handshake_work_budget_per_update()
     rocketnet_test_server_setup( &other );
 
     const int num_requests = 16000;
-    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+    const int budget = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -8126,6 +8127,7 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
     "rocketnet_server_client_id",
+    "rocketnet_server_client_user_data",
     "rocketnet_server_disconnect_client",
     "rocketnet_server_disconnect_all_clients",
     "rocketnet_server_disconnect_reason",
@@ -8180,6 +8182,7 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
     "rocketnet_server_client_id",
+    "rocketnet_server_client_user_data",
     "rocketnet_server_disconnect_client",
     "rocketnet_server_disconnect_all_clients",
     "rocketnet_server_disconnect_reason",
@@ -8314,6 +8317,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_num_connected_clients",
     "rocketnet_server_transport_is_client_connected",
     "rocketnet_server_transport_client_id",
+    "rocketnet_server_transport_client_user_data",
     "rocketnet_server_transport_client_connection_id",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
@@ -8450,6 +8454,7 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_num_connected_clients",
     "rocketnet_server_transport_is_client_connected",
     "rocketnet_server_transport_client_id",
+    "rocketnet_server_transport_client_user_data",
     "rocketnet_server_transport_client_connection_id",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
@@ -8644,6 +8649,13 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_num_connected_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connected( NULL, 0 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_id( NULL, 0 ) == 0 ) );
+    {
+        uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+        memset( user_data, 0xA5, sizeof( user_data ) );
+        RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_user_data( NULL, 0, user_data ) ) );
+        rocketnet_check( user_data[0] == 0 && user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES - 1] == 0 );
+        RN_TEST_ONE_MISUSE( rocketnet_check( !rocketnet_server_client_user_data( NULL, 0, NULL ) ) );
+    }
     RN_TEST_ONE_MISUSE( rocketnet_server_disconnect_client( NULL, 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_server_disconnect_all_clients( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_disconnect_reason( NULL, 0 ) == ROCKETNET_DISCONNECT_REASON_NONE ) );
@@ -8886,6 +8898,13 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_client_id( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    {
+        uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
+        rocketnet_check( !rocketnet_server_transport_client_user_data( NULL, 0, user_data ) );
+    }
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();
@@ -13514,6 +13533,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, disconnect_packets_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshakes_per_update ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -14563,8 +14583,9 @@ void rocketnet_test_transport_ladder_parse()
     rocketnet_check( !rocketnet_transport_ladder_parse( "gso,,portable", linux_server, 3, &ladder ) );
     rocketnet_check( !rocketnet_transport_ladder_parse( ",", linux_server, 3, &ladder ) );
     rocketnet_check( !rocketnet_transport_ladder_parse( "auto,gso", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
-    rocketnet_check( !rocketnet_transport_ladder_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
+    // one past ROCKETNET_MAX_TRANSPORT_CANDIDATES (16), available and skipped
+    rocketnet_check( !rocketnet_transport_ladder_parse( "portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable,portable", linux_server, 3, &ladder ) );
+    rocketnet_check( !rocketnet_transport_ladder_parse( "msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx,msgx", linux_server, 3, &ladder ) );
 
     // duplicates of an available name are allowed: trying a rung twice is
     // the operator's list, honored as written

@@ -162,4 +162,4 @@ void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int f
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
 #endif // #if ROCKETNET_DEV && defined( ROCKETNET_IOCP_TESTS )
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H

@@ -26,7 +26,9 @@ static void test_process_resources_handle_rise_is_not_flat()
     rocketnet_unit_check( process_resources_flat( PROCESS_RESOURCES_HANDLES, 106, 107, 0.0 ) == 0 );
     rocketnet_unit_check( process_resources_flat( PROCESS_RESOURCES_HANDLES, -1, 104, 1800.0 ) == 0 );
     rocketnet_unit_check( process_resources_flat( PROCESS_RESOURCES_HANDLES, 106, -1, 1800.0 ) == 0 );
+
     // the thread count is unchanged: it must still equal its start
+
     rocketnet_unit_check( process_resources_flat( PROCESS_RESOURCES_THREADS, 4, 3, 1800.0 ) == 0 );
 }
 

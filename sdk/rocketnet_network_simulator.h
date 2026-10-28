@@ -194,4 +194,4 @@ static inline int rocketnet_network_simulator_receive_any( struct rocketnet_netw
 
 #endif // #if ROCKETNET_TEST_SEAMS
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H
+#endif // ROCKETNET_SDK_ROCKETNET_NETWORK_SIMULATOR_H

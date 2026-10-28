@@ -145,8 +145,11 @@ static void test_xdp_transport_send_queue_is_one_per_destination()
 
     const int queue = rocketnet_server_socket_send_queue( &client, 4 );
     check( queue >= 0 && queue < 4 );
+
     for ( int i = 0; i < 64; i++ )
+    {
         check( rocketnet_server_socket_send_queue( &client, 4 ) == queue );
+    }
 
     // one queue means queue 0
 
@@ -156,14 +159,18 @@ static void test_xdp_transport_send_queue_is_one_per_destination()
     // of 4 queues, and an IPv6 destination stays in range
 
     bool seen[4] = { false, false, false, false };
+
     for ( int i = 0; i < 64; i++ )
     {
         client.port = (uint16_t) ( 50000 + i );
         const int q = rocketnet_server_socket_send_queue( &client, 4 );
         check( q >= 0 && q < 4 );
         if ( q >= 0 && q < 4 )
+        {
             seen[q] = true;
+        }
     }
+
     check( seen[0] && seen[1] && seen[2] && seen[3] );
 
     struct rocketnet_address_t client_ipv6;
