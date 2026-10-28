@@ -479,6 +479,22 @@
     (:feature "macOS: the nightly soak job green at the branch" :cells (- n -) :note "planned for the final deliverable")
     (:feature "Ack receipts: LOSS only after the receipt deadline" :cells (n n n) :note "planned for the final deliverable")
     (:feature "The whole tree formatted with clang-format in the netcode style, the format checked in CI" :cells (n n n) :note "planned for the final deliverable")))
+  (:id "final-contraction"
+   :title "Final contraction pass"
+   :text "The last pass before v1.0.0: the library shrunk to the size and readability of netcode and yojimbo, one layer at a time from the bottom, with no change a caller can see. The public API, the wire format and every guarantee stay as they are; the existing unit, functional and soak suites and the TLA+ models guard each layer while it shrinks."
+   :columns platforms
+   :rows
+   ((:feature "Each layer's job written in one sentence, and the list corrected by the owner before any code changes" :cells (n - -) :note "owner, 2026-10-28: \"This is the final contraction pass.\" Start from the seven layers in CLAUDE.md, including any that exist only as scattered code")
+    (:feature "Layer 1, init, allocator, logging and assertions: contracted" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Layer 2, leaf utilities (address, hash, base64, bounded containers): contracted" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Layer 3, platform (threads, mutexes, clocks, sockets): contracted, with far fewer preprocessor branches" :cells (n n n) :note "planned for the final deliverable; sdk/rocketnet_platform.cpp is 6,568 lines with 108 conditional blocks at f981340d")
+    (:feature "Layer 4, transport protocol (token, cookie, handshake, keys, replay, acks, packets): contracted" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Layer 5, message layer (reliability, ordering, fragmentation, receipts, receive queue): contracted" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Layer 6, runtime transports: one seam, no separate driver layer, each transport as small as its platform allows" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Layer 7, public C API: contracted, with no change to rocketnet.h behaviour" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Comments say what the code does, not why a review was satisfied" :cells (n n n) :note "planned for the final deliverable")
+    (:feature "Tests and tools contracted alongside: library tests out of sdk/, no case kept only for a deleted mechanism" :cells (n n n) :note "planned for the final deliverable; sdk/rocketnet_tests.cpp is 16,426 lines at f981340d")
+    (:feature "The library is readable end to end in an afternoon: sdk/ total recorded before and after" :cells (n n n) :note "sdk/ is 98,906 lines at f981340d")))
   (:id "release"
    :title "Release and process"
    :columns platforms
