@@ -58,6 +58,8 @@ on:
   schedule:
     - cron: "10 3 * * *"
   workflow_dispatch:
+  push:
+    branches: [nightly/perf-trend]
 
 permissions:
   contents: read
