@@ -1,0 +1,249 @@
+# THE NIGHTLY WINDOWS SANITIZERS AND APPLICATION VERIFIER.
+#
+# The Windows twin of nightly-macos-sanitizers.yml. nightly.yml's windows /
+# Release ASan job runs the suites under MSVC AddressSanitizer in Release and
+# only build-checks the Debug configuration; this workflow runs the full unit
+# and functional suites in DEBUG (the asserts Release compiles out) under
+# AddressSanitizer with both Windows compilers, and runs Application Verifier
+# over the unit suite and a functional subset. It runs on the fleet's native
+# Windows runner (label rocketnet-windows), never a hosted image, in three
+# legs, each in its own build directory and its own job:
+#
+#   msvc-asan     Debug, MSVC, -DROCKETNET_SANITIZE_ADDRESS=ON (/fsanitize=address
+#                 /Zi, link /DEBUG /INCREMENTAL:NO; the debug CRT /MDd beside the
+#                 one clang_rt.asan_dynamic-x86_64.dll the build stages, BUILDING.md).
+#   clangcl-asan  Debug, clang-cl (Visual Studio's LLVM toolset, -T ClangCL),
+#                 the same option. clang-cl refuses AddressSanitizer with the
+#                 debug CRT, so this leg links the release CRT (/MD,
+#                 CMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL); NDEBUG stays
+#                 undefined, so the asserts stay in.
+#   appverif      an unsanitized Debug build (Application Verifier's heap layer
+#                 and AddressSanitizer each replace the heap, so they never share
+#                 a process). tools/windows/appverif_run.py runs each executable
+#                 under the Basics layers (Handles, Heaps, Locks, Memory, TLS,
+#                 Threadpool, Leak), every stop logged, and is red on any stop:
+#                 test.exe, test_lifecycle.exe and test_iocp.exe, then the
+#                 functional subset of ci.yml's Windows transport matrix (the
+#                 loopback UDP, IPv6, dual-stack and env-pin cases) once per
+#                 server transport (portable, iocp, rio). appverif_run.py writes
+#                 Image File Execution Options in HKLM, so the runner's account
+#                 must be allowed to: the first step proves it can, and the leg
+#                 is red with that reason when it cannot.
+#
+# Each ASan leg runs test.exe and test_sodium.exe, test_lifecycle.exe (portable
+# pins) and test_iocp.exe once, then functional.exe once per server transport:
+# portable, iocp and rio (the client takes its automatic order, iocp). Every run
+# step runs even when an earlier one is red, so a night shows all of them. The
+# Debug figure of the per-case peak-RSS bound applies
+# (ROCKETNET_TEST_MAX_CASE_RSS_MB=2048, the owner's ruling of 2026-10-20 that
+# nightly.yml's windows / Debug job carries); the bound in code is unchanged.
+# Windows AddressSanitizer has no leak detector; the appverif leg's Leak layer is
+# the leak check here.
+#
+# No suppression, no skipped case and no changed bound: a finding is a defect
+# with its own card.
+#
+# The bench: every job on this runner takes one shared winlock slot for its whole
+# run through the runner's job-started hook (the same hold every Windows job of
+# this repository takes; nothing in this file asks for it), and a scheduled or
+# dispatched job waits up to 50 minutes in "Set up job" for it. Each job's
+# timeout covers that wait plus its steps, and stays far under the hold's own
+# 6.5 hour limit. Nightlies are exempt from the two-minute rule.
+
+name: nightly-windows-sanitizers
+
+on:
+  schedule:
+    - cron: "10 7 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sanitizers-windows:
+    name: windows ${{ matrix.leg }}
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    # 50 minutes of bench wait, then the build and every run step at its own timeout
+    timeout-minutes: ${{ matrix.leg == 'appverif' && 200 || 220 }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        leg: [msvc-asan, clangcl-asan, appverif]
+    concurrency:
+      group: nightly-windows-sanitizers-${{ matrix.ref }}-${{ matrix.leg }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    env:
+      ROCKETNET_TEST_MAX_CASE_RSS_MB: 2048
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Application Verifier can be enabled by this runner's account
+        if: matrix.leg == 'appverif'
+        timeout-minutes: 2
+        run: |
+          set -uo pipefail
+          av=/c/Windows/System32/appverif.exe
+          if [ ! -x "$av" ]; then echo "APPVERIF-MISSING $av on $RUNNER_NAME: install Application Verifier for x64"; exit 1; fi
+          probe="rocketnet_appverif_probe_$$.exe"
+          out=$("$av" -enable Heaps -for "$probe" 2>&1); rc=$?
+          "$av" -disable '*' -for "$probe" > /dev/null 2>&1
+          "$av" -delete settings -for "$probe" > /dev/null 2>&1
+          if [ "$rc" != 0 ]; then
+            echo "APPVERIF-REFUSED on $RUNNER_NAME as $(whoami): appverif -enable exit $rc: $(echo "$out" | tr -d '\r' | tr '\n' ' ')"
+            echo "Application Verifier writes Image File Execution Options in HKLM; this runner's account may not."
+            exit 1
+          fi
+          echo "APPVERIF-OK on $RUNNER_NAME as $(whoami)"
+
+      - name: Configure
+        run: |
+          set -euo pipefail
+          case "${{ matrix.leg }}" in
+            msvc-asan)    dir=build-asan-msvc;    extra=(-DROCKETNET_SANITIZE_ADDRESS=ON) ;;
+            clangcl-asan) dir=build-asan-clangcl; extra=(-T ClangCL -DROCKETNET_SANITIZE_ADDRESS=ON -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreadedDLL) ;;
+            appverif)     dir=build-appverif;     extra=() ;;
+          esac
+          echo "LEG_BUILD_DIR=$dir" >> "$GITHUB_ENV"
+          echo "LEG_BIN=$dir/bin/Debug" >> "$GITHUB_ENV"
+          # each leg writes its binaries under its own build directory, so no leg replaces another's (or bin/)
+          cmake -B "$dir" -A x64 "${extra[@]}" "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/$dir/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/$dir/bin"
+
+      - name: Build Debug
+        id: build
+        timeout-minutes: 30
+        run: cmake --build "$LEG_BUILD_DIR" --config Debug --parallel 4
+
+      # ---- the AddressSanitizer legs ----
+
+      - name: Unit suite and sodium under ASan
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg != 'appverif' }}
+        timeout-minutes: 20
+        run: |
+          set -o pipefail
+          rc=0
+          "$LEG_BIN/test.exe" 2>&1 | tr -d '\r' | tee unit.log || rc=1
+          "$LEG_BIN/test_sodium.exe" 2>&1 | tr -d '\r' | tee sodium.log || rc=1
+          exit "$rc"
+
+      - name: Lifecycle suite under ASan (portable)
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg != 'appverif' }}
+        timeout-minutes: 15
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          "$LEG_BIN/test_lifecycle.exe" 2>&1 | tr -d '\r' | tee lifecycle.log
+
+      - name: IOCP and RIO transport suite under ASan
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg != 'appverif' }}
+        timeout-minutes: 10
+        run: |
+          set -o pipefail
+          "$LEG_BIN/test_iocp.exe" 2>&1 | tr -d '\r' | tee iocp.log
+
+      - name: Functional suite under ASan, portable
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg != 'appverif' }}
+        timeout-minutes: 40
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          "$LEG_BIN/functional.exe" 2>&1 | tr -d '\r' | tee functional-portable.log
+
+      - name: Functional suite under ASan, iocp
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg != 'appverif' }}
+        timeout-minutes: 40
+        env:
+          ROCKETNET_SERVER_TRANSPORT: iocp
+        run: |
+          set -o pipefail
+          "$LEG_BIN/functional.exe" 2>&1 | tr -d '\r' | tee functional-iocp.log
+
+      - name: Functional suite under ASan, rio
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg != 'appverif' }}
+        timeout-minutes: 40
+        env:
+          ROCKETNET_SERVER_TRANSPORT: rio
+        run: |
+          set -o pipefail
+          "$LEG_BIN/functional.exe" 2>&1 | tr -d '\r' | tee functional-rio.log
+
+      # ---- the Application Verifier leg ----
+
+      - name: Unit suite under Application Verifier
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg == 'appverif' }}
+        timeout-minutes: 60
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          python tools/windows/appverif_run.py --xml logs/appverif-unit.xml -- "$LEG_BIN/test.exe" 2>&1 | tr -d '\r' | tee unit.log
+
+      - name: Lifecycle and IOCP suites under Application Verifier
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg == 'appverif' }}
+        timeout-minutes: 30
+        env:
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: |
+          set -o pipefail
+          mkdir -p logs
+          rc=0
+          python tools/windows/appverif_run.py --xml logs/appverif-lifecycle.xml -- "$LEG_BIN/test_lifecycle.exe" 2>&1 | tr -d '\r' | tee lifecycle.log || rc=1
+          env -u ROCKETNET_SERVER_TRANSPORT -u ROCKETNET_CLIENT_TRANSPORT python tools/windows/appverif_run.py --xml logs/appverif-iocp.xml -- "$LEG_BIN/test_iocp.exe" 2>&1 | tr -d '\r' | tee iocp.log || rc=1
+          exit "$rc"
+
+      - name: Functional subset under Application Verifier, per server transport
+        if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.leg == 'appverif' }}
+        timeout-minutes: 40
+        run: |
+          set -uo pipefail
+          mkdir -p logs
+          # the cases of ci.yml's Windows transport matrix, each pinned to one server transport
+          cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
+          failed=0
+          for server in portable iocp rio; do
+            for case in $cases; do
+              log="logs/functional.$server.$case.log"
+              ROCKETNET_SERVER_TRANSPORT=$server python tools/windows/appverif_run.py --xml "logs/appverif-functional.$server.$case.xml" -- "$LEG_BIN/functional.exe" --run "$case" 2>&1 | tr -d '\r' > "$log"
+              rc=${PIPESTATUS[0]}
+              if [ "$rc" = 0 ] && grep -qx "$case" "$log" && ! grep -q '\[SKIPPED' "$log"; then
+                echo "PASS server=$server $case ($(grep -o 'appverif_run: PASS.*' "$log"))"
+              else
+                echo "FAIL server=$server $case (exit $rc)"
+                grep -E 'appverif_run: (STOP|FAIL)' "$log" | sed 's/^/    /'
+                tail -n 5 "$log" | sed 's/^/    /'
+                failed=1
+              fi
+            done
+          done
+          exit "$failed"
+
+      # GitHub expressions have no replace(): the artifact name's ref and leg slug is made here
+      - name: Artifact name for the ref and leg
+        id: slug
+        if: failure()
+        env:
+          REF: ${{ matrix.ref }}
+          LEG: ${{ matrix.leg }}
+        run: |
+          s="$REF-$LEG"; s=${s//\//-}
+          echo "slug=$s" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-windows-sanitizers-logs-${{ steps.slug.outputs.slug }}
+          path: |
+            *.log
+            logs/
+          if-no-files-found: ignore

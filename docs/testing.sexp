@@ -100,6 +100,7 @@
    :rows
    ((:feature "UDP connection reset (SIO_UDP_CONNRESET) never stalls receive" :on Windows :cell y :source "functional/windows_connreset.cpp, tests/test_iocp.cpp" :evidence "Windows: landed as 561142df; the test_*_transport_windows_connreset_* cases in functional.exe, green on Windows in landed 4529ca2d")
     (:feature "Application Verifier" :on Windows :cell y :source "the CI workflows" :evidence "Windows: 0 verifier stops, 7457d35b")
+    (:feature "Windows Debug sanitizers nightly: MSVC and clang-cl AddressSanitizer over the unit and functional suites, Application Verifier over the unit suite and a functional subset" :on Windows :cell p :source ".github/workflows/nightly-windows-sanitizers.yml, tools/windows/appverif_run.py" :pending "planned for the final deliverable")
     (:feature "App Nap and timer coalescing keep client timing" :on macOS :cell o :source "docs/MACOS.md (the App Nap timing cases are retired)" :evidence "macOS: the App Nap timing cases have been retired" :pending "retired: OS scheduling and process throttling are outside RocketNet's control (docs/MACOS.md)")
     (:feature "MemorySanitizer (msan.yml)" :on Linux :cell y :source ".github/workflows/msan.yml, tools/msan_known.txt" :evidence "Linux: msan.yml run 39514217624 at 330e951e passes")
     (:feature "Big-endian system build and suites" :on Linux :cell p :source ".github/workflows/nightly-bigendian-system.yml, tools/bigendian/" :pending "planned for the final deliverable")

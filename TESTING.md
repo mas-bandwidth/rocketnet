@@ -55,6 +55,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 |---|:---:|:---:|
 | UDP connection reset (SIO_UDP_CONNRESET) never stalls receive | Windows | ✅ |
 | Application Verifier | Windows | ✅ |
+| Windows Debug sanitizers nightly: MSVC and clang-cl AddressSanitizer over the unit and functional suites, Application Verifier over the unit suite and a functional subset | Windows | planned for the final deliverable |
 | App Nap and timer coalescing keep client timing | macOS | planned for the final deliverable |
 | MemorySanitizer (msan.yml) | Linux | ✅ |
 | Big-endian system build and suites | Linux | planned for the final deliverable |
@@ -63,7 +64,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | Windows lifecycle stress: SDK identities are checked separately; process-wide handle deltas are unattributed and not ownership evidence; threads stay flat, heap growth is bounded and same-host time is diagnostic | Windows | ❌ |
 | Windows lifecycle ledger: balanced generations, raw-value reuse, stale-close child termination and capacity overflow | Windows | ❌ |
 | Live XDP test (an XDP server, a client on every test machine) | Linux | planned for the final deliverable |
-| complete | 3 of 10 | 30% |
+| complete | 3 of 11 | 27% |
 
 ## Historical preview-1 baseline: tests per transport
 
