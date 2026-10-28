@@ -402,7 +402,7 @@ inline int suite_layer_of( const std::string & name )
         // core: init, allocator, logging, status names
         { "log", "allocator", "status_name", NULL },
         // helpers: platform, time, base64, config, memory
-        { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "bounded", "base64", "hash", "copy", "address", "anonymize", "random", "config", "memory", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
+        { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "base64", "hash", "copy", "address", "random", "config", "memory", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
         // packet: wire, crypto, tokens, prefilter, fragments
         { "wire", "crypto", "wycheproof", "token", "connect_token", "protocol", "signed", "prefilter", "packet", "sealed", "unsealed", "open_sealed", "fragment", "reassembly", "cookie", "standard", "serialize", "replay", "integrity", "keyed", "encryption", "used", "hostile", "tampered", "vectors", "salt", "response", "admission", "payload", "max", "large", "small", "chunk", "span", "builder", "coalesce", "v4", "ipv4", "ipv6", "reused", "parse", NULL },
         // acks: ack, window, sequence, receipts

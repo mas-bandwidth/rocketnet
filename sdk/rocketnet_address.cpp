@@ -6,7 +6,6 @@
 #include "rocketnet_address.h"
 #include "rocketnet_platform.h"
 
-#include <stdlib.h>
 #include <memory.h>
 #include <stdio.h>
 
@@ -209,97 +208,30 @@ const char * rocketnet_address_to_string( const rocketnet_address_t * address, c
     return buffer;
 }
 
-const char * rocketnet_address_to_string_without_port( const rocketnet_address_t * address, char * buffer )
-{
-    rocketnet_assert( buffer );
-
-    rocketnet_address_write_without_port( address, buffer );
-    return buffer;
-}
-
 bool rocketnet_address_equal( const rocketnet_address_t * a, const rocketnet_address_t * b )
 {
     rocketnet_assert( a );
     rocketnet_assert( b );
 
-    if ( a->type != b->type )
-        return false;
-
-    if ( a->type != ROCKETNET_ADDRESS_IPV4 && a->type != ROCKETNET_ADDRESS_IPV6 )
+    if ( a->type != b->type || a->port != b->port )
         return false;
 
     if ( a->type == ROCKETNET_ADDRESS_IPV4 )
-    {
-        if ( a->port != b->port )
-            return false;
+        return memcmp( a->data.ipv4, b->data.ipv4, 4 ) == 0;
 
-        for ( int i = 0; i < 4; ++i )
-        {
-            if ( a->data.ipv4[i] != b->data.ipv4[i] )
-                return false;
-        }
-    }
-    else if ( a->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-        if ( a->port != b->port )
-            return false;
+    if ( a->type == ROCKETNET_ADDRESS_IPV6 )
+        return memcmp( a->data.ipv6, b->data.ipv6, sizeof( a->data.ipv6 ) ) == 0;
 
-        for ( int i = 0; i < 8; ++i )
-        {
-            if ( a->data.ipv6[i] != b->data.ipv6[i] )
-                return false;
-        }
-    }
-
-    return true;
-}
-
-void rocketnet_address_anonymize( rocketnet_address_t * address )
-{
-    rocketnet_assert( address );
-
-    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
-    {
-        address->data.ipv4[3] = 0;
-    }
-    else if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-        if ( rocketnet_address_is_ipv4_in_ipv6( address ) )
-        {
-            address->data.ipv6[7] &= 0xFF00;
-        }
-        else
-        {
-            address->data.ipv6[4] = 0;
-            address->data.ipv6[5] = 0;
-            address->data.ipv6[6] = 0;
-            address->data.ipv6[7] = 0;
-        }
-    }
-
-    address->port = 0;
+    return false;
 }
 
 bool rocketnet_address_is_ipv4_in_ipv6( struct rocketnet_address_t * address )
 {
     rocketnet_assert( address );
 
-    if ( address->type != ROCKETNET_ADDRESS_IPV6 )
-        return false;
-    if ( address->data.ipv6[0] != 0x0000 )
-        return false;
-    if ( address->data.ipv6[1] != 0x0000 )
-        return false;
-    if ( address->data.ipv6[2] != 0x0000 )
-        return false;
-    if ( address->data.ipv6[3] != 0x0000 )
-        return false;
-    if ( address->data.ipv6[4] != 0x0000 )
-        return false;
-    if ( address->data.ipv6[5] != 0xFFFF )
-        return false;
-
-    return true;
+    return address->type == ROCKETNET_ADDRESS_IPV6 &&
+           address->data.ipv6[0] == 0 && address->data.ipv6[1] == 0 && address->data.ipv6[2] == 0 &&
+           address->data.ipv6[3] == 0 && address->data.ipv6[4] == 0 && address->data.ipv6[5] == 0xFFFF;
 }
 
 void rocketnet_address_convert_ipv4_to_ipv6( struct rocketnet_address_t * address )

@@ -42,12 +42,14 @@ struct rn_slots_t
 void rn_slots_init( struct rn_slots_t * slots, int max_clients );
 
 // RNSlots Observe: reads one slot's connection id after the transport's
-// update. RESET on a change to a nonzero id, DROP on a change to 0, NONE when
-// the id is unchanged. Every call refreshes the slot's per-update changed bit.
+// update. Every call refreshes the slot's per-update changed bit, which the
+// server uses to withhold that slot until each batch entry carries its
+// connection's id (CHANNELS.md 11.5).
 int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_id );
 
-// RNSlots Admit: APPLY only when the slot is bound and the entry's connection
-// id is that binding; DISCARD otherwise, a free slot included.
+// RNSlots Admit: the slot index alone never decides. APPLY only when the slot
+// is bound and the entry's connection id is that binding; DISCARD otherwise,
+// a free slot included (no entry carries the id 0).
 int rn_slots_admit( const struct rn_slots_t * slots, int slot, uint64_t entry_connection_id );
 
 #endif // ROCKETNET_SDK_ROCKETNET_SLOTS_H

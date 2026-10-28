@@ -72,18 +72,8 @@ int rocketnet_base64_encode_data( const uint8_t * input, size_t input_length, ch
     return int( output_length );
 }
 
-// strict decode (#110 review, both readers independently): the old table
-// indexed by a plain (signed) char, so any byte >= 0x80 read below the
-// table -- an out-of-bounds read steered by attacker-controlled input --
-// and every unknown character silently decoded as SOMETHING, which for the
-// config system's key fields meant a corrupted env var could become a
-// wrong key without a word. Refuse-loudly is the law, and doubly so for
-// secret material: an invalid character, misplaced padding, or an
-// impossible length now refuses the whole decode (returns 0), and every
-// lookup is by value range, never by table index. ONE alphabet, the
-// standard one: the url-safe aliases were dropped on the #110 gate so
-// that two distinct strings can never decode to the same bytes -- with
-// aliases, "+w" and "-w" were the same key twice.
+// strict decode: one alphabet, no invalid characters, padding required and
+// tails canonical, so two distinct strings never decode to the same key.
 
 static int rocketnet_base64_char_value( char c )
 {
@@ -109,11 +99,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
 
     const size_t input_length = strlen( input );
 
-    // padding is REQUIRED (ruled on the #110 gate, round five): every
-    // input is whole four-character groups, with one or two trailing '='
-    // completing the last -- so each byte length has exactly one valid
-    // spelling and the no-two-spellings-one-key property is real, not
-    // aspirational ("AA" is refused beside "AA==")
+    // whole four-character groups only, so each length has one spelling
 
     if ( ( input_length % 4 ) != 0 )
         return 0;
@@ -162,9 +148,7 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
         }
     }
 
-    // canonical tails only: leftover bits below the last whole byte must
-    // be zero, so two distinct strings can never decode to the same bytes
-    // (without it "AB" and "AC" would both yield 0x00)
+    // leftover bits must be zero (otherwise "AB" and "AC" decode alike)
 
     if ( bits > 0 && ( accumulator & ( ( 1u << bits ) - 1 ) ) != 0 )
         return 0;
@@ -172,29 +156,4 @@ int rocketnet_base64_decode_data( const char * input, uint8_t * output, size_t o
     rocketnet_assert( j == output_length );
 
     return int( output_length );
-}
-
-int rocketnet_base64_encode_string( const char * input, char * output, size_t output_size )
-{
-    rocketnet_assert( input );
-    rocketnet_assert( output );
-    rocketnet_assert( output_size > 0 );
-
-    return rocketnet_base64_encode_data( (const uint8_t *) ( input ), strlen( input ), output, output_size );
-}
-
-int rocketnet_base64_decode_string( const char * input, char * output, size_t output_size )
-{
-    rocketnet_assert( input );
-    rocketnet_assert( output );
-    rocketnet_assert( output_size > 0 );
-
-    if ( output_size < 2 )
-        return 0;       // room for nothing but the terminator; decode_data requires a real buffer
-
-    int output_length = rocketnet_base64_decode_data( input, (uint8_t *) ( output ), output_size - 1 );
-
-    output[output_length] = '\0';
-
-    return output_length;
 }

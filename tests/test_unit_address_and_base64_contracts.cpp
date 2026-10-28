@@ -7,15 +7,12 @@
 //
 // Two error arms at BASE, pinned here:
 //
-//   * rocketnet_base64_decode_data (sdk/rocketnet_base64.cpp:89) never
-//     returns a negative value: every refusal is `return 0` and every
-//     success returns a non-negative length. The `< 0` arm in
-//     rocketnet_base64_decode_string (sdk/rocketnet_base64.cpp:175) is
-//     therefore unreachable, and the table below makes that provable by
-//     driving decode_data over empty, valid, invalid, mis-padded and
-//     over-long inputs and asserting each result is >= 0.
+//   * rocketnet_base64_decode_data never returns a negative value: every
+//     refusal is `return 0` and every success returns a non-negative
+//     length. The table below drives it over empty, valid, invalid,
+//     mis-padded and over-long inputs and asserts each result is >= 0.
 //
-//   * rocketnet_address_to_string (sdk/rocketnet_address.cpp:101) tests
+//   * rocketnet_address_to_string tests
 //     snprintf's return `< 0` and logs "truncated". snprintf signals
 //     truncation by returning a value >= the buffer size; a negative
 //     return is a formatting or encoding error. The longest bracketed
@@ -144,10 +141,10 @@ static void test_address_ipv6_with_port_fits_the_buffer()
 }
 
 // ---------------------------------------------------------------------------
-// rocketnet_address_load_ipv4 (sdk/rocketnet_address.cpp:13) round-trips:
+// rocketnet_address_load_ipv4 round-trips:
 // its wire-big-endian inputs land as the matching typed address, parse the
 // same dotted-quad text back to equality, and rocketnet_address_ipv4
-// (sdk/rocketnet_address.cpp:318) returns the same four bytes.
+// returns the same four bytes.
 // ---------------------------------------------------------------------------
 
 static void test_address_load_ipv4_round_trips()
@@ -184,43 +181,9 @@ static void test_address_load_ipv4_round_trips()
 }
 
 // ---------------------------------------------------------------------------
-// rocketnet_address_to_string_without_port (sdk/rocketnet_address.cpp:165)
-// renders each address type without its port: dotted-quad, compressed IPv6
-// and the NONE fallback for a zeroed address.
-// ---------------------------------------------------------------------------
-
-static void test_address_to_string_without_port_each_type()
-{
-    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-
-    struct rocketnet_address_t ipv4;
-    rocketnet_unit_check( rocketnet_address_parse( &ipv4, "203.0.113.10:40000" ) );
-
-    const char * ipv4_text = rocketnet_address_to_string_without_port( &ipv4, buffer );
-    rocketnet_unit_check( ipv4_text == buffer );
-    rocketnet_unit_check( strcmp( ipv4_text, "203.0.113.10" ) == 0 );
-
-    struct rocketnet_address_t ipv6;
-    rocketnet_unit_check( rocketnet_address_parse( &ipv6, "[2001:db8::1]:40000" ) );
-
-    const char * ipv6_text = rocketnet_address_to_string_without_port( &ipv6, buffer );
-    rocketnet_unit_check( ipv6_text == buffer );
-    rocketnet_unit_check( strcmp( ipv6_text, "2001:db8::1" ) == 0 );
-
-    struct rocketnet_address_t none;
-    memset( &none, 0, sizeof( none ) );
-
-    const char * none_text = rocketnet_address_to_string_without_port( &none, buffer );
-    rocketnet_unit_check( none_text == buffer );
-    rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
-}
-
-// ---------------------------------------------------------------------------
-// rocketnet_address_to_string and rocketnet_address_to_string_without_port
-// render every address form exactly: IPv4 and IPv6 with and without a port,
-// the longest forms, an IPv4-mapped IPv6 address, and NONE (with and without
-// a port). These strings are pinned so that folding the two functions onto
-// one formatting helper changes no output.
+// rocketnet_address_to_string renders every address form exactly: IPv4 and
+// IPv6 with and without a port, the longest forms, an IPv4-mapped IPv6
+// address, and NONE (with and without a port).
 // ---------------------------------------------------------------------------
 
 struct address_to_string_case_t
@@ -228,23 +191,22 @@ struct address_to_string_case_t
     const char * input;             // parsed text, or NULL for a zeroed NONE address
     uint16_t none_port;             // the port set on the NONE address
     const char * with_port;         // expected rocketnet_address_to_string
-    const char * without_port;      // expected rocketnet_address_to_string_without_port
 };
 
 static const struct address_to_string_case_t k_address_to_string_cases[] = {
-    { "203.0.113.10:40000", 0, "203.0.113.10:40000", "203.0.113.10" },
-    { "203.0.113.10", 0, "203.0.113.10", "203.0.113.10" },
-    { "255.255.255.255:65535", 0, "255.255.255.255:65535", "255.255.255.255" },
-    { "0.0.0.0:1", 0, "0.0.0.0:1", "0.0.0.0" },
-    { "[2001:db8::1]:40000", 0, "[2001:db8::1]:40000", "2001:db8::1" },
-    { "2001:db8::1", 0, "2001:db8::1", "2001:db8::1" },
-    { "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", 0, "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
-    { "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 0, "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
-    { "[::ffff:192.0.2.1]:40000", 0, "[::ffff:192.0.2.1]:40000", "::ffff:192.0.2.1" },
-    { "::ffff:192.0.2.1", 0, "::ffff:192.0.2.1", "::ffff:192.0.2.1" },
-    { "[::1]:1", 0, "[::1]:1", "::1" },
-    { NULL, 0, "NONE", "NONE" },
-    { NULL, 40000, "NONE", "NONE" },
+    { "203.0.113.10:40000", 0, "203.0.113.10:40000" },
+    { "203.0.113.10", 0, "203.0.113.10" },
+    { "255.255.255.255:65535", 0, "255.255.255.255:65535" },
+    { "0.0.0.0:1", 0, "0.0.0.0:1" },
+    { "[2001:db8::1]:40000", 0, "[2001:db8::1]:40000" },
+    { "2001:db8::1", 0, "2001:db8::1" },
+    { "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535", 0, "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535" },
+    { "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 0, "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff" },
+    { "[::ffff:192.0.2.1]:40000", 0, "[::ffff:192.0.2.1]:40000" },
+    { "::ffff:192.0.2.1", 0, "::ffff:192.0.2.1" },
+    { "[::1]:1", 0, "[::1]:1" },
+    { NULL, 0, "NONE" },
+    { NULL, 40000, "NONE" },
 };
 
 static void test_address_to_string_forms_pinned()
@@ -279,77 +241,11 @@ static void test_address_to_string_forms_pinned()
 
         rocketnet_unit_check( with_port == buffer );
         rocketnet_unit_check( strcmp( with_port, c.with_port ) == 0 );
-
-        memset( buffer, 'x', sizeof( buffer ) );
-
-        const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
-        if ( without_port != buffer || strcmp( without_port, c.without_port ) != 0 )
-        {
-            printf( "address case %d to_string_without_port was \"%s\", expected \"%s\"\n", i, without_port, c.without_port );
-            fflush( stdout );
-        }
-
-        rocketnet_unit_check( without_port == buffer );
-        rocketnet_unit_check( strcmp( without_port, c.without_port ) == 0 );
     }
 }
 
 // ---------------------------------------------------------------------------
-// rocketnet_address_anonymize touches only the data of the type it names: a
-// NONE address keeps every data byte and loses only its port, while IPv4,
-// mapped IPv6 and plain IPv6 are cut exactly as before.
-// ---------------------------------------------------------------------------
-
-static void test_address_anonymize_leaves_other_types_untouched()
-{
-    struct rocketnet_address_t none;
-    memset( &none, 0, sizeof( none ) );
-    none.type = ROCKETNET_ADDRESS_NONE;
-    memset( &none.data, 0xA5, sizeof( none.data ) );
-    none.port = 7;
-    rocketnet_address_anonymize( &none );
-
-    const uint8_t * none_bytes = (const uint8_t *) &none.data;
-
-    for ( size_t i = 0; i < sizeof( none.data ); ++i )
-    {
-        if ( none_bytes[i] != 0xA5 )
-        {
-            printf( "anonymized NONE address data byte %d was 0x%02x, expected 0xa5\n", (int) i, none_bytes[i] );
-            fflush( stdout );
-        }
-
-        rocketnet_unit_check( none_bytes[i] == 0xA5 );
-    }
-
-    rocketnet_unit_check( none.port == 0 );
-    rocketnet_unit_check( none.type == ROCKETNET_ADDRESS_NONE );
-
-    char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
-
-    struct rocketnet_address_t ipv4;
-    rocketnet_unit_check( rocketnet_address_parse( &ipv4, "203.0.113.10:40000" ) );
-    rocketnet_address_anonymize( &ipv4 );
-    rocketnet_unit_check( strcmp( rocketnet_address_to_string( &ipv4, buffer ), "203.0.113.0" ) == 0 );
-
-    struct rocketnet_address_t mapped;
-    rocketnet_unit_check( rocketnet_address_parse( &mapped, "[::ffff:203.0.113.10]:40000" ) );
-    rocketnet_address_anonymize( &mapped );
-    rocketnet_unit_check( mapped.type == ROCKETNET_ADDRESS_IPV6 );
-    rocketnet_unit_check( mapped.data.ipv6[5] == 0xFFFF );
-    rocketnet_unit_check( mapped.data.ipv6[6] == 0xCB00 );
-    rocketnet_unit_check( mapped.data.ipv6[7] == 0x7100 );
-    rocketnet_unit_check( mapped.port == 0 );
-
-    struct rocketnet_address_t ipv6;
-    rocketnet_unit_check( rocketnet_address_parse( &ipv6, "[2001:db8:1:2:3:4:5:6]:40000" ) );
-    rocketnet_address_anonymize( &ipv6 );
-    rocketnet_unit_check( strcmp( rocketnet_address_to_string( &ipv6, buffer ), "2001:db8:1:2::" ) == 0 );
-}
-
-// ---------------------------------------------------------------------------
-// the widest IPv4 text, with and without its port, comes back whole from
-// rocketnet_address_to_string and rocketnet_address_to_string_without_port.
+// the widest IPv4 text comes back whole from rocketnet_address_to_string.
 // ---------------------------------------------------------------------------
 
 static void test_address_to_string_ipv4_widest_is_complete()
@@ -367,10 +263,6 @@ static void test_address_to_string_ipv4_widest_is_complete()
 
     rocketnet_unit_check( with_port == buffer );
     rocketnet_unit_check( strcmp( with_port, "255.255.255.255:65535" ) == 0 );
-
-    const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
-    rocketnet_unit_check( without_port == buffer );
-    rocketnet_unit_check( strcmp( without_port, "255.255.255.255" ) == 0 );
 
     address.port = 0;
 
@@ -523,9 +415,7 @@ REGISTER_UNIT_TEST( test_base64_decode_data_never_returns_negative );
 REGISTER_UNIT_TEST( test_base64_encode_refuses_length_over_int_max );
 REGISTER_UNIT_TEST( test_address_ipv6_with_port_fits_the_buffer );
 REGISTER_UNIT_TEST( test_address_load_ipv4_round_trips );
-REGISTER_UNIT_TEST( test_address_to_string_without_port_each_type );
 REGISTER_UNIT_TEST( test_address_to_string_forms_pinned );
-REGISTER_UNIT_TEST( test_address_anonymize_leaves_other_types_untouched );
 REGISTER_UNIT_TEST( test_address_to_string_ipv4_widest_is_complete );
 REGISTER_UNIT_TEST( test_wycheproof_files_load_and_count );
 REGISTER_UNIT_TEST( test_wycheproof_reader_refuses_malformed_json );
