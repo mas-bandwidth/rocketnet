@@ -216,10 +216,8 @@ static void test_xdp_transport_receive_ring_conserves_frames_and_never_stalls()
         }
 
         rocketnet_xdp_receive_ring_finish( peeked, took, fake_cancel, fake_release, &ring );
-        for ( uint32_t i = 0; i < took; i++ )
-        {
-            fill[fill_count++] = taken[i];
-        }
+        memcpy( fill + fill_count, taken, took * sizeof( taken[0] ) );
+        fill_count += took;
 
         received += took;
 

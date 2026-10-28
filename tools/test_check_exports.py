@@ -52,8 +52,8 @@ class ExportFixtureTest(unittest.TestCase):
         self.assertNotIn('"rocketnet_fixture_export"', tests_text)
         return self.replace_once(
             tests_text,
-            "rocketnet_test_exports[] =\n{",
-            "rocketnet_test_exports[] =\n{\n    \"rocketnet_fixture_export\",",
+            "rocketnet_test_exports[] = {",
+            "rocketnet_test_exports[] = {\n    \"rocketnet_fixture_export\",",
         )
 
 
@@ -87,8 +87,8 @@ class CheckExportsSourceTest(ExportFixtureTest):
     def test_duplicate_table_entry_fails(self):
         tests_text = self.replace_once(
             TESTS.read_text(),
-            "rocketnet_test_exports[] =\n{",
-            "rocketnet_test_exports[] =\n{\n    \"rocketnet_version\",",
+            "rocketnet_test_exports[] = {",
+            "rocketnet_test_exports[] = {\n    \"rocketnet_version\",",
         )
         tests_copy = Path(self.tmp.name) / "rocketnet_tests.cpp"
         tests_copy.write_text(tests_text)
