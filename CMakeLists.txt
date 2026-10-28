@@ -624,6 +624,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_status_lifecycle_create_ex.cpp
             tests/test_unit_unreliable_promotion.cpp
             tests/test_unit_window_sequences.cpp
+            tests/test_unit_xdp_replay_marks.cpp
             tests/test_unit_ack_block_walk.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp
