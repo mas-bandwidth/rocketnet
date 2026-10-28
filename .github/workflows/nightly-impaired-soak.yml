@@ -1,0 +1,214 @@
+# The impaired soak: 1000 clients for ten minutes per server transport,
+# under loss, latency, jitter and duplication. scripts/load-impaired-soak runs
+# bin/load 1000 600 once per cell with the development link simulator at both
+# ends (loss 5 percent, latency 30 ms, jitter 20 ms, duplicate 2 percent, the
+# values scripts/soak-per-transport runs) and LOAD_ASSERT_FLAT=1, and prints
+# one PASS or FAIL line per cell. A cell passes only when every client
+# connected within 10 s and stayed connected for the whole run with no
+# timeout, every reliable message arrived exactly once and every ordered
+# stream in order, no unreliable message arrived twice or corrupt, the
+# requested loss left its trace, fds and threads came back to their
+# baseline, the library's own bytes stayed flat after a 60-second warm-up,
+# and the granted server transport is the pinned one. Each PASS line records
+# the run's per-call frame timings (p50 and p99 upper bounds and maximum for
+# server update, send and receive and client update); a colocated run is a
+# correctness test, so they are recorded and never judged (docs/LOAD.md).
+#
+# Where: the Linux host cells (portable, gso, gso plain, io_uring) run one
+# after another on the large-memory Linux runner, because one 1000-client
+# default-profile run peaks near 27 GB resident and the other Linux runners
+# have 30 GB. The xdp cell runs only on the XDP machine, as root inside a
+# virtme-ng guest of its own kernel sized from the run's own plan. Windows
+# (portable, iocp, rio) runs on the fleet's Windows runner through its
+# CI-hold hooks, as the other Windows jobs do; macOS (portable, msgx) on the
+# fleet's macOS runner.
+#
+# When: on alternate nights (odd days of the month, 12:00 UTC), after every
+# other nightly's slot, so it and the real-load nightly are never queued for
+# the same machines on the same night: real-load keeps the even days. Each Linux host cell
+# is about eleven minutes; the four are about 45 minutes, Windows about 35,
+# macOS about 25, xdp about 15. A red night is a found bug.
+
+name: nightly-impaired-soak
+
+on:
+  schedule:
+    - cron: "0 12 */2 * *"
+  workflow_dispatch:
+
+jobs:
+  impaired-soak-linux:
+    name: impaired soak (${{ matrix.ref }} / linux / 1000 clients / 600 s per cell)
+    runs-on: [self-hosted, Linux, X64, fleet, hetzner2]
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's build dependencies are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for tool in cmake gcc g++ xxd pkg-config; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          for lib in libbpf libxdp libsodium liburing; do
+            if ! pkg-config --exists "$lib" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $lib (any) (pkg-config --exists failed) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build
+        run: make
+
+      - name: Impaired soak (portable, gso, gso plain, io_uring; 1000 clients, 600 s each)
+        timeout-minutes: 80
+        shell: bash
+        run: bash scripts/load-impaired-soak --seconds 600 --cell portable --cell gso --cell gso-plain --cell io_uring --log-dir build/impaired-soak
+
+      # GitHub expressions have no replace(): the artifact name's ref slug ('/' -> '-') is made here
+      - name: Artifact name for the ref
+        id: refslug
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the impaired soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: impaired-soak-linux-${{ steps.refslug.outputs.slug }}
+          path: build/impaired-soak
+          if-no-files-found: ignore
+
+  impaired-soak-xdp:
+    name: impaired soak (${{ matrix.ref }} / xdp / 1000 clients / 600 s)
+    # XDP runs only on the XDP machine
+    runs-on: [self-hosted, Linux, X64, hulk]
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build
+        run: make
+
+      - name: Impaired soak (xdp in a virtme-ng guest; 1000 clients, 600 s)
+        timeout-minutes: 25
+        shell: bash
+        run: bash scripts/load-impaired-soak --seconds 600 --cell xdp --log-dir build/impaired-soak
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the impaired soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: impaired-soak-xdp-${{ steps.refslug.outputs.slug }}
+          path: build/impaired-soak
+          if-no-files-found: ignore
+
+  impaired-soak-windows:
+    name: impaired soak (${{ matrix.ref }} / windows / 1000 clients / 600 s per cell)
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure (Windows)
+        run: cmake -B build -A x64
+
+      - name: Build (Windows)
+        run: cmake --build build --config Release --parallel
+
+      - name: Impaired soak (portable, iocp, rio; 1000 clients, 600 s each)
+        timeout-minutes: 60
+        shell: bash
+        run: bash scripts/load-impaired-soak --seconds 600 --cell portable --cell iocp --cell rio --log-dir build/impaired-soak
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the impaired soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: impaired-soak-windows-${{ steps.refslug.outputs.slug }}
+          path: build/impaired-soak
+          if-no-files-found: ignore
+
+  impaired-soak-macos:
+    name: impaired soak (${{ matrix.ref }} / macos / 1000 clients / 600 s per cell)
+    runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build
+        run: make
+
+      - name: Impaired soak (portable, msgx; 1000 clients, 600 s each)
+        timeout-minutes: 40
+        shell: bash
+        run: bash scripts/load-impaired-soak --seconds 600 --cell portable --cell msgx --log-dir build/impaired-soak
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: always()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the impaired soak logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: impaired-soak-macos-${{ steps.refslug.outputs.slug }}
+          path: build/impaired-soak
+          if-no-files-found: ignore

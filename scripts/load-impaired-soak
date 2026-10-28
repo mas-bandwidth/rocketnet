@@ -1,0 +1,291 @@
+#!/usr/bin/env bash
+#
+# load-impaired-soak: bin/load's 1000 clients for ten minutes once per server
+# transport, under the development link simulator's loss, latency, jitter and
+# duplication at both ends, with the library's own bytes held flat after the
+# warm-up (load.c's header, THE IMPAIRED SOAK).
+#
+#   scripts/load-impaired-soak --cell portable --cell gso                (Linux)
+#   scripts/load-impaired-soak --cell xdp                                (the XDP machine)
+#   scripts/load-impaired-soak --cell iocp --cell rio                    (Windows)
+#   scripts/load-impaired-soak --cell msgx                               (macOS)
+#   scripts/load-impaired-soak --seconds 120 --clients 100 --cell portable   (by hand)
+#
+# The cells. The server transport is pinned by ROCKETNET_SERVER_TRANSPORT and
+# every client by ROCKETNET_CLIENT_TRANSPORT=portable, as load.c's cells are:
+#   portable   every platform
+#   gso        Linux
+#   gso-plain  Linux, ROCKETNET_TEST_GSO_PLAIN=1 (the UDP_SEGMENT and UDP_GRO
+#              probes skipped)
+#   io_uring   Linux, where /proc/sys/kernel/io_uring_disabled reads 0; else
+#              the cell prints SKIP naming why, and does not pass
+#   xdp        Linux, ROCKETNET_SERVER_NUM_XDP_QUEUES=1
+#              ROCKETNET_SERVER_NUM_OS_CPUS=1, as root inside a virtme-ng
+#              guest of this machine's own kernel, the shape of
+#              nightly-soak.yml's many-client xdp cell: a veth pair, the far
+#              end in its own namespace, the server bound on the near end
+#              (LOAD_SERVER_ADDRESS) and every client opened in the far
+#              namespace (LOAD_CLIENT_NETNS). The guest is sized from the
+#              run's own LOAD_PLAN_ONLY receipt as that cell sizes it. Nothing
+#              is attached to any interface outside the guest.
+#   iocp, rio  Windows
+#   msgx       macOS
+#
+# The impairment, at both ends (ROCKETNET_DEV_SERVER_* and
+# ROCKETNET_DEV_CLIENT_*, read by the public create), the values
+# scripts/soak-per-transport runs: loss 5 percent, latency 30 ms, jitter
+# 20 ms, duplicate 2 percent. LOAD_ASSERT_FLAT=1 holds library_bytes flat.
+#
+# A cell passes only when load exits 0 with verdict=PASS (every client
+# connected within 10 s and stayed connected, every reliable message exactly
+# once and every ordered stream in order, no unreliable duplicate or corrupt
+# payload, counters reconciled with the link's allowed gaps, the requested
+# loss witnessed, fds and threads back to their baseline, library_bytes
+# flat), the server transport it names is the one the cell pins, and both
+# "load link simulator:" lines show the setting asked for. Each cell prints
+# one line:
+#   IMPAIRED cell=<name> PASS server=<granted> clients=<n> seconds=<S> sent=<n> received=<n> unreliable_lost=<n> sequenced_skipped=<n> resent=<client>/<server> library_bytes=<post-warmup>/<end> rss_mb=<n> <call>_us=<p50>/<p99>/<max> ...
+#   IMPAIRED cell=<name> FAIL <why>
+# The <call>_us fields are the run's per-call frame timings (p50 and p99
+# upper bounds, exact maximum) for server_update, server_send_packets,
+# server_receive_messages and client_update. They are recorded, never
+# judged: a colocated run is a correctness test (docs/LOAD.md).
+#
+# Options:
+#   --seconds S      traffic seconds per cell (default 600)
+#   --clients N      clients per cell (default 1000)
+#   --cell NAME      a cell to run (repeatable; at least one)
+#   --load PATH      the load binary (default ../bin/load, or
+#                    ../bin/Release/load.exe on Windows, beside this script)
+#   --log-dir DIR    keep each cell's output as DIR/<cell>.log (default: a
+#                    temporary directory, removed at exit)
+#   --vm-kernel PATH the xdp guest's kernel (default ~/vm-kernels/vmlinuz-$(uname -r))
+#
+# Exit status: 0 when every cell run passed, 1 when any failed or was skipped,
+# 2 on a malformed option.
+
+set -u
+
+NAME=load-impaired-soak
+SECONDS_PER_CELL=600
+CLIENTS=1000
+CELLS=()
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) LOAD="$SCRIPT_DIR/../bin/Release/load.exe" ;;
+    *)                    LOAD="$SCRIPT_DIR/../bin/load" ;;
+esac
+LOG_DIR=
+VM_KERNEL="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+
+usage()
+{
+    sed -n '2,/^set -u/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+refuse()
+{
+    echo "$NAME: $* (see --help)" >&2
+    exit 2
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --seconds)    [ $# -ge 2 ] || refuse "--seconds needs a value"; SECONDS_PER_CELL=$2; shift 2 ;;
+        --clients)    [ $# -ge 2 ] || refuse "--clients needs a value"; CLIENTS=$2; shift 2 ;;
+        --cell)       [ $# -ge 2 ] || refuse "--cell needs a value"; CELLS+=("$2"); shift 2 ;;
+        --load)       [ $# -ge 2 ] || refuse "--load needs a value"; LOAD=$2; shift 2 ;;
+        --log-dir)    [ $# -ge 2 ] || refuse "--log-dir needs a value"; LOG_DIR=$2; shift 2 ;;
+        --vm-kernel)  [ $# -ge 2 ] || refuse "--vm-kernel needs a value"; VM_KERNEL=$2; shift 2 ;;
+        -h|--help)    usage; exit 0 ;;
+        *)            refuse "unknown option $1" ;;
+    esac
+done
+
+case "$SECONDS_PER_CELL" in
+    ''|*[!0-9]*|0) refuse "--seconds S must be a positive integer" ;;
+esac
+case "$CLIENTS" in
+    ''|*[!0-9]*|0) refuse "--clients N must be a positive integer" ;;
+esac
+[ ${#CELLS[@]} -gt 0 ] || refuse "name at least one --cell"
+for cell in "${CELLS[@]}"; do
+    case "$cell" in
+        portable|gso|gso-plain|io_uring|xdp|iocp|rio|msgx) ;;
+        *) refuse "unknown cell $cell (portable, gso, gso-plain, io_uring, xdp, iocp, rio, msgx)" ;;
+    esac
+done
+[ -x "$LOAD" ] || { echo "$NAME: $LOAD not built -- build first" >&2; exit 1; }
+LOAD=$(cd "$(dirname "$LOAD")" && pwd)/$(basename "$LOAD")
+
+if [ -z "$LOG_DIR" ]; then
+    LOG_DIR=$(mktemp -d "${TMPDIR:-/tmp}/$NAME.XXXXXX")
+    trap 'rm -rf "$LOG_DIR"' EXIT
+else
+    mkdir -p "$LOG_DIR" || exit 1
+fi
+LOG_DIR=$(cd "$LOG_DIR" && pwd)
+
+IMPAIRMENT=(LOAD_ASSERT_FLAT=1)
+for end in SERVER CLIENT; do
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_PACKET_LOSS_PERCENT=5")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_LATENCY_MS=30")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_JITTER_MS=20")
+    IMPAIRMENT+=("ROCKETNET_DEV_${end}_DUPLICATE_PERCENT=2")
+done
+# the setting each end's "load link simulator:" line must show
+WANT_LINK="latency_ms=30 jitter_ms=20 loss_percent=5 duplicate_percent=2"
+
+# the bound past the traffic itself: connect, the drain, teardown and, for
+# xdp, the guest's boot
+TIMEOUT=$(( SECONDS_PER_CELL + 300 ))
+
+failures=0
+
+field()
+{
+    # field <line> <key>: the value of key=value on one load: line
+    printf '%s\n' "$1" | tr ' ' '\n' | sed -n "s/^$2=//p" | tail -n 1
+}
+
+judge()
+{
+    # judge <cell> <want server transport> <log> <load exit status>
+    local cell=$1 want=$2 raw=$3 status=$4
+    # Windows writes CRLF: judge an LF copy, never a pipe out of tr
+    local log="$raw.lf"
+    tr -d '\r' < "$raw" > "$log"
+    local line
+    line=$(grep '^load: connected=' "$log" | tail -n 1)
+    local fail_reason=
+    if [ -z "$line" ]; then
+        fail_reason="load printed no result line (exit $status): $(grep -E '^load' "$log" | tail -n 3 | tr '\n' ';')"
+    elif [ "$status" -ne 0 ] || [ "$(field "$line" verdict)" != PASS ]; then
+        fail_reason="load exit $status verdict=$(field "$line" verdict) failed_criterion=$(field "$line" failed_criterion) connected=$(field "$line" connected) $(grep -E '^load: (client|server|drain|counters_agree)' "$log" | head -n 4 | tr '\n' ';')"
+    elif [ "$(field "$line" server_transport_io)" != "$want" ]; then
+        fail_reason="server transport granted '$(field "$line" server_transport_io)', the cell pins $want"
+    elif [ "$(field "$line" link_impaired)" != 1 ] || [ "$(field "$line" memory_flat)" != PASS ]; then
+        fail_reason="link_impaired=$(field "$line" link_impaired) memory_flat=$(field "$line" memory_flat)"
+    else
+        local end
+        for end in server client; do
+            if ! grep -qx "load link simulator: $end $WANT_LINK" "$log"; then
+                fail_reason="the $end link simulator shows '$(sed -n "s/^load link simulator: $end //p" "$log" | head -n 1)', the cell asks for '$WANT_LINK'"
+                break
+            fi
+        done
+    fi
+    if [ -n "$fail_reason" ]; then
+        echo "IMPAIRED cell=$cell FAIL $fail_reason (log $raw)"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    local timings="" call
+    for call in server_update server_send_packets server_receive_messages client_update; do
+        timings="$timings ${call}_us=$(field "$line" "frame_${call}_p50_upper_us")/$(field "$line" "frame_${call}_p99_upper_us")/$(field "$line" "frame_${call}_max_us")"
+    done
+    echo "IMPAIRED cell=$cell PASS server=$(field "$line" server_transport_io) clients=$(field "$line" connected) seconds=$SECONDS_PER_CELL sent=$(field "$line" sent) received=$(field "$line" received) unreliable_lost=$(field "$line" unreliable_lost) sequenced_skipped=$(field "$line" sequenced_skipped) resent=$(field "$line" client_messages_resent)/$(field "$line" server_messages_resent) library_bytes=$(field "$line" memory_post_warmup_library_bytes)/$(field "$line" memory_end_library_bytes) rss_mb=$(field "$line" rss_mb)$timings"
+}
+
+run_host_cell()
+{
+    # run_host_cell <cell> <want server transport> <env...>
+    local cell=$1 want=$2
+    shift 2
+    local log="$LOG_DIR/$cell.log"
+    local status=0
+    env "$@" "${IMPAIRMENT[@]}" timeout "$TIMEOUT" "$LOAD" "$CLIENTS" "$SECONDS_PER_CELL" > "$log" 2>&1 || status=$?
+    judge "$cell" "$want" "$log" "$status"
+}
+
+run_xdp_cell()
+{
+    local log="$LOG_DIR/xdp.log"
+    if ! command -v vng > /dev/null || [ ! -r "$VM_KERNEL" ] || [ ! -w /dev/kvm ]; then
+        echo "IMPAIRED cell=xdp FAIL no VM tier on this machine: needs vng, a readable $VM_KERNEL and a writable /dev/kvm"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    local xdp_env=(ROCKETNET_SERVER_TRANSPORT=xdp ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_SERVER_NUM_XDP_QUEUES=1 ROCKETNET_SERVER_NUM_OS_CPUS=1)
+    # the guest from the plan plus nightly-soak.yml's measured reserve per
+    # client (docs/LOAD.md, "The nightly AF_XDP cell's guest memory"):
+    # need * 5/4 + 1 GiB for the guest kernel, in whole GiB
+    local plan plan_bytes
+    plan=$(env "${xdp_env[@]}" "${IMPAIRMENT[@]}" LOAD_PLAN_ONLY=1 "$LOAD" "$CLIENTS" "$SECONDS_PER_CELL" | grep '^load_plan:' | tail -n 1)
+    case "$plan" in
+        *verdict=PASS*) ;;
+        *) echo "IMPAIRED cell=xdp FAIL no PASS plan line from LOAD_PLAN_ONLY=1: $plan"; failures=$(( failures + 1 )); return 1 ;;
+    esac
+    plan_bytes=$(field "$plan" total_public_required_bytes)
+    local gib=$(( 1024 * 1024 * 1024 ))
+    local need=$(( plan_bytes + CLIENTS * 9848630 ))
+    local guest_gib=$(( (need * 5 / 4 + gib + gib - 1) / gib ))
+    local avail_kib
+    avail_kib=$(awk '/^MemAvailable:/ { print $2 }' /proc/meminfo)
+    if [ $(( avail_kib * 1024 )) -lt $(( guest_gib * gib )) ]; then
+        echo "IMPAIRED cell=xdp FAIL this machine has $(( avail_kib / 1024 )) MiB available, the guest needs ${guest_gib} GiB (plan $plan_bytes, need $need)"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    local guest
+    guest=$(mktemp -d "$LOG_DIR/xdp-guest.XXXXXX")
+    {
+        echo 'set -u'
+        echo 'mountpoint -q /sys/fs/bpf || mount -t bpf bpf /sys/fs/bpf'
+        echo 'ip netns add rnxdpimp'
+        echo 'ip link add rnxdpimp0 mtu 1500 type veth peer name rnxdpimp1 mtu 1500'
+        echo 'ip link set rnxdpimp1 netns rnxdpimp'
+        echo 'ip addr add 10.77.5.1/24 dev rnxdpimp0'
+        echo 'ip -n rnxdpimp addr add 10.77.5.2/24 dev rnxdpimp1'
+        echo 'ip link set rnxdpimp0 up'
+        echo 'echo 2 > /sys/class/net/rnxdpimp0/napi_defer_hard_irqs'
+        echo 'echo 200000 > /sys/class/net/rnxdpimp0/gro_flush_timeout'
+        echo 'ip -n rnxdpimp link set lo up'
+        echo 'ip -n rnxdpimp link set rnxdpimp1 up'
+        echo 'ulimit -n 65536'
+        printf 'env'
+        printf ' %q' "${xdp_env[@]}" LOAD_SERVER_ADDRESS=10.77.5.1:40413 LOAD_CLIENT_NETNS=/var/run/netns/rnxdpimp \
+            "${IMPAIRMENT[@]}" "$LOAD" "$CLIENTS" "$SECONDS_PER_CELL"
+        printf ' > %q 2>&1\n' "$log"
+        printf 'echo "guest load exit=$?" >> %q\n' "$guest/status"
+    } > "$guest/run.sh"
+    echo "IMPAIRED cell=xdp guest_memory=${guest_gib}G plan_bytes=$plan_bytes need_bytes=$need"
+    # vng from a short directory: its virtiofs socket path must stay under 108 bytes
+    local short
+    short=$(mktemp -d /tmp/rnimp.XXXXXX)
+    ( cd "$short" && timeout "$TIMEOUT" vng --run "$VM_KERNEL" --memory "${guest_gib}G" --cpus 16 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$LOG_DIR" -- \
+        sudo sh "$guest/run.sh" ) > "$guest/vm.log" 2>&1 || echo "vng exit=$? (124 is the $TIMEOUT s timeout)" >> "$guest/vm.log"
+    rmdir "$short" 2>/dev/null
+    local status
+    status=$(sed -nE 's/^guest load exit=([0-9]+)$/\1/p' "$guest/status" 2>/dev/null | tail -n 1)
+    if [ -z "$status" ]; then
+        echo "IMPAIRED cell=xdp FAIL the guest reported no load exit status: $(tail -n 3 "$guest/vm.log" | tr '\n' ';')"
+        failures=$(( failures + 1 ))
+        return 1
+    fi
+    judge xdp xdp "$log" "$status"
+}
+
+ulimit -n 65536 2>/dev/null || ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+
+for cell in "${CELLS[@]}"; do
+    case "$cell" in
+        portable)  run_host_cell portable portable ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ;;
+        gso)       run_host_cell gso gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ;;
+        gso-plain) run_host_cell gso-plain gso ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=portable ROCKETNET_TEST_GSO_PLAIN=1 ;;
+        io_uring)
+            if [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then
+                run_host_cell io_uring io_uring ROCKETNET_SERVER_TRANSPORT=io_uring ROCKETNET_CLIENT_TRANSPORT=portable
+            else
+                echo "IMPAIRED cell=io_uring SKIP this kernel disables io_uring (/proc/sys/kernel/io_uring_disabled is not 0)"
+                failures=$(( failures + 1 ))
+            fi
+            ;;
+        xdp)       run_xdp_cell ;;
+        iocp)      run_host_cell iocp iocp ROCKETNET_SERVER_TRANSPORT=iocp ROCKETNET_CLIENT_TRANSPORT=portable ;;
+        rio)       run_host_cell rio rio ROCKETNET_SERVER_TRANSPORT=rio ROCKETNET_CLIENT_TRANSPORT=portable ;;
+        msgx)      run_host_cell msgx msgx ROCKETNET_SERVER_TRANSPORT=msgx ROCKETNET_CLIENT_TRANSPORT=portable ;;
+    esac
+done
+
+[ "$failures" -eq 0 ]

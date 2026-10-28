@@ -42,10 +42,11 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | 1000 clients, load harness | planned for the final deliverable | planned for the final deliverable | ✅ |
 | 1000 light clients (10 Hz, 1 packet per update) | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | Soak (30 minutes per transport under impairment) | planned for the final deliverable | ✅ | planned for the final deliverable |
+| 1000 clients for 10 minutes per transport under impairment, every guarantee checked, library bytes flat (nightly-impaired-soak.yml) | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | Main API calls under 0.1 ms each, Release, under load | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | Nightlies (every nightly job's steps green on this branch) | planned for the final deliverable | planned for the final deliverable | planned for the final deliverable |
 | CI (ci.yml, every step green on this branch) | ❌ | ❌ | ❌ |
-| complete | 30% | 45% | 40% |
+| complete | 29% | 43% | 38% |
 
 ## Historical preview-1 baseline: platform-specific tests
 

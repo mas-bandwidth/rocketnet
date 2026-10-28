@@ -53,6 +53,37 @@
     when the result is below 2 fds per client plus 64, so `ulimit -n 512`
     fails a 1000-client run before it starts.
     .github/workflows/nightly-soak.yml runs `load 1000 60` once per cell.
+
+    THE IMPAIRED SOAK. ROCKETNET_DEV_SERVER_LATENCY_MS, _JITTER_MS,
+    _PACKET_LOSS_PERCENT and _DUPLICATE_PERCENT, and the ROCKETNET_DEV_CLIENT_
+    twins, are the development link simulator's settings the public create
+    reads (sdk/rocketnet.h); load passes them through untouched and prints
+    what it found as "load link simulator: <server|client> latency_ms=<n>
+    jitter_ms=<n> loss_percent=<n> duplicate_percent=<n>". With any of them
+    nonzero the link is impaired, and a message the link loses is not a
+    failure where the mode allows it (tools/load_split_verify.h's rules): an
+    unreliable-family message lost on the wire is counted as unreliable_lost
+    and a stale RELIABLE_SEQUENCED message the receiver drops as
+    sequenced_skipped, and counters_agree reconciles sent with received plus
+    counted drops plus both. Every reliable stream must still deliver
+    exactly once and ordered streams in order. A requested loss must leave a
+    trace: loss at the client end with no unreliable message lost and no
+    client resend, or loss at the server end with no server resend, fails
+    the run (link_impairment). A stream tracks sequences up to
+    LOAD_MAX_SEQ_TRACKED, so one client's server-to-client stream holds a
+    600-second run at 10 Hz.
+    LOAD_ASSERT_FLAT=1 gives rocketnet_init a counting allocator and holds
+    library_bytes (the allocator's bytes plus rocketnet_direct_allocation_bytes,
+    as soak.c counts them) to tests/process_resources.h's flat rule: the
+    sample at the end of the traffic window may exceed the post-warmup sample,
+    taken LOAD_WARMUP_SECONDS (60) into traffic, by at most one page per ten
+    minutes. It prints "load memory: <phase> t=<s> library_bytes=<n>
+    direct_bytes=<n> rss_bytes=<n>" at the post-warmup sample, every 60 s
+    after it and at the end; rss_bytes (query_rss_bytes) is printed and never asserted,
+    since the OS and the C runtime hold it beside the library. A run whose
+    traffic window ends inside the warm-up fails (memory_flat). The impaired
+    soak, .github/workflows/nightly-impaired-soak.yml, runs `load 1000 600`
+    per server transport with both.
     A -DROCKETNET_MAX_CLIENTS=10000 build runs `LOAD_PROFILE=light load 10000
     30` nightly (.github/workflows/nightly-max-clients.yml); the default
     profile's per-client config plans about 183 GB for that server.
@@ -104,13 +135,16 @@
 #endif // #if !defined( _WIN32 )
 
 #include "load_census.h"
+#include "tests/process_resources.h"
 
 #define LOAD_NUM_COMBOS         8
 #define LOAD_PAYLOAD_BYTES      32
 #define LOAD_MAGIC_CLIENT_TO_SV 0x524E4C44u
 #define LOAD_MAGIC_SV_TO_CLIENT 0x524E5356u
 #define LOAD_CONNECT_DEADLINE_S 10.0
-#define LOAD_MAX_SEQ_TRACKED    4096u
+#define LOAD_MAX_SEQ_TRACKED    8192u
+#define LOAD_WARMUP_SECONDS     60.0
+#define LOAD_MEMORY_SAMPLE_SECONDS 60.0
 #define LOAD_TIMING_BUCKET_NS   1000ULL
 #define LOAD_TIMING_MAX_BUCKET_US 100000ULL
 #define LOAD_TIMING_BUCKET_COUNT ( LOAD_TIMING_MAX_BUCKET_US + 1 )
@@ -793,6 +827,109 @@ static uint64_t query_rss_bytes( void )
 #endif // #if !defined( _WIN32 )
 }
 
+// The library's own allocations, counted as soak.c counts them: rocketnet_init
+// is given an allocator that adds each block's bytes on allocate and takes
+// them away on free. The library calls it from its own threads too, so the
+// count moves by atomic adds. Each block carries its byte count in a header
+// of LOAD_ALLOCATION_HEADER_BYTES, which keeps malloc's alignment.
+
+#define LOAD_ALLOCATION_HEADER_BYTES 16
+
+static volatile int64_t load_library_allocator_bytes;
+
+static void load_library_bytes_add( int64_t bytes )
+{
+#if defined( _WIN32 )
+    InterlockedExchangeAdd64( (volatile LONG64 *) &load_library_allocator_bytes, (LONG64) bytes );
+#else
+    __atomic_fetch_add( &load_library_allocator_bytes, bytes, __ATOMIC_RELAXED );
+#endif // #if defined( _WIN32 )
+}
+
+// the bytes the library holds in blocks it takes from the OS itself, outside
+// the allocator (sdk/rocketnet_memory.h)
+uint64_t rocketnet_direct_allocation_bytes( void );
+
+static int64_t load_library_bytes_read( void )
+{
+#if defined( _WIN32 )
+    const int64_t allocator_bytes = (int64_t) InterlockedCompareExchange64( (volatile LONG64 *) &load_library_allocator_bytes, 0, 0 );
+#else
+    const int64_t allocator_bytes = __atomic_load_n( &load_library_allocator_bytes, __ATOMIC_RELAXED );
+#endif // #if defined( _WIN32 )
+    return allocator_bytes + (int64_t) rocketnet_direct_allocation_bytes();
+}
+
+static void * load_library_malloc( void * context, size_t bytes )
+{
+    (void) context;
+
+    uint8_t * block = (uint8_t *) malloc( bytes + LOAD_ALLOCATION_HEADER_BYTES );
+    if ( !block )
+        return NULL;
+    memcpy( block, &bytes, sizeof( bytes ) );
+    load_library_bytes_add( (int64_t) bytes );
+
+    return block + LOAD_ALLOCATION_HEADER_BYTES;
+}
+
+static void load_library_free( void * context, void * p )
+{
+    (void) context;
+    if ( !p )
+        return;
+
+    uint8_t * block = (uint8_t *) p - LOAD_ALLOCATION_HEADER_BYTES;
+    size_t bytes = 0;
+    memcpy( &bytes, block, sizeof( bytes ) );
+    load_library_bytes_add( -(int64_t) bytes );
+    free( block );
+}
+
+static void load_memory_print( const char * phase, double t, int64_t library_bytes )
+{
+    printf( "load memory: %s t=%.3f library_bytes=%" PRId64 " direct_bytes=%" PRIu64 " rss_bytes=%" PRIu64 "\n",
+            phase, t, library_bytes, rocketnet_direct_allocation_bytes(), query_rss_bytes() );
+    fflush( stdout );
+}
+
+// The development link simulator's settings at one end, read from the names
+// the public create reads (sdk/rocketnet_api.cpp rn_dev_simulator_env). The
+// create validates them and refuses a bad one; here an unset, empty or
+// non-numeric value reads as 0, which only means load does not count it as
+// impairment.
+
+struct load_link_t
+{
+    int latency_ms, jitter_ms, loss_percent, duplicate_percent;
+};
+
+static int load_link_env_int( const char * end, const char * field )
+{
+    char name[96];
+    char text[64];
+    snprintf( name, sizeof( name ), "ROCKETNET_DEV_%s_%s", end, field );
+    if ( !rocketnet_test_getenv( name, text, sizeof( text ) ) || text[0] == 0 )
+        return 0;
+    for ( const char * c = text; *c; c++ )
+        if ( *c < '0' || *c > '9' )
+            return 0;
+    return atoi( text );
+}
+
+static void load_link_read( const char * end, struct load_link_t * link )
+{
+    link->latency_ms = load_link_env_int( end, "LATENCY_MS" );
+    link->jitter_ms = load_link_env_int( end, "JITTER_MS" );
+    link->loss_percent = load_link_env_int( end, "PACKET_LOSS_PERCENT" );
+    link->duplicate_percent = load_link_env_int( end, "DUPLICATE_PERCENT" );
+}
+
+static int load_link_impaired( const struct load_link_t * link )
+{
+    return link->latency_ms || link->jitter_ms || link->loss_percent || link->duplicate_percent;
+}
+
 static void write_u32_le( uint8_t * dst, uint32_t v )
 {
     dst[0] = (uint8_t) ( v & 0xFFu );
@@ -1051,6 +1188,24 @@ int main( int argc, char ** argv )
                                sizeof( handshake_diagnostics_env ) ) &&
         strcmp( handshake_diagnostics_env, "1" ) == 0;
 
+    char assert_flat_env[8] = { 0 };
+    int assert_flat = 0;
+    if ( rocketnet_test_getenv( "LOAD_ASSERT_FLAT", assert_flat_env, sizeof( assert_flat_env ) ) && assert_flat_env[0] != 0 )
+    {
+        if ( strcmp( assert_flat_env, "1" ) != 0 )
+        {
+            fprintf( stderr, "load: LOAD_ASSERT_FLAT must be 1 when set\n" );
+            return 2;
+        }
+
+        assert_flat = 1;
+    }
+
+    struct load_link_t server_link, client_link;
+    load_link_read( "SERVER", &server_link );
+    load_link_read( "CLIENT", &client_link );
+    const int link_impaired = load_link_impaired( &server_link ) || load_link_impaired( &client_link );
+
     char message_rate_text[64] = { 0 };
     int fixed_message_rate = 0;
 #if defined( _MSC_VER )
@@ -1180,7 +1335,7 @@ int main( int argc, char ** argv )
 
     LOAD_CENSUS( LOAD_PRE_INIT );
 
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
+    if ( rocketnet_init( NULL, assert_flat ? load_library_malloc : NULL, assert_flat ? load_library_free : NULL ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "load: rocketnet_init failed\n" );
         free( timing.buckets );
@@ -1618,7 +1773,18 @@ int main( int argc, char ** argv )
         load_server_wire_sample( server, &server_wire_start );
     }
 
+    printf( "load link simulator: server latency_ms=%d jitter_ms=%d loss_percent=%d duplicate_percent=%d\n",
+            server_link.latency_ms, server_link.jitter_ms, server_link.loss_percent, server_link.duplicate_percent );
+    printf( "load link simulator: client latency_ms=%d jitter_ms=%d loss_percent=%d duplicate_percent=%d\n",
+            client_link.latency_ms, client_link.jitter_ms, client_link.loss_percent, client_link.duplicate_percent );
+    fflush( stdout );
+
     const double traffic_start = rocketnet_time();
+    int64_t memory_post_warmup = -1;
+    double memory_post_warmup_t = 0.0;
+    int64_t memory_end = -1;
+    double memory_end_t = 0.0;
+    double next_memory_sample = traffic_start + LOAD_WARMUP_SECONDS;
     double wire_window_seconds = 0.0;
     int wire_window_recorded = 0;
     uint64_t destroyed_client_wire_bytes_sent = 0;
@@ -1651,6 +1817,13 @@ int main( int argc, char ** argv )
         if ( !in_traffic_window && !draining )
         {
             draining = 1;
+
+            if ( assert_flat )
+            {
+                memory_end = load_library_bytes_read();
+                memory_end_t = elapsed;
+                load_memory_print( "end", memory_end_t, memory_end );
+            }
 
             if ( fixed_message_rate )
             {
@@ -1944,6 +2117,23 @@ int main( int argc, char ** argv )
             next_resource_sample = now + 0.25;
         }
 
+        if ( assert_flat && !draining && now >= next_memory_sample )
+        {
+            const int64_t library_bytes = load_library_bytes_read();
+            if ( memory_post_warmup < 0 )
+            {
+                memory_post_warmup = library_bytes;
+                memory_post_warmup_t = elapsed;
+                load_memory_print( "post-warmup", elapsed, library_bytes );
+            }
+            else
+            {
+                load_memory_print( "sample", elapsed, library_bytes );
+            }
+
+            next_memory_sample = now + LOAD_MEMORY_SAMPLE_SECONDS;
+        }
+
         next_slice_time += 0.010;
 
         const double left = next_slice_time - rocketnet_time();
@@ -1999,6 +2189,8 @@ int main( int argc, char ** argv )
     }
 
     uint64_t client_counted_drops = 0;
+    uint64_t client_messages_resent = 0;
+    uint64_t server_messages_resent = 0;
     uint64_t client_wire_bytes_sent = destroyed_client_wire_bytes_sent;
     uint64_t client_wire_bytes_received = destroyed_client_wire_bytes_received;
 
@@ -2010,6 +2202,7 @@ int main( int argc, char ** argv )
             rocketnet_client_stats( clients[i], &stats );
             client_counted_drops += stats.messages_dropped_over_budget;
             client_counted_drops += stats.messages_dropped_not_connected;
+            client_messages_resent += stats.messages_resent;
             client_wire_bytes_sent += stats.bytes_sent;
             client_wire_bytes_received += stats.bytes_received;
         }
@@ -2024,6 +2217,7 @@ int main( int argc, char ** argv )
         rocketnet_server_stats( server, &stats );
         server_counted_drops += stats.messages_dropped_over_budget;
         server_counted_drops += stats.messages_dropped_not_connected;
+        server_messages_resent = stats.messages_resent;
         server_wire_bytes_sent = stats.bytes_sent;
         server_wire_bytes_received = stats.bytes_received;
     }
@@ -2109,11 +2303,54 @@ int main( int argc, char ** argv )
                                             ( c2s_offered_total == c2s_sent_total && s2c_offered_total == s2c_sent_total );
 
     const uint64_t total_counted_drops = client_counted_drops + server_counted_drops;
+
+    /* On an impaired link a lost unreliable-family message and a stale
+       RELIABLE_SEQUENCED message the receiver drops are outcomes the mode
+       allows, counted and never failed (tools/load_split_verify.h's rules);
+       every reliable stream is still held to exactly once by
+       crit3_reliable_delivery. On a clean link both stay out of the sum, so
+       any such gap still fails counters_agree as before. */
+    uint64_t unreliable_lost = 0;
+    uint64_t sequenced_skipped = 0;
+
+    for ( int i = 0; i < num_clients; i++ )
+    {
+        for ( uint32_t combo = 0; combo < LOAD_NUM_COMBOS; combo++ )
+        {
+            const struct load_stream_state_t * st = &c2s_streams[(size_t) i * LOAD_NUM_COMBOS + combo];
+            const uint64_t gap = st->sent_count > st->recv_count ? (uint64_t) ( st->sent_count - st->recv_count ) : 0;
+            if ( combo_is_unreliable_family( combo ) )
+            {
+                unreliable_lost += gap;
+            }
+            else if ( combo == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED )
+            {
+                sequenced_skipped += gap;
+            }
+        }
+    }
+
+    const uint64_t link_allowed_gaps = link_impaired ? unreliable_lost + sequenced_skipped : 0;
+
+    /* a requested loss must leave its trace: client-end loss drops
+       client-to-server packets (an unreliable message lost, or a reliable
+       one resent), server-end loss drops server-to-client packets (a
+       reliable-ordered message resent) */
+    const int client_loss_witnessed = client_link.loss_percent == 0 || unreliable_lost > 0 || client_messages_resent > 0;
+    const int server_loss_witnessed = server_link.loss_percent == 0 || server_messages_resent > 0;
+    const int link_impairment_witnessed = client_loss_witnessed && server_loss_witnessed;
+
+    int memory_flat = 1;
+    if ( assert_flat )
+    {
+        memory_flat = memory_post_warmup >= 0 && memory_end >= 0 &&
+                      process_resources_flat( PROCESS_RESOURCES_MEMORY, memory_post_warmup, memory_end, memory_end_t - memory_post_warmup_t );
+    }
     const int crit1_connect_within_10s = ( all_connected && connect_elapsed <= LOAD_CONNECT_DEADLINE_S ) ? 1 : 0;
     const int crit2_no_unexpected_disconnect = ( unexpected_disconnects == 0 ) ? 1 : 0;
     const int crit3_reliable_delivery = ( reliable_errors == 0 && c2s_sent_total > 0 ) ? 1 : 0;
     const int crit4_unreliable_integrity = ( unreliable_errors == 0 ) ? 1 : 0;
-    const int crit5_counters_agree = ( c2s_sent_total == c2s_received_total + total_counted_drops ) ? 1 : 0;
+    const int crit5_counters_agree = ( c2s_sent_total == c2s_received_total + total_counted_drops + link_allowed_gaps ) ? 1 : 0;
 
     if ( !crit3_reliable_delivery || !crit5_counters_agree )
     {
@@ -2258,6 +2495,14 @@ int main( int argc, char ** argv )
     {
         failed_criterion = "application_offers_accepted";
     }
+    else if ( !link_impairment_witnessed )
+    {
+        failed_criterion = "link_impairment";
+    }
+    else if ( !memory_flat )
+    {
+        failed_criterion = "memory_flat";
+    }
 
     int pass = crit1_connect_within_10s &&
                crit2_no_unexpected_disconnect &&
@@ -2267,6 +2512,8 @@ int main( int argc, char ** argv )
                wire_metrics_valid &&
                client_wire_under_100kbps &&
                application_offers_accepted &&
+               link_impairment_witnessed &&
+               memory_flat &&
                !quit;
 
     char server_transport_io[32];
@@ -2474,6 +2721,20 @@ int main( int argc, char ** argv )
             client_wire_bytes_sent, client_wire_bytes_received,
             server_wire_bytes_sent, server_wire_bytes_received );
     load_timing_print( &timing );
+    printf( " link_impaired=%d unreliable_lost=%" PRIu64 " sequenced_skipped=%" PRIu64
+            " client_messages_resent=%" PRIu64 " server_messages_resent=%" PRIu64 " link_impairment=%s",
+            link_impaired, unreliable_lost, sequenced_skipped, client_messages_resent, server_messages_resent,
+            link_impairment_witnessed ? "PASS" : "FAIL" );
+    if ( assert_flat )
+    {
+        printf( " memory_post_warmup_library_bytes=%" PRId64 " memory_end_library_bytes=%" PRId64
+                " memory_flat_seconds=%.3f memory_flat=%s",
+                memory_post_warmup, memory_end, memory_end_t - memory_post_warmup_t, memory_flat ? "PASS" : "FAIL" );
+    }
+    else
+    {
+        printf( " memory_flat=UNMEASURED" );
+    }
     printf( " verdict=%s", pass ? "PASS" : "FAIL" );
     putchar( '\n' );
 
