@@ -46,6 +46,7 @@ static void token_timeout_fields( struct rocketnet_signed_connect_data_t * signe
     signed_fields->expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields->timeout_seconds = timeout_seconds;
     signed_fields->address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields->ipv4_address, server_address, 6 );
     memcpy( signed_fields->server_public_key, rocketnet_test_server_public_key, 32 );
@@ -72,6 +73,7 @@ static void test_client_refuses_token_timeout_zero_or_negative()
     {
         struct rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
+
         static struct rocketnet_client_protocol_t client;
         rocketnet_client_protocol_init( &client, &counters );
 
@@ -79,14 +81,17 @@ static void test_client_refuses_token_timeout_zero_or_negative()
         token_timeout_mint( token_data, token_timeout_refused_values[i] );
 
         // refused at the point the token is read, with the named state
+
         check( !rocketnet_client_protocol_connect( &client, token_data, 1000.0, ROCKETNET_TEST_CREATE_TS ) );
         check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
 
         // and nothing goes on the wire, now or later
+
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
         int packet_bytes = -1;
         rocketnet_client_protocol_update( &client, 1000.0, packet, &packet_bytes );
         check( packet_bytes == 0 );
+
         rocketnet_client_protocol_update( &client, 2000.0, packet, &packet_bytes );
         check( packet_bytes == 0 );
         check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_INVALID_CONNECT_TOKEN );
@@ -96,8 +101,10 @@ static void test_client_refuses_token_timeout_zero_or_negative()
     {
         struct rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
+
         static struct rocketnet_client_protocol_t client;
         rocketnet_client_protocol_init( &client, &counters );
+
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
         token_timeout_mint( token_data, 1 );
         check( rocketnet_client_protocol_connect( &client, token_data, 1000.0, ROCKETNET_TEST_CREATE_TS ) );
@@ -114,12 +121,14 @@ static void test_server_refuses_token_timeout_zero_or_negative()
         memset( &server, 0, sizeof( server ) );
         memset( &counters, 0, sizeof( counters ) );
         server.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
         const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
         memcpy( server.packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
         memcpy( server.backend_public_key, rocketnet_test_backend_public_key, 32 );
         memcpy( server.server_public_key, rocketnet_test_server_public_key, 32 );
         memcpy( server.server_secret_key, rocketnet_test_server_secret_key, 32 );
         check( rocketnet_address_parse( &server.advertised_ipv4, "203.0.113.10:40000" ) );
+
         memcpy( server.cookie_key, rocketnet_test_cookie_key, 32 );
         server.cookie_lifetime_seconds = 3;
         server.handshake_deadline_seconds = 5.0;
@@ -129,6 +138,7 @@ static void test_server_refuses_token_timeout_zero_or_negative()
         server.client_slots = rocketnet_client_slots_create( NULL, 4 );
         server.counters = &counters;
         check( server.encryption_map && server.used_token_history && server.client_slots );
+
         rocketnet_server_protocol_update( &server, 1000.0 );
 
         struct rocketnet_address_t client_address;
@@ -137,8 +147,10 @@ static void test_server_refuses_token_timeout_zero_or_negative()
         struct rocketnet_signed_connect_data_t signed_fields;
         struct rocketnet_connect_token_private_t private_fields;
         token_timeout_fields( &signed_fields, &private_fields, token_timeout_refused_values[i] );
+
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
         check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
         struct rocketnet_connect_token_t token;
         rocketnet_read_connect_token( &token, token_data );
 
@@ -146,9 +158,11 @@ static void test_server_refuses_token_timeout_zero_or_negative()
         rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
                                                    rocketnet_test_client_eph_public,
                                                    token.signed_connect_data, token.signature );
+
         const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
         uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
         check( rocketnet_generate_cookie_mac( cookie_mac, &client_address, rocketnet_test_salt, cookie_expire, server.cookie_key ) );
+
         uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
         rocketnet_write_uint64( &cookie, cookie_expire );
         memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );

@@ -53,6 +53,7 @@ static void token_time_game_mint( uint8_t * token_data, uint64_t create, uint64_
     signed_fields.expire_timestamp = expire;
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -89,6 +90,7 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
         rn_native_client_transport_stop_and_destroy( transport );
         return ROCKETNET_STATUS_OK;
     }
+
     return status;
 }
 
@@ -102,6 +104,7 @@ static void token_time_game_server_setup( struct token_time_game_server_t * t )
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
     server->handshake_deadline_seconds = 5.0;
@@ -113,6 +116,7 @@ static void token_time_game_server_setup( struct token_time_game_server_t * t )
     server->counters = &t->counters;
     check( server->encryption_map && server->used_token_history && server->client_slots &&
            server->acks && server->reassembly );
+
     rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, 1 );
 }
@@ -130,6 +134,7 @@ static int token_time_game_server_request( struct token_time_game_server_t * t, 
 {
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     token_time_game_mint( token_data, create, expire );
+
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
 
@@ -141,6 +146,7 @@ static int token_time_game_server_request( struct token_time_game_server_t * t, 
 
     struct rocketnet_address_t client_address;
     check( rocketnet_address_parse( &client_address, "198.51.100.7:56789" ) );
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
     return rocketnet_server_protocol_process_connection_request( &t->server, &client_address, request,
@@ -175,6 +181,7 @@ static void test_token_time_game_clock_admits_a_fixed_token()
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
     check( token_time_game_server_request( &t, create, expire, GAME_CLOCK_EPOCH + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+
     token_time_game_server_teardown( &t );
 
     printf( "test_token_time_game_clock_admits_a_fixed_token\n" );
@@ -193,6 +200,7 @@ static void test_token_time_game_clock_refuses_after_expire()
     token_time_game_server_setup( &t );
     check( token_time_game_server_request( &t, create, expire, GAME_CLOCK_EPOCH + 1011 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
+
     token_time_game_server_teardown( &t );
 
     printf( "test_token_time_game_clock_refuses_after_expire\n" );
@@ -209,6 +217,7 @@ static void test_token_time_game_clock_off_reads_the_wall_clock()
     token_time_game_server_setup( &t );
     check( token_time_game_server_request( &t, 1000, 1010, GAME_CLOCK_EPOCH + 2000000000ULL ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
+
     token_time_game_server_teardown( &t );
 
     printf( "test_token_time_game_clock_off_reads_the_wall_clock\n" );

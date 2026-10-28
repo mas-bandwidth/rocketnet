@@ -80,7 +80,9 @@ static void test_status_names_cover_every_code()
         check( strncmp( name, "ROCKETNET_STATUS_", 17 ) != 0 );
 
         for ( int j = 0; j < i; j++ )
+        {
             check( strcmp( name, status_expected[j].name ) != 0 );
+        }
     }
 }
 
@@ -106,6 +108,7 @@ REGISTER_UNIT_TEST( test_status_name_out_of_range_is_unknown );
 static void test_name_functions_take_any_int()
 {
     const int out_of_range[] = { 100, -100, INT_MIN, INT_MAX };
+
     for ( int i = 0; i < 4; i++ )
     {
         const int v = out_of_range[i];
@@ -113,6 +116,7 @@ static void test_name_functions_take_any_int()
         check( strcmp( rocketnet_client_state_name( (enum rocketnet_client_state_t) v ), "UNKNOWN" ) == 0 );
         check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) v ), "UNKNOWN" ) == 0 );
     }
+
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_DISCONNECTED ), "DISCONNECTED" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ), "NONE" ) == 0 );

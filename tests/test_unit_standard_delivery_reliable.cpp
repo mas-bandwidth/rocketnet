@@ -125,11 +125,13 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
 
     rn_channels_t channels;
     rn_window_receive_t receive;
+
     if ( !rn_channels_init( &channels, region, (uint32_t) config.num_channels, 0 ) )
     {
         rn_arena_destroy( arena );
         return -1;
     }
+
     rn_channels_set_payload_capacity( &channels, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     rn_window_receive_init( &receive, region, 0 );
 
@@ -167,6 +169,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
             record.ordering = step->ordering;
             record.channel = step->channel;
         }
+
         record.data = &step->data;
         record.bytes = 1;
 
@@ -175,6 +178,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
             rn_arena_destroy( arena );
             return -1;
         }
+
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
         if ( payload_bytes < 1 )
         {
@@ -215,12 +219,15 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
                         dispatch = false;
                     }
                 }
+
                 if ( dispatch )
                 {
                     rn_delivery_t delivery;
                     outcome = rn_channels_dispatch( &channels, &parsed, &delivery );
                     if ( channels.error != ROCKETNET_DISCONNECT_REASON_NONE )
+                    {
                         connection_violation = 1;
+                    }
                 }
             }
         }
@@ -251,6 +258,7 @@ static int trace_run( const delivery_step_t * steps, int count, uint8_t * out, i
     }
 
     rn_arena_destroy( arena );
+
     return used;
 }
 
@@ -262,6 +270,7 @@ static int standard_delivery_reliable_generate( const char * id, uint8_t * out, 
         return trace_run( ordered_steps, (int) ( sizeof( ordered_steps ) / sizeof( ordered_steps[0] ) ), out, capacity );
     if ( strcmp( id, "m7.reliable-sequenced-hold-drain" ) == 0 )
         return trace_run( sequenced_steps, (int) ( sizeof( sequenced_steps ) / sizeof( sequenced_steps[0] ) ), out, capacity );
+
     return -1;
 }
 

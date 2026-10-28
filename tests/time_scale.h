@@ -28,14 +28,14 @@
 #elif defined( __has_feature )
 #if __has_feature( address_sanitizer ) || __has_feature( thread_sanitizer ) || __has_feature( memory_sanitizer )
 #define ROCKETNET_FUNCTIONAL_SANITIZED 1
-#endif
-#endif
+#endif // #if __has_feature( address_sanitizer ) || __has_feature( thread_sanitizer ) || __has_feature( memory_sanitizer )
+#endif // #if defined( __SANITIZE_ADDRESS__ ) || defined( __SANITIZE_THREAD__ )
 
 #if defined( NDEBUG ) && !defined( ROCKETNET_FUNCTIONAL_SANITIZED )
 #define ROCKETNET_FUNCTIONAL_TIME_SCALE 1.0
 #else
 #define ROCKETNET_FUNCTIONAL_TIME_SCALE ROCKETNET_FUNCTIONAL_DEBUG_TIME_SCALE
-#endif
+#endif // #if defined( NDEBUG ) && !defined( ROCKETNET_FUNCTIONAL_SANITIZED )
 
 // Full-system emulation runs a Release build, but one case receives only a
 // fraction of a native CPU. Scale case completion bounds without lengthening
@@ -46,7 +46,7 @@
 #define ROCKETNET_TEST_CASE_TIME_SCALE ROCKETNET_FUNCTIONAL_DEBUG_TIME_SCALE
 #else
 #define ROCKETNET_TEST_CASE_TIME_SCALE ROCKETNET_FUNCTIONAL_TIME_SCALE
-#endif
+#endif // #if defined( ROCKETNET_TEST_EMULATED )
 
 // The environment's scale on case completion bounds. The nightly macOS TSAN
 // functional runs set ROCKETNET_TEST_CASE_TIME_SCALE (30, a one-hour case
@@ -57,15 +57,18 @@
 static inline int rocketnet_test_case_env_time_scale( double * scale )
 {
     *scale = 1.0;
+
     char value[64];
     if ( !rocketnet_test_getenv( "ROCKETNET_TEST_CASE_TIME_SCALE", value, sizeof( value ) ) || value[0] == '\0' )
         return 1;
+
     char * end = NULL;
     const double parsed = strtod( value, &end );
     if ( end == value || *end != '\0' || !( parsed > 0.0 && parsed <= 1000.0 ) )
         return 0;
     *scale = parsed;
+
     return 1;
 }
 
-#endif // ROCKETNET_TESTS_TIME_SCALE_H
+#endif // #ifndef ROCKETNET_TESTS_TIME_SCALE_H

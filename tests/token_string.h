@@ -49,6 +49,7 @@ static inline enum rocketnet_status_t rn_test_production_token_string( const uin
         return status;
     if ( !rn_test_token_to_string( token, token_string ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     return ROCKETNET_STATUS_OK;
 }
 
@@ -72,4 +73,4 @@ static inline enum rocketnet_status_t rn_test_server_token_string( const uint8_t
                                             timeout_seconds, user_data, token_string );
 }
 
-#endif // ROCKETNET_TESTS_TOKEN_STRING_H
+#endif // #ifndef ROCKETNET_TESTS_TOKEN_STRING_H

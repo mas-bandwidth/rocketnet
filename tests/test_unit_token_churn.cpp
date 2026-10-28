@@ -55,7 +55,7 @@ extern "C" int rocketnet_dev_token_claim_remove_handle( struct rocketnet_used_to
                                                         int slot,
                                                         uint64_t generation,
                                                         uint64_t owner_epoch );
-#endif
+#endif // #if ROCKETNET_DEV
 
 #define check rocketnet_unit_check
 
@@ -85,6 +85,7 @@ static void tc_mint_token( uint8_t * token_data, uint64_t client_id )
     signed_fields.expire_timestamp = ROCKETNET_TEST_CREATE_TS + TC_TOKEN_LIFETIME;
     signed_fields.timeout_seconds = ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -113,6 +114,7 @@ static void tc_server_setup( struct tc_server_t * t, int max_clients, int histor
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
     server->handshake_deadline_seconds = 5.0;
@@ -124,6 +126,7 @@ static void tc_server_setup( struct tc_server_t * t, int max_clients, int histor
     server->counters = &t->counters;
     check( server->encryption_map && server->used_token_history &&
            server->client_slots && server->acks && server->reassembly );
+
     rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, TC_NOW );
     t->time = 1000.0;
@@ -152,6 +155,7 @@ static void tc_client_init( struct tc_client_t * c, const char * address )
     rocketnet_client_protocol_init( &c->client, &c->counters );
     c->client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, ROCKETNET_NUM_CLIENT_PACKETS / 2 );
     check( c->client.reassembly );
+
     rocketnet_reassembly_set_begin_update( c->client.reassembly );
     check( rocketnet_address_parse( &c->address, address ) );
 }
@@ -178,10 +182,12 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
         if ( c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
              c->client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTION_DENIED )
             break;
+
         int out_bytes = 0;
         rocketnet_client_protocol_update( &c->client, t->time, out_packet, &out_bytes );
         if ( out_bytes == 0 )
             continue;
+
         int response_bytes = 0;
         rocketnet_server_protocol_process_packet( &t->server, &c->address, out_packet, out_bytes,
                                                   now, t->time, response, &response_bytes,
@@ -190,6 +196,7 @@ static int tc_drive( struct tc_server_t * t, struct tc_client_t * c, uint64_t no
             rocketnet_client_protocol_process_packet( &c->client, response, response_bytes, t->time + 0.01,
                                                       payload, (int) sizeof( payload ), &payload_bytes );
     }
+
     return c->client.state;
 }
 
@@ -203,6 +210,7 @@ static void tc_disconnect( struct tc_server_t * t, struct tc_client_t * c, uint6
     int burst_bytes = 0;
     rocketnet_client_protocol_disconnect( &c->client, burst, &burst_count, &burst_bytes );
     check( burst_count > 0 );
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
@@ -215,6 +223,7 @@ static void tc_disconnect( struct tc_server_t * t, struct tc_client_t * c, uint6
                                                   payload, &payload_bytes, &payload_client_index );
         t->time += 0.001;
     }
+
     t->time += 0.2;
 }
 
@@ -235,6 +244,7 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
         struct tc_client_t c;
         snprintf( address, sizeof( address ), "198.51.100.%d:56789", 10 + cycle );
         tc_client_init( &c, address );
+
         uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
         tc_mint_token( token_data, UINT64_C( 0x3000 ) + (uint64_t) cycle );
         check( rocketnet_client_protocol_connect( &c.client, token_data, t.time, TC_NOW ) );
@@ -250,6 +260,7 @@ static void test_server_admits_sequential_fresh_tokens_past_twice_max_clients()
         tc_disconnect( &t, &c, TC_NOW );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 0 );
         check( rocketnet_encryption_map_num_mappings( t.server.encryption_map ) == 0 );
+
         tc_client_destroy( &c );
     }
 
@@ -292,18 +303,22 @@ static void test_server_refuses_a_token_connected_now()
         static struct tc_client_t b;
         tc_client_init( &b, "198.51.100.22:56789" );
         check( rocketnet_client_protocol_connect( &b.client, token_data, t.time, TC_NOW ) );
+
         const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
         check( tc_drive( &t, &b, TC_NOW ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] > 0 );
         check( rocketnet_crypto_tally.signature_verify == tally_before.signature_verify );
         check( rocketnet_crypto_tally.seal_open == tally_before.seal_open );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 1 );
+
         tc_client_destroy( &b );
     }
 
     // a second client's binding flushes the history's one entry
+
     static struct tc_client_t c;
     tc_client_init( &c, "198.51.100.21:56789" );
+
     uint8_t other_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     tc_mint_token( other_token, 0x4001ULL );
     check( rocketnet_client_protocol_connect( &c.client, other_token, t.time, TC_NOW ) );
@@ -315,11 +330,13 @@ static void test_server_refuses_a_token_connected_now()
         static struct tc_client_t d;
         tc_client_init( &d, "198.51.100.23:56789" );
         check( rocketnet_client_protocol_connect( &d.client, token_data, t.time, TC_NOW ) );
+
         const uint64_t used_before = t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED];
         check( tc_drive( &t, &d, TC_NOW ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
         check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] == used_before );
         check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_CLIENT_ID_ALREADY_CONNECTED] > 0 );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 2 );
+
         tc_client_destroy( &d );
     }
 
@@ -349,6 +366,7 @@ static void test_server_rejects_an_expired_token_before_any_crypto()
     check( rocketnet_client_protocol_connect( &c.client, token_data, t.time, TC_NOW ) );
 
     // the server's token clock has reached the token's expire timestamp
+
     const uint64_t expired_now = ROCKETNET_TEST_CREATE_TS + TC_TOKEN_LIFETIME;
     const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally;
 
@@ -356,6 +374,7 @@ static void test_server_rejects_an_expired_token_before_any_crypto()
     int out_bytes = 0;
     rocketnet_client_protocol_update( &c.client, t.time, out_packet, &out_bytes );
     check( out_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
+
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
@@ -373,6 +392,7 @@ static void test_server_rejects_an_expired_token_before_any_crypto()
     check( rocketnet_encryption_map_num_mappings( t.server.encryption_map ) == 0 );
 
     // one second earlier the same request is answered with a cookie
+
     check( rocketnet_server_protocol_process_packet( &t.server, &c.address, out_packet, out_bytes,
                                                      expired_now - 1, t.time, response, &response_bytes,
                                                      payload, &payload_bytes, &payload_client_index ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
@@ -401,10 +421,13 @@ static void test_server_admits_a_token_again_after_its_connection_closes()
         tc_client_init( &c, "198.51.100.40:56789" );
         check( rocketnet_client_protocol_connect( &c.client, token_data, t.time, TC_NOW ) );
         check( tc_drive( &t, &c, TC_NOW ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
         tc_disconnect( &t, &c, TC_NOW );
         check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 0 );
+
         tc_client_destroy( &c );
     }
+
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_CONNECTED] == 2 );
 
     tc_server_teardown( &t );
@@ -418,24 +441,31 @@ static void test_response_replay_does_not_refresh_connected_slot()
 {
     struct tc_server_t t;
     tc_server_setup( &t, 1, 8 );
+
     struct tc_client_t c;
     tc_client_init( &c, "198.51.100.7:56789" );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     tc_mint_token( token, 9001 );
     check( rocketnet_client_protocol_connect( &c.client, token, t.time, TC_NOW ) );
     check( tc_drive( &t, &c, TC_NOW ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
+
     const int index = rocketnet_encryption_map_find( t.server.encryption_map, &c.address );
     check( index >= 0 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( t.server.encryption_map, index );
     const double received = mapping->control->last_receive_time;
     uint8_t response[ROCKETNET_RECEIVE_CEILING], payload[ROCKETNET_RECEIVE_CEILING];
+
     int response_bytes = 0, payload_bytes = 0, client_index = -1;
     check( rocketnet_server_protocol_process_packet( &t.server, &c.address,
                                                      c.client.stored_response, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, TC_NOW,
                                                      received + 1.0, response, &response_bytes, payload, &payload_bytes, &client_index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( mapping->control->last_receive_time == received );
+
     rocketnet_server_protocol_update( &t.server, received + mapping->control->timeout_seconds );
     check( rocketnet_client_slots_num_connected( t.server.client_slots ) == 0 );
+
     tc_client_destroy( &c );
     tc_server_teardown( &t );
 }
@@ -479,17 +509,25 @@ static void test_claim_release_returns_slot_to_free_list()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
+
     const double now = 1000.0;
 
     check( rocketnet_used_token_history_claim_free_count( history ) == TC_CLAIM_CAPACITY );
+
     uint8_t ids[6][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 6; i++ )
+    {
         tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    }
 
     for ( int i = 0; i < 4; i++ )
+    {
         check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, now + TC_CLAIM_DEADLINE_SECONDS, now ) == 1 );
+    }
+
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
 
     rocketnet_used_token_history_claim_release( history, ids[0], &holder );
@@ -498,6 +536,7 @@ static void test_claim_release_returns_slot_to_free_list()
 
     // a second release of a released claim, and a release from an address
     // that does not hold the claim, change nothing
+
     rocketnet_used_token_history_claim_release( history, ids[0], &holder );
     rocketnet_used_token_history_claim_release( history, ids[2], &other );
     check( rocketnet_used_token_history_claim_free_count( history ) == 2 );
@@ -508,12 +547,15 @@ static void test_claim_release_returns_slot_to_free_list()
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
 
     // the two unreleased claims still hold their tokens for their address
+
     for ( int i = 2; i < 4; i++ )
     {
         check( rocketnet_used_token_history_claim_check( history, ids[i], &other, now ) == 0 );
         check( rocketnet_used_token_history_claim_check( history, ids[i], &holder, now ) == 1 );
     }
+
     // the released tokens hold nothing
+
     check( rocketnet_used_token_history_claim_check( history, ids[0], &other, now ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, ids[1], &other, now ) == 1 );
 
@@ -530,32 +572,39 @@ static void test_claim_expired_slot_reused_from_order_head()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
 
     uint8_t ids[6][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 6; i++ )
+    {
         tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    }
 
     for ( int i = 0; i < 4; i++ )
     {
         const double at = 1000.0 + (double) i;
         check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, at + TC_CLAIM_DEADLINE_SECONDS, at ) == 1 );
     }
+
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
 
     // past the first claim's deadline (1005.0) only
+
     const double later = 1005.0;
     check( rocketnet_used_token_history_claim_can_record( history, ids[4], later ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, ids[4], &other, later + TC_CLAIM_DEADLINE_SECONDS, later ) == 1 );
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
 
     // the first claim's slot went to the new token
+
     check( rocketnet_used_token_history_claim_check( history, ids[0], &other, later ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, ids[4], &holder, later ) == 0 );
     check( rocketnet_used_token_history_claim_check( history, ids[4], &other, later ) == 1 );
 
     // every other claim is live for its own address and refuses another
+
     for ( int i = 1; i < 4; i++ )
     {
         check( rocketnet_used_token_history_claim_check( history, ids[i], &holder, later ) == 1 );
@@ -563,6 +612,7 @@ static void test_claim_expired_slot_reused_from_order_head()
     }
 
     // and the table is full of live claims again
+
     check( rocketnet_used_token_history_claim_can_record( history, ids[5], later ) == 0 );
     check( rocketnet_used_token_history_claim_record( history, ids[5], &other, later + TC_CLAIM_DEADLINE_SECONDS, later ) == 0 );
 
@@ -579,16 +629,23 @@ static void test_claim_full_of_live_claims_refuses()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
+
     const double now = 1000.0;
 
     uint8_t ids[5][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 5; i++ )
+    {
         tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    }
 
     for ( int i = 0; i < 4; i++ )
+    {
         check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, now + TC_CLAIM_DEADLINE_SECONDS, now ) == 1 );
+    }
+
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
 
     check( rocketnet_used_token_history_claim_can_record( history, ids[4], now + 1.0 ) == 0 );
@@ -598,8 +655,12 @@ static void test_claim_full_of_live_claims_refuses()
 
     // nothing evicted: every claim still refuses another address, and the
     // refused token holds nothing
+
     for ( int i = 0; i < 4; i++ )
+    {
         check( rocketnet_used_token_history_claim_check( history, ids[i], &other, now + 1.0 ) == 0 );
+    }
+
     check( rocketnet_used_token_history_claim_check( history, ids[4], &holder, now + 1.0 ) == 1 );
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
 
@@ -619,22 +680,27 @@ static void test_claim_out_of_order_deadline_delays_reuse_only()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 2 );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
 
     uint8_t ids[4][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 4; i++ )
+    {
         tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    }
 
     check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1010.0, 1000.0 ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, ids[1], &holder, 1003.0, 1000.0 ) == 1 );
 
     // the second claim has expired, the head has not: reuse waits
+
     check( rocketnet_used_token_history_claim_can_record( history, ids[2], 1004.0 ) == 0 );
     check( rocketnet_used_token_history_claim_record( history, ids[2], &other, 1009.0, 1004.0 ) == 0 );
     check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1004.0 ) == 0 );
 
     // once the head expires it is reused first, then the expired claim behind it
+
     check( rocketnet_used_token_history_claim_can_record( history, ids[2], 1010.0 ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, ids[2], &other, 1015.0, 1010.0 ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1010.0 ) == 1 );
@@ -653,22 +719,29 @@ static void test_claim_expired_identifier_moves_to_order_tail()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, TC_CLAIM_CAPACITY );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
+
     uint8_t ids[5][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 5; i++ )
+    {
         tc_claim_id( ids[i], (uint8_t) ( i + 1 ) );
+    }
+
     for ( int i = 0; i < TC_CLAIM_CAPACITY; i++ )
     {
         const double at = 1000.0 + (double) i;
         check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, at + TC_CLAIM_DEADLINE_SECONDS, at ) == 1 );
     }
+
     check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1010.0, 1005.0 ) == 1 );
     check( rocketnet_used_token_history_claim_can_record( history, ids[4], 1006.0 ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, ids[4], &other, 1011.0, 1006.0 ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1006.0 ) == 0 );
     check( rocketnet_used_token_history_claim_check( history, ids[1], &other, 1006.0 ) == 1 );
     check( rocketnet_used_token_history_claim_free_count( history ) == 0 );
+
     rocketnet_used_token_history_destroy( history );
 }
 
@@ -683,6 +756,7 @@ static void test_claim_flat_index_full_key_collisions_are_bounded()
     const int capacity = 4;
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
 
@@ -698,14 +772,23 @@ static void test_claim_flat_index_full_key_collisions_are_bounded()
         identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES - 1] = (uint8_t) ( candidate ^ 0xA5 );
         const int start = rocketnet_dev_token_claim_index_start( history, identifier );
         if ( wanted_start == -1 )
+        {
             wanted_start = start;
+        }
+
         if ( start == wanted_start )
+        {
             memcpy( colliding[found++], identifier, sizeof( identifier ) );
+        }
     }
+
     check( found == 5 );
 
     for ( int i = 0; i < capacity; ++i )
+    {
         check( rocketnet_used_token_history_claim_record( history, colliding[i], &holder, 1010.0, 1000.0 ) == 1 );
+    }
+
     for ( int i = 0; i < capacity; ++i )
     {
         check( rocketnet_used_token_history_claim_check( history, colliding[i], &holder, 1001.0 ) == 1 );
@@ -727,6 +810,7 @@ static void test_claim_wide_ticket_exhaustion_and_reset()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 3 );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
     uint8_t first[ROCKETNET_TOKEN_IDENTIFIER_BYTES], second[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
@@ -762,6 +846,7 @@ static void test_claim_generation_exhaustion_refuses_wrap()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 1 );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
     uint8_t first[ROCKETNET_TOKEN_IDENTIFIER_BYTES], second[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
@@ -770,12 +855,14 @@ static void test_claim_generation_exhaustion_refuses_wrap()
 
     rocketnet_dev_token_claim_set_wide_state( history, UINT64_MAX - 1, 1 );
     check( rocketnet_used_token_history_claim_record( history, first, &holder, 1005.0, 1000.0 ) == 1 );
+
     rocketnet_used_token_history_claim_release( history, first, &holder );
     check( rocketnet_used_token_history_claim_record( history, second, &other, 1006.0, 1001.0 ) == 0 );
     check( rocketnet_used_token_history_claim_free_count( history ) == 1 );
     check( rocketnet_dev_token_claim_reset( history ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, second, &other, 1006.0, 1001.0 ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, second, &holder, 1001.0 ) == 0 );
+
     rocketnet_used_token_history_destroy( history );
 }
 
@@ -787,15 +874,23 @@ static void test_claim_interior_churn_is_bounded_and_stale_safe()
     const int capacity = 4;
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
+
     uint8_t ids[6][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 6; ++i )
+    {
         tc_claim_id( ids[i], (uint8_t) ( 0x50 + i ) );
-    for ( int i = 0; i < capacity; ++i )
-        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, 1010.0, 1000.0 ) == 1 );
+    }
 
-    // Save the head, retire it, and reuse its slot. The old tag is stale.
+    for ( int i = 0; i < capacity; ++i )
+    {
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, 1010.0, 1000.0 ) == 1 );
+    }
+
+    // save the head, retire it, and reuse its slot. The old tag is stale
+
     int stale_slot = -1;
     uint64_t stale_generation = 0, stale_epoch = 0;
     check( rocketnet_dev_token_claim_head_handle( history, &stale_slot, &stale_generation, &stale_epoch ) == 1 );
@@ -809,6 +904,7 @@ static void test_claim_interior_churn_is_bounded_and_stale_safe()
     check( rocketnet_dev_token_claim_probe_steps( history ) <= (uint64_t) ( capacity * 2 ) );
     check( rocketnet_dev_token_claim_order_steps( history ) <= (uint64_t) capacity );
     check( rocketnet_used_token_history_claim_record( history, ids[5], &holder, 1010.0, 1000.0 ) == 1 );
+
     rocketnet_used_token_history_destroy( history );
 }
 
@@ -818,17 +914,23 @@ static void test_claim_equal_deadlines_reuse_in_insertion_order()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 2 );
     check( history );
+
     struct rocketnet_address_t holder, other;
     tc_claim_addresses( &holder, &other );
+
     uint8_t ids[3][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     for ( int i = 0; i < 3; ++i )
+    {
         tc_claim_id( ids[i], (uint8_t) ( 0x60 + i ) );
+    }
+
     check( rocketnet_used_token_history_claim_record( history, ids[0], &holder, 1005.0, 1000.0 ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, ids[1], &holder, 1005.0, 1000.0 ) == 1 );
     check( rocketnet_used_token_history_claim_record( history, ids[2], &other, 1010.0, 1005.0 ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, ids[0], &other, 1005.0 ) == 1 );
     check( rocketnet_used_token_history_claim_check( history, ids[1], &other, 1004.0 ) == 0 );
     check( rocketnet_used_token_history_claim_check( history, ids[2], &holder, 1005.0 ) == 0 );
+
     rocketnet_used_token_history_destroy( history );
 }
 
@@ -837,4 +939,4 @@ REGISTER_UNIT_TEST( test_claim_wide_ticket_exhaustion_and_reset );
 REGISTER_UNIT_TEST( test_claim_generation_exhaustion_refuses_wrap );
 REGISTER_UNIT_TEST( test_claim_interior_churn_is_bounded_and_stale_safe );
 REGISTER_UNIT_TEST( test_claim_equal_deadlines_reuse_in_insertion_order );
-#endif
+#endif // #if ROCKETNET_DEV

@@ -14,26 +14,33 @@ static void test_xdp_transport_send_staging_retains_producer()
     const int first = handoff.acquire();
     rocketnet_unit_check( first >= 0 );
     rocketnet_unit_check( handoff.publish() );
+
     const int second = handoff.acquire();
     rocketnet_unit_check( second >= 0 && second != first );
     rocketnet_unit_check( !handoff.publish() );
-    // A second flush while the worker is behind keeps producer storage.
+
+    // A second flush while the worker is behind keeps producer storage
+
     rocketnet_unit_check( handoff.acquire() >= 0 );
     rocketnet_unit_check( handoff.filling == second );
     rocketnet_unit_check( handoff.count == 1 && handoff.front() == first );
+
     for ( int flush = 0; flush < 4; ++flush )
     {
         rocketnet_unit_check( !handoff.publish() );
         rocketnet_unit_check( handoff.acquire() == second );
         rocketnet_unit_check( handoff.front() == first && handoff.count == 1 );
     }
+
     handoff.retire();
     rocketnet_unit_check( handoff.publish() );
     rocketnet_unit_check( handoff.front() == second );
     rocketnet_unit_check( handoff.acquire() == first );
+
     handoff.retire();
     rocketnet_unit_check( handoff.count == 0 );
 }
+
 REGISTER_UNIT_TEST( test_xdp_transport_send_staging_retains_producer );
 
 #if ROCKETNET_DEV
@@ -45,6 +52,7 @@ static void test_xdp_transport_send_staging_reflushes_without_commit()
 {
     rocketnet_unit_check( rocketnet_server_transport_test_xdp_reflush() == 2 );
 }
+
 REGISTER_UNIT_TEST( test_xdp_transport_send_staging_reflushes_without_commit );
 
 // gso retains its producer on a contended or full handoff and io_uring keeps
@@ -56,18 +64,21 @@ static void test_gso_transport_send_packets_reflushes_without_commit()
 {
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_GSO ) == 2 );
 }
+
 REGISTER_UNIT_TEST( test_gso_transport_send_packets_reflushes_without_commit );
 
 static void test_io_uring_transport_send_packets_reflushes_without_commit()
 {
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_IO_URING ) == 2 );
 }
+
 REGISTER_UNIT_TEST( test_io_uring_transport_send_packets_reflushes_without_commit );
 
 static void test_staged_transport_send_packets_flushes_once_per_commit()
 {
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_IOCP ) == 1 );
 }
+
 REGISTER_UNIT_TEST( test_staged_transport_send_packets_flushes_once_per_commit );
 
 int rocketnet_server_transport_test_staged_simulator_flush();
@@ -75,6 +86,7 @@ static void test_xdp_transport_send_packets_flushes_simulator_window()
 {
     rocketnet_unit_check( rocketnet_server_transport_test_staged_simulator_flush() == 1 );
 }
+
 REGISTER_UNIT_TEST( test_xdp_transport_send_packets_flushes_simulator_window );
 
 #endif // #if ROCKETNET_DEV
@@ -98,11 +110,12 @@ static void test_send_handoff_publish_without_acquire_refuses()
     rocketnet_send_handoff_t<2> handoff;
     send_handoff_assert_count = 0;
     rocketnet_assert_function( send_handoff_assert_hook );
+
     const bool refused = handoff.publish();
     rocketnet_assert_function( NULL );
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( send_handoff_assert_count == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_unit_check( !refused );
     rocketnet_unit_check( handoff.count == 0 );
     rocketnet_unit_check( handoff.head == 0 );
@@ -111,11 +124,13 @@ static void test_send_handoff_publish_without_acquire_refuses()
     rocketnet_unit_check( handoff.free[0] && handoff.free[1] );
 
     // the refused publish left the handoff usable
+
     const int generation = handoff.acquire();
     rocketnet_unit_check( generation >= 0 );
     rocketnet_unit_check( handoff.publish() );
     rocketnet_unit_check( handoff.count == 1 && handoff.front() == generation );
 }
+
 REGISTER_UNIT_TEST( test_send_handoff_publish_without_acquire_refuses );
 
 // A retire on an empty queue changes nothing: the release build must not
@@ -138,21 +153,24 @@ static void test_send_handoff_retire_empty_changes_nothing()
     rocketnet_assert_function( NULL );
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( send_handoff_assert_count == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_unit_check( handoff.count == before_count );
     rocketnet_unit_check( handoff.head == before_head );
     rocketnet_unit_check( handoff.free[0] == before_free_0 );
     rocketnet_unit_check( handoff.free[1] == before_free_1 );
 
     // the refused retire left the handoff usable
+
     const int generation = handoff.acquire();
     rocketnet_unit_check( generation >= 0 );
     rocketnet_unit_check( handoff.publish() );
+
     handoff.retire();
     rocketnet_unit_check( handoff.count == 0 );
     rocketnet_unit_check( handoff.head == ( before_head + 1 ) % 2 );
     rocketnet_unit_check( handoff.free[generation] );
 }
+
 REGISTER_UNIT_TEST( test_send_handoff_retire_empty_changes_nothing );
 
 // The helper returns each in-range packet index and refuses and counts every
@@ -166,6 +184,7 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
 
     // the first limit claims take an index of their own, the next five are
     // refused and counted
+
     for ( int i = 0; i < limit + 5; ++i )
     {
         const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
@@ -174,11 +193,14 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
         else
             rocketnet_unit_check( index == -1 );
     }
+
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
 
     // a queue that starts over claims from zero again and counts again
+
     num_packets.store( 0, std::memory_order_relaxed );
     refused.store( 0, std::memory_order_relaxed );
+
     for ( int i = 0; i < limit + 5; ++i )
     {
         const int index = rocketnet_xdp_send_claim( num_packets, limit, refused );
@@ -187,8 +209,10 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
         else
             rocketnet_unit_check( index == -1 );
     }
+
     rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 5 );
 }
+
 REGISTER_UNIT_TEST( test_xdp_transport_send_claim_counts_each_refusal );
 
 #endif // #if defined(__linux__)

@@ -111,16 +111,25 @@ static void sequence_wrap_record_finish( struct sequence_wrap_seam_t * seam, uin
         seam->packets_overflow = 1;
         return;
     }
+
     seam->packet_id[seam->packets] = packet_id;
     seam->sequence[seam->packets] = sequence;
     seam->send_time[seam->packets] = sequence_wrap_clock;
     seam->packets++;
     if ( seam->lowest_sequence == 0 || sequence < seam->lowest_sequence )
+    {
         seam->lowest_sequence = sequence;
+    }
+
     if ( sequence > seam->highest_sequence )
+    {
         seam->highest_sequence = sequence;
+    }
+
     if ( sequence > SEQUENCE_WRAP_FIELD_LIMIT )
+    {
         seam->packets_past_wrap++;
+    }
 }
 
 static void sequence_wrap_record_acks( struct sequence_wrap_seam_t * seam, int count, const uint64_t * packet_ids )
@@ -128,6 +137,7 @@ static void sequence_wrap_record_acks( struct sequence_wrap_seam_t * seam, int c
     for ( int k = 0; k < count; k++ )
     {
         // acks name recent packets: search from the newest
+
         for ( int i = seam->packets - 1; i >= 0; i-- )
         {
             if ( seam->packet_id[i] != packet_ids[k] )
@@ -138,11 +148,18 @@ static void sequence_wrap_record_acks( struct sequence_wrap_seam_t * seam, int c
                 seam->acked_past_wrap++;
                 const double sample = sequence_wrap_clock - seam->send_time[i];
                 if ( seam->samples_past_wrap == 0 || sample < seam->sample_min )
+                {
                     seam->sample_min = sample;
+                }
+
                 if ( seam->samples_past_wrap == 0 || sample > seam->sample_max )
+                {
                     seam->sample_max = sample;
+                }
+
                 seam->samples_past_wrap++;
             }
+
             break;
         }
     }
@@ -153,7 +170,10 @@ static int sequence_wrap_server_finish( void * transport, struct rocketnet_packe
     const uint64_t packet_id = context->packet_id;
     const int wire_bytes = sequence_wrap_seams[0].finish_next( transport, context, payload_bytes );
     if ( wire_bytes > 0 )
+    {
         sequence_wrap_record_finish( &sequence_wrap_seams[0], packet_id, context->sequence );
+    }
+
     return wire_bytes;
 }
 
@@ -162,7 +182,10 @@ static int sequence_wrap_client_finish( void * transport, struct rocketnet_packe
     const uint64_t packet_id = context->packet_id;
     const int wire_bytes = sequence_wrap_seams[1].finish_next( transport, context, payload_bytes );
     if ( wire_bytes > 0 )
+    {
         sequence_wrap_record_finish( &sequence_wrap_seams[1], packet_id, context->sequence );
+    }
+
     return wire_bytes;
 }
 
@@ -254,14 +277,19 @@ static void sequence_wrap_drain( struct sequence_wrap_pair_t * pair, int at_clie
                                   : rocketnet_message_server_receive( pair->server, 0, 0, &data, &bytes );
         if ( !got )
             break;
+
         if ( d && bytes == 8 && data[0] == 0x5E )
         {
             uint32_t index = 0;
             memcpy( &index, data + 4, sizeof( index ) );
             if ( (int) index != d->received )
+            {
                 d->in_order = 0;
+            }
+
             d->received++;
         }
+
         if ( at_client )
             rocketnet_message_client_release( pair->client, data );
         else
@@ -276,6 +304,7 @@ static void sequence_wrap_send( struct sequence_wrap_pair_t * pair, int from_cli
     memcpy( message + 4, &index, sizeof( index ) );
     const uint32_t id = from_client ? rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) : rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
     check( id != 0 );
+
     d->sent++;
 }
 
@@ -307,15 +336,22 @@ static void sequence_wrap_check_counters( const char * name, const struct rocket
     char report[256];
     const int conserved = rocketnet_counters_conserved( counters, report, sizeof( report ) );
     if ( !conserved )
+    {
         printf( "sequence wrap: %s counters not conserved: %s\n", name, report );
+    }
+
     check( conserved );
+
     for ( int i = 0; i < rocketnet_num_counters(); i++ )
     {
         if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL )
             continue;
         const uint64_t value = rocketnet_counter_value( counters, i );
         if ( value != 0 )
+        {
             printf( "sequence wrap: %s refusal %s = %llu\n", name, rocketnet_counter_name( i ), (unsigned long long) value );
+        }
+
         check( value == 0 );
     }
 }
@@ -326,6 +362,7 @@ static void test_sequence_wrap_session_both_directions( void )
     char start_text[32];
     snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_START );
     sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
+
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_START );
 
     struct sequence_wrap_pair_t pair;
@@ -349,21 +386,26 @@ static void test_sequence_wrap_session_both_directions( void )
             if ( rocketnet_counter_value( client_counters, i ) != 0 )
                 printf( "sequence wrap: client %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) rocketnet_counter_value( client_counters, i ) );
     }
+
     check( rocketnet_message_server_client_connected( pair.server, 0 ) );
     check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     // the seam is read once per process: unsetting it now leaves the
     // environment as the suite found it and changes nothing for this process
+
     sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
+
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_START );
 
     struct rn_message_object_t * objects[2] = { &pair.server->object, &pair.client->object };
     memset( sequence_wrap_seams, 0, sizeof( sequence_wrap_seams ) );
+
     for ( int side = 0; side < 2; side++ )
     {
         sequence_wrap_seams[side].finish_next = objects[side]->link.finish_packet;
         sequence_wrap_seams[side].acked_next = objects[side]->link.acked;
     }
+
     objects[0]->link.finish_packet = sequence_wrap_server_finish;
     objects[0]->link.acked = sequence_wrap_server_acked;
     objects[1]->link.finish_packet = sequence_wrap_client_finish;
@@ -371,8 +413,11 @@ static void test_sequence_wrap_session_both_directions( void )
 
     struct sequence_wrap_direction_t to_client = { 0, 0, 1 };
     struct sequence_wrap_direction_t to_server = { 0, 0, 1 };
+
     for ( int step = 0; step < SEQUENCE_WRAP_STEPS + SEQUENCE_WRAP_SETTLE; step++ )
+    {
         sequence_wrap_step( &pair, step < SEQUENCE_WRAP_STEPS, &to_client, &to_server );
+    }
 
     for ( int side = 0; side < 2; side++ )
     {
@@ -381,6 +426,7 @@ static void test_sequence_wrap_session_both_directions( void )
     }
 
     // every message delivered once, in order, both ways
+
     check( to_client.sent == SEQUENCE_WRAP_STEPS && to_server.sent == SEQUENCE_WRAP_STEPS );
     check( to_client.received == to_client.sent && to_client.in_order == 1 );
     check( to_server.received == to_server.sent && to_server.in_order == 1 );
@@ -388,6 +434,7 @@ static void test_sequence_wrap_session_both_directions( void )
     const double low = SEQUENCE_WRAP_DT - 1e-9;
     const double high = 4.0 * SEQUENCE_WRAP_DT + 1e-9;
     const char * side_names[2] = { "server", "client" };
+
     for ( int side = 0; side < 2; side++ )
     {
         const struct sequence_wrap_seam_t * seam = &sequence_wrap_seams[side];
@@ -404,6 +451,7 @@ static void test_sequence_wrap_session_both_directions( void )
 
         // the session started at the seam's value and the field wrapped,
         // with at least SEQUENCE_WRAP_STEPS packets sent each way
+
         check( !seam->packets_overflow );
         check( seam->packets >= SEQUENCE_WRAP_STEPS );
         check( seam->lowest_sequence >= SEQUENCE_WRAP_START && seam->lowest_sequence <= SEQUENCE_WRAP_FIELD_LIMIT );
@@ -411,19 +459,23 @@ static void test_sequence_wrap_session_both_directions( void )
         check( seam->packets_past_wrap >= SEQUENCE_WRAP_STEPS - 1000 );
 
         // acks and the RTT they sample carry on across the wrap
+
         check( seam->acked_past_wrap >= SEQUENCE_WRAP_STEPS - 1000 );
         check( seam->samples_past_wrap > 0 );
         check( seam->sample_min >= low && seam->sample_max <= high );
+
         const double srtt = objects[side]->connections[0].ordered.ack.srtt;
         check( srtt >= low && srtt <= high );
 
         // nothing delivered was resent or arrived twice
+
         check( objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT] == 0 );
         check( objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] == 0 );
     }
 
     // replay and reconstruction refused nothing past the wrap, and every
     // counter family balances, on both transports and both message layers
+
     sequence_wrap_check_counters( "server transport", rocketnet_server_transport_counters( rocketnet_message_server_transport( pair.server ) ) );
     sequence_wrap_check_counters( "client transport", rocketnet_client_transport_counters( rocketnet_message_client_transport( pair.client ) ) );
     sequence_wrap_check_counters( "server message", &objects[0]->counters );
@@ -458,6 +510,7 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     char start_text[32];
     snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_EDGE_START );
     sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
+
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
 
     struct sequence_wrap_pair_t pair;
@@ -471,11 +524,13 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 
     struct rn_message_object_t * objects[2] = { &pair.server->object, &pair.client->object };
     memset( sequence_wrap_seams, 0, sizeof( sequence_wrap_seams ) );
+
     for ( int side = 0; side < 2; side++ )
     {
         sequence_wrap_seams[side].finish_next = objects[side]->link.finish_packet;
         sequence_wrap_seams[side].acked_next = objects[side]->link.acked;
     }
+
     objects[0]->link.finish_packet = sequence_wrap_server_finish;
     objects[0]->link.acked = sequence_wrap_server_acked;
     objects[1]->link.finish_packet = sequence_wrap_client_finish;
@@ -496,12 +551,16 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     check( rocketnet_message_server_client_connected( pair.server, 0 ) );
 
     sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
+
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
 
     struct sequence_wrap_direction_t to_client = { 0, 0, 1 };
     struct sequence_wrap_direction_t to_server = { 0, 0, 1 };
+
     for ( int step = 0; step < SEQUENCE_WRAP_EDGE_STEPS + SEQUENCE_WRAP_SETTLE; step++ )
+    {
         sequence_wrap_step( &pair, step < SEQUENCE_WRAP_EDGE_STEPS, &to_client, &to_server );
+    }
 
     for ( int side = 0; side < 2; side++ )
     {
@@ -526,6 +585,7 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     check( rocketnet_counter_value( client_counters, ROCKETNET_COUNTER_CLIENT_PAYLOAD_BAD_ACK_BLOCK ) == 0 );
     check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_KEEP_ALIVE_BAD_ACK_BLOCK ) == 0 );
     check( rocketnet_counter_value( server_counters, ROCKETNET_COUNTER_PAYLOAD_BAD_ACK_BLOCK ) == 0 );
+
     sequence_wrap_check_counters( "server transport", server_counters );
     sequence_wrap_check_counters( "client transport", client_counters );
     sequence_wrap_check_counters( "server message", &objects[0]->counters );

@@ -55,7 +55,7 @@ public:
             present = true;
             value = current;
         }
-#endif
+#endif // #if defined( _WIN32 )
     }
 
     ~production_environment_guard_t()
@@ -72,7 +72,7 @@ public:
         production_lifecycle_check( _putenv_s( name.c_str(), current ) == 0 );
 #else
         production_lifecycle_check( setenv( name.c_str(), current, 1 ) == 0 );
-#endif
+#endif // #if defined( _WIN32 )
     }
 
     void clear()
@@ -81,7 +81,7 @@ public:
         production_lifecycle_check( _putenv_s( name.c_str(), "" ) == 0 );
 #else
         production_lifecycle_check( unsetenv( name.c_str() ) == 0 );
-#endif
+#endif // #if defined( _WIN32 )
     }
 
 private:
@@ -100,12 +100,14 @@ int main()
     uint8_t seed[32];
     for ( int i = 0; i < 32; ++i )
         seed[i] = (uint8_t) ( 0xA7 ^ i );
+
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[64];
     production_lifecycle_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_server_config_t server_config;
     production_lifecycle_check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+
     server_config.protocol_id = protocol_id;
     server_config.max_clients = 1;
     server_config.transport = "portable";
@@ -115,14 +117,17 @@ int main()
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     production_environment_guard_t server_reverse( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" );
     server_reverse.set( "4" );
+
     struct rocketnet_server_t * refused_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     production_lifecycle_check( refused_server == NULL );
     production_lifecycle_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
     server_reverse.clear();
 
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
     production_lifecycle_check( server != NULL && status == ROCKETNET_STATUS_OK );
     production_lifecycle_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
     const int running_port = rocketnet_server_port( server );
     production_lifecycle_check( running_port != 0 );
     production_lifecycle_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_SERVER_NOT_STOPPED );
@@ -132,14 +137,17 @@ int main()
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
     production_lifecycle_check( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
+
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, server_public );
+
     const char * server_addresses[] = { server_address };
     uint8_t token_bytes[ROCKETNET_CONNECT_TOKEN_BYTES];
     production_lifecycle_check( rocketnet_write_production_connect_token(
                                     backend_secret, server_public, protocol_id, server_addresses, 1,
                                     0xC11E17ULL, 0, 1ULL << 40, 5, NULL,
                                     token_bytes, sizeof( token_bytes ) ) == ROCKETNET_STATUS_OK );
+
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     production_lifecycle_check( rocketnet_base64_encode_data(
                                     token_bytes, sizeof( token_bytes ), token, sizeof( token ) ) ==
@@ -147,13 +155,17 @@ int main()
 
     struct rocketnet_client_config_t client_config;
     production_lifecycle_check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+
     client_config.transport = "portable";
     memcpy( client_config.packet_filter, packet_filter, sizeof( client_config.packet_filter ) );
+
     production_environment_guard_t client_drop( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
     client_drop.set( "7" );
+
     struct rocketnet_client_t * refused_client = rocketnet_client_create( NULL, &client_config, &status );
     production_lifecycle_check( refused_client == NULL );
     production_lifecycle_check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
     client_drop.clear();
 
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
@@ -181,6 +193,7 @@ int main()
     production_lifecycle_check( rocketnet_server_set_send_kbps( server, 0, 3000 ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_disconnect( client );
+
     const double disconnect_start = rocketnet_time();
     while ( !rocketnet_client_disconnected( client ) && rocketnet_time() - disconnect_start < 5.0 )
     {
@@ -191,11 +204,14 @@ int main()
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.001 );
     }
+
     production_lifecycle_check( rocketnet_client_disconnected( client ) );
     production_lifecycle_check( rocketnet_client_set_send_kbps( client, 4000 ) == ROCKETNET_STATUS_OK );
+
     rocketnet_client_destroy( client );
 
     rocketnet_server_stop( server );
+
     const double stop_start = rocketnet_time();
     while ( !rocketnet_server_stopped( server ) && rocketnet_time() - stop_start < 5.0 )
     {
@@ -203,12 +219,16 @@ int main()
         rocketnet_server_send_packets( server );
         rocketnet_sleep( 0.001 );
     }
+
     production_lifecycle_check( rocketnet_server_stopped( server ) );
     production_lifecycle_check( rocketnet_server_set_send_kbps( server, 0, 4000 ) == ROCKETNET_STATUS_OK );
+
     rocketnet_server_destroy( server );
+
     production_lifecycle_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
     printf( "test_production_client_lifecycle: create/start/connect/update/disconnect/destroy PASS\n" );
+
     return 0;
 }
 
@@ -248,21 +268,28 @@ static void test_public_step_driven_client_delivers_both_ways()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
+
     public_step_pair_t pair;
     public_step_pair_create( &pair, &identity );
     public_step_connect( &pair );
 
     const uint8_t client_messages[2][4] = { { 1, 2, 3, 4 }, { 5, 6, 7, 8 } };
     const uint8_t server_messages[2][4] = { { 9, 10, 11, 12 }, { 13, 14, 15, 16 } };
+
     for ( int i = 0; i < 2; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
         check( out != NULL );
+
         memcpy( out, client_messages[i], 4 );
+
         check( rocketnet_client_finish_message( pair.client, 4 ) != 0 );
+
         out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
         check( out != NULL );
+
         memcpy( out, server_messages[i], 4 );
+
         check( rocketnet_server_finish_message( pair.server, 4 ) != 0 );
     }
 
@@ -270,6 +297,7 @@ static void test_public_step_driven_client_delivers_both_ways()
     for ( int step = 0; step < 400 && ( at_server < 2 || at_client < 2 ); step++ )
     {
         public_step_pump( &pair );
+
         const uint8_t * data = NULL;
         int bytes = 0;
         uint64_t sender = ~0ULL;
@@ -283,9 +311,11 @@ static void test_public_step_driven_client_delivers_both_ways()
                 sender = (uint64_t) batch->client_index[i];
                 check( sender == 0 );
                 check( at_server < 2 && bytes == 4 && memcmp( data, client_messages[at_server], 4 ) == 0 );
+
                 at_server++;
             }
         }
+
         const struct rocketnet_message_batch_t * incoming = NULL;
         while ( ( incoming = rocketnet_client_receive_messages( pair.client ) ) != NULL )
         {
@@ -294,13 +324,17 @@ static void test_public_step_driven_client_delivers_both_ways()
                 data = incoming->data[i];
                 bytes = incoming->bytes[i];
                 check( at_client < 2 && bytes == 4 && memcmp( data, server_messages[at_client], 4 ) == 0 );
+
                 at_client++;
             }
         }
     }
+
     check( at_server == 2 && at_client == 2 );
+
     public_step_pair_destroy( &pair );
 }
+
 REGISTER_UNIT_TEST( test_public_step_driven_client_delivers_both_ways );
 
 // The deterministic trace: the client's counters in the stats struct's
@@ -315,16 +349,22 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     public_step_pair_t pair;
     public_step_pair_create( &pair, identity, port );
     public_step_connect( &pair );
+
     int delivered = 0;
     uint64_t delivered_bytes = 0;
     for ( int i = 0; i < 8; i++ )
     {
         uint8_t * out = rocketnet_client_start_message( pair.client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 1 );
         check( out != NULL );
+
         out[0] = (uint8_t) i;
+
         check( rocketnet_client_finish_message( pair.client, 1 ) != 0 );
+
         public_step_pump( &pair );
+
         // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( ( batch = rocketnet_server_receive_messages( pair.server ) ) != NULL )
         {
@@ -334,22 +374,27 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
                 check( batch->bytes[m] == 1 );
                 check( batch->data[m][0] == (uint8_t) delivered );
                 check( batch->client_index[m] == 0 );
+
                 delivered++;
                 delivered_bytes += (uint64_t) batch->bytes[m];
             }
         }
+
         while ( rocketnet_client_receive_messages( pair.client ) != NULL )
         {
         }
     }
+
     check( delivered == 8 );
     check( delivered_bytes == 8 );
+
     struct rocketnet_client_stats_t stats;
     rocketnet_client_stats( pair.client, &stats );
     check( stats.packets_sent > 0 );
     check( stats.packets_received > 0 );
     check( stats.bytes_sent > 0 );
     check( stats.bytes_received > 0 );
+
     struct rocketnet_server_stats_t server_stats;
     rocketnet_server_stats( pair.server, &server_stats );
     check( server_stats.packets_sent > 0 );
@@ -358,6 +403,7 @@ static void public_step_trace( const public_step_identity_t * identity, uint16_t
     check( server_stats.bytes_received > 0 );
     check( server_stats.payloads_received > 0 );
     check( server_stats.connections_accepted == 1 );
+
     const uint64_t values[PUBLIC_STEP_NUM_COUNTERS] = { stats.packets_sent, stats.packets_received, stats.bytes_sent,
                                                         stats.bytes_received, stats.payloads_received, stats.messages_resent, stats.messages_duplicated,
                                                         stats.receipts_acked, stats.receipts_lost, stats.messages_dropped_over_budget, stats.messages_dropped_not_connected,
@@ -372,6 +418,7 @@ static void test_public_step_driven_client_same_inputs_same_trace()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
+
     const uint16_t port = 52341;
     uint64_t first[PUBLIC_STEP_NUM_COUNTERS] = {};
     uint64_t second[PUBLIC_STEP_NUM_COUNTERS] = {};
@@ -379,18 +426,22 @@ static void test_public_step_driven_client_same_inputs_same_trace()
     public_step_trace( &identity, port, second );
     check( memcmp( first, second, sizeof( first ) ) == 0 );
 }
+
 REGISTER_UNIT_TEST( test_public_step_driven_client_same_inputs_same_trace );
 
 static void test_public_step_driven_client_refused_on_a_threaded_only_transport()
 {
     public_step_identity_t identity;
     public_step_identity( &identity );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_step_token( 40000, identity.server_public, &identity, token );
+
     rocketnet_fake_client_transport_io_t fake = {};
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.step_driven = true;
+
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex(
         &fake, token, &config, 1000.0, &rocketnet_fake_client_operations_base, &fake, &status );
@@ -398,12 +449,14 @@ static void test_public_step_driven_client_refused_on_a_threaded_only_transport(
     check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
     check( fake.destroy_calls == 1 );
 }
+
 REGISTER_UNIT_TEST( test_public_step_driven_client_refused_on_a_threaded_only_transport );
 
 static int public_step_setenv( const char * name, const char * value )
 {
     return rocketnet_test_env_setenv( name, value, 1 );
 }
+
 static int public_step_unsetenv( const char * name )
 {
     return rocketnet_test_env_unsetenv( name );
@@ -418,10 +471,12 @@ static void test_public_step_driven_client_env_selects_the_mode()
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
     check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1" ) == 0 );
+
     rocketnet_client_transport_default_config( &config );
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 1 );
     check( public_step_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "0" ) == 0 );
+
     rocketnet_client_transport_default_config( &config );
     check( rocketnet_config_apply_env( "client", &config, fields, num_fields ) );
     check( config.step_driven == 0 );
@@ -430,15 +485,18 @@ static void test_public_step_driven_client_env_selects_the_mode()
     else
         check( public_step_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) == 0 );
 }
+
 REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );
 
 static void test_public_step_driven_client_loss_100_drops_everything()
 {
     rocketnet_public_link_simulator_test_development( 1 );
+
     public_step_identity_t identity;
     public_step_identity( &identity );
 
     rocketnet_quiet( 1 );
+
     rocketnet_server_config_t server_config;
     public_step_server_config( &server_config, &identity );
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
@@ -454,6 +512,7 @@ static void test_public_step_driven_client_loss_100_drops_everything()
 
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
+
     rocketnet_client_network_simulator( client, 0, 0, 100, 0 );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
 
@@ -475,6 +534,7 @@ static void test_public_step_driven_client_loss_100_drops_everything()
     rn_test_server_stop_and_destroy( server );
     rocketnet_public_link_simulator_test_development( 0 );
 }
+
 REGISTER_UNIT_TEST( test_public_step_driven_client_loss_100_drops_everything );
 
 #endif // #if ROCKETNET_DEV

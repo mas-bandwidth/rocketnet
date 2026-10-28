@@ -62,6 +62,7 @@ static void token_time_mint( uint8_t * token_data, uint64_t create, uint64_t exp
     signed_fields.expire_timestamp = expire;
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -87,6 +88,7 @@ static void token_time_setup( struct token_time_server_t * t )
     memcpy( server->server_public_key, rocketnet_test_server_public_key, 32 );
     memcpy( server->server_secret_key, rocketnet_test_server_secret_key, 32 );
     check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
+
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
     server->handshake_deadline_seconds = 5.0;
@@ -98,8 +100,10 @@ static void token_time_setup( struct token_time_server_t * t )
     server->counters = &t->counters;
     check( server->encryption_map && server->used_token_history && server->client_slots &&
            server->acks && server->reassembly );
+
     rocketnet_reassembly_set_begin_update( server->reassembly );
     rocketnet_server_protocol_update( server, TOKEN_TIME_NOW );
+
     check( rocketnet_address_parse( &t->client_address, "198.51.100.7:56789" ) );
 }
 
@@ -146,6 +150,7 @@ static void token_time_refuse_at( struct token_time_server_t * t, uint64_t creat
 
     check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( response_bytes == 0 );
+
     rocketnet_counters_expect( &before, &t->counters,
                                { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                  { counter, 1 } } );
@@ -175,6 +180,7 @@ static void token_time_accept_at( struct token_time_server_t * t, uint64_t creat
 
     check( result == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
     check( response_bytes == ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES );
+
     rocketnet_counters_expect( &before, &t->counters,
                                { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                  { ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_COOKIE, 1 } } );
@@ -192,16 +198,19 @@ static void test_token_time_refusals_are_distinct()
 
     // expire <= now: the expired token, and only that counter; one second past
     // the boundary the same token is accepted
+
     token_time_refuse( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED );
 
     // create more than thirty seconds ahead: the skew, not expiry; exactly thirty
     // seconds ahead is inside the allowance
+
     token_time_refuse( &t, TOKEN_TIME_NOW + 31, TOKEN_TIME_NOW + 40,
                        ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );
 
     // the accepted side of each boundary: expire now+1 and create now+30, each
     // answering with a cookie
+
     token_time_accept( &t, TOKEN_TIME_NOW - 100, TOKEN_TIME_NOW + 1 );
     token_time_accept( &t, TOKEN_TIME_NOW + 30, TOKEN_TIME_NOW + 40 );
 
@@ -235,6 +244,7 @@ static void test_token_with_a_long_lifetime_is_accepted()
     token_time_setup( &t );
     token_time_accept( &t, TOKEN_TIME_NOW, TOKEN_TIME_NOW + ( 1ULL << 40 ) );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] == 0 );
+
     token_time_teardown( &t );
 }
 
@@ -259,8 +269,10 @@ static void test_token_creation_skew_is_overflow_safe()
 {
     struct token_time_server_t t;
     token_time_setup( &t );
+
     // Adding the allowance to this clock would wrap, but the ordered
     // subtraction keeps a token 29 seconds ahead inside the allowance.
+
     token_time_accept_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 29 );
     token_time_refuse_at( &t, UINT64_MAX, UINT64_MAX, UINT64_MAX - 31,
                           ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE );

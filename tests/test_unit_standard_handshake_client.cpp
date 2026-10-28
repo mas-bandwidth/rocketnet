@@ -179,11 +179,13 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
     rocketnet_client_protocol_init( &client, &counters );
 
     // one attempt from the frozen connect token, at the test create time
+
     rocketnet_unit_check( rocketnet_client_protocol_connect( &client, rocketnet_test_frozen_token,
                                                              1000.0, ROCKETNET_TEST_CREATE_TS ) );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
 
     // the published test value for every random field of this attempt
+
     memcpy( client.connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
     memcpy( client.client_ephemeral_secret_key, rocketnet_test_client_eph_secret, ROCKETNET_KEY_BYTES );
     memcpy( client.client_ephemeral_public_key, rocketnet_test_client_eph_public, ROCKETNET_KEY_BYTES );
@@ -195,13 +197,16 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
     int written = 0;
 
     // state 1: the request carries an all-zero return cookie
+
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client, 1000.0, out + written, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE );
+
     written += packet_bytes;
 
     // a cookie arrives; the client stores it and moves to state 2
+
     uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     rocketnet_write_connection_cookie_packet( cookie, tag, rocketnet_test_salt,
                                               ROCKETNET_TEST_EXPIRE_TS, rocketnet_test_cookie_mac );
@@ -210,23 +215,29 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
     // state 2: the next scheduled request carries the stored cookie
+
     rocketnet_client_protocol_update( &client, 1000.1, out + written, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
     written += packet_bytes;
 
     // the challenge is lost: the next scheduled send retransmits the request
+
     rocketnet_client_protocol_update( &client, 1000.2, out + written, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
+
     written += packet_bytes;
 
     // the server's challenge answers the retransmission; the client opens it,
     // derives the session keys and moves to state 3
+
     struct rocketnet_connection_keys_t handshake_keys;
     rocketnet_derive_handshake_keys( &handshake_keys,
                                      rocketnet_test_token_c2s_key, rocketnet_test_token_s2c_key,
                                      rocketnet_test_salt, rocketnet_test_session_nonce );
+
     uint8_t challenge[ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES];
     rocketnet_unit_check( rocketnet_write_sealed_packet( challenge, ROCKETNET_CONNECTION_CHALLENGE_PACKET, tag, 1,
                                                          rocketnet_test_session_nonce,
@@ -241,6 +252,7 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
 
     // A delayed cookie with this attempt's salt but an arbitrary MAC cannot
     // rewind the authenticated challenge or alter its stored response.
+
     uint8_t stored_response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
     memcpy( stored_response, client.stored_response, sizeof( stored_response ) );
     const double received = client.last_receive_time;
@@ -253,21 +265,26 @@ static int standard_handshake_client_generate( const char * id, uint8_t * out, i
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_STATE] == 1 );
 
     // state 3: the response is the stored bytes, sent at the scheduled rate
+
     rocketnet_client_protocol_update( &client, 1000.31, out + written, &packet_bytes );
     rocketnet_unit_check( packet_bytes == ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES );
     rocketnet_unit_check( client.state == ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_RESPONSE );
+
     written += packet_bytes;
 
     // the server's keep-alive completes the handshake; the client state after
     // this packet is connected (4), and its next send is a keep-alive
+
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 8];
     struct rocketnet_replay_protection_t empty_replay;
     memset( &empty_replay, 0, sizeof( empty_replay ) );
     const int block_bytes = rocketnet_ack_block_build( plaintext, ROCKETNET_ACK_BLOCK_MIN_BYTES, &empty_replay );
     rocketnet_unit_check( block_bytes == ROCKETNET_ACK_BLOCK_MIN_BYTES );
+
     uint8_t * p = plaintext + block_bytes;
     rocketnet_write_uint32( &p, 0 );
     rocketnet_write_uint32( &p, 1 );
+
     uint8_t keep_alive[ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES];
     rocketnet_unit_check( rocketnet_write_sealed_packet( keep_alive, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET, tag, 1,
                                                          NULL, plaintext, block_bytes + 8,
@@ -303,6 +320,7 @@ static void test_client_protocol_connect_ignored_while_attempt_live()
 
     uint8_t original_salt[ROCKETNET_CONNECTION_SALT_BYTES];
     memcpy( original_salt, client.connection_salt, sizeof( original_salt ) );
+
     const struct rocketnet_counters_t original_counters = counters;
     const uint64_t original_handshake_sequence = client.send_sequence_handshake;
     const uint64_t original_session_sequence = client.send_sequence_session;
