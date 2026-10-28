@@ -104,7 +104,15 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #include <malloc.h>
 #endif // #if defined( __GLIBC__ )
 #include <sched.h>
+#if defined( __linux__ )
 #include <sys/vfs.h>
+#else // #if defined( __linux__ )
+#include <sys/param.h>
+#include <sys/sysctl.h>
+#if defined( __FreeBSD__ )
+#include <sys/user.h>
+#endif // #if defined( __FreeBSD__ )
+#endif // #if defined( __linux__ )
 #include <unistd.h>
 #endif // #if defined( __APPLE__ )
 
@@ -139,6 +147,18 @@ static int posix_open_file_descriptors()
     if ( got <= 0 )
         return -1;
     return got / (int) sizeof( struct proc_fdinfo );
+#elif !defined( __linux__ )
+    // the BSDs have no /proc/self/fd: probe every descriptor slot
+    long slots = sysconf( _SC_OPEN_MAX );
+    if ( slots <= 0 || slots > 65536 )
+        slots = 65536;
+    int count = 0;
+    for ( int fd = 0; fd < (int) slots; fd++ )
+    {
+        if ( fcntl( fd, F_GETFD ) != -1 )
+            count++;
+    }
+    return count;
 #else
     DIR * directory = opendir( "/proc/self/fd" );
     if ( !directory )
@@ -166,6 +186,34 @@ static int posix_threads()
     if ( got != (int) sizeof( info ) )
         return -1;
     return (int) info.pti_threadnum;
+#elif defined( __FreeBSD__ )
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PID, (int) getpid() };
+    struct kinfo_proc info;
+    size_t bytes = sizeof( info );
+    if ( sysctl( mib, 4, &info, &bytes, NULL, 0 ) != 0 || bytes != sizeof( info ) )
+        return -1;
+    return (int) info.ki_numthreads;
+#elif defined( __NetBSD__ )
+    int mib[6] = { CTL_KERN, KERN_PROC2, KERN_PROC_PID, (int) getpid(), (int) sizeof( struct kinfo_proc2 ), 1 };
+    struct kinfo_proc2 info;
+    size_t bytes = sizeof( info );
+    if ( sysctl( mib, 6, &info, &bytes, NULL, 0 ) != 0 || bytes != sizeof( info ) )
+        return -1;
+    return (int) info.p_nlwps;
+#elif defined( __OpenBSD__ )
+    // one entry per thread, plus the process's own entry (p_tid -1)
+    struct kinfo_proc entries[256];
+    int mib[6] = { CTL_KERN, KERN_PROC, KERN_PROC_PID | KERN_PROC_SHOW_THREADS, (int) getpid(), (int) sizeof( struct kinfo_proc ), 256 };
+    size_t bytes = sizeof( entries );
+    if ( sysctl( mib, 6, entries, &bytes, NULL, 0 ) != 0 )
+        return -1;
+    int count = 0;
+    for ( size_t i = 0; i < bytes / sizeof( struct kinfo_proc ); i++ )
+    {
+        if ( entries[i].p_tid != -1 )
+            count++;
+    }
+    return count;
 #else
     DIR * directory = opendir( "/proc/self/task" );
     if ( !directory )
