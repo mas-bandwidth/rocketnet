@@ -124,4 +124,4 @@ static inline void rocketnet_xdp_program_close( rocketnet_xdp_program_t * progra
 #endif // #if ROCKETNET_XDP_LEGACY_LIBBPF
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_COMPAT_H

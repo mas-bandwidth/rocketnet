@@ -42,12 +42,17 @@ static void check_bits_match_ring( struct rocketnet_ack_endpoint_t * ep )
     const uint64_t N = ROCKETNET_SENT_PACKET_BUFFER_SIZE;
     uint64_t window_low = 1;
     if ( ep->highest_sequence >= N )
+    {
         window_low = ep->highest_sequence - N + 1;
+    }
+
     for ( uint64_t i = 0; i < N; i++ )
     {
         uint64_t held_bit = ( ep->sent_held[i >> 6] >> ( i & 63 ) ) & 1;
         uint64_t unacked_bit = ( ep->sent_unacked[i >> 6] >> ( i & 63 ) ) & 1;
+
         // a slot not written since the reset is the empty record (sequence 0)
+
         const bool written = ( ep->sent_written[i >> 6] >> ( i & 63 ) ) & 1;
         int expect_held = written && ep->sent[i].sequence != 0 && ep->sent[i].sequence >= window_low;
         int expect_unacked = expect_held && !ep->sent[i].acked;
@@ -72,7 +77,9 @@ static void test_ack_block_walk_visits_only_unacknowledged()
     rocketnet_unit_check( acked );
 
     for ( uint64_t s = 1; s <= N; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     int acked_count = 0;
     uint64_t unknown = 0, batch_full = 0;
@@ -94,7 +101,9 @@ static void test_ack_block_walk_visits_only_unacknowledged()
     rocketnet_unit_check( g_ack_visit_count == 0 );
 
     for ( uint64_t s = N + 1; s <= N + 4; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     acked_count = 0;
     unknown = 0;
@@ -128,9 +137,12 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     rocketnet_unit_check( acked );
 
     for ( uint64_t s = 1; s <= N; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     // acknowledge everything but 100: two ranges, [1,99] and [101,N]
+
     struct rocketnet_ack_block_t block;
     memset( &block, 0, sizeof( block ) );
     block.largest = N;
@@ -148,6 +160,7 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     rocketnet_unit_check( g_ack_visit_count == N - 1 );
 
     uint64_t highest = N;
+
     for ( int round = 0; round < 4; round++ )
     {
         for ( int i = 0; i < 64; i++ )
@@ -160,6 +173,7 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
         struct rocketnet_ack_block_t b;
         memset( &b, 0, sizeof( b ) );
         b.largest = highest;
+
         if ( 100 >= window_low && 100 <= highest )
         {
             b.first_range_length = (uint32_t) ( highest - 101 + 1 );
@@ -184,11 +198,13 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
 
     // the rounds took highest past N + 100, so 100 left the window; a further
     // block visits only the newest unacknowledged records
+
     for ( int i = 0; i < 64; i++ )
     {
         highest++;
         rec_sent( ep, highest );
     }
+
     uint64_t window_low = highest - N + 1;
     acked_count = 0;
     unknown = 0;
@@ -202,6 +218,7 @@ static void test_ack_block_walk_lost_packet_does_not_stall()
     rocketnet_free( NULL, ep );
 
     // a deferral: batch capacity 2, three new unacknowledged records
+
     ep = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );
@@ -260,17 +277,25 @@ static void test_ack_block_walk_bits_match_ring()
     uint64_t unknown = 0, batch_full = 0;
 
     for ( uint64_t s = 1; s <= 200; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     // burned sequence 201; record 202..400
+
     for ( uint64_t s = 202; s <= 400; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     // alias write N above the unacknowledged record at slot 200
+
     rec_sent( ep, 200 + N );
 
     for ( uint64_t s = N + 401; s <= N + 450; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     acked_count = 0;
     unknown = 0;
@@ -279,6 +304,7 @@ static void test_ack_block_walk_bits_match_ring()
     check_bits_match_ring( ep );
 
     // a stale write below the window is refused and sets nothing
+
     enum rocketnet_ack_sent_result_t refused;
     refused = rocketnet_ack_endpoint_record_sent_classified( ep, 5, 100, 5000005, 1, 0, 2000.0 );
     rocketnet_unit_check( refused == ROCKETNET_ACK_SENT_REFUSED_STALE );
@@ -290,6 +316,7 @@ static void test_ack_block_walk_bits_match_ring()
     check_bits_match_ring( ep );
 
     // a second alias, N above an unacknowledged in-window record
+
     rec_sent( ep, 1000 + N );
 
     acked_count = 0;
@@ -299,7 +326,9 @@ static void test_ack_block_walk_bits_match_ring()
     check_bits_match_ring( ep );
 
     for ( uint64_t s = N + 451; s <= N + 520; s++ )
+    {
         rec_sent( ep, s );
+    }
 
     acked_count = 0;
     unknown = 0;
@@ -312,6 +341,7 @@ static void test_ack_block_walk_bits_match_ring()
 
     // a deferral on a fresh endpoint: capacity 2 over three new unacknowledged
     // records (FragmentsAndAcks RecvAck's batch deferral)
+
     ep = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );
     rocketnet_ack_endpoint_reset( ep );

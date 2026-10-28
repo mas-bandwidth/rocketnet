@@ -59,10 +59,10 @@ int main()
             break;
         rocketnet_sleep( 0.001 );
     }
+
     check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
     // client -> server through the stream surface
-
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
@@ -100,21 +100,24 @@ int main()
             uint32_t magic = 0;
             check( stream.SerializeBits( magic, 32 ) );
             check( magic == 0xdecafbad );
+
             int32_t small = 0;
             check( stream.SerializeInteger( small, -100, 100 ) );
             check( small == -17 );
+
             int64_t big = 0;
             check( stream.SerializeInteger64( big, 0, (int64_t) 0x7fffffffffffffffLL ) );
             check( big == (int64_t) 0x123456789abcdefLL );
 
             verified = 1;
         }
+
         rocketnet_sleep( 0.001 );
     }
+
     check( verified );
 
     // server -> client the same way
-
     {
         serialize::WriteStream stream;
         struct rocketnet_packet_context_t context;
@@ -142,13 +145,16 @@ int main()
             uint8_t * payload = rocketnet_client_transport_payload( client, i, &payload_bytes );
             check( payload != NULL );
             stream.Initialize( payload, payload_bytes );
+
             uint32_t reply = 0;
             check( stream.SerializeBits( reply, 32 ) );
             check( reply == 0xabad1dea );
             verified = 1;
         }
+
         rocketnet_sleep( 0.001 );
     }
+
     check( verified );
 
     rn_native_client_transport_stop_and_destroy( client );

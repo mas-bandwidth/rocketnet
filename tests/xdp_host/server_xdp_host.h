@@ -25,7 +25,7 @@
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 
 // config zeroed, every socket slot empty, every counter zeroed, every replay
 // entry removed, and the config lookup succeeding
@@ -74,6 +74,6 @@ uint64_t rocketnet_xdp_host_last_redirect_key( void );
 
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 
 #endif // ROCKETNET_TESTS_XDP_HOST_SERVER_XDP_HOST_H

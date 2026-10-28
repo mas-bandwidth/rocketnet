@@ -527,7 +527,7 @@ static const rocketnet_server_transport_io_operations_t loopback_server_operatio
 // no connect: the loopback router is one in-process table shared by every
 // endpoint, with no socket to connect; the client's own source check
 // (rocketnet_client_process_packet) is the only filter on this transport
-static const rocketnet_client_transport_io_operations_t loopback_client_operations = { loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive, NULL, NULL, NULL, NULL, loopback_send_failures, NULL };
+static const rocketnet_client_transport_io_operations_t loopback_client_operations = { loopback_client_create, loopback_destroy, loopback_send, loopback_client_receive, NULL, NULL, NULL, NULL, loopback_send_failures, NULL, NULL };
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 

@@ -28,7 +28,7 @@ extern "C"
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
-#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, disconnect_packets_per_update ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, handshakes_per_update ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and unfragmented payload limits.
 /// Internal; fragments retain their separate, unrounded stride bound.
@@ -798,6 +798,8 @@ struct rocketnet_server_transport_config_t
     char second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     /** @brief Whole-server disconnect notification packets sealed per update; 1 through 1024, default 64. */
     int disconnect_packets_per_update;
+    /** @brief Cookie-validated connection requests processed per update; 1 through 1024, default 16. */
+    int handshakes_per_update;
 };
 
 // a NULL config is a counted no-op
@@ -1305,6 +1307,15 @@ int rocketnet_server_transport_is_client_connected( struct rocketnet_server_tran
  * @return The connected client's identifier, or zero for a free or invalid slot. Read on the main thread outside update work.
  */
 uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport_t * server_transport, int client_index );
+
+// a NULL server_transport is a counted no-op that returns false
+/** @brief Copy the connect-token user data of the client currently assigned to a slot.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @param user_data [out] ROCKETNET_USER_DATA_BYTES; zeroed for a free or invalid slot.
+ * @return True if the slot is connected and its user data was copied. Read on the main thread outside update work.
+ */
+bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transport_t * server_transport, int client_index, uint8_t * user_data );
 
 // the connection that holds the slot now: nonzero and unique for each
 // connection over the transport's life, 0 while the slot is free (and for an
@@ -2052,4 +2063,4 @@ void rocketnet_server_transport_accept_payload( struct rocketnet_server_transpor
 }
 #endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_LAYERS_H
+#endif // ROCKETNET_SDK_ROCKETNET_LAYERS_H

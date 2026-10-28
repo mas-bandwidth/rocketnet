@@ -44,7 +44,9 @@ static void standard_replay_write_u32( uint8_t * out, uint32_t value )
 static void standard_replay_write_u64( uint8_t * out, uint64_t value )
 {
     for ( int i = 0; i < 8; i++ )
+    {
         out[i] = (uint8_t) ( value >> ( 8 * i ) );
+    }
 }
 
 static int standard_replay_observe( rn_replay_check_t check, rn_replay_advance_t advance, uint64_t depth,
@@ -58,16 +60,23 @@ static int standard_replay_observe( rn_replay_check_t check, rn_replay_advance_t
 
     struct rocketnet_replay_protection_t replay;
     memset( &replay, 0, sizeof( replay ) );
+
     for ( int i = 0; i < mark_count; i++ )
+    {
         advance( &replay, marks[i] );
+    }
 
     int at = 0;
     standard_replay_write_u32( out + at, (uint32_t) depth );
     at += 4;
     standard_replay_write_u64( out + at, replay.highest_opened );
     at += 8;
+
     for ( int i = 0; i < probe_count; i++ )
+    {
         out[at++] = (uint8_t) ( check( &replay, probes[i] ) ? 0x00 : 0x01 );
+    }
+
     return at;
 }
 
@@ -88,6 +97,7 @@ static int standard_replay_generate( const char * id, uint8_t * out, int capacit
                                         ROCKETNET_HISTORY_PACKETS_MIN,
                                         marks, 2, probes, 4, out, capacity );
     }
+
     if ( strcmp( id, "t14.behind-window" ) == 0 )
     {
         const uint64_t marks[] = { ROCKETNET_HISTORY_PACKETS_MIN + 44 };
@@ -96,6 +106,7 @@ static int standard_replay_generate( const char * id, uint8_t * out, int capacit
                                         ROCKETNET_HISTORY_PACKETS_MIN,
                                         marks, 1, probes, 3, out, capacity );
     }
+
     if ( strcmp( id, "t14.forward-jump-clears" ) == 0 )
     {
         const uint64_t marks[] = { 1, ROCKETNET_HISTORY_PACKETS_MIN + 1 };
@@ -104,6 +115,7 @@ static int standard_replay_generate( const char * id, uint8_t * out, int capacit
                                         ROCKETNET_HISTORY_PACKETS_MIN,
                                         marks, 2, probes, 3, out, capacity );
     }
+
     if ( strcmp( id, "t14.window-maximum" ) == 0 )
     {
         const uint64_t marks[] = { 1, ROCKETNET_HISTORY_PACKETS_MAX + 1 };
@@ -112,6 +124,7 @@ static int standard_replay_generate( const char * id, uint8_t * out, int capacit
                                         ROCKETNET_HISTORY_PACKETS_MAX,
                                         marks, 2, probes, 3, out, capacity );
     }
+
     return -1;
 }
 
@@ -123,6 +136,7 @@ static void test_standard_replay_vectors()
     // the maximum-depth copy really is configured at 32768: its ring keeps a
     // sequence one depth behind the high-water mark, while the build depth
     // does not
+
     struct rocketnet_replay_protection_t replay;
     memset( &replay, 0, sizeof( replay ) );
     rocketnet_replay_max_advance( &replay, ROCKETNET_HISTORY_PACKETS_MAX + 1 );

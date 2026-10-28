@@ -53,7 +53,9 @@ static void xdp_compiled_out_pin_set_aside( xdp_compiled_out_env_pin * saved )
 static void xdp_compiled_out_pin_put_back( const xdp_compiled_out_env_pin * saved )
 {
     if ( saved->was_set )
+    {
         rocketnet_test_env_setenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, 1 );
+    }
 }
 #endif // #if ROCKETNET_DEV
 
@@ -78,12 +80,14 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
 
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp" );
+
     int status = -1;
     check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) status ), "TRANSPORT_NOT_BUILT" ) == 0 );
 
     // named twice, still one refusal for the same reason
+
     xdp_compiled_out_config( &config, "xdp,xdp" );
     status = -1;
     check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
@@ -105,13 +109,16 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
 
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp,loopback" );
+
     int status = -1;
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
+
     if ( server )
     {
         check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
+
         rocketnet_server_transport_destroy( server );
     }
 
@@ -125,8 +132,10 @@ REGISTER_UNIT_TEST( test_xdp_compiled_out_list_takes_the_next_candidate );
 static void test_xdp_compiled_out_has_no_memory_plan()
 {
     // no XDP plan is reported, so the ladder's plan loop logs xdp as unavailable
+
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp" );
+
     rocketnet_server_memory_plan_t plan;
     check( !rocketnet_server_transport_memory_plan( &config, "xdp", plan ) );
 }

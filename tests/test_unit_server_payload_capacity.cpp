@@ -40,6 +40,7 @@ static int seal_payload( uint8_t * packet, uint64_t sequence, const uint8_t * da
 {
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 64];
     rocketnet_unit_check( data_bytes <= 64 );
+
     memset( plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
     memcpy( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, data, (size_t) data_bytes );
     return rocketnet_write_sealed_packet( packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
@@ -69,8 +70,10 @@ static void test_server_payload_capacity_uses_live_session_path()
 
     struct rocketnet_address_t from;
     rocketnet_unit_check( rocketnet_address_parse( &from, "198.51.100.7:56789" ) );
+
     const int mapping_index = rocketnet_encryption_map_add( server.encryption_map, &from, 1005.0 );
     rocketnet_unit_check( mapping_index >= 0 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server.encryption_map, mapping_index );
     memcpy( mapping->keys.session_client_to_server, rocketnet_test_session_c2s_key, ROCKETNET_KEY_BYTES );
     memcpy( mapping->connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
@@ -78,6 +81,7 @@ static void test_server_payload_capacity_uses_live_session_path()
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES] = {};
     const int client_index = rocketnet_client_slots_assign( server.client_slots, 0x1400, mapping_index, user_data );
     rocketnet_unit_check( client_index == 0 );
+
     mapping->control->client_index = client_index;
     mapping->control->established = 1;
 
@@ -125,6 +129,7 @@ static void test_server_payload_capacity_uses_live_session_path()
 
     int packet_bytes = seal_payload( packet, 1, expected, (int) sizeof( expected ) );
     rocketnet_unit_check( packet_bytes > 0 );
+
     const struct rocketnet_counters_t before_small = counters;
     rocketnet_unit_check( rocketnet_server_protocol_process_received( &server, &from, mapping_index,
                                                                       packet, packet_bytes,
@@ -142,6 +147,7 @@ static void test_server_payload_capacity_uses_live_session_path()
     rocketnet_unit_check( mapping->replay_session.highest_opened == 1 );
     rocketnet_unit_check( mapping->accepted_session.highest_opened == 0 );
     rocketnet_unit_check( server.acks->endpoints[client_index].ack_debt == 0 );
+
     check_counter_delta( &before_small, &counters,
                          ROCKETNET_COUNTER_PACKETS_RECEIVED,
                          ROCKETNET_COUNTER_PAYLOAD_RECEIVED,
@@ -149,6 +155,7 @@ static void test_server_payload_capacity_uses_live_session_path()
 
     packet_bytes = seal_payload( packet, 2, expected, (int) sizeof( expected ) );
     rocketnet_unit_check( packet_bytes > 0 );
+
     const struct rocketnet_counters_t before_fit = counters;
     rocketnet_unit_check( rocketnet_server_protocol_process_received( &server, &from, mapping_index,
                                                                       packet, packet_bytes,
@@ -166,6 +173,7 @@ static void test_server_payload_capacity_uses_live_session_path()
     rocketnet_unit_check( mapping->replay_session.highest_opened == 2 );
     rocketnet_unit_check( mapping->accepted_session.highest_opened == 0 );
     rocketnet_unit_check( server.acks->endpoints[client_index].ack_debt == 0 );
+
     check_counter_delta( &before_fit, &counters,
                          ROCKETNET_COUNTER_PACKETS_RECEIVED,
                          ROCKETNET_COUNTER_PAYLOAD_RECEIVED,
@@ -174,6 +182,7 @@ static void test_server_payload_capacity_uses_live_session_path()
     rocketnet_server_protocol_accept_payload( &server, payload_client_index,
                                               server.payload_connection_id,
                                               server.payload_sequence );
+
     rocketnet_unit_check( mapping->accepted_session.highest_opened == 2 );
     rocketnet_unit_check( server.acks->endpoints[client_index].ack_debt == 1 );
 

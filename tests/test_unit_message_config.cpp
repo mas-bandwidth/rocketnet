@@ -110,7 +110,9 @@ static mc_net_t * mc_net_new()
     net->server->is_server = true;
     net->server->slot = -1;
     for ( int i = 0; i < MC_MAX_SLOTS; i++ )
+    {
         net->clients[i] = NULL;
+    }
     net->next_connection = 100;
     net->next_packet_id = 1000;
     net->drop_to_server = false;
@@ -130,29 +132,37 @@ static mc_endpoint_t * mc_net_client( mc_net_t * net, int slot )
     client->slot = slot;
     client->connected = false;
     net->clients[slot] = client;
+
     return client;
 }
 
 // the transport's handshake completes: the server's slot takes a new
 // connection id and the client is CONNECTED
+
 static void mc_net_connect( mc_net_t * net, int slot )
 {
     net->slot_connection[slot] = net->next_connection++;
     if ( net->clients[slot] )
+    {
         net->clients[slot]->connected = true;
+    }
 }
 
 static void mc_net_drop_slot( mc_net_t * net, int slot )
 {
     net->slot_connection[slot] = 0;
     if ( net->clients[slot] )
+    {
         net->clients[slot]->connected = false;
+    }
 }
 
 static void mc_net_free( mc_net_t * net )
 {
     for ( int i = 0; i < MC_MAX_SLOTS; i++ )
+    {
         delete net->clients[i];
+    }
     delete net->server;
     delete net;
 }
@@ -166,8 +176,10 @@ static void mc_update( void * transport, double time )
     e->time = time;
 
     // the transport's acked packet ids: what the other end opened since the last update
+
     e->acked.clear();
     e->acked_slot.clear();
+
     if ( !net->hold_acks )
     {
         e->acked.swap( e->acks_inbox );
@@ -175,11 +187,13 @@ static void mc_update( void * transport, double time )
     }
 
     // the batch: the last one is gone, the wire's packets are opened once each
+
     e->batch.clear();
     e->batch_data.clear();
     e->batch_bytes.clear();
     e->batch_slot.clear();
     e->batch.reserve( e->inbound.size() );
+
     for ( size_t i = 0; i < e->inbound.size(); i++ )
     {
         const mc_packet_t & p = e->inbound[i];
@@ -188,7 +202,9 @@ static void mc_update( void * transport, double time )
         if ( !e->is_server && !e->connected )
             continue;
         e->batch.push_back( p );
+
         // the opened id goes back to the sender as an ack at its next update
+
         mc_endpoint_t * sender = e->is_server ? net->clients[p.slot] : net->server;
         if ( sender )
         {
@@ -196,7 +212,9 @@ static void mc_update( void * transport, double time )
             sender->acks_inbox_slot.push_back( p.slot );
         }
     }
+
     e->inbound.clear();
+
     for ( size_t i = 0; i < e->batch.size(); i++ )
     {
         e->batch_data.push_back( e->batch[i].data );
@@ -211,6 +229,7 @@ static int mc_payloads( void * transport, const int ** client_index, uint8_t * c
     *client_index = e->is_server ? e->batch_slot.data() : NULL;
     *payload_data = e->batch_data.data();
     *payload_bytes = e->batch_bytes.data();
+
     return (int) e->batch.size();
 }
 
@@ -230,6 +249,7 @@ static uint8_t * mc_start_packet( void * transport, int client_index, int reques
         return NULL;
     if ( e->is_server ? e->net->slot_connection[client_index] == 0 : !e->connected )
         return NULL;
+
     for ( int f = 0; f < MC_MAX_FRAMES; f++ )
     {
         if ( e->frame_used[f] )
@@ -244,6 +264,7 @@ static uint8_t * mc_start_packet( void * transport, int client_index, int reques
         context->client_index = client_index;
         return e->frames[f];
     }
+
     return NULL;
 }
 
@@ -267,6 +288,7 @@ static int mc_finish_packet( void * transport, rocketnet_packet_context_t * cont
         e->net->fail_finish--;                                  // the transport refused the packet: nothing goes on the wire
         return 0;
     }
+
     e->finishes++;
 
     mc_packet_t packet;
@@ -275,14 +297,19 @@ static int mc_finish_packet( void * transport, rocketnet_packet_context_t * cont
     packet.bytes = payload_bytes;
     memcpy( packet.data, e->frames[f] + MC_PAYLOAD_INDEX, (size_t) payload_bytes );         // the wire: the transport's own business
     if ( e->net->keep_log )
+    {
         e->sent_log.push_back( packet );
+    }
 
     mc_net_t * net = e->net;
+
     if ( e->is_server )
     {
         mc_endpoint_t * to = net->clients[packet.slot];
         if ( to && !net->drop_to_client )
+        {
             to->inbound.push_back( packet );
+        }
     }
     else
     {
@@ -300,7 +327,9 @@ static void mc_abort_packet( void * transport, rocketnet_packet_context_t * cont
     mc_endpoint_t * e = (mc_endpoint_t *) transport;
     const int f = mc_frame_of( e, context );
     if ( f >= 0 )
+    {
         e->frame_used[f] = false;
+    }
 }
 
 static void mc_send_packets( void * transport )
@@ -406,29 +435,35 @@ static void mc_pair_setup( mc_pair_t * pair, int num_clients, const rocketnet_me
                            int32_t client_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, int32_t server_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS )
 {
     rocketnet_message_config_t defaults;
+
     if ( !config )
     {
         mc_config( &defaults );
         config = &defaults;
     }
+
     memset( pair, 0, sizeof( *pair ) );
     pair->net = mc_net_new();
     pair->num_clients = num_clients;
     pair->server = mc_server_create( pair->net, config, MC_MAX_SLOTS, server_kbps );
     check( pair->server );
+
     for ( int i = 0; i < num_clients; i++ )
     {
         pair->clients[i] = mc_client_create( pair->net, i, config, client_kbps );
         check( pair->clients[i] );
         mc_net_connect( pair->net, i );
     }
+
     pair->time = MC_T0;
 }
 
 static void mc_pair_teardown( mc_pair_t * pair )
 {
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         rocketnet_message_client_destroy( pair->clients[i] );
+    }
     rocketnet_message_server_destroy( pair->server );
     mc_net_free( pair->net );
 }
@@ -454,17 +489,21 @@ struct mc_received_t
 
 // copies a received message; a zero-byte message copies nothing, so its data
 // pointer never reaches memmove (gcc 13 and 15 -Wnonnull on vector::assign)
+
 static void mc_copy_bytes( std::vector<uint8_t> & to, const uint8_t * from, int bytes )
 {
     to.resize( (size_t) bytes );
     if ( bytes > 0 )
+    {
         memcpy( to.data(), from, (size_t) bytes );
+    }
 }
 
 static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out )
 {
     // the server's one receive queue across every slot: each message names
     // its sender's slot and the channel it was delivered on
+
     const uint8_t * data = NULL;
     int bytes = 0;
     int slot = 0;
@@ -472,12 +511,15 @@ static void mc_drain_server( mc_pair_t * pair, std::vector<mc_received_t> * out 
     while ( rocketnet_message_server_receive( pair->server, &slot, &channel, &data, &bytes ) )
     {
         check( slot >= 0 && slot < MC_MAX_SLOTS );
+
         mc_received_t r;
         r.slot = slot;
         r.channel = channel;
         mc_copy_bytes( r.bytes, data, bytes );
         if ( out )
+        {
             out->push_back( r );
+        }
         rocketnet_message_server_release( pair->server, data );
     }
 }
@@ -495,7 +537,9 @@ static void mc_drain_client( rocketnet_message_client_t * client, std::vector<mc
             r.channel = channel;
             mc_copy_bytes( r.bytes, data, bytes );
             if ( out )
+            {
                 out->push_back( r );
+            }
             rocketnet_message_client_release( client, data );
         }
     }
@@ -509,13 +553,19 @@ static void mc_step( mc_pair_t * pair, std::vector<mc_received_t> * server_got =
     pair->time += dt;
     check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
+    }
     mc_drain_server( pair, server_got );
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         mc_drain_client( pair->clients[i], client_got );
+    }
     rocketnet_message_server_send_packets( pair->server );
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         rocketnet_message_client_send_packets( pair->clients[i] );
+    }
 }
 
 static uint8_t mc_pattern( uint32_t id, uint32_t i )
@@ -526,21 +576,27 @@ static uint8_t mc_pattern( uint32_t id, uint32_t i )
 static void mc_fill( uint8_t * data, uint32_t id, uint32_t bytes )
 {
     for ( uint32_t i = 0; i < bytes; i++ )
+    {
         data[i] = mc_pattern( id, i );
+    }
     if ( bytes >= 4 )
+    {
         memcpy( data, &id, 4 );
+    }
 }
 
 static bool mc_verify( const std::vector<uint8_t> & data, uint32_t * out_id )
 {
     if ( data.size() < 4 )
         return false;
+
     uint32_t id;
     memcpy( &id, data.data(), 4 );
     for ( uint32_t i = 4; i < data.size(); i++ )
         if ( data[i] != mc_pattern( id, i ) )
             return false;
     *out_id = id;
+
     return true;
 }
 
@@ -561,14 +617,20 @@ static void mc_step_client_first( mc_pair_t * pair, double dt = 0.01 )
 {
     pair->time += dt;
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         check( rocketnet_message_client_update( pair->clients[i], pair->time ) == ROCKETNET_UPDATE_OK );
+    }
     check( rocketnet_message_server_update( pair->server, pair->time ) == ROCKETNET_UPDATE_OK );
     mc_drain_server( pair, NULL );
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         mc_drain_client( pair->clients[i], NULL );
+    }
     rocketnet_message_server_send_packets( pair->server );
     for ( int i = 0; i < pair->num_clients; i++ )
+    {
         rocketnet_message_client_send_packets( pair->clients[i] );
+    }
 }
 
 // the error lines naming a CONFIG mismatch
@@ -580,12 +642,14 @@ static void mc_capture( void * context, enum rocketnet_log_level_t level, const 
     (void) context;
     if ( level != ROCKETNET_LOG_LEVEL_ERROR || !strstr( message, "CONFIG mismatch" ) )
         return;
+
     if ( g_mc_mismatch_lines < 2 )
     {
         const size_t n = length < sizeof( g_mc_mismatch_line[0] ) - 1 ? length : sizeof( g_mc_mismatch_line[0] ) - 1;
         memcpy( g_mc_mismatch_line[g_mc_mismatch_lines], message, n );
         g_mc_mismatch_line[g_mc_mismatch_lines][n] = '\0';
     }
+
     g_mc_mismatch_lines++;
 }
 
@@ -598,6 +662,7 @@ static void mc_capture( void * context, enum rocketnet_log_level_t level, const 
 // refuse each other. Each end logs one error line naming the field and both
 // values; the server kicks the slot and the client disconnects itself, both
 // with CONFIG_MISMATCH. Red at a base without CONFIG: both stay connected.
+
 static void test_message_config_mismatch_ends_both_connections()
 {
     rocketnet_message_config_t server_config;
@@ -623,7 +688,9 @@ static void test_message_config_mismatch_ends_both_connections()
     rocketnet_log_function( mc_capture, NULL );
 
     for ( int i = 0; i < 5; i++ )
+    {
         mc_step_client_first( &pair );
+    }
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
@@ -636,7 +703,9 @@ static void test_message_config_mismatch_ends_both_connections()
     check( pair.net->slot_connection[0] == 0 );
 
     // one line from each end, naming the field and both values
+
     check( g_mc_mismatch_lines == 2 );
+
     for ( int i = 0; i < 2 && i < g_mc_mismatch_lines; i++ )
     {
         check( strstr( g_mc_mismatch_line[i], "num_channels" ) != NULL );
@@ -649,26 +718,33 @@ static void test_message_config_mismatch_ends_both_connections()
 
 // The records one finished packet carried, read back with the receiving
 // connection's limits.
+
 static int mc_records( const mc_packet_t & packet, const rocketnet_message_limits_t * limits, rocketnet_message_record_t * out, int max )
 {
     rocketnet_message_reader_t reader;
     if ( rocketnet_message_reader_begin( &reader, packet.data, packet.bytes, limits ) != ROCKETNET_MESSAGE_VIOLATION_NONE )
         return -1;
+
     int count = 0;
     rocketnet_message_record_t record;
     while ( count < max && rocketnet_message_reader_next( &reader, &record ) )
+    {
         out[count++] = record;
+    }
+
     return count;
 }
 
 // RNEndpoint WriteOk: an endpoint's first packet carries CONFIG first, code 2
 // with CONTROL set, the connection's first reliable number, and the 13.4 body
 // of the sender's config.
+
 static void mc_check_first_record_is_config( const mc_endpoint_t * sender, const rocketnet_message_limits_t * limits, const rocketnet_message_config_t * config )
 {
     check( !sender->sent_log.empty() );
     if ( sender->sent_log.empty() )
         return;
+
     rocketnet_message_record_t records[16];
     const int count = mc_records( sender->sent_log[0], limits, records, 16 );
     check( count >= 1 );
@@ -692,9 +768,11 @@ static void mc_check_first_record_is_config( const mc_endpoint_t * sender, const
 }
 
 // the CONFIG records a sender finished, first sends and resends
+
 static int mc_config_sends( const mc_endpoint_t * sender, const rocketnet_message_limits_t * limits )
 {
     int sends = 0;
+
     for ( size_t p = 0; p < sender->sent_log.size(); p++ )
     {
         rocketnet_message_record_t records[16];
@@ -703,27 +781,33 @@ static int mc_config_sends( const mc_endpoint_t * sender, const rocketnet_messag
             if ( records[i].control )
                 sends++;
     }
+
     return sends;
 }
 
 // RNEndpoint Reset, WriteOk and OnPayload: equal configs connect and both
 // ends verify. CONFIG goes first even when the application queued a message
 // before the first packet, and that message's record takes reliable number 1.
+
 static void test_message_config_equal_connects_and_verifies()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
+
     mc_pair_t pair;
     mc_pair_setup( &pair, 1, &config );
 
     // queued before the client's first packet: it travels behind CONFIG
+
     uint8_t data[64];
     mc_fill( data, 7, sizeof( data ) );
     check( rocketnet_message_client_send( pair.clients[0], 1, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, data, sizeof( data ) ) != 0 );
 
     std::vector<mc_received_t> server_got;
     for ( int i = 0; i < 10; i++ )
+    {
         mc_step( &pair, &server_got );
+    }
 
     rn_message_connection_t * server_slot = mc_server_slot( &pair, 0 );
     rn_message_connection_t * client = mc_client_connection( pair.clients[0] );
@@ -735,13 +819,17 @@ static void test_message_config_equal_connects_and_verifies()
     check( pair.net->server->disconnects == 0 );
 
     // each end's first record is its CONFIG (read with the other end's limits)
+
     mc_check_first_record_is_config( pair.net->clients[0], &server_slot->ordered.limits, &config );
     mc_check_first_record_is_config( pair.net->server, &client->ordered.limits, &config );
 
     // the application's message arrived once, intact, numbered after CONFIG
+
     check( server_got.size() == 1 );
+
     uint32_t id = 0;
     check( server_got.size() == 1 && mc_verify( server_got[0].bytes, &id ) && id == 7 );
+
     bool found = false;
     for ( size_t p = 0; p < pair.net->clients[0]->sent_log.size() && !found; p++ )
     {
@@ -755,9 +843,11 @@ static void test_message_config_equal_connects_and_verifies()
                 break;
             }
     }
+
     check( found );
 
     // CONFIG is never an application delivery
+
     check( mc_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) == 0 );
 
     mc_pair_teardown( &pair );
@@ -766,16 +856,19 @@ static void test_message_config_equal_connects_and_verifies()
 // RNEndpoint ConfigReliable (the reversed witness ConfigVerifiedDespite-
 // FirstLoss): the first packet each way is lost; CONFIG is resent until acked
 // like any reliable record, and both ends still verify.
+
 static void test_message_config_first_loss_still_verifies()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
+
     mc_pair_t pair;
     mc_pair_setup( &pair, 1, &config );
 
     pair.net->drop_next_to_server = 1;                          // the client's first packet: its CONFIG
     pair.net->drop_to_client = true;                            // the server's first packet: its CONFIG
     mc_step( &pair );
+
     rn_message_connection_t * server_slot = mc_server_slot( &pair, 0 );
     rn_message_connection_t * client = mc_client_connection( pair.clients[0] );
     check( !server_slot->ordered.config_received );
@@ -783,7 +876,9 @@ static void test_message_config_first_loss_still_verifies()
     pair.net->drop_to_client = false;
 
     for ( int i = 0; i < 100; i++ )
+    {
         mc_step( &pair );
+    }
 
     check( server_slot->ordered.config_received );
     check( client->ordered.config_received );
@@ -793,12 +888,14 @@ static void test_message_config_first_loss_still_verifies()
     check( pair.net->server->disconnects == 0 );
 
     // each CONFIG went out at least twice: the lost send and its resend
+
     check( mc_config_sends( pair.net->clients[0], &server_slot->ordered.limits ) >= 2 );
     check( mc_config_sends( pair.net->server, &client->ordered.limits ) >= 2 );
     check( mc_counter( rocketnet_message_client_counters( pair.clients[0] ), ROCKETNET_COUNTER_MESSAGE_RESENT ) >= 1 );
     check( mc_counter( rocketnet_message_server_counters( pair.server ), ROCKETNET_COUNTER_MESSAGE_RESENT ) >= 1 );
 
     // every CONFIG resend is acked: nothing reliable is left unacked
+
     check( client->ordered.send.U >= client->ordered.send.next );
     check( server_slot->ordered.send.U >= server_slot->ordered.send.next );
 
@@ -810,11 +907,13 @@ static void test_message_config_first_loss_still_verifies()
 // nothing reliable unacked, yet it is still waiting for the server's CONFIG, so
 // reliable_timeout after it connected it ends the connection as
 // RELIABLE_TIMEOUT. Red at a base without CONFIG: nothing ever times out.
+
 static void test_message_config_never_received_is_reliable_timeout()
 {
     rocketnet_message_config_t config;
     mc_config( &config );
     config.reliable_message_timeout_ms = 1000;
+
     mc_pair_t pair;
     mc_pair_setup( &pair, 1, &config );
     pair.net->drop_to_client = true;
@@ -822,8 +921,11 @@ static void test_message_config_never_received_is_reliable_timeout()
     rn_message_connection_t * client = mc_client_connection( pair.clients[0] );
 
     // 0.9 s: still waiting, still connected, and the client's own CONFIG acked
+
     for ( int i = 0; i < 9; i++ )
+    {
         mc_step( &pair, NULL, NULL, 0.1 );
+    }
     check( !client->ordered.config_received );
     check( client->ordered.send.U >= client->ordered.send.next );
     check( client->ordered.send.next >= 1 );
@@ -835,12 +937,16 @@ static void test_message_config_never_received_is_reliable_timeout()
     // reliable_timeout in the same update, and each checks it in its update
     // (rn_endpoint_tick). The client updates first here so that its own
     // CONFIG wait, not the server's kick, ends its connection.
+
     for ( int i = 0; i < 5; i++ )
+    {
         mc_step_client_first( &pair, 0.1 );
+    }
     check( rocketnet_message_client_disconnect_reason( pair.clients[0] ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
     check( pair.net->clients[0]->disconnects == 1 );
 
     // the server's CONFIG was never acked: it times out too (RNEndpoint Tick)
+
     check( rocketnet_message_server_disconnect_reason( pair.server, 0 ) == ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT );
 
     mc_pair_teardown( &pair );
@@ -850,6 +956,7 @@ static void test_message_config_never_received_is_reliable_timeout()
 // from the library's own defaults (CHANNELS.md 13.4) and pins it byte for
 // byte: enabled 0xFF, all eight types of the first version's mask (7.5).
 // Red if the default mask or the default config drifts from the standard.
+
 static void test_config_vector_is_library_default()
 {
     rocketnet_message_config_t config;
@@ -859,6 +966,7 @@ static void test_config_vector_is_library_default()
     check( config.message_resend_delay_max_ms == 2000 );
 
     // the body rn_ordered_announce_config writes for a NULL/default config
+
     struct rocketnet_message_config_body_t body;
     body.version = ROCKETNET_MESSAGE_CONFIG_VERSION;
     body.enabled = ROCKETNET_CHANNEL_ENABLED_FIRST_VERSION & 0xFFu;
@@ -869,6 +977,7 @@ static void test_config_vector_is_library_default()
     body.fragment_bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
 
     // the first version's mask is all eight types: the intended default
+
     check( body.enabled == 0xFF );
 
     uint8_t config_bytes[ROCKETNET_MESSAGE_CONFIG_BYTES];
@@ -901,12 +1010,14 @@ static void test_config_vector_is_library_default()
 // evicted, nothing is resent, and the sender's U reaches next. Red with the
 // old default of 256 entries: the burst evicts its own entries and their acks
 // are ignored.
+
 static void test_message_config_sent_map_holds_a_window_burst()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.receive_message_buffer_bytes = 1 << 20;  // the receive ring and the store hold the whole unacked
     config.send_message_buffer_bytes = 1 << 22;     // burst; W and P stay the defaults
+
     mc_pair_t pair;
     mc_pair_setup( &pair, 1, &config, -1 );           // below 0: no client send budget (11.5)
 
@@ -914,7 +1025,9 @@ static void test_message_config_sent_map_holds_a_window_burst()
     const int bytes = 800;                          // two never share a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES packet
     check( 2 * bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
     check( messages < config.reliable_messages_in_flight );
+
     uint8_t data[bytes];
+
     for ( int i = 0; i < messages; i++ )
     {
         mc_fill( data, (uint32_t) i, (uint32_t) bytes );
@@ -922,18 +1035,25 @@ static void test_message_config_sent_map_holds_a_window_burst()
     }
 
     // the burst: every first send leaves before any ack lands
+
     std::vector<mc_received_t> server_got;
     pair.net->hold_acks = true;
     for ( int i = 0; i < 6; i++ )
+    {
         mc_step( &pair, &server_got, NULL, 0.001 );
+    }
     check( server_got.size() == (size_t) messages );
+
     rn_message_connection_t * client = mc_client_connection( pair.clients[0] );
     check( client->ordered.send.next >= (uint64_t) messages );
 
     // the acks land, well inside the 2 s initial resend delay
+
     pair.net->hold_acks = false;
     for ( int i = 0; i < 4; i++ )
+    {
         mc_step( &pair, &server_got, NULL, 0.001 );
+    }
 
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( pair.clients[0] );
     check( mc_counter( counters, ROCKETNET_COUNTER_MESSAGE_SENT_MAP_EVICTED ) == 0 );
@@ -950,10 +1070,12 @@ static void test_message_config_sent_map_holds_a_window_burst()
 // "use the default"). The harness expects validation to refuse it exactly as
 // it refuses any out-of-range INT; this pins that the library does, by setting
 // the struct field directly, and that the refusal never clamps the value.
+
 static void test_message_config_resend_delay_max_zero_refused()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
     check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
@@ -975,16 +1097,19 @@ static void test_message_config_resend_delay_max_zero_refused()
 // must sit inside the min..max the operator chose). A value the table's range
 // accepts can still break the cross rule: a min above the initial delay is
 // refused by the cross rule alone.
+
 static void test_message_config_resend_delay_cross_rule_refused()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_message_config_fields( &num_fields );
 
     // 60000 is inside the table's range for the min (0..60000), so the table
     // accepts it; the cross rule does not, because the initial delay (2000)
     // would sit below the floor
+
     config.message_resend_delay_min_ms = 60000;
     check( rocketnet_config_validate( "client", &config, fields, num_fields ) );
     check( !rocketnet_message_validate_config( &config ) );

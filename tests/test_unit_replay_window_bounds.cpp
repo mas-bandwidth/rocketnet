@@ -31,6 +31,7 @@ static void test_replay_partial_skip_clears_like_bitwise()
     const int starts[] = { 0, 1, 63, 64, 65, ROCKETNET_REPLAY_WINDOW_BITS - 1 };
     const int skips[] = { 1, 2, 63, 64, 65, 127, 128,
                           ROCKETNET_REPLAY_WINDOW_BITS / 2, ROCKETNET_REPLAY_WINDOW_BITS - 1 };
+
     for ( const int start : starts )
     {
         for ( const int skip : skips )
@@ -45,6 +46,7 @@ static void test_replay_partial_skip_clears_like_bitwise()
                 const int bit = (int) ( s % ROCKETNET_REPLAY_WINDOW_BITS );
                 expected.window[bit / 64] &= ~( 1ULL << ( bit % 64 ) );
             }
+
             const int received_bit = (int) ( sequence % ROCKETNET_REPLAY_WINDOW_BITS );
             expected.window[received_bit / 64] |= 1ULL << ( received_bit % 64 );
             expected.highest_opened = sequence;
@@ -52,8 +54,12 @@ static void test_replay_partial_skip_clears_like_bitwise()
             rocketnet_replay_advance( &actual, sequence );
 
             rocketnet_unit_check( actual.highest_opened == expected.highest_opened );
+
             for ( int word = 0; word < ROCKETNET_REPLAY_WINDOW_BITS / 64; word++ )
+            {
                 rocketnet_unit_check( actual.window[word] == expected.window[word] );
+            }
+
             rocketnet_unit_check( rocketnet_replay_already_received( &actual, sequence ) );
         }
     }

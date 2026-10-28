@@ -66,4 +66,4 @@ int rocketnet_gateway_netlink_neighbor( int family, int interface_index, const u
 
 const char * rocketnet_gateway_netlink_result_name( int result );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_GATEWAY_NETLINK_H
+#endif // ROCKETNET_SDK_ROCKETNET_GATEWAY_NETLINK_H

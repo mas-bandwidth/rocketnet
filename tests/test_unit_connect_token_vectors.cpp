@@ -28,7 +28,7 @@
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 #include <stdint.h>
 #include <stdio.h>
@@ -48,14 +48,17 @@ static int ctv_unhex_digit( char c )
         return c - '0';
     if ( c >= 'a' && c <= 'f' )
         return c - 'a' + 10;
+
     return -1;
 }
 
 // strict lower-case hex of exactly count bytes; 1 on success
+
 static int ctv_unhex( const std::string & text, uint8_t * bytes, int count )
 {
     if ( (int) text.size() != count * 2 )
         return 0;
+
     for ( int i = 0; i < count; i++ )
     {
         int hi = ctv_unhex_digit( text[(size_t) ( 2 * i )] );
@@ -64,6 +67,7 @@ static int ctv_unhex( const std::string & text, uint8_t * bytes, int count )
             return 0;
         bytes[i] = (uint8_t) ( ( hi << 4 ) | lo );
     }
+
     return 1;
 }
 
@@ -72,26 +76,34 @@ static uint64_t ctv_unhex_uint( const std::string & text, int count )
     uint8_t bytes[8];
     rocketnet_unit_check( count <= 8 );
     rocketnet_unit_check( ctv_unhex( text, bytes, count ) );
+
     uint64_t value = 0;
     for ( int i = 0; i < count; i++ )
+    {
         value = ( value << 8 ) | bytes[i];
+    }
+
     return value;
 }
 
 // the committed tests/connect_token_vectors.json, compiled into this binary
 // at build time (cmake/EmbedTestFixtures.cmake); 1 when it is there
+
 static int ctv_read_embedded( std::string & out )
 {
     out.clear();
+
     size_t bytes = 0;
     const unsigned char * data = rocketnet_test_fixture( "tests/connect_token_vectors.json", &bytes );
     if ( !data )
         return 0;
     out.assign( reinterpret_cast<const char *>( data ), bytes );
+
     return 1;
 }
 
 // every string value of "key" in the file, in order of appearance
+
 static std::vector<std::string> ctv_values( const std::string & text, const char * key )
 {
     std::vector<std::string> values;
@@ -100,11 +112,13 @@ static std::vector<std::string> ctv_values( const std::string & text, const char
     while ( ( at = text.find( needle, at ) ) != std::string::npos )
     {
         at += needle.size();
+
         size_t end = text.find( '"', at );
         rocketnet_unit_check( end != std::string::npos );
         values.push_back( text.substr( at, end - at ) );
         at = end + 1;
     }
+
     return values;
 }
 
@@ -157,6 +171,7 @@ static std::vector<ctv_file_vector_t> ctv_load()
     rocketnet_unit_check( user_data.size() == count && c2s.size() == count && s2c.size() == count );
 
     std::vector<ctv_file_vector_t> vectors( count );
+
     for ( size_t i = 0; i < count; i++ )
     {
         ctv_file_vector_t & v = vectors[i];
@@ -176,6 +191,7 @@ static std::vector<ctv_file_vector_t> ctv_load()
         rocketnet_unit_check( ctv_unhex( s2c[i], v.server_to_client_key, 32 ) );
         rocketnet_unit_check( ctv_unhex( token[i], v.token, ROCKETNET_CONNECT_TOKEN_BYTES ) );
     }
+
     return vectors;
 }
 
@@ -186,6 +202,7 @@ static std::vector<ctv_file_vector_t> ctv_load()
 // into this binary and compared in memory; nothing here writes it. the file
 // is rewritten only by the tool, ./bin/connect_token_vectors, from the same
 // generator (tools/connect_token_vectors/main.cpp)
+
 static void test_vectors_regenerate_byte_identical()
 {
     std::string generated;
@@ -203,6 +220,7 @@ static void test_vectors_regenerate_byte_identical()
 // every vector in the file: its seed expands to the test backend key, its
 // signature verifies, its sealed block opens with the test server secret, and
 // every field read back out of the token equals the field the file states
+
 static void test_each_vector_verifies_and_opens()
 {
     std::vector<ctv_file_vector_t> vectors = ctv_load();
@@ -238,6 +256,7 @@ static void test_each_vector_verifies_and_opens()
 
         // the sealed box's first 32 bytes are the ephemeral public key the
         // stated ephemeral secret derives
+
         uint8_t epk[32];
         rocketnet_unit_check( crypto_scalarmult_base( epk, v.ephemeral_secret ) == 0 );
         rocketnet_unit_check( memcmp( signed_fields.sealed_private_block, epk, 32 ) == 0 );
@@ -255,13 +274,20 @@ static void test_each_vector_verifies_and_opens()
         rocketnet_unit_check( memcmp( private_fields.user_data, v.user_data, ROCKETNET_USER_DATA_BYTES ) == 0 );
 
         // the clear token keys after the signature, then zero padding
+
         rocketnet_unit_check( memcmp( token.client_to_server_key, v.client_to_server_key, 32 ) == 0 );
         rocketnet_unit_check( memcmp( token.server_to_client_key, v.server_to_client_key, 32 ) == 0 );
         for ( int b = ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES + 64; b < ROCKETNET_CONNECT_TOKEN_BYTES; b++ )
+        {
             rocketnet_unit_check( v.token[b] == 0 );
+        }
+
         // and the zero padding after the sealed block inside the signed data
+
         for ( int b = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES; b < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; b++ )
+        {
             rocketnet_unit_check( v.token[b] == 0 );
+        }
     }
 }
 
@@ -270,6 +296,7 @@ static void test_each_vector_verifies_and_opens()
 // crypto_box_open_easy under the blake2b-192(epk || pk) nonce; the same
 // inputs mint the same token twice; and outside the sealed block and the
 // signature it is the production writer's token exactly
+
 static void test_deterministic_seal_matches_libsodium_open()
 {
     for ( int v = 0; v < ctv_input_count; v++ )
@@ -285,6 +312,7 @@ static void test_deterministic_seal_matches_libsodium_open()
         struct rocketnet_signed_connect_data_t signed_fields;
         struct rocketnet_connect_token_private_t private_fields;
         ctv_fields( input, &signed_fields, &private_fields );
+
         uint8_t expected_private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
         rocketnet_write_connect_token_private( &private_fields, expected_private_block );
 
@@ -312,6 +340,7 @@ static void test_deterministic_seal_matches_libsodium_open()
 
         // re-sealing the same block from the same ephemeral secret by hand is
         // the vector's sealed block exactly
+
         uint8_t resealed[ROCKETNET_SEALED_BLOCK_BYTES];
         memcpy( resealed, epk, 32 );
         rocketnet_unit_check( crypto_box_easy( resealed + 32, expected_private_block, ROCKETNET_PRIVATE_BLOCK_BYTES, nonce,
@@ -320,9 +349,11 @@ static void test_deterministic_seal_matches_libsodium_open()
 
         // the production writer's token differs only in the sealed block and
         // the signature over it
+
         uint8_t token_random[ROCKETNET_CONNECT_TOKEN_BYTES];
         rocketnet_unit_check( rocketnet_write_connect_token( &signed_fields, &private_fields,
                                                              rocketnet_test_backend_secret_key, token_random ) == 1 );
+
         const int sealed_end = ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK + ROCKETNET_SEALED_BLOCK_BYTES;
         const int signature_end = ROCKETNET_SIGNED_CONNECT_DATA_BYTES + ROCKETNET_SIGNATURE_BYTES;
         rocketnet_unit_check( memcmp( token_random, token_a, ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK ) == 0 );
@@ -335,6 +366,7 @@ static void test_deterministic_seal_matches_libsodium_open()
 // one flipped byte anywhere in the signed connect data or the signature is
 // refused by the signature check; one flipped byte in the sealed block,
 // re-signed so the signature passes, is refused by the seal open
+
 static void test_tampered_vector_refused()
 {
     std::vector<ctv_file_vector_t> vectors = ctv_load();
@@ -343,6 +375,7 @@ static void test_tampered_vector_refused()
     for ( size_t i = 0; i < vectors.size(); i++ )
     {
         const ctv_file_vector_t & v = vectors[i];
+
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
 
         memcpy( token, v.token, sizeof( token ) );
@@ -358,6 +391,7 @@ static void test_tampered_vector_refused()
         }
 
         // the ephemeral public key, the first ciphertext byte, the last mac byte
+
         const int positions[] = { 0, 31, 32, 33 + ROCKETNET_PRIVATE_BLOCK_BYTES / 2, ROCKETNET_SEALED_BLOCK_BYTES - 1 };
         for ( size_t p = 0; p < sizeof( positions ) / sizeof( positions[0] ); p++ )
         {
@@ -367,6 +401,7 @@ static void test_tampered_vector_refused()
                                                         ROCKETNET_SIGNED_CONNECT_DATA_BYTES, rocketnet_test_backend_secret_key ) == 0 );
             rocketnet_unit_check( rocketnet_verify_signed_connect_data( token, token + ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
                                                                         rocketnet_test_backend_public_key ) );
+
             struct rocketnet_connect_token_private_t private_fields;
             rocketnet_unit_check( !rocketnet_open_connect_token_private( &private_fields, token,
                                                                          rocketnet_test_server_public_key,
@@ -412,7 +447,9 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
     tally->refused_verify = 0;
     tally->sig_size = 0;
     if ( disagreements )
+    {
         disagreements->clear();
+    }
 
     std::vector<wycheproof_test_t> tests;
     int number_of_tests = 0;
@@ -421,6 +458,7 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
         return -1;
 
     int failed = 0;
+
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         const wycheproof_test_t & test = tests[i];
@@ -486,8 +524,11 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
                     test.tc_id, test.result.c_str(), outcome.c_str() );
             printf( "wycheproof ed25519_test.json tcId %d flags", test.tc_id );
             for ( size_t f = 0; f < test.flags.size(); f++ )
+            {
                 printf( " %s", test.flags[f].c_str() );
+            }
             printf( "\n" );
+
             if ( disagreements )
             {
                 wp_ed25519_disagreement_t d;
@@ -507,6 +548,7 @@ static int wp_ed25519_run( bool accept_all, wp_ed25519_tally_t * tally,
 // against all 151 Ed25519 vectors, then drives the SDK wrapper itself: S
 // replaced by S + L (RFC 8032 section 5.1.7), a flipped R bit, flipped data
 // and the identity public key encoding are all refused.
+
 static void test_wycheproof_ed25519_vectors()
 {
     wp_ed25519_tally_t tally;
@@ -517,7 +559,9 @@ static void test_wycheproof_ed25519_vectors()
 
     uint8_t data[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
     for ( int i = 0; i < ROCKETNET_SIGNED_CONNECT_DATA_BYTES; i++ )
+    {
         data[i] = (uint8_t) ( i & 0xff );
+    }
 
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
     rocketnet_unit_check( crypto_sign_detached( signature, NULL, data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES,
@@ -526,6 +570,7 @@ static void test_wycheproof_ed25519_vectors()
                                                                 rocketnet_test_backend_public_key ) == 1 );
 
     // L = 2^252 + 27742317777372353535851937790883648493, little endian
+
     static const uint8_t group_order[32] = {
         0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
         0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
@@ -535,13 +580,16 @@ static void test_wycheproof_ed25519_vectors()
 
     uint8_t malleable[ROCKETNET_SIGNATURE_BYTES];
     memcpy( malleable, signature, sizeof( malleable ) );
+
     int carry = 0;
+
     for ( int i = 0; i < 32; i++ )
     {
         int sum = (int) malleable[32 + i] + (int) group_order[i] + carry;
         malleable[32 + i] = (uint8_t) ( sum & 0xff );
         carry = sum >> 8;
     }
+
     rocketnet_unit_check( carry == 0 );
     rocketnet_unit_check( !rocketnet_verify_signed_connect_data( data, malleable,
                                                                  rocketnet_test_backend_public_key ) );
@@ -568,12 +616,14 @@ static void test_wycheproof_ed25519_vectors()
 // exactly the 51 invalid vectors whose 64-byte signature the verify branch in
 // sdk/rocketnet_connect_token.cpp rocketnet_verify_signed_connect_data exists
 // to refuse. A green witness means the main test would not catch that bug.
+
 static void test_wycheproof_ed25519_witness_accept_all_goes_red()
 {
     wp_ed25519_tally_t tally;
     std::vector<wp_ed25519_disagreement_t> disagreements;
     rocketnet_unit_check( wp_ed25519_run( true, &tally, &disagreements ) == 51 );
     rocketnet_unit_check( disagreements.size() == 51 );
+
     for ( size_t i = 0; i < disagreements.size(); i++ )
     {
         rocketnet_unit_check( disagreements[i].result == "invalid" );

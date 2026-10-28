@@ -17,4 +17,4 @@ struct rocketnet_server_socket_process_packets_t
     uint8_t * packet_data[ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE];
 };
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PACKET_BATCH_H
+#endif // ROCKETNET_SDK_ROCKETNET_PACKET_BATCH_H

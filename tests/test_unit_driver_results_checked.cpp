@@ -27,7 +27,7 @@
 
 #ifndef UDP_GRO
 #define UDP_GRO 104
-#endif
+#endif // #ifndef UDP_GRO
 
 extern int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_bytes, uint64_t * faults );
 #endif // #if defined(__linux__)
@@ -74,7 +74,10 @@ static int transport_results_lie_receive( void * transport, rocketnet_address_t 
     if ( lie->mode == 3 )
         return ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 1;
     if ( data && capacity > 0 )
+    {
         data[0] = 0x21;
+    }
+
     return 1;
 }
 
@@ -85,6 +88,7 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
     lie->max_seen = max_packets;
     if ( lie->calls > 1 )
         return 0;
+
     if ( lie->mode == 1 )
     {
         for ( int i = 0; i < max_packets; i++ )
@@ -94,16 +98,22 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
             from[i].port = 1;
             packet_bytes[i] = ( i == 0 ) ? 4 : 0;
             if ( i == 0 )
+            {
                 memset( packet_data, 0x11, 4 );
+            }
         }
+
         return max_packets + 1;
     }
+
     if ( lie->mode == 6 && max_packets >= 3 )
     {
         memset( from, 0, 3 * sizeof( *from ) );
         memset( packet_data, 0xcc, (size_t) packet_stride * 3 );
         for ( int i = 0; i < 3; i++ )
+        {
             from[i].type = ROCKETNET_ADDRESS_IPV4;
+        }
         packet_bytes[0] = -1;
         packet_bytes[1] = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES;
         packet_bytes[2] = 4;
@@ -111,6 +121,7 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
         memset( packet_data + 2 * packet_stride, 0x22, 4 );
         return 3;
     }
+
     if ( lie->mode == 7 && max_packets >= 2 )
     {
         memset( from, 0, 2 * sizeof( *from ) );
@@ -120,6 +131,7 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
         memset( packet_data + packet_stride, 0x22, 4 );
         return 2;
     }
+
     if ( lie->mode == 4 && max_packets >= 2 )
     {
         memset( &from[0], 0, sizeof( from[0] ) );
@@ -131,6 +143,7 @@ static int transport_results_lie_receive_batch( void * transport, rocketnet_addr
         memset( packet_data + packet_stride, 0x22, 4 );
         return 2;
     }
+
     return 0;
 }
 
@@ -148,14 +161,18 @@ static void transport_results_open_io( transport_results_lie_t * lie, rocketnet_
     ops->receive_batch = batch ? transport_results_lie_receive_batch : NULL;
     ops->wait = NULL;
     ops->wake = NULL;
+
     rocketnet_client_transport_io_config_t config = { "fake", NULL, NULL };
     rocketnet_address_t bind = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( ops, lie, &config, &bind, transport ) );
 
     // every caller passes io value-initialised: zeroed, as init expects
+
     transport_results_rig = rocketnet_client_io_rig_create();
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+    {
         buffers[i] = transport_results_rig->buffers[i];
+    }
     clock->now = 1000.0;
     rocketnet_client_io_rig_init( transport_results_rig, io, transport, transport_results_time, clock );
 }
@@ -164,7 +181,9 @@ static void transport_results_close_io( rocketnet_client_transport_io_t * transp
 {
     rocketnet_client_transport_io_close( transport );
     for ( int i = 0; i < ROCKETNET_CLIENT_IO_NUM_BUFFERS; i++ )
+    {
         buffers[i] = NULL;
+    }
     rocketnet_client_io_rig_destroy( transport_results_rig );
     transport_results_rig = NULL;
 }
@@ -172,10 +191,12 @@ static void transport_results_close_io( rocketnet_client_transport_io_t * transp
 // A receive_batch that returns one past the count it was asked for does not
 // index the stack arrays past that count. The extra return is one fault. The
 // slots it was asked to fill are kept, including a zero-length slot.
+
 static void test_transport_results_client_batch_over_count_is_a_fault()
 {
     transport_results_lie_t lie = {};
     lie.mode = 1;
+
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
@@ -185,6 +206,7 @@ static void test_transport_results_client_batch_over_count_is_a_fault()
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
+
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == lie.max_seen );
@@ -200,6 +222,7 @@ static void test_transport_results_client_negative_byte_count_is_a_fault()
 {
     transport_results_lie_t lie = {};
     lie.mode = 2;
+
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
@@ -220,6 +243,7 @@ static void test_transport_results_client_oversized_byte_count_is_a_fault()
 {
     transport_results_lie_t lie = {};
     lie.mode = 3;
+
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
@@ -239,10 +263,12 @@ REGISTER_UNIT_TEST( test_transport_results_client_oversized_byte_count_is_a_faul
 
 // A negative byte count in a batch is refused and counted. The later slot
 // whose count fits the stride is kept.
+
 static void test_transport_results_client_batch_refuses_a_bad_byte_count()
 {
     transport_results_lie_t lie = {};
     lie.mode = 4;
+
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
@@ -252,6 +278,7 @@ static void test_transport_results_client_batch_refuses_a_bad_byte_count()
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
+
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
@@ -265,10 +292,12 @@ REGISTER_UNIT_TEST( test_transport_results_client_batch_refuses_a_bad_byte_count
 
 // A truncated slot after a refused slot keeps its original length, but
 // compaction must not read or overwrite the following slot's payload.
+
 static void test_transport_results_client_truncated_batch_copies_only_prefix()
 {
     transport_results_lie_t lie = {};
     lie.mode = 6;
+
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
@@ -277,15 +306,20 @@ static void test_transport_results_client_truncated_batch_copies_only_prefix()
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
+
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 2 );
     rocketnet_unit_check( received->packet_bytes[0] == ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES );
     for ( int i = 0; i < ROCKETNET_FRAME_SIZE; i++ )
+    {
         rocketnet_unit_check( received->packet_data[0][i] == 0xa5 );
+    }
     rocketnet_unit_check( received->packet_bytes[1] == 4 );
     for ( int i = 0; i < 4; i++ )
+    {
         rocketnet_unit_check( received->packet_data[1][i] == 0x22 );
+    }
     transport_results_close_io( &transport, buffers );
 }
 REGISTER_UNIT_TEST( test_transport_results_client_truncated_batch_copies_only_prefix );
@@ -294,6 +328,7 @@ static void test_transport_results_client_batch_impossible_length_is_a_fault()
 {
     transport_results_lie_t lie = {};
     lie.mode = 7;
+
     rocketnet_client_transport_io_operations_t ops;
     rocketnet_client_transport_io_t transport = {};
     rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
@@ -302,6 +337,7 @@ static void test_transport_results_client_batch_impossible_length_is_a_fault()
     transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, true );
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.transport_faults == 1 );
+
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( received != NULL );
     rocketnet_unit_check( received->num_packets == 1 );
@@ -313,6 +349,7 @@ REGISTER_UNIT_TEST( test_transport_results_client_batch_impossible_length_is_a_f
 
 // A transport open allows wait and wake both absent. A blocked idle step does
 // not call wait.
+
 static void test_transport_results_client_without_wait_skips_the_call()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -360,6 +397,7 @@ static int transport_results_server_receive_batch( void * transport, rocketnet_a
         return 0;
     if ( lie->mode == 1 )
         return -1;
+
     if ( lie->mode == 2 )
     {
         for ( int i = 0; i < capacity; i++ )
@@ -369,29 +407,38 @@ static int transport_results_server_receive_batch( void * transport, rocketnet_a
             from[i].port = 9;
             bytes[i] = -1;
         }
+
         return capacity + 1;
     }
+
     memset( &from[0], 0, sizeof( from[0] ) );
     from[0].type = ROCKETNET_ADDRESS_IPV4;
     from[0].port = 9;
+
     if ( lie->mode == 3 )
     {
         bytes[0] = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES + 1;
         return 1;
     }
+
     if ( lie->mode == 6 )
     {
         bytes[0] = ROCKETNET_TRANSPORT_MAX_DATAGRAM_BYTES;
         return 1;
     }
+
     if ( lie->mode == 4 )
     {
         bytes[0] = -5;
         return 1;
     }
+
     bytes[0] = 4;
     if ( stride >= 4 )
+    {
         memset( data, 0x33, 4 );
+    }
+
     return 1;
 }
 
@@ -409,7 +456,9 @@ static rocketnet_server_transport_t * transport_results_make_server( transport_r
     int create_status = -1;
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
+    {
         printf( "create_ex status=%d\n", create_status );
+    }
     rocketnet_unit_check( server );
     rn_test_server_io_stop_and_close( &server->io );
     memset( operations, 0, sizeof( *operations ) );
@@ -421,6 +470,7 @@ static rocketnet_server_transport_t * transport_results_make_server( transport_r
     server->io.instance = lie;
     server->io.operations = operations;
     rocketnet_server_transport_set_test_timestamp( server, 1000 );
+
     return server;
 }
 
@@ -432,6 +482,7 @@ static void test_transport_results_server_receive_checks_counts()
 
     lie.mode = 1;
     lie.calls = 0;
+
     const uint64_t received_before = server->counters.values[ROCKETNET_COUNTER_PACKETS_RECEIVED];
     rocketnet_server_transport_update( server, 1000.0 );
     rocketnet_unit_check( server->transport_faults == 1 );
@@ -490,7 +541,10 @@ static int transport_results_stopping_receive( void * transport, rocketnet_addre
     from[0].port = 9;
     bytes[0] = 4;
     if ( stride >= 4 )
+    {
         memset( data, 0x33, 4 );
+    }
+
     return 1;
 }
 
@@ -509,6 +563,7 @@ static rocketnet_server_transport_t * transport_results_stopping_server( transpo
     lie->workers_exited = 0;
     lie->calls = 0;
     lie->send_calls = 0;
+
     return server;
 }
 
@@ -590,7 +645,6 @@ static void test_transport_results_server_truncated_datagram_refused()
 }
 REGISTER_UNIT_TEST( test_transport_results_server_truncated_datagram_refused );
 
-
 static void transport_results_set_ipv4( rocketnet_address_t * address, int a, int b, int c, int d, uint16_t port )
 {
     memset( address, 0, sizeof( *address ) );
@@ -604,19 +658,23 @@ static void transport_results_set_ipv4( rocketnet_address_t * address, int a, in
 
 // A datagram reaches the endpoint bound to its destination, or a wildcard of
 // that family. 10.0.0.1:p does not reach an endpoint bound to 127.0.0.1:p.
+
 static void test_loopback_transport_io_results_matches_destination_or_wildcard()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
 
     rocketnet_address_t server_address, client_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
     rocketnet_unit_check( rocketnet_address_parse( &client_address, "0.0.0.0:0" ) );
+
     rocketnet_server_transport_io_t server = {};
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
@@ -665,23 +723,28 @@ static void transport_results_fill_gro( struct msghdr * header, char * control, 
     memset( control, 0, control_bytes );
     header->msg_control = control;
     header->msg_controllen = (socklen_t) control_bytes;
+
     struct cmsghdr * cmsg = CMSG_FIRSTHDR( header );
     rocketnet_unit_check( cmsg != NULL );
     cmsg->cmsg_level = IPPROTO_UDP;
     cmsg->cmsg_type = UDP_GRO;
     cmsg->cmsg_len = valid_len ? CMSG_LEN( sizeof( int ) ) : (socklen_t) sizeof( struct cmsghdr );
     if ( valid_len )
+    {
         memcpy( CMSG_DATA( cmsg ), &stride, sizeof( stride ) );
+    }
 }
 
 // The GRO cmsg is read only when the message is not MSG_CTRUNC and cmsg_len
 // holds an int. Anything else is one fault and one datagram. The header is
 // built in memory; no socket.
+
 static void test_gso_transport_io_results_gro_cmsg_is_checked()
 {
     const int message_bytes = 300;
     const int stride = 100;
     alignas( 16 ) char control[CMSG_SPACE( sizeof( int ) )];
+
     struct msghdr header;
     uint64_t faults = 0;
 

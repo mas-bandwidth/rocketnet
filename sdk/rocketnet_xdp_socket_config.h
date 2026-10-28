@@ -66,4 +66,4 @@ static inline bool rocketnet_xdp_attached_any( const rocketnet_xdp_attached_t * 
 
 ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_FILL_RING_SIZE & ( ROCKETNET_XDP_FILL_RING_SIZE - 1 ) ) == 0, "the kernel takes only power of two ring sizes" );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_SOCKET_CONFIG_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_SOCKET_CONFIG_H

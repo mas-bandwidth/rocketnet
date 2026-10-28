@@ -30,6 +30,7 @@ static int standard_wire_primitives_sequence( uint8_t * out, int capacity, uint3
 {
     if ( capacity < 8 )
         return -1;
+
     uint8_t * p = out;
     rocketnet_write_uint64( &p, rocketnet_reconstruct_sequence( wire_field, highest_opened ) );
     return (int) ( p - out );
@@ -66,6 +67,7 @@ static int standard_wire_primitives_generate( const char * id, uint8_t * out, in
         address.port = 56789;
         return standard_wire_primitives_address( out, capacity, &address );
     }
+
     if ( strcmp( id, "t4.address-ipv6" ) == 0 )
     {
         struct rocketnet_address_t address;
@@ -77,6 +79,7 @@ static int standard_wire_primitives_generate( const char * id, uint8_t * out, in
         address.port = 56789;
         return standard_wire_primitives_address( out, capacity, &address );
     }
+
     return -1;
 }
 
@@ -87,17 +90,23 @@ static void test_standard_wire_primitives_vectors()
 
     // zero is never a valid sequence: the wire field of zero with nothing
     // opened reconstructs to zero, which the receiver ignores
+
     uint8_t zero[8];
     rocketnet_unit_check( standard_wire_primitives_generate( "t4.sequence-zero", zero, (int) sizeof( zero ) ) == 8 );
+
     for ( int i = 0; i < 8; i++ )
+    {
         rocketnet_unit_check( zero[i] == 0 );
+    }
 
     // the exact tie takes the larger candidate, and the wrap takes the next
     // 64-bit value
+
     rocketnet_unit_check( rocketnet_reconstruct_sequence( 0u, 0x17fffffffull ) == 0x200000000ull );
     rocketnet_unit_check( rocketnet_reconstruct_sequence( 0u, 0xffffffffull ) == 0x100000000ull );
 
     // an unknown id is refused by the generator
+
     uint8_t scratch[ROCKETNET_ADDRESS_BYTES_IPV6];
     rocketnet_unit_check( standard_wire_primitives_generate( "t4.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
 }

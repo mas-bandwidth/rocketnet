@@ -69,6 +69,7 @@ static void test_small_records_packed_several_per_packet()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     rn_packet_builder_t builder;
@@ -82,16 +83,22 @@ static void test_small_records_packed_several_per_packet()
 
     struct rn_packet_item_t items[4];
     for ( int i = 0; i < 4; i++ )
+    {
         builder_item( &items[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[i], 16 );
+    }
 
     const int packets = rn_packet_builder_write( &builder, items, 4, frames, 4 );
 
     // all four small records fit one packet: one write, not four
+
     rocketnet_unit_check( packets == 1 );
     for ( int i = 0; i < 4; i++ )
+    {
         rocketnet_unit_check( items[i].taken == 1 );
+    }
 
     // and the packet reads back as four records of 16 bytes each
+
     struct rocketnet_message_limits_t limits;
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = (int) region->num_channels;
@@ -115,10 +122,12 @@ static void test_small_records_packed_several_per_packet()
         rocketnet_unit_check( record.data[0] == 0x33 );
         records++;
     }
+
     rocketnet_unit_check( records == 4 );
 
     // a pure-unreliable packet carries no reliable number, so it takes no
     // sent-map entry (I3)
+
     uint32_t count = 99;
     const uint64_t * numbers = rn_packet_builder_numbers( &builder, 0, &count );
     rocketnet_unit_check( numbers != NULL );
@@ -136,6 +145,7 @@ static void test_builder_obeys_budget_and_class_order()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     memset( &builder_counters, 0, sizeof( builder_counters ) );
@@ -154,6 +164,7 @@ static void test_builder_obeys_budget_and_class_order()
     memset( data, 0x77, sizeof( data ) );
 
     // offered out of order on purpose: the unreliable first, the retransmit last
+
     struct rn_packet_item_t items[3];
     builder_item( &items[0], 0, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[0], 32 );
     builder_item( &items[1], 1, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ROCKETNET_SEND_CLASS_NEW_RELIABLE, data[1], 32 );
@@ -166,6 +177,7 @@ static void test_builder_obeys_budget_and_class_order()
 
     // the packet reads back in class order: the retransmit, then the new
     // reliable, then the unreliable
+
     struct rocketnet_message_limits_t limits;
     memset( &limits, 0, sizeof( limits ) );
     limits.num_channels = (int) region->num_channels;
@@ -186,10 +198,12 @@ static void test_builder_obeys_budget_and_class_order()
     rocketnet_unit_check( record.channel == 0 );
 
     // the packet charged the bucket
+
     rocketnet_unit_check( budget.bytes_spent > 0 );
 
     // a budget that cannot pay one packet writes nothing: the unreliable item
     // is dropped and counted, and the reliable one waits, never dropped
+
     struct rocketnet_send_budget_t poor;
     rocketnet_unit_check( rocketnet_send_budget_init( &poor, ROCKETNET_SEND_BUDGET_MIN_KBPS, now ) );
     poor.tokens = 1.0;                                          // less than any packet's wire bytes
@@ -207,6 +221,7 @@ static void test_builder_obeys_budget_and_class_order()
 
     // a reliable item under the same budget waits and is never dropped, and no
     // unreliable item after it spends the bucket
+
     struct rn_packet_item_t reliable;
     builder_item( &reliable, 0, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, ROCKETNET_SEND_CLASS_NEW_RELIABLE, data[1], 32 );
     reliable.number = 0;
@@ -228,8 +243,10 @@ static void test_packet_builder_no_allocation_after_create()
     rocketnet_unit_check( rocketnet_init( NULL, builder_malloc, builder_free ) == ROCKETNET_STATUS_OK );
 
     builder_allocs = 0;
+
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
+
     const size_t after_create = builder_allocs;
     rocketnet_unit_check( after_create > 0 );                   // create is the one allocation
 
@@ -250,10 +267,13 @@ static void test_packet_builder_no_allocation_after_create()
     // the hot path: write packets, dispatch records, feed acks, end the update.
     // each update queues its items afresh: the builder skips an item it marked
     // taken (rn_builder_writable, sdk/rocketnet_packet_builder.cpp:131).
+
     for ( int update = 0; update < 8; update++ )
     {
         for ( int i = 0; i < 2; i++ )
+        {
             builder_item( &items[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, data[i], 16 );
+        }
 
         rocketnet_unit_check( rn_packet_builder_write( &builder, items, 2, frames, 4 ) == 1 );
 
@@ -274,6 +294,7 @@ static void test_packet_builder_no_allocation_after_create()
     }
 
     // zero allocator calls after create
+
     rocketnet_unit_check( builder_allocs == after_create );
 
     rn_arena_destroy( arena );
@@ -289,9 +310,11 @@ static void test_packet_builder_no_allocation_after_create()
 static void test_message_record_valid_refuses_each_shape()
 {
     // NULL is refused
+
     rocketnet_unit_check( !rocketnet_message_record_valid( NULL ) );
 
     // a zeroed base record is valid for every code 0..NUM_CODES-1
+
     for ( int code = 0; code < ROCKETNET_MESSAGE_NUM_CODES; code++ )
     {
         struct rocketnet_message_record_t record;
@@ -460,7 +483,9 @@ static const uint64_t reference_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 
 static void reference_reset_clocks( struct reference_scheduler_t * scheduler )
 {
     for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
+    {
         scheduler->level_clock[p] = reference_seed[p];
+    }
     scheduler->clock_base = 0;
 }
 
@@ -492,25 +517,30 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
 
         bool head = true;
         int level = items[i].priority;
+
         for ( int j = 0; j < num_items; j++ )
         {
             scheduler->visits++;
             if ( j == i || items[j].channel != items[i].channel || items[j].send_class != (uint8_t) send_class || !reference_writable( &items[j] ) )
                 continue;
+
             if ( j < i )
             {
                 head = false;
                 break;
             }
+
             if ( items[j].priority < level )
+            {
                 level = items[j].priority;
+            }
         }
+
         if ( !head )
             continue;
 
         const uint64_t clock = reference_effective_clock( scheduler, level );
         const uint32_t distance = ( items[i].channel % channels + channels - scheduler->round_robin % channels - 1 ) % channels;
-
         if ( best < 0 || clock < best_clock || ( clock == best_clock && level < best_level ) ||
              ( clock == best_clock && level == best_level && distance < best_distance ) )
         {
@@ -522,6 +552,7 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
     }
 
     *out_level = best_level;
+
     return best;
 }
 
@@ -541,7 +572,6 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
 {
     int packets = 0;
     const int limit = scheduler->packets_per_update < num_payloads ? scheduler->packets_per_update : num_payloads;
-
     for ( int p = 0; p < limit; p++ )
     {
         struct rocketnet_message_writer_t writer;
@@ -571,7 +601,6 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
                 record.code = items[i].code;
                 record.data = items[i].data;
                 record.bytes = (int) items[i].bytes;
-
                 if ( !rocketnet_message_writer_add( &writer, &record ) )
                 {
                     items[i].taken = 0;
@@ -582,7 +611,9 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
                 records++;
 
                 if ( items[i].number != ROCKETNET_PACKET_NUMBER_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_NUMBERS )
+                {
                     count++;
+                }
 
                 scheduler->round_robin = items[i].channel;
                 reference_take_level( scheduler, level );
@@ -591,7 +622,6 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
                     goto packet_done;
             }
         }
-
     packet_done:
 
         const int payload_bytes = rocketnet_message_writer_finish( &writer );
@@ -607,7 +637,9 @@ static int reference_write( struct reference_scheduler_t * scheduler, struct rn_
         if ( reference_writable( &items[i] ) )
             drained = false;
     if ( drained )
+    {
         reference_reset_clocks( scheduler );
+    }
 
     return packets;
 }
@@ -647,14 +679,19 @@ static void plan_fill( int num_items, uint32_t channels )
         const uint32_t roll = plan_random() % 100;
         uint16_t channel = (uint16_t) ( plan_random() % channels );
         if ( roll < 3 )
+        {
             channel = (uint16_t) ( channels + plan_random() % 3 );
+        }
+
         const int send_class = (int) ( plan_random() % 4 );
         const int bytes = 2 + (int) ( plan_random() % 120 );
         uint8_t * data = plan_data[i];
         data[0] = (uint8_t) ( i & 0xFF );
         data[1] = (uint8_t) ( i >> 8 );
         for ( int b = 2; b < bytes; b++ )
+        {
             data[b] = (uint8_t) ( i + b );
+        }
 
         struct rn_packet_item_t * item = &plan_builder_items[i];
         builder_item( item, channel, ROCKETNET_MESSAGE_CODE_UNRELIABLE, send_class, data, bytes );
@@ -668,7 +705,9 @@ static void plan_fill( int num_items, uint32_t channels )
         if ( plan_random() % 3 == 0 )
             item->number = (uint64_t) i;                        // numbered: the packet's number limit
         if ( plan_random() % 30 == 0 )
+        {
             item->alone = 1;
+        }
 
         plan_reference_items[i] = *item;
     }
@@ -682,12 +721,14 @@ static void test_packet_builder_matches_reference_order()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     plan_random_state = 0x2545F491u;
 
     uint8_t * builder_frames[PLAN_PAYLOADS];
     uint8_t * reference_frames[PLAN_PAYLOADS];
+
     for ( int p = 0; p < PLAN_PAYLOADS; p++ )
     {
         builder_frames[p] = plan_builder_frames[p];
@@ -730,15 +771,21 @@ static void test_packet_builder_matches_reference_order()
             const int builder_packets = rn_packet_builder_write( &builder, plan_builder_items, num_items, builder_frames, PLAN_PAYLOADS );
 
             rocketnet_unit_check( builder_packets == reference_packets );
+
             for ( int p = 0; p < builder_packets; p++ )
             {
                 rocketnet_unit_check( builder.packet[p].payload_bytes == reference_payload_bytes[p] );
                 rocketnet_unit_check( memcmp( builder_frames[p], reference_frames[p], reference_payload_bytes[p] ) == 0 );
             }
+
             for ( int i = 0; i < num_items; i++ )
+            {
                 rocketnet_unit_check( plan_builder_items[i].taken == plan_reference_items[i].taken );
+            }
             for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
+            {
                 rocketnet_unit_check( builder.level_clock[l] == reference.level_clock[l] );
+            }
             rocketnet_unit_check( builder.clock_base == reference.clock_base );
             rocketnet_unit_check( builder.round_robin == reference.round_robin );
 
@@ -747,6 +794,7 @@ static void test_packet_builder_matches_reference_order()
 
             // the application queues more between updates: a few new items
             // replace taken ones, so the clocks and the round robin carry over
+
             for ( int i = 0; i < num_items; i++ )
             {
                 if ( plan_builder_items[i].taken && plan_random() % 8 == 0 )
@@ -772,12 +820,14 @@ static void test_packet_builder_operations_bounded()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     plan_random_state = 0x9E3779B9u;
 
     uint8_t * builder_frames[PLAN_PAYLOADS];
     uint8_t * reference_frames[PLAN_PAYLOADS];
+
     for ( int p = 0; p < PLAN_PAYLOADS; p++ )
     {
         builder_frames[p] = plan_builder_frames[p];
@@ -818,9 +868,13 @@ static void test_packet_builder_operations_bounded()
 
             uint64_t taken = 0;
             for ( int i = 0; i < num_items; i++ )
+            {
                 rocketnet_unit_check( plan_builder_items[i].taken == plan_reference_items[i].taken );
+            }
             for ( int p = 0; p < packets; p++ )
+            {
                 taken += builder.packet[p].records;
+            }
             rocketnet_unit_check( taken >= 1 );
 
             const struct rn_packet_builder_plan_t * plan = rn_packet_builder_test_last_plan();
@@ -828,10 +882,13 @@ static void test_packet_builder_operations_bounded()
             rocketnet_unit_check( plan->plan_operations <= (uint64_t) num_items * 9 );
             rocketnet_unit_check( plan->selection_operations <= ( taken + (uint64_t) packets_per_update ) * groups );
 
-            // At the maximum production plan, grouping plus selection costs
-            // under one tenth of BASE's repeated item scans.
+            // at the maximum production plan, grouping plus selection costs
+            // under one tenth of BASE's repeated item scans
+
             if ( num_items == ROCKETNET_PACKET_BUILDER_MAX_ITEMS )
+            {
                 rocketnet_unit_check( ( plan->plan_operations + plan->selection_operations ) * 10 < reference.visits );
+            }
         }
     }
 
@@ -849,6 +906,7 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     rn_packet_builder_t builder;
@@ -858,6 +916,7 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 
     static const uint16_t channels[] = { 65535, 0, 32768, 256, 255, 65535, 0, 32768 };
     struct rn_packet_item_t items[8];
+
     for ( int i = 0; i < 8; i++ )
     {
         builder_item( &items[i], channels[i], ROCKETNET_MESSAGE_CODE_UNRELIABLE, i % 4, plan_data[i], 2 );
@@ -878,13 +937,16 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
         const struct rn_packet_builder_group_t * group = &plan->groups[g];
         rocketnet_unit_check( group->begin < group->end );
         rocketnet_unit_check( group->end <= 8 );
+
         uint8_t suffix = ROCKETNET_PACKET_BUILDER_LEVELS;
+
         for ( uint32_t p = group->end; p > group->begin; p-- )
         {
             const struct rn_packet_builder_sequence_t * entry = &plan->sequence[p - 1];
             rocketnet_unit_check( entry->call_epoch == builder.call_epoch );
             rocketnet_unit_check( entry->item_index < 8 );
             rocketnet_unit_check( entry->group_index == g );
+
             const struct rn_packet_item_t * item = &items[entry->item_index];
             rocketnet_unit_check( item->send_class == group->send_class );
             rocketnet_unit_check( item->channel == group->channel );
@@ -894,8 +956,9 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
     }
 #endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
-    // A one-item next call advances the epoch and exposes only its one group;
-    // every slot outside that range remains invalid for the current epoch.
+    // a one-item next call advances the epoch and exposes only its one group;
+    // every slot outside that range remains invalid for the current epoch
+
     builder_item( &items[0], 65535, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_NEW_RELIABLE, plan_data[0], 2 );
     rocketnet_unit_check( rn_packet_builder_write( &builder, items, 1, frames, 1 ) == 1 );
     rocketnet_unit_check( builder.call_epoch == 2 );
@@ -909,12 +972,17 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
 
     struct rn_packet_item_t over[ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1];
     for ( int i = 0; i <= ROCKETNET_PACKET_BUILDER_MAX_ITEMS; i++ )
+    {
         builder_item( &over[i], (uint16_t) i, ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_SEND_CLASS_UNRELIABLE, plan_data[i % PLAN_MAX_ITEMS], 2 );
+    }
+
     const uint64_t before_over = builder.call_epoch;
     rocketnet_unit_check( rn_packet_builder_write( &builder, over, ROCKETNET_PACKET_BUILDER_MAX_ITEMS + 1, frames, 1 ) == 0 );
     rocketnet_unit_check( builder.call_epoch == before_over );
     for ( int i = 0; i <= ROCKETNET_PACKET_BUILDER_MAX_ITEMS; i++ )
+    {
         rocketnet_unit_check( !over[i].taken );
+    }
 
     builder.call_epoch = UINT64_MAX;
     items[0].taken = 0;

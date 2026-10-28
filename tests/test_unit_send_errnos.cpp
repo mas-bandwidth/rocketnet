@@ -37,6 +37,7 @@ static void test_send_errnos_counted_by_call()
 {
     rocketnet_platform_send_errnos_t errnos;
     memset( &errnos, 0, sizeof( errnos ) );
+
     rocketnet_unit_check( rocketnet_platform_send_errno_kind( 0 ) == ROCKETNET_PLATFORM_SEND_ERRNO_NONE );
     rocketnet_unit_check( rocketnet_platform_send_errno_kind( EAGAIN ) == ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN );
     rocketnet_unit_check( rocketnet_platform_send_errno_kind( ENOBUFS ) == ROCKETNET_PLATFORM_SEND_ERRNO_ENOBUFS );
@@ -46,9 +47,14 @@ static void test_send_errnos_counted_by_call()
     rocketnet_unit_check( rocketnet_platform_send_errnos_format( &errnos, text, sizeof( text ) ) == 0 && text[0] == '\0' );
 
     // the first failure of a call and errno reports first; later ones only count
+
     rocketnet_unit_check( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EAGAIN ) );
+
     for ( int i = 0; i < 999; ++i )
+    {
         rocketnet_unit_check( !rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EAGAIN ) );
+    }
+
     rocketnet_unit_check( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_REPLAY, EAGAIN ) );
     rocketnet_unit_check( rocketnet_platform_send_errnos_read( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN ) == 1000 );
     rocketnet_unit_check( rocketnet_platform_send_errnos_read( &errnos, ROCKETNET_PLATFORM_SEND_CALL_REPLAY, ROCKETNET_PLATFORM_SEND_ERRNO_EAGAIN ) == 1 );
