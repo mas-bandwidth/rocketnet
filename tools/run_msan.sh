@@ -15,7 +15,9 @@
 # Exit status: 0 when the run is clean, or when every finding is listed in
 # tools/msan_known.txt and every failed test carries the MSan exit code; 1
 # when a finding is not listed there, a test crashes or exits for any other
-# reason, or the run stops without a test fail line. A finding is the top
+# reason, a fatal MemorySanitizer ERROR appears in any process (its exit
+# code is 0 here, so the suite reads that case as passed), or the run stops
+# without a test fail line. A finding is the top
 # frame of a MemorySanitizer warning. Its origin trace is printed with it.
 #
 # The C++ standard library is the MSan-instrumented libc++ for the active
@@ -156,6 +158,24 @@ def frame(line):
     line = shorten(line)
     line = re.sub(r"^\s*#\d+\s+0x[0-9a-f]+\s+(?:in\s+)?", "", line)
     return line.strip()
+
+# A fatal MSan error (allocation-size-too-big, out-of-memory, a CHECK) ends
+# its process with MSan's exitcode, which is 0 here, so the suite reads the
+# case as passed though it stopped where the error was raised. Up to clang 18
+# every 1000-slot case died that way at its server create and was never
+# checked. Any ERROR line fails the gate, naming the case from its stack.
+fatal = []
+for path in sorted(glob.glob(os.path.join(reports, "msan.*"))):
+    data = open(path, errors="replace").read()
+    for line in data.splitlines():
+        if re.match(r"^==\d+==ERROR: MemorySanitizer:", line):
+            case = re.search(r"\bin (test_[a-z0-9_]+)\b", data)
+            fatal.append("%s: %s" % (case.group(1) if case else os.path.basename(path), shorten(re.sub(r"^==\d+==", "", line))))
+            break
+if fatal:
+    for entry in fatal:
+        print("MSan: fatal error: %s" % entry)
+    sys.exit(1)
 
 texts = []
 for path in sorted(glob.glob(os.path.join(reports, "msan.*"))):

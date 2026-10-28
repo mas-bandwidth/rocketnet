@@ -31,9 +31,20 @@ sys.exit(%(status)d)
 '''
 
 
+FATAL_TEXT = (
+    "==1==ERROR: MemorySanitizer: requested allocation size 0x2d25c8997 exceeds"
+    " maximum supported size of 0x200000000\n"
+    "    #0 0x1000 in malloc\n"
+    "    #1 0x2000 in test_server_stats_current_every_update tools/fixture.cpp:3:1\n"
+    "SUMMARY: MemorySanitizer: allocation-size-too-big in malloc\n"
+)
+
+
 def warning_text(top):
     if top is None:
         return ""
+    if top == "fatal":
+        return FATAL_TEXT
     return (
         "==1==WARNING: MemorySanitizer: use-of-uninitialized-value\n"
         "    #0 0x1000 in %s\n"
@@ -116,6 +127,18 @@ class RunMsanGateTest(unittest.TestCase):
         code, output = self.run_gate("", 0, UNKNOWN_TOP)
         self.assertEqual(code, 1, output)
         self.assertIn(UNKNOWN_TOP, output)
+
+    def test_fatal_error_with_zero_exit_fails_naming_the_case(self):
+        # MSan's exitcode is 0 in the gate, so a case killed by a fatal
+        # error exits 0 and the suite prints its pass line
+        stdout = "test_server_stats_current_every_update\n*** ALL TESTS PASSED ***\n"
+        code, output = self.run_gate(stdout, 0, "fatal")
+        self.assertEqual(code, 1, output)
+        self.assertIn(
+            "MSan: fatal error: test_server_stats_current_every_update: "
+            "ERROR: MemorySanitizer: requested allocation size",
+            output,
+        )
 
     def test_clean_run_passes(self):
         code, output = self.run_gate("", 0, None)

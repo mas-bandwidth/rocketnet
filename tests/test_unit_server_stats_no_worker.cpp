@@ -23,6 +23,7 @@
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
 #include "suite_runner.h"
+#include "msan_scale_allocator.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,6 +43,7 @@
 // almost every slot at the old 100 ms.
 static void test_server_stats_current_every_update()
 {
+    msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     no_worker_world_t * world = &g_no_worker_world;
     no_worker_server_create( world, NO_WORKER_CLIENTS );
     no_worker_clients_create( world, NO_WORKER_CLIENTS );

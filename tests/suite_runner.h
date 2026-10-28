@@ -902,6 +902,47 @@ inline int suite_finish( const std::vector<suite_result> & results, bool passed 
     return 0;
 }
 
+// A case that declares SUITE_CASE_RSS_BOUND is a full-capacity server: its
+// memory plan allocates every slot up front, and where that plan is charged
+// as it is allocated rather than as it is touched, such a case runs alone.
+//
+// Windows charges committed memory against the system commit limit when it is
+// allocated, not when it is touched, so one such case commits tens of GiB, and
+// two at once (or one with the cases beside it) can pass the limit: every
+// allocation in every running case can then fail, wherever it is (a world that
+// does not create, a connection that comes back NULL, a case that does not
+// spawn).
+//
+// MemorySanitizer writes shadow and origin bytes for the blocks it poisons, so
+// a planned block is resident in shadow though the case never touches it. The
+// full-capacity cases keep their largest blocks unpoisoned
+// (tests/msan_scale_allocator.h), and each still peaks at 3 to 6 GiB; five of
+// them at once filled a 20 GiB runner and stalled every case beside them past
+// the 600 s case limit (amd-2, 2026-10-28). Under MSan such a case runs alone.
+
+#if defined( __has_feature )
+#if __has_feature( memory_sanitizer )
+#define SUITE_RSS_BOUND_CASES_RUN_ALONE 1
+#endif // #if __has_feature( memory_sanitizer )
+#endif // #if defined( __has_feature )
+#if defined( _WIN32 )
+#define SUITE_RSS_BOUND_CASES_RUN_ALONE 1
+#endif // #if defined( _WIN32 )
+
+inline bool suite_case_runs_alone( const std::string & name )
+{
+#if defined( SUITE_RSS_BOUND_CASES_RUN_ALONE )
+    suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
+    for ( int i = 0; i < registry->count; i++ )
+        if ( name == registry->entries[i].name )
+            return true;
+#else // #if defined( SUITE_RSS_BOUND_CASES_RUN_ALONE )
+    (void) name;
+#endif // #if defined( SUITE_RSS_BOUND_CASES_RUN_ALONE )
+
+    return false;
+}
+
 #if !defined( _WIN32 )
 
 inline void suite_drain( int fd, std::string & output )
@@ -1084,6 +1125,7 @@ inline int suite_main( int argc, char ** argv,
         int group;
         int out_fd;
         bool uring;
+        bool alone;
     };
     const bool capture = !suite_env_is_set( "ROCKETNET_TEST_VERBOSE" );
     if ( capture )
@@ -1097,7 +1139,8 @@ inline int suite_main( int argc, char ** argv,
     bool passed = true;
     while ( passed && ( next < pending.size() || !running.empty() ) )
     {
-        while ( (int) running.size() < jobs && next < pending.size() && ( running.empty() || running[0].group == pending[next].group ) &&
+        while ( (int) running.size() < jobs && next < pending.size() &&
+                ( running.empty() || ( running[0].group == pending[next].group && !running[0].alone && !suite_case_runs_alone( pending[next].name ) ) ) &&
                 !( bound_io_uring && uring_running >= uring_slots && suite_case_is_io_uring( pending[next].name ) ) )
         {
             const size_t index = next++;
@@ -1207,6 +1250,7 @@ inline int suite_main( int argc, char ** argv,
             child.group = item.group;
             child.out_fd = pipefd[0];
             child.uring = bound_io_uring && suite_case_is_io_uring( item.name );
+            child.alone = suite_case_runs_alone( item.name );
             uring_running += child.uring ? 1 : 0;
             running.push_back( child );
         }
@@ -1344,25 +1388,6 @@ inline std::string suite_spawn_failure_text( const char * call, DWORD error )
     char text[96];
     snprintf( text, sizeof( text ), " failed to spawn (%s error %lu)", call, (unsigned long) error );
     return text;
-}
-
-// A case that declares SUITE_CASE_RSS_BOUND is a full-capacity server: its
-// memory plan allocates every slot up front. Windows charges committed memory
-// against the system commit limit when it is allocated, not when it is
-// touched, so one such case commits tens of GiB, and two at once (or one with
-// the cases beside it) can pass the limit: every allocation in every running
-// case can then fail, wherever it is (a world that does not create, a
-// connection that comes back NULL, a case that does not spawn). Such a case
-// runs alone.
-
-inline bool suite_case_runs_alone( const std::string & name )
-{
-    suite_case_rss_bound_registry_t * registry = suite_case_rss_bound_registry();
-    for ( int i = 0; i < registry->count; i++ )
-        if ( name == registry->entries[i].name )
-            return true;
-
-    return false;
 }
 
 inline int suite_main( int argc, char ** argv,
