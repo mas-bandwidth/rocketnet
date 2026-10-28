@@ -438,10 +438,11 @@ static void split_print_server_calls( const struct load_timing_t * timing, uint6
 
         printf( "split_server_call: run_id=%016" PRIx64 " total=%d transport=%s scope=traffic_plus_drain "
                 "load=%s call=%s count=%" PRIu64 " p50_upper_us=%" PRIu64 " p99_upper_us=%" PRIu64 " "
-                "max_us=%.3f overbudget_count=%" PRIu64 " budget_us=100\n",
+                "p999_upper_us=%" PRIu64 " max_us=%.3f overbudget_count=%" PRIu64 " budget_us=100\n",
                 run_id, total, transport, split_load_name(), load_timing_names[call], timing->count[call],
                 load_timing_quantile_upper_us( timing, call, 50 ),
                 load_timing_quantile_upper_us( timing, call, 99 ),
+                load_timing_permille_upper_us( timing, call, 999 ),
                 (double) timing->max_ns[call] / 1000.0, timing->overbudget_count[call] );
     }
 }

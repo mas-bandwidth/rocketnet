@@ -231,5 +231,6 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rngsohandoff (2 required) | planned for the final deliverable |
 | CBMC bounded proofs of the untrusted-input readers to the full packet size (Frama-C route for C++) | planned for the final deliverable |
 | Frama-Clang WP trial on rocketnet_ack_block_read | planned for the final deliverable |
+| Real-load nightly: 1000 clients over the LAN against one real server per transport (xdp, gso, io_uring, iocp, rio) | planned for the final deliverable |
 | Holistic review: six independent whole-system reviewers | planned for the final deliverable |
 | complete | 0% |

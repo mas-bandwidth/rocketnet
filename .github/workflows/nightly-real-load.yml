@@ -1,0 +1,154 @@
+# The nightly real load: 1000 real clients against one real server, once per
+# server transport, over the LAN. Each cell is one run of scripts/lan-proof
+# (docs/LAN-PROOF.md): the server alone on its machine pinned to the cell's
+# transport, the clients in shards of at most 250 on other machines, all
+# traffic across the switch, the proof load of docs/LOAD_SPLIT.md, and the
+# merger (tools/check_split_load.py --load proof) on the collected logs.
+#
+# Cells, one at a time, in this order:
+#   xdp        AF_XDP, bare metal on the XDP bench's test port (--xdp-uplink),
+#              with the self-detach timer lan-proof arms before the attach
+#   gso        Linux sockets, segmentation offload
+#   io_uring   Linux io_uring
+#   iocp       Windows, Linux clients; the server holds the Windows bench's
+#   rio        exclusive CI lock for its whole life, as lan-proof does
+#
+# The coordinator here runs only ssh, scp and the merger. The machines come
+# from repository variables, never from this file: an inventory in
+# scripts/lan-proof.inventory.example's form per group
+# (ROCKETNET_REAL_LOAD_INVENTORY_XDP, _LINUX for gso and io_uring, _WINDOWS
+# for iocp and rio) and ROCKETNET_REAL_LOAD_XDP_UPLINK, the XDP test port. A
+# group without its variable fails its cells by name. The coordinator's runner
+# account needs non-interactive ssh to every machine of every inventory.
+#
+# Per cell, tools/real_load_report.py prints the server call times (p50, p99,
+# p999 upper bounds and maximum, from split_server_call), connects,
+# disconnects, messages sent and received each way and the merger's
+# unreliable_lost. The rows go to the job summary and the real-load artifact
+# (TSV, JSON, Markdown, and every cell's run directory). A cell fails the night
+# when fewer than every client connected, on any disconnect or timeout, or
+# when the proof cell is not PASS. The 100 microsecond per-call target is
+# reported (`target` inside or outside, on p99 of server_update and
+# server_send_packets) and is not a gate yet.
+#
+# Schedule: 03:00 UTC, before the 05:30 proofs and frame budget and every
+# later nightly. Five cells of 300 seconds plus builds take about an hour;
+# lan-proof refuses a cell while any of its machines is busy (load at or above
+# half its cores), so a host shared with another nightly fails that cell by
+# name rather than measuring noise. A red night here is a found bug or a named
+# refusal, read by whoever is on the estate that morning.
+
+name: nightly-real-load
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-load:
+    name: 1000 clients over the LAN, per server transport
+    runs-on: [self-hosted, Linux, X64, fleet, rocketnet-quiet]
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-real-load
+      cancel-in-progress: false
+    env:
+      DURATION: "300"
+      CLIENTS: "1000"
+      INVENTORY_XDP: ${{ vars.ROCKETNET_REAL_LOAD_INVENTORY_XDP }}
+      INVENTORY_LINUX: ${{ vars.ROCKETNET_REAL_LOAD_INVENTORY_LINUX }}
+      INVENTORY_WINDOWS: ${{ vars.ROCKETNET_REAL_LOAD_INVENTORY_WINDOWS }}
+      XDP_UPLINK: ${{ vars.ROCKETNET_REAL_LOAD_XDP_UPLINK }}
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Report unit cases
+        run: python3 tools/test_real_load_report.py -v
+
+      - name: Run the cells
+        shell: bash
+        run: |
+          set -u
+          head=$(git rev-parse HEAD)
+          base="$RUNNER_TEMP/real-load"
+          rm -rf "$base"
+          mkdir -p "$base"
+          echo "$head" > "$base/head.txt"
+          index=0
+          for cell in xdp gso io_uring iocp rio; do
+            dir="$base/$cell"
+            mkdir -p "$dir"
+            case "$cell" in
+              xdp) inventory_text=$INVENTORY_XDP; variable=ROCKETNET_REAL_LOAD_INVENTORY_XDP ;;
+              gso|io_uring) inventory_text=$INVENTORY_LINUX; variable=ROCKETNET_REAL_LOAD_INVENTORY_LINUX ;;
+              iocp|rio) inventory_text=$INVENTORY_WINDOWS; variable=ROCKETNET_REAL_LOAD_INVENTORY_WINDOWS ;;
+            esac
+            if [ -z "$inventory_text" ]; then
+              echo "lan-proof: OWED: repository variable $variable is not set" | tee "$dir/lan-proof.console"
+              continue
+            fi
+            printf '%s\n' "$inventory_text" > "$base/$cell.inventory"
+            # every machine answers ssh before anything is built
+            unreachable=""
+            while read -r label ssh_name _; do
+              case "$label" in ''|\#*) continue ;; esac
+              timeout 30 ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_name" true >/dev/null 2>&1 ||
+                unreachable="$unreachable $label"
+            done < "$base/$cell.inventory"
+            if [ -n "$unreachable" ]; then
+              echo "lan-proof: OWED: no non-interactive ssh from this runner to$unreachable" | tee "$dir/lan-proof.console"
+              continue
+            fi
+            extra=""
+            if [ "$cell" = "xdp" ]; then
+              if [ -z "$XDP_UPLINK" ]; then
+                echo "lan-proof: OWED: repository variable ROCKETNET_REAL_LOAD_XDP_UPLINK is not set" | tee "$dir/lan-proof.console"
+                continue
+              fi
+              extra="--xdp-uplink $XDP_UPLINK"
+            fi
+            index=$(( index + 1 ))
+            # 16 hex digits: the start second, the cell index, the run number
+            run_id=$(printf '%010x%02x%04x' "$(date +%s)" "$index" "$(( GITHUB_RUN_NUMBER % 65536 ))")
+            echo "::group::cell $cell run $run_id"
+            # shellcheck disable=SC2086
+            scripts/lan-proof --inventory "$base/$cell.inventory" --cell "$cell" \
+              --duration "$DURATION" --clients "$CLIENTS" --commit "$head" \
+              --run-dir "$dir" --run-id "$run_id" $extra 2>&1 | tee "$dir/lan-proof.console"
+            echo "::endgroup::"
+          done
+
+      - name: Report
+        if: always()
+        shell: bash
+        run: |
+          set -u
+          base="$RUNNER_TEMP/real-load"
+          head=$(cat "$base/head.txt" 2>/dev/null || git rev-parse HEAD)
+          status=0
+          python3 tools/real_load_report.py --out "$base/report" --head "$head" \
+            --date "$(date -u +%Y-%m-%dT%H:%MZ)" \
+            xdp="$base/xdp" gso="$base/gso" io_uring="$base/io_uring" \
+            iocp="$base/iocp" rio="$base/rio" || status=$?
+          cat "$base/report/real-load.md" >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          exit "$status"
+
+      - name: Upload the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-load-${{ github.run_id }}
+          path: ${{ runner.temp }}/real-load
+          retention-days: 90
+          if-no-files-found: warn
