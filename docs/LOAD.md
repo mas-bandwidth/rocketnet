@@ -202,7 +202,7 @@ of one 1,500-byte packet per 100 ms in each direction (10 * 1,500 * 8 =
 3,243,578,316 bytes, and `rocketnet_client_required_memory` for the client
 profile is 22,895,109 bytes (Linux x86-64, development build, io_uring and
 XDP built; each is the lifecycle peak the caller's allocator sees, for the
-largest transport the ladder can grant). Re-measured 2026-10-27 on hetzner2
+largest transport the ladder can grant). Re-measured 2026-10-27 on a Linux x64 bench
 at `d00cf56e`, Release, clang++ 18.1.3, `ROCKETNET_DEV=ON`. The previous
 development figures were 3,238,578,316 and 22,890,053. Generation, owner epoch,
 enqueue ticket and the hole bound of 64 stayed. The non-development column was

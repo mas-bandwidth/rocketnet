@@ -1407,6 +1407,17 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
     return client;
 }
 
+static void portable_io_client_close( void * transport )
+{
+    // the family race's losing family, on the reading thread
+    // (tla/RNClientRace.tla ReaderStep): the wake's handles, then the
+    // socket's; the memory stays for destroy on the caller's thread
+
+    struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
+    rocketnet_platform_wake_close( client->wake );
+    rocketnet_platform_socket_close( client->socket );
+}
+
 static void portable_io_client_destroy( void * transport )
 {
     // RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the transport joins
@@ -1494,7 +1505,7 @@ static bool portable_io_client_connect( void * transport, const rocketnet_addres
 static const rocketnet_client_transport_io_operations_t portable_client_operations = {
     portable_io_client_create, portable_io_client_destroy, portable_io_client_send, portable_io_client_receive,
     portable_io_client_send_batch, portable_io_client_receive_batch, portable_io_client_wait, portable_io_client_wake,
-    portable_io_client_send_failures, portable_io_client_connect
+    portable_io_client_send_failures, portable_io_client_connect, portable_io_client_close
 };
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
@@ -1532,13 +1543,22 @@ static bool portable_client_connect( void * transport, const rocketnet_address_t
     return rocketnet_platform_socket_connect( (rocketnet_platform_socket_t *) transport, server_address );
 }
 
+static void portable_client_close( void * transport )
+{
+    // the family race's losing family, on the reading thread
+    // (tla/RNClientRace.tla ReaderStep): the socket's handle; the memory
+    // stays for destroy on the caller's thread
+
+    rocketnet_platform_socket_close( (rocketnet_platform_socket_t *) transport );
+}
+
 static const rocketnet_client_transport_io_operations_t portable_client_operations = { portable_client_create, portable_socket_destroy, portable_client_send, portable_client_receive,
 #if defined( __linux__ )
                                                                                        portable_client_send_batch, portable_client_receive_batch,
 #else
                                                                                        NULL, NULL,
 #endif // #if defined( __linux__ )
-                                                                                       NULL, NULL, portable_socket_send_failures, portable_client_connect };
+                                                                                       NULL, NULL, portable_socket_send_failures, portable_client_connect, portable_client_close };
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };

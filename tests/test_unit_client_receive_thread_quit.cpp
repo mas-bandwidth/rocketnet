@@ -33,6 +33,7 @@
 
 // four create and destroy cycles of a step-driven client without a worker:
 // every destroy returns and closes its fake transport exactly once
+
 static void test_client_step_driven_destroy_returns_and_closes_once_without_worker()
 {
     struct rocketnet_client_transport_config_t client_config;
@@ -40,6 +41,7 @@ static void test_client_step_driven_destroy_returns_and_closes_once_without_work
     client_config.step_driven = 1;
 
     // the token's create time is the supplied unix time; it expires 30 s later
+
     const uint64_t unix_timestamp = ROCKETNET_TEST_CREATE_TS;
 
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -50,6 +52,7 @@ static void test_client_step_driven_destroy_returns_and_closes_once_without_work
     signed_fields.expire_timestamp = unix_timestamp + 30;
     signed_fields.timeout_seconds = 10;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 127, 0, 0, 1, 0x40, 0x9c };     // 127.0.0.1:40000; the fake transport opens no socket
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -67,6 +70,7 @@ static void test_client_step_driven_destroy_returns_and_closes_once_without_work
 
     rocketnet_fake_client_transport_io_t fake = {};
     const double time = 1000.0;
+
     for ( int i = 0; i < 4; i++ )
     {
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_at_timestamp(
@@ -75,6 +79,7 @@ static void test_client_step_driven_destroy_returns_and_closes_once_without_work
         rn_test_client_transport_stop_and_destroy( client );
         check( fake.destroy_calls == i + 1 );
     }
+
     printf( "test_client_step_driven_destroy_returns_and_closes_once_without_worker\n" );
 }
 

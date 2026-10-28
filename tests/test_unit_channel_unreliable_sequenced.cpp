@@ -22,7 +22,9 @@ static rn_arena_t * sequenced_arena = NULL;
 static rn_region_t * sequenced_region()
 {
     if ( !sequenced_arena )
+    {
         sequenced_arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
+    }
     return sequenced_arena ? rn_arena_region( sequenced_arena, 0 ) : NULL;
 }
 
@@ -42,8 +44,10 @@ static void test_older_dropped_newest_delivered()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
+
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint8_t newest = 7, older = 3;
     rocketnet_message_record_t record;
     rn_delivery_t out;
@@ -51,6 +55,7 @@ static void test_older_dropped_newest_delivered()
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     rocketnet_unit_check( out.data == &newest );
     rocketnet_unit_check( region->channel_receive[0].sequenced_watermark == 2 );
+
     const uint64_t stale_before = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &older );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
@@ -63,8 +68,10 @@ static void test_watermark_resets_on_ordered_delivery()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
+
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint8_t before = 1, ordered = 2, after = 3;
     rocketnet_message_record_t record;
     rn_delivery_t out;
@@ -83,13 +90,16 @@ static void test_held_newest_ahead_of_epoch()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
+
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint8_t old_state = 1, new_state = 2, ordered = 3;
     rocketnet_message_record_t record;
     rn_delivery_t out;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, &old_state );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+
     const uint64_t superseded_before = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 1, &new_state );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
@@ -106,8 +116,10 @@ static void test_reliable_sequenced_uses_shared_watermark()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
+
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint8_t payload = 1;
     rocketnet_message_record_t record;
     rn_delivery_t out;
@@ -127,12 +139,15 @@ static void test_hold_full_drops_and_counts()
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.sequenced_messages_held = 1;
+
     rocketnet_counters_t counters = {};
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint8_t a = 1, b = 2;
     rocketnet_message_record_t record;
     rn_delivery_t out;
@@ -149,21 +164,26 @@ static void test_large_future_state_drops_without_violation()
 {
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
+
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1] = {};
     rocketnet_message_record_t record;
     rn_delivery_t out;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0, payload );
     record.bytes = (int) sizeof( payload );
+
     const uint64_t before = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL];
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
     rocketnet_unit_check( sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_HOLD_FULL] == before + 1 );
     rocketnet_unit_check( channels.violations == 0 );
     rocketnet_unit_check( channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
+
     const uint8_t small = 9;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 1, &small );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+
     const uint64_t superseded = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED];
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 2, payload );
     record.bytes = (int) sizeof( payload );
@@ -176,31 +196,37 @@ static void test_large_future_state_drops_without_violation()
 
 static void test_never_takes_a_reliable_number()
 {
-    // The public C API's start/finish accepts code 1 while the per-channel
-    // queue and reliable number state stay independent (RNChannelTypes!Enqueue).
+    // the public C API's start/finish accepts code 1 while the per-channel
+    // queue and reliable number state stay independent (RNChannelTypes!Enqueue)
+
     rn_message_link_t link = {};
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0,
                                                              ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, 0.0 );
     rocketnet_unit_check( object != NULL );
+
     rocketnet_message_client_t * client = (rocketnet_message_client_t *) object;
     rn_message_connection_t * connection = &object->connections[0];
     const uint64_t next = connection->ordered.send.next;
     uint8_t * p = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, 4 );
     rocketnet_unit_check( p != NULL );
+
     if ( p )
     {
         memcpy( p, "new!", 4 );
         rocketnet_unit_check( rocketnet_message_client_finish( client, 4 ) != 0 );
         rocketnet_unit_check( connection->unreliable_count == 1 );
+
         const uint32_t d = connection->unreliable_head;
         rocketnet_unit_check( d != RN_DESCRIPTOR_NONE );
         rocketnet_unit_check( connection->region->send_descriptors[d].reliability == ROCKETNET_CHANNEL_TYPE_UNRELIABLE_SEQUENCED );
         rocketnet_unit_check( connection->ordered.send.next == next );
+
         uint64_t number = 0, ring = 0;
         rocketnet_unit_check( rn_window_send_first_write( &connection->ordered.send, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED,
                                                           4, d, &number, &ring ) == RN_WINDOW_SEND_UNRELIABLE );
         rocketnet_unit_check( connection->ordered.send.next == next );
     }
+
     rn_message_object_destroy( object );
 }
 
@@ -233,18 +259,23 @@ static void test_large_state_promotes_to_reliable_sequenced()
     link.connection = sequenced_large_connected;
     link.start_packet = sequenced_large_start_packet;
     link.send_packets = sequenced_large_send_packets;
+
     rn_message_object_t * object = rn_message_object_create( NULL, &link, 0, 1, NULL, NULL, 0, 1, 0.0 );
     rocketnet_unit_check( object != NULL );
-    // An oversize unreliable send is promoted to its reliable twin (the
-    // promotion rule), never dropped as unreliable.
+
+    // an oversize unreliable send is promoted to its reliable twin (the
+    // promotion rule), never dropped as unreliable
+
     uint8_t * pointer = rn_message_object_start( object, 0, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                  ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     rocketnet_unit_check( pointer != NULL );
+
     if ( pointer )
     {
         memset( pointer, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
         rocketnet_unit_check( rn_message_object_finish( object, 0, ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES ) != 0 );
     }
+
     rn_message_connection_t * connection = &object->connections[0];
     rocketnet_unit_check( object->counters.values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1 );
     rocketnet_unit_check( connection->unreliable_count == 0 );
@@ -254,17 +285,21 @@ static void test_large_state_promotes_to_reliable_sequenced()
 
 static void test_sequenced_drain_refusal_counts_stale()
 {
-    // The ordered record opens the epoch; the drain then refuses the held
-    // record's sequencing (upper half) and must count it, not drop it silently.
+    // the ordered record opens the epoch; the drain then refuses the held
+    // record's sequencing (upper half) and must count it, not drop it silently
+
     rn_region_t * region = sequenced_region();
     rocketnet_unit_check( region != NULL );
+
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint8_t ahead = 1, ordered = 2;
     rocketnet_message_record_t record;
     rn_delivery_t out;
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 1, 0x800000, &ahead );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+
     const uint64_t stale_before = sequenced_counters.values[ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE];
     sequenced_record( &record, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 0, 0, 0, &ordered );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
@@ -281,6 +316,7 @@ static void test_rnchannel_sequenced_witness_replays()
     // Keep this combined run because the last case must see ordered_read reset
     // after the middle case advances it to 1; otherwise ordering 1 is delivered
     // instead of held. The cases reuse the same static region.
+
     test_older_dropped_newest_delivered();
     test_watermark_resets_on_ordered_delivery();
     test_held_newest_ahead_of_epoch();
@@ -306,11 +342,14 @@ static void test_sequenced_no_allocation_after_create()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, sequenced_counting_malloc, sequenced_counting_free ) == ROCKETNET_STATUS_OK );
+
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &sequenced_counters );
     rocketnet_unit_check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     rn_channels_t channels;
     rocketnet_unit_check( rn_channels_init( &channels, region, region->num_channels, 0 ) );
+
     const uint64_t after_create = sequenced_allocations;
     const uint8_t state = 5, ordered = 6;
     rocketnet_message_record_t record;

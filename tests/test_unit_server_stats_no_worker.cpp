@@ -51,6 +51,7 @@ static void test_server_stats_current_every_update()
     check( no_worker_connected_slots( world ) == NO_WORKER_CLIENTS );
 
     // steady traffic at 100 ms steps until every slot has samples
+
     for ( int step = 0; step < 10; step++ )
         no_worker_step( world, true, 0.1 );
 
@@ -63,6 +64,7 @@ static void test_server_stats_current_every_update()
 
     // the server's last send went out at a 10 ms step; this update's acks
     // carry 10 ms samples for every slot
+
     no_worker_step( world, true, 0.01 );
     no_worker_step( world, true, 0.01 );
 
@@ -79,6 +81,7 @@ static void test_server_stats_current_every_update()
         if ( stats.rtt_ms > 9.0 && stats.rtt_ms < 11.0 )
             current++;
     }
+
     check( current == NO_WORKER_CLIENTS );
 
     no_worker_world_destroy( world );
@@ -143,10 +146,12 @@ static void test_server_stats_rss_bound_scales_with_page()
     suite_check_rss( result, large );
     check( !result.failed );
     check( !result.rss_over_bound );
+
     result.peak_rss_mb = large + 1;
     suite_check_rss( result, large, false );
     check( !result.failed && result.rss_over_bound );
     check( result.detail.find( "peak_rss_mb=" ) != std::string::npos );
+
     result.rss_over_bound = false;
     suite_check_rss( result, large, true );
     check( result.failed && result.rss_over_bound );

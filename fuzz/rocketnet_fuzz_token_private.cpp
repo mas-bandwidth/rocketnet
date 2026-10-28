@@ -190,6 +190,7 @@ static void fuzz_server_create( struct fuzz_server_t * server )
     }
 
     p->cookie_lifetime_seconds = 3;
+    p->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     p->handshake_deadline_seconds = 5.0;
     p->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
     p->used_token_history = rocketnet_used_token_history_create( NULL, 64 );

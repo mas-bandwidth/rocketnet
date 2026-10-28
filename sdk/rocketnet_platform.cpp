@@ -122,7 +122,6 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
 // rounding forgives the floating-point error of the scaling (a millionth of
 // a unit), so 0.0005 s is exactly 5000 units and not 5001.
 
-
 struct timeval rocketnet_platform_timeval_from_seconds( float seconds )
 {
     struct timeval tv;
@@ -911,10 +910,15 @@ void rocketnet_server_receive_buffer_granted( const char * name, int requested_b
 #endif // #if !defined(CLOCK_MONOTONIC_RAW)
 
 static int connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+static bool connection_type_probed = false;
 
 static int get_connection_type();
 
 static double time_start;
+
+// The connection-type probe opens an AF_INET and a netlink socket, so init
+// leaves it to the first rocketnet_platform_connection_type call and opens no
+// socket itself.
 
 bool rocketnet_platform_init()
 {
@@ -925,13 +929,8 @@ bool rocketnet_platform_init()
     timespec ts;
     clock_gettime( CLOCK_MONOTONIC_RAW, &ts );
     time_start = (double) ts.tv_sec + ( (double) ( ts.tv_nsec ) ) / 1000000000.0;
-#if ROCKETNET_DEV
-    const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
-    if ( lookups )
-        connection_type = lookups->connection_type();
-    else
-#endif // #if ROCKETNET_DEV
-        connection_type = get_connection_type();
+    connection_type = ROCKETNET_CONNECTION_TYPE_UNKNOWN;
+    connection_type_probed = false;
     return true;
 }
 
@@ -970,6 +969,17 @@ int rocketnet_platform_id()
 
 int rocketnet_platform_connection_type()
 {
+    if ( !connection_type_probed )
+    {
+        connection_type_probed = true;
+#if ROCKETNET_DEV
+        const rocketnet_platform_network_lookups_t * lookups = rocketnet_platform_network_lookups_override.load( std::memory_order_acquire );
+        if ( lookups )
+            connection_type = lookups->connection_type();
+        else
+#endif // #if ROCKETNET_DEV
+            connection_type = get_connection_type();
+    }
     return connection_type;
 }
 
@@ -1357,18 +1367,27 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     return socket;
 }
 
-void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
+bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
-#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
-    rocketnet_platform_test_unregister( socket );
-#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+
     if ( rocketnet_platform_socket_handle_is_valid( socket->handle ) )
     {
         close( socket->handle );
         socket->handle = -1;
     }
 
+    return true;
+}
+
+void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+    rocketnet_platform_test_unregister( socket );
+#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+
+    rocketnet_platform_socket_close( socket );
     rocketnet_free( socket->context, socket );
 }
 
@@ -1663,11 +1682,18 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     return wake;
 }
 
-void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
     if ( wake->event_fd >= 0 )
         close( wake->event_fd );
+    wake->event_fd = -1;
+    return true;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_platform_wake_close( wake );
     rocketnet_free( wake->context, wake );
 }
 
@@ -1776,11 +1802,23 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     return wake;
 }
 
-void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
-    close( wake->read_fd );
-    close( wake->write_fd );
+
+    if ( wake->read_fd >= 0 )
+        close( wake->read_fd );
+    if ( wake->write_fd >= 0 )
+        close( wake->write_fd );
+    wake->read_fd = -1;
+    wake->write_fd = -1;
+
+    return true;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_platform_wake_close( wake );
     rocketnet_free( wake->context, wake );
 }
 
@@ -3405,13 +3443,21 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
         rocketnet_info( "socket send failures by errno: %s (first other errno %llu)", failures, (unsigned long long) other_error );
     }
 
+    rocketnet_platform_socket_close( socket );
+    rocketnet_free( socket->context, socket );
+}
+
+bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
+{
+    rocketnet_assert( socket );
+
     if ( rocketnet_platform_socket_handle_is_valid( socket->handle ) )
     {
         close( socket->handle );
         socket->handle = -1;
     }
 
-    rocketnet_free( socket->context, socket );
+    return true;
 }
 
 // A connected socket (rocketnet_platform_socket_connect) has one remote endpoint: every
@@ -4540,11 +4586,18 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 // docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla IoExit and Free: the
 // kqueue, and with it both filters, goes with the I/O thread.
 
-void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
     if ( wake->kq >= 0 )
         close( wake->kq );
+    wake->kq = -1;
+    return true;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_platform_wake_close( wake );
     rocketnet_free( wake->context, wake );
 }
 
@@ -5221,7 +5274,13 @@ struct rocketnet_platform_sleep_timer_t
     }
 };
 
-static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = { NULL, false };
+static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = {
+    NULL,
+    false,
+#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+    0,
+#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+};
 
 void rocketnet_platform_sleep( double time )
 {
@@ -5680,7 +5739,10 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     return s;
 }
 
-void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
+// false only when the lifecycle tracker refused the close: the handle is
+// still open, so destroy keeps the memory too
+
+bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
 
@@ -5689,7 +5751,7 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket->handle,
                                                      socket->lifecycle_generation ) )
-            return;
+            return false;
         const int closed = closesocket( socket->handle );
         rocketnet_lifecycle_track_close_end( socket->lifecycle_generation, closed == 0 );
 #else
@@ -5698,6 +5760,13 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
         socket->handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
     }
 
+    return true;
+}
+
+void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
+{
+    if ( !rocketnet_platform_socket_close( socket ) )
+        return;
     rocketnet_free( socket->context, socket );
 }
 
@@ -6108,30 +6177,52 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     return wake;
 }
 
-void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+// false only when the lifecycle tracker refused a close: that handle is still
+// open, so destroy keeps the memory too
+
+bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );
 
     if ( wake->read_event != WSA_INVALID_EVENT )
     {
+        // the socket's event selection is cleared once: a retry after a
+        // refused close must not select on a handle the socket's own close
+        // may have released for reuse
+
         WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
+        wake->socket_handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
-            return;
-        const BOOL closed = WSACloseEvent( wake->read_event );
-        rocketnet_lifecycle_track_close_end( wake->read_generation, closed != 0 );
+            return false;
+        const BOOL read_closed = WSACloseEvent( wake->read_event );
+        rocketnet_lifecycle_track_close_end( wake->read_generation, read_closed != 0 );
 #else
         WSACloseEvent( wake->read_event );
 #endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+        wake->read_event = WSA_INVALID_EVENT;
     }
+
+    if ( wake->wake_event != NULL )
+    {
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
-    if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event, wake->wake_generation ) )
-        return;
-    const BOOL closed = CloseHandle( wake->wake_event );
-    rocketnet_lifecycle_track_close_end( wake->wake_generation, closed != 0 );
+        if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event, wake->wake_generation ) )
+            return false;
+        const BOOL closed = CloseHandle( wake->wake_event );
+        rocketnet_lifecycle_track_close_end( wake->wake_generation, closed != 0 );
 #else
-    CloseHandle( wake->wake_event );
+        CloseHandle( wake->wake_event );
 #endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+        wake->wake_event = NULL;
+    }
+
+    return true;
+}
+
+void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
+{
+    if ( !rocketnet_platform_wake_close( wake ) )
+        return;
     rocketnet_free( wake->context, wake );
 }
 
@@ -6365,6 +6456,12 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     (void) context;
     (void) socket;
     return NULL;
+}
+
+bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
+{
+    rocketnet_assert( !wake );
+    return true;
 }
 
 void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )

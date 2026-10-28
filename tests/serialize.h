@@ -152,7 +152,7 @@
         ( x ) = serialize_float_force_round_slot;                                           \
     }                                                                                       \
     while ( 0 )
-#endif
+#endif // #if ( defined( __GNUC__ ) || defined( __clang__ ) ) && ( defined( __aarch64__ ) || defined( _M_ARM64 ) )
 
 #ifndef serialize_assert
 #include <assert.h>
@@ -177,10 +177,10 @@
 #define SERIALIZE_RELEASE
 #else
 #define SERIALIZE_DEBUG
-#endif
+#endif // #if defined( NDEBUG )
 #elif defined( SERIALIZE_DEBUG ) && defined( SERIALIZE_RELEASE )
 #error Can only define one of debug & release
-#endif
+#endif // #if !defined( SERIALIZE_DEBUG ) && !defined( SERIALIZE_RELEASE )
 
 #if !defined( SERIALIZE_LITTLE_ENDIAN ) && !defined( SERIALIZE_BIG_ENDIAN )
 
@@ -219,16 +219,16 @@
 #define SERIALIZE_LITTLE_ENDIAN 1
 #else
 #error Unknown machine endianness detected. User needs to define SERIALIZE_LITTLE_ENDIAN or SERIALIZE_BIG_ENDIAN.
-#endif
-#endif
+#endif // #ifdef __BYTE_ORDER__
+#endif // #if !defined( SERIALIZE_LITTLE_ENDIAN ) && !defined( SERIALIZE_BIG_ENDIAN )
 
 #ifndef SERIALIZE_LITTLE_ENDIAN
 #define SERIALIZE_LITTLE_ENDIAN 0
-#endif
+#endif // #ifndef SERIALIZE_LITTLE_ENDIAN
 
 #ifndef SERIALIZE_BIG_ENDIAN
 #define SERIALIZE_BIG_ENDIAN 0
-#endif
+#endif // #ifndef SERIALIZE_BIG_ENDIAN
 
 // implicit narrowing is a deliberate style inside this header. push/pop so the disabled
 // warnings do not leak into code that includes it. note that code using the serialize_* macros
@@ -296,7 +296,7 @@
 
 #ifdef __cplusplus
 struct serialize_int128_t;      // forward declaration for the bit preserving converting constructor below
-#endif
+#endif // #ifdef __cplusplus
 
 typedef struct serialize_uint128_t
 {
@@ -399,7 +399,9 @@ typedef struct serialize_uint128_t
     {
         // shifting a uint64 lane by 64 is undefined behavior, so the half boundary is an explicit
         // branch. shift counts outside [0,127] yield zero, documented above.
+
         serialize_uint128_t result( 0 );
+
         if ( shift == 0 )
         {
             result = *this;
@@ -414,6 +416,7 @@ typedef struct serialize_uint128_t
             result.hi = lo << ( shift - 64 );
             result.lo = 0;
         }
+
         return result;
     }
 
@@ -421,7 +424,9 @@ typedef struct serialize_uint128_t
     {
         // shifting a uint64 lane by 64 is undefined behavior, so the half boundary is an explicit
         // branch. shift counts outside [0,127] yield zero, documented above.
+
         serialize_uint128_t result( 0 );
+
         if ( shift == 0 )
         {
             result = *this;
@@ -436,6 +441,7 @@ typedef struct serialize_uint128_t
             result.lo = hi >> ( shift - 64 );
             result.hi = 0;
         }
+
         return result;
     }
 
@@ -459,6 +465,7 @@ typedef struct serialize_uint128_t
     {
         // schoolbook multiplication in 32 bit limbs over the uint64 lanes: the low 64 x 64 product
         // is computed exactly, then the cross products fold into the high lane modulo 2^64
+
         const uint64_t a_low = lo & 0xFFFFFFFFULL;
         const uint64_t a_high = lo >> 32;
         const uint64_t b_low = other.lo & 0xFFFFFFFFULL;
@@ -483,18 +490,20 @@ typedef struct serialize_uint128_t
         // shift subtract long division. division by zero is UNDEFINED (documented above) — this
         // returns zero quotient and zero remainder only to stay TOTAL, since the block has no
         // assert dependency by design. Not a contract; callers may not rely on the value.
+
         quotient = serialize_uint128_t( 0 );
         remainder = serialize_uint128_t( 0 );
+
         if ( divisor == serialize_uint128_t( 0 ) )
-        {
             return;
-        }
+
         if ( dividend.hi == 0 && divisor.hi == 0 )
         {
             quotient = serialize_uint128_t( dividend.lo / divisor.lo );
             remainder = serialize_uint128_t( dividend.lo % divisor.lo );
             return;
         }
+
         for ( int i = 127; i >= 0; i-- )
         {
             remainder = remainder << 1;
@@ -689,10 +698,10 @@ typedef struct serialize_int128_t
     bool operator<( serialize_int128_t other ) const
     {
         // signed ordering: the high lanes compare signed, the low lanes break ties unsigned
+
         if ( hi != other.hi )
-        {
             return int64_t( hi ) < int64_t( other.hi );
-        }
+
         return lo < other.lo;
     }
 
@@ -728,6 +737,7 @@ typedef struct serialize_int128_t
     {
         // a logical shift of the bit pattern, matching what native two's complement hardware does.
         // shift counts outside [0,127] yield zero, matching the unsigned type
+
         return serialize_int128_t( serialize_uint128_t( *this ) << shift );
     }
 
@@ -736,15 +746,17 @@ typedef struct serialize_int128_t
         // ARITHMETIC shift right: the vacated high bits fill with the sign. shift counts outside
         // [0,127] yield all sign bits — 0 for non negative values, -1 for negative ones — which is
         // the limit of shifting further, documented above
+
         if ( shift < 0 || shift >= 128 )
-        {
             return IsNegative() ? serialize_int128_t( -1 ) : serialize_int128_t( 0 );
-        }
+
         serialize_uint128_t result = serialize_uint128_t( *this ) >> shift;
+
         if ( IsNegative() && shift > 0 )
         {
             result = result | ( ~serialize_uint128_t( 0 ) << ( 128 - shift ) );
         }
+
         return serialize_int128_t( result );
     }
 
@@ -763,6 +775,7 @@ typedef struct serialize_int128_t
         // sign extraction, unsigned shift subtract division on the magnitudes, then sign
         // application: C++ semantics, truncation toward zero with the remainder sign following
         // the dividend. the documented edge choices live in the comment block above.
+
         const bool dividend_negative = dividend.IsNegative();
         const bool divisor_negative = divisor.IsNegative();
         const serialize_uint128_t dividend_magnitude = dividend_negative ? -serialize_uint128_t( dividend ) : serialize_uint128_t( dividend );
@@ -1086,10 +1099,10 @@ namespace serialize
     inline int bits_required64( uint64_t min, uint64_t max )
     {
         if ( min == max )
-        {
             return 0;
-        }
+
         // subtract in the unsigned domain: max - min overflows signed arithmetic when the range is wider than 2^63
+
         const uint64_t diff = max - min;
 #ifdef __GNUC__
         return 64 - __builtin_clzll( diff );
@@ -1113,10 +1126,10 @@ namespace serialize
     inline int bits_required128( uint128_t min, uint128_t max )
     {
         if ( min == max )
-        {
             return 0;
-        }
+
         // subtract in the unsigned domain: max - min overflows signed arithmetic when the range is wider than 2^127
+
         const uint128_t diff = max - min;
         const uint64_t high = uint64_t( diff >> 64 );
         return high ? ( 64 + bits_required64( 0, high ) ) : bits_required64( 0, uint64_t( diff ) );
@@ -1210,6 +1223,7 @@ namespace serialize
     inline uint32_t signed_to_unsigned( int32_t n )
     {
         // shift in the unsigned domain: left shift of a negative signed value is undefined behavior pre C++20
+
         return ( uint32_t( n ) << 1 ) ^ ( 0 - ( uint32_t( n ) >> 31 ) );
     }
 
@@ -1333,7 +1347,6 @@ namespace serialize
         SERIALIZE_ALWAYS_INLINE void WriteAlign()
         {
             const int remainderBits = (int) ( m_bitsWritten % 8 );
-
             if ( remainderBits != 0 )
             {
                 uint32_t zero = 0;
@@ -1555,6 +1568,7 @@ namespace serialize
             serialize_assert( m_bitsRead + bits <= m_numBits );
 
             // loads up to 7 bytes past the last data byte: the allocation contract covers this
+
             uint64_t window;
             memcpy( &window, m_data + ( m_bitsRead >> 3 ), sizeof( window ) );
             window = network_to_host( window );
@@ -1585,6 +1599,7 @@ namespace serialize
                 if ( value != 0 )
                     return false;
             }
+
             return true;
         }
 
@@ -1600,6 +1615,7 @@ namespace serialize
             serialize_assert( uint64_t( m_bitsRead ) + uint64_t( bytes ) * 8 <= uint64_t( m_numBits ) );
 
             // the bit index is byte aligned here (see the align assert), so this is a straight copy
+
             memcpy( data, m_data + ( m_bitsRead >> 3 ), (size_t) bytes );
 
             m_bitsRead += bytes * 8;
@@ -1757,14 +1773,16 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
+
             const int bits = bits_required( uint32_t( min ), uint32_t( max ) );
             if ( bits == 0 )
-            {
                 return true;                // degenerate range: the value IS the range, nothing to send
-            }
+
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^31
+
             uint32_t unsigned_value = uint32_t( value ) - uint32_t( min );
             m_writer.WriteBits( unsigned_value, bits );
+
             return true;
         }
 
@@ -1781,13 +1799,15 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
+
             const int bits = bits_required64( uint64_t( min ), uint64_t( max ) );
             if ( bits == 0 )
-            {
                 return true;                // degenerate range: the value IS the range, nothing to send
-            }
+
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^63
+
             const uint64_t unsigned_value = uint64_t( value ) - uint64_t( min );
+
             if ( bits <= 32 )
             {
                 m_writer.WriteBits( uint32_t( unsigned_value ), bits );
@@ -1798,6 +1818,7 @@ namespace serialize
                 m_writer.WriteBits( uint32_t( unsigned_value & 0xFFFFFFFF ), 32 );
                 m_writer.WriteBits( uint32_t( unsigned_value >> 32 ), bits - 32 );
             }
+
             return true;
         }
 
@@ -1814,14 +1835,20 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
+
             const int bits = bits_required128( uint128_t( min ), uint128_t( max ) );
+
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^127
+
             const uint128_t unsigned_value = uint128_t( value ) - uint128_t( min );
+
             // 32 bit groups, least significant first: the same convention as serialize_bits, serialize_uint64 and the wide fixed point path
+
             const uint32_t group0 = uint32_t( uint64_t( unsigned_value ) & 0xFFFFFFFF );
             const uint32_t group1 = uint32_t( uint64_t( unsigned_value >> 32 ) & 0xFFFFFFFF );
             const uint32_t group2 = uint32_t( uint64_t( unsigned_value >> 64 ) & 0xFFFFFFFF );
             const uint32_t group3 = uint32_t( uint64_t( unsigned_value >> 96 ) & 0xFFFFFFFF );
+
             if ( bits <= 32 )
             {
                 m_writer.WriteBits( group0, bits );
@@ -1844,6 +1871,7 @@ namespace serialize
                 m_writer.WriteBits( group2, 32 );
                 m_writer.WriteBits( group3, bits - 96 );
             }
+
             return true;
         }
 
@@ -1875,6 +1903,7 @@ namespace serialize
             serialize_assert( bytes >= 0 );
             SerializeAlign();
             m_writer.WriteBytes( data, bytes );
+
             return true;
         }
 
@@ -1997,19 +2026,25 @@ namespace serialize
         SERIALIZE_ALWAYS_INLINE bool SerializeInteger( int32_t & value, int32_t min, int32_t max )
         {
             serialize_assert( min <= max );
+
             const int bits = bits_required( uint32_t( min ), uint32_t( max ) );
             if ( bits == 0 )
             {
                 value = min;                // degenerate range: the value IS the range
                 return true;
             }
+
             if ( m_reader.WouldReadPastEnd( bits ) )
                 return false;
+
             uint32_t unsigned_value = m_reader.ReadBits( bits );
             if ( unsigned_value > uint32_t( max ) - uint32_t( min ) )
                 return false;
+
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^31
+
             value = int32_t( unsigned_value + uint32_t( min ) );
+
             return true;
         }
 
@@ -2024,15 +2059,19 @@ namespace serialize
         SERIALIZE_ALWAYS_INLINE bool SerializeInteger64( int64_t & value, int64_t min, int64_t max )
         {
             serialize_assert( min <= max );
+
             const int bits = bits_required64( uint64_t( min ), uint64_t( max ) );
             if ( bits == 0 )
             {
                 value = min;                // degenerate range: the value IS the range
                 return true;
             }
+
             if ( m_reader.WouldReadPastEnd( bits ) )
                 return false;
+
             uint64_t unsigned_value;
+
             if ( bits <= 32 )
             {
                 unsigned_value = m_reader.ReadBits( bits );
@@ -2044,10 +2083,14 @@ namespace serialize
                 const uint32_t hi = m_reader.ReadBits( bits - 32 );
                 unsigned_value = ( uint64_t( hi ) << 32 ) | lo;
             }
+
             if ( unsigned_value > uint64_t( max ) - uint64_t( min ) )
                 return false;
+
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^63
+
             value = int64_t( unsigned_value + uint64_t( min ) );
+
             return true;
         }
 
@@ -2062,14 +2105,18 @@ namespace serialize
         SERIALIZE_ALWAYS_INLINE bool SerializeInteger128( int128_t & value, int128_t min, int128_t max )
         {
             serialize_assert( min <= max );
+
             const int bits = bits_required128( uint128_t( min ), uint128_t( max ) );
             if ( m_reader.WouldReadPastEnd( bits ) )
                 return false;
+
             // 32 bit groups, least significant first: the same convention as the write path
+
             uint32_t group0 = 0;
             uint32_t group1 = 0;
             uint32_t group2 = 0;
             uint32_t group3 = 0;
+
             if ( bits <= 32 )
             {
                 group0 = m_reader.ReadBits( bits );
@@ -2092,11 +2139,15 @@ namespace serialize
                 group2 = m_reader.ReadBits( 32 );
                 group3 = m_reader.ReadBits( bits - 96 );
             }
+
             const uint128_t unsigned_value = ( uint128_t( group3 ) << 96 ) | ( uint128_t( group2 ) << 64 ) | ( uint128_t( group1 ) << 32 ) | uint128_t( group0 );
             if ( unsigned_value > uint128_t( max ) - uint128_t( min ) )
                 return false;
+
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^127
+
             value = int128_t( unsigned_value + uint128_t( min ) );
+
             return true;
         }
 
@@ -2113,8 +2164,10 @@ namespace serialize
             serialize_assert( bits <= 32 );
             if ( m_reader.WouldReadPastEnd( bits ) )
                 return false;
+
             uint32_t read_value = m_reader.ReadBits( bits );
             value = read_value;
+
             return true;
         }
 
@@ -2131,10 +2184,13 @@ namespace serialize
                 return false;
             if ( !SerializeAlign() )
                 return false;
+
             // compare in bytes rather than bits, consistent with the 64 bit bookkeeping
+
             if ( bytes > m_reader.GetBitsRemaining() / 8 )
                 return false;
             m_reader.ReadBytes( data, bytes );
+
             return true;
         }
 
@@ -2150,6 +2206,7 @@ namespace serialize
                 return false;
             if ( !m_reader.ReadAlign() )
                 return false;
+
             return true;
         }
 
@@ -2229,8 +2286,10 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
+
             const int bits = bits_required( uint32_t( min ), uint32_t( max ) );
             m_bitsWritten += bits;
+
             return true;
         }
 
@@ -2248,8 +2307,10 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
+
             const int bits = bits_required64( uint64_t( min ), uint64_t( max ) );
             m_bitsWritten += bits;
+
             return true;
         }
 
@@ -2267,8 +2328,10 @@ namespace serialize
             serialize_assert( min <= max );
             serialize_assert( value >= min );
             serialize_assert( value <= max );
+
             const int bits = bits_required128( uint128_t( min ), uint128_t( max ) );
             m_bitsWritten += bits;
+
             return true;
         }
 
@@ -2285,6 +2348,7 @@ namespace serialize
             serialize_assert( bits > 0 );
             serialize_assert( bits <= 32 );
             m_bitsWritten += bits;
+
             return true;
         }
 
@@ -2301,6 +2365,7 @@ namespace serialize
             serialize_assert( bytes >= 0 );
             SerializeAlign();
             m_bitsWritten += bytes * 8;
+
             return true;
         }
 
@@ -2547,7 +2612,6 @@ namespace serialize
             }                                                           \
         } while (0)
 
-
     /**
         Serialize a boolean value to the stream (read/write/measure).
         This is a helper macro to make writing unified serialize functions easier.
@@ -2575,15 +2639,19 @@ namespace serialize
     template <typename Stream> SERIALIZE_ALWAYS_INLINE bool serialize_float_internal( Stream & stream, float & value )
     {
         uint32_t int_value = 0;
+
         if ( Stream::IsWriting )
         {
             memcpy( (char *) &int_value, &value, 4 );
         }
+
         bool result = stream.SerializeBits( int_value, 32 );
+
         if ( Stream::IsReading )
         {
             memcpy( (char *) &value, &int_value, 4 );
         }
+
         return result;
     }
 
@@ -2630,10 +2698,12 @@ namespace serialize
         // (STANDARD.md, adopted 2026-08-15) -- assert in debug, per the writer-trusted model.
         // finiteness is spelled x - x == 0 (NaN and both infinities fail it: Inf - Inf is NaN)
         // so the header needs no isfinite and no new include.
+
         serialize_assert( delta - delta == 0.0f );
         serialize_assert( values - values == 0.0f );
 
         // clamp so the uint32_t cast below is defined even for pathological delta / res (the !>= form also catches NaN)
+
         if ( !( values >= 1.0f ) )
         {
             values = 1.0f;
@@ -2679,6 +2749,7 @@ namespace serialize
             serialize_assert( value - value == 0.0f );
 
             // clamp with the !>= / !<= form so a NaN value is forced into range instead of reaching the uint32 cast below
+
             float normalizedValue = ( value - min ) / delta;
             if ( !( normalizedValue >= 0.0f ) )
             {
@@ -2688,6 +2759,7 @@ namespace serialize
             {
                 normalizedValue = 1.0f;
             }
+
             // STANDARD.md pins this to float32 with TWO roundings: the product
             // rounds before 0.5 is added. The local plus the barrier are what
             // force that, and neither is optional. Written as one expression, a
@@ -2707,15 +2779,18 @@ namespace serialize
             // do not remove the barrier -- the -ffp-contract=fast test build
             // and the write-side negative control both go red if either
             // rounding is ever lost.
+
             float scaled = normalizedValue * float( max_integer_value );
             SERIALIZE_FLOAT_FORCE_ROUND( scaled );
             integerValue = (uint32_t) floor( scaled + 0.5f );
+
             // STANDARD.md: the integer clamp is normative (2026-08-23). Once
             // max_integer_value >= 2^23 the float32 ulp at the top of the range
             // reaches 1, so the rounded sum can exceed max_integer_value itself:
             // the writer emits a code its own reader rejects, or one bit wider
             // than the field. Clamping after the floor closes both; no byte
             // changes for any declaration outside [2^23, 2^24).
+
             if ( integerValue > max_integer_value )
             {
                 integerValue = (uint32_t) max_integer_value;
@@ -2723,17 +2798,15 @@ namespace serialize
         }
 
         if ( !stream.SerializeBits( integerValue, bits ) )
-        {
             return false;
-        }
 
         if ( Stream::IsReading )
         {
             if ( integerValue > max_integer_value )
-            {
                 return false;
-            }
+
             const float normalizedValue = float( integerValue ) / float( max_integer_value );
+
             // The reader rounds twice for the same reason the writer above does:
             // the product must round to float32 BEFORE min is added, and the
             // local plus the barrier are what force that. Written as one
@@ -2752,6 +2825,7 @@ namespace serialize
             // pins them exactly, and the -ffp-contract=fast test build and the
             // read-side negative control both go red if this is ever folded
             // back into one expression or the barrier removed.
+
             float scaledValue = normalizedValue * delta;
             SERIALIZE_FLOAT_FORCE_ROUND( scaledValue );
             value = scaledValue + min;
@@ -2769,6 +2843,7 @@ namespace serialize
         // the wire lives in serialize_compressed_float_precomputed_internal, statement for
         // statement. test_compressed_float_precomputed_differential holds this composition
         // to byte and bit identity against a frozen copy of the original unsplit body.
+
         uint32_t max_integer_value = 0;
         int bits = 0;
         float delta = 0.0f;
@@ -2824,15 +2899,19 @@ namespace serialize
             uint64_t int_value;
         };
         DoubleInt tmp = { 0 };
+
         if ( Stream::IsWriting )
         {
             tmp.double_value = value;
         }
+
         serialize_bits( stream, tmp.int_value, 64 );
+
         if ( Stream::IsReading )
         {
             value = tmp.double_value;
         }
+
         return true;
     }
 
@@ -2910,21 +2989,26 @@ namespace serialize
     {
         // refuse narrower types at compile time: a uint64_t here would shift by 64 — undefined
         // behavior — and silently is not the 128 bit operation the caller asked for
+
         serialize_static_assert( sizeof( UInt128 ) == 16, "serialize_uint128 requires a 128 bit type (did you mean serialize_uint64?)" );
 
         uint64_t low_half = 0;
         uint64_t high_half = 0;
+
         if ( Stream::IsWriting )
         {
             low_half = uint64_t( value );
             high_half = uint64_t( value >> 64 );
         }
+
         serialize_bits( stream, low_half, 64 );
         serialize_bits( stream, high_half, 64 );
+
         if ( Stream::IsReading )
         {
             value = ( UInt128( high_half ) << 64 ) | UInt128( low_half );
         }
+
         return true;
     }
 
@@ -3000,6 +3084,7 @@ namespace serialize
             {
                 if ( i + 2 >= length )
                     return false;
+
                 const uint32_t byte1 = (uint8_t) string[i + 1];
                 const uint32_t byte2 = (uint8_t) string[i + 2];
                 if ( ( byte1 & 0xC0 ) != 0x80 || ( byte2 & 0xC0 ) != 0x80 )
@@ -3016,6 +3101,7 @@ namespace serialize
                     return false;
                 if ( i + 3 >= length )
                     return false;
+
                 const uint32_t byte1 = (uint8_t) string[i + 1];
                 const uint32_t byte2 = (uint8_t) string[i + 2];
                 const uint32_t byte3 = (uint8_t) string[i + 3];
@@ -3032,21 +3118,27 @@ namespace serialize
                 return false;                                                                   // continuation or invalid lead byte
             }
         }
+
         return true;
     }
 
     template <typename Stream> bool serialize_string_internal( Stream & stream, char * string, int buffer_size )
     {
         int length = 0;
+
         if ( Stream::IsWriting )
         {
             length = (int) strlen( string );
             serialize_assert( length < buffer_size );
+
             // the writer's contract, debug only. See serialize_string_is_valid_utf8.
+
             serialize_assert( serialize_string_is_valid_utf8( string, length ) );
         }
+
         serialize_int( stream, length, 0, buffer_size - 1 );
         serialize_bytes( stream, (uint8_t *) string, length );
+
         if ( Stream::IsReading )
         {
             // STANDARD.md, "Readers must refuse malformed string payloads" (adopted
@@ -3059,16 +3151,15 @@ namespace serialize
             for ( int i = 0; i < length; i++ )
             {
                 if ( string[i] == '\0' )
-                {
                     return false;
-                }
             }
+
             if ( !serialize_string_is_valid_utf8( string, length ) )
-            {
                 return false;
-            }
+
             string[length] = '\0';
         }
+
         return true;
     }
 
@@ -3080,11 +3171,13 @@ namespace serialize
     inline int serialize_wstring_unit_count( const wchar_t * string )
     {
         int units = 0;
+
         for ( int i = 0; string[i] != L'\0'; i++ )
         {
             const uint32_t character = (uint32_t) string[i];
             units += ( character >= 0x10000 && character <= 0x10FFFF ) ? 2 : 1;
         }
+
         return units;
     }
 
@@ -3100,11 +3193,13 @@ namespace serialize
     inline bool serialize_wstring_is_valid_utf16( const wchar_t * string )
     {
         // through a local rather than tested inline, so MSVC /W4 does not flag the constant conditional
+
         const bool wide_wchar = sizeof( wchar_t ) >= 4;
         int i = 0;
         while ( string[i] != L'\0' )
         {
             const uint32_t character = (uint32_t) string[i];
+
             if ( wide_wchar )
             {
                 if ( character >= 0xD800 && character <= 0xDFFF )       // a surrogate is not a code point
@@ -3132,6 +3227,7 @@ namespace serialize
                 }
             }
         }
+
         return true;
     }
 
@@ -3152,6 +3248,7 @@ namespace serialize
     template <typename Stream> bool serialize_wstring_internal( Stream & stream, wchar_t * string, int buffer_size )
     {
         int length = 0;
+
         if ( Stream::IsWriting )
         {
             // the writer's contract, debug only. See serialize_wstring_is_valid_utf16.
@@ -3159,7 +3256,9 @@ namespace serialize
             length = serialize_wstring_unit_count( string );
             serialize_assert( length < buffer_size );
         }
+
         serialize_int( stream, length, 0, buffer_size - 1 );
+
         if ( Stream::IsWriting )
         {
             for ( int i = 0; string[i] != L'\0'; i++ )
@@ -3197,24 +3296,23 @@ namespace serialize
             uint32_t pending = 0;                   // a high surrogate awaiting its pair
             bool have_pending = false;
             int output_index = 0;
+
             for ( int i = 0; i < length; i++ )
             {
                 uint32_t character = 0;
                 serialize_bits( stream, character, 32 );
+
                 if ( character > 0xFFFF )
-                {
                     return false;                   // not a UTF-16 code unit: nothing conforming emits one
-                }
+
                 if ( character == 0 )
-                {
                     return false;                   // interior NUL: the two-lengths smuggling primitive
-                }
+
                 if ( have_pending )
                 {
                     if ( character < 0xDC00 || character > 0xDFFF )
-                    {
                         return false;               // high surrogate without its low
-                    }
+
                     if ( wide_wchar )
                     {
                         string[output_index++] = (wchar_t) ( 0x10000 + ( ( pending - 0xD800 ) << 10 ) + ( character - 0xDC00 ) );
@@ -3224,30 +3322,32 @@ namespace serialize
                         string[output_index++] = (wchar_t) pending;
                         string[output_index++] = (wchar_t) character;
                     }
+
                     have_pending = false;
                     continue;
                 }
+
                 if ( character >= 0xDC00 && character <= 0xDFFF )
-                {
                     return false;                   // low surrogate with no high before it
-                }
+
                 if ( character >= 0xD800 && character <= 0xDBFF )
                 {
                     pending = character;
                     have_pending = true;
                     continue;
                 }
+
                 string[output_index++] = (wchar_t) character;
             }
+
             if ( have_pending )
-            {
                 return false;                       // the final group is a dangling high surrogate
-            }
+
             string[output_index] = L'\0';
         }
+
         return true;
     }
-
 
     /**
         Serialize a string to the stream (read/write/measure).
@@ -3290,7 +3390,6 @@ namespace serialize
             }                                                                               \
         } while (0)
 
-
     /**
         Serialize an alignment to the stream (read/write/measure).
         This is a helper macro to make writing unified serialize functions easier.
@@ -3330,19 +3429,25 @@ namespace serialize
     template <typename Stream, typename T> bool serialize_int_relative_internal( Stream & stream, T previous, T & current )
     {
         uint32_t difference = 0;
+
         if ( Stream::IsWriting )
         {
             serialize_assert( previous < current );
+
             // subtract in the unsigned domain: current - previous overflows signed arithmetic when the gap is wider than 2^31
+
             difference = uint32_t( current ) - uint32_t( previous );
         }
 
         bool oneBit = false;
+
         if ( Stream::IsWriting )
         {
             oneBit = difference == 1;
         }
+
         serialize_bool( stream, oneBit );
+
         if ( oneBit )
         {
             if ( Stream::IsReading )
@@ -3350,103 +3455,128 @@ namespace serialize
                 // reconstruct in the unsigned domain: previous + difference overflows signed arithmetic near the type maximum
                 current = T( uint32_t( previous ) + 1 );
             }
+
             return true;
         }
 
         bool twoBits = false;
+
         if ( Stream::IsWriting )
         {
             twoBits = difference <= 6;
         }
+
         serialize_bool( stream, twoBits );
+
         if ( twoBits )
         {
             serialize_int( stream, difference, 2, 6 );
+
             if ( Stream::IsReading )
             {
                 // reconstruct in the unsigned domain: previous + difference overflows signed arithmetic near the type maximum
                 current = T( uint32_t( previous ) + difference );
             }
+
             return true;
         }
 
         bool fourBits = false;
+
         if ( Stream::IsWriting )
         {
             fourBits = difference <= 23;
         }
+
         serialize_bool( stream, fourBits );
+
         if ( fourBits )
         {
             serialize_int( stream, difference, 7, 23 );
+
             if ( Stream::IsReading )
             {
                 // reconstruct in the unsigned domain: previous + difference overflows signed arithmetic near the type maximum
                 current = T( uint32_t( previous ) + difference );
             }
+
             return true;
         }
 
         bool eightBits = false;
+
         if ( Stream::IsWriting )
         {
             eightBits = difference <= 280;
         }
+
         serialize_bool( stream, eightBits );
+
         if ( eightBits )
         {
             serialize_int( stream, difference, 24, 280 );
+
             if ( Stream::IsReading )
             {
                 // reconstruct in the unsigned domain: previous + difference overflows signed arithmetic near the type maximum
                 current = T( uint32_t( previous ) + difference );
             }
+
             return true;
         }
 
         bool twelveBits = false;
+
         if ( Stream::IsWriting )
         {
             twelveBits = difference <= 4377;
         }
+
         serialize_bool( stream, twelveBits );
+
         if ( twelveBits )
         {
             serialize_int( stream, difference, 281, 4377 );
+
             if ( Stream::IsReading )
             {
                 // reconstruct in the unsigned domain: previous + difference overflows signed arithmetic near the type maximum
                 current = T( uint32_t( previous ) + difference );
             }
+
             return true;
         }
 
         bool sixteenBits = false;
+
         if ( Stream::IsWriting )
         {
             sixteenBits = difference <= 69914;
         }
+
         serialize_bool( stream, sixteenBits );
+
         if ( sixteenBits )
         {
             serialize_int( stream, difference, 4378, 69914 );
+
             if ( Stream::IsReading )
             {
                 // reconstruct in the unsigned domain: previous + difference overflows signed arithmetic near the type maximum
                 current = T( uint32_t( previous ) + difference );
             }
+
             return true;
         }
 
         uint32_t value = current;
         serialize_bits( stream, value, 32 );
+
         if ( Stream::IsReading )
         {
             current = value;
             if ( current <= previous )
-            {
                 return false;
-            }
         }
 
         return true;
@@ -3651,6 +3781,7 @@ namespace serialize
         static bool Serialize( Stream & stream, Storage & value )
         {
             // the whole unit capacity of the Q format. computed in the unsigned domain so the widest formats (Q64.0 and friends) cannot overflow signed arithmetic
+
             const int64_t min_representable_units = FixedPointInteger<Storage>::is_signed ? int64_t( uint64_t( 0 ) - ( uint64_t( 1 ) << ( IntegerBits - 1 ) ) ) : int64_t( 0 );
             const int64_t max_representable_units = FixedPointInteger<Storage>::is_signed ? int64_t( ( uint64_t( 1 ) << ( IntegerBits - 1 ) ) - 1 ) : ( ( IntegerBits >= 64 ) ? INT64_MAX : int64_t( ( uint64_t( 1 ) << ( IntegerBits < 64 ? IntegerBits : 0 ) ) - 1 ) );
 
@@ -3659,6 +3790,7 @@ namespace serialize
 
             // shift the whole unit bounds into raw fixed point units in the unsigned domain, so negative bounds wrap two's complement instead of invoking undefined behavior.
             // everything below is a compile time constant: the bounds, the range and the bit count all fold, so the call site carries no runtime bit width computation at all.
+
             const uint64_t raw_min = uint64_t( MinUnits ) << FractionalBits;
             const uint64_t raw_max = uint64_t( MaxUnits ) << FractionalBits;
             const uint64_t raw_range = raw_max - raw_min;
@@ -3670,10 +3802,12 @@ namespace serialize
                 {
                     serialize_assert( uint64_t( value ) == raw_min );       // all checking is performed by debug asserts on write
                 }
+
                 if ( Stream::IsReading )
                 {
                     value = Storage( raw_min );
                 }
+
                 return true;
             }
 
@@ -3692,9 +3826,8 @@ namespace serialize
             {
                 uint32_t unsigned_value = uint32_t( offset );
                 if ( !stream.SerializeBits( unsigned_value, bits ) )
-                {
                     return false;
-                }
+
                 offset = unsigned_value;
             }
             else
@@ -3702,14 +3835,13 @@ namespace serialize
                 // low dword first, then the high remainder: same convention as serialize_bits and serialize_int64
                 uint32_t low_half = uint32_t( offset & 0xFFFFFFFF );
                 uint32_t high_half = uint32_t( offset >> 32 );
+
                 if ( !stream.SerializeBits( low_half, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( high_half, bits - 32 ) )
-                {
                     return false;
-                }
+
                 offset = ( uint64_t( high_half ) << 32 ) | low_half;
             }
 
@@ -3717,10 +3849,10 @@ namespace serialize
             {
                 // reject raw values outside [raw_min,raw_max] smuggled into the bit headroom. reject, never clamp
                 if ( offset > raw_range )
-                {
                     return false;
-                }
+
                 // reconstruct in the unsigned domain, then convert: wraps two's complement for signed storage
+
                 value = Storage( raw_min + offset );
             }
 
@@ -3737,12 +3869,14 @@ namespace serialize
             // storage, the emulated serialize_uint128_t for emulated storage. all raw offset math runs
             // in this type, where wrap around is exact two's complement in both representations,
             // so this codec is representation generic and needs no compiler guard at all.
+
             typedef typename FixedPointUnsigned<Storage>::type Unsigned;
 
             // the whole unit capacity of the Q format, in the 64 bit compile time domain: with 65
             // or more integer bits the capacity covers any int64 bound, and below that the
             // capacity math fits 64 bits. the inner clamps keep the unselected ternary arms free
             // of invalid shift counts.
+
             const int64_t min_representable_units = FixedPointInteger<Storage>::is_signed ? ( ( IntegerBits >= 65 ) ? INT64_MIN : int64_t( uint64_t( 0 ) - ( uint64_t( 1 ) << ( ( IntegerBits <= 64 ? IntegerBits : 1 ) - 1 ) ) ) ) : int64_t( 0 );
             const int64_t max_representable_units = FixedPointInteger<Storage>::is_signed ? ( ( IntegerBits >= 64 ) ? INT64_MAX : int64_t( ( uint64_t( 1 ) << ( ( IntegerBits < 64 ? IntegerBits : 1 ) - 1 ) ) - 1 ) ) : ( ( IntegerBits >= 64 ) ? INT64_MAX : int64_t( ( uint64_t( 1 ) << ( IntegerBits < 64 ? IntegerBits : 0 ) ) - 1 ) );
 
@@ -3751,6 +3885,7 @@ namespace serialize
 
             // shift the whole unit bounds into raw fixed point units in the unsigned 128 bit domain, so negative bounds wrap two's complement instead of invoking undefined behavior.
             // the storage constructor sign extends the int64 bounds for signed storage. everything below folds: the bounds, the range, the bit count and the group structure.
+
             const Unsigned raw_min = Unsigned( Storage( MinUnits ) ) << FractionalBits;
             const Unsigned raw_max = Unsigned( Storage( MaxUnits ) ) << FractionalBits;
             const Unsigned raw_range = raw_max - raw_min;
@@ -3764,16 +3899,19 @@ namespace serialize
                 {
                     serialize_assert( Unsigned( value ) == raw_min );       // all checking is performed by debug asserts on write
                 }
+
                 if ( Stream::IsReading )
                 {
                     value = Storage( raw_min );
                 }
+
                 return true;
             }
 
             // the wire cost, computed in the 64 bit compile time domain: the range in whole units
             // is exact in a uint64, and shifting it left by FractionalBits adds exactly
-            // FractionalBits to its bit length.
+            // FractionalBits to its bit length
+
             const int bits = BitsRequired64<uint64_t( MinUnits ), uint64_t( MaxUnits )>::result + FractionalBits;
 
             Unsigned offset = 0;
@@ -3787,6 +3925,7 @@ namespace serialize
 
             // the offset is written in 32 bit groups, least significant group first: the same convention as serialize_bits.
             // the group structure is selected at compile time, so each SerializeBits call receives a constant bit count.
+
             uint32_t group0 = 0;
             uint32_t group1 = 0;
             uint32_t group2 = 0;
@@ -3803,54 +3942,40 @@ namespace serialize
             if ( bits <= 32 )
             {
                 if ( !stream.SerializeBits( group0, bits ) )
-                {
                     return false;
-                }
             }
             else if ( bits <= 64 )
             {
                 if ( !stream.SerializeBits( group0, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( group1, bits - 32 ) )
-                {
                     return false;
-                }
             }
             else if ( bits <= 96 )
             {
                 if ( !stream.SerializeBits( group0, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( group1, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( group2, bits - 64 ) )
-                {
                     return false;
-                }
             }
             else
             {
                 if ( !stream.SerializeBits( group0, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( group1, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( group2, 32 ) )
-                {
                     return false;
-                }
+
                 if ( !stream.SerializeBits( group3, bits - 96 ) )
-                {
                     return false;
-                }
             }
 
             if ( Stream::IsReading )
@@ -3858,11 +3983,12 @@ namespace serialize
                 offset = ( Unsigned( group3 ) << 96 ) | ( Unsigned( group2 ) << 64 ) | ( Unsigned( group1 ) << 32 ) | Unsigned( group0 );
 
                 // reject raw values outside [raw_min,raw_max] smuggled into the bit headroom. reject, never clamp
+
                 if ( offset > raw_range )
-                {
                     return false;
-                }
+
                 // reconstruct in the unsigned domain, then convert: wraps two's complement for signed storage
+
                 value = Storage( raw_min + offset );
             }
 
@@ -3878,7 +4004,6 @@ namespace serialize
         serialize_static_assert( FractionalBits >= 0, "serialize_fixed fractional bits can't be negative" );
         serialize_static_assert( IntegerBits + FractionalBits == 8 * (int) sizeof( Storage ), "serialize_fixed integer bits plus fractional bits must equal the number of bits in the storage type" );
         serialize_static_assert( MinUnits <= MaxUnits, "serialize_fixed min must not exceed max" );
-
         return FixedPointSerializer<( 8 * (int) sizeof( Storage ) > 64 )>::template Serialize<IntegerBits, FractionalBits, MinUnits, MaxUnits>( stream, value );
     }
 
@@ -4046,7 +4171,6 @@ namespace serialize
             }                                                                               \
         } while (0)
 
-
 #define read_align                  serialize_align
 #define read_object                 serialize_object
 #define read_int_relative           serialize_int_relative
@@ -4178,7 +4302,6 @@ namespace serialize
             }                                                                                       \
         } while (0)
 
-
 #define write_align( stream )                                                           \
         do                                                                                  \
         {                                                                                   \
@@ -4207,7 +4330,7 @@ namespace serialize
     // (VS2017, _MSC_VER 1910, carries full C++14 constexpr in every language mode it supports).
 #if ( defined( __cplusplus ) && __cplusplus >= 201402L ) || ( defined( _MSC_VER ) && _MSC_VER >= 1910 )
 #define SERIALIZE_HAS_COMPILE_TIME_SURFACE 1
-#endif
+#endif // #if ( defined( __cplusplus ) && __cplusplus >= 201402L ) || ( defined( _MSC_VER ) && _MSC_VER >= 1910 )
 
 #if defined( SERIALIZE_HAS_COMPILE_TIME_SURFACE )
 
@@ -4241,11 +4364,14 @@ namespace serialize
     {
         // subtract in the unsigned domain: max - min overflows signed arithmetic when the range is wider than 2^63.
         // sign extended int32 bounds wrap to the same difference, so this one function covers both integer domains.
+
         int bits = 0;
+
         for ( uint64_t diff = max - min; diff != 0; diff >>= 1 )
         {
             bits++;
         }
+
         return bits;
     }
 
@@ -4264,28 +4390,33 @@ namespace serialize
     template <int32_t Min, int32_t Max, typename Stream> bool SerializeIntConst( Stream & stream, int32_t & value )
     {
         static_assert( Min < Max, "serialize: min must be less than max" );
+
         constexpr int bits = bits_required64_constexpr( uint64_t( int64_t( Min ) ), uint64_t( int64_t( Max ) ) );
         uint32_t unsigned_value = 0;
+
         if ( Stream::IsWriting )
         {
             serialize_assert( value >= Min );
             serialize_assert( value <= Max );
+
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^31
+
             unsigned_value = uint32_t( value ) - uint32_t( Min );
         }
+
         if ( !stream.SerializeBits( unsigned_value, bits ) )
-        {
             return false;
-        }
+
         if ( Stream::IsReading )
         {
             if ( unsigned_value > uint32_t( Max ) - uint32_t( Min ) )
-            {
                 return false;
-            }
+
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^31
+
             value = int32_t( unsigned_value + uint32_t( Min ) );
         }
+
         return true;
     }
 
@@ -4304,22 +4435,26 @@ namespace serialize
     template <int64_t Min, int64_t Max, typename Stream> bool SerializeInt64Const( Stream & stream, int64_t & value )
     {
         static_assert( Min < Max, "serialize: min must be less than max" );
+
         constexpr int bits = bits_required64_constexpr( uint64_t( Min ), uint64_t( Max ) );
         uint64_t unsigned_value = 0;
+
         if ( Stream::IsWriting )
         {
             serialize_assert( value >= Min );
             serialize_assert( value <= Max );
+
             // subtract in the unsigned domain: value - min overflows signed arithmetic when the range is wider than 2^63
+
             unsigned_value = uint64_t( value ) - uint64_t( Min );
         }
+
         if ( bits <= 32 )       // constant condition: the dead branch folds at compile time
         {
             uint32_t unsigned_value32 = uint32_t( unsigned_value );
             if ( !stream.SerializeBits( unsigned_value32, bits ) )
-            {
                 return false;
-            }
+
             if ( Stream::IsReading )
             {
                 unsigned_value = unsigned_value32;
@@ -4330,28 +4465,29 @@ namespace serialize
             // low dword first, then the high remainder: same convention as serialize_bits and serialize_uint64
             uint32_t lo = uint32_t( unsigned_value & 0xFFFFFFFF );
             uint32_t hi = uint32_t( unsigned_value >> 32 );
+
             if ( !stream.SerializeBits( lo, 32 ) )
-            {
                 return false;
-            }
+
             if ( !stream.SerializeBits( hi, bits - 32 ) )
-            {
                 return false;
-            }
+
             if ( Stream::IsReading )
             {
                 unsigned_value = ( uint64_t( hi ) << 32 ) | lo;
             }
         }
+
         if ( Stream::IsReading )
         {
             if ( unsigned_value > uint64_t( Max ) - uint64_t( Min ) )
-            {
                 return false;
-            }
+
             // add in the unsigned domain: unsigned_value + min overflows signed arithmetic when the range is wider than 2^63
+
             value = int64_t( unsigned_value + uint64_t( Min ) );
         }
+
         return true;
     }
 
@@ -4388,13 +4524,13 @@ namespace serialize
     {
         static_assert( Bits > 0, "serialize: bits must be greater than zero" );
         static_assert( Bits <= 64, "serialize: bits must be less than or equal to 64" );
+
         if ( Bits <= 32 )       // constant condition: the dead branch folds at compile time
         {
             uint32_t value32 = uint32_t( value );
             if ( !stream.SerializeBits( value32, Bits ) )
-            {
                 return false;
-            }
+
             if ( Stream::IsReading )
             {
                 value = value32;
@@ -4405,19 +4541,19 @@ namespace serialize
             // low dword first, then the high remainder: same convention as serialize_bits and serialize_uint64
             uint32_t lo = uint32_t( value & 0xFFFFFFFF );
             uint32_t hi = uint32_t( value >> 32 );
+
             if ( !stream.SerializeBits( lo, 32 ) )
-            {
                 return false;
-            }
+
             if ( !stream.SerializeBits( hi, Bits - 32 ) )
-            {
                 return false;
-            }
+
             if ( Stream::IsReading )
             {
                 value = ( uint64_t( hi ) << 32 ) | lo;
             }
         }
+
         return true;
     }
 
@@ -4571,6 +4707,7 @@ inline void serialize_copy_string( char * dest, const char * source, size_t dest
     serialize_assert( source );
     serialize_assert( dest_size >= 1 );
     memset( dest, 0, dest_size );
+
     for ( size_t i = 0; i < dest_size - 1; i++ )
     {
         if ( source[i] == '\0' )
@@ -4585,6 +4722,7 @@ inline void serialize_copy_wstring( wchar_t * dest, const wchar_t * source, size
     serialize_assert( source );
     serialize_assert( dest_size >= 1 );
     memset( dest, 0, dest_size * sizeof( wchar_t ) );
+
     for ( size_t i = 0; i < dest_size - 1; i++ )
     {
         if ( source[i] == L'\0' )
@@ -4592,7 +4730,6 @@ inline void serialize_copy_wstring( wchar_t * dest, const wchar_t * source, size
         dest[i] = source[i];
     }
 }
-
 
 #if defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS
 
@@ -4625,8 +4762,8 @@ inline void SerializeCheckHandler( const char * condition,
     __builtin_trap();
 #elif defined( _MSC_VER )
     __debugbreak();
-#endif
-#endif
+#endif // #if defined( __GNUC__ )
+#endif // #ifndef NDEBUG
     exit( 1 );
 }
 
@@ -4762,27 +4899,32 @@ inline void test_bits_required128()
     serialize_check( serialize::bits_required128( u128( 0 ), u128( 0xFFFFFFFFFFFFFFFFULL ) ) == 64 );
 
     // the boundary the 64 bit helper cannot reach: one past a full low lane needs the high lane
+
     serialize_check( serialize::bits_required128( u128( 0 ), u128( 1 ) << 64 ) == 65 );
     serialize_check( serialize::bits_required128( u128( 0 ), ( u128( 1 ) << 127 ) ) == 128 );
     serialize_check( serialize::bits_required128( u128( 0 ), ~u128( 0 ) ) == 128 );
 
     // the two helpers must agree wherever the range fits 64 bits, or the wire identity claim in
     // STANDARD.md is false and serialize_int128 would silently disagree with serialize_int64
+
     serialize_check( serialize::bits_required128( u128( 0 ), u128( 4294967296ULL ) ) == serialize::bits_required64( 0, 4294967296ULL ) );
     serialize_check( serialize::bits_required128( u128( 0 ), u128( ( 1ULL << 40 ) ) ) == serialize::bits_required64( 0, ( 1ULL << 40 ) ) );
 
     // NEGATIVE BOUNDS MUST ARRIVE SIGN EXTENDED, which is what the codec does — it converts
     // serialize::int128_t bounds straight to the unsigned domain. This is the same 34 bits the 64
     // bit helper reports for the same signed range.
+
     serialize_check( serialize::bits_required128( u128( serialize::int128_t( -5000000000LL ) ), u128( serialize::int128_t( +5000000000LL ) ) ) == 34 );
 
     // AND THE TRAP IT WOULD BE EASY TO WALK INTO, pinned so nobody "fixes" the conversion:
     // widening an ALREADY WRAPPED uint64_t bound zero extends instead of sign extending, so the
     // range comes out just under 2^128 and the field would cost 128 bits instead of 34. Correct
     // arithmetic on the wrong input — no assert would ever fire.
+
     serialize_check( serialize::bits_required128( u128( uint64_t( -5000000000LL ) ), u128( uint64_t( +5000000000LL ) ) ) == 128 );
 
     // a range wider than 2^127: the subtraction must run in the unsigned domain or this wraps wrong
+
     serialize_check( serialize::bits_required128( u128( 1 ), ~u128( 0 ) ) == 128 );
 }
 
@@ -4805,7 +4947,6 @@ inline void test_zigzag()
     serialize_check( serialize::unsigned_to_signed( 0xFFFFFFFF ) == INT32_MIN );
 
     const int32_t values[] = { 0, -1, +1, -2, +2, 12345, -12345, INT32_MAX, INT32_MIN };
-
     for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
     {
         serialize_check( serialize::unsigned_to_signed( serialize::signed_to_unsigned( values[i] ) ) == values[i] );
@@ -4865,7 +5006,9 @@ struct TestObject
 
         data.numItems = MaxItems / 2;
         for ( int i = 0; i < data.numItems; ++i )
+        {
             data.items[i] = i + 10;
+        }
 
         data.compressed_float_value = 2.13f;
         data.float_value = 3.1415926f;
@@ -4879,7 +5022,9 @@ struct TestObject
         data.int64_range = 4123456789LL;
 
         for ( int i = 0; i < (int) sizeof( data.bytes ); ++i )
+        {
             data.bytes[i] = (uint8_t) ( i + 5 ) * 13;
+        }
 
         serialize_copy_string( data.string, "hello world!", sizeof( data.string ) - 1 );
 
@@ -4888,6 +5033,7 @@ struct TestObject
         // literals. Writing the code points makes this independent of source encoding entirely,
         // which also protects consumers who include this header without /utf-8. The assertions
         // further down already do this for the same family of reason.
+
         const wchar_t hello_world[] = { 0x043F, 0x0440, 0x0438, 0x0432, 0x0456, 0x0442,    // privit
                                         0x002C, 0x0020,                                    // ", "
                                         0x0441, 0x0432, 0x0456, 0x0442, 0x0021, 0 };       // svit!
@@ -4913,7 +5059,9 @@ struct TestObject
 
         serialize_int( stream, data.numItems, 0, MaxItems - 1 );
         for ( int i = 0; i < data.numItems; ++i )
+        {
             serialize_bits( stream, data.items[i], 8 );
+        }
 
         serialize_float( stream, data.float_value );
 
@@ -4935,7 +5083,6 @@ struct TestObject
 
         serialize_string( stream, data.string, sizeof( data.string ) );
         serialize_wstring( stream, data.wstring, sizeof( data.wstring ) / sizeof( wchar_t ) );
-
         return true;
     }
 
@@ -4985,7 +5132,6 @@ bool ReadFunction( serialize::ReadStream & readStream )
     // IMPORTANT: You wouldn't normally write a read function like this, but I'm just checking each value as it's read in
     // Note that the only thing the read function has to have is to return bool: true on success, false on failing to read.
     // This is important because protects you from maliciously crafted packets.
-
     {
         uint32_t value;
         read_bits( readStream, value, 4 );
@@ -5082,8 +5228,10 @@ bool ReadFunction( serialize::ReadStream & readStream )
     {
         wchar_t wstring[20];
         read_wstring( readStream, wstring, 20 );
+
         // explicit code points rather than cyrillic literals: serialize_check stringizes its
         // condition into a narrow string, which warns as C4566 on MSVC with a western code page
+
         serialize_check( wstring[0] == 0x043F );        // 'п'
         serialize_check( wstring[1] == 0x0440 );        // 'р'
         serialize_check( wstring[2] == 0x0438 );        // 'и'
@@ -5099,6 +5247,7 @@ bool ReadFunction( serialize::ReadStream & readStream )
     context.max = +10;
 
     readStream.SetContext( &context );
+
     {
         TestObject expectedObject;
         expectedObject.Init();
@@ -5157,6 +5306,7 @@ inline void test_read_write()
         write_string( writeStream, string, 10 );
 
         // explicit code points, see the note above
+
         const wchar_t wstring_storage[] = { 0x043F, 0x0440, 0x0438, 0x0432, 0x0456, 0x0442, 0 };
         const wchar_t * wstring = wstring_storage;
         write_wstring( writeStream, wstring, 20 );
@@ -5194,14 +5344,17 @@ inline void test_read_write()
 inline void test_serialize_integer_validation()
 {
     // bits_required(0,5) is 3 bits, so a malicious packet can encode 6 or 7. reads must reject values above max.
+
     uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
     serialize::WriteStream writeStream( buffer, 8 );
+
     uint32_t out_of_range = 7;
     writeStream.SerializeBits( out_of_range, 3 );
     writeStream.Flush();
 
     serialize::ReadStream readStream( buffer, 4 );
+
     int32_t value = 0;
     serialize_check( readStream.SerializeInteger( value, 0, 5 ) == false );
 }
@@ -5216,9 +5369,11 @@ inline void test_serialize_degenerate_range()
     // exactly the case the format defines and the release build handled
     // correctly. This test is here so debug and release cannot drift apart
     // again.
+
     uint8_t buffer[16] = { 0 };
 
     serialize::WriteStream writeStream( buffer, 16 );
+
     int32_t degenerate = 5;
     int32_t after = 3;
     serialize_check( writeStream.SerializeInteger( degenerate, 5, 5 ) );
@@ -5228,6 +5383,7 @@ inline void test_serialize_degenerate_range()
     writeStream.Flush();
 
     serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
     int32_t read_degenerate = 0;
     int32_t read_after = 0;
     serialize_check( readStream.SerializeInteger( read_degenerate, 5, 5 ) );
@@ -5237,6 +5393,7 @@ inline void test_serialize_degenerate_range()
     serialize_check( read_after == 3 );
 
     // and the measure stream must agree that it costs nothing
+
     serialize::MeasureStream measureStream;
     int32_t measured = 5;
     serialize_check( measureStream.SerializeInteger( measured, 5, 5 ) );
@@ -5258,11 +5415,13 @@ inline void test_serialize_degenerate_range_64()
     //
     // The bounds below are deliberately wider than 2^32 so the field would
     // take the two-dword path if it took any path at all.
+
     uint8_t buffer[16] = { 0 };
 
     const int64_t point = int64_t( 1 ) << 40;
 
     serialize::WriteStream writeStream( buffer, 16 );
+
     int64_t degenerate = point;
     int32_t after = 3;
     serialize_check( writeStream.SerializeInteger64( degenerate, point, point ) );
@@ -5272,6 +5431,7 @@ inline void test_serialize_degenerate_range_64()
     writeStream.Flush();
 
     serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
     int64_t read_degenerate = 0;
     int32_t read_after = 0;
     serialize_check( readStream.SerializeInteger64( read_degenerate, point, point ) );
@@ -5289,8 +5449,8 @@ inline void test_serialize_degenerate_range_64()
 inline void test_serialize_integer_full_range()
 {
     // ranges wider than 2^31 overflow if [min,max] arithmetic is done signed (undefined behavior)
-    const int32_t values[] = { INT32_MIN, INT32_MIN + 1, -1, 0, +1, INT32_MAX - 1, INT32_MAX };
 
+    const int32_t values[] = { INT32_MIN, INT32_MIN + 1, -1, 0, +1, INT32_MAX - 1, INT32_MAX };
     for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
     {
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
@@ -5300,6 +5460,7 @@ inline void test_serialize_integer_full_range()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         int32_t value = 0;
         serialize_check( readStream.SerializeInteger( value, INT32_MIN, INT32_MAX ) == true );
         serialize_check( value == values[i] );
@@ -5313,6 +5474,7 @@ inline void test_serialize_integer_full_range()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         int32_t value = 0;
         serialize_check( readStream.SerializeInteger( value, -2000000000, 2000000000 ) == true );
         serialize_check( value == 1000000000 );
@@ -5324,7 +5486,6 @@ inline void test_serialize_int64_full_range()
     // ranges wider than 2^63 overflow if [min,max] arithmetic is done signed (undefined behavior)
     {
         const int64_t values[] = { INT64_MIN, INT64_MIN + 1, -1, 0, +1, INT64_MAX - 1, INT64_MAX };
-
         for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
         {
             uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
@@ -5334,6 +5495,7 @@ inline void test_serialize_int64_full_range()
             writeStream.Flush();
 
             serialize::ReadStream readStream( buffer, 16 );
+
             int64_t value = 0;
             serialize_check( readStream.SerializeInteger64( value, INT64_MIN, INT64_MAX ) == true );
             serialize_check( value == values[i] );
@@ -5345,7 +5507,6 @@ inline void test_serialize_int64_full_range()
         const int64_t min = -5000000000LL;
         const int64_t max = +5000000000LL;
         const int64_t values[] = { min, min + 1, -1, 0, +1, 4123456789LL, max - 1, max };
-
         for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
         {
             uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
@@ -5355,6 +5516,7 @@ inline void test_serialize_int64_full_range()
             writeStream.Flush();
 
             serialize::ReadStream readStream( buffer, 16 );
+
             int64_t value = 0;
             serialize_check( readStream.SerializeInteger64( value, min, max ) == true );
             serialize_check( value == values[i] );
@@ -5372,6 +5534,7 @@ inline void test_serialize_int64_full_range()
         serialize_check( writeStream.GetBitsProcessed() == 8 );        // bits_required64(-100,100) == 8, same as the 32 bit path
 
         serialize::ReadStream readStream( buffer, 8 );
+
         int64_t value = 0;
         serialize_check( readStream.SerializeInteger64( value, -100, +100 ) == true );
         serialize_check( value == 55 );
@@ -5385,6 +5548,7 @@ inline void test_serialize_int64_validation()
         uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         const uint64_t out_of_range = ( 1ULL << 34 ) + 5;               // range [0, 2^34] is 35 bits, so values above 2^34 fit in the headroom
         uint32_t lo = uint32_t( out_of_range & 0xFFFFFFFF );
         uint32_t hi = uint32_t( out_of_range >> 32 );
@@ -5393,6 +5557,7 @@ inline void test_serialize_int64_validation()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 16 );
+
         int64_t value = 0;
         serialize_check( readStream.SerializeInteger64( value, 0, int64_t( 1ULL << 34 ) ) == false );
     }
@@ -5402,6 +5567,7 @@ inline void test_serialize_int64_validation()
         uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 4 );
+
         int64_t value = 0;
         serialize_check( readStream.SerializeInteger64( value, INT64_MIN, INT64_MAX ) == false );
     }
@@ -5410,6 +5576,7 @@ inline void test_serialize_int64_validation()
 inline void test_serialize_bytes_validation()
 {
     // negative and huge byte counts must be rejected, not overflow the bounds check in bits
+
     uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
     uint8_t data[16];
 
@@ -5453,7 +5620,9 @@ inline void test_wstring_validation()
         uint8_t buffer[512];
         wchar_t full[BufferSize];
         for ( int i = 0; i < BufferSize - 1; ++i )
+        {
             full[i] = (wchar_t) ( 0x0041 + ( i % 26 ) );
+        }
         full[BufferSize - 1] = 0;
 
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
@@ -5501,6 +5670,7 @@ inline void test_wstring_validation()
         wchar_t read_back[BufferSize];
         memset( read_back, 0, sizeof( read_back ) );
         serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
         const bool result = serialize::serialize_wstring_internal( readStream, read_back, BufferSize );
 
         serialize_check( result == false );
@@ -5521,7 +5691,9 @@ inline void test_wstring_utf16_code_units()
 
     // U+1F600 is the surrogate pair 0xD83D 0xDE00: one character but two units on a 4 byte
     // wchar_t platform. On a 2 byte platform the string already holds the pair.
+
     wchar_t ws_in[8];
+
     if ( sizeof( wchar_t ) >= 4 )
     {
         ws_in[0] = (wchar_t) 0x0001F600;
@@ -5538,12 +5710,16 @@ inline void test_wstring_utf16_code_units()
 
     // the wire, spelled out with raw bit operations: three units in a [0,7] length field,
     // then each unit as a 32 bit group
+
     uint8_t expected_bytes[64];
     memset( expected_bytes, 0, sizeof( expected_bytes ) );
+
     int expected_bytes_processed = 0;
+
     {
         serialize::WriteStream expectedStream( expected_bytes, sizeof( expected_bytes ) );
         serialize_check( expectedStream.SerializeInteger( 3, 0, BufferSize - 1 ) );
+
         uint32_t high_surrogate = 0xD83D;
         uint32_t low_surrogate = 0xDE00;
         uint32_t letter_a = 0x0041;
@@ -5555,8 +5731,10 @@ inline void test_wstring_utf16_code_units()
     }
 
     // write side: the unified serialize path must produce exactly those bytes
+
     int bits_written = 0;
     uint8_t buffer[64];
+
     {
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
@@ -5580,6 +5758,7 @@ inline void test_wstring_utf16_code_units()
         uint8_t macro_buffer[64];
         memset( macro_buffer, 0, sizeof( macro_buffer ) );
         serialize::WriteStream writeStream( macro_buffer, sizeof( macro_buffer ) );
+
         const wchar_t * wstring = ws_in;
         write_wstring( writeStream, wstring, BufferSize );
         writeStream.Flush();
@@ -5614,8 +5793,10 @@ inline void test_string_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 3;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         const uint8_t payload[3] = { 0xFF, 0xFE, 0xFF };
         serialize_check( writeStream.SerializeBytes( payload, 3 ) );
         writeStream.Flush();
@@ -5630,8 +5811,10 @@ inline void test_string_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 2;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         const uint8_t payload[2] = { 'a', 0xE2 };
         serialize_check( writeStream.SerializeBytes( payload, 2 ) );
         writeStream.Flush();
@@ -5649,8 +5832,10 @@ inline void test_string_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 3;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         const uint8_t payload[3] = { 'a', 0x00, 'b' };
         serialize_check( writeStream.SerializeBytes( payload, 3 ) );
         writeStream.Flush();
@@ -5666,6 +5851,7 @@ inline void test_string_read_validation()
     {
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
+
         char text[BufferSize];
         const uint8_t utf8[11] = { 'h', 0xC3, 0xA9, 0xE2, 0x82, 0xAC, 0xF0, 0x9F, 0x98, 0x80, 0 };  // h, e-acute, euro sign, U+1F600
         memcpy( text, utf8, sizeof( utf8 ) );
@@ -5694,8 +5880,10 @@ inline void test_wstring_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 2;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         uint32_t group0 = 0xD800;
         uint32_t group1 = 0x0041;
         serialize_check( writeStream.SerializeBits( group0, 32 ) );
@@ -5712,8 +5900,10 @@ inline void test_wstring_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 1;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         uint32_t group0 = 0xDC00;
         serialize_check( writeStream.SerializeBits( group0, 32 ) );
         writeStream.Flush();
@@ -5728,8 +5918,10 @@ inline void test_wstring_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 1;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         uint32_t group0 = 0xD83D;
         serialize_check( writeStream.SerializeBits( group0, 32 ) );
         writeStream.Flush();
@@ -5745,8 +5937,10 @@ inline void test_wstring_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 3;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         uint32_t group0 = 0x0041;
         uint32_t group1 = 0x0000;
         uint32_t group2 = 0x0042;
@@ -5768,8 +5962,10 @@ inline void test_wstring_read_validation()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, sizeof( buffer ) );
+
         int32_t length = 2;
         serialize_check( writeStream.SerializeInteger( length, 0, BufferSize - 1 ) );
+
         uint32_t group0 = 0xD83D;
         uint32_t group1 = 0xDE00;
         serialize_check( writeStream.SerializeBits( group0, 32 ) );
@@ -5790,13 +5986,16 @@ inline void test_int_relative_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         uint32_t six_false_bools = 0;
         writeStream.SerializeBits( six_false_bools, 6 );
+
         uint32_t bad_current = 50;
         writeStream.SerializeBits( bad_current, 32 );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         int previous = 100;
         int current = 0;
         serialize_check( serialize::serialize_int_relative_internal( readStream, previous, current ) == false );
@@ -5807,12 +6006,14 @@ inline void test_int_relative_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         int previous = 100;
         int written = 100000;
         serialize_check( serialize::serialize_int_relative_internal( writeStream, previous, written ) == true );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         int current = 0;
         serialize_check( serialize::serialize_int_relative_internal( readStream, previous, current ) == true );
         serialize_check( current == written );
@@ -5823,12 +6024,14 @@ inline void test_int_relative_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         int previous = -1000;
         int written = INT32_MAX;
         serialize_check( serialize::serialize_int_relative_internal( writeStream, previous, written ) == true );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         int current = 0;
         serialize_check( serialize::serialize_int_relative_internal( readStream, previous, current ) == true );
         serialize_check( current == written );
@@ -5838,19 +6041,21 @@ inline void test_int_relative_validation()
     // this must wrap in the unsigned domain rather than invoke undefined behavior.
     {
         // difference of 1 exercises the oneBit branch, difference of 5 exercises a bucket branch
-        const int differences[] = { 1, 5 };
 
+        const int differences[] = { 1, 5 };
         for ( int d = 0; d < (int) ( sizeof( differences ) / sizeof( differences[0] ) ); d++ )
         {
             uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
             serialize::WriteStream writeStream( buffer, 8 );
+
             int prevWrite = 10;
             int curWrite = prevWrite + differences[d];
             serialize_check( serialize::serialize_int_relative_internal( writeStream, prevWrite, curWrite ) == true );
             writeStream.Flush();
 
             serialize::ReadStream readStream( buffer, 8 );
+
             int previous = INT32_MAX;                        // previous + difference exceeds INT32_MAX
             int current = 0;
             serialize_check( serialize::serialize_int_relative_internal( readStream, previous, current ) == true );
@@ -5866,11 +6071,13 @@ inline void test_compressed_float_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         uint32_t out_of_range = 1023;                       // maxIntegerValue is 1000 for [0,10] at res 0.01 -> 10 bits
         writeStream.SerializeBits( out_of_range, 10 );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         float value = 0.0f;
         serialize_check( serialize::serialize_compressed_float_internal( readStream, value, 0.0f, 10.0f, 0.01f ) == false );
     }
@@ -5880,11 +6087,13 @@ inline void test_compressed_float_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         float written = 5000000000.0f;
         serialize_check( serialize::serialize_compressed_float_internal( writeStream, written, 0.0f, 10000000000.0f, 1.0f ) == true );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         float value = 0.0f;
         serialize_check( serialize::serialize_compressed_float_internal( readStream, value, 0.0f, 10000000000.0f, 1.0f ) == true );
         serialize_check( fabs( value - written ) <= 4096.0f );
@@ -5899,6 +6108,7 @@ inline void test_compressed_float_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         uint32_t nan_bits = 0x7fc00000;                 // quiet NaN bit pattern, built without the NAN macro (finite-math builds reject it)
         float written = 0.0f;
         memcpy( &written, &nan_bits, 4 );
@@ -5906,6 +6116,7 @@ inline void test_compressed_float_validation()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         float value = -1.0f;
         serialize_check( serialize::serialize_compressed_float_internal( readStream, value, 0.0f, 10.0f, 0.01f ) == true );
         serialize_check( value >= 0.0f && value <= 10.0f );      // NaN clamps to the low end of the range
@@ -5920,10 +6131,12 @@ inline void test_compressed_float_validation()
 
 // run fn in a forked child with stderr silenced, and report whether it died on a signal --
 // which is what a fired debug assert looks like from outside (assert calls abort, SIGABRT).
+
 inline bool serialize_test_assert_fires( void ( *fn )() )
 {
     fflush( stdout );
     fflush( stderr );
+
     pid_t pid = fork();
     if ( pid == 0 )
     {
@@ -5931,18 +6144,23 @@ inline bool serialize_test_assert_fires( void ( *fn )() )
         fn();
         _exit( 0 );                             // the assert did not fire
     }
+
     if ( pid < 0 )
         return false;
+
     int status = 0;
     waitpid( pid, &status, 0 );
+
     return WIFSIGNALED( status );
 }
 
 inline void serialize_test_write_non_finite_declaration()
 {
     // delta = max - min overflows float32 to +Inf: a non-conforming declaration
+
     uint8_t buffer[8] = { 0 };
     serialize::WriteStream writeStream( buffer, 8 );
+
     float value = 0.0f;
     serialize::serialize_compressed_float_internal( writeStream, value, -3e38f, 3e38f, 1.0f );
 }
@@ -5950,8 +6168,10 @@ inline void serialize_test_write_non_finite_declaration()
 inline void serialize_test_write_non_finite_value()
 {
     // a NaN value over a perfectly good declaration: a non-conforming write
+
     uint8_t buffer[8] = { 0 };
     serialize::WriteStream writeStream( buffer, 8 );
+
     uint32_t nan_bits = 0x7fc00000;             // quiet NaN bit pattern, built without the NAN macro (finite-math builds reject it)
     float value = 0.0f;
     memcpy( &value, &nan_bits, 4 );
@@ -5961,8 +6181,10 @@ inline void serialize_test_write_non_finite_value()
 inline void serialize_test_write_non_finite_value_precomputed()
 {
     // the same non-conforming NaN write, through the precomputed entry point directly
+
     uint8_t buffer[8] = { 0 };
     serialize::WriteStream writeStream( buffer, 8 );
+
     uint32_t nan_bits = 0x7fc00000;             // quiet NaN bit pattern, built without the NAN macro (finite-math builds reject it)
     float value = 0.0f;
     memcpy( &value, &nan_bits, 4 );
@@ -5973,8 +6195,10 @@ inline void serialize_test_precomputed_inconsistent_bits()
 {
     // a wire width that disagrees with the step count is a caller bug: the field would not
     // occupy the width every other conforming implementation of the declaration expects
+
     uint8_t buffer[8] = { 0 };
     serialize::WriteStream writeStream( buffer, 8 );
+
     float value = 5.0f;
     serialize::serialize_compressed_float_precomputed_internal( writeStream, value, 1000, 11, 10.0f, 0.0f );
 }
@@ -6016,7 +6240,8 @@ inline void test_compressed_float_precomputed_validation()
 {
     // the constants serialize_compressed_float derives on every call, derived once instead:
     // the precomputed read path must refuse the same smuggled integers and accept the same
-    // conforming ones as the derive-per-call path.
+    // conforming ones as the derive-per-call path
+
     uint32_t max_integer_value = 0;
     int bits = 0;
     float delta = 0.0f;
@@ -6030,11 +6255,13 @@ inline void test_compressed_float_precomputed_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         uint32_t out_of_range = 1023;                       // max_integer_value is 1000 for [0,10] at res 0.01 -> 10 bits
         writeStream.SerializeBits( out_of_range, 10 );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         float value = 0.0f;
         serialize_check( serialize::serialize_compressed_float_precomputed_internal( readStream, value, max_integer_value, bits, delta, 0.0f ) == false );
     }
@@ -6044,11 +6271,13 @@ inline void test_compressed_float_precomputed_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         uint32_t top_of_range = 1000;
         writeStream.SerializeBits( top_of_range, 10 );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 8 );
+
         float value = 0.0f;
         serialize_check( serialize::serialize_compressed_float_precomputed_internal( readStream, value, max_integer_value, bits, delta, 0.0f ) == true );
         serialize_check( value == 10.0f );                  // 1000 / 1000 * 10 + 0: exact at the top of the range
@@ -6065,6 +6294,7 @@ inline void check_fixed_round_trip( Storage raw_value )
     uint8_t buffer[32 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
     serialize::WriteStream writeStream( buffer, 32 );
+
     Storage written = raw_value;
     serialize_check( ( serialize::serialize_fixed_internal<IntegerBits, FractionalBits, MinUnits, MaxUnits>( writeStream, written ) ) == true );
     writeStream.Flush();
@@ -6075,6 +6305,7 @@ inline void check_fixed_round_trip( Storage raw_value )
     serialize_check( measureStream.GetBitsProcessed() == writeStream.GetBitsProcessed() );
 
     serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
     Storage read_back = 0;
     serialize_check( ( serialize::serialize_fixed_internal<IntegerBits, FractionalBits, MinUnits, MaxUnits>( readStream, read_back ) ) == true );
     serialize_check( read_back == raw_value );
@@ -6085,34 +6316,42 @@ inline void check_fixed_cases( Storage one_unit )
 {
     // the multiplications keep the Storage typed operand on the left, so the emulated 128 bit
     // types (member operators only) work as Storage here too
+
     const Storage raw_min = Storage( one_unit * Storage( MinUnits ) );
     const Storage raw_max = Storage( one_unit * Storage( MaxUnits ) );
 
     // exact raw bounds, and one raw step inside each
+
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( raw_min );
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( raw_max );
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( raw_min + 1 ) );
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( raw_max - 1 ) );
 
     // whole unit values one unit inside each bound
+
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( one_unit * Storage( MinUnits + 1 ) ) );
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( one_unit * Storage( MaxUnits - 1 ) ) );
 
     // a value with every fraction bit set
+
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( raw_min + one_unit - 1 ) );
 
     // the middle of the range, computed without overflowing the storage type
+
     check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( raw_min / 2 + raw_max / 2 ) );
 
     // zero, one and minus one whole units, where the bounds allow them
+
     if ( MinUnits <= 0 && MaxUnits >= 0 )
     {
         check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( 0 ) );
     }
+
     if ( MinUnits <= 1 && MaxUnits >= 1 )
     {
         check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( one_unit );
     }
+
     if ( MinUnits <= -1 && MaxUnits >= -1 )
     {
         check_fixed_round_trip<IntegerBits, FractionalBits, MinUnits, MaxUnits>( Storage( Storage( 0 ) - one_unit ) );
@@ -6124,20 +6363,20 @@ inline void check_fixed_rejects_out_of_range( Storage )
 {
     // recompute the wire parameters independently of the codec, then hand build a stream encoding
     // an offset of exactly raw_range + 1: one raw step past raw_max, smuggled into the bit headroom
+
     const uint64_t raw_range = ( uint64_t( MaxUnits ) << FractionalBits ) - ( uint64_t( MinUnits ) << FractionalBits );
     const int bits = serialize::bits_required64( 0, raw_range );
 
     const uint64_t max_encodable = ( bits < 64 ) ? ( ( uint64_t( 1 ) << bits ) - 1 ) : 0xFFFFFFFFFFFFFFFFULL;
     if ( raw_range == max_encodable )
-    {
         return;                             // no headroom: every encoding decodes in range for this configuration
-    }
 
     const uint64_t smuggled = raw_range + 1;
 
     uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
     serialize::WriteStream writeStream( buffer, 16 );
+
     if ( bits <= 32 )
     {
         writeStream.SerializeBits( uint32_t( smuggled ), bits );
@@ -6147,9 +6386,11 @@ inline void check_fixed_rejects_out_of_range( Storage )
         writeStream.SerializeBits( uint32_t( smuggled & 0xFFFFFFFF ), 32 );
         writeStream.SerializeBits( uint32_t( smuggled >> 32 ), bits - 32 );
     }
+
     writeStream.Flush();
 
     serialize::ReadStream readStream( buffer, 16 );
+
     Storage value = 0;
     serialize_check( ( serialize::serialize_fixed_internal<IntegerBits, FractionalBits, MinUnits, MaxUnits>( readStream, value ) ) == false );
 }
@@ -6161,48 +6402,59 @@ inline void test_serialize_fixed()
     // bits set, the middle of the range, and zero / +1.0 / -1.0 units where the bounds allow them.
 
     // int16_t
+
     check_fixed_cases<8, 8, -100, +100>( int16_t( 256 ) );
     check_fixed_cases<12, 4, -2000, +2000>( int16_t( 16 ) );
 
     // int32_t
+
     check_fixed_cases<16, 16, -30000, +30000>( int32_t( 65536 ) );
     check_fixed_cases<24, 8, -8000000, +8000000>( int32_t( 256 ) );
     check_fixed_cases<32, 0, -100000, +100000>( int32_t( 1 ) );                                 // pure integer Q: fraction_bits == 0 is legal
 
     // int64_t
+
     check_fixed_cases<48, 16, -100000000000LL, +100000000000LL>( int64_t( 65536 ) );
     check_fixed_cases<32, 32, -1000000, +1000000>( int64_t( 1 ) << 32 );
     check_fixed_cases<64, 0, -5000000000LL, +5000000000LL>( int64_t( 1 ) );                     // pure integer Q at full width
 
     // unsigned storage
+
     check_fixed_cases<16, 0, 0, 60000>( uint16_t( 1 ) );
     check_fixed_cases<16, 16, 0, 60000>( uint32_t( 65536 ) );
     check_fixed_cases<48, 16, 0, 1000000000>( uint64_t( 65536 ) );
 
     // single unit range: the whole wire is the fractional part
+
     check_fixed_cases<16, 16, 0, 1>( int32_t( 65536 ) );
 
     // asymmetric bounds
+
     check_fixed_cases<48, 16, -3, +100000>( int64_t( 65536 ) );
 
     // the wire cost is a compile time constant of the call site. pin a few
     {
         uint8_t buffer[16];
         serialize::WriteStream stream( buffer, 16 );
+
         int64_t value = int64_t( 12345 ) * 65536 + 32768;                                       // 12345.5 in Q48.16
         serialize_check( ( serialize::serialize_fixed_internal<48, 16, -100000, +100000>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 34 );         // 200000 << 16 raw values needs 34 bits
     }
+
     {
         uint8_t buffer[8];
         serialize::WriteStream stream( buffer, 8 );
+
         int32_t value = 65536 / 2;                                                              // 0.5 in Q16.16
         serialize_check( ( serialize::serialize_fixed_internal<16, 16, 0, 1>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 17 );         // 1 << 16 raw values needs 17 bits
     }
+
     {
         uint8_t buffer[8];
         serialize::WriteStream stream( buffer, 8 );
+
         int16_t value = -832;                                                                   // -3.25 in Q8.8
         serialize_check( ( serialize::serialize_fixed_internal<8, 8, -100, +100>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 16 );         // 200 << 8 raw values needs 16 bits
@@ -6226,6 +6478,7 @@ inline void test_serialize_fixed_validation()
     // a malicious packet can smuggle a raw value past raw_max into the bit headroom of the offset
     // encoding. reads must reject one raw step past the top of the range, on every configuration
     // in the matrix that has headroom.
+
     check_fixed_rejects_out_of_range<8, 8, -100, +100>( int16_t( 0 ) );
     check_fixed_rejects_out_of_range<12, 4, -2000, +2000>( int16_t( 0 ) );
     check_fixed_rejects_out_of_range<16, 16, -30000, +30000>( int32_t( 0 ) );
@@ -6245,6 +6498,7 @@ inline void test_serialize_fixed_validation()
         uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 2 );
+
         int64_t value = 0;
         serialize_check( ( serialize::serialize_fixed_internal<48, 16, -100000000000LL, +100000000000LL>( readStream, value ) ) == false );
     }
@@ -6258,12 +6512,12 @@ inline void test_serialize_fixed_matches_int64()
     // the new path to the proven one.
 
     const int64_t values[] = { -5000000000LL, -4999999999LL, -1, 0, +1, 12345678, 4999999999LL, 5000000000LL };
-
     for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
     {
         // > 32 bit range: the two group path
         uint8_t fixed_buffer[16] = { 0 };
         serialize::WriteStream fixedStream( fixed_buffer, 16 );
+
         int64_t fixed_value = values[i];
         serialize_check( ( serialize::serialize_fixed_internal<64, 0, -5000000000LL, +5000000000LL>( fixedStream, fixed_value ) ) == true );
         fixedStream.Flush();
@@ -6278,12 +6532,13 @@ inline void test_serialize_fixed_matches_int64()
     }
 
     // <= 32 bit range: the single group path, on 32 bit storage
-    const int32_t narrow_values[] = { -100000, -99999, -1, 0, +1, 54321, 99999, 100000 };
 
+    const int32_t narrow_values[] = { -100000, -99999, -1, 0, +1, 54321, 99999, 100000 };
     for ( int i = 0; i < (int) ( sizeof( narrow_values ) / sizeof( narrow_values[0] ) ); i++ )
     {
         uint8_t fixed_buffer[16] = { 0 };
         serialize::WriteStream fixedStream( fixed_buffer, 16 );
+
         int32_t fixed_value = narrow_values[i];
         serialize_check( ( serialize::serialize_fixed_internal<32, 0, -100000, +100000>( fixedStream, fixed_value ) ) == true );
         fixedStream.Flush();
@@ -6300,12 +6555,13 @@ inline void test_serialize_fixed_matches_int64()
     // the equivalence is not limited to fraction_bits == 0: for any Q format the wire is
     // serialize_int64 of the raw value over the raw bounds. fixed point adds no wire structure,
     // only the compile time scaling convention.
-    const int32_t q16_16_raw_values[] = { -30000 * 65536, -( 3 * 65536 + 16384 ), 0, 65536 / 2, 12345 * 65536 + 1, 30000 * 65536 };
 
+    const int32_t q16_16_raw_values[] = { -30000 * 65536, -( 3 * 65536 + 16384 ), 0, 65536 / 2, 12345 * 65536 + 1, 30000 * 65536 };
     for ( int i = 0; i < (int) ( sizeof( q16_16_raw_values ) / sizeof( q16_16_raw_values[0] ) ); i++ )
     {
         uint8_t fixed_buffer[16] = { 0 };
         serialize::WriteStream fixedStream( fixed_buffer, 16 );
+
         int32_t fixed_value = q16_16_raw_values[i];
         serialize_check( ( serialize::serialize_fixed_internal<16, 16, -30000, +30000>( fixedStream, fixed_value ) ) == true );
         fixedStream.Flush();
@@ -6325,11 +6581,13 @@ inline void check_fixed_wide_rejects_out_of_range( Storage )
 {
     // recompute the wire parameters independently of the codec, then hand build a stream encoding
     // an offset of exactly raw_range + 1: one raw step past raw_max, smuggled into the bit headroom
+
     const serialize::uint128_t raw_min = serialize::uint128_t( serialize::int128_t( MinUnits ) ) << FractionalBits;
     const serialize::uint128_t raw_max = serialize::uint128_t( serialize::int128_t( MaxUnits ) ) << FractionalBits;
     const serialize::uint128_t raw_range = raw_max - raw_min;
 
     int bits = 0;
+
     for ( serialize::uint128_t x = raw_range; x != 0; x >>= 1 )
     {
         bits++;
@@ -6337,15 +6595,14 @@ inline void check_fixed_wide_rejects_out_of_range( Storage )
 
     const serialize::uint128_t max_encodable = ( bits < 128 ) ? ( ( serialize::uint128_t( 1 ) << bits ) - 1 ) : ~( serialize::uint128_t( 0 ) );
     if ( raw_range == max_encodable )
-    {
         return;                             // no headroom: every encoding decodes in range for this configuration
-    }
 
     serialize::uint128_t smuggled = raw_range + 1;
 
     uint8_t buffer[24 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
     serialize::WriteStream writeStream( buffer, 24 );
+
     int bits_left = bits;
     while ( bits_left > 0 )
     {
@@ -6354,9 +6611,11 @@ inline void check_fixed_wide_rejects_out_of_range( Storage )
         smuggled >>= group_bits;
         bits_left -= group_bits;
     }
+
     writeStream.Flush();
 
     serialize::ReadStream readStream( buffer, 24 );
+
     Storage value = 0;
     serialize_check( ( serialize::serialize_fixed_internal<IntegerBits, FractionalBits, MinUnits, MaxUnits>( readStream, value ) ) == false );
 }
@@ -6366,6 +6625,7 @@ inline void test_serialize_fixed_wide()
 #if defined( __SIZEOF_INT128__ )
     // compile time bit counts in the 128 bit domain. the metafunction needs native __int128
     // template parameters, so these checks are the one native only piece of this test
+
     serialize_check( ( serialize::BitsRequired128<0, 0>::result ) == 0 );
     serialize_check( ( serialize::BitsRequired128<0, 1>::result ) == 1 );
     serialize_check( ( serialize::BitsRequired128<0, ( serialize::uint128_t( 1 ) << 64 )>::result ) == 65 );
@@ -6374,7 +6634,8 @@ inline void test_serialize_fixed_wide()
 
     // the matrix, wide: Q112.16 with a raw range past 64 bits (three groups on the wire), Q112.16
     // with a small range (a single group on wide storage), Q64.64 (the fraction alone spans 64 bits),
-    // Q64.64 over the full unit range (128 bits on the wire, four groups), and the unsigned wide case.
+    // Q64.64 over the full unit range (128 bits on the wire, four groups), and the unsigned wide case
+
     check_fixed_cases<112, 16, -1152921504606846976LL, +1152921504606846976LL>( serialize::int128_t( 65536 ) );     // ±2^60 units: 78 bits on the wire
     check_fixed_cases<112, 16, -2, +2>( serialize::int128_t( 65536 ) );
     check_fixed_cases<64, 64, -1000, +1000>( serialize::int128_t( 1 ) << 64 );
@@ -6383,6 +6644,7 @@ inline void test_serialize_fixed_wide()
 
     // the 33..64 bit two group band on wide storage: both boundaries exactly, plus the example's
     // own Q112.16 ±1e11 shape (54 bits), which used to live only in example.cpp and not in CI
+
     check_fixed_cases<112, 16, -32768, +32768>( serialize::int128_t( 65536 ) );                                     // 33 bits: the band's low edge
     check_fixed_cases<112, 16, -100000000000LL, +100000000000LL>( serialize::int128_t( 65536 ) );                   // 54 bits: the example's shape
     check_fixed_cases<112, 16, -140737488355328LL, +140737488355327LL>( serialize::int128_t( 65536 ) );             // 64 bits: the band's high edge
@@ -6391,34 +6653,43 @@ inline void test_serialize_fixed_wide()
     {
         uint8_t buffer[16];
         serialize::WriteStream stream( buffer, 16 );
+
         serialize::int128_t value = serialize::int128_t( 12345 ) * 65536;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -1152921504606846976LL, +1152921504606846976LL>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 78 );         // 2^61 << 16 raw values needs 78 bits
     }
+
     {
         uint8_t buffer[24];
         serialize::WriteStream stream( buffer, 24 );
+
         serialize::int128_t value = 0;
         serialize_check( ( serialize::serialize_fixed_internal<64, 64, INT64_MIN, INT64_MAX>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 128 );        // the full unit range costs the full storage width
     }
+
     {
         uint8_t buffer[16];
         serialize::WriteStream stream( buffer, 16 );
+
         serialize::int128_t value = serialize::int128_t( 12345678901LL ) * serialize::int128_t( 65536 );
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -100000000000LL, +100000000000LL>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 54 );         // the example's shape: 2e11 << 16 raw values needs 54 bits, inside the two group band
     }
+
     {
         uint8_t buffer[16];
         serialize::WriteStream stream( buffer, 16 );
+
         serialize::int128_t value = 0;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -32768, +32768>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 33 );         // the band's low edge
     }
+
     {
         uint8_t buffer[16];
         serialize::WriteStream stream( buffer, 16 );
+
         serialize::int128_t value = 0;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -140737488355328LL, +140737488355327LL>( stream, value ) ) == true );
         serialize_check( stream.GetBitsProcessed() == 64 );         // the band's high edge
@@ -6426,6 +6697,7 @@ inline void test_serialize_fixed_wide()
 
     // one raw step past raw_max must be rejected on read, through every group structure —
     // the 33..64 bit two group band included
+
     check_fixed_wide_rejects_out_of_range<112, 16, -1152921504606846976LL, +1152921504606846976LL>( serialize::int128_t( 0 ) );
     check_fixed_wide_rejects_out_of_range<112, 16, -2, +2>( serialize::int128_t( 0 ) );
     check_fixed_wide_rejects_out_of_range<64, 64, -1000, +1000>( serialize::int128_t( 0 ) );
@@ -6439,6 +6711,7 @@ inline void test_serialize_fixed_wide()
         uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 4 );
+
         serialize::int128_t value = 0;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -1152921504606846976LL, +1152921504606846976LL>( readStream, value ) ) == false );
     }
@@ -6450,6 +6723,7 @@ inline void test_serialize_fixed_wide_emulated()
     // is what makes wide fixed point available on compilers without native __int128. run the wide
     // case list through the emulated types explicitly, on every platform — where native exists
     // this doubles as proof that both representations drive the same codec.
+
     check_fixed_cases<112, 16, -1152921504606846976LL, +1152921504606846976LL>( ::serialize_int128_t( 65536 ) );
     check_fixed_cases<112, 16, -2, +2>( ::serialize_int128_t( 65536 ) );
     check_fixed_cases<64, 64, -1000, +1000>( ::serialize_int128_t( 1 ) << 64 );
@@ -6457,11 +6731,13 @@ inline void test_serialize_fixed_wide_emulated()
     check_fixed_cases<112, 16, 0, 2305843009213693952LL>( ::serialize_uint128_t( 65536 ) );
 
     // the 33..64 bit two group band on emulated wide storage: both boundaries and the example's shape
+
     check_fixed_cases<112, 16, -32768, +32768>( ::serialize_int128_t( 65536 ) );
     check_fixed_cases<112, 16, -100000000000LL, +100000000000LL>( ::serialize_int128_t( 65536 ) );
     check_fixed_cases<112, 16, -140737488355328LL, +140737488355327LL>( ::serialize_int128_t( 65536 ) );
 
     // one raw step past raw_max must be rejected through the emulated read path too
+
     check_fixed_wide_rejects_out_of_range<112, 16, -1152921504606846976LL, +1152921504606846976LL>( ::serialize_int128_t( 0 ) );
     check_fixed_wide_rejects_out_of_range<64, 64, -1000, +1000>( ::serialize_int128_t( 0 ) );
     check_fixed_wide_rejects_out_of_range<112, 16, 0, 2305843009213693952LL>( ::serialize_uint128_t( 0 ) );
@@ -6477,6 +6753,7 @@ inline void test_serialize_fixed_wide_emulated()
 
         uint8_t native_buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
         serialize::WriteStream nativeStream( native_buffer, 16 );
+
         serialize::int128_t native_value = raw;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -1152921504606846976LL, +1152921504606846976LL>( nativeStream, native_value ) ) == true );
         nativeStream.Flush();
@@ -6491,6 +6768,7 @@ inline void test_serialize_fixed_wide_emulated()
         serialize_check( memcmp( native_buffer, emulated_buffer, 16 ) == 0 );
 
         // read the native bytes back through emulated storage
+
         serialize::ReadStream readStream( native_buffer, nativeStream.GetBytesProcessed() );
         ::serialize_int128_t read_back( 0 );
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -1152921504606846976LL, +1152921504606846976LL>( readStream, read_back ) ) == true );
@@ -6518,6 +6796,7 @@ inline void test_serialize_fixed_degenerate()
         uint8_t buffer[16] = { 0 };
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         int32_t degenerate = 5 * 65536;                              // 5.0 in Q16.16: the raw value IS min << 16
         int32_t after = 3;
         serialize_check( ( serialize::serialize_fixed_internal<16, 16, 5, 5>( writeStream, degenerate ) ) == true );
@@ -6527,6 +6806,7 @@ inline void test_serialize_fixed_degenerate()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
         int32_t read_degenerate = 0;
         int32_t read_after = 0;
         serialize_check( ( serialize::serialize_fixed_internal<16, 16, 5, 5>( readStream, read_degenerate ) ) == true );
@@ -6547,6 +6827,7 @@ inline void test_serialize_fixed_degenerate()
         uint8_t buffer[16] = { 0 };
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         int64_t degenerate = int64_t( -7 ) * 65536;
         int32_t after = 3;
         serialize_check( ( serialize::serialize_fixed_internal<48, 16, -7, -7>( writeStream, degenerate ) ) == true );
@@ -6555,6 +6836,7 @@ inline void test_serialize_fixed_degenerate()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
         int64_t read_degenerate = 0;
         int32_t read_after = 0;
         serialize_check( ( serialize::serialize_fixed_internal<48, 16, -7, -7>( readStream, read_degenerate ) ) == true );
@@ -6569,6 +6851,7 @@ inline void test_serialize_fixed_degenerate()
         uint8_t buffer[16] = { 0 };
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         serialize::int128_t degenerate = serialize::int128_t( 9 * 65536 );  // 9.0 in Q112.16
         int32_t after = 3;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, 9, 9>( writeStream, degenerate ) ) == true );
@@ -6579,6 +6862,7 @@ inline void test_serialize_fixed_degenerate()
 
         serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
         serialize::int128_t read_degenerate( 0 );
+
         int32_t read_after = 0;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, 9, 9>( readStream, read_degenerate ) ) == true );
         serialize_check( read_degenerate == serialize::int128_t( 9 * 65536 ) );
@@ -6597,6 +6881,7 @@ inline void test_serialize_fixed_degenerate()
         uint8_t buffer[16] = { 0 };
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         serialize::int128_t degenerate = serialize::int128_t( -9 * 65536 );
         int32_t after = 3;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -9, -9>( writeStream, degenerate ) ) == true );
@@ -6606,6 +6891,7 @@ inline void test_serialize_fixed_degenerate()
 
         serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
         serialize::int128_t read_degenerate( 0 );
+
         int32_t read_after = 0;
         serialize_check( ( serialize::serialize_fixed_internal<112, 16, -9, -9>( readStream, read_degenerate ) ) == true );
         serialize_check( read_degenerate == serialize::int128_t( -9 * 65536 ) );
@@ -6623,6 +6909,7 @@ inline void test_serialize_fixed_degenerate()
 
         serialize::WriteStream writeStream( buffer, 16 );
         ::serialize_int128_t degenerate( 0 );
+
         int32_t after = 3;
         serialize_check( ( serialize::serialize_fixed_internal<64, 64, 0, 0>( writeStream, degenerate ) ) == true );
         serialize_check( writeStream.GetBitsProcessed() == 0 );      // zero bits, not the 64 bit fractional field
@@ -6631,6 +6918,7 @@ inline void test_serialize_fixed_degenerate()
 
         serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
         ::serialize_int128_t read_degenerate( 1 );                   // a wrong value, so recovery is observable
+
         int32_t read_after = 0;
         serialize_check( ( serialize::serialize_fixed_internal<64, 64, 0, 0>( readStream, read_degenerate ) ) == true );
         serialize_check( read_degenerate == ::serialize_int128_t( 0 ) );
@@ -6651,12 +6939,12 @@ inline void test_serialize_uint128()
             ( serialize::uint128_t( 0xAAAAAAAAAAAAAAAAULL ) << 64 ) | 0x5555555555555555ULL,    // alternating bits
             ( serialize::uint128_t( 0x0123456789ABCDEFULL ) << 64 ) | 0xFEDCBA9876543210ULL,    // distinct halves
         };
-
         for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
         {
             uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
             serialize::WriteStream writeStream( buffer, 16 );
+
             serialize::uint128_t written = values[i];
             serialize_check( serialize::serialize_uint128_internal( writeStream, written ) == true );
             writeStream.Flush();
@@ -6668,6 +6956,7 @@ inline void test_serialize_uint128()
             serialize_check( writeStream.GetBitsProcessed() == 128 );
 
             serialize::ReadStream readStream( buffer, writeStream.GetBytesProcessed() );
+
             serialize::uint128_t read_back = 0;
             serialize_check( serialize::serialize_uint128_internal( readStream, read_back ) == true );
             serialize_check( read_back == values[i] );
@@ -6683,6 +6972,7 @@ inline void test_serialize_uint128()
 
         uint8_t uint128_buffer[16 + 8] = { 0 };
         serialize::WriteStream uint128Stream( uint128_buffer, 16 );
+
         serialize::uint128_t value = ( serialize::uint128_t( high_half ) << 64 ) | low_half;
         serialize_check( serialize::serialize_uint128_internal( uint128Stream, value ) == true );
         uint128Stream.Flush();
@@ -6712,6 +7002,7 @@ inline void test_serialize_uint128()
         uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         serialize::uint128_t written = golden_value;
         serialize_check( serialize::serialize_uint128_internal( writeStream, written ) == true );
         writeStream.Flush();
@@ -6720,6 +7011,7 @@ inline void test_serialize_uint128()
 
         memcpy( buffer, golden_uint128_bytes, 16 );
         serialize::ReadStream readStream( buffer, 16 );
+
         serialize::uint128_t read_back = 0;
         serialize_check( serialize::serialize_uint128_internal( readStream, read_back ) == true );
         serialize_check( read_back == golden_value );
@@ -6736,7 +7028,6 @@ inline void test_serialize_int128()
         const int64_t min64 = -5000000000LL;
         const int64_t max64 = +5000000000LL;
         const int64_t values[] = { min64, min64 + 1, -1, 0, +1, 4123456789LL, max64 - 1, max64 };
-
         for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
         {
             uint8_t buffer128[32 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
@@ -6755,6 +7046,7 @@ inline void test_serialize_int128()
             serialize_check( memcmp( buffer128, buffer64, (size_t) w64.GetBytesProcessed() ) == 0 );
 
             serialize::ReadStream readStream( buffer128, 32 );
+
             i128 read_back = 0;
             serialize_check( readStream.SerializeInteger128( read_back, i128( min64 ), i128( max64 ) ) == true );
             serialize_check( read_back == i128( values[i] ) );
@@ -6768,7 +7060,6 @@ inline void test_serialize_int128()
         const i128 wide_min = -( i128( 1 ) << 100 );
         const i128 wide_max = ( i128( 1 ) << 100 );
         const i128 values[] = { wide_min, wide_min + 1, i128( -1 ), i128( 0 ), i128( 1 ), ( i128( 1 ) << 99 ), wide_max - 1, wide_max };
-
         for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
         {
             uint8_t buffer[32 + 8] = { 0 };
@@ -6779,6 +7070,7 @@ inline void test_serialize_int128()
             serialize_check( writeStream.GetBitsProcessed() == 102 );        // bits_required128( -2^100, 2^100 ) == 102
 
             serialize::ReadStream readStream( buffer, 32 );
+
             i128 read_back = 0;
             serialize_check( readStream.SerializeInteger128( read_back, wide_min, wide_max ) == true );
             serialize_check( read_back == values[i] );
@@ -6790,7 +7082,6 @@ inline void test_serialize_int128()
         const i128 full_min = i128( ( serialize::uint128_t( 1 ) << 127 ) );                  // INT128_MIN
         const i128 full_max = i128( ~( serialize::uint128_t( 1 ) << 127 ) );                 // INT128_MAX
         const i128 values[] = { full_min, full_min + 1, i128( -1 ), i128( 0 ), i128( 1 ), full_max - 1, full_max };
-
         for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
         {
             uint8_t buffer[32 + 8] = { 0 };
@@ -6801,6 +7092,7 @@ inline void test_serialize_int128()
             serialize_check( writeStream.GetBitsProcessed() == 128 );
 
             serialize::ReadStream readStream( buffer, 32 );
+
             i128 read_back = 0;
             serialize_check( readStream.SerializeInteger128( read_back, full_min, full_max ) == true );
             serialize_check( read_back == values[i] );
@@ -6815,7 +7107,6 @@ inline void test_serialize_int128()
             { i128( 1 ), -( i128( 1 ) << 100 ), ( i128( 1 ) << 100 ) },
             { i128( 0 ), i128( ( serialize::uint128_t( 1 ) << 127 ) ), i128( ~( serialize::uint128_t( 1 ) << 127 ) ) },
         };
-
         for ( int i = 0; i < (int) ( sizeof( cases ) / sizeof( cases[0] ) ); i++ )
         {
             uint8_t buffer[32 + 8] = { 0 };
@@ -6843,6 +7134,7 @@ inline void test_serialize_int128()
         serialize_check( serialize::bits_required128( serialize::uint128_t( 0 ), serialize::uint128_t( 200 ) ) == 8 );
 
         serialize::ReadStream readStream( buffer, 32 );
+
         i128 read_back = 0;
         serialize_check( readStream.SerializeInteger128( read_back, i128( 0 ), i128( 200 ) ) == false );
     }
@@ -6880,6 +7172,7 @@ inline void test_serialize_int128()
 
         memcpy( buffer, golden_int128_bytes, sizeof( golden_int128_bytes ) );
         serialize::ReadStream readStream( buffer, 16 );
+
         i128 read_back = 0;
         serialize_check( readStream.SerializeInteger128( read_back, golden_min, golden_max ) == true );
         serialize_check( read_back == golden_value );
@@ -6901,7 +7194,7 @@ inline void test_uint128_emulation()
 {
     // known answer checks for the emulated 128 bit unsigned integer, unguarded so they run on
     // every platform — including the ones with no native __int128, where the emulation is the
-    // only implementation and the differential test below cannot run.
+    // only implementation and the differential test below cannot run
 
     const uint64_t lo = 0xFEDCBA9876543210ULL;
     const uint64_t hi = 0x0123456789ABCDEFULL;
@@ -7100,6 +7393,7 @@ inline void test_int128_emulation()
         // unsigned sources are value preserving with a zero high lane, exactly like native: a
         // uint64 with the top bit set stays a large positive value, it does NOT wrap negative.
         // these are the exact cross signed cases that diverged before the per-type constructors.
+
         serialize_check( ::serialize_int128_t( uint64_t( 1 ) << 63 ) == int128_emulated( 0, 0x8000000000000000ULL ) );
         serialize_check( ::serialize_int128_t( uint64_t( 1 ) << 63 ) > ::serialize_int128_t( 0 ) );
         serialize_check( ::serialize_int128_t( UINT64_MAX ) == int128_emulated( 0, 0xFFFFFFFFFFFFFFFFULL ) );
@@ -7264,6 +7558,7 @@ inline void test_uint128_differential()
         uint64_t b_lo = serialize_test_next_lcg();
 
         // bias some operands toward the interesting edges: empty lanes, saturated lanes, equal operands
+
         switch ( i % 8 )
         {
             case 1: a_hi = 0; break;
@@ -7287,6 +7582,7 @@ inline void test_uint128_differential()
 
         const ::serialize_uint128_t ea = uint128_emulated( a_hi, a_lo );
         const ::serialize_uint128_t eb = uint128_emulated( b_hi, b_lo );
+
         const serialize::uint128_t na = ( serialize::uint128_t( a_hi ) << 64 ) | a_lo;
         const serialize::uint128_t nb = ( serialize::uint128_t( b_hi ) << 64 ) | b_lo;
 
@@ -7318,10 +7614,12 @@ inline void test_uint128_differential()
         serialize_check( ( ea >= eb ) == ( na >= nb ) );
 
         // construction agreement from both signednesses of the drawn lanes
+
         check_uint128_agree( ::serialize_uint128_t( a_lo ), serialize::uint128_t( a_lo ) );
         check_uint128_agree( ::serialize_uint128_t( int64_t( a_lo ) ), serialize::uint128_t( int64_t( a_lo ) ) );
 
         ::serialize_uint128_t emulated_accumulator = ea;
+
         serialize::uint128_t native_accumulator = na;
         check_uint128_agree( ++emulated_accumulator, ++native_accumulator );
         check_uint128_agree( emulated_accumulator++, native_accumulator++ );
@@ -7356,6 +7654,7 @@ inline void test_uint128_differential()
         emulated_accumulator >>= shift;
         native_accumulator >>= shift;
         check_uint128_agree( emulated_accumulator, native_accumulator );
+
         if ( eb != ::serialize_uint128_t( 0 ) )
         {
             emulated_accumulator = ea;
@@ -7397,10 +7696,10 @@ inline void test_uint128_differential()
                 { 0, 0xFFFFFFFFFFFFFFFFULL },                                       // low half only
                 { 0x0123456789ABCDEFULL, 0xFEDCBA9876543210ULL },                   // distinct halves
             };
-
         for ( int i = 0; i < (int) ( sizeof( lanes ) / sizeof( lanes[0] ) ); i++ )
         {
             ::serialize_uint128_t emulated = uint128_emulated( lanes[i][0], lanes[i][1] );
+
             serialize::uint128_t native = uint128_native_from_emulated( emulated );
 
             uint8_t emulated_buffer[16 + 8] = { 0 };            // + 8: read buffer allocations extend 8 bytes past the data
@@ -7417,6 +7716,7 @@ inline void test_uint128_differential()
             serialize_check( memcmp( emulated_buffer, native_buffer, 16 ) == 0 );
 
             // read the native bytes back through the emulated type
+
             serialize::ReadStream readStream( native_buffer, 16 );
             ::serialize_uint128_t read_back( 0 );
             serialize_check( serialize::serialize_uint128_internal( readStream, read_back ) == true );
@@ -7459,6 +7759,7 @@ inline void test_int128_differential()
 
         // bias operands toward the sign boundaries: zero, ±1, INT64_MIN/MAX sign extended,
         // INT128_MIN/MAX, negated and equal pairs
+
         switch ( i % 10 )
         {
             case 1:
@@ -7502,6 +7803,7 @@ inline void test_int128_differential()
 
         const ::serialize_int128_t ea = int128_emulated( a_hi, a_lo );
         const ::serialize_int128_t eb = int128_emulated( b_hi, b_lo );
+
         const serialize::uint128_t ua = ( serialize::uint128_t( a_hi ) << 64 ) | a_lo;
         const serialize::uint128_t ub = ( serialize::uint128_t( b_hi ) << 64 ) | b_lo;
         const serialize::int128_t na = serialize::int128_t( ua );
@@ -7509,6 +7811,7 @@ inline void test_int128_differential()
 
         // + - * and unary minus: native expectations via the unsigned domain, avoiding native
         // signed overflow, which is undefined behavior. the wrap is the semantics under test.
+
         check_int128_agree( ea + eb, serialize::int128_t( ua + ub ) );
         check_int128_agree( ea - eb, serialize::int128_t( ua - ub ) );
         check_int128_agree( ea * eb, serialize::int128_t( ua * ub ) );
@@ -7538,6 +7841,7 @@ inline void test_int128_differential()
         serialize_check( ( ea >= eb ) == ( na >= nb ) );
 
         // increments and decrements via the unsigned domain, since native ++ overflows at INT128_MAX
+
         ::serialize_int128_t incremented = ea;
         ++incremented;
         check_int128_agree( incremented, serialize::int128_t( ua + 1 ) );
@@ -7549,12 +7853,14 @@ inline void test_int128_differential()
 
         // conversions: the sign extending and value preserving constructors and the truncating
         // conversion match native, from both signednesses of the drawn lane
+
         const int64_t seed64 = int64_t( a_lo );
         check_int128_agree( ::serialize_int128_t( seed64 ), serialize::int128_t( seed64 ) );
         check_int128_agree( ::serialize_int128_t( a_lo ), serialize::int128_t( a_lo ) );
         serialize_check( int64_t( ea ) == int64_t( uint64_t( ua ) ) );
 
         // compound forms via the unsigned domain where overflow could occur
+
         ::serialize_int128_t accumulator = ea;
         accumulator += eb;
         check_int128_agree( accumulator, serialize::int128_t( ua + ub ) );
@@ -7579,6 +7885,7 @@ inline void test_int128_differential()
         accumulator = ea;
         accumulator <<= shift;
         check_int128_agree( accumulator, serialize::int128_t( ua << shift ) );
+
         if ( nb != 0 && !( na == native_int128_min && nb == -1 ) )
         {
             accumulator = ea;
@@ -7660,9 +7967,11 @@ template <int Bits, typename Stream> bool serialize_bits64_compile_time_form( St
 inline void test_compile_time_bits_required()
 {
     // usable in template argument position by construction
+
     static_assert( serialize::bits_required64_constexpr( 0, 255 ) == 8, "must be a constant expression" );
 
     // agrees with the runtime bits_required across the 32 bit table
+
     serialize_check( serialize::bits_required64_constexpr( 0, 0 ) == 0 );
     serialize_check( serialize::bits_required64_constexpr( 0, 1 ) == 1 );
     serialize_check( serialize::bits_required64_constexpr( 0, 2 ) == 2 );
@@ -7675,6 +7984,7 @@ inline void test_compile_time_bits_required()
     serialize_check( serialize::bits_required64_constexpr( 0, 4294967295ULL ) == 32 );
 
     // agrees with the runtime bits_required64 on 64 bit ranges
+
     serialize_check( serialize::bits_required64_constexpr( 0, 4294967296ULL ) == 33 );
     serialize_check( serialize::bits_required64_constexpr( 0, ( 1ULL << 40 ) ) == 41 );
     serialize_check( serialize::bits_required64_constexpr( 0, 0xFFFFFFFFFFFFFFFFULL ) == 64 );
@@ -7682,10 +7992,12 @@ inline void test_compile_time_bits_required()
     serialize_check( serialize::bits_required64_constexpr( uint64_t( -5000000000LL ), uint64_t( +5000000000LL ) ) == 34 );
 
     // sign extended int32 bounds wrap to the same difference as the uint32 runtime path
+
     serialize_check( serialize::bits_required64_constexpr( uint64_t( int64_t( -100 ) ), uint64_t( int64_t( +100 ) ) ) == serialize::bits_required( uint32_t( -100 ), uint32_t( +100 ) ) );
     serialize_check( serialize::bits_required64_constexpr( uint64_t( int64_t( INT32_MIN ) ), uint64_t( int64_t( INT32_MAX ) ) ) == 32 );
 
     // sweep agreement with the runtime form
+
     for ( uint32_t max = 0; max <= 1000; max++ )
     {
         serialize_check( serialize::bits_required64_constexpr( 0, max ) == serialize::bits_required( 0, max ) );
@@ -7699,19 +8011,23 @@ template <int32_t Min, int32_t Max> inline void check_compile_time_int_range( co
         const int32_t value = values[i];
 
         // measure: both forms agree on cost
+
         serialize::MeasureStream measureRuntime;
         int32_t measure_value = value;
         serialize_check( serialize_int_runtime_form( measureRuntime, measure_value, Min, Max ) == true );
+
         serialize::MeasureStream measureCompileTime;
         measure_value = value;
         serialize_check( ( serialize_int_compile_time_form<Min, Max>( measureCompileTime, measure_value ) == true ) );
         serialize_check( measureRuntime.GetBitsProcessed() == measureCompileTime.GetBitsProcessed() );
 
         // write: the wire identity property, byte for byte
+
         uint8_t buffer_runtime[8 + 8] = { 0 };              // + 8: read buffer allocations extend 8 bytes past the data
         uint8_t buffer_compile_time[8 + 8] = { 0 };         // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeRuntime( buffer_runtime, 8 );
+
         int32_t write_value = value;
         serialize_check( serialize_int_runtime_form( writeRuntime, write_value, Min, Max ) == true );
         writeRuntime.Flush();
@@ -7725,12 +8041,15 @@ template <int32_t Min, int32_t Max> inline void check_compile_time_int_range( co
         serialize_check( memcmp( buffer_runtime, buffer_compile_time, 8 ) == 0 );
 
         // round trip through the compile time form
+
         serialize::ReadStream readStream( buffer_compile_time, (int) writeCompileTime.GetBytesProcessed() );
+
         int32_t read_value = 0;
         serialize_check( ( serialize_int_compile_time_form<Min, Max>( readStream, read_value ) == true ) );
         serialize_check( read_value == value );
 
         // cross decode: runtime written bytes through the compile time form
+
         serialize::ReadStream crossStream( buffer_runtime, (int) writeRuntime.GetBytesProcessed() );
         read_value = 0;
         serialize_check( ( serialize_int_compile_time_form<Min, Max>( crossStream, read_value ) == true ) );
@@ -7769,19 +8088,23 @@ template <int64_t Min, int64_t Max> inline void check_compile_time_int64_range( 
         const int64_t value = values[i];
 
         // measure: both forms agree on cost
+
         serialize::MeasureStream measureRuntime;
         int64_t measure_value = value;
         serialize_check( serialize_int64_runtime_form( measureRuntime, measure_value, Min, Max ) == true );
+
         serialize::MeasureStream measureCompileTime;
         measure_value = value;
         serialize_check( ( serialize_int64_compile_time_form<Min, Max>( measureCompileTime, measure_value ) == true ) );
         serialize_check( measureRuntime.GetBitsProcessed() == measureCompileTime.GetBitsProcessed() );
 
         // write: the wire identity property, byte for byte
+
         uint8_t buffer_runtime[8 + 8] = { 0 };              // + 8: read buffer allocations extend 8 bytes past the data
         uint8_t buffer_compile_time[8 + 8] = { 0 };         // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeRuntime( buffer_runtime, 8 );
+
         int64_t write_value = value;
         serialize_check( serialize_int64_runtime_form( writeRuntime, write_value, Min, Max ) == true );
         writeRuntime.Flush();
@@ -7795,12 +8118,15 @@ template <int64_t Min, int64_t Max> inline void check_compile_time_int64_range( 
         serialize_check( memcmp( buffer_runtime, buffer_compile_time, 8 ) == 0 );
 
         // round trip through the compile time form
+
         serialize::ReadStream readStream( buffer_compile_time, (int) writeCompileTime.GetBytesProcessed() );
+
         int64_t read_value = 0;
         serialize_check( ( serialize_int64_compile_time_form<Min, Max>( readStream, read_value ) == true ) );
         serialize_check( read_value == value );
 
         // cross decode: runtime written bytes through the compile time form
+
         serialize::ReadStream crossStream( buffer_runtime, (int) writeRuntime.GetBytesProcessed() );
         read_value = 0;
         serialize_check( ( serialize_int64_compile_time_form<Min, Max>( crossStream, read_value ) == true ) );
@@ -7833,6 +8159,7 @@ inline void test_compile_time_int64()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         int64_t value = 55;
         serialize_check( ( serialize::SerializeInt64Const<-100, +100>( writeStream, value ) == true ) );
         writeStream.Flush();
@@ -7843,32 +8170,37 @@ inline void test_compile_time_int64()
 template <int Bits> inline void check_compile_time_bits_width()
 {
     // ( ( 1 << ( Bits - 1 ) ) << 1 ) - 1 is the all ones value without shifting by the full width (undefined behavior at Bits == 32)
+
     const uint32_t max_value = uint32_t( ( ( uint64_t( 1 ) << ( Bits - 1 ) ) << 1 ) - 1 );
     const uint32_t values[] = { 0, 1, max_value >> 1, max_value };
-
     for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
     {
         const uint32_t value = values[i];
 
         // measure: both forms agree on cost
+
         serialize::MeasureStream measureRuntime;
         uint64_t measure_value64 = value;
         serialize_check( serialize_bits64_runtime_form( measureRuntime, measure_value64, Bits ) == true );
+
         serialize::MeasureStream measureCompileTime;
         uint32_t measure_value = value;
         serialize_check( serialize_bits_compile_time_form<Bits>( measureCompileTime, measure_value ) == true );
         serialize_check( measureRuntime.GetBitsProcessed() == measureCompileTime.GetBitsProcessed() );
 
         // write: the wire identity property, byte for byte
+
         uint8_t buffer_runtime[8 + 8] = { 0 };              // + 8: read buffer allocations extend 8 bytes past the data
         uint8_t buffer_compile_time[8 + 8] = { 0 };         // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeRuntime( buffer_runtime, 8 );
+
         uint64_t write_value64 = value;
         serialize_check( serialize_bits64_runtime_form( writeRuntime, write_value64, Bits ) == true );
         writeRuntime.Flush();
 
         serialize::WriteStream writeCompileTime( buffer_compile_time, 8 );
+
         uint32_t write_value = value;
         serialize_check( serialize_bits_compile_time_form<Bits>( writeCompileTime, write_value ) == true );
         writeCompileTime.Flush();
@@ -7877,12 +8209,15 @@ template <int Bits> inline void check_compile_time_bits_width()
         serialize_check( memcmp( buffer_runtime, buffer_compile_time, 8 ) == 0 );
 
         // round trip through the compile time form
+
         serialize::ReadStream readStream( buffer_compile_time, (int) writeCompileTime.GetBytesProcessed() );
+
         uint32_t read_value = 0;
         serialize_check( serialize_bits_compile_time_form<Bits>( readStream, read_value ) == true );
         serialize_check( read_value == value );
 
         // cross decode: runtime written bytes through the compile time form
+
         serialize::ReadStream crossStream( buffer_runtime, (int) writeRuntime.GetBytesProcessed() );
         read_value = 0;
         serialize_check( serialize_bits_compile_time_form<Bits>( crossStream, read_value ) == true );
@@ -7893,27 +8228,31 @@ template <int Bits> inline void check_compile_time_bits_width()
 template <int Bits> inline void check_compile_time_bits64_width()
 {
     // ( ( 1 << ( Bits - 1 ) ) << 1 ) - 1 is the all ones value without shifting by the full width (undefined behavior at Bits == 64)
+
     const uint64_t max_value = ( ( uint64_t( 1 ) << ( Bits - 1 ) ) << 1 ) - 1;
     const uint64_t values[] = { 0, 1, max_value >> 1, max_value };
-
     for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
     {
         const uint64_t value = values[i];
 
         // measure: both forms agree on cost
+
         serialize::MeasureStream measureRuntime;
         uint64_t measure_value = value;
         serialize_check( serialize_bits64_runtime_form( measureRuntime, measure_value, Bits ) == true );
+
         serialize::MeasureStream measureCompileTime;
         measure_value = value;
         serialize_check( serialize_bits64_compile_time_form<Bits>( measureCompileTime, measure_value ) == true );
         serialize_check( measureRuntime.GetBitsProcessed() == measureCompileTime.GetBitsProcessed() );
 
         // write: the wire identity property, byte for byte
+
         uint8_t buffer_runtime[8 + 8] = { 0 };              // + 8: read buffer allocations extend 8 bytes past the data
         uint8_t buffer_compile_time[8 + 8] = { 0 };         // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeRuntime( buffer_runtime, 8 );
+
         uint64_t write_value = value;
         serialize_check( serialize_bits64_runtime_form( writeRuntime, write_value, Bits ) == true );
         writeRuntime.Flush();
@@ -7927,12 +8266,15 @@ template <int Bits> inline void check_compile_time_bits64_width()
         serialize_check( memcmp( buffer_runtime, buffer_compile_time, 8 ) == 0 );
 
         // round trip through the compile time form
+
         serialize::ReadStream readStream( buffer_compile_time, (int) writeCompileTime.GetBytesProcessed() );
+
         uint64_t read_value = 0;
         serialize_check( serialize_bits64_compile_time_form<Bits>( readStream, read_value ) == true );
         serialize_check( read_value == value );
 
         // cross decode: runtime written bytes through the compile time form
+
         serialize::ReadStream crossStream( buffer_runtime, (int) writeRuntime.GetBytesProcessed() );
         read_value = 0;
         serialize_check( serialize_bits64_compile_time_form<Bits>( crossStream, read_value ) == true );
@@ -7967,11 +8309,13 @@ inline void test_compile_time_int_validation()
         uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 8 );
+
         uint32_t out_of_range = 7;
         writeStream.SerializeBits( out_of_range, 3 );
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 4 );
+
         int32_t value = 0;
         serialize_check( ( serialize::SerializeIntConst<0, 5>( readStream, value ) == false ) );
     }
@@ -7981,6 +8325,7 @@ inline void test_compile_time_int_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 1 );
+
         int32_t value = 0;
         serialize_check( ( serialize::SerializeIntConst<0, 65535>( readStream, value ) == false ) );
     }
@@ -7993,6 +8338,7 @@ inline void test_compile_time_int64_validation()
         uint8_t buffer[16 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::WriteStream writeStream( buffer, 16 );
+
         const uint64_t out_of_range = ( 1ULL << 34 ) + 5;               // range [0, 2^34] is 35 bits, so values above 2^34 fit in the headroom
         uint32_t lo = uint32_t( out_of_range & 0xFFFFFFFF );
         uint32_t hi = uint32_t( out_of_range >> 32 );
@@ -8001,6 +8347,7 @@ inline void test_compile_time_int64_validation()
         writeStream.Flush();
 
         serialize::ReadStream readStream( buffer, 16 );
+
         int64_t value = 0;
         serialize_check( ( serialize::SerializeInt64Const<0, ( int64_t( 1 ) << 34 )>( readStream, value ) ) == false );
     }
@@ -8010,6 +8357,7 @@ inline void test_compile_time_int64_validation()
         uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 4 );
+
         int64_t value = 0;
         serialize_check( ( serialize::SerializeInt64Const<INT64_MIN, INT64_MAX>( readStream, value ) ) == false );
     }
@@ -8022,6 +8370,7 @@ inline void test_compile_time_bits_validation()
         uint8_t buffer[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 1 );
+
         uint32_t value = 0;
         serialize_check( serialize::SerializeBitsConst<13>( readStream, value ) == false );
     }
@@ -8031,6 +8380,7 @@ inline void test_compile_time_bits_validation()
         uint8_t buffer[4 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
         serialize::ReadStream readStream( buffer, 4 );
+
         uint64_t value = 0;
         serialize_check( serialize::SerializeBits64Const<48>( readStream, value ) == false );
     }
@@ -8201,12 +8551,15 @@ inline void check_compile_time_packet( CompileTimeTestPacket & packet )
     writeCompileTime.Flush();
 
     // the wire identity property: byte identical, so a code generator can switch forms without a wire change
+
     serialize_check( writeRuntime.GetBitsProcessed() == writeCompileTime.GetBitsProcessed() );
     serialize_check( memcmp( buffer_runtime, buffer_compile_time, BufferSize ) == 0 );
 
     // measure streams agree with the write streams (no aligns in this packet, so the measure is exact)
+
     serialize::MeasureStream measureRuntime;
     serialize_check( packet.SerializeRuntime( measureRuntime ) == true );
+
     serialize::MeasureStream measureCompileTime;
     serialize_check( packet.SerializeCompileTime( measureCompileTime ) == true );
     serialize_check( measureRuntime.GetBitsProcessed() == writeRuntime.GetBitsProcessed() );
@@ -8217,6 +8570,7 @@ inline void check_compile_time_packet( CompileTimeTestPacket & packet )
     // cross decode: runtime written bytes through the compile time form...
     {
         serialize::ReadStream readStream( buffer_runtime, bytesWritten );
+
         CompileTimeTestPacket read_packet;
         serialize_check( read_packet.SerializeCompileTime( readStream ) == true );
         serialize_check( read_packet == packet );
@@ -8225,6 +8579,7 @@ inline void check_compile_time_packet( CompileTimeTestPacket & packet )
     // ...and compile time written bytes through the runtime form
     {
         serialize::ReadStream readStream( buffer_compile_time, bytesWritten );
+
         CompileTimeTestPacket read_packet;
         serialize_check( read_packet.SerializeRuntime( readStream ) == true );
         serialize_check( read_packet == packet );
@@ -8300,10 +8655,13 @@ inline void GoldenWireInit( GoldenWireData & data )
     data.uint64_value = 0x123456789ABCDEF0ULL;
     data.relative_near = 101;                   // difference of 1 from the base: exercises the one bit branch
     data.relative_far = 2100;                   // difference of 2000 from the base: exercises the twelve bit bucket
+
     const uint8_t golden_byte_data[7] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0x01 };
     memcpy( data.bytes, golden_byte_data, sizeof( golden_byte_data ) );
     serialize_copy_string( data.string, "golden", sizeof( data.string ) );
+
     // built from explicit code points so the source file encoding can never change the golden bytes
+
     const wchar_t golden_wide_string[4] = { 0x043C, 0x0438, 0x0440, 0 };            // cyrillic, BMP only
     serialize_copy_wstring( data.wstring, golden_wide_string, sizeof( data.wstring ) / sizeof( wchar_t ) );
     data.fixed_q8_8 = int16_t( -( 3 * 256 + 64 ) );                                 // -3.25 in Q8.8
@@ -8368,6 +8726,7 @@ inline void test_golden_wire_format()
         uint8_t buffer[256];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         GoldenWireData data;
         GoldenWireInit( data );
         serialize_check( GoldenWireSerialize( stream, data ) == true );
@@ -8382,6 +8741,7 @@ inline void test_golden_wire_format()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, golden_wire_bytes, sizeof( golden_wire_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( golden_wire_bytes ) );
+
         GoldenWireData data;
         memset( (void *) &data, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( stream, data ) == true );
@@ -8425,14 +8785,16 @@ inline void test_trailing_bits()
     // this test proves.
 
     // writer obligation: emit a message that ends 3 bits into its final byte, into a buffer
-    // pre-filled with 0xFF so the zeros must come from the writer, not from the caller.
+    // pre-filled with 0xFF so the zeros must come from the writer, not from the caller
     {
         uint8_t buffer[64];
         memset( buffer, 0xFF, sizeof( buffer ) );
 
         serialize::WriteStream writeStream( buffer, (int) sizeof( buffer ) );
+
         uint32_t head = 0xDEADBEEF;
         serialize_check( writeStream.SerializeBits( head, 32 ) == true );
+
         uint32_t tail = 5;
         serialize_check( writeStream.SerializeBits( tail, 3 ) == true );
         writeStream.Flush();
@@ -8440,16 +8802,20 @@ inline void test_trailing_bits()
         const int bytesWritten = (int) writeStream.GetBytesProcessed();
         const int bitsInFinalByte = (int) ( writeStream.GetBitsProcessed() % 8 );
         serialize_check( bitsInFinalByte == 3 );                                        // the stream really does end unaligned
+
         const uint8_t trailingMask = (uint8_t) ( 0xFF << bitsInFinalByte );
         serialize_check( ( buffer[bytesWritten - 1] & trailingMask ) == 0 );              // writers must write zero
 
         // reader indifference, small stream: set every trailing bit and read back. the
         // doctored stream must be accepted and must decode the same values.
+
         buffer[bytesWritten - 1] |= trailingMask;
         serialize::ReadStream readStream( buffer, bytesWritten );
+
         uint32_t readHead = 0;
         serialize_check( readStream.SerializeBits( readHead, 32 ) == true );
         serialize_check( readHead == 0xDEADBEEF );
+
         uint32_t readTail = 0;
         serialize_check( readStream.SerializeBits( readTail, 3 ) == true );
         serialize_check( readTail == 5 );
@@ -8463,18 +8829,21 @@ inline void test_trailing_bits()
         memcpy( buffer, golden_wire_bytes, sizeof( golden_wire_bytes ) );
 
         serialize::ReadStream cleanStream( buffer, (int) sizeof( golden_wire_bytes ) );
+
         GoldenWireData cleanData;
         memset( (void *) &cleanData, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( cleanStream, cleanData ) == true );
 
         const int bitsInFinalByte = (int) ( cleanStream.GetBitsProcessed() % 8 );
         serialize_check( bitsInFinalByte != 0 );                                        // golden ends unaligned, so this test can discriminate
+
         const uint8_t trailingMask = (uint8_t) ( 0xFF << bitsInFinalByte );
         serialize_check( ( golden_wire_bytes[sizeof( golden_wire_bytes ) - 1] & trailingMask ) == 0 );  // the pinned emission met the writer obligation
 
         buffer[sizeof( golden_wire_bytes ) - 1] |= trailingMask;                        // set every trailing bit
 
         serialize::ReadStream doctoredStream( buffer, (int) sizeof( golden_wire_bytes ) );
+
         GoldenWireData doctoredData;
         memset( (void *) &doctoredData, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( doctoredStream, doctoredData ) == true );                 // readers must not reject
@@ -8502,11 +8871,13 @@ inline void test_past_end_poison()
         memcpy( poisonBuffer, golden_wire_bytes, sizeof( golden_wire_bytes ) );
 
         serialize::ReadStream cleanStream( cleanBuffer, (int) sizeof( golden_wire_bytes ) );
+
         GoldenWireData cleanData;
         memset( (void *) &cleanData, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( cleanStream, cleanData ) == true );
 
         serialize::ReadStream poisonStream( poisonBuffer, (int) sizeof( golden_wire_bytes ) );
+
         GoldenWireData poisonData;
         memset( (void *) &poisonData, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( poisonStream, poisonData ) == true );
@@ -8529,11 +8900,13 @@ inline void test_past_end_poison()
         memcpy( poisonBuffer, golden_wire_bytes, truncatedBytes );
 
         serialize::ReadStream cleanStream( cleanBuffer, truncatedBytes );
+
         GoldenWireData cleanData;
         memset( (void *) &cleanData, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( cleanStream, cleanData ) == false );
 
         serialize::ReadStream poisonStream( poisonBuffer, truncatedBytes );
+
         GoldenWireData poisonData;
         memset( (void *) &poisonData, 0, sizeof( GoldenWireData ) );
         serialize_check( GoldenWireSerialize( poisonStream, poisonData ) == false );
@@ -8542,7 +8915,6 @@ inline void test_past_end_poison()
         serialize_check( memcmp( &poisonData, &cleanData, sizeof( GoldenWireData ) ) == 0 );    // with identical partial state
     }
 }
-
 
 // ---------------------------------------------------------------------------------------
 // Does THIS build actually fuse, and does it fuse ACROSS statements?
@@ -8602,9 +8974,10 @@ inline void test_past_end_poison()
 #define SERIALIZE_TEST_NOINLINE __attribute__((noinline))
 #else
 #define SERIALIZE_TEST_NOINLINE
-#endif
+#endif // #if defined( _MSC_VER )
 
 // contractible: one expression, so any compiler permitted to contract at all may fuse it
+
 SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_one_expression( float a, float b, float c )
 {
     return a * b + c;
@@ -8613,6 +8986,7 @@ SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_one_expression( float a, 
 // two statements through a plain float local. The language rounds a float local, so only a
 // compiler contracting ACROSS the statement boundary can fuse this -- which is the shape of
 // the compressed float's audited home, and the property under test.
+
 SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_two_statements( float a, float b, float c )
 {
     const float product = a * b;
@@ -8621,6 +8995,7 @@ SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_two_statements( float a, 
 
 // the reference: a volatile store forces the product to memory as float32, so no contraction
 // setting on any compiler can fuse through it. This is what the other three are measured against.
+
 SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_forced_unfused( float a, float b, float c )
 {
     volatile float product = a * b;
@@ -8629,6 +9004,7 @@ SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_forced_unfused( float a, 
 
 // the audited home's shape: a local pinned by SERIALIZE_FLOAT_FORCE_ROUND. This is the
 // mechanism the wire's contraction invariance rests on, probed directly.
+
 SERIALIZE_TEST_NOINLINE inline float serialize_test_fp_two_statements_barriered( float a, float b, float c )
 {
     float product = a * b;
@@ -8646,11 +9022,11 @@ inline bool serialize_test_fp_contraction_is_live()
         uint32_t pattern_fused, pattern_unfused;
         memcpy( &pattern_fused, &fused, 4 );
         memcpy( &pattern_unfused, &unfused, 4 );
+
         if ( pattern_fused != pattern_unfused )
-        {
             return true;
-        }
     }
+
     return false;
 }
 
@@ -8664,11 +9040,11 @@ inline bool serialize_test_fp_contraction_crosses_statements()
         uint32_t pattern_across, pattern_unfused;
         memcpy( &pattern_across, &across, 4 );
         memcpy( &pattern_unfused, &unfused, 4 );
+
         if ( pattern_across != pattern_unfused )
-        {
             return true;
-        }
     }
+
     return false;
 }
 
@@ -8682,11 +9058,11 @@ inline bool serialize_test_fp_barrier_holds()
         uint32_t pattern_barriered, pattern_unfused;
         memcpy( &pattern_barriered, &barriered, 4 );
         memcpy( &pattern_unfused, &unfused, 4 );
+
         if ( pattern_barriered != pattern_unfused )
-        {
             return false;
-        }
     }
+
     return true;
 }
 
@@ -8739,6 +9115,7 @@ inline void test_compressed_float_conformance_nonzero_min()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         float a = 0.0f;
         float b = -99.875f;
         float c = -33.34f;
@@ -8755,20 +9132,24 @@ inline void test_compressed_float_conformance_nonzero_min()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, pinned_bytes, sizeof( pinned_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( pinned_bytes ) );
+
         float a = -1.0f;
         float b = -1.0f;
         float c = -1.0f;
         serialize_check( CompressedFloatNonZeroMinSerialize( stream, a, b, c ) == true );
+
         uint32_t bits_a, bits_b, bits_c;
         memcpy( &bits_a, &a, 4 );
         memcpy( &bits_b, &b, 4 );
         memcpy( &bits_c, &c, 4 );
+
         // These stay pinned unconditionally on every build the library supports, under every
         // contraction mode including -ffp-contract=fast: the reader's two roundings are
         // pinned by SERIALIZE_FLOAT_FORCE_ROUND, which no contraction setting fuses through.
         // Before the barrier, a consumer building this header at gcc's arm64 defaults
         // reconstructed the last of these as 0xC2055C29 -- one ulp off every conformant
         // runtime -- and this check is the one that caught it (issue #95).
+
         serialize_check( bits_a == 0x00000000u );
         serialize_check( bits_b == 0xC2C7BD71u );
         serialize_check( bits_c == 0xC2055C2Au );
@@ -8818,6 +9199,7 @@ inline void test_compressed_float_conformance_writer_fusion()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         float a = 8388608.0f;
         float b = 11184811.0f;
         float c = 16777215.0f;
@@ -8829,16 +9211,18 @@ inline void test_compressed_float_conformance_writer_fusion()
 
     // read side: the decoded floats are pinned bit-exactly, same terms as every conformance
     // vector -- the divergences this family detects are single ulps, and tolerance would
-    // hide them.
+    // hide them
     {
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, pinned_bytes, sizeof( pinned_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( pinned_bytes ) );
+
         float a = -1.0f;
         float b = -1.0f;
         float c = -1.0f;
         serialize_check( CompressedFloatWriterFusionSerialize( stream, a, b, c ) == true );
+
         uint32_t bits_a, bits_b, bits_c;
         memcpy( &bits_a, &a, 4 );
         memcpy( &bits_b, &b, 4 );
@@ -8873,6 +9257,7 @@ inline void test_compressed_float_precomputed_conformance()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         float a = 0.0f;
         float b = -99.875f;
         float c = -33.34f;
@@ -8888,15 +9273,19 @@ inline void test_compressed_float_precomputed_conformance()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, pinned_bytes, sizeof( pinned_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( pinned_bytes ) );
+
         float a = -1.0f;
         float b = -1.0f;
         float c = -1.0f;
         serialize_check( CompressedFloatPrecomputedConformanceSerialize( stream, a, b, c ) == true );
+
         uint32_t bits_a, bits_b, bits_c;
         memcpy( &bits_a, &a, 4 );
         memcpy( &bits_b, &b, 4 );
         memcpy( &bits_c, &c, 4 );
+
         // pinned on the same terms as the derive-per-call vector above: see the note there
+
         serialize_check( bits_a == 0x00000000u );
         serialize_check( bits_b == 0xC2C7BD71u );
         serialize_check( bits_c == 0xC2055C2Au );
@@ -8938,6 +9327,7 @@ template <typename Stream> bool serialize_compressed_float_frozen_reference( Str
 {
     // verbatim pre-split serialize_compressed_float_internal, comments elided, statements
     // identical (locals included: the float stores are what pin the two roundings). DO NOT EDIT.
+
     serialize_assert( min < max && res > 0 );
 
     const float delta = max - min;
@@ -8975,10 +9365,13 @@ template <typename Stream> bool serialize_compressed_float_frozen_reference( Str
         {
             normalizedValue = 1.0f;
         }
+
         const float scaled = normalizedValue * maxIntegerValue;
         integerValue = (uint32_t) floor( scaled + 0.5f );
+
         // STANDARD.md: the integer clamp is normative (2026-08-23) -- same
-        // clamp as serialize_compressed_float above, same reason.
+        // clamp as serialize_compressed_float above, same reason
+
         if ( integerValue > maxIntegerValue )
         {
             integerValue = maxIntegerValue;
@@ -8986,16 +9379,13 @@ template <typename Stream> bool serialize_compressed_float_frozen_reference( Str
     }
 
     if ( !stream.SerializeBits( integerValue, bits ) )
-    {
         return false;
-    }
 
     if ( Stream::IsReading )
     {
         if ( integerValue > maxIntegerValue )
-        {
             return false;
-        }
+
         const float normalizedValue = integerValue / float( maxIntegerValue );
         const float scaledValue = normalizedValue * delta;
         value = scaledValue + min;
@@ -9077,6 +9467,7 @@ static bool compressed_float_frozen_oracle_conformant = true;
 // the writer's quantization with the two float roundings collapsed: the product and the
 // +0.5 both taken in double, rounded once by the floor. the "widened to double"
 // perturbation, permanently on watch.
+
 inline uint32_t compressed_float_sentinel_write_code_one_rounding( float value, uint32_t max_integer_value, float delta, float min )
 {
     float normalized = ( value - min ) / delta;
@@ -9088,12 +9479,14 @@ inline uint32_t compressed_float_sentinel_write_code_one_rounding( float value, 
     {
         normalized = 1.0f;
     }
+
     return (uint32_t) floor( (double) normalized * (double) max_integer_value + 0.5 );
 }
 
 // the reader's reconstruction with the multiply and the add collapsed into one rounding --
 // exactly what an FMA contraction produces, spelled in double so it happens on hosts
 // without an FMA instruction too.
+
 inline float compressed_float_sentinel_read_value_one_rounding( uint32_t integer_value, uint32_t max_integer_value, float delta, float min )
 {
     const float normalized = integer_value / float( max_integer_value );
@@ -9111,15 +9504,19 @@ static uint64_t compressed_float_differential_check_count = 0;
 
 // one written value through all three implementations: measured bits, wire bytes and decoded
 // bit patterns must agree exactly
+
 inline void check_compressed_float_value_agrees( float value, float min, float max, float res, uint32_t max_integer_value, int bits, float delta )
 {
     // measure: all three forms agree on cost
+
     serialize::MeasureStream measureReference;
     float measure_value = value;
     serialize_differential_check( serialize_compressed_float_frozen_reference( measureReference, measure_value, min, max, res ) == true );
+
     serialize::MeasureStream measureClassic;
     measure_value = value;
     serialize_differential_check( serialize_compressed_float_classic_form( measureClassic, measure_value, min, max, res ) == true );
+
     serialize::MeasureStream measurePrecomputed;
     measure_value = value;
     serialize_differential_check( serialize_compressed_float_precomputed_form( measurePrecomputed, measure_value, max_integer_value, bits, delta, min ) == true );
@@ -9127,11 +9524,13 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     serialize_differential_check( measureReference.GetBitsProcessed() == measurePrecomputed.GetBitsProcessed() );
 
     // write: byte identical wire from all three
+
     uint8_t buffer_reference[8 + 8] = { 0 };            // + 8: read buffer allocations extend 8 bytes past the data
     uint8_t buffer_classic[8 + 8] = { 0 };               // + 8: read buffer allocations extend 8 bytes past the data
     uint8_t buffer_precomputed[8 + 8] = { 0 };          // + 8: read buffer allocations extend 8 bytes past the data
 
     serialize::WriteStream writeReference( buffer_reference, 8 );
+
     float write_value = value;
     serialize_differential_check( serialize_compressed_float_frozen_reference( writeReference, write_value, min, max, res ) == true );
     writeReference.Flush();
@@ -9149,6 +9548,7 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     serialize_differential_check( writeReference.GetBitsProcessed() == writeClassic.GetBitsProcessed() );
     serialize_differential_check( writeReference.GetBitsProcessed() == writePrecomputed.GetBitsProcessed() );
     serialize_differential_check( memcmp( buffer_classic, buffer_precomputed, 8 ) == 0 );
+
     if ( compressed_float_frozen_oracle_conformant )
     {
         serialize_differential_check( memcmp( buffer_reference, buffer_classic, 8 ) == 0 );
@@ -9156,13 +9556,17 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     }
 
     // read: decoded BIT PATTERNS agree exactly — one ulp of divergence must fail
+
     serialize::ReadStream readReference( buffer_precomputed, 8 );
+
     float decoded_reference = 0.0f;
     serialize_differential_check( serialize_compressed_float_frozen_reference( readReference, decoded_reference, min, max, res ) == true );
     serialize::ReadStream readClassic( buffer_precomputed, 8 );
+
     float decoded_classic = 0.0f;
     serialize_differential_check( serialize_compressed_float_classic_form( readClassic, decoded_classic, min, max, res ) == true );
     serialize::ReadStream readPrecomputed( buffer_precomputed, 8 );
+
     float decoded_precomputed = 0.0f;
     serialize_differential_check( serialize_compressed_float_precomputed_form( readPrecomputed, decoded_precomputed, max_integer_value, bits, delta, min ) == true );
 
@@ -9171,6 +9575,7 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     memcpy( &pattern_classic, &decoded_classic, 4 );
     memcpy( &pattern_precomputed, &decoded_precomputed, 4 );
     serialize_differential_check( pattern_classic == pattern_precomputed );
+
     if ( compressed_float_frozen_oracle_conformant )
     {
         serialize_differential_check( pattern_reference == pattern_classic );
@@ -9185,6 +9590,7 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
     // stood down.
     {
         serialize::ReadStream sentinelStream( buffer_precomputed, 8 );
+
         uint32_t wire_code = 0;
         if ( sentinelStream.SerializeBits( wire_code, bits ) )
         {
@@ -9198,23 +9604,28 @@ inline void check_compressed_float_value_agrees( float value, float min, float m
 
 // one wire integer through all three read paths: acceptance must agree (the headroom refusal),
 // and accepted codes must decode to identical bit patterns
+
 inline void check_compressed_float_code_agrees( uint32_t code, float min, float max, float res, uint32_t max_integer_value, int bits, float delta )
 {
     uint8_t buffer[8 + 8] = { 0 };              // + 8: read buffer allocations extend 8 bytes past the data
     serialize::WriteStream writeStream( buffer, 8 );
+
     uint32_t raw = code;
     serialize_differential_check( writeStream.SerializeBits( raw, bits ) == true );
     writeStream.Flush();
 
     serialize::ReadStream readReference( buffer, 8 );
+
     float decoded_reference = 0.0f;
     const bool ok_reference = serialize_compressed_float_frozen_reference( readReference, decoded_reference, min, max, res );
 
     serialize::ReadStream readClassic( buffer, 8 );
+
     float decoded_classic = 0.0f;
     const bool ok_classic = serialize_compressed_float_classic_form( readClassic, decoded_classic, min, max, res );
 
     serialize::ReadStream readPrecomputed( buffer, 8 );
+
     float decoded_precomputed = 0.0f;
     const bool ok_precomputed = serialize_compressed_float_precomputed_form( readPrecomputed, decoded_precomputed, max_integer_value, bits, delta, min );
 
@@ -9229,6 +9640,7 @@ inline void check_compressed_float_code_agrees( uint32_t code, float min, float 
         memcpy( &pattern_classic, &decoded_classic, 4 );
         memcpy( &pattern_precomputed, &decoded_precomputed, 4 );
         serialize_differential_check( pattern_classic == pattern_precomputed );
+
         if ( compressed_float_frozen_oracle_conformant )
         {
             serialize_differential_check( pattern_reference == pattern_classic );
@@ -9243,9 +9655,11 @@ inline void check_compressed_float_code_agrees( uint32_t code, float min, float 
         // are ever fused -- a deleted barrier under -ffp-contract=fast is exactly this --
         // the home decodes what the sentinel decodes, the divergences drop to zero, and the
         // nonzero assertion below the corpus fails by name.
+
         const float sentinel_value = compressed_float_sentinel_read_value_one_rounding( code, max_integer_value, delta, min );
         uint32_t pattern_sentinel;
         memcpy( &pattern_sentinel, &sentinel_value, 4 );
+
         if ( pattern_sentinel != pattern_precomputed )
         {
             compressed_float_sentinel_read_divergences++;
@@ -9305,25 +9719,32 @@ inline void test_compressed_float_top_of_range_clamp()
     // wrote a code one bit wider than the field.
     {
         // witness A: [0, 8388609] at resolution 1 -> max_integer_value 2^23+1, 24 bits
+
         uint8_t buffer[16 + 8] = { 0 };
         serialize::WriteStream writeStream( buffer, 16 );
+
         float written = 8388609.0f;
         serialize_check( serialize::serialize_compressed_float_internal( writeStream, written, 0.0f, 8388609.0f, 1.0f ) == true );
         writeStream.Flush();
         serialize::ReadStream readStream( buffer, 16 );
+
         float value = 0.0f;
         serialize_check( serialize::serialize_compressed_float_internal( readStream, value, 0.0f, 8388609.0f, 1.0f ) == true );
         serialize_check( value == 8388609.0f );
     }
+
     {
         // witness B: [0, 16777215] at resolution 1 -> max_integer_value 2^24-1, 24 bits;
         // the unclamped code was 2^24, one bit wider than the field
+
         uint8_t buffer[16 + 8] = { 0 };
         serialize::WriteStream writeStream( buffer, 16 );
+
         float written = 16777215.0f;
         serialize_check( serialize::serialize_compressed_float_internal( writeStream, written, 0.0f, 16777215.0f, 1.0f ) == true );
         writeStream.Flush();
         serialize::ReadStream readStream( buffer, 16 );
+
         float value = 0.0f;
         serialize_check( serialize::serialize_compressed_float_internal( readStream, value, 0.0f, 16777215.0f, 1.0f ) == true );
         serialize_check( value == 16777215.0f );
@@ -9334,6 +9755,7 @@ inline void test_compressed_float_precomputed_differential()
 {
     // the frozen oracle predates the barrier: under cross-statement contraction it fuses,
     // so its comparisons stand down on such a build (see the declaration above)
+
     compressed_float_frozen_oracle_conformant = !serialize_test_fp_contraction_crosses_statements();
 
     const float float_max = 3.402823466e+38f;               // FLT_MAX, spelled so the header needs no float.h
@@ -9343,7 +9765,6 @@ inline void test_compressed_float_precomputed_differential()
 #define serialize_differential_next_lcg() ( lcg = lcg * 6364136223846793005ULL + 1442695040888963407ULL )
 
     const int num_shapes = (int) ( sizeof( compressed_float_shapes ) / sizeof( compressed_float_shapes[0] ) );
-
     for ( int s = 0; s < num_shapes; s++ )
     {
         const float min = compressed_float_shapes[s].min;
@@ -9356,6 +9777,7 @@ inline void test_compressed_float_precomputed_differential()
         serialize::serialize_compressed_float_params( min, max, res, max_integer_value, bits, delta );
 
         // the derived constants are pinned against the schema compiler's generation-time table
+
         serialize_differential_check( max_integer_value == compressed_float_shapes[s].expected_max_integer_value );
         serialize_differential_check( bits == compressed_float_shapes[s].expected_bits );
         serialize_differential_check( delta == max - min );
@@ -9368,6 +9790,7 @@ inline void test_compressed_float_precomputed_differential()
             const int sweep_steps = 2048;
             const double lo = dmin - 0.25 * ddelta;
             const double span = 1.5 * ddelta;
+
             for ( int i = 0; i <= sweep_steps; i++ )
             {
                 const float value = (float) ( lo + span * i / sweep_steps );
@@ -9460,6 +9883,7 @@ inline void test_compressed_float_precomputed_differential()
                 const uint32_t pattern = (uint32_t) ( serialize_differential_next_lcg() >> 32 );
                 float value = 0.0f;
                 memcpy( &value, &pattern, 4 );
+
                 if ( value - value == 0.0f )
                 {
                     check_compressed_float_value_agrees( value, min, max, res, max_integer_value, bits, delta );
@@ -9472,6 +9896,7 @@ inline void test_compressed_float_precomputed_differential()
         // boundary codes are pinned and the interior is sampled
         {
             const uint32_t top_code = ( bits == 32 ) ? 0xFFFFFFFFu : ( ( 1u << bits ) - 1u );
+
             if ( bits <= 16 )
             {
                 for ( uint32_t code = 0; code <= top_code; code++ )
@@ -9485,16 +9910,19 @@ inline void test_compressed_float_precomputed_differential()
                 {
                     check_compressed_float_code_agrees( code, min, max, res, max_integer_value, bits, delta );
                 }
+
                 const uint32_t window_lo = max_integer_value - 512;                 // max_integer_value >= 2^16 here, so no underflow
                 const uint32_t window_hi = ( top_code - max_integer_value < 512 ) ? top_code : max_integer_value + 512;
                 for ( uint32_t code = window_lo; code <= window_hi && code >= window_lo; code++ )
                 {
                     check_compressed_float_code_agrees( code, min, max, res, max_integer_value, bits, delta );
                 }
+
                 for ( uint32_t code = top_code - 64; code <= top_code && code >= top_code - 64; code++ )
                 {
                     check_compressed_float_code_agrees( code, min, max, res, max_integer_value, bits, delta );
                 }
+
                 for ( int i = 0; i < 2048; i++ )
                 {
                     const uint32_t code = ( (uint32_t) ( serialize_differential_next_lcg() >> 32 ) ) & top_code;
@@ -9510,6 +9938,7 @@ inline void test_compressed_float_precomputed_differential()
     // built with, that is a test bug, and it fails here instead of fading quietly. A build
     // whose frozen oracle stood down runs fewer comparisons, so it is held to its own
     // measured floor rather than the full one.
+
     serialize_check( compressed_float_differential_check_count >= ( compressed_float_frozen_oracle_conformant ? 2000000 : 1600000 ) );
 
     if ( serialize_test_verbose() )
@@ -9521,7 +9950,8 @@ inline void test_compressed_float_precomputed_differential()
     // the negative controls, CHECKED rather than merely reported: if a one-rounding writer
     // ever stops producing a different wire code, or a one-rounding reader ever stops
     // producing a different bit pattern, then everything above agrees for a reason that has
-    // nothing to do with the split being correct, and this differential is decoration.
+    // nothing to do with the split being correct, and this differential is decoration
+
     serialize_check( compressed_float_sentinel_write_divergences > 0 );
     serialize_check( compressed_float_sentinel_read_divergences > 0 );
 
@@ -9564,10 +9994,12 @@ template <typename Stream> bool GoldenFloatSerialize( Stream & stream, float * f
     {
         serialize_float( stream, float_values[i] );
     }
+
     for ( int i = 0; i < 2; i++ )
     {
         serialize_double( stream, double_values[i] );
     }
+
     return true;
 }
 
@@ -9579,12 +10011,17 @@ inline void test_golden_float_bit_transparency()
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         float float_values[5];
         double double_values[2];
         for ( int i = 0; i < 5; i++ )
+        {
             memcpy( &float_values[i], &golden_float_patterns[i], 4 );
+        }
         for ( int i = 0; i < 2; i++ )
+        {
             memcpy( &double_values[i], &golden_double_patterns[i], 8 );
+        }
         serialize_check( GoldenFloatSerialize( stream, float_values, double_values ) == true );
         stream.Flush();
         serialize_check( stream.GetBytesProcessed() == (int) sizeof( golden_float_bytes ) );
@@ -9598,17 +10035,20 @@ inline void test_golden_float_bit_transparency()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, golden_float_bytes, sizeof( golden_float_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( golden_float_bytes ) );
+
         float float_values[5];
         double double_values[2];
         memset( float_values, 0, sizeof( float_values ) );
         memset( double_values, 0, sizeof( double_values ) );
         serialize_check( GoldenFloatSerialize( stream, float_values, double_values ) == true );
+
         for ( int i = 0; i < 5; i++ )
         {
             uint32_t bits = 0;
             memcpy( &bits, &float_values[i], 4 );
             serialize_check( bits == golden_float_patterns[i] );
         }
+
         for ( int i = 0; i < 2; i++ )
         {
             uint64_t bits = 0;
@@ -9638,12 +10078,14 @@ inline void test_golden_zero_length_bytes()
     // { bits(5,3); bytes(count=0); bits(0xA5,8) }. The zero-length bytes still ALIGNS:
     // the pad lands in bits [3,8) and 0xA5 occupies byte 1. A port that early-returns on
     // count == 0 writes { 0x2D, 0x05 } — every later field shifted by five bits.
+
     static const uint8_t pinned_bytes[2] = { 0x05, 0xA5 };
 
     {
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         uint32_t head = 5;
         uint32_t tail = 0xA5;
         uint8_t data[1] = { 0 };
@@ -9658,6 +10100,7 @@ inline void test_golden_zero_length_bytes()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, pinned_bytes, sizeof( pinned_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( pinned_bytes ) );
+
         uint32_t head = 0;
         uint32_t tail = 0;
         uint8_t data[1] = { 0 };
@@ -9682,12 +10125,14 @@ inline void test_golden_zero_length_string()
     // length of 0, then the zero-length payload's align pads bits [6,8). A port whose
     // STRING path skips the empty-payload align writes { 0x45, 0x29 } — the exact hazard
     // the C port's comment names, and a separate code path from bytes in three ports.
+
     static const uint8_t pinned_bytes[2] = { 0x05, 0xA5 };
 
     {
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         uint32_t head = 5;
         uint32_t tail = 0xA5;
         char string[8] = { 0 };
@@ -9702,6 +10147,7 @@ inline void test_golden_zero_length_string()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, pinned_bytes, sizeof( pinned_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( pinned_bytes ) );
+
         uint32_t head = 0;
         uint32_t tail = 0;
         char string[8];
@@ -9728,12 +10174,14 @@ inline void test_golden_unaligned_bytes()
     // align from bit index 1 — the case the golden vector structurally shadows, because an
     // explicit serialize_align immediately precedes its bytes field, making the operation's
     // internal align a no-op there.
+
     static const uint8_t pinned_bytes[4] = { 0x01, 0xEF, 0xBE, 0x0F };
 
     {
         uint8_t buffer[64];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream stream( buffer, (int) sizeof( buffer ) );
+
         uint32_t head = 1;
         uint32_t tail = 0x0F;
         uint8_t data[2] = { 0xEF, 0xBE };
@@ -9748,6 +10196,7 @@ inline void test_golden_unaligned_bytes()
         memset( buffer, 0, sizeof( buffer ) );
         memcpy( buffer, pinned_bytes, sizeof( pinned_bytes ) );
         serialize::ReadStream stream( buffer, (int) sizeof( pinned_bytes ) );
+
         uint32_t head = 0;
         uint32_t tail = 0;
         uint8_t data[2] = { 0, 0 };
@@ -9782,20 +10231,24 @@ inline void test_measure_bound()
 
         // written at every starting offset, the message's actual span never exceeds the
         // measure — the property the bound exists to guarantee
+
         for ( int offset = 0; offset < 8; offset++ )
         {
             uint8_t buffer[64];
             memset( buffer, 0, sizeof( buffer ) );
             serialize::WriteStream writeStream( buffer, (int) sizeof( buffer ) );
+
             for ( int i = 0; i < offset; i++ )
             {
                 uint32_t one_bit = 1;
                 serialize_check( writeStream.SerializeBits( one_bit, 1 ) == true );
             }
+
             const int64_t start = writeStream.GetBitsProcessed();
             serialize_check( writeStream.SerializeBits( byte_value, 8 ) == true );
             serialize_check( writeStream.SerializeAlign() == true );
             serialize_check( writeStream.SerializeBits( byte_value, 8 ) == true );
+
             const int64_t span = writeStream.GetBitsProcessed() - start;
             serialize_check( span <= measureStream.GetBitsProcessed() );
             if ( offset == 0 )
@@ -9810,8 +10263,10 @@ inline void test_measure_bound()
     {
         GoldenWireData data;
         GoldenWireInit( data );
+
         serialize::MeasureStream measureStream;
         serialize_check( GoldenWireSerialize( measureStream, data ) == true );
+
         uint8_t buffer[256];
         memset( buffer, 0, sizeof( buffer ) );
         serialize::WriteStream writeStream( buffer, (int) sizeof( buffer ) );
@@ -9824,9 +10279,14 @@ inline void test_measure_bound()
         float float_values[5];
         double double_values[2];
         for ( int i = 0; i < 5; i++ )
+        {
             memcpy( &float_values[i], &golden_float_patterns[i], 4 );
+        }
         for ( int i = 0; i < 2; i++ )
+        {
             memcpy( &double_values[i], &golden_double_patterns[i], 8 );
+        }
+
         serialize::MeasureStream measureStream;
         serialize_check( GoldenFloatSerialize( measureStream, float_values, double_values ) == true );
         serialize_check( measureStream.GetBitsProcessed() >= 5 * 32 + 2 * 64 );     // no aligns: exact, and still a bound
@@ -9876,7 +10336,9 @@ inline void test_unaligned_writer()
 
         uint8_t data[13];
         for ( int i = 0; i < (int) sizeof( data ); i++ )
+        {
             data[i] = (uint8_t) ( i * 47 + offset );
+        }
 
         serialize::WriteStream writeStream( buffer, 256 );
         writeStream.SerializeBits( 0x12345678, 32 );
@@ -9888,16 +10350,20 @@ inline void test_unaligned_writer()
         const int bytesWritten = writeStream.GetBytesProcessed();
 
         serialize::ReadStream readStream( buffer, bytesWritten );
+
         uint32_t a = 0;
         serialize_check( readStream.SerializeBits( a, 32 ) == true );
         serialize_check( a == 0x12345678 );
+
         uint32_t b = 0;
         serialize_check( readStream.SerializeBits( b, 7 ) == true );
         serialize_check( b == 123 );
+
         uint8_t read_data[13];
         memset( read_data, 0, sizeof( read_data ) );
         serialize_check( readStream.SerializeBytes( read_data, (int) sizeof( read_data ) ) == true );
         serialize_check( memcmp( read_data, data, sizeof( data ) ) == 0 );
+
         uint32_t c = 0;
         serialize_check( readStream.SerializeBits( c, 32 ) == true );
         serialize_check( c == 0xDEADBEEF );
@@ -9918,22 +10384,30 @@ inline void test_large_buffer()
         {
             printf( "(skipped test_large_buffer: could not allocate the buffer)\n" );
         }
+
         return;
     }
 
     static uint8_t chunk[1024 * 1024];
     for ( int i = 0; i < (int) sizeof( chunk ); i++ )
+    {
         chunk[i] = (uint8_t) ( i * 37 );
+    }
 
     const int numChunks = 300;                                              // 300 MB of bulk data: past the 256 MB boundary
 
     int64_t bytesWritten = 0;
+
     {
         serialize::WriteStream writeStream( buffer, bufferSize );
         for ( int i = 0; i < numChunks; i++ )
+        {
             serialize_check( writeStream.SerializeBytes( chunk, sizeof( chunk ) ) == true );
+        }
+
         uint32_t sentinel = 0xDEADBEEF;
         serialize_check( writeStream.SerializeBits( sentinel, 32 ) == true );
+
         int32_t value = -12345;
         serialize_check( writeStream.SerializeInteger( value, -100000, +100000 ) == true );
         writeStream.Flush();
@@ -9943,13 +10417,18 @@ inline void test_large_buffer()
 
     {
         serialize::ReadStream readStream( buffer, bytesWritten );
+
         static uint8_t readChunk[1024 * 1024];
         for ( int i = 0; i < numChunks; i++ )
+        {
             serialize_check( readStream.SerializeBytes( readChunk, sizeof( readChunk ) ) == true );
+        }
         serialize_check( memcmp( readChunk, chunk, sizeof( chunk ) ) == 0 );        // the final chunk, decoded from past the boundary
+
         uint32_t sentinel = 0;
         serialize_check( readStream.SerializeBits( sentinel, 32 ) == true );
         serialize_check( sentinel == 0xDEADBEEF );
+
         int32_t value = 0;
         serialize_check( readStream.SerializeInteger( value, -100000, +100000 ) == true );
         serialize_check( value == -12345 );
@@ -9980,6 +10459,7 @@ inline void serialize_test()
     // reporting a failure it did not find. The -ffp-contract=off build is still the gate on
     // such a compiler, and its negative controls still carry the discrimination there.
     // Anyone transplanting the -ffp-contract=on build to another repo should carry this check.
+
     if ( fp_contraction_crosses_statements )
     {
         printf( "*** STANDING DOWN: asked for -ffp-contract=on and this compiler produced CROSS-STATEMENT contraction (GCC before 14 maps =on onto =fast), so the discriminating build is not available on this toolchain ***\n\n" );
@@ -9992,6 +10472,7 @@ inline void serialize_test()
     // instruction cannot fuse however the flag is set, and that is a fact about the host,
     // not a failure. A green log must never claim a discipline it did not exercise — the
     // claim is on demand now, and the default log claims nothing beyond the names.
+
     if ( serialize_test_verbose() )
     {
         printf( "built with %s; fp contraction is %s in this build\n\n",
@@ -10009,6 +10490,7 @@ inline void serialize_test()
     // quotient that was never correctly rounded. A -ffast-math build cannot produce a
     // conformant wire, so the honest report is this one, not a bit pattern mismatch that
     // reads like a library bug.
+
     printf( "This build uses -ffast-math (or -Ofast), which licenses reciprocal approximation and\n"
             "reassociation in the exact arithmetic the compressed float conformance vectors pin.\n"
             "The wire cannot be conformant from this build. Rebuild without -ffast-math.\n\n" );
@@ -10026,6 +10508,7 @@ inline void serialize_test()
     // from the other side: if the audited home's roundings are ever fused, its decode
     // collapses onto the one-rounding sentinel, the divergence count drops to zero, and the
     // differential fails.
+
     if ( !serialize_test_fp_barrier_holds() )
     {
         printf( "This toolchain contracts floating point THROUGH SERIALIZE_FLOAT_FORCE_ROUND. The compressed\n"
@@ -10104,6 +10587,5 @@ inline void serialize_test()
 }
 
 #endif // #if defined( SERIALIZE_ENABLE_TESTS ) && SERIALIZE_ENABLE_TESTS
-
 
 #endif // ROCKETNET_TESTS_SERIALIZE_H

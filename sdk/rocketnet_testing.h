@@ -77,4 +77,4 @@ template <typename config_t> static inline struct rocketnet_client_t * rocketnet
 
 #endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TESTING_H
+#endif // ROCKETNET_SDK_ROCKETNET_TESTING_H

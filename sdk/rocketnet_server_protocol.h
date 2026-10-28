@@ -70,6 +70,7 @@ struct rocketnet_server_protocol_t
     double previous_cookie_key_expire_time;                 // when the previous key stops being accepted
 
     double handshake_deadline_seconds;                      // default 5
+    int handshakes_per_update;                              // the handshake work budget, 1 .. 1024; default 16
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
 
     struct rocketnet_encryption_map_t * encryption_map;
@@ -348,4 +349,4 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_PROTOCOL_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_PROTOCOL_H

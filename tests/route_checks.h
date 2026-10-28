@@ -15,18 +15,23 @@ static void test_route_prefixes()
     rocketnet_ifforward4_t fallback = { 1, 0, 0, 100 };
     CHECK( better_match( &fallback, NULL, ip ) );
     CHECK( ip == 0x0aa00309u );
+
     rocketnet_ifforward4_t net = { 2, 0x0aa00000u, 0xffe00000u, 50 }; // /11
     CHECK( better_match( &net, &fallback, ip ) );
     CHECK( !better_match( &fallback, &net, ip ) );
+
     rocketnet_ifforward4_t wrong = { 3, 0x0aa10309u, 0xffffffffu, 1 };
     CHECK( !better_match( &wrong, &net, ip ) ); // 31 matching bits is still no route
+
     rocketnet_ifforward4_t host = { 4, ip, 0xffffffffu, 90 };
     CHECK( better_match( &host, &net, ip ) );
+
     rocketnet_ifforward4_t cheap = host;
     cheap.forward_metric = 10;
     CHECK( better_match( &cheap, &host, ip ) );
     CHECK( !better_match( &host, &cheap, ip ) );
     CHECK( !better_match( &cheap, &cheap, ip ) );
+
     const uint8_t edge[4] = { 10, 191, 255, 255 };
     const uint8_t outside[4] = { 10, 192, 0, 0 };
     CHECK( better_match( &net, NULL, rocketnet_route_ip( edge ) ) );
@@ -55,6 +60,7 @@ struct route_fixture_t
     void add( unsigned short type, const void * value, unsigned bytes )
     {
         CHECK( bytes <= sizeof( attributes ) );
+
         rtattr * attr = (rtattr *) ( (uint8_t *) this + NLMSG_ALIGN( header.nlmsg_len ) );
         attr->rta_type = type;
         attr->rta_len = (unsigned short) RTA_LENGTH( bytes );
@@ -67,16 +73,19 @@ static void test_route_netlink()
 {
     rocketnet_ifforward4_t parsed;
     memset( &parsed, 0xa5, sizeof( parsed ) );
+
     uint32_t oif = 7, priority = 123;
     route_fixture_t fallback;
     fallback.add( RTA_OIF, &oif, sizeof( oif ) );
     CHECK( parse_kernel_route( &fallback.header, &parsed ) );
     CHECK( parsed.if_index == 7 && parsed.forward_dest == 0 && parsed.forward_mask == 0 && parsed.forward_metric == 0 );
+
     const uint8_t destination[4] = { 10, 160, 0, 0 };
     route_fixture_t subnet( 11 );
     subnet.add( RTA_DST, destination, 4 );
     subnet.add( RTA_OIF, &oif, 4 );
     subnet.add( RTA_PRIORITY, &priority, 4 );
+
     uint32_t nested_metrics[2] = { 0xdeadbeef, 0x12345678 };
     subnet.add( RTA_METRICS, nested_metrics, sizeof( nested_metrics ) );
     CHECK( parse_kernel_route( &subnet.header, &parsed ) );
@@ -95,16 +104,19 @@ static void test_route_netlink()
     subnet.route.rtm_table = RT_TABLE_MAIN;
     subnet.route.rtm_type = RTN_BLACKHOLE;
     CHECK( !parse_kernel_route( &subnet.header, &parsed ) );
+
     route_fixture_t missing;
     CHECK( !parse_kernel_route( &missing.header, &parsed ) );
+
     route_fixture_t short_attr;
     short_attr.add( RTA_OIF, &oif, 1 );
     CHECK( !parse_kernel_route( &short_attr.header, &parsed ) );
+
     route_fixture_t short_header;
     short_header.header.nlmsg_len = NLMSG_LENGTH( sizeof( rtmsg ) ) - 1;
     CHECK( !parse_kernel_route( &short_header.header, &parsed ) );
     printf( "test_route_netlink\n" );
 }
-#endif
+#endif // #if defined( __linux__ )
 
 #endif // ROCKETNET_TESTS_ROUTE_CHECKS_H

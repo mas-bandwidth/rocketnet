@@ -30,4 +30,4 @@ static inline struct rocketnet_crypto_tally_t rocketnet_crypto_tally_get( void )
     return rocketnet_crypto_tally;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CRYPTO_TALLY_H
+#endif // ROCKETNET_SDK_ROCKETNET_CRYPTO_TALLY_H

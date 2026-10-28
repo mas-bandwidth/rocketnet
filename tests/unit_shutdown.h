@@ -17,8 +17,10 @@ static inline void rn_test_client_transport_wait_stopped( rocketnet_client_trans
     {
         // Stopping update only progresses the worker seam; it does not read
         // or change the connection clock. The fixed time is not game time.
+
         rocketnet_client_transport_update( client, 1000.0 );
     }
+
     rocketnet_unit_check( rocketnet_client_transport_stopped( client ) );
 }
 
@@ -28,8 +30,10 @@ static inline void rn_test_client_wait_disconnected( rocketnet_client_t * client
     {
         rocketnet_message_client_t * message = rocketnet_client_message_client( client );
         rocketnet_unit_check( message != NULL );
+
         rn_test_client_transport_wait_stopped( rocketnet_message_client_transport( message ) );
     }
+
     rocketnet_unit_check( rocketnet_client_disconnected( client ) );
 }
 
@@ -46,6 +50,7 @@ static inline enum rocketnet_status_t rn_test_client_connect_after_completion( r
         rn_test_client_wait_disconnected( client );
         status = rocketnet_client_connect( client, token );
     }
+
     return status;
 }
 
@@ -63,6 +68,7 @@ static inline void rn_test_client_stop_and_destroy( rocketnet_client_t * client 
         rocketnet_client_disconnect( client );
         rn_test_client_wait_disconnected( client );
     }
+
     rocketnet_client_destroy( client );
 }
 
@@ -75,6 +81,7 @@ static inline void rn_test_server_stop_and_destroy( rocketnet_server_t * server 
         rocketnet_server_stop( server );
         rn_test_server_wait_stopped( server );
     }
+
     rocketnet_server_destroy( server );
 }
 
@@ -87,6 +94,7 @@ static inline void rn_test_client_transport_stop_and_destroy( rocketnet_client_t
         rocketnet_client_transport_stop( client );
         rn_test_client_transport_wait_stopped( client );
     }
+
     rocketnet_client_transport_destroy( client );
 }
 
@@ -99,6 +107,7 @@ static inline void rn_test_server_transport_stop_and_destroy( rocketnet_server_t
         rocketnet_server_transport_stop( server );
         rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
     }
+
     rocketnet_server_transport_destroy( server );
 }
 
@@ -124,6 +133,7 @@ static inline void rn_test_message_client_stop_and_destroy( struct rocketnet_mes
         rocketnet_client_transport_stop( transport );
         rn_test_client_transport_wait_stopped( transport );
     }
+
     rocketnet_message_client_destroy( message );
 }
 
@@ -137,6 +147,7 @@ static inline void rn_test_message_server_stop_and_destroy( struct rocketnet_mes
         rocketnet_server_transport_stop( transport );
         rocketnet_unit_check( rocketnet_server_transport_stopped( transport ) );
     }
+
     rocketnet_message_server_destroy( message );
 }
 

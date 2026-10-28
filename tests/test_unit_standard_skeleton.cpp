@@ -27,6 +27,7 @@ static int standard_skeleton_generate( const char * id, uint8_t * out, int capac
         rocketnet_connect_token_identifier( out, rocketnet_test_frozen_token );
         return ROCKETNET_TOKEN_IDENTIFIER_BYTES;
     }
+
     return -1;
 }
 
@@ -36,17 +37,20 @@ static void test_standard_skeleton_vectors()
     rocketnet_unit_check( rn_standard_vectors_walk( standard_skeleton_table, count, standard_skeleton_generate ) == 1 );
 
     // the twin is the frozen identifier the sdk suite already holds
+
     uint8_t twin[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     rocketnet_unit_check( rn_standard_hex_decode( standard_skeleton_table[0].hex, twin, (int) sizeof( twin ) ) == ROCKETNET_TOKEN_IDENTIFIER_BYTES );
     rocketnet_unit_check( memcmp( twin, rocketnet_test_token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 );
 
     // the walk's own refusals: a differing byte is found and named, a short
     // vector is found at its end, and bad hex is refused
+
     const uint8_t a[3] = { 1, 2, 3 };
     const uint8_t b[3] = { 1, 9, 3 };
     rocketnet_unit_check( rn_standard_first_difference( a, 3, a, 3 ) == -1 );
     rocketnet_unit_check( rn_standard_first_difference( a, 3, b, 3 ) == 1 );
     rocketnet_unit_check( rn_standard_first_difference( a, 3, a, 2 ) == 2 );
+
     uint8_t scratch[2];
     rocketnet_unit_check( rn_standard_hex_decode( "0g", scratch, 2 ) == -1 );
     rocketnet_unit_check( rn_standard_hex_decode( "012", scratch, 2 ) == -1 );

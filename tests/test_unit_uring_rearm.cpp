@@ -14,13 +14,13 @@
 
 #if defined( __linux__ )
 #include "../sdk/rocketnet_uring_codec.h"
-#endif
+#endif // #if defined( __linux__ )
 
 #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 #define ROCKETNET_URING_REARM_TEST 1
 #else
 #define ROCKETNET_URING_REARM_TEST 0
-#endif
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
 
 #if ROCKETNET_URING_REARM_TEST
 
@@ -37,11 +37,13 @@ static void test_io_uring_transport_rearm_retries_a_failed_arm()
 
     // the multishot ends and the one-shot re-arm in the CQE handler finds no
     // submission entry: the queue is left unarmed and the failure is counted
+
     rocketnet_server_uring_test_multishot_ends( uring, 0, true );
     rocketnet_unit_check( !rocketnet_server_uring_test_queue_armed( uring, 0 ) );
     rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED ) == 1 );
 
     // receives that also find no entry retry every call and stay counted
+
     rocketnet_server_uring_test_set_arm_failures( uring, 2 );
     rocketnet_server_uring_receive_packets( uring );
     rocketnet_server_uring_receive_packets( uring );
@@ -50,6 +52,7 @@ static void test_io_uring_transport_rearm_retries_a_failed_arm()
     rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == 0 );
 
     // the next receive finds an entry and arms the queue again
+
     rocketnet_server_uring_receive_packets( uring );
     rocketnet_unit_check( rocketnet_server_uring_test_queue_armed( uring, 0 ) );
     rocketnet_unit_check( rocketnet_server_uring_test_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS ) == 1 );

@@ -47,8 +47,15 @@
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 #include <liburing.h>
 #include "rocketnet_uring_codec.h"
+// ROCKETNET_IO_URING also puts the io_uring row in the transport registry
+// (rocketnet_driver.cpp), so it must mean the transport is built: a liburing
+// without multishot receive is refused here, never compiled to a stub that the
+// registry would still offer. CMake checks this at configure time
+// (cmake/RocketNetDependencies.cmake) and leaves ROCKETNET_IO_URING unset.
 #if defined( IORING_RECV_MULTISHOT )
 #define ROCKETNET_URING_BUILT 1
+#else // #if defined( IORING_RECV_MULTISHOT )
+#error "ROCKETNET_IO_URING needs liburing 2.3 or later (IORING_RECV_MULTISHOT); build without ROCKETNET_IO_URING"
 #endif // #if defined( IORING_RECV_MULTISHOT )
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( ROCKETNET_IO_URING ) && ROCKETNET_IO_URING
 

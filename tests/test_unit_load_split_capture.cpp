@@ -63,6 +63,7 @@ static int capture_fake_sample( void * context, int index, double now, struct sp
     out->packets_sent = 100 + (uint64_t) index;
     out->packets_received = 90 + (uint64_t) index;
     out->delivery.connected = fake->connected[index];
+
     if ( fake->connected[index] )
     {
         out->delivery.server_mapping_known = 1;
@@ -75,6 +76,7 @@ static int capture_fake_sample( void * context, int index, double now, struct sp
         out->delivery.reliable_unacked = 2;
         out->delivery.reliable_oldest_unacked_age_seconds = 0.5;
     }
+
     return 1;
 }
 
@@ -97,6 +99,7 @@ static void capture_fake_line( void * context, const char * line )
 static void capture_fake_init( capture_fake_t * fake )
 {
     memset( fake, 0, sizeof( *fake ) );
+
     for ( int i = 0; i < CAPTURE_CONNECTIONS; i++ )
     {
         fake->exists[i] = 1;
@@ -116,9 +119,11 @@ static void capture_start( struct split_capture_t * capture, struct split_captur
 }
 
 // lines with this prefix that contain every one of the fragments
+
 static int capture_count( const capture_fake_t * fake, const char * prefix, const char * a, const char * b = NULL, const char * c = NULL )
 {
     int found = 0;
+
     for ( int i = 0; i < fake->num_lines; i++ )
     {
         const char * line = fake->lines[i];
@@ -132,16 +137,19 @@ static int capture_count( const capture_fake_t * fake, const char * prefix, cons
             continue;
         found++;
     }
+
     return found;
 }
 
 // every field is key=value and no key repeats: the evidence parser
 // (tools/check_split_load.py records) refuses a line otherwise
+
 static int capture_line_well_formed( const char * line )
 {
     const char * colon = strchr( line, ':' );
     if ( !colon || colon[1] != ' ' )
         return 0;
+
     char keys[64][48];
     int num_keys = 0;
     const char * p = colon + 2;
@@ -152,6 +160,7 @@ static int capture_line_well_formed( const char * line )
         const char * equals = (const char *) memchr( p, '=', length );
         if ( !equals || equals == p || equals == p + length - 1 )
             return 0;
+
         const size_t key_length = (size_t) ( equals - p );
         if ( key_length >= sizeof( keys[0] ) || num_keys == 64 )
             return 0;
@@ -163,6 +172,7 @@ static int capture_line_well_formed( const char * line )
         num_keys++;
         p = end ? end + 1 : p + length;
     }
+
     return num_keys > 0;
 }
 
@@ -174,6 +184,7 @@ static void test_load_split_capture_samples_once_per_interval()
 {
     static capture_fake_t fake;
     capture_fake_init( &fake );
+
     struct split_capture_entry_t entries[CAPTURE_CONNECTIONS];
     struct split_capture_t capture;
     capture_start( &capture, entries, &fake, "server", 0 );
@@ -191,8 +202,10 @@ static void test_load_split_capture_prints_the_last_connected_sample_at_a_kick()
 {
     // connection 1 is ended between two samples: the SDK has reset the slot,
     // so the kick line carries the sample from before, aged at the print
+
     static capture_fake_t fake;
     capture_fake_init( &fake );
+
     struct split_capture_entry_t entries[CAPTURE_CONNECTIONS];
     struct split_capture_t capture;
     capture_start( &capture, entries, &fake, "server", 0 );
@@ -210,31 +223,38 @@ static void test_load_split_capture_prints_the_last_connected_sample_at_a_kick()
     check( capture_count( &fake, "split_capture: ", "client=8 ", "why=kick", "received_sequence=77 " ) == 1 );
     check( capture_count( &fake, "split_capture: ", "why=kick", "sample_age_s=1.000 ", "last_receive_age_s=0.500 " ) == 1 );
     check( capture_count( &fake, "split_capture: ", "why=kick", "server_slot=21 ", "remote_endpoint=192.0.2.9:40001 " ) == 1 );
+
     char state_now[48];
     snprintf( state_now, sizeof( state_now ), "state_now=%d ", (int) ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT );
     check( capture_count( &fake, "split_capture: ", "why=kick", state_now ) == 1 );
 
     // the side's counters once: every named one, zero or not, and every
     // other one only when nonzero
+
     check( capture_count( &fake, "split_counter: ", "client=all " ) == SPLIT_CAPTURE_NUM_NAMED + 1 );
     check( capture_count( &fake, "split_counter: ", "name=ACK_UNKNOWN_SEQUENCE ", "value=3" ) == 1 );
     check( capture_count( &fake, "split_counter: ", "name=SEND_RING_FULL ", "value=0" ) == 1 );
     check( capture_count( &fake, "split_counter: ", "name=CONNECTION_REQUEST_RECEIVED ", "value=9" ) == 1 );
 
     // a kick prints once: later ticks find it still ended and stay quiet
+
     const int lines = fake.num_lines;
     check( split_capture_tick( &capture, 1002.0 ) == 0 );
     check( fake.num_lines == lines );
     for ( int i = 0; i < fake.num_lines; i++ )
+    {
         check( capture_line_well_formed( fake.lines[i] ) );
+    }
 }
 
 static void test_load_split_capture_marks_acks_past_run()
 {
     // RUN's mark is the first sequence sent after RUN was queued: an
     // acknowledgement at or past it is yes, below it no, no mark na
+
     static capture_fake_t fake;
     capture_fake_init( &fake );
+
     struct split_capture_entry_t entries[CAPTURE_CONNECTIONS];
     struct split_capture_t capture;
     capture_start( &capture, entries, &fake, "server", 0 );
@@ -255,9 +275,11 @@ static void test_load_split_capture_end_names_every_connection()
     // from its last connected sample, one never connected from nothing; then
     // the counters, and on a side with a block per connection, each
     // connection's nonzero named counters from its last connected sample
+
     static capture_fake_t fake;
     capture_fake_init( &fake );
     fake.exists[2] = 0;
+
     struct split_capture_entry_t entries[CAPTURE_CONNECTIONS];
     struct split_capture_t capture;
     capture_start( &capture, entries, &fake, "client-shard", 1 );
@@ -277,7 +299,9 @@ static void test_load_split_capture_end_names_every_connection()
     check( capture_count( &fake, "split_counter: ", "client=all " ) == SPLIT_CAPTURE_NUM_NAMED );
     check( capture_count( &fake, "split_capture: ", "messages_resent=na:0 " ) == CAPTURE_CONNECTIONS );
     for ( int i = 0; i < fake.num_lines; i++ )
+    {
         check( capture_line_well_formed( fake.lines[i] ) );
+    }
 }
 
 static void test_load_split_capture_kick_prints_only_the_kicked_connection_counters()
@@ -285,13 +309,17 @@ static void test_load_split_capture_kick_prints_only_the_kicked_connection_count
     // a client shard keeps a block per connection: a kick inside the run
     // prints the side totals and the kicked connection's own counters, never
     // every connection's, so the tick that finds it stays small
+
     static capture_fake_t fake;
     capture_fake_init( &fake );
+
     struct split_capture_entry_t entries[CAPTURE_CONNECTIONS];
     struct split_capture_t capture;
     capture_start( &capture, entries, &fake, "client-shard", 1 );
     for ( int i = 0; i < CAPTURE_CONNECTIONS; i++ )
+    {
         fake.own[i][ROCKETNET_COUNTER_CLIENT_PAYLOAD_DELIVERED] = 10 + (uint64_t) i;
+    }
     check( split_capture_tick( &capture, 1000.0 ) == 0 );
     fake.connected[2] = 0;
     check( split_capture_tick( &capture, 1001.0 ) == 1 );
@@ -308,7 +336,9 @@ static void test_load_split_capture_named_counters_are_distinct()
         check( split_capture_named_counters[i] >= 0 && split_capture_named_counters[i] < rocketnet_num_counters() );
         check( split_capture_is_named( split_capture_named_counters[i] ) );
         for ( int j = 0; j < i; j++ )
+        {
             check( split_capture_named_counters[i] != split_capture_named_counters[j] );
+        }
     }
 }
 
@@ -347,9 +377,12 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
     pair->time = 1000.0;
     capture_now = 1000.0;
     rocketnet_quiet( 1 );
+
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x5A ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
 
     rocketnet_server_config_t server_config;
@@ -364,12 +397,15 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
 
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( pair->server, server_public );
+
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( pair->server ) );
+
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public, CAPTURE_PROTOCOL, addresses, 1,
                                                      0x5EED, 1000, 1ULL << 40, 300, NULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 
@@ -386,16 +422,22 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
 static void capture_pair_pump( capture_pair_t * pair )
 {
     capture_now = pair->time;
+
     // every delivery is received before the next update (standard/MESSAGES.md m1.6)
+
     rocketnet_client_update( pair->client, pair->time );
+
     while ( rocketnet_client_receive_messages( pair->client ) != NULL )
     {
     }
+
     rocketnet_client_send_packets( pair->client );
     rocketnet_server_update( pair->server, pair->time );
+
     while ( rocketnet_server_receive_messages( pair->server ) != NULL )
     {
     }
+
     rocketnet_server_send_packets( pair->server );
     pair->time += 0.01;
 }
@@ -415,6 +457,7 @@ static void test_load_split_capture_sdk_reads_both_ends()
     capture_pair_create( &pair, &identity );
 
     // before the connection: both read as zeros, not connected
+
     struct rocketnet_delivery_capture_t server_side, client_side;
     rocketnet_server_delivery_capture( pair.server, 0, &server_side );
     rocketnet_client_delivery_capture( pair.client, &client_side );
@@ -425,11 +468,14 @@ static void test_load_split_capture_sdk_reads_both_ends()
     for ( int i = 0; i < 400 && ( rocketnet_client_state( pair.client ) != ROCKETNET_CLIENT_STATE_CONNECTED ||
                                   !rocketnet_server_client_connected( pair.server, 0 ) );
           i++ )
+    {
         capture_pair_pump( &pair );
+    }
     check( rocketnet_client_state( pair.client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
 
     // one reliable message the server holds unacknowledged until the client
     // has it and says so
+
     uint8_t * out = rocketnet_server_start_message( pair.server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 4 );
     check( out != NULL );
     memset( out, 7, 4 );
@@ -440,11 +486,14 @@ static void test_load_split_capture_sdk_reads_both_ends()
     check( server_side.server_mapping_known && server_side.server_slot == 0 );
     check( strncmp( server_side.remote_endpoint, "127.0.0.1:", 10 ) == 0 );
     check( server_side.reliable_unacked == 1 );
+
     const uint64_t sent_with_message = server_side.highest_sent_sequence;
     check( sent_with_message > 0 );
 
     for ( int i = 0; i < 100; i++ )
+    {
         capture_pair_pump( &pair );
+    }
     rocketnet_server_delivery_capture( pair.server, 0, &server_side );
     rocketnet_client_delivery_capture( pair.client, &client_side );
     check( server_side.connected && client_side.connected );
@@ -452,19 +501,24 @@ static void test_load_split_capture_sdk_reads_both_ends()
     check( server_side.largest_acked_sequence >= sent_with_message );
     check( server_side.highest_received_sequence > 0 && server_side.highest_received_sequence <= client_side.highest_sent_sequence );
     check( client_side.highest_received_sequence > 0 && client_side.highest_received_sequence <= server_side.highest_sent_sequence );
+
     // both ends heard the other within the last few steps, each on its own clock
+
     check( server_side.last_receive_age_seconds >= 0.0 && server_side.last_receive_age_seconds <= 0.05 );
     check( client_side.last_receive_age_seconds >= 0.0 && client_side.last_receive_age_seconds <= 0.05 );
     check( server_side.reliable_oldest_unacked_age_seconds < 0.0 );
     check( server_side.srtt_seconds >= 0.0 );
 
     // a slot out of range reads as not connected
+
     rocketnet_server_delivery_capture( pair.server, 5, &server_side );
     check( !server_side.connected && !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
 
     // a NULL endpoint is the public boundary's NULL guard: a counted misuse
     // that fires rocketnet_assert in a debug build, then reads as not connected
+
     rocketnet_assert_function( capture_quiet_assert );
+
     const uint64_t misuse = rocketnet_api_misuse_count();
     rocketnet_server_delivery_capture( NULL, 0, &server_side );
     check( !server_side.connected && !server_side.server_mapping_known && !server_side.remote_endpoint[0] );
@@ -474,6 +528,7 @@ static void test_load_split_capture_sdk_reads_both_ends()
     rocketnet_assert_function( NULL );
 
     // the counter blocks are the ones the endpoint counts in
+
     check( rocketnet_server_transport_counter_block( pair.server ) != NULL );
     check( rocketnet_server_message_counter_block( pair.server ) != NULL );
     check( rocketnet_client_transport_counter_block( pair.client ) != NULL );

@@ -62,6 +62,8 @@ MCRNWindowBrokenDropDuplicates.cfg	MCRNWindow.tla	invariant	DeliveredOnce	check	
 MCClientConnectionBrokenEarlyFragment.cfg	MCClientConnection.tla	invariant	FragmentOnlyWhenConnected	ignore-terminal	clientconnection	required	-
 MCClientConnectionCookieTrust.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenCookieRefreshes.cfg	MCClientConnection.tla	action	OnlyAuthenticatedRefreshes	ignore-terminal	clientconnection	required	-
+MCClientConnectionForgedCookie.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
+MCClientConnectionBrokenCookieReplaces.cfg	MCClientConnection.tla	action	HandshakeNeverRewinds	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenEarlyPayload.cfg	MCClientConnection.tla	action	PayloadOnlyWhenConnected	ignore-terminal	clientconnection	required	-
 MCClientConnectionRetryFromFailure.cfg	MCClientConnection.tla	pass	-	ignore-terminal	clientconnection	required	-
 MCClientConnectionBrokenRetryKeepsAttempt.cfg	MCClientConnection.tla	action	FreshAttemptFromFailure	ignore-terminal	clientconnection	required	-
@@ -92,6 +94,8 @@ MCRNSecurityTablesBindAtRequest.cfg	MCRNSecurityTables.tla	invariant	SafetyInvar
 MCRNSecurityTablesBindAtRequestAttacker.cfg	MCRNSecurityTables.tla	invariant	NoBindToNonHolder	check	rnsecuritytables	required	-
 MCRNSecurityTablesHoldUntilExpire.cfg	MCRNSecurityTables.tla	invariant	SafetyInvariants	check	rnsecuritytables	required	-
 MCRNSecurityTablesFlood.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
+MCRNSecurityTablesFloodBudgetOne.cfg	MCRNSecurityTables.tla	pass	-	check	rnsecuritytables	required	-
+MCRNSecurityTablesBrokenUnfairBudget.cfg	MCRNSecurityTables.tla	temporal	HonestConnectsUnderFlood	check	rnsecuritytables	required	-
 MCRNSecurityTablesBrokenGlobalLockout.cfg	MCRNSecurityTables.tla	temporal	HonestConnectsUnderFlood	check	rnsecuritytables	required	-
 MCRNSecurityTablesBrokenReleaseKeepsSlot.cfg	MCRNSecurityTables.tla	invariant	CanRecordMatchesScan	check	rnsecuritytables	required	-
 MCRNSecurityTablesBrokenReleaseTwice.cfg	MCRNSecurityTables.tla	invariant	FreeAndOrderPartitionSlots	check	rnsecuritytables	required	-
@@ -420,3 +424,8 @@ MCRNChannelQueues.cfg	MCRNChannelQueues.tla	pass	-	ignore-terminal	rnchannelqueu
 MCRNChannelQueuesBrokenStale.cfg	MCRNChannelQueues.tla	invariant	NamedGenerationOnly	ignore-terminal	rnchannelqueues	required	-
 MCRNGsoHandoff.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenPublishWhileHeld.cfg	MCRNGsoHandoff.tla	invariant	NoPublishWhileHeld	check	rngsohandoff	required	-
+MCRNClientRace.cfg	MCRNClientRace.tla	pass	-	check	clientrace	required	-
+MCRNClientRaceBrokenReaderFrees.cfg	MCRNClientRace.tla	invariant	FreedOnlyByCaller	check	clientrace	required	-
+MCRNClientRaceBrokenCallerUsesLoser.cfg	MCRNClientRace.tla	invariant	NoUseAfterClose	check	clientrace	required	-
+MCRNClientRaceBrokenFreeBeforeJoin.cfg	MCRNClientRace.tla	invariant	FreedOnlyAfterJoin	check	clientrace	required	-
+MCRNClientRaceBrokenReaderClosesEarly.cfg	MCRNClientRace.tla	invariant	NoUseAfterClose	check	clientrace	required	-

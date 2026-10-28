@@ -22,6 +22,7 @@ static void stats_ack_run( struct rocketnet_ack_endpoint_t * endpoint, uint64_t 
     memset( &block, 0, sizeof( block ) );
     block.largest = high;
     block.first_range_length = (uint32_t) ( high - low + 1 );
+
     static uint64_t acked_ids[ROCKETNET_SENT_PACKET_BUFFER_SIZE];
     int acked_count = 0;
     uint64_t unknown = 0;
@@ -37,10 +38,12 @@ static void test_server_stats_current_after_one_update()
     check( acks );
 
     // a slot far from any round-robin phase's first visit
+
     struct rocketnet_ack_endpoint_t * endpoint = &acks->endpoints[997];
 
     // two packets sent half a second apart, both acknowledged one second
     // after the first was sent: rtt samples of 1000 ms and 500 ms
+
     const double t0 = 1000.0;
     rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 7, 1, 0, t0 );
     rocketnet_ack_endpoint_record_sent( endpoint, 2, 100, 8, 1, 0, t0 + 0.5 );
@@ -50,6 +53,7 @@ static void test_server_stats_current_after_one_update()
 
     // current at once, with no sweep: the minimum sample, the mean excess
     // over it, both packets acknowledged, and the rates over the spans
+
     check( fabsf( endpoint->rtt - 500.0f ) < 0.01f );
     check( fabsf( endpoint->jitter - 250.0f ) < 0.01f );
     check( endpoint->packet_loss == 0.0f );
@@ -58,6 +62,7 @@ static void test_server_stats_current_after_one_update()
     check( fabsf( endpoint->bandwidth_received_kbps - 6.4f ) < 0.001f );        // 400 bytes over 0.5 s
 
     // and equal to the reference recompute
+
     const float rtt = endpoint->rtt, jitter = endpoint->jitter, sent = endpoint->bandwidth_sent_kbps;
     const float acked = endpoint->bandwidth_acked_kbps, received = endpoint->bandwidth_received_kbps;
     rocketnet_ack_endpoint_update_stats( endpoint );
@@ -66,6 +71,7 @@ static void test_server_stats_current_after_one_update()
            received == endpoint->bandwidth_received_kbps );
 
     // a reset slot reads as zeros again
+
     rocketnet_server_acks_reset_slot( acks, 997 );
     rocketnet_ack_endpoint_record_sent( endpoint, 1, 100, 9, 1, 0, t0 + 2.0 );
     check( endpoint->rtt == 0.0f && endpoint->jitter == 0.0f && endpoint->packet_loss == 0.0f );
@@ -132,9 +138,14 @@ static void test_server_stats_current_after_window_slides()
 
         // every 61st sequence is burned; every 23rd pair is recorded out of
         // order, the higher sequence first, as concurrent fill writers can
+
         sequence++;
+
         if ( step % 61 == 0 )
+        {
             sequence++;
+        }
+
         if ( step % 23 == 0 )
         {
             rocketnet_ack_endpoint_record_sent( endpoint, sequence + 1, bytes, sequence + 1, 1, 0, time );
@@ -151,11 +162,13 @@ static void test_server_stats_current_after_window_slides()
 
         // acks trail the sends by about half a ring, one run in five never
         // acknowledged; now and then an old record is acknowledged late
+
         if ( step % 10 == 0 && sequence > 2100 && ( step / 10 ) % 5 != 0 )
         {
             stats_ack_run( endpoint, sequence - 2100, sequence - 2091, time + 0.0005 );
             stats_check_reference( endpoint );
         }
+
         if ( step % 157 == 0 && sequence > 3500 )
         {
             stats_ack_run( endpoint, sequence - 3500, sequence - 3500, time + 0.0007 );
@@ -166,21 +179,28 @@ static void test_server_stats_current_after_window_slides()
         // every 97th, a very late one every 211th (more than a ring behind,
         // it is refused and leaves the newer record in its slot counted) and
         // a duplicate every 89th
+
         received++;
         if ( received % 13 == 0 )
+        {
             received++;
+        }
+
         rocketnet_ack_endpoint_record_received( endpoint, received, bytes, time );
         stats_check_reference( endpoint );
+
         if ( step % 97 == 0 && received > 200 )
         {
             rocketnet_ack_endpoint_record_received( endpoint, received - 150, bytes, time );
             stats_check_reference( endpoint );
         }
+
         if ( step % 211 == 0 && received > 2 * ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE )
         {
             rocketnet_ack_endpoint_record_received( endpoint, received - ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE - 1500, bytes, time );
             stats_check_reference( endpoint );
         }
+
         if ( step % 89 == 0 )
         {
             rocketnet_ack_endpoint_record_received( endpoint, received, bytes, time );
@@ -189,6 +209,7 @@ static void test_server_stats_current_after_window_slides()
     }
 
     // the high-water marks are far past both rings and every number is live
+
     check( endpoint->highest_sequence > 3 * ROCKETNET_SENT_PACKET_BUFFER_SIZE );
     check( endpoint->highest_received_sequence > 3 * ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE );
     check( endpoint->rtt > 0.0f );
@@ -202,11 +223,13 @@ static void test_server_stats_current_after_window_slides()
     // jumps of the high-water marks: a short one (a stepwise slide), one
     // under a ring (the window partly keeps old records) and one past the
     // whole ring (the window empties)
+
     const uint64_t jumps[] = { 100, 3000, 5000, 3 * ROCKETNET_SENT_PACKET_BUFFER_SIZE };
     double time = t0 + (double) count * 0.001;
     for ( int j = 0; j < 4; j++ )
     {
         time += 0.01;
+
         const uint64_t s = endpoint->highest_sequence + jumps[j];
         rocketnet_ack_endpoint_record_sent( endpoint, s, 120, s, 1, 0, time );
         stats_check_reference( endpoint );
@@ -251,10 +274,12 @@ static void test_server_stats_current_rtt_minimum_moves()
 
         // one, two or three ticks of rtt, the shortest absent for long
         // stretches so the history loses every copy of its minimum
+
         const uint64_t lag = ( step / 700 ) % 2 == 0 ? 1 + ( step % 3 ) : 2 + ( step % 2 );
         stats_ack_run( endpoint, s, s, time + (double) lag * tick );
         stats_check_reference( endpoint );
     }
+
     check( endpoint->rtt > 124.0f && endpoint->rtt < 251.0f );
 
     for ( uint64_t step = 1; step <= count; step++ )
@@ -265,6 +290,7 @@ static void test_server_stats_current_rtt_minimum_moves()
         stats_ack_run( endpoint, s, s, time + 0.5 + (double) step * 0.0001 );
         stats_check_reference( endpoint );
     }
+
     check( endpoint->rtt > 500.0f && endpoint->jitter > 0.0f );
 }
 
@@ -291,6 +317,7 @@ static const double stats_window_test_step = 0.125;
 static int stats_window_test_fill( struct stats_window_test_bucket_t ( &buckets )[STATS_WINDOW_TEST_BUCKETS], uint64_t * frame )
 {
     memset( buckets, 0, sizeof( buckets ) );
+
     int index = STATS_WINDOW_TEST_BUCKETS - 1;
     for ( int k = 0; k < STATS_WINDOW_TEST_BUCKETS; k++ )
     {
@@ -298,8 +325,10 @@ static int stats_window_test_fill( struct stats_window_test_bucket_t ( &buckets 
         *frame += 1;
         index = rocketnet_stats_window_advance( buckets, index, *frame, 1000.0 + (double) k * stats_window_test_step );
         check( index == ( previous + 1 ) % STATS_WINDOW_TEST_BUCKETS );
+
         buckets[index].value = (uint64_t) k + 1;
     }
+
     return index;
 }
 
@@ -317,12 +346,16 @@ static void test_stats_window_backwards_step_keeps_bucket()
         index = rocketnet_stats_window_advance( buckets, index, frame, 999.0 );
         check( index == filled );
     }
+
     frame++;
     index = rocketnet_stats_window_advance( buckets, index, frame, 1000.05 );
     check( index == filled );
 
     for ( int i = 0; i < STATS_WINDOW_TEST_BUCKETS; i++ )
+    {
         check( buckets[i].value != 0 && buckets[i].frame != 0 );
+    }
+
     check( buckets[filled].time == newest );
 }
 
@@ -344,19 +377,26 @@ static void test_stats_window_advances_after_backwards_step()
 
     // one bucket width past the newest bucket's time: exactly one advance,
     // into the oldest bucket, and every other bucket keeps its value
+
     frame++;
+
     const double later = newest + stats_window_test_step;
     index = rocketnet_stats_window_advance( buckets, index, frame, later );
+
     const int advanced = ( filled + 1 ) % STATS_WINDOW_TEST_BUCKETS;
     check( index == advanced );
     check( buckets[advanced].frame == frame && buckets[advanced].time == later && buckets[advanced].value == 0 );
+
     for ( int i = 0; i < STATS_WINDOW_TEST_BUCKETS; i++ )
     {
         if ( i != advanced )
+        {
             check( buckets[i].value != 0 );
+        }
     }
 
     // and again at the same time: still that one bucket
+
     frame++;
     check( rocketnet_stats_window_advance( buckets, index, frame, later ) == advanced );
 }

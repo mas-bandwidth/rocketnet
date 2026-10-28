@@ -257,4 +257,4 @@ void rocketnet_message_write_config_body( uint8_t * output, const struct rocketn
 
 int rocketnet_message_read_config_body( const uint8_t * data, int bytes, struct rocketnet_message_config_body_t * body );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_MESSAGE_H
+#endif // ROCKETNET_SDK_ROCKETNET_MESSAGE_H

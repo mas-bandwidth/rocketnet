@@ -40,7 +40,9 @@ static void capture_callback( void * context, enum rocketnet_log_level_t level, 
 static void fill_string( char * out, size_t len )
 {
     for ( size_t i = 0; i < len; i++ )
+    {
         out[i] = 'x';
+    }
     out[len] = '\0';
 }
 
@@ -120,6 +122,7 @@ static void test_log_callback_filters_before_formatting()
 
     // a format argument whose evaluation is visible: the token survives only
     // when the call is not filtered before formatting and dispatch
+
     const char * visible = "visible-token";
     rocketnet_error( "shows %s", visible );
     check( g_count == 1 );
@@ -183,7 +186,9 @@ static void test_log_callback_last_registration_wins()
     check( g_second_count == 1 );
 
     rocketnet_log_function( NULL, NULL );
+
     // the default sink writes to stdout, and a passing suite prints only names
+
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     rocketnet_error( "default sink" );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_SPAM );

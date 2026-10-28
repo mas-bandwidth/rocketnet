@@ -40,6 +40,7 @@
 
 #include <unordered_map>
 #include <atomic>
+#include <thread>
 
 extern std::atomic<unsigned long long> g_client_ack_stats_count;
 
@@ -11188,6 +11189,152 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 }
 #endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
 
+// The family race frees nothing off the caller's thread (tla/RNClientRace.tla
+// FreedOnlyByCaller). A development token naming both families, 127.0.0.1
+// and [::1] at the port of a portable server serving both, makes each
+// socket client transport dial both; the first cookie commits one family and
+// the reading thread (the client's I/O thread) closes the other. Every
+// allocator call goes through an allocator that counts the calls made on any
+// thread but this one: none may be, across create, connect, the race, the
+// connection, disconnect and destroy. The log line "client races both
+// families" proves the race ran, so a host that refuses the second socket
+// fails the case rather than passing it vacuously.
+
+#if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+static std::thread::id race_caller_thread;
+static std::atomic<uint64_t> race_off_caller_mallocs{ 0 };
+static std::atomic<uint64_t> race_off_caller_frees{ 0 };
+static std::atomic<uint64_t> race_logged{ 0 };
+
+static void * race_malloc( void * context, size_t bytes )
+{
+    (void) context;
+    if ( std::this_thread::get_id() != race_caller_thread )
+        race_off_caller_mallocs.fetch_add( 1 );
+    return malloc( bytes );
+}
+
+static void race_free( void * context, void * p )
+{
+    (void) context;
+    if ( std::this_thread::get_id() != race_caller_thread )
+        race_off_caller_frees.fetch_add( 1 );
+    free( p );
+}
+
+static void race_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    static const char needle[] = "client races both families";
+    const size_t needle_bytes = sizeof( needle ) - 1;
+    for ( size_t i = 0; i + needle_bytes <= length; i++ )
+        if ( memcmp( message + i, needle, needle_bytes ) == 0 )
+        {
+            race_logged.fetch_add( 1 );
+            return;
+        }
+}
+
+static void rocketnet_test_family_race_frees_on_caller_thread()
+{
+    race_caller_thread = std::this_thread::get_id();
+    rocketnet_term();
+    rocketnet_check( rocketnet_init( NULL, race_malloc, race_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+    rocketnet_log_function( race_log, NULL );
+
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    server_config.max_clients = 2;
+    server_config.transport = "portable";
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    // one server serving both families on one port
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", "[::1]:0", &server_config, &create_status );
+    rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    char ipv4_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    char ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    snprintf( ipv6_address, sizeof( ipv6_address ), "[::1]:%d", (int) rocketnet_server_port( server ) );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+
+    int num_available = 0;
+    const int * available = rocketnet_client_transport_io_availability( &num_available );
+    int raced = 0;
+    for ( int i = 0; i < num_available; i++ )
+    {
+        const char * transport = rocketnet_transport_name( available[i] );
+        if ( strcmp( transport, "loopback" ) == 0 )
+            continue;
+        race_off_caller_mallocs.store( 0 );
+        race_off_caller_frees.store( 0 );
+        race_logged.store( 0 );
+
+        const uint64_t create_timestamp = rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() );
+        char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+        rocketnet_check( rocketnet_create_dev_connect_token( ipv4_address, ipv6_address, server_key, 300, 10, 0x2FA5 + (uint64_t) i,
+                                                             server_config.protocol_id, create_timestamp, NULL, token ) == ROCKETNET_STATUS_OK );
+
+        struct rocketnet_client_config_t client_config;
+        rocketnet_client_default_config( &client_config );
+        client_config.transport = transport;
+        create_status = ROCKETNET_STATUS_OK;
+        struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+        rocketnet_check( client && create_status == ROCKETNET_STATUS_OK );
+        rocketnet_check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
+
+        const double wall_start = rocketnet_time();
+        while ( rocketnet_time() - wall_start < 10.0 )
+        {
+            const double now = 1000.0 + ( rocketnet_time() - wall_start );
+            rocketnet_server_update( server, now );
+            rocketnet_client_update( client, now );
+            rocketnet_client_send_packets( client );
+            rocketnet_server_send_packets( server );
+            if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+                 rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+                break;
+            if ( rocketnet_client_state( client ) < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+                break;
+            rocketnet_sleep( 0.005 );
+        }
+        // a few more frames, so the I/O thread reads after the commit and
+        // closes the losing family
+        for ( int frame = 0; frame < 20; frame++ )
+        {
+            const double now = 1000.0 + ( rocketnet_time() - wall_start );
+            rocketnet_server_update( server, now );
+            rocketnet_client_update( client, now );
+            rocketnet_client_send_packets( client );
+            rocketnet_server_send_packets( server );
+            rocketnet_sleep( 0.005 );
+        }
+        const bool connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
+        rn_cli_client_stop_and_destroy( client );
+        printf( "family race over %s: connected %d, raced %d, allocator calls off the caller's thread: %llu mallocs, %llu frees\n",
+                transport, connected ? 1 : 0, (int) race_logged.load(), (unsigned long long) race_off_caller_mallocs.load(),
+                (unsigned long long) race_off_caller_frees.load() );
+        rocketnet_check( connected );
+        rocketnet_check( race_logged.load() > 0 );
+        rocketnet_check( race_off_caller_mallocs.load() == 0 );
+        rocketnet_check( race_off_caller_frees.load() == 0 );
+        raced++;
+    }
+    rocketnet_check( raced > 0 );
+
+    rn_cli_server_stop_and_destroy( server );
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+#endif // #if !defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) || !ROCKETNET_FUNCTIONAL_PRODUCTION
+
 #if ROCKETNET_DEV
 
 // A public development token must complete the asynchronous connection and
@@ -12259,6 +12406,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
     { "test_two_address_token_connects_over_ipv4", rocketnet_test_two_address_token_connects_over_ipv4, NULL },
+    { "test_family_race_frees_on_caller_thread", rocketnet_test_family_race_frees_on_caller_thread, NULL },
 #endif // production excludes dev-key/test-filter cases
     { "test_portable_transport_server_io_pin", rocketnet_test_server_transport_io_pin_portable, rocketnet_test_server_pin_allows_portable },
     { "test_loopback_transport_server_io_pin", rocketnet_test_server_transport_io_pin_loopback, NULL },

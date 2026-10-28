@@ -43,6 +43,7 @@ static int standard_key_schedule_generate( const char * id, uint8_t * out, int c
     {
         if ( capacity < 1 )
             return -1;
+
         const uint8_t zero_point[32] = { 0 };
         struct rocketnet_connection_keys_t keys;
         memset( &keys, 0, sizeof( keys ) );
@@ -84,6 +85,7 @@ static int standard_key_schedule_generate( const char * id, uint8_t * out, int c
         memcpy( out, keys.session_client_to_server, 32 );
     else
         memcpy( out, keys.session_server_to_client, 32 );
+
     return 32;
 }
 

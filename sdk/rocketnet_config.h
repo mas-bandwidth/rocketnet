@@ -217,7 +217,9 @@ const char * rocketnet_transport_name( int transport );
 
 bool rocketnet_transport_discovers_bound_port( int transport );
 
-#define ROCKETNET_MAX_TRANSPORT_CANDIDATES 8
+// room for the built-in registry and the transports an application adds
+// through its own registry (tests/driver_extension adds one)
+#define ROCKETNET_MAX_TRANSPORT_CANDIDATES 16
 
 struct rocketnet_transport_ladder_t
 {
@@ -258,4 +260,4 @@ const int * rocketnet_server_transport_io_availability( int * num_available );
 
 const int * rocketnet_client_transport_io_availability( int * num_available );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONFIG_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONFIG_H

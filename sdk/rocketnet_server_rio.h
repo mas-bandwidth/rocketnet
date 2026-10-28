@@ -143,4 +143,4 @@ bool rocketnet_server_rio_available();
 inline bool rocketnet_server_rio_available() { return false; }
 #endif // #if defined( _WIN32 )
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_RIO_H
