@@ -92,13 +92,13 @@ static void lifecycle_client_config( rocketnet_client_test_config_t * config )
 }
 
 // the token string sealed to the server's own key, naming 127.0.0.1:port
-static void lifecycle_token( const rocketnet_server_t * server, uint16_t port, const lifecycle_identity_t * identity, uint64_t client_id, int32_t timeout_seconds, char * token )
+static void lifecycle_token( const rocketnet_server_t * server, uint16_t port, const lifecycle_identity_t * identity, uint64_t client_id, int32_t timeout_seconds, char * token, const uint8_t * user_data = NULL )
 {
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
     const char * addresses[] = { address };
     check( rn_test_server_token_string( identity->backend_secret, server,
-                                        LIFECYCLE_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, timeout_seconds, NULL,
+                                        LIFECYCLE_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, timeout_seconds, user_data,
                                         token ) == ROCKETNET_STATUS_OK );
 }
 
@@ -161,10 +161,10 @@ static void lifecycle_pump( lifecycle_world_t * world, double dt = 0.01 )
     world->time += dt;
 }
 
-static void lifecycle_connect( lifecycle_world_t * world, int client, uint64_t client_id )
+static void lifecycle_connect( lifecycle_world_t * world, int client, uint64_t client_id, const uint8_t * user_data = NULL )
 {
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-    lifecycle_token( world->server, rocketnet_server_port( world->server ), &world->identity, client_id, 300, token );
+    lifecycle_token( world->server, rocketnet_server_port( world->server ), &world->identity, client_id, 300, token, user_data );
     check( rn_test_client_connect_after_completion( world->clients[client], token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( world->clients[client] ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
         lifecycle_pump( world );
@@ -1276,6 +1276,91 @@ static void test_server_client_index_round_trips_as_int()
     lifecycle_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_server_client_index_round_trips_as_int );
+
+// rocketnet_server_client_user_data returns the connect token's user data for
+// the slot, from connect until the slot is released. Release wipes it: the
+// freed slot reads zeros, and the next client in that slot reads its own
+// token's bytes, never the last client's.
+
+static void lifecycle_user_data_fill( uint8_t * user_data, uint8_t seed )
+{
+    for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES; i++ )
+        user_data[i] = (uint8_t) ( seed + i * 7 );
+}
+
+static bool lifecycle_user_data_zero( const uint8_t * user_data )
+{
+    for ( int i = 0; i < ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES; i++ )
+        if ( user_data[i] != 0 )
+            return false;
+    return true;
+}
+
+static void test_server_client_user_data_from_connect_until_release()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 2 );
+
+    uint8_t first[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    uint8_t second[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    uint8_t out[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+    lifecycle_user_data_fill( first, 0x11 );
+    lifecycle_user_data_fill( second, 0x5C );
+
+    const uint64_t misuse = rocketnet_api_misuse_count();
+
+    // before any client: the slot is free and reads zeros
+    memset( out, 0xA5, sizeof( out ) );
+    check( !rocketnet_server_client_user_data( world.server, 0, out ) );
+    check( lifecycle_user_data_zero( out ) );
+
+    // connected: exactly the token's bytes
+    lifecycle_connect( &world, 0, 0x1C01, first );
+    const int slot = rocketnet_client_index( world.clients[0] );
+    check( slot == 0 );
+    memset( out, 0, sizeof( out ) );
+    check( rocketnet_server_client_user_data( world.server, slot, out ) );
+    check( memcmp( out, first, sizeof( out ) ) == 0 );
+    for ( int i = 0; i < 4; i++ )
+        lifecycle_pump( &world );
+    check( rocketnet_server_client_user_data( world.server, slot, out ) );
+    check( memcmp( out, first, sizeof( out ) ) == 0 );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    // released: zeros, false, and not misuse
+    rocketnet_server_disconnect_client( world.server, slot );
+    check( !rocketnet_server_client_connected( world.server, slot ) );
+    memset( out, 0xA5, sizeof( out ) );
+    check( !rocketnet_server_client_user_data( world.server, slot, out ) );
+    check( lifecycle_user_data_zero( out ) );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    // the next client in the same slot reads its own token's bytes
+    lifecycle_connect( &world, 1, 0x1C02, second );
+    check( rocketnet_client_index( world.clients[1] ) == slot );
+    check( rocketnet_server_client_user_data( world.server, slot, out ) );
+    check( memcmp( out, second, sizeof( out ) ) == 0 );
+    check( rocketnet_api_misuse_count() == misuse );
+
+    // an index outside 0 .. max_clients - 1 is misuse and reads zeros
+    memset( out, 0xA5, sizeof( out ) );
+    check( !rocketnet_server_client_user_data( world.server, 1, out ) );
+    check( lifecycle_user_data_zero( out ) );
+    check( rocketnet_api_misuse_count() == misuse + 1 );
+    check( !rocketnet_server_client_user_data( world.server, -1, out ) );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
+
+    // stopped: every slot is released and reads zeros
+    rocketnet_server_stop( world.server );
+    rn_test_server_wait_stopped( world.server );
+    memset( out, 0xA5, sizeof( out ) );
+    check( !rocketnet_server_client_user_data( world.server, slot, out ) );
+    check( lifecycle_user_data_zero( out ) );
+    check( rocketnet_api_misuse_count() == misuse + 2 );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_client_user_data_from_connect_until_release );
 
 // packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
