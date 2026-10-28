@@ -99,7 +99,6 @@ clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	b217d4ef5be04b61
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	baff54cc4ea8d527
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	f661354e38935ed9
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	fa84c3f1d6aadb3d
-clang-tidy	sdk/rocketnet_platform.cpp	bugprone-assignment-in-if-condition	127978ac01e63b78
 clang-tidy	sdk/rocketnet_platform.cpp	cert-err33-c	b6e019295a45cb0d
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	5338b9d4292643b1
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	575453c0ab0edd9b
@@ -115,7 +114,6 @@ clang-tidy	sdk/rocketnet_protocol.h	bugprone-macro-parentheses	8e6a9f17b2e99551
 clang-tidy	sdk/rocketnet_protocol.h	bugprone-macro-parentheses	f3cd4026b31df1a9
 clang-tidy	sdk/rocketnet_protocol.h	bugprone-macro-parentheses	f7f1dece19b87b65
 clang-tidy	sdk/rocketnet_replay.cpp	bugprone-narrowing-conversions	c0449e17f6d0158d
-clang-tidy	sdk/rocketnet_route.h	bugprone-switch-missing-default-case	ce46f11fb6489461
 clang-tidy	sdk/rocketnet_server_gso_linux.cpp	bugprone-implicit-widening-of-multiplication-result	4aa564419e807030
 clang-tidy	sdk/rocketnet_server_gso_linux.cpp	bugprone-implicit-widening-of-multiplication-result	503e2cc0176f0925
 clang-tidy	sdk/rocketnet_server_gso_linux.cpp	concurrency-mt-unsafe	102f5b730420d572

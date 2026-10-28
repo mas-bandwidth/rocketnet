@@ -117,7 +117,5 @@ OS ABI.
 
 | File | Function | Field | Release |
 |---|---|---|---|
-| sdk/rocketnet_platform.cpp | get_connection_type | ifa_next | freeifaddrs |
-| sdk/rocketnet_platform.cpp | get_connection_type | Next | rocketnet_free |
 | sdk/rocketnet_server_socket_linux.cpp | rocketnet_server_socket_find_interface | ifa_next | freeifaddrs |
 | tools/xdp_packet_blaster.c | rn_blaster_source_on_interface | ifa_next | freeifaddrs |

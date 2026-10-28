@@ -110,15 +110,6 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 }
 #endif // #ifdef __cplusplus
 
-/** @brief Connection classification when the type is unknown. */
-#define ROCKETNET_CONNECTION_TYPE_UNKNOWN                              0
-/** @brief Connection classification for wired access. */
-#define ROCKETNET_CONNECTION_TYPE_WIRED                                1
-/** @brief Connection classification for Wi-Fi access. */
-#define ROCKETNET_CONNECTION_TYPE_WIFI                                 2
-/** @brief Connection classification for cellular access. */
-#define ROCKETNET_CONNECTION_TYPE_CELLULAR                             3
-
 #define ROCKETNET_PLATFORM_UNKNOWN                                     0
 #define ROCKETNET_PLATFORM_WINDOWS                                     1
 #define ROCKETNET_PLATFORM_MAC                                         2
@@ -555,18 +546,15 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 #define ROCKETNET_MESSAGE_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_message_config_t, server_send_kbps ) + sizeof( int ), sizeof( int ) )
 #define ROCKETNET_MESSAGE_CONFIG_KNOWN_BYTES ROCKETNET_MESSAGE_CONFIG_BYTES_1, ROCKETNET_MESSAGE_CONFIG_BYTES_2
 
-// the platform's network lookups, for unit tests only. On Linux,
-// rocketnet_platform_init classifies the connection with get_connection_type:
-// getifaddrs, an AF_INET ioctl socket and a netlink route dump.
+// the platform's network lookups, for unit tests only.
 // rocketnet_platform_client_ipv6_available opens and closes an AF_INET6 socket.
-// With a table set, each reads its entry instead and opens nothing; NULL, the
-// default, runs the real lookups. The unit suite sets a fake before
+// With a table set, it reads its entry instead and opens nothing; NULL, the
+// default, runs the real lookup. The unit suite sets a fake before
 // rocketnet_init (tests/test.cpp) so the DEV unit suite opens no socket. Not exported
 
 #if ROCKETNET_DEV
 struct rocketnet_platform_network_lookups_t
 {
-    int ( *connection_type )( void );
     bool ( *ipv6_available )( void );
 };
 

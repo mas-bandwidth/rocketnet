@@ -410,7 +410,7 @@ jobs:
   # compiled by clang-cl at the tree's warning floor (/W4 /WX and the strict
   # set CMakeLists.txt adds for clang-cl) and linked against it with
   # -fsanitize=fuzzer,address. The link set is the replay targets' one:
-  # rocketnet_dev.lib alone, whose platform source names WS2_32, IPHLPAPI,
+  # rocketnet_dev.lib alone, whose platform source names WS2_32,
   # Qwave and winmm itself. Debug keeps the asserts, on the static release C
   # runtime (/MT) with the STL's ASan string and vector annotations off,
   # because Visual Studio's clang_rt.fuzzer-x86_64.lib is built that way and
