@@ -70,6 +70,147 @@ time is recorded only as under the timeout.
 | | functional | `./bin/functional` | exit 0, 1391 cases | `*** ALL TESTS PASSED ***` | 204 |
 | | production build | `make clean && make ROCKETNET_DEV=OFF -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 18 |
 
+## Tag candidate `471b3fbc` (release/preview-3-gates)
+
+- Candidate head: `471b3fbc70ce88a0c7da2a73ce1b3e60415159dd` on
+  `release/preview-3-gates` (PR #599): `main` at `05233f3f` plus #580, #587,
+  #588, #593, #597, #598 and #582, and two fixes made during this
+  qualification:
+  - `32fa0012`: `soak_sim.cpp` sets the server's `handshakes_per_update`.
+    #593 made the handshake budget a server field; `soak_sim` builds its
+    server by `memset` and left the budget at 0, so every request was
+    dropped and `scripts/soak-sim-selftest` failed (platform selftests on
+    `81e8b473`).
+  - `471b3fbc`: a disposition in `tools/tidy_dispositions.txt` for the
+    cppcheck `preprocessorErrorDirective` that #598's liburing version
+    `#error` produces (static analysis on `81e8b473`).
+- Every suite below ran on a fresh clone at `471b3fbc`, except the 22.04 XDP
+  wire cases, which ran at `81e8b473`. The inputs differ between those two
+  commits only in `soak_sim.cpp`, `tools/tidy_dispositions.txt` and the
+  static-analysis triage document; none is built into `bin/functional`.
+- The commit that adds this section changes only this document. By the rule
+  for carried results above, the results below are carried to it from
+  `471b3fbc`, and its inputs differ from `471b3fbc` only in this file.
+
+### Native suites at `471b3fbc`
+
+Same commands as above. The Linux row ran on a different bench from the
+earlier rows (the bench with the most free memory tonight), so its compiler
+differs. Case counts are the `test_` lines each suite printed; a case
+skipped by its predicate prints a `SKIPPED` line instead and is not counted.
+The unit and functional counts rose by 5 and 6 cases on Linux and macOS
+against the rows above: the pull requests merged since add cases.
+
+| Platform | Step | Command | Result | Last line | Seconds |
+| --- | --- | --- | --- | --- | ---: |
+| Linux x64, gcc 13.3.0 (Ubuntu 24.04.5) | build | `make -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 83 |
+| | unit | `./bin/test` | exit 0, 1299 cases | `*** ALL TESTS PASSED ***` | 28 |
+| | functional | `./bin/functional` | exit 0, 1521 cases, 21 skipped | `*** ALL TESTS PASSED ***` | 280 |
+| | production build | `make clean && make ROCKETNET_DEV=OFF -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 37 |
+| | docs | `make docs && make docs-undocumented` | exit 0, 0 warnings | `Generated html documentation in 339ms` (229 pages) | under 1 |
+| macOS 27.2 arm64, Apple clang 21.0.0 | build | `make -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 23 |
+| | unit | `./bin/test` | exit 0, 1204 cases | `*** ALL TESTS PASSED ***` | 20 |
+| | functional | `./bin/functional` | exit 0, 1397 cases, 1 skipped | `*** ALL TESTS PASSED ***` | 204 |
+| | production build | `make clean && make ROCKETNET_DEV=OFF -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 19 |
+| Windows 11 x64, MSVC 19.51.36260 | build | `cmake -B build-ON -A x64 -DROCKETNET_DEV=ON` then `cmake --build build-ON --config Release --parallel 4` | exit 0, 0 MSVC warnings | `Building Custom Rule .../CMakeLists.txt` | 177 |
+| | unit | `bin\Release\test.exe` | exit 0, 1174 cases | `*** ALL TESTS PASSED ***` | 42 |
+| | functional | `bin\Release\functional.exe` | exit 0, 1400 cases, 1 skipped | `*** ALL TESTS PASSED ***` | 470 |
+| | production build | `cmake -B build-OFF -A x64 -DROCKETNET_DEV=OFF` then `cmake --build build-OFF --config Release --parallel 4` | exit 0, 0 MSVC warnings | `Building Custom Rule .../CMakeLists.txt` | 150 |
+
+The Linux skips are the 19 XDP cases that need root and a veth pair, the
+low-tick measurement case, and `test_transport_env_pin_is_honoured` (no
+transport pin set); macOS and Windows skip only the last. On Windows the
+build and unit suite held a shared slot of the bench's lock (at most three
+jobs) and the functional suite its exclusive lock; the seconds are the
+suite's own, measured inside the lock. An earlier Windows functional run at
+`81e8b473` failed one case,
+`test_rio_transport_windows_server_create_destroy_1000`: the process held
+two threads more after the loop than before it, none of them the SDK's (its
+ledger showed 1000 threads created and 1000 closed). The case then passed
+three times in a row alone under the exclusive lock, and the whole suite
+passed at `471b3fbc` as recorded. It is recorded here as an intermittent
+count of operating-system threads, not fixed.
+
+### Ubuntu 22.04 LTS at `471b3fbc`
+
+The stock `jammy` amd64 cloud image (SHA256 `2099e63d...`, cached and checked
+on the bench as the nightly LTS VM workflow does), booted under KVM with its
+own kernel, 8 vCPUs and 24 GiB; stock packages: gcc 11.4.0, cmake 3.22.1,
+`libbpf-dev` 0.5.0, `liburing-dev` 2.1, no `libxdp-dev`.
+
+| Platform | Step | Command | Result | Last line | Seconds |
+| --- | --- | --- | --- | --- | ---: |
+| Ubuntu 22.04.5 x64 VM, gcc 11.4.0, kernel 5.15.0-198 | build | `make -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 68 |
+| | unit | `./bin/test` | exit 0, 1283 cases | `*** ALL TESTS PASSED ***` | 23 |
+| | XDP adapter | `./bin/test_xdp_compat` | exit 0 | `Legacy XDP adapter contracts passed (no kernel operations)` | under 1 |
+| | functional | `./bin/functional` | exit 0, 1479 cases, 41 skipped | `*** ALL TESTS PASSED ***` | 214 |
+
+Configure printed `-- XDP: using legacy AF_XDP APIs from libbpf (Ubuntu
+22.04)` and `-- liburing found without multishot receive
+(IORING_RECV_MULTISHOT, liburing 2.3 or later): the io_uring server
+transport is not built`. The AF_XDP server is built (`ROCKETNET_XDP=ON`,
+`server_xdp` compiled and embedded, `test_xdp` built); the io_uring server
+transport is not.
+
+Why 22.04 prints fewer functional cases than the Linux row: the io_uring
+server transport is not built there, so 42 io_uring cases do not run (22
+are not compiled in; 20 more print `SKIPPED` on the predicate
+`rocketnet_server_uring_available` or `rocketnet_test_posix_io_uring_offered`).
+1521 - 42 = 1479. The other 21 skips are the same as on the Linux row. The
+figure of 177 seen in an earlier 22.04 trial (176 in the trial run
+40609380643 at `48080034`) is a different measure: it is the line count of
+`./bin/functional --list`, the in-process registered
+cases (178 at this head on 22.04, 204 on the 24.04 host), which leaves out
+the cases that run inside the suite's helper executables (`test_serialize`,
+`test_transport_control`, `test_xdp` and the unit-case memory check). That
+trial ran before #598 and stopped at `test_server_port_zero_transport`
+with `io_uring transport refused: built without liburing`, which #598 fixes.
+
+The XDP cases that put the AF_XDP server on a wire need root, a network
+namespace and a veth pair, and skip in the run above as they do on every
+host. They were run separately in the same image at `81e8b473`, as root
+with `ROCKETNET_TEST_XDP_VETH=1`, after setting the kernel command line the
+XDP pre-flight requires (`irqaffinity=0 isolcpus=1-3 nohz_full=1-3`) and
+rebooting, each with `sudo ROCKETNET_TEST_XDP_VETH=1 ./bin/functional --run
+<case>`. These passed: `test_xdp_transport_keep_alive_before_first_payloads`
+(IPv4, IPv6), `test_xdp_transport_posix_init_term_1000`,
+`..._server_create_destroy_1000`, `..._client_create_destroy_1000`,
+`..._server_restart_same_port_100`, `..._connect_disconnect_1000`,
+`..._destroy_under_traffic_100`, `test_posix_hard_killed_client_xdp_*`,
+`test_posix_send_to_closed_port_xdp_*`, `test_posix_client_server_gone_xdp_*`
+(each IPv4 and IPv6), `test_session_reconnect_isolation_xdp`, and
+`sudo ./bin/test_xdp` (6 cases). `test_xdp_transport_max_size_both_ways`
+(IPv4, IPv6) failed at first with the server receiving every packet (`xdp
+redirected = 44`, `transport packets_received = 44`) but its packet capture
+empty: the image's AppArmor profile for tcpdump denied tcpdump reading back
+its own capture file (`apparmor="DENIED" operation="open"
+profile="tcpdump" name="/tmp/rocketnet_xdp_veth_..."`). With that profile
+unloaded (`apparmor_parser -R /etc/apparmor.d/usr.bin.tcpdump`), both
+passed. The two `test_xdp_transport_linux_receive_weather` cases were not
+run: their predicate requires a virtme-ng guest. The guest's virtio NIC is
+not a deployment NIC; zero copy was refused and the server bound in copy
+mode, and performance was not measured.
+
+### CI at `471b3fbc`
+
+All 30 jobs that ran of the CI, static analysis, msan, CBMC, TLC records,
+docs and Release Check workflows on PR #599 passed at `471b3fbc`. The three
+tag-only Release Check jobs were skipped, as on any branch push. The six legs
+below were cancelled: they cannot finish inside the three-minute per-commit
+budget and are waived for this candidate. The native suites recorded above
+cover them.
+
+| Waived CI leg | Covered by |
+| --- | --- |
+| windows / Release (a) | Windows rows above |
+| windows / Release (b) | Windows rows above |
+| ubuntu-24.04 / Debug | Linux rows above |
+| ubuntu-24.04 / Release (b) | Linux rows above |
+| macos-15 / Debug | macOS rows above |
+| macos-15 / Release | macOS rows above |
+
+The docs workflow is run again on the commit that adds this section.
+
 ## LAN proof
 
 1000 clients against one server pinned to one transport, clients on other
@@ -142,8 +283,9 @@ pass.
   (RELEASING.md step 6). Not run.
 - **Space soak gate**: the `space builds and soaks on the release` job on the
   same dispatch. Not run.
-- **Windows suites at the candidate head**: the Windows unit and functional
-  suites ran at the suite head `126ef062` only.
+- **Windows suites at the candidate head `13b82655`**: the Windows unit and
+  functional suites ran at the suite head `126ef062` and at the tag candidate
+  `471b3fbc`, not at `13b82655`.
 - **Windows docs gate**: `make docs` was run on Linux only.
 - **Default CI gates** of RELEASING.md ("Default CI requirements"): not
   recorded here; this preview uses manual qualification as preview-2 did.
