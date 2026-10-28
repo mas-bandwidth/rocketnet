@@ -14,12 +14,13 @@
 #   rio        exclusive CI lock for its whole life, as lan-proof does
 #
 # The coordinator here runs only ssh, scp and the merger. The machines come
-# from repository variables, never from this file: an inventory in
-# scripts/lan-proof.inventory.example's form per group
-# (ROCKETNET_REAL_LOAD_INVENTORY_XDP, _LINUX for gso and io_uring, _WINDOWS
-# for iocp and rio) and ROCKETNET_REAL_LOAD_XDP_UPLINK, the XDP test port. A
-# group without its variable fails its cells by name. The coordinator's runner
-# account needs non-interactive ssh to every machine of every inventory.
+# from files the fleet deploys on the runner, never from this repository: an
+# inventory in scripts/lan-proof.inventory.example's form per group, in
+# ~/nova-bench/real-load/ on the runner (inventory-xdp.tsv, inventory-linux.tsv
+# for gso and io_uring, inventory-windows.tsv for iocp and rio) and xdp-uplink
+# there, the XDP test port. A group without its file fails its cells by name.
+# The coordinator's runner account needs non-interactive ssh to every machine
+# of every inventory; the fleet that writes the files sets that up too.
 #
 # Per cell, tools/real_load_report.py prints the server call times (p50, p99,
 # p999 upper bounds and maximum, from split_server_call), connects,
@@ -66,10 +67,6 @@ jobs:
     env:
       DURATION: "300"
       CLIENTS: "1000"
-      INVENTORY_XDP: ${{ vars.ROCKETNET_REAL_LOAD_INVENTORY_XDP }}
-      INVENTORY_LINUX: ${{ vars.ROCKETNET_REAL_LOAD_INVENTORY_LINUX }}
-      INVENTORY_WINDOWS: ${{ vars.ROCKETNET_REAL_LOAD_INVENTORY_WINDOWS }}
-      XDP_UPLINK: ${{ vars.ROCKETNET_REAL_LOAD_XDP_UPLINK }}
     steps:
 
       - uses: actions/checkout@v4
@@ -83,6 +80,7 @@ jobs:
         shell: bash
         run: |
           set -u
+          fleet="$HOME/nova-bench/real-load"
           head=$(git rev-parse HEAD)
           base="$RUNNER_TEMP/real-load"
           rm -rf "$base"
@@ -93,15 +91,15 @@ jobs:
             dir="$base/$cell"
             mkdir -p "$dir"
             case "$cell" in
-              xdp) inventory_text=$INVENTORY_XDP; variable=ROCKETNET_REAL_LOAD_INVENTORY_XDP ;;
-              gso|io_uring) inventory_text=$INVENTORY_LINUX; variable=ROCKETNET_REAL_LOAD_INVENTORY_LINUX ;;
-              iocp|rio) inventory_text=$INVENTORY_WINDOWS; variable=ROCKETNET_REAL_LOAD_INVENTORY_WINDOWS ;;
+              xdp) inventory_file=$fleet/inventory-xdp.tsv ;;
+              gso|io_uring) inventory_file=$fleet/inventory-linux.tsv ;;
+              iocp|rio) inventory_file=$fleet/inventory-windows.tsv ;;
             esac
-            if [ -z "$inventory_text" ]; then
-              echo "lan-proof: OWED: repository variable $variable is not set" | tee "$dir/lan-proof.console"
+            if [ ! -s "$inventory_file" ]; then
+              echo "lan-proof: OWED: this runner has no inventory $inventory_file" | tee "$dir/lan-proof.console"
               continue
             fi
-            printf '%s\n' "$inventory_text" > "$base/$cell.inventory"
+            cp "$inventory_file" "$base/$cell.inventory"
             # every machine answers ssh before anything is built
             unreachable=""
             while read -r label ssh_name _; do
@@ -115,11 +113,12 @@ jobs:
             fi
             extra=""
             if [ "$cell" = "xdp" ]; then
-              if [ -z "$XDP_UPLINK" ]; then
-                echo "lan-proof: OWED: repository variable ROCKETNET_REAL_LOAD_XDP_UPLINK is not set" | tee "$dir/lan-proof.console"
+              xdp_uplink=$(head -n 1 "$fleet/xdp-uplink" 2>/dev/null | tr -d '[:space:]')
+              if [ -z "$xdp_uplink" ]; then
+                echo "lan-proof: OWED: this runner has no XDP test port in $fleet/xdp-uplink" | tee "$dir/lan-proof.console"
                 continue
               fi
-              extra="--xdp-uplink $XDP_UPLINK"
+              extra="--xdp-uplink $xdp_uplink"
             fi
             index=$(( index + 1 ))
             # 16 hex digits: the start second, the cell index, the run number
