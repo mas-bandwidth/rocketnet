@@ -102,7 +102,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET Rock
         set_target_properties(RocketNet::Uring PROPERTIES
             IMPORTED_LOCATION "${ROCKETNET_Uring_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Uring_INCLUDE_DIR}")
-    else()
+    elseif(NOT DEFINED ROCKETNET_URING_HAS_RECV_MULTISHOT)
         message(STATUS "liburing not found: the io_uring server transport is built to refuse")
     endif()
 endif()
