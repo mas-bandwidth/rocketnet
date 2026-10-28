@@ -6146,7 +6146,9 @@ void rocketnet_test_server_transport_io_pin_xdp()
     rocketnet_server_socket_set_preflight_test_result( 0 );
     rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
     struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6204,7 +6206,9 @@ void rocketnet_test_server_transport_io_pin_xdp()
         // the natural unavailable answer drives the production pin, with
         // the barrier lifted so the refusal is the pre-flight's own
 
+#if ROCKETNET_DEV
         rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
         enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
         struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6270,7 +6274,9 @@ void rocketnet_test_server_transport_io_ladder_fall()
     rocketnet_server_socket_set_preflight_test_result( 0 );
     rocketnet_check( !rocketnet_server_socket_preflight( real_port_address, 7 ) );
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     enum rocketnet_log_level_t saved_level = rocketnet_test_xdp_capture_begin();
     struct rocketnet_server_transport_t * server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6328,7 +6334,9 @@ void rocketnet_test_server_transport_io_ladder_fall()
         // the natural unavailable answer: xdp refuses at its pre-flight on a
         // real port and the ladder falls to gso, with the refusal named
 
+#if ROCKETNET_DEV
         rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
         enum rocketnet_log_level_t natural_saved_level = rocketnet_test_xdp_capture_begin();
         struct rocketnet_server_transport_t * natural_server = rocketnet_test_server_transport_create_on_free_port( &config );
@@ -6700,7 +6708,9 @@ void rocketnet_test_server_gso_probe()
     struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &bind_address, 2, 0 );
     rocketnet_check( gso );
     rocketnet_check( bind_address.port != 0 );
+#if ROCKETNET_DEV
     rocketnet_check( rocketnet_server_gso_num_queues( gso ) == 2 );
+#endif // #if ROCKETNET_DEV
     rocketnet_check( rocketnet_server_gso_features( gso ) & ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT );
 
     uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
@@ -9773,7 +9783,9 @@ struct rocketnet_server_transport_t * rocketnet_xdp_veth_start( bool ipv6, const
 
     // the server: pinned to xdp, one queue, on the near end
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
