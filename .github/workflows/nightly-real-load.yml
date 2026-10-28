@@ -79,6 +79,8 @@ jobs:
       - name: Run the cells
         shell: bash
         run: |
+          # the shell is bash -e -o pipefail: a refused or failed cell must not end the loop,
+          # every cell runs and the Report step fails the night by name
           set -u
           fleet="$HOME/nova-bench/real-load"
           head=$(git rev-parse HEAD)
@@ -127,7 +129,8 @@ jobs:
             # shellcheck disable=SC2086
             scripts/lan-proof --inventory "$base/$cell.inventory" --cell "$cell" \
               --duration "$DURATION" --clients "$CLIENTS" --commit "$head" \
-              --run-dir "$dir" --run-id "$run_id" $extra 2>&1 | tee "$dir/lan-proof.console"
+              --run-dir "$dir" --run-id "$run_id" $extra 2>&1 | tee "$dir/lan-proof.console" ||
+              echo "lan-proof: cell $cell exited non-zero; the report names its reason"
             echo "::endgroup::"
           done
 
