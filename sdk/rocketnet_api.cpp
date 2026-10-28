@@ -988,11 +988,25 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     client->owns_block = memory ? 0 : 1;
     client->block = base + rn_client_header_bytes;
     client->block_bytes = connection_bytes;
+
     // tla/RNInstanceHeap.tla Create: the one block from the installed
-    // allocator holds the heap every later allocation comes from
+    // allocator holds the heap every later allocation comes from. A heap tlsf
+    // cannot hold in one pool (a 32-bit build's limit) is refused here, so a
+    // connect never falls back to the installed allocator
 
     client->heap = rocketnet_heap_create( base + heap_offset, heap_bytes );
-    rocketnet_assert( client->heap );
+    if ( !client->heap )
+    {
+        rocketnet_error( "client create refused: a %llu byte heap is past the allocator's pool limit", (unsigned long long) heap_bytes );
+
+        if ( !memory )
+            rocketnet_free( context, base );
+
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+
+        return NULL;
+    }
 
     return client;
 }
@@ -1207,15 +1221,16 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 
     rn_client_end_connection( client );
 
-    // every allocation went back to the heap with its transport: a live one
-    // is a leak, refused like the library's own at rocketnet_term
-    // (tla/RNInstanceHeap.tla Destroy, NothingLiveAtFree)
+    // every allocation went back to the heap with its transport
+    // (tla/RNInstanceHeap.tla Destroy, NothingLiveAtFree). One still live is
+    // one a transport kept on purpose, a buffer the kernel may yet write (an
+    // iocp receive that never drained), so the block it lives in is kept,
+    // not freed, and rocketnet_term reports it as LIVE_ALLOCATIONS
 
     if ( rocketnet_heap_live_allocations( client->heap ) != 0 )
     {
-        rocketnet_error( "rocketnet_client_destroy: %llu allocations are still live in the client's heap", (unsigned long long) rocketnet_heap_live_allocations( client->heap ) );
-
-        rocketnet_assert( false );
+        rocketnet_error( "rocketnet_client_destroy: %llu allocations are still live in the client's heap; the client is kept, not freed", (unsigned long long) rocketnet_heap_live_allocations( client->heap ) );
+        return;
     }
 
     // the connection's keys were wiped by its transport's destroy; the header
