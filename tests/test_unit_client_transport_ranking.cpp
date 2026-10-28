@@ -25,6 +25,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "test_env_source.h"
 #if ROCKETNET_DEV
 #include "fake_client_driver.h"
 #include "portable_crt.h"
@@ -207,7 +208,8 @@ static void ranking_token( uint8_t * token )
     rocketnet_write_signed_connect_data( &signed_fields, token );
 }
 
-// a CI leg's client pin is set aside while these cases name their own
+// a CI leg's client pin is set aside while these cases name their own. The
+// unit suite reads the in-memory environment table, never the process one.
 struct ranking_env_t
 {
     bool was_set;
@@ -216,23 +218,15 @@ struct ranking_env_t
 
 static void ranking_env_set_aside( ranking_env_t * saved )
 {
-    saved->was_set = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
-#if defined( _WIN32 )
-    _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
-#else
-    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-#endif
+    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
+    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 }
 
 static void ranking_env_put_back( const ranking_env_t * saved )
 {
     if ( !saved->was_set )
         return;
-#if defined( _WIN32 )
-    _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved->value );
-#else
-    setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
-#endif
+    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
 }
 
 struct ranking_result_t
