@@ -181,7 +181,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnwindow (7 required) | planned for the final deliverable |
 | TLA+ model check: receiveorder (8 required) | planned for the final deliverable |
 | TLA+ model check: rndriversendstaging (3 required) | planned for the final deliverable |
-| TLA+ model check: rnsecuritytables (17 required) | planned for the final deliverable |
+| TLA+ model check: rnsecuritytables (19 required) | planned for the final deliverable |
 | TLA+ model check: serverconnection (14 required) | planned for the final deliverable |
 | TLA+ model check: rnconnectionmemory (3 required) | planned for the final deliverable |
 | TLA+ model check: rnsendbudget (5 required) | planned for the final deliverable |

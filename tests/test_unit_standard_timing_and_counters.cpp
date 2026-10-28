@@ -71,7 +71,7 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
             (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS,
             (uint64_t) ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS,
             (uint64_t) ROCKETNET_ACK_DEBT_THRESHOLD,
-            (uint64_t) ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE,
+            (uint64_t) ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE,
             (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET,
             (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS,
         };
@@ -109,11 +109,12 @@ static int standard_timing_and_counters_generate( const char * id, uint8_t * out
     return -1;
 }
 
-// Re-pin t17 because the ACK-debt threshold now records one eliciting packet.
+// Re-pin t17 because the ACK-debt threshold now records one eliciting packet,
+// and again for the handshake work budget's default of 16.
 static const rn_standard_vector_t standard_timing_and_counters_table[] = {
     RN_STANDARD_VECTOR( "t17.timing-defaults", "0a0000000000000005000000000000000a000000000000000300000000000000"
                                                "3c000000000000000a000000000000000a000000000000000100000000000000"
-                                               "00040000000000005a000000000000000a00000000000000" ),
+                                               "10000000000000005a000000000000000a00000000000000" ),
     // Vector reflects the nine message-violation counters plus XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE, XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION and MESSAGE_NOT_RECEIVED appended in sdk/rocketnet_counters.h.
     RN_STANDARD_VECTOR( "t18.counter-registry",
                         "8472d40203000064f915d0000000ed4bcc7f000000d0a5f5ee000000a0f3313d000000b6f1b51a00"

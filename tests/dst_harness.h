@@ -1474,6 +1474,7 @@ static inline int rocketnet_dst_world_create( rocketnet_dst_world_t * w, uint64_
     memcpy( w->server.server_secret_key, rocketnet_test_server_secret_key, 32 );
     randombytes_buf( w->server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     w->server.cookie_lifetime_seconds = 3;
+    w->server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     w->server.cookie_rotation_seconds = 60;
     w->server.cookie_key_rotation_time = w->now + 60.0;
     w->server.handshake_deadline_seconds = 5.0;

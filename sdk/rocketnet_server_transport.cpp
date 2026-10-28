@@ -1966,6 +1966,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->cookie_key_rotation_time = server_transport->time + (double) protocol->cookie_rotation_seconds;
     protocol->previous_cookie_key_expire_time = 0.0;
     protocol->handshake_deadline_seconds = config->handshake_deadline_seconds;
+    protocol->handshakes_per_update = config->handshakes_per_update;
     protocol->max_timeout_seconds = config->max_timeout_seconds;
 
     protocol->encryption_map = rocketnet_encryption_map_create( context, max_clients * ROCKETNET_ENCRYPTION_MAP_RATIO );

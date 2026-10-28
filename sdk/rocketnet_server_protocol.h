@@ -70,6 +70,7 @@ struct rocketnet_server_protocol_t
     double previous_cookie_key_expire_time;                 // when the previous key stops being accepted
 
     double handshake_deadline_seconds;                      // default 5
+    int handshakes_per_update;                              // the handshake work budget, 1 .. 1024; default 16
     int32_t max_timeout_seconds;                            // clamp; <= 0 means no clamp
 
     struct rocketnet_encryption_map_t * encryption_map;

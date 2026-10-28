@@ -117,6 +117,7 @@ static void tc_server_setup( struct tc_server_t * t, int max_clients, int histor
 
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, max_clients * 2 + 2 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, history_capacity );

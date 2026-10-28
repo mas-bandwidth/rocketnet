@@ -122,6 +122,7 @@ static void handshake_server_setup( struct handshake_server_t * test )
 
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -598,7 +599,7 @@ static void test_claim_table_full_counts_its_own_counter()
     check( rocketnet_address_parse( &filler_address, "192.0.2.9:50000" ) );
 
     int filled = 0;
-    for ( int i = 0; i < ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE; ++i )
+    for ( int i = 0; i < ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE; ++i )
     {
         uint8_t filler[ROCKETNET_TOKEN_IDENTIFIER_BYTES] = { 0 };
         filler[0] = 0xa5;

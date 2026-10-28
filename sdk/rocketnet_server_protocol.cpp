@@ -554,12 +554,14 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     // the handshake budget check: after the cookie validates, count and cap
-    // post-cookie handshakes per update, per server. requests beyond the
-    // budget are dropped before any asymmetric work runs and counted, so a
-    // flood of staged attempts cannot spend the whole update on signature
-    // verification.
+    // post-cookie handshakes per update, per server, at the configured
+    // handshakes_per_update. requests beyond the budget are dropped before
+    // any asymmetric work runs and counted, so a flood of staged attempts
+    // cannot spend the whole update on signature verification; a dropped
+    // client's next request is processed in a later update
+    // (tla/RNSecurityTables.tla HonestRequest).
 
-    if ( server->counters->handshakes_processed_this_update >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+    if ( server->counters->handshakes_processed_this_update >= (uint64_t) server->handshakes_per_update )
     {
         rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
