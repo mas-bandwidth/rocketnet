@@ -92,7 +92,8 @@ jobs:
         if: matrix.leg == 'appverif'
         timeout-minutes: 2
         run: |
-          set -uo pipefail
+          # bash runs this step with -e; the probe's own exit status is what it reports
+          set +e -uo pipefail
           av=/c/Windows/System32/appverif.exe
           if [ ! -x "$av" ]; then echo "APPVERIF-MISSING $av on $RUNNER_NAME: install Application Verifier for x64"; exit 1; fi
           probe="rocketnet_appverif_probe_$$.exe"
