@@ -48,6 +48,11 @@ on:
   schedule:
     - cron: "50 7 * * *"
   workflow_dispatch:
+  # a change to this nightly runs it on its own pull request, and nothing else does
+  pull_request:
+    paths:
+      - .github/workflows/nightly-framework.yml
+      - tools/framework_vendor_main.sh
 
 permissions:
   contents: read
