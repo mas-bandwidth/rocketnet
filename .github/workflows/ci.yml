@@ -351,6 +351,12 @@ jobs:
         if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
+      # The vendored tlsf section of sdk/rocketnet_allocator.cpp from its
+      # SHA-256 pinned upstream inputs, byte for byte (tlsf/README.md).
+      - name: Reproduce the vendored tlsf section
+        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        run: python3 tools/generate_tlsf.py --inputs build/vendor-inputs/tlsf --fetch --check
+
       - name: Sodium parity against the independent system library
         if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
         run: |

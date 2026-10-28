@@ -4066,6 +4066,8 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 
 static void rocketnet_client_thread_function( void * data )
 {
+    rocketnet_worker_thread_enter();
+
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) data;
 
     // quit is read with acquire on every iteration; the wait between polls is bounded at 1 ms. Stop does not acquire the platform wake mutex.

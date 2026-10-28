@@ -3234,6 +3234,8 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
 
 static void rocketnet_server_socket_xdp_thread_function( void * data )
 {
+    rocketnet_worker_thread_enter();
+
     rocketnet_server_xdp_socket_t * socket = (rocketnet_server_xdp_socket_t *) data;
 
     rocketnet_assert( socket );

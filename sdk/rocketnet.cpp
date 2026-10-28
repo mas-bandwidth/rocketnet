@@ -444,11 +444,55 @@ struct rocketnet_allocation_header_t
     void * base;
     void * context;
     void ( *free_function )( void *, void * );
+    bool from_heap;                                     // an instance heap's, uncounted: context is the heap
 };
+
+// The bytes rocketnet_malloc asks an instance heap for beyond the request:
+// the header and the alignment's slack. The heap spends at most 16 more on
+// the block (tlsf rounds a request up to 8 bytes and heads its block with 8).
+
+static const size_t rocketnet_heap_allocation_pad = sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+
+#define ROCKETNET_HEAP_BLOCK_OVERHEAD 16
+
+// every plan's cost of one allocation beyond its bytes, and what
+// rocketnet_malloc asks the installed allocator for beyond them: the pad and
+// the heap's block, so a plan holds in a heap as in the installed allocator
 
 uint64_t rocketnet_allocation_overhead()
 {
-    return sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
+    return rocketnet_heap_allocation_pad + ROCKETNET_HEAP_BLOCK_OVERHEAD;
+}
+
+// The heap rocketnet_malloc takes from on this thread: the scope of the
+// client or server whose call is running (rocketnet_heap_scope_t), or NULL
+// for the installed allocator.
+
+static thread_local const rocketnet_heap_scope_t * rocketnet_heap_in_scope = NULL;
+
+// A RocketNet worker thread (rocketnet_worker_thread_enter): it never
+// allocates or frees from an instance heap, which has one owner, the caller's
+// thread (lens 14; tla/RNClientRace.tla FreedOnlyByCaller).
+
+static thread_local bool rocketnet_on_worker_thread = false;
+
+void rocketnet_worker_thread_enter()
+{
+    rocketnet_on_worker_thread = true;
+}
+
+const rocketnet_heap_scope_t * rocketnet_heap_scope_enter( const rocketnet_heap_scope_t * scope )
+{
+    const rocketnet_heap_scope_t * previous = rocketnet_heap_in_scope;
+    if ( scope->heap )
+        rocketnet_heap_in_scope = scope;
+
+    return previous;
+}
+
+void rocketnet_heap_scope_leave( const rocketnet_heap_scope_t * previous )
+{
+    rocketnet_heap_in_scope = previous;
 }
 
 // Installs the allocator pair with the lifecycle lock held. NULL for both is
@@ -514,6 +558,28 @@ void * rocketnet_malloc( void * context, size_t bytes )
         return NULL;
     }
 
+    // an instance heap in scope: its own memory, no lock and no count, the
+    // installed allocator untouched (rocketnet_allocator.h, the instance heap)
+
+    const rocketnet_heap_scope_t * scope = rocketnet_heap_in_scope;
+    if ( scope )
+    {
+        rocketnet_assert( !rocketnet_on_worker_thread );
+
+        const size_t pad = rocketnet_heap_allocation_pad;
+        void * base = scope->allocate( scope->heap, bytes + pad );
+        if ( !base )
+        {
+            ++rocketnet_allocation_refusals_on_this_thread;
+            return NULL;
+        }
+
+        const uintptr_t aligned = ( (uintptr_t) base + pad ) & ~(uintptr_t) ( alignment - 1 );
+        new ( (void *) ( aligned - sizeof( rocketnet_allocation_header_t ) ) ) rocketnet_allocation_header_t{ base, scope->heap, scope->release, true };
+
+        return (void *) aligned;
+    }
+
     void * ( *allocate )( void *, size_t );
 
     void ( *release )( void *, void * );
@@ -539,7 +605,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
 
     const uintptr_t aligned = ( (uintptr_t) base + overhead ) & ~(uintptr_t) ( alignment - 1 );
     auto * header = new ( (void *) ( aligned - sizeof( rocketnet_allocation_header_t ) ) )
-        rocketnet_allocation_header_t{ base, context, release };
+        rocketnet_allocation_header_t{ base, context, release, false };
     (void) header;
 
     return (void *) aligned;
@@ -555,6 +621,17 @@ void rocketnet_free( void * context, void * p )
     auto * header = (rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
     const rocketnet_allocation_header_t allocation = *header;
     header->~rocketnet_allocation_header_t();
+
+    // a heap allocation goes back to its heap, uncounted, and never from a
+    // RocketNet worker thread: the heap's one owner is the caller's thread
+
+    if ( allocation.from_heap )
+    {
+        rocketnet_assert( !rocketnet_on_worker_thread );
+
+        allocation.free_function( allocation.context, allocation.base );
+        return;
+    }
 
     allocation.free_function( allocation.context, allocation.base );
 

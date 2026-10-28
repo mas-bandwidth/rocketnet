@@ -289,6 +289,8 @@ static bool portable_tx_publish( portable_server_t * server )
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 static void portable_tx_worker( void * arg )
 {
+    rocketnet_worker_thread_enter();
+
     portable_server_t * server = (portable_server_t *) arg;
     for ( ;; )
     {
@@ -468,6 +470,8 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 static void portable_rx_worker( void * arg )
 {
+    rocketnet_worker_thread_enter();
+
     // tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
     // alone when every bank is full, and on the wake or socket readability
     // after an empty read.

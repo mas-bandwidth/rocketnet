@@ -813,6 +813,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
 inline void rocketnet_client_io_thread_function( void * data )
 {
+    rocketnet_worker_thread_enter();
+
     rocketnet_client_io_t * io = (rocketnet_client_io_t *) data;
 
     while ( true )

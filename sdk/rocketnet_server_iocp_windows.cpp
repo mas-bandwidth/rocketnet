@@ -817,6 +817,8 @@ static void rocketnet_iocp_publish_receive_bank( rocketnet_iocp_worker_t * worke
 
 static void rocketnet_iocp_worker( void * argument )
 {
+    rocketnet_worker_thread_enter();
+
     rocketnet_iocp_worker_t * worker = (rocketnet_iocp_worker_t *) argument;
     rocketnet_server_iocp_t * iocp = worker->owner;
 
@@ -1663,6 +1665,8 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
 
 static void rocketnet_iocp_send_worker( void * argument )
 {
+    rocketnet_worker_thread_enter();
+
     // tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
     rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t *) argument;
 

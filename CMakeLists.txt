@@ -687,6 +687,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_finish_requires_start.cpp
             tests/test_unit_light_profile.cpp
             tests/test_unit_max_clients.cpp
+            tests/test_unit_instance_heap.cpp
             tests/test_unit_memory_plan_lifecycle.cpp
             tests/test_unit_platform_socket_hygiene.cpp
             tests/test_unit_portable_rx.cpp
@@ -1349,6 +1350,7 @@ install(FILES sdk/rocketnet.h
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet)
 install(FILES sodium/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/sodium)
+install(FILES tlsf/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/rocketnet/tlsf)
 set(ROCKETNET_PACKAGE_DIR "${CMAKE_INSTALL_LIBDIR}/cmake/RocketNet")
 if(TARGET RocketNet::Uring)
     set(ROCKETNET_IO_URING_BUILT ON)

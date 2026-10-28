@@ -12,8 +12,8 @@
 //     fails rocketnet_frame_sync_create_ex;
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
-//   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect under a
-//     fault-injecting allocator fails when allocating the worker thread's
+//   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect whose
+//     heap refuses an allocation fails when allocating the worker thread's
 //     record, before the OS thread create; the sweep stops at that first
 //     refusal, so no attempt reaches the OS create and no thread starts;
 //   * ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT and
@@ -29,6 +29,7 @@
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_allocator.h"
 #include "rocketnet_frame_sync.h"
 #include "rocketnet_platform.h"
 
@@ -248,12 +249,19 @@ static void test_client_connect_thread_create_failed_reached()
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
+    // connect takes every allocation from the client's heap, none from the
+    // installed allocator: the heap refuses the kth, until the kth is the
+    // network thread's record
+
+    struct rocketnet_heap_t * heap = rocketnet_client_heap( client );
+    check( heap != NULL );
+    const int calls_after_create = state.calls;
     int out_of_memory = 0;
     int thread_create_failed = 0;
     enum rocketnet_status_t thread_create_status = ROCKETNET_STATUS_OK;
     for ( int k = 1; k <= 256 && !thread_create_failed; k++ )
     {
-        state.fail_at = state.calls + k;
+        rocketnet_heap_refuse_allocation_for_test( heap, (uint64_t) k );
         const enum rocketnet_status_t status = rocketnet_client_connect( client, token );
         check( status != ROCKETNET_STATUS_OK );
         if ( status == ROCKETNET_STATUS_THREAD_CREATE_FAILED )
@@ -268,7 +276,9 @@ static void test_client_connect_thread_create_failed_reached()
         }
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     }
-    state.fail_at = 0;
+    rocketnet_heap_refuse_allocation_for_test( heap, 0 );
+    check( state.calls == calls_after_create );
+    check( rocketnet_heap_live_allocations( heap ) == 0 );
     check( out_of_memory > 0 );
     check( thread_create_failed == 1 );
     check( thread_create_status == ROCKETNET_STATUS_THREAD_CREATE_FAILED );

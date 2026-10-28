@@ -18,6 +18,7 @@
 #include "../sdk/rocketnet_constants.h"
 #include "../sdk/rocketnet_server_protocol.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_allocator.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_packet_builder.h"
 #include "token_string.h"
@@ -3434,10 +3435,12 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     // From the terminal MESSAGE_MEMORY_EXHAUSTED state, the first connect requests
     // transport retirement (returning ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED while
     // retaining MESSAGE_MEMORY_EXHAUSTED); after bounded update completion,
-    // rocketnet_client_disconnected( client ) becomes true. Then force the custom
-    // allocator to refuse the reconnect allocation in rocketnet_client_connect,
-    // proving it returns ROCKETNET_STATUS_OUT_OF_MEMORY, leaves the client cleanly
-    // disconnected with zero partial state, and recovers when allocator pressure lifts.
+    // rocketnet_client_disconnected( client ) becomes true. Then force the
+    // client's heap to refuse the reconnect allocation in rocketnet_client_connect
+    // (connect takes nothing from the installed allocator, so the heap is where
+    // memory pressure lands), proving it returns ROCKETNET_STATUS_OUT_OF_MEMORY,
+    // leaves the client cleanly disconnected with zero partial state, and
+    // recovers when the pressure lifts.
     char token_gen2[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     lifecycle_token( server, rocketnet_server_port( server ), &identity, 0x5102, 300, token_gen2 );
 
@@ -3448,10 +3451,15 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     rocketnet_client_update( client, now );
     check( rocketnet_client_disconnected( client ) );
 
-    alloc_state.fail_countdown = 1;
-    const int refused_before = alloc_state.refused_count;
+    struct rocketnet_heap_t * heap = rocketnet_client_heap( client );
+    check( heap != NULL );
+    rocketnet_heap_refuse_allocation_for_test( heap, 1 );
+    const uint64_t refused_before = rocketnet_heap_refusals( heap );
+    const int allocator_refused_before = alloc_state.refused_count;
     check( rocketnet_client_connect( client, token_gen2 ) == ROCKETNET_STATUS_OUT_OF_MEMORY );
-    check( alloc_state.refused_count == refused_before + 1 );
+    check( rocketnet_heap_refusals( heap ) == refused_before + 1 );
+    check( alloc_state.refused_count == allocator_refused_before );
+    check( rocketnet_heap_live_allocations( heap ) == 0 );
     check( rocketnet_client_disconnected( client ) );
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_client_receive_messages( client ) == NULL );

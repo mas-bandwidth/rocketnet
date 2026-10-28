@@ -1346,6 +1346,8 @@ static void rocketnet_rio_idle_wait( rocketnet_server_rio_t * rio )
 // and turns to the stop pass once it is set.
 static void rocketnet_rio_worker( void * argument )
 {
+    rocketnet_worker_thread_enter();
+
     rocketnet_server_rio_t * rio = (rocketnet_server_rio_t *) argument;
 
     for ( ;; )

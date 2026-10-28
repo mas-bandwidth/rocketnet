@@ -383,6 +383,8 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
 // the ownership mutex; stop's final bank is sent last and ends the worker.
 static void rocketnet_server_gso_send_worker( void * context )
 {
+    rocketnet_worker_thread_enter();
+
     rocketnet_server_gso_t * gso = (rocketnet_server_gso_t *) context;
 
     for ( ;; )
@@ -731,6 +733,8 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
 
 static void rocketnet_server_gso_worker( void * data )
 {
+    rocketnet_worker_thread_enter();
+
     struct rocketnet_server_gso_queue_t * queue = (struct rocketnet_server_gso_queue_t *) data;
 
     rocketnet_assert( queue );

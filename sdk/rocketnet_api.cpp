@@ -24,6 +24,7 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_allocator.h"
 
 #include <sodium.h>
 
@@ -530,6 +531,7 @@ struct rocketnet_client_t
     int owns_block;                                     // 1: this struct and the block are one rocketnet_malloc
     uint8_t * block;                                    // the connection's memory, ROCKETNET_ALLOCATION_ALIGNMENT aligned
     uint64_t block_bytes;
+    struct rocketnet_heap_t * heap;                     // every allocation after create: the transport each connect makes (in the create-time block)
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
@@ -543,6 +545,34 @@ static inline uint64_t rn_round_up_alignment( uint64_t bytes )
 }
 
 static const uint64_t rn_client_header_bytes = rn_round_up_alignment( sizeof( struct rocketnet_client_t ) );
+
+// The bytes of create's one block: the header, the connection's memory, and
+// the heap every later allocation comes from, sized from the transport plan
+// of the largest candidate the config's ladder can grant. 0 for a plan that
+// cannot be made.
+
+static uint64_t rn_client_block_bytes( const struct rocketnet_client_transport_config_t * transport, uint64_t connection_bytes, uint64_t * heap_offset, uint64_t * heap_bytes )
+{
+    const uint64_t heap = rocketnet_heap_required_bytes( rocketnet_client_transport_ladder_allocator_bytes( transport ) );
+    if ( heap == 0 )
+        return 0;
+
+    const uint64_t offset = rn_client_header_bytes + rn_round_up_alignment( connection_bytes );
+    if ( offset < connection_bytes || heap > UINT64_MAX - offset )
+        return 0;
+
+    if ( heap_offset )
+        *heap_offset = offset;
+    if ( heap_bytes )
+        *heap_bytes = heap;
+
+    return offset + heap;
+}
+
+struct rocketnet_heap_t * rocketnet_client_heap( struct rocketnet_client_t * client )
+{
+    return client ? client->heap : NULL;
+}
 
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client )
 {
@@ -828,14 +858,12 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     if ( connection_bytes == 0 )
         return 0;
 
-    // the peak over the lifecycle: create's one block as the allocator sees
-    // it, plus the transport connect creates for the candidate it grants;
-    // disconnect retires it and the next connect frees it before it creates
-    // the next, so a reconnect takes the same bytes again
+    // create's one block as the allocator sees it, the whole lifecycle: the
+    // transport each connect creates comes from the heap in the block, so
+    // connect, disconnect and reconnect take nothing more
 
-    uint64_t total = rn_client_header_bytes + connection_bytes;
-    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) ||
-         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) )
+    uint64_t total = rn_client_block_bytes( &transport, connection_bytes, NULL, NULL );
+    if ( total == 0 || !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) )
         return 0;
 
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
@@ -906,7 +934,19 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
         return NULL;
     }
 
-    const uint64_t total = rn_client_header_bytes + connection_bytes;
+    uint64_t heap_offset = 0;
+    uint64_t heap_bytes = 0;
+    const uint64_t total = rn_client_block_bytes( &transport, connection_bytes, &heap_offset, &heap_bytes );
+    if ( total == 0 || total > (uint64_t) SIZE_MAX )
+    {
+        rocketnet_error( "client create refused: no transport plan for the config's transport list" );
+
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+
+        return NULL;
+    }
+
     uint8_t * base = (uint8_t *) memory;
     if ( base )
     {
@@ -948,6 +988,12 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     client->owns_block = memory ? 0 : 1;
     client->block = base + rn_client_header_bytes;
     client->block_bytes = connection_bytes;
+    // tla/RNInstanceHeap.tla Create: the one block from the installed
+    // allocator holds the heap every later allocation comes from
+
+    client->heap = rocketnet_heap_create( base + heap_offset, heap_bytes );
+    rocketnet_assert( client->heap );
+
     return client;
 }
 
@@ -1047,6 +1093,12 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
 {
     if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token_string ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+    // the transport this connect creates comes from the client's heap,
+    // after the retired one went back to it (tla/RNInstanceHeap.tla Connect,
+    // then Allocate for each of its allocations and Built)
+
+    rocketnet_heap_scope_t heap_scope( client->heap );
 
     // connect reads no clock: the connection's clock starts at its first update, as create's always has (documented in rocketnet.h)
 
@@ -1155,6 +1207,17 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 
     rn_client_end_connection( client );
 
+    // every allocation went back to the heap with its transport: a live one
+    // is a leak, refused like the library's own at rocketnet_term
+    // (tla/RNInstanceHeap.tla Destroy, NothingLiveAtFree)
+
+    if ( rocketnet_heap_live_allocations( client->heap ) != 0 )
+    {
+        rocketnet_error( "rocketnet_client_destroy: %llu allocations are still live in the client's heap", (unsigned long long) rocketnet_heap_live_allocations( client->heap ) );
+
+        rocketnet_assert( false );
+    }
+
     // the connection's keys were wiped by its transport's destroy; the header
     // and the block hold config and message bytes, no secret, so they are
     // freed or given back as they are. The OS zero-fills a page before
@@ -1197,6 +1260,7 @@ void rocketnet_client_send_packets( struct rocketnet_client_t * client )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
+
     if ( !client->connection )
         return;
 
@@ -1207,6 +1271,9 @@ void rocketnet_client_send_packets( struct rocketnet_client_t * client )
 // is kicked (its disconnect burst) and its worker asked to stop;
 // DisconnectFromError: from an error state only the stop is asked; both
 // leave the client DISCONNECTED.
+// tla/RNInstanceHeap.tla Disconnect: the transport retires, still in the
+// heap until the next connect or destroy frees it (WorkerStops is the
+// worker's completion, which rocketnet_client_disconnected reads).
 
 void rocketnet_client_disconnect( struct rocketnet_client_t * client )
 {
