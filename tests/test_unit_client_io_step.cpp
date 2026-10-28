@@ -36,6 +36,7 @@ static void client_io_step_test_open( rocketnet_fake_client_transport_io_t * fak
 // Three slots, the middle aborted: one step sends the two live slots byte
 // exact to the handed-off destination, per packet with the io table, and the
 // next step only gives the ring back. RNClientIo HandOff, IoSend.
+
 static void test_client_io_step_sends_handed_off_ring()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -47,9 +48,13 @@ static void test_client_io_step_sends_handed_off_ring()
     rig->counts[0][1] = 0;
     rig->counts[0][2] = 7;
     for ( int i = 0; i < 11; i++ )
+    {
         rocketnet_client_io_rig_slot( rig, 0, 0 )[i] = (uint8_t) ( i + 1 );
+    }
     for ( int i = 0; i < 7; i++ )
+    {
         rocketnet_client_io_rig_slot( rig, 0, 2 )[i] = (uint8_t) ( 0x80 + i );
+    }
 
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
@@ -86,6 +91,7 @@ REGISTER_UNIT_TEST( test_client_io_step_sends_handed_off_ring );
 
 // The batch table takes the whole ring in one send_batch call and no send
 // calls. RNClientIo IoSend with the transport's batch callback.
+
 static void test_client_io_step_uses_send_batch_when_set()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -96,9 +102,13 @@ static void test_client_io_step_uses_send_batch_when_set()
     rig->counts[0][0] = 9;
     rig->counts[0][1] = 13;
     for ( int i = 0; i < 9; i++ )
+    {
         rocketnet_client_io_rig_slot( rig, 0, 0 )[i] = (uint8_t) ( 0x10 + i );
+    }
     for ( int i = 0; i < 13; i++ )
+    {
         rocketnet_client_io_rig_slot( rig, 0, 1 )[i] = (uint8_t) ( 0x20 + i );
+    }
 
     client_io_step_test_clock_t clock = { 1000.0 };
     rocketnet_client_io_t io = {};
@@ -126,6 +136,7 @@ REGISTER_UNIT_TEST( test_client_io_step_uses_send_batch_when_set );
 // they were committed for. The steps send the queued rings oldest first, then
 // the deferred one leaves with the next hand-off. RNBufferHandoff InOrder,
 // MainNeverWaits; RNClientIo Defer, SentToCommitted.
+
 static void test_client_io_step_sends_rings_in_order_and_defers()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -133,6 +144,7 @@ static void test_client_io_step_sends_rings_in_order_and_defers()
     client_io_step_test_open( &fake, &rocketnet_fake_client_operations_io, &transport );
 
     rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
+
     for ( int ring = 0; ring < ROCKETNET_CLIENT_IO_NUM_RINGS; ring++ )
     {
         rig->counts[ring][0] = 4;
@@ -157,6 +169,7 @@ static void test_client_io_step_sends_rings_in_order_and_defers()
 
     // a later attempt for the deferred ring keeps the destination it was
     // committed with
+
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &second ) == ROCKETNET_CLIENT_RINGS_LATE );
 
     rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
@@ -183,6 +196,7 @@ REGISTER_UNIT_TEST( test_client_io_step_sends_rings_in_order_and_defers );
 // game thread never waits for the lock. RNBufferHandoff MainNeverWaits. The
 // test holds the mutex on its own thread, so it runs where the platform mutex
 // is not recursive (a Windows critical section is).
+
 static void test_client_io_hand_off_never_waits_for_the_mutex()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -200,6 +214,7 @@ static void test_client_io_hand_off_never_waits_for_the_mutex()
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9020 );
 
     // try-acquire fails while held; no other thread is needed to show it
+
     rocketnet_platform_mutex_acquire( &rig->mutex );
     rocketnet_unit_check( rocketnet_client_io_hand_off( &io, 1, &to ) == ROCKETNET_CLIENT_RINGS_LATE );
     rocketnet_unit_check( io.send_fill == 0 && io.send.ready_count == 0 );
@@ -220,6 +235,7 @@ REGISTER_UNIT_TEST( test_client_io_hand_off_never_waits_for_the_mutex );
 
 // The clock callback stamps receive_time: one datagram read with now = 1000.25
 // is exposed with receive_time 1000.25. docs/CLIENT-IO.md _The clock_.
+
 static void test_client_io_receive_time_from_callback()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -233,7 +249,10 @@ static void test_client_io_receive_time_from_callback()
 
     uint8_t datagram[32];
     for ( int i = 0; i < 32; i++ )
+    {
         datagram[i] = (uint8_t) ( 0x40 + i );
+    }
+
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9100 );
     rocketnet_fake_client_push( &fake, &from, datagram, 32 );
@@ -259,6 +278,7 @@ REGISTER_UNIT_TEST( test_client_io_receive_time_from_callback );
 // runt as a record for the main thread's prefilter to refuse and count; after
 // its return a later datagram reaches the next expose. RNClientIo
 // IoReceive, IoPublish, Expose, Return.
+
 static void test_client_io_step_publishes_received()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -272,7 +292,10 @@ static void test_client_io_step_publishes_received()
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
+    {
         datagram[i] = (uint8_t) ( 0x60 + i );
+    }
+
     uint8_t short_datagram[4] = { 1, 2, 3, 4 };
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9200 );
@@ -310,6 +333,7 @@ REGISTER_UNIT_TEST( test_client_io_step_publishes_received );
 // own buffer instead of queueing a second one, so update's next expose takes
 // everything published in one buffer and the rest in the next. RNBufferHandoff
 // receive triple buffer (MaxReady 1), InOrder.
+
 static void test_client_io_step_receive_triple_buffer()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -323,17 +347,21 @@ static void test_client_io_step_receive_triple_buffer()
 
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9250 );
+
     uint8_t datagram[8] = {};
+
     for ( int i = 0; i < 3; i++ )
     {
         datagram[0] = (uint8_t) ( 0x10 + i );
         rocketnet_fake_client_push( &fake, &from, datagram, 8 );
         rocketnet_unit_check( rocketnet_client_io_step( &io, false ) == ROCKETNET_CLIENT_IO_WORKED );
     }
+
     rocketnet_unit_check( io.receive.ready_count == 1 );
     rocketnet_unit_check( io.receive.owed );
 
     // the exchange that takes the ready buffer reports the owed publish
+
     const int wakes = fake.wake_calls;
     rocketnet_client_receive_buffer_t * received = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( fake.wake_calls == wakes + 1 );
@@ -353,6 +381,7 @@ REGISTER_UNIT_TEST( test_client_io_step_receive_triple_buffer );
 
 // A blocked idle step waits once with the guard timeout and readable true; a
 // step with a handed-off ring is worked and does not wait. RNClientIo IoWait.
+
 static void test_client_io_step_waits_only_when_idle()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -361,6 +390,7 @@ static void test_client_io_step_waits_only_when_idle()
 
     rocketnet_client_io_rig_t * rig = rocketnet_client_io_rig_create();
     rig->counts[0][0] = 5;
+
     rocketnet_address_t to = {};
     rocketnet_address_load_ipv4( &to, 0x7f000001, 9300 );
 
@@ -388,6 +418,7 @@ REGISTER_UNIT_TEST( test_client_io_step_waits_only_when_idle );
 // does not wake; update's next exchange wakes the I/O thread exactly once,
 // and the step after that publishes. RNClientIo FullWaitsOnWake,
 // RNBufferHandoff ArrivedDelivered (the owed wake).
+
 static void test_client_io_step_full_buffer_waits_on_wake_only()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -401,27 +432,36 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
 
     uint8_t datagram[16];
     for ( int i = 0; i < 16; i++ )
+    {
         datagram[i] = (uint8_t) ( 0x70 + i );
+    }
+
     rocketnet_address_t from = {};
     rocketnet_address_load_ipv4( &from, 0x7f000001, 9400 );
 
     // update holds one buffer
+
     rocketnet_fake_client_push( &fake, &from, datagram, 16 );
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
+
     rocketnet_client_receive_buffer_t * held = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( held != NULL );
     rocketnet_unit_check( held->num_packets == 1 );
 
     // one buffer published and waiting ready
+
     rocketnet_fake_client_push( &fake, &from, datagram, 16 );
     rocketnet_unit_check( rocketnet_client_io_step( &io, true ) == ROCKETNET_CLIENT_IO_WORKED );
     rocketnet_unit_check( io.receive.ready_count == 1 );
 
     // the I/O thread's own buffer fills to the brim
+
     for ( int batch = 0; batch < ROCKETNET_NUM_CLIENT_PACKETS / ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS; batch++ )
     {
         for ( int i = 0; i < ROCKETNET_FAKE_CLIENT_MAX_DATAGRAMS; i++ )
+        {
             rocketnet_fake_client_push( &fake, &from, datagram, 16 );
+        }
         rocketnet_client_io_step( &io, true );
     }
 
@@ -441,8 +481,10 @@ static void test_client_io_step_full_buffer_waits_on_wake_only()
 
     // update's next frame: it gives back the held buffer and takes the ready
     // one, reads the owed publish and wakes the I/O thread once
+
     rocketnet_client_io_return( &io );
     rocketnet_unit_check( fake.wake_calls == wake_calls + 1 );
+
     rocketnet_client_receive_buffer_t * ready = rocketnet_client_io_expose( &io );
     rocketnet_unit_check( ready != NULL && ready->num_packets == 1 );
 
@@ -465,6 +507,7 @@ REGISTER_UNIT_TEST( test_client_io_step_full_buffer_waits_on_wake_only );
 // 1000 same-host clients woke 340,000 times a second, held 70% of a 64-thread
 // host with up to 570 threads ready, and starved client I/O threads and the
 // server's IOCP completion worker for up to 12.7 s, so clients timed out.
+
 static void test_client_io_step_idle_wait_is_a_guard_not_a_cadence()
 {
     rocketnet_fake_client_transport_io_t fake = {};

@@ -76,10 +76,14 @@ static void violation_send( violation_node_t * node, uint32_t channel, int type,
 static int violation_write( violation_node_t * node, double now, violation_packet_t * packets, int capacity )
 {
     alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+
     uint8_t * pointers[8];
     check( capacity > 0 && capacity <= 8 );
     for ( int i = 0; i < capacity; i++ )
+    {
         pointers[i] = frames[i];
+    }
+
     const int count = rn_ordered_write( &node->ordered, now, pointers, capacity );
     for ( int i = 0; i < count; i++ )
     {
@@ -89,6 +93,7 @@ static int violation_write( violation_node_t * node, double now, violation_packe
         memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
         rn_ordered_commit( &node->ordered, i, packets[i].id, now );
     }
+
     return count;
 }
 
@@ -96,17 +101,20 @@ static int violation_write( violation_node_t * node, double now, violation_packe
 // reader's check 5 (MESSAGE_BAD_CHANNEL) before any dispatch. The live path
 // counts that violation by its own counter, then MESSAGE_PROTOCOL_VIOLATION
 // once for the ended connection (rn_channels_count_violation).
+
 static void test_violation_malformed_ordered_record_moves_its_own_counter()
 {
     rocketnet_message_config_t sender_config, receiver_config;
     violation_config( &sender_config, 16 );
     violation_config( &receiver_config, 8 );
+
     violation_node_t sender, receiver;
     violation_init( &sender, &sender_config );
     violation_init( &receiver, &receiver_config );
 
     const uint8_t value = 42;
     violation_send( &sender, 12, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, &value, 1 );
+
     violation_packet_t packet;
     check( violation_write( &sender, 1000.0, &packet, 1 ) == 1 );
 
@@ -124,10 +132,12 @@ REGISTER_UNIT_TEST( test_violation_malformed_ordered_record_moves_its_own_counte
 // A connection whose mask enables RELIABLE_WITH_RECEIPT and not RELIABLE takes
 // wire code 2 (rocketnet_message_enabled_codes), so the reader admits the
 // record and the dispatch delivers it: no TYPE_NOT_ENABLED, no violation.
+
 static void test_violation_receipt_only_reliable_connection_takes_its_records()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
+
     violation_node_t sender, receiver;
     violation_init( &sender, &config );
     violation_init( &receiver, &config );
@@ -141,6 +151,7 @@ static void test_violation_receipt_only_reliable_connection_takes_its_records()
 
     const uint8_t value = 7;
     violation_send( &sender, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_WITH_RECEIPT, &value, 1 );
+
     violation_packet_t packet;
     check( violation_write( &sender, 1000.0, &packet, 1 ) == 1 );
 
@@ -165,10 +176,12 @@ REGISTER_UNIT_TEST( test_violation_receipt_only_reliable_connection_takes_its_re
 // sdk/rocketnet_message.cpp:52) and the form byte.
 // The largest single record is payload_capacity - 17 bytes; one byte more is
 // a block. The boundary size payload_capacity - 16 is written and delivered.
+
 static void test_violation_wide_reliable_sequenced_boundary_is_sent()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 300 );
+
     violation_node_t sender, receiver;
     violation_init( &sender, &config );
     violation_init( &receiver, &config );
@@ -177,14 +190,18 @@ static void test_violation_wide_reliable_sequenced_boundary_is_sent()
     const uint32_t bytes = sender.ordered.channels.payload_capacity - 16;
     static uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     for ( uint32_t i = 0; i < bytes; i++ )
+    {
         data[i] = (uint8_t) ( i * 13 + 5 );
+    }
     violation_send( &sender, channel, ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED, data, bytes );
 
     static violation_packet_t packets[8];
     const int count = violation_write( &sender, 1000.0, packets, 8 );
     check( count >= 1 );
     for ( int i = 0; i < count; i++ )
+    {
         check( rn_ordered_receive( &receiver.ordered, packets[i].data, packets[i].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+    }
     check( rn_ordered_deliveries( &receiver.ordered ) == 1 );
     const rn_delivery_t & delivery = receiver.region->deliveries[0];
     check( delivery.channel == channel && delivery.bytes == (int) bytes && memcmp( delivery.data, data, bytes ) == 0 );
@@ -202,6 +219,7 @@ REGISTER_UNIT_TEST( test_violation_wide_reliable_sequenced_boundary_is_sent );
 // 9, 10 and 12) each move their own counter beside MESSAGE_PROTOCOL_VIOLATION,
 // which is counted once for the connection the violation ends. A fresh node
 // per case, because the first violation ends the connection.
+
 static void violation_feed_refuses( violation_node_t * receiver, const uint8_t * data, int bytes,
                                     int expected_result, int expected_counter )
 {
@@ -223,6 +241,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         const uint8_t payload[1] = { 0x00 };
         violation_feed_refuses( &receiver, payload, 1, ROCKETNET_MESSAGE_VIOLATION_BAD_FORM, ROCKETNET_COUNTER_MESSAGE_BAD_FORM );
         rn_arena_destroy( receiver.arena );
@@ -234,6 +253,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         const uint8_t payload[2] = { 0x00, ROCKETNET_MESSAGE_FORM_RECORDS };
         violation_feed_refuses( &receiver, payload, 2, ROCKETNET_MESSAGE_VIOLATION_TRUNCATED, ROCKETNET_COUNTER_MESSAGE_TRUNCATED );
         rn_arena_destroy( receiver.arena );
@@ -245,6 +265,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         const uint8_t payload[4] = { 0x80, 0x00, 0x00, ROCKETNET_MESSAGE_FORM_RECORDS };
         violation_feed_refuses( &receiver, payload, 4, ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS, ROCKETNET_COUNTER_MESSAGE_BAD_FLAGS );
         rn_arena_destroy( receiver.arena );
@@ -256,6 +277,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         uint8_t payload[13];
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
@@ -279,6 +301,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         static uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 64];
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
@@ -292,6 +315,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         *p++ = 0;
         *p++ = 0;
         *p++ = 0x00;
+
         const int total = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1;
         memset( p, 0xFF, (size_t) ( total - 1 - (int) ( p - payload ) ) );
         payload[total - 1] = ROCKETNET_MESSAGE_FORM_RECORDS;
@@ -305,6 +329,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         uint8_t payload[8];
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x22 );
@@ -324,6 +349,7 @@ static void test_violation_reader_and_window_checks_move_their_own_counters()
         rocketnet_message_config_t config;
         violation_config( &config, 8 );
         violation_init( &receiver, &config );
+
         uint8_t payload[14];
         uint8_t * p = payload;
         rocketnet_write_uint8( &p, 0x03 );
@@ -352,6 +378,7 @@ REGISTER_UNIT_TEST( test_violation_reader_and_window_checks_move_their_own_count
 // reaches a receiver configured for 1416: it is refused and counted
 // MESSAGE_BAD_SIZE, exactly as a block that adds up past the limit is refused
 // and counted MESSAGE_BAD_BLOCK. A message at the limit is still delivered.
+
 static void violation_over_max_config( rocketnet_message_config_t * config )
 {
     violation_config( config, 8 );
@@ -365,7 +392,9 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
     alignas( 16 ) static uint8_t payload[4096];
 
     // the SINGLE form, one byte over the limit and well over it
+
     const int over[2] = { 1417, 2000 };
+
     for ( int i = 0; i < 2; i++ )
     {
         violation_node_t receiver;
@@ -373,6 +402,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
         violation_over_max_config( &config );
         violation_init( &receiver, &config );
         memcpy( payload, data, (size_t) over[i] );
+
         const int bytes = rocketnet_message_single_finish( payload, (int) sizeof( payload ), over[i] );
         check( bytes == over[i] + 1 );
         violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
@@ -386,6 +416,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
         violation_over_max_config( &config );
         violation_init( &receiver, &config );
         memcpy( payload, data, 1416 );
+
         const int bytes = rocketnet_message_single_finish( payload, (int) sizeof( payload ), 1416 );
         check( rn_ordered_receive( &receiver.ordered, payload, bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
@@ -394,21 +425,26 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
     }
 
     // one UNRELIABLE or UNRELIABLE_SEQUENCED record over the limit, in RECORDS form
+
     const int codes[2] = { ROCKETNET_MESSAGE_CODE_UNRELIABLE, ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED };
+
     for ( int i = 0; i < 2; i++ )
     {
         violation_node_t receiver;
         rocketnet_message_config_t config;
         violation_over_max_config( &config );
         violation_init( &receiver, &config );
+
         rocketnet_message_record_t record;
         memset( &record, 0, sizeof( record ) );
         record.code = codes[i];
         record.data = data;
         record.bytes = 2000;
+
         rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, payload, (int) sizeof( payload ) );
         check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+
         const int bytes = rocketnet_message_writer_finish( &writer );
         violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE, ROCKETNET_COUNTER_MESSAGE_BAD_SIZE );
         rn_arena_destroy( receiver.arena );
@@ -421,6 +457,7 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
         rocketnet_message_config_t config;
         violation_over_max_config( &config );
         violation_init( &receiver, &config );
+
         rocketnet_message_record_t record;
         memset( &record, 0, sizeof( record ) );
         record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
@@ -429,9 +466,11 @@ static void test_violation_single_message_over_max_message_bytes_is_refused()
         record.fragments = 2;
         record.data = data;
         record.bytes = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+
         rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, payload, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         check( rocketnet_message_writer_add( &writer, &record ) == 1 );
+
         const int bytes = rocketnet_message_writer_finish( &writer );
         violation_feed_refuses( &receiver, payload, bytes, ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         rn_arena_destroy( receiver.arena );
@@ -442,6 +481,7 @@ REGISTER_UNIT_TEST( test_violation_single_message_over_max_message_bytes_is_refu
 
 // Append one code 3 (RELIABLE_ORDERED) record: flags, length 1, number, ring 0,
 // ordering, channel, then its one data byte.
+
 static int violation_put_ordered( uint8_t * p, uint32_t number, uint32_t ordering, uint8_t channel, uint8_t data )
 {
     uint8_t * start = p;
@@ -456,6 +496,7 @@ static int violation_put_ordered( uint8_t * p, uint32_t number, uint32_t orderin
     rocketnet_write_uint8( &p, (uint8_t) ( ( ordering >> 16 ) & 0xff ) );
     rocketnet_write_uint8( &p, channel );
     rocketnet_write_uint8( &p, data );
+
     return (int) ( p - start );
 }
 
@@ -470,10 +511,12 @@ static int violation_finish_records( uint8_t * p )
 // index (rn_channels_dispatch, sdk/rocketnet_channel.cpp), counted
 // MESSAGE_DUPLICATE_ORDERING and, once for the ended connection,
 // MESSAGE_PROTOCOL_VIOLATION.
+
 static void test_violation_two_ordered_records_with_one_ordering_index_get_their_own_counter()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
+
     violation_node_t receiver;
     violation_init( &receiver, &config );
 
@@ -499,10 +542,12 @@ REGISTER_UNIT_TEST( test_violation_two_ordered_records_with_one_ordering_index_g
 // number one window above lands on the same slot. Record 0 delivers on channel
 // 0 and advances R; record 1 waits on channel 1 and keeps slot 1 live; number
 // W+1 on channel 2 maps to slot 1 and is refused as SLOT_COLLISION.
+
 static void test_violation_slot_collision_is_reachable_from_the_wire()
 {
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
+
     violation_node_t receiver;
     violation_init( &receiver, &config );
 
@@ -538,9 +583,11 @@ REGISTER_UNIT_TEST( test_violation_slot_collision_is_reachable_from_the_wire );
 // (BAD_BLOCK on code 4), and the added fragment-ring-span check is BAD_BLOCK on
 // code 3 and 4. Each record is accepted by layer 3 (its descriptor live) and
 // dispatched.
+
 static rocketnet_message_record_t block_shape_record( int code, uint32_t fragments, uint32_t fragment, uint32_t ring, int bytes, uint32_t ordering )
 {
     alignas( 16 ) static uint8_t data[ROCKETNET_MESSAGE_FRAGMENT_BYTES + 64];
+
     rocketnet_message_record_t record;
     memset( &record, 0, sizeof( record ) );
     record.code = code;
@@ -562,8 +609,10 @@ static void block_shape_refusal( const rocketnet_message_record_t * record, int 
     rocketnet_message_config_t config;
     violation_config( &config, 8 );
     violation_init( &node, &config );
+
     uint32_t slot = RN_DESCRIPTOR_NONE;
     check( rn_window_receive_accept( &node.ordered.receive, record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+
     const uint64_t before = node.counters.values[counter];
     rn_delivery_t delivery;
     check( rn_channels_dispatch( &node.ordered.channels, record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
@@ -581,11 +630,13 @@ static void test_block_shape_refusals_match_across_reliable_codes()
     rocketnet_message_config_t pconfig;
     violation_config( &pconfig, 8 );
     violation_init( &probe, &pconfig );
+
     const uint32_t W = probe.region->window;
     const uint32_t ring_bytes = probe.region->ring_bytes;
     rn_arena_destroy( probe.arena );
 
     // shape: count 1, count over W, index at count, short non-last, last over F
+
     const uint32_t fragments[] = { 0, W, 2, 2, 2 };
     const uint32_t fragment[] = { 0, 0, 3, 0, 2 };
     const int bytesv[] = { (int) F, (int) F, (int) F, 100, (int) F + 1 };
@@ -598,7 +649,9 @@ static void test_block_shape_refusals_match_across_reliable_codes()
         }
 
     // block span past the ring: BAD_RING on code 2/3, BAD_BLOCK on code 4
+
     const uint32_t span_ring = ring_bytes / 16 - F / 16;
+
     for ( int c = 0; c < 3; c++ )
     {
         const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;
@@ -608,6 +661,7 @@ static void test_block_shape_refusals_match_across_reliable_codes()
     }
 
     // fragment ring span past the ring: BAD_BLOCK on code 3 and 4, BAD_RING on code 2
+
     for ( int c = 0; c < 3; c++ )
     {
         const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;

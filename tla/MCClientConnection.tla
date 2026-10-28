@@ -26,6 +26,11 @@ MCBothFamilies  == {"ipv4", "ipv6"}
 MCIpv4Reachable == {"ipv4"}
 MCCommitEarly   == TRUE
 
+\* the forgery runs (MCClientConnectionForgedCookie.cfg and its reversed
+\* witness MCClientConnectionBrokenCookieReplaces.cfg): an observer of the
+\* request sends cookies echoing the attempt's salt with a mac of its own
+MCForgery       == TRUE
+
 (***************************************************************************)
 (* Reachability.  A probe, not a rule: the client is connected and its     *)
 (* application has been handed a payload.  cPayloadDelivered is the ghost  *)

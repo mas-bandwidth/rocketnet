@@ -157,4 +157,4 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     }
 };
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H
+#endif // ROCKETNET_SDK_ROCKETNET_PACKET_LEASE_H

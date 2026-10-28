@@ -21,4 +21,4 @@ void rocketnet_run_tests( void );
 }
 #endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_TESTS_H
+#endif // ROCKETNET_SDK_ROCKETNET_TESTS_H

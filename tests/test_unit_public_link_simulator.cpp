@@ -107,6 +107,7 @@ static bool live_link_pair_connect( struct live_link_pair_t * pair )
             return true;
         live_link_pair_step( pair, 0.01 );
     }
+
     return false;
 }
 
@@ -121,6 +122,7 @@ static int live_link_server_payload_count( struct live_link_pair_t * pair )
 {
     const int * indices = NULL;
     uint8_t * const * data = NULL;
+
     const int * bytes = NULL;
     return rocketnet_server_transport_payloads( pair->server, &indices, &data, &bytes );
 }
@@ -145,6 +147,7 @@ static int live_link_server_payloads_seen( struct live_link_pair_t * pair, int s
         live_link_pair_step( pair, 0.01 );
         seen += live_link_server_payload_count( pair );
     }
+
     return seen;
 }
 
@@ -161,6 +164,7 @@ static int live_link_client_bytes_seen( struct live_link_pair_t * pair, int step
             bytes = live_link_client_receive( pair );
         }
     }
+
     return seen;
 }
 
@@ -177,20 +181,26 @@ static void test_public_link_simulator_applies_to_live_connection()
     // the setting applies to the live connection at once: the packet the
     // client sends after the call leaves the client and never reaches the
     // server
+
     check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 100, 0 ) );
+
     uint8_t payload[4] = { 1, 2, 3, 4 };
     rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
     check( live_link_server_payloads_seen( &pair, 20 ) == 0 );
+
     rocketnet_client_transport_stats( pair.client, &after );
     check( after.packets_sent > before.packets_sent );
 
     // the connection is still up: the loss applies to the packets, not to the
     // connection
+
     check( rocketnet_client_transport_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     check( rocketnet_server_transport_is_client_connected( pair.server, 0 ) );
 
     // and the setting comes back off: the next packet is delivered
+
     check( rocketnet_client_transport_network_simulator( pair.client, 0, 0, 0, 0 ) );
+
     rocketnet_client_transport_send_packet( pair.client, payload, sizeof( payload ) );
     check( live_link_server_payloads_seen( &pair, 20 ) > 0 );
 
@@ -210,15 +220,20 @@ static void test_public_link_simulator_server_applies_to_live_start()
     // the setting applies to the running server at once: the packet the
     // server sends after the call leaves the server and never reaches the
     // client
+
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 100, 0 ) );
+
     uint8_t payload[4] = { 5, 6, 7, 8 };
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     check( live_link_client_bytes_seen( &pair, 20 ) == 0 );
+
     rocketnet_server_transport_stats( pair.server, &after );
     check( after.packets_sent > before.packets_sent );
 
     // and the setting comes back off: the next packet is delivered
+
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     check( live_link_client_bytes_seen( &pair, 20 ) > 0 );
 
@@ -235,10 +250,15 @@ static void test_public_link_simulator_server_switch_off_delivers_held()
     check( live_link_pair_connect( &pair ) );
 
     check( rocketnet_server_transport_network_simulator( pair.server, 200, 0, 0, 0 ) );
+
     const int num_payloads = 8;
     uint8_t payload[4] = { 9, 10, 11, 12 };
+
     for ( int i = 0; i < num_payloads; i++ )
+    {
         rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    }
+
     check( live_link_client_bytes_seen( &pair, 1 ) == 0 );
 
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
@@ -265,8 +285,11 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
 
     // a nonzero latency keeps the simulator active, so the send goes through
     // the link and its lock
+
     check( rocketnet_server_transport_network_simulator( pair.server, 1, 0, 0, 0 ) );
+
     rocketnet_server_transport_link_busy_for_test( pair.server, 1 );
+
     uint8_t payload[4] = { 13, 14, 15, 16 };
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     rocketnet_server_transport_send_packets( pair.server );
@@ -276,6 +299,7 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
     check( rocketnet_server_transport_counters( pair.server )->values[ROCKETNET_COUNTER_SEND_RING_FULL] == ring_full_before + 1 );
 
     // the next send meets a free lock: it is counted sent once and arrives
+
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     rocketnet_server_transport_send_packets( pair.server );
     rocketnet_server_transport_stats( pair.server, &after );
@@ -297,14 +321,26 @@ static void public_link_simulator_check_fields( const struct rocketnet_config_fi
     for ( int i = 0; i < num_fields; i++ )
     {
         if ( strcmp( fields[i].name, "simulated_loss_percent" ) == 0 )
+        {
             found_loss = 1;
+        }
+
         if ( strcmp( fields[i].name, "simulated_latency_ms" ) == 0 )
+        {
             found_latency = 1;
+        }
+
         if ( strcmp( fields[i].name, "simulated_jitter_ms" ) == 0 )
+        {
             found_jitter = 1;
+        }
+
         if ( strcmp( fields[i].name, "simulated_duplicate_percent" ) == 0 )
+        {
             found_duplicate = 1;
+        }
     }
+
     check( found_loss );
     check( found_latency );
     check( found_jitter );
@@ -314,8 +350,10 @@ static void public_link_simulator_check_fields( const struct rocketnet_config_fi
 static void test_public_link_simulator_production_refusal()
 {
     // the client transport, from its real table
+
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
+
     int client_fields = 0;
     const struct rocketnet_config_field_t * client_table = rocketnet_client_transport_config_fields( &client_fields );
     public_link_simulator_check_fields( client_table, client_fields );
@@ -337,22 +375,28 @@ static void test_public_link_simulator_production_refusal()
     check( rocketnet_config_validate_public_link_simulator( "client", &client_config, client_table, client_fields, true ) );
 
     // the server transport, from its real table
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_default_config_current( &server_config );
+
     int server_fields = 0;
     const struct rocketnet_config_field_t * server_table = rocketnet_server_transport_config_fields( &server_fields );
     public_link_simulator_check_fields( server_table, server_fields );
     check( rocketnet_config_validate_public_link_simulator( "server", &server_config, server_table, server_fields, false ) );
+
     server_config.simulated_jitter_ms = 10;
     check( !rocketnet_config_validate_public_link_simulator( "server", &server_config, server_table, server_fields, false ) );
     check( rocketnet_config_validate_public_link_simulator( "server", &server_config, server_table, server_fields, true ) );
 
     // ranges: percentages cap at 100, milliseconds at 60000
+
     client_config.simulated_loss_percent = 101;
     check( !rocketnet_config_validate( "client", &client_config, client_table, client_fields ) );
+
     client_config.simulated_loss_percent = 0;
     client_config.simulated_latency_ms = 60001;
     check( !rocketnet_config_validate( "client", &client_config, client_table, client_fields ) );
+
     client_config.simulated_latency_ms = 0;
 
     printf( "test_public_link_simulator_production_refusal\n" );
@@ -385,6 +429,7 @@ static void public_link_wire_begin( struct public_link_wire_t * wire,
     check( wire->simulator != NULL );
     check( rocketnet_address_parse( &wire->from, "198.51.100.1:10000" ) );
     check( rocketnet_address_parse( &wire->to, "198.51.100.2:10000" ) );
+
     rocketnet_network_simulator_config( wire->simulator,
                                         config->simulated_latency_ms / 1000.0,
                                         config->simulated_jitter_ms / 1000.0,
@@ -440,24 +485,33 @@ static rocketnet_client_transport_t * public_link_simulator_client(
 static void test_public_link_simulator_drops_at_loss()
 {
     rocketnet_public_link_simulator_test_development( 1 );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     config.simulated_loss_percent = 100;
+
     rocketnet_fake_client_transport_io_t * dropped = new rocketnet_fake_client_transport_io_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( dropped, &config );
     check( transport != NULL );
+
     rocketnet_client_transport_update( transport, 1000.0 );
     rocketnet_client_transport_update( transport, 1001.0 );
+
     check( dropped->num_sent == 0 );
+
     rn_test_client_transport_stop_and_destroy( transport );
     delete dropped;
 
     config.simulated_loss_percent = 0;
+
     rocketnet_fake_client_transport_io_t * direct = new rocketnet_fake_client_transport_io_t();
     transport = public_link_simulator_client( direct, &config );
     check( transport != NULL );
+
     rocketnet_client_transport_update( transport, 1000.0 );
+
     check( direct->num_sent == 1 );
+
     rn_test_client_transport_stop_and_destroy( transport );
     delete direct;
 }
@@ -465,18 +519,27 @@ static void test_public_link_simulator_drops_at_loss()
 static void test_public_link_simulator_latency()
 {
     rocketnet_public_link_simulator_test_development( 1 );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     config.simulated_latency_ms = 25;
+
     rocketnet_fake_client_transport_io_t * transport_io = new rocketnet_fake_client_transport_io_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( transport_io, &config );
     check( transport != NULL );
+
     rocketnet_client_transport_update( transport, 1000.0 );
+
     check( transport_io->num_sent == 0 );
+
     rocketnet_client_transport_update( transport, 1000.024 );
+
     check( transport_io->num_sent == 0 );
+
     rocketnet_client_transport_update( transport, 1000.025 );
+
     check( transport_io->num_sent == 1 );
+
     rn_test_client_transport_stop_and_destroy( transport );
     delete transport_io;
 }
@@ -491,24 +554,35 @@ static void test_public_link_simulator_jitter()
 
     struct public_link_wire_t wire;
     public_link_wire_begin( &wire, &config, 13 );
+
     for ( int i = 0; i < 64; i++ )
+    {
         public_link_wire_send( &wire, (uint8_t) i );
+    }
 
     int delivered = 0;
     while ( wire.time < 1000.009 )
     {
         wire.time += 0.001;
         while ( public_link_wire_receive( &wire ) > 0 )
+        {
             delivered++;
+        }
     }
+
     check( delivered == 0 );
+
     while ( wire.time < 1000.031 )
     {
         wire.time += 0.001;
         while ( public_link_wire_receive( &wire ) > 0 )
+        {
             delivered++;
+        }
     }
+
     check( delivered == 64 );
+
     public_link_wire_end( &wire );
 }
 
@@ -516,16 +590,23 @@ static void test_public_link_simulator_jitter()
 static void test_public_link_simulator_duplicate()
 {
     rocketnet_public_link_simulator_test_development( 1 );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     config.simulated_duplicate_percent = 100;
+
     rocketnet_fake_client_transport_io_t * transport_io = new rocketnet_fake_client_transport_io_t();
     rocketnet_client_transport_t * transport = public_link_simulator_client( transport_io, &config );
     check( transport != NULL );
+
     rocketnet_client_transport_update( transport, 1000.0 );
+
     check( transport_io->num_sent == 0 );
+
     rocketnet_client_transport_update( transport, 1000.001 );
+
     check( transport_io->num_sent == 2 );
+
     rn_test_client_transport_stop_and_destroy( transport );
     delete transport_io;
 }
@@ -544,6 +625,7 @@ static void test_public_link_simulator_same_seed_same_schedule()
     struct public_link_wire_t b;
     public_link_wire_begin( &a, &config, 23 );
     public_link_wire_begin( &b, &config, 23 );
+
     for ( int i = 0; i < 64; i++ )
     {
         public_link_wire_send( &a, (uint8_t) i );
@@ -554,6 +636,7 @@ static void test_public_link_simulator_same_seed_same_schedule()
     {
         a.time += 0.001;
         b.time += 0.001;
+
         for ( ;; )
         {
             const int a_bytes = public_link_wire_receive( &a );
@@ -564,6 +647,7 @@ static void test_public_link_simulator_same_seed_same_schedule()
             check( memcmp( a.received, b.received, (size_t) a_bytes ) == 0 );
         }
     }
+
     public_link_wire_end( &a );
     public_link_wire_end( &b );
 }
@@ -582,13 +666,16 @@ static void test_public_link_simulator_inactive_takes_no_lock()
 {
     struct rocketnet_network_simulator_t * simulator = rocketnet_network_simulator_create( NULL, 64, 1 );
     check( simulator != NULL );
+
     rocketnet_network_simulator_config( simulator, 0.0, 0.0, 0.0f, 0.0f );
+
     struct rocketnet_platform_mutex_t mutex;
     check( rocketnet_platform_mutex_create( &mutex ) );
 
     rocketnet_platform_mutex_acquire( &mutex );
     check( !rocketnet_network_simulator_take_setting( simulator, &mutex ) );
     check( !rocketnet_network_simulator_holds_any( simulator ) );
+
     rocketnet_platform_mutex_release( &mutex );
 
     rocketnet_network_simulator_reconfigure( simulator, &mutex, 0.1, 0.0, 0.0f, 0.0f );
@@ -597,8 +684,10 @@ static void test_public_link_simulator_inactive_takes_no_lock()
 
     rocketnet_network_simulator_reconfigure( simulator, &mutex, 0.0, 0.0, 0.0f, 0.0f );
     check( !rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+
     rocketnet_platform_mutex_acquire( &mutex );
     check( !rocketnet_network_simulator_take_setting( simulator, &mutex ) );
+
     rocketnet_platform_mutex_release( &mutex );
 
     rocketnet_platform_mutex_destroy( &mutex );
@@ -616,6 +705,7 @@ static void test_public_link_simulator_server_inactive_passes_straight_through()
     check( live_link_pair_connect( &pair ) );
 
     check( rocketnet_server_transport_network_simulator( pair.server, 0, 0, 0, 0 ) );
+
     uint8_t payload[4] = { 13, 14, 15, 16 };
     rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
     check( live_link_client_bytes_seen( &pair, 2 ) == (int) sizeof( payload ) );
@@ -649,7 +739,10 @@ static void test_public_link_simulator_revision_1_prefixes()
     check( rocketnet_client_transport_default_config_sized(
                (rocketnet_client_transport_config_t *) client.bytes, sizeof( client.bytes ) ) == 1 );
     for ( size_t i = 0; i < sizeof( client.guard ); i++ )
+    {
         check( client.guard[i] == 0xa5 );
+    }
+
     rocketnet_client_transport_config_t client_current;
     rocketnet_client_transport_default_config_current( &client_current );
     snprintf( client_current.transport, sizeof( client_current.transport ), "%s", "loopback" );
@@ -661,9 +754,13 @@ static void test_public_link_simulator_revision_1_prefixes()
         NULL, token, (const rocketnet_client_transport_config_t *) client.bytes,
         sizeof( client.bytes ), 1000.0 );
     check( client_transport != NULL );
+
     rn_test_client_transport_stop_and_destroy( client_transport );
+
     for ( size_t i = 0; i < sizeof( client.guard ); i++ )
+    {
         check( client.guard[i] == 0xa5 );
+    }
 #endif // #if ROCKETNET_DEV
 
     struct alignas( alignof( rocketnet_server_transport_config_t ) ) server_revision_1_t
@@ -675,7 +772,10 @@ static void test_public_link_simulator_revision_1_prefixes()
     check( rocketnet_server_transport_default_config_sized(
                (rocketnet_server_transport_config_t *) server.bytes, sizeof( server.bytes ) ) == 1 );
     for ( size_t i = 0; i < sizeof( server.guard ); i++ )
+    {
         check( server.guard[i] == 0x5a );
+    }
+
     rocketnet_server_transport_config_t server_current;
     rocketnet_server_transport_default_config_current( &server_current );
     server_current.max_clients = 1;
@@ -689,9 +789,13 @@ static void test_public_link_simulator_revision_1_prefixes()
         NULL, "127.0.0.1:0", (const rocketnet_server_transport_config_t *) server.bytes,
         sizeof( server.bytes ) );
     check( server_transport != NULL );
+
     rn_test_server_transport_stop_and_destroy( server_transport );
+
     for ( size_t i = 0; i < sizeof( server.guard ); i++ )
+    {
         check( server.guard[i] == 0x5a );
+    }
 }
 
 REGISTER_UNIT_TEST( test_public_link_simulator_revision_1_prefixes );

@@ -39,10 +39,10 @@
 
 #if defined( ROCKETNET_UNRELIABLE ) || defined( ROCKETNET_RELIABLE_ORDERED ) || defined( ROCKETNET_RECEIPT_ACKED ) || defined( ROCKETNET_MESSAGE_OK )
 #error "ruling 3: the reliability, receipt and update #defines are enums now"
-#endif
+#endif // #if defined( ROCKETNET_UNRELIABLE ) || defined( ROCKETNET_RELIABLE_ORDERED ) || defined( ROCKETNET_RECEIPT_ACKED ) || defined( ROCKETNET_MESSAGE_OK )
 #if defined( ROCKETNET_MESSAGE_ERROR_NONE ) || defined( ROCKETNET_ERROR_MESSAGE_NOT_RELEASED ) || defined( ROCKETNET_LOG_LEVEL_SPAM )
 #error "ruling 3 and 6: disconnect reasons, update results and log levels are enums now"
-#endif
+#endif // #if defined( ROCKETNET_MESSAGE_ERROR_NONE ) || defined( ROCKETNET_ERROR_MESSAGE_NOT_RELEASED ) || defined( ROCKETNET_LOG_LEVEL_SPAM )
 
 template <typename A, typename B> struct rn_same
 {
@@ -72,6 +72,7 @@ static_assert( rn_same<decltype( rocketnet_server_start( NULL ) ), rocketnet_sta
 static_assert( rn_same<decltype( &rocketnet_status_name ), const char * (*) ( rocketnet_status_t )>::value, "ruling 1 and 7: status_name takes the enum" );
 
 // the published development keys, set by hand after the defaults
+
 static void api_polish_dev_server_config( struct rocketnet_server_config_t * config )
 {
     check( rocketnet_server_default_config( config ) == ROCKETNET_STATUS_OK );
@@ -92,6 +93,7 @@ static void api_polish_free( void * context, void * p )
 
 // the worker process is initialized before a unit test runs: a second init
 // says why it refused, where the old bool said only false
+
 static void test_api_polish_status_returns()
 {
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
@@ -99,6 +101,7 @@ static void test_api_polish_status_returns()
     check( rocketnet_init( NULL, api_polish_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // a live allocation refuses term, with the reason, and nothing changes
+
     void * held = rocketnet_malloc( NULL, 64 );
     check( held != NULL );
     check( rocketnet_term() == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
@@ -108,6 +111,7 @@ static void test_api_polish_status_returns()
     uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint8_t secret_key[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_server_keypair( public_key, secret_key ) == ROCKETNET_STATUS_OK );
+
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
@@ -118,9 +122,11 @@ static void test_api_polish_status_returns()
     check( rocketnet_write_production_connect_token( backend_secret, public_key, 0x1234ULL, addresses, 1, 7, 1000, 2000, 10, NULL, token, sizeof( token ) - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 
     // the default config and create's status: OK is 0, where the old form's success was 1
+
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     check( client_config.config_bytes == sizeof( client_config ) );
+
     enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client != NULL );
@@ -130,13 +136,17 @@ static void test_api_polish_status_returns()
     create_status = ROCKETNET_TEST_STATUS_UNSET;
     check( rocketnet_client_create( NULL, &client_config, &create_status ) == NULL );
     check( create_status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+
     // a config never filled is refused by name
+
     client_config.config_bytes = 0;
     check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
+
     struct rocketnet_server_config_t server_config;
     api_polish_dev_server_config( &server_config );
     server_config.max_clients = 1; // This case checks status codes, not server capacity.
     create_status = ROCKETNET_TEST_STATUS_UNSET;
+
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
@@ -181,8 +191,10 @@ static_assert( rn_same<decltype( ( (rocketnet_client_testing_t *) 0 )->step_driv
 static void test_api_polish_bool_field_abi()
 {
     // the flag is a bool; send_kbps is an int
+
     check( sizeof( ( (rocketnet_client_testing_t *) 0 )->step_driven ) == sizeof( bool ) );
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->send_kbps ) == sizeof( int ) );
+
     struct rocketnet_client_test_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.step_driven == 0 );
@@ -206,6 +218,7 @@ static void api_polish_log_capture( void * context, rocketnet_log_level_t level,
     g_polish_calls++;
     g_polish_level = level;
     g_polish_context = context;
+
     const size_t n = length < sizeof( g_polish_message ) - 1 ? length : sizeof( g_polish_message ) - 1;
     memcpy( g_polish_message, message, n );
     g_polish_message[n] = '\0';
@@ -220,6 +233,7 @@ static void test_api_polish_log_callback_receives_a_message()
 {
     const rocketnet_log_level_t saved = rocketnet_log_level_current();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
     int context = 0;
     g_polish_calls = 0;
     rocketnet_log_function( api_polish_log_capture, &context );
@@ -231,6 +245,7 @@ static void test_api_polish_log_callback_receives_a_message()
     check( strcmp( g_polish_message, "polish 9" ) == 0 );
 
     // a level outside the enum is ignored; the one in force stays
+
     rocketnet_test_c_caller_log_level( 9 );
     check( rocketnet_log_level_current() == ROCKETNET_LOG_LEVEL_INFO );
     rocketnet_log_level( saved );
@@ -276,6 +291,7 @@ REGISTER_UNIT_TEST( test_api_polish_lookups_say_unknown );
 
 // A zero-filled receipt names NONE. Value 2 is reserved and is not a
 // disconnect reason. Every name lookup names every value of its enum.
+
 static void test_api_polish_zero_receipt_and_dense_reasons()
 {
     struct rocketnet_receipt_t receipt;
@@ -291,12 +307,15 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
         ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED,
     };
     const int reason_values[] = { 0, -1, -2, -3, -4, -5 };
+
     for ( int i = 0; i < (int) ( sizeof( reasons ) / sizeof( reasons[0] ) ); i++ )
     {
         check( (int) reasons[i] == reason_values[i] );
+
         const char * name = rocketnet_disconnect_reason_name( reasons[i] );
         check( name != NULL && name[0] != '\0' && strcmp( name, "UNKNOWN" ) != 0 );
     }
+
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
 
@@ -305,11 +324,13 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
     }
+
     for ( int level = (int) ROCKETNET_LOG_LEVEL_NONE; level <= (int) ROCKETNET_LOG_LEVEL_SPAM; level++ )
     {
         const char * name = rocketnet_log_level_name( (enum rocketnet_log_level_t) level );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
     }
+
     for ( int state = (int) ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED; state <= (int) ROCKETNET_CLIENT_STATE_CONNECTED; state++ )
     {
         const char * name = rocketnet_client_state_name( (enum rocketnet_client_state_t) state );
@@ -347,6 +368,7 @@ static void test_api_polish_null_client_state_is_disconnected()
 {
     static_assert( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED == -12, "dense: the last failure state is -12" );
     rocketnet_assert_function( api_polish_quiet_assert );
+
     const uint64_t before = rocketnet_api_misuse_count();
     check( rocketnet_client_state( NULL ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
     check( rocketnet_api_misuse_count() == before + 1 );
@@ -382,7 +404,10 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x5C ^ i );
+    }
+
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
@@ -393,6 +418,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     server_config.max_clients = 1;
     server_config.transport = "loopback";
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( server != NULL );
@@ -401,6 +427,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
 
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+
     const char * addresses[] = { address };
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rn_test_server_token_string( backend_secret, server, API_POLISH_INDEX_PROTOCOL, addresses, 1,
@@ -412,15 +439,18 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     client_config.step_driven = 1;
     client_config.time_callback = api_polish_index_clock;
     create_status = ROCKETNET_STATUS_OK;
+
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
     // before connect: no connection, index -1
+
     check( rocketnet_client_index( client ) == -1 );
     check( g_polish_asserts == 0 );
 
     // while connecting: the client holds no server slot yet; index -1, no assert
+
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_client_index( client ) == -1 );
@@ -433,18 +463,23 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
         rocketnet_server_update( server, g_polish_index_now );
         rocketnet_server_send_packets( server );
         if ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED )
+        {
             check( rocketnet_client_index( client ) == -1 );
+        }
         g_polish_index_now += 0.01;
     }
+
     check( g_polish_asserts == 0 );
 
     // connected: the index is the server slot the client holds
+
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_client_index( client ) == 0 );
     check( rocketnet_server_client_connected( server, 0 ) );
     check( g_polish_asserts == 0 );
 
     // disconnected again: -1
+
     rocketnet_client_disconnect( client );
     rn_test_client_wait_disconnected( client );
     check( rocketnet_client_index( client ) == -1 );
@@ -464,6 +499,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
     rocketnet_server_config_t config;
     api_polish_dev_server_config( &config );
     config.max_clients = 16;
+
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, &create_status );
     check( server != NULL );
@@ -471,6 +507,7 @@ static void test_api_polish_server_abort_message_without_start_is_a_no_op()
 
     rocketnet_assert_function( api_polish_count_assert );
     g_polish_asserts = 0;
+
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_server_abort_message( server );
     check( rocketnet_api_misuse_count() == before );
@@ -490,11 +527,13 @@ REGISTER_UNIT_TEST( test_api_polish_server_abort_message_without_start_is_a_no_o
 // a timeout of zero or below (t13.2: a production server refuses both), and an
 // expire stamp at or before the create stamp (the token is already expired when
 // it is made), are refused with INVALID_ARGUMENT and the output is untouched
+
 static void test_api_polish_production_token_refuses_dead_tokens()
 {
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     uint8_t server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
     check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
+
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
     check( rocketnet_generate_backend_keypair( backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
@@ -516,6 +555,7 @@ static void test_api_polish_production_token_refuses_dead_tokens()
     };
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+
     for ( size_t i = 0; i < sizeof( cases ) / sizeof( cases[0] ); i++ )
     {
         memset( token, 0xA5, sizeof( token ) );
@@ -523,10 +563,13 @@ static void test_api_polish_production_token_refuses_dead_tokens()
                                                          create, cases[i].expire, cases[i].timeout_seconds, NULL,
                                                          token, sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
         for ( size_t j = 0; j < sizeof( token ); j++ )
+        {
             check( token[j] == 0xA5 );
+        }
     }
 
     // the smallest live token still mints
+
     check( rocketnet_write_production_connect_token( backend_secret, server_public, 0x1234ULL, addresses, 1, 7,
                                                      create, create + 1, 1, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 }

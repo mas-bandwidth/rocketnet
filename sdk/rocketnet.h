@@ -43,7 +43,7 @@
     /// The SDK version as text. Development builds use "dev" and 255 for each
     /// numeric component.
 
-#define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-2"
+#define ROCKETNET_VERSION_FULL                    "v1.0.0-preview-3"
 
     /// The major component of the SDK version.
 
@@ -899,6 +899,8 @@ struct rocketnet_server_t;
 /// Returns the version this library was built with. Compare it with
 /// ROCKETNET_VERSION to detect a header and library mismatch.
 /// This function works before init.
+///
+/// @return The library's ROCKETNET_VERSION value.
 
 ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 
@@ -955,6 +957,7 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_term( void );
 /// It works before init, and its strings last for the process.
 ///
 /// @param status The status to name.
+/// @return The status name, or "UNKNOWN". Never NULL.
 
 ROCKETNET_EXPORT const char * rocketnet_status_name( enum rocketnet_status_t status );
 
@@ -1010,6 +1013,7 @@ ROCKETNET_EXPORT void rocketnet_thread_priority( bool enabled );
 /// Use this to format a level like the default log sink.
 ///
 /// @param level The level to name.
+/// @return The level name, or "UNKNOWN". Never NULL.
 
 ROCKETNET_EXPORT const char * rocketnet_log_level_name( enum rocketnet_log_level_t level );
 
@@ -1456,6 +1460,16 @@ struct rocketnet_server_config_t
     /// notification copies rather than exceeding this allowance.
 
     int disconnect_packets_per_update;
+
+    /// ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE sets the handshake work budget:
+    /// the most connection requests with a valid cookie the server processes
+    /// in one update, each one signature verification and, for a valid token,
+    /// the key exchange. Range is 1 .. 1024. Default is 16. A request past it
+    /// is dropped unanswered and counted in handshakes_dropped_over_budget;
+    /// the client sends it again and a later update processes it, so a mass
+    /// join or a flood of requests spreads across updates.
+
+    int handshakes_per_update;
 };
 
 /// Messages
@@ -1567,6 +1581,11 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 /// Fills the light profile within config_bytes and leaves config_bytes
 /// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
 /// is too small. Use rocketnet_client_light_config to initialize a config.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config );
 
@@ -2121,6 +2140,11 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 /// Fills the light profile within config_bytes and leaves config_bytes
 /// unchanged. Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size
 /// is too small. Use rocketnet_server_light_config to initialize a config.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config );
 
@@ -2416,6 +2440,32 @@ ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_
 /// @return The client ID, or 0.
 
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
+
+/// Copies the user data from the slot's connect token into user_data.
+///
+/// The bytes are the ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES the backend put
+/// in the token, exactly as signed. They are readable from the moment the slot
+/// connects, the same moment rocketnet_server_client_id reads the token's
+/// client ID, until the slot is released: a disconnect, a timeout, or the
+/// server stopping. Release wipes the server's copy, so a later read of the
+/// slot writes zeros, and a new client in the slot reads its own token's
+/// bytes. The copy written here is the caller's to keep.
+///
+/// Callable running or stopped. A slot without a connected client, and any
+/// slot while stopped, writes zeros and returns false; that is not misuse.
+/// Thread: not thread-safe; the caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse, zeroes user_data and
+/// returns false.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse, zeroes user_data and returns false.
+/// @param user_data The output buffer of
+/// ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES. NULL counts as API misuse and
+/// writes nothing.
+/// @return True if the slot holds a connected client and its user data was
+/// copied.
+
+ROCKETNET_EXPORT bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data );
 
 /// Disconnects a client and frees its slot.
 ///

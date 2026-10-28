@@ -272,4 +272,4 @@ static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_
     *count = marks->mark_count;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H
+#endif // ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H

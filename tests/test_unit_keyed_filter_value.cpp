@@ -67,7 +67,9 @@ static void check_golden( const uint8_t * key, const keyed_filter_golden_t * vec
 static void test_keyed_filter_value_known_answers()
 {
     for ( size_t i = 0; i < sizeof( golden ) / sizeof( golden[0] ); ++i )
+    {
         check_golden( magic, &golden[i], golden[i].four_bytes );
+    }
     check_golden( alternate_magic, &alternate_magic_golden, alternate_magic_golden.four_bytes );
 }
 
@@ -78,21 +80,25 @@ static void test_keyed_filter_value_inputs_are_the_standards()
     // Exercise unaligned four-byte inputs at several offsets. The two buffers
     // differ after those four bytes; each call must still match the immutable
     // oracle for the same standard-defined seven-byte input.
+
     uint8_t buf_a[12] = { 0 };
     uint8_t buf_b[12] = { 0 };
     memcpy( buf_a + 3, base->four_bytes, 4 );
     memcpy( buf_b + 3, base->four_bytes, 4 );
+
     for ( size_t i = 7; i < sizeof( buf_a ); ++i )
     {
         buf_a[i] = (uint8_t) i;
         buf_b[i] = (uint8_t) ( 0xffu - (unsigned) i );
     }
+
     for ( size_t offset = 0; offset < 3; ++offset )
     {
         uint8_t storage[7] = { 0 };
         memcpy( storage + offset, base->four_bytes, 4 );
         check_golden( magic, base, storage + offset );
     }
+
     check_golden( magic, base, buf_a + 3 );
     check_golden( magic, base, buf_b + 3 );
 }

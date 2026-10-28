@@ -53,7 +53,10 @@ static void fair_identity( fair_identity_t * identity )
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x5A ^ i );
+    }
+
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
 }
@@ -62,6 +65,7 @@ static void fair_message_config( rocketnet_server_config_t * server, rocketnet_c
 {
     // the queues hold one reliable and one unreliable message for every data
     // tick, both directions, without a refusal
+
     if ( server )
     {
         server->send_message_buffer_bytes = 4 * 1024 * 1024;
@@ -69,6 +73,7 @@ static void fair_message_config( rocketnet_server_config_t * server, rocketnet_c
         server->reliable_messages_in_flight = 4096;
         server->packets_in_flight = 4096;            // the sent map holds the window
     }
+
     if ( client )
     {
         client->send_message_buffer_bytes = 4 * 1024 * 1024;
@@ -99,11 +104,13 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
 
     rocketnet_server_config_t server_config;
     check( rocketnet_server_default_config( &server_config ) == ROCKETNET_STATUS_OK );
+
     server_config.protocol_id = FAIR_PROTOCOL;
     server_config.max_clients = max_clients;
     memcpy( server_config.backend_public_key, world->identity.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
     fair_message_config( &server_config, NULL );
+
     if ( max_clients >= 256 )
     {
         server_config.send_message_buffer_bytes = 12288;
@@ -113,10 +120,13 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     }
 
     rocketnet_server_transport_set_create_send_capacity_for_test( capacity );
+
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     world->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
     check( world->server != NULL );
+
     rocketnet_server_public_key( world->server, world->identity.server_public );
+
     check( create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
     check( rocketnet_server_running( world->server ) == 1 );
@@ -125,15 +135,18 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     {
         rocketnet_client_test_config_t client_config;
         check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+
         client_config.transport = "loopback";
         client_config.step_driven = true;
         client_config.time_callback = fair_clock;
         fair_message_config( NULL, &client_config );
+
         if ( max_clients >= 256 )
         {
             client_config.reliable_messages_in_flight = 64;
             client_config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
         }
+
         create_status = ROCKETNET_STATUS_OK;
         world->clients[i] = rocketnet_client_create( NULL, &client_config, &create_status );
         check( world->clients[i] != NULL );
@@ -144,7 +157,10 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
 static void fair_world_destroy( fair_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
+    {
         rn_test_client_stop_and_destroy( world->clients[i] );
+    }
+
     rn_test_server_stop_and_destroy( world->server );
 }
 
@@ -164,13 +180,17 @@ static void fair_update_clients( fair_world_t * world )
 {
     fair_now = world->time;
     for ( int i = 0; i < world->num_clients; i++ )
+    {
         rocketnet_client_update( world->clients[i], world->time );
+    }
 }
 
 static void fair_send_clients( fair_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
+    {
         rocketnet_client_send_packets( world->clients[i] );
+    }
 }
 
 static void fair_server_update( fair_world_t * world )
@@ -191,7 +211,9 @@ static void fair_connect( fair_world_t * world, int client, uint64_t client_id )
         rocketnet_server_send_packets( world->server );
         world->time += FAIR_DT;
     }
+
     check( rocketnet_client_state( world->clients[client] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
     world->server_index[client] = rocketnet_client_index( world->clients[client] );
     for ( int step = 0; step < 400 && !rocketnet_server_client_connected( world->server, world->server_index[client] ); step++ )
     {
@@ -201,6 +223,7 @@ static void fair_connect( fair_world_t * world, int client, uint64_t client_id )
         rocketnet_server_send_packets( world->server );
         world->time += FAIR_DT;
     }
+
     check( rocketnet_server_client_connected( world->server, world->server_index[client] ) != 0 );
 }
 
@@ -212,6 +235,7 @@ static uint32_t fair_client_send( fair_world_t * world, int client, int channel,
         return 0;
     out[0] = (uint8_t) ( value >> 8 );
     out[1] = (uint8_t) value;
+
     return rocketnet_client_finish_message( world->clients[client], 2 );
 }
 
@@ -223,6 +247,7 @@ static uint32_t fair_server_send( fair_world_t * world, int client, int channel,
         return 0;
     out[0] = (uint8_t) ( value >> 8 );
     out[1] = (uint8_t) value;
+
     return rocketnet_server_finish_message( world->server, 2 );
 }
 
@@ -231,7 +256,9 @@ static void fair_run_case( int num_clients, int capacity = 1 )
     fair_world_t world;
     fair_world_create( &world, num_clients, capacity );
     for ( int i = 0; i < num_clients; i++ )
+    {
         fair_connect( &world, i, 0x9000 + (uint64_t) i );
+    }
 
     int server_reliable[FAIR_MAX_CLIENTS];
     int server_unreliable[FAIR_MAX_CLIENTS];
@@ -242,8 +269,11 @@ static void fair_run_case( int num_clients, int capacity = 1 )
     memset( server_unreliable, 0, sizeof( server_unreliable ) );
     memset( client_reliable, 0, sizeof( client_reliable ) );
     memset( client_unreliable, 0, sizeof( client_unreliable ) );
+
     for ( int c = 0; c < num_clients; c++ )
+    {
         last_reliable_tick[c] = -1;
+    }
 
     for ( int tick = 0; tick < FAIR_DATA_TICKS + FAIR_DRAIN_TICKS; tick++ )
     {
@@ -259,9 +289,11 @@ static void fair_run_case( int num_clients, int capacity = 1 )
                     if ( batch->channel[i] == FAIR_CHANNEL_RELIABLE )
                     {
                         check( batch->bytes[i] == 2 );
+
                         const uint8_t * data = batch->data[i];
                         const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
                         check( value == (uint16_t) client_reliable[c] );
+
                         client_reliable[c]++;
                         last_reliable_tick[c] = tick;
                     }
@@ -276,6 +308,7 @@ static void fair_run_case( int num_clients, int capacity = 1 )
         // With N clients and capacity K, one-frame rounds serve each client
         // within ceil(N/K) ticks, even when each client has multiple packets
         // due. Allow the first rotation to reach every client.
+
         if ( tick >= num_clients && tick < FAIR_DATA_TICKS )
         {
             for ( int c = 0; c < num_clients; c++ )
@@ -293,6 +326,7 @@ static void fair_run_case( int num_clients, int capacity = 1 )
                 check( fair_client_send( &world, c, FAIR_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, (uint16_t) tick ) != 0 );
             }
         }
+
         fair_send_clients( &world );
         fair_server_update( &world );
 
@@ -304,14 +338,20 @@ static void fair_run_case( int num_clients, int capacity = 1 )
                 {
                     int c = 0;
                     while ( c < num_clients && world.server_index[c] != batch->client_index[i] )
+                    {
                         c++;
+                    }
+
                     check( c < num_clients );
+
                     if ( batch->channel[i] == FAIR_CHANNEL_RELIABLE )
                     {
                         check( batch->bytes[i] == 2 );
+
                         const uint8_t * data = batch->data[i];
                         const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
                         check( value == (uint16_t) server_reliable[c] );
+
                         server_reliable[c]++;
                     }
                     else if ( batch->channel[i] == FAIR_CHANNEL_UNRELIABLE )
@@ -321,22 +361,27 @@ static void fair_run_case( int num_clients, int capacity = 1 )
                 }
             }
         }
+
         if ( tick < FAIR_DATA_TICKS )
         {
             for ( int c = 0; c < num_clients; c++ )
             {
                 // Queue unreliable first to exercise in-place admission before
                 // the reliable work for this tick is visible.
+
                 check( fair_server_send( &world, c, FAIR_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, (uint16_t) tick ) != 0 );
                 check( fair_server_send( &world, c, FAIR_CHANNEL_RELIABLE, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, (uint16_t) tick ) != 0 );
             }
         }
+
         rocketnet_server_send_packets( world.server );
         world.time += FAIR_DT;
     }
 
     // one last client update delivers the final server send
+
     fair_update_clients( &world );
+
     for ( int c = 0; c < num_clients; c++ )
     {
         const struct rocketnet_message_batch_t * batch = NULL;
@@ -347,9 +392,11 @@ static void fair_run_case( int num_clients, int capacity = 1 )
                 if ( batch->channel[i] != FAIR_CHANNEL_RELIABLE )
                     continue;
                 check( batch->bytes[i] == 2 );
+
                 const uint8_t * data = batch->data[i];
                 const uint16_t value = (uint16_t) ( ( data[0] << 8 ) | data[1] );
                 check( value == (uint16_t) client_reliable[c] );
+
                 client_reliable[c]++;
             }
         }
@@ -363,23 +410,43 @@ static void fair_run_case( int num_clients, int capacity = 1 )
              server_reliable[c] != FAIR_DATA_TICKS || client_reliable[c] != FAIR_DATA_TICKS )
             ok = false;
     }
+
     if ( !ok )
     {
         printf( "cap %d, %d clients: connected", capacity, num_clients );
         for ( int c = 0; c < num_clients; c++ )
+        {
             printf( " [%d]=%d", c, rocketnet_client_state( world.clients[c] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+        }
+
         printf( " server_reliable" );
+
         for ( int c = 0; c < num_clients; c++ )
+        {
             printf( " [%d]=%d", c, server_reliable[c] );
+        }
+
         printf( " client_reliable" );
+
         for ( int c = 0; c < num_clients; c++ )
+        {
             printf( " [%d]=%d", c, client_reliable[c] );
+        }
+
         printf( " server_unreliable" );
+
         for ( int c = 0; c < num_clients; c++ )
+        {
             printf( " [%d]=%d", c, server_unreliable[c] );
+        }
+
         printf( " client_unreliable" );
+
         for ( int c = 0; c < num_clients; c++ )
+        {
             printf( " [%d]=%d", c, client_unreliable[c] );
+        }
+
         printf( "\n" );
         fflush( stdout );
     }
@@ -419,20 +486,30 @@ static void test_server_send_cap_two_multi_packet_service()
 {
     fair_world_t world;
     fair_world_create( &world, 3, 2 );
+
     for ( int c = 0; c < 3; c++ )
+    {
         fair_connect( &world, c, 0x9200 + (uint64_t) c );
+    }
+
     int last_service[3] = { -1, -1, -1 };
+
     for ( int tick = 0; tick < 24; tick++ )
     {
         fair_update_clients( &world );
+
         for ( int c = 0; c < 3; c++ )
         {
             const struct rocketnet_message_batch_t * batch = NULL;
             while ( ( batch = rocketnet_client_receive_messages( world.clients[c] ) ) != NULL )
+            {
                 ;
+            }
         }
+
         fair_send_clients( &world );
         fair_server_update( &world );
+
         uint64_t before[3];
         for ( int c = 0; c < 3; c++ )
         {
@@ -440,19 +517,30 @@ static void test_server_send_cap_two_multi_packet_service()
             uint8_t * out = rocketnet_server_start_message( world.server, (uint64_t) world.server_index[c], FAIR_CHANNEL_RELIABLE,
                                                             ROCKETNET_RELIABILITY_RELIABLE_ORDERED, 3000 );
             check( out != NULL );
+
             memset( out, tick, 3000 );
+
             check( rocketnet_server_finish_message( world.server, 3000 ) != 0 );
         }
+
         rocketnet_server_send_packets( world.server );
+
         for ( int c = 0; c < 3; c++ )
         {
             if ( rn_server_client_stats_of( world.server, world.server_index[c] ).packets_sent > before[c] )
+            {
                 last_service[c] = tick;
+            }
+
             if ( tick >= 1 )
+            {
                 check( tick - last_service[c] < 2 );
+            }
         }
+
         world.time += FAIR_DT;
     }
+
     fair_world_destroy( &world );
 }
 
@@ -461,9 +549,11 @@ REGISTER_UNIT_TEST( test_server_send_cap_two_multi_packet_service );
 static void test_server_send_capacity_spare_slots_keep_in_place()
 {
     fair_world_t world;
+
     // Keep fewer connected clients than configured clients: surplus is measured
     // against the one connected client, not the four configured slots. Four
     // send slots preserve that distinction without reserving 256 clients.
+
     fair_world_create( &world, 1, 4, 4 );
     fair_connect( &world, 0, 0x9100 );
     fair_update_clients( &world );
@@ -473,6 +563,7 @@ static void test_server_send_capacity_spare_slots_keep_in_place()
     const uint64_t before = rocketnet_counter_value( rocketnet_message_server_counters( messages ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK );
     check( fair_server_send( &world, 0, FAIR_CHANNEL_UNRELIABLE, ROCKETNET_RELIABILITY_UNRELIABLE, 1 ) != 0 );
     check( rocketnet_counter_value( rocketnet_message_server_counters( messages ), ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK ) == before );
+
     fair_world_destroy( &world );
 }
 
@@ -506,9 +597,11 @@ static long send_capacity_default_rss_bound_mb()
 {
     rocketnet_server_transport_config_t config;
     send_capacity_default_config( &config );
+
     rocketnet_server_memory_plan_t plan;
     if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
         return 0;
+
     const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
     return suite_rss_bound_mb( plan.total_bytes + endpoint, 32 );
 }
@@ -522,13 +615,16 @@ static void test_server_send_capacity_default_covers_clients()
 {
     rocketnet_server_transport_config_t config;
     send_capacity_default_config( &config );
+
     uint8_t backend_secret_key[64];
     check( rocketnet_generate_backend_keypair( config.backend_public_key, backend_secret_key ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( config.server_public_key, config.server_secret_key ) == ROCKETNET_STATUS_OK );
+
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     struct rocketnet_server_transport_t * transport = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
     check( transport != NULL );
     check( rocketnet_server_transport_send_capacity( transport ) >= config.max_clients );
+
     rn_test_server_transport_stop_and_destroy( transport );
 }
 

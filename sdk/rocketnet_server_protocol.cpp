@@ -554,12 +554,14 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     // the handshake budget check: after the cookie validates, count and cap
-    // post-cookie handshakes per update, per server. requests beyond the
-    // budget are dropped before any asymmetric work runs and counted, so a
-    // flood of staged attempts cannot spend the whole update on signature
-    // verification.
+    // post-cookie handshakes per update, per server, at the configured
+    // handshakes_per_update. requests beyond the budget are dropped before
+    // any asymmetric work runs and counted, so a flood of staged attempts
+    // cannot spend the whole update on signature verification; a dropped
+    // client's next request is processed in a later update
+    // (tla/RNSecurityTables.tla HonestRequest).
 
-    if ( server->counters->handshakes_processed_this_update >= ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE )
+    if ( server->counters->handshakes_processed_this_update >= (uint64_t) server->handshakes_per_update )
     {
         rocketnet_debug( "server dropped connection request. handshake budget exceeded" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED]++;
@@ -653,6 +655,9 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     }
 
     struct rocketnet_connect_token_private_t private_data;
+    // a sealed block that does not open is a refusal past the verify: the
+    // claim just recorded is released (tla/RNSecurityTables.tla RequestRefused)
+
     if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server->server_public_key, server->server_secret_key ) )
     {
         rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );
@@ -673,7 +678,9 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     sodium_memzero( &private_data, sizeof( private_data ) );
 
     // Only a live mapping retains the request claim. Every refusal, including
-    // a sealed denial, releases it immediately instead of waiting for expiry.
+    // a sealed denial, releases it immediately instead of waiting for expiry
+    // (tla/RNSecurityTables.tla RequestRefused: the claim recorded past the
+    // verify is released in the same step and no mapping is made).
 
     if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
         rocketnet_used_token_history_claim_release( server->used_token_history, token_identifier, from );

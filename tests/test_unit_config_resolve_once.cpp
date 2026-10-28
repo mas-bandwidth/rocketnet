@@ -63,7 +63,9 @@ static void resolve_once_identity( resolve_once_identity_t * identity )
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x3C ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
 }
 
@@ -77,12 +79,15 @@ static void resolve_once_server_config( rocketnet_server_config_t * config, cons
 }
 
 // a token for client_id sealed to the running server's own key
+
 static void resolve_once_token( const rocketnet_server_t * server, const resolve_once_identity_t * identity, uint64_t client_id, char * token_string )
 {
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, server_public );
+
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( server ) );
+
     const char * addresses[] = { address };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
@@ -111,6 +116,7 @@ static void resolve_once_pump( rocketnet_server_t * server, rocketnet_client_t *
             rocketnet_client_update( clients[i], resolve_once_now );
             rocketnet_client_send_packets( clients[i] );
         }
+
         rocketnet_server_update( server, resolve_once_now );
         rocketnet_server_send_packets( server );
         resolve_once_now += 0.01;
@@ -120,15 +126,18 @@ static void resolve_once_pump( rocketnet_server_t * server, rocketnet_client_t *
 // A 1-client server is created; ROCKETNET_SERVER_MAX_CLIENTS=2 is set before
 // start. The started server is the one create sized: one slot, so the second
 // client is denied and never connects.
+
 static void test_config_server_env_changed_after_create_has_no_effect()
 {
     rocketnet_quiet( 1 );
+
     resolve_once_identity_t identity;
     resolve_once_identity( &identity );
     resolve_once_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
 
     rocketnet_server_config_t server_config;
     resolve_once_server_config( &server_config, &identity, 1 );
+
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
     check( rocketnet_server_max_clients( server ) == 1 );
@@ -138,27 +147,34 @@ static void test_config_server_env_changed_after_create_has_no_effect()
     check( rocketnet_server_max_clients( server ) == 1 );
 
     rocketnet_client_t * clients[2] = { NULL, NULL };
+
     for ( int i = 0; i < 2; i++ )
     {
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         resolve_once_token( server, &identity, 0x1000 + (uint64_t) i, token );
+
         rocketnet_client_test_config_t client_config;
         resolve_once_client_config( &client_config );
         clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
         check( clients[i] != NULL );
         check( rocketnet_client_connect( clients[i], token ) == ROCKETNET_STATUS_OK );
+
         int connected_at = -1;
         for ( int step = 0; step < 400 && connected_at < 0; step++ )
         {
             resolve_once_pump( server, clients, i + 1, 1 );
             if ( rocketnet_client_state( clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED || rocketnet_client_state( clients[i] ) < 0 )
+            {
                 connected_at = step;
+            }
         }
     }
+
     resolve_once_pump( server, clients, 2, 50 );
 
     check( rocketnet_client_state( clients[0] ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_client_state( clients[1] ) != ROCKETNET_CLIENT_STATE_CONNECTED );
+
     struct rocketnet_server_stats_t stats;
     rocketnet_server_stats( server, &stats );
     check( stats.connections_accepted == 1 );
@@ -166,7 +182,9 @@ static void test_config_server_env_changed_after_create_has_no_effect()
 
     resolve_once_unsetenv( "ROCKETNET_SERVER_MAX_CLIENTS" );
     for ( int i = 0; i < 2; i++ )
+    {
         rn_test_client_stop_and_destroy( clients[i] );
+    }
     rn_test_server_stop_and_destroy( server );
     rocketnet_quiet( 0 );
 }
@@ -175,11 +193,14 @@ REGISTER_UNIT_TEST( test_config_server_env_changed_after_create_has_no_effect );
 // Both endpoints take filter A from the environment at create; the client's
 // variable then changes to filter B before connect. The client connects with
 // the filter it was created with, A, and reaches the server.
+
 static void test_config_client_env_changed_after_create_has_no_effect()
 {
     rocketnet_quiet( 1 );
+
     resolve_once_identity_t identity;
     resolve_once_identity( &identity );
+
     char filter_a[16];
     char filter_b[16];
     resolve_once_filter_text( resolve_once_filter_a, filter_a, sizeof( filter_a ) );
@@ -189,21 +210,26 @@ static void test_config_client_env_changed_after_create_has_no_effect()
 
     rocketnet_server_config_t server_config;
     resolve_once_server_config( &server_config, &identity, 1 );
+
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_test_config_t client_config;
     resolve_once_client_config( &client_config );
+
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     check( client != NULL );
 
     resolve_once_setenv( "ROCKETNET_CLIENT_PACKET_FILTER", filter_b );
+
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     resolve_once_token( server, &identity, 0x2000, token );
     check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_OK );
     for ( int step = 0; step < 400 && rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED; step++ )
+    {
         resolve_once_pump( server, &client, 1, 1 );
+    }
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_server_client_connected( server, 0 ) != 0 );
 
@@ -217,19 +243,24 @@ REGISTER_UNIT_TEST( test_config_client_env_changed_after_create_has_no_effect );
 
 // An invalid transport list set only through the environment is refused at
 // create, as the same list in the struct is, never first at connect.
+
 static void test_config_client_env_transport_refused_at_create()
 {
     rocketnet_quiet( 1 );
     resolve_once_setenv( "ROCKETNET_CLIENT_TRANSPORT", "no-such-transport" );
+
     rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     config.transport = "loopback";
+
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );
     check( client == NULL );
     check( status == ROCKETNET_STATUS_INVALID_TRANSPORT_LIST );
     if ( client )
+    {
         rocketnet_client_destroy( client );
+    }
     resolve_once_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     rocketnet_quiet( 0 );
 }
@@ -256,23 +287,29 @@ static void config_ladder_max_assert_hook( const char *, const char *, const cha
 static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
 {
     rocketnet_quiet( 1 );
+
     const int num_available = ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1;
     int available[ROCKETNET_MAX_TRANSPORT_CANDIDATES + 1];
     for ( int i = 0; i < num_available; i++ )
+    {
         available[i] = ROCKETNET_TRANSPORT_PORTABLE;
+    }
     check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, true ) );
     check( !rocketnet_transport_pin_only( ROCKETNET_TRANSPORT_PORTABLE, false ) );
 
     // a by-value sibling so a write past candidates is visible: parse clears
-    // only the ladder, and every canary byte must survive it.
+    // only the ladder, and every canary byte must survive it
+
     struct
     {
         struct rocketnet_transport_ladder_t ladder;
         uint8_t canary[32];
     } guarded;
+
     const char * const values[2] = { "auto", NULL };
     config_ladder_max_assertions = 0;
     rocketnet_assert_function( config_ladder_max_assert_hook );
+
     for ( int v = 0; v < 2; v++ )
     {
         for ( int server = 0; server < 2; server++ )
@@ -280,24 +317,30 @@ static void test_config_transport_ladder_auto_refuses_more_than_max_candidates()
             memset( &guarded, 0xA5, sizeof( guarded ) );
 #if ROCKETNET_ASSERTS
             const int assertions_before_parse = config_ladder_max_assertions;
-#endif
+#endif // #if ROCKETNET_ASSERTS
             check( !rocketnet_transport_ladder_parse( values[v], available, num_available, &guarded.ladder, server != 0 ) );
 #if ROCKETNET_ASSERTS
             check( config_ladder_max_assertions == assertions_before_parse + 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
             check( guarded.ladder.num_candidates >= 0 );
             check( guarded.ladder.num_candidates <= ROCKETNET_MAX_TRANSPORT_CANDIDATES );
             for ( int i = 0; i < guarded.ladder.num_candidates; i++ )
+            {
                 check( guarded.ladder.candidates[i] == ROCKETNET_TRANSPORT_PORTABLE );
+            }
             for ( size_t i = 0; i < sizeof( guarded.canary ); i++ )
+            {
                 check( guarded.canary[i] == 0xA5 );
+            }
         }
     }
+
     rocketnet_assert_function( NULL );
 #if ROCKETNET_ASSERTS
-    // Two values times two roles; each parse checks the same refusal once.
+    // two values times two roles; each parse checks the same refusal once
+
     check( config_ladder_max_assertions == 4 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_quiet( 0 );
 }
 REGISTER_UNIT_TEST( test_config_transport_ladder_auto_refuses_more_than_max_candidates );

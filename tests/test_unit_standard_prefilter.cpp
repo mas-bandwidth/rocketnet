@@ -37,6 +37,7 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     {
         if ( capacity < ROCKETNET_PREFILTER_BYTES )
             return -1;
+
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, test_value );
         rocketnet_unit_check( rocketnet_prefilter_check( out, ROCKETNET_PREFILTER_BYTES, test_value ) == ROCKETNET_CONNECTION_PAYLOAD_PACKET );
@@ -48,6 +49,7 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
         if ( capacity < ROCKETNET_PREFILTER_BYTES - 1 )
             return -1;
         standard_prefilter_write_value( out, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_FILTER_EPOCH_UNKEYED, test_value );
+
         const int bytes = ROCKETNET_PREFILTER_BYTES - 1;
         rocketnet_unit_check( rocketnet_prefilter_check( out, bytes, test_value ) == ROCKETNET_PREFILTER_TOO_SHORT );
         return bytes;
@@ -60,6 +62,7 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
         memset( long_packet, 0, sizeof( long_packet ) );
         standard_prefilter_write_value( long_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET, ROCKETNET_FILTER_EPOCH_UNKEYED, test_value );
         rocketnet_unit_check( rocketnet_prefilter_check( long_packet, STANDARD_PREFILTER_LONG_BYTES, test_value ) == ROCKETNET_PREFILTER_TOO_LARGE );
+
         memcpy( out, long_packet, STANDARD_PREFILTER_LONG_BYTES );
         return STANDARD_PREFILTER_LONG_BYTES;
     }
@@ -77,9 +80,11 @@ static int standard_prefilter_generate( const char * id, uint8_t * out, int capa
     {
         if ( capacity < ROCKETNET_PREFILTER_BYTES )
             return -1;
+
         static const uint8_t zero_value[ROCKETNET_FILTER_VALUE_BYTES] = { 0, 0, 0, 0 };
         uint8_t * p = out;
         rocketnet_write_prefilter_header( &p, ROCKETNET_CONNECTION_PAYLOAD_PACKET, zero_value );
+
         rocketnet_unit_check( rocketnet_prefilter_check( out, ROCKETNET_PREFILTER_BYTES, test_value ) == ROCKETNET_PREFILTER_WRONG_VALUE );
         return ROCKETNET_PREFILTER_BYTES;
     }
@@ -147,11 +152,13 @@ static void test_standard_prefilter_vectors()
     rocketnet_unit_check( rn_standard_vectors_walk( standard_prefilter_table, count, standard_prefilter_generate ) == count );
 
     // the walk's own refusals, as every vector file checks them
+
     const uint8_t a[3] = { 1, 2, 3 };
     const uint8_t b[3] = { 1, 9, 3 };
     rocketnet_unit_check( rn_standard_first_difference( a, 3, a, 3 ) == -1 );
     rocketnet_unit_check( rn_standard_first_difference( a, 3, b, 3 ) == 1 );
     rocketnet_unit_check( rn_standard_first_difference( a, 3, a, 2 ) == 2 );
+
     uint8_t scratch[2];
     rocketnet_unit_check( rn_standard_hex_decode( "0g", scratch, 2 ) == -1 );
     rocketnet_unit_check( rn_standard_hex_decode( "012", scratch, 2 ) == -1 );

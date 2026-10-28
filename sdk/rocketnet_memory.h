@@ -165,4 +165,4 @@ inline void rocketnet_zero_except( void * storage, size_t bytes, const rocketnet
         memset( base + at, 0, bytes - at );
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_MEMORY_H
+#endif // ROCKETNET_SDK_ROCKETNET_MEMORY_H

@@ -481,6 +481,17 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     return client;
 }
 
+// the family race's losing family, on the reading thread (tla/RNClientRace.tla
+// ReaderStep): the wake's handle, then the socket's; the memory stays for
+// destroy on the caller's thread
+
+static void rocketnet_client_gso_close( void * transport )
+{
+    rocketnet_client_gso_io_t * client = (rocketnet_client_gso_io_t *) transport;
+    rocketnet_platform_wake_close( client->wake );
+    rocketnet_platform_socket_close( client->socket );
+}
+
 // RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the transport joins
 // the I/O thread before closing the transport, so the wake goes, then the socket.
 
@@ -581,7 +592,7 @@ static bool rocketnet_client_gso_connect( void * transport, const rocketnet_addr
 const rocketnet_client_transport_io_operations_t rocketnet_client_gso_operations = {
     rocketnet_client_gso_create, rocketnet_client_gso_destroy, rocketnet_client_gso_send, rocketnet_client_gso_receive,
     rocketnet_client_gso_send_batch_operation, rocketnet_client_gso_receive_batch_operation, rocketnet_client_gso_wait, rocketnet_client_gso_wake,
-    rocketnet_client_gso_send_failures, rocketnet_client_gso_connect
+    rocketnet_client_gso_send_failures, rocketnet_client_gso_connect, rocketnet_client_gso_close
 };
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

@@ -618,12 +618,16 @@ static inline void rocketnet_client_link_flush( rocketnet_client_transport_t * t
 // A late answer from the other family that was already read fails the
 // source check and is counted as a foreign source.
 //
-// Threads. The caller's thread commits (in update) and is the only thread
-// that sends to a server address it reads from the protocol; the reading
-// thread (the I/O thread, the legacy worker, or the caller's own step)
-// closes the losing socket only after it observes the commit, and the caller
-// touches only the kept family once it committed. No lock: one release
-// store, read with acquire.
+// Threads (tla/RNClientRace.tla). The caller's thread commits (in update)
+// and is the only thread that sends to a server address it reads from the
+// protocol; the reading thread (the I/O thread, the legacy worker, or the
+// caller's own step) closes the losing family's operating-system handles
+// only after it observes the commit, and the caller touches only the kept
+// family once it committed. No lock: one release store, read with acquire.
+// The reading thread frees nothing: the losing family's memory, like the
+// kept family's, is freed by the caller's thread when the transport is
+// destroyed, after the reading thread is joined (FreedOnlyByCaller,
+// FreedOnlyAfterJoin).
 
 #define ROCKETNET_CLIENT_RACE_WAIT_SECONDS 0.001     // the reading thread's poll of the second socket during the race
 
@@ -653,7 +657,8 @@ static uint64_t rocketnet_client_race_family_send_failures( const rocketnet_clie
     return family->instance && family->operations->send_failures ? family->operations->send_failures( family->instance ) : 0;
 }
 
-// the reading thread closes the losing family once it sees the commit
+// the reading thread closes the losing family's handles once it sees the
+// commit (tla/RNClientRace.tla ReaderStep); its memory stays until destroy
 
 static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
 {
@@ -663,13 +668,18 @@ static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
         rocketnet_client_transport_io_t * lost = &race->family[1 - committed];
         race->closed_send_failures.store( rocketnet_client_race_family_send_failures( lost ), std::memory_order_release );
 
-        rocketnet_client_transport_io_close( lost );
+        if ( lost->operations->close )
+            lost->operations->close( lost->instance );
 
         race->closed = true;
     }
 
     return committed;
 }
+
+// the caller's thread, after the reading thread is joined (tla/RNClientRace.tla
+// CallerDestroy): both families' memory, the losing one's handles already
+// closed
 
 static void rocketnet_client_race_destroy( void * instance )
 {
@@ -692,6 +702,9 @@ static int rocketnet_client_race_family_of( const rocketnet_client_race_t * race
 {
     return to->type == race->server_address[1].type ? 1 : 0;
 }
+
+// tla/RNClientRace.tla CallerSend: the caller's thread sends to both
+// families while they are in flight, then to the kept family only
 
 static void rocketnet_client_race_send( void * instance, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes )
 {
@@ -825,8 +838,9 @@ static uint64_t rocketnet_client_race_send_failures( void * instance )
            rocketnet_client_race_family_send_failures( &race->family[1] );
 }
 
-// the commit, on the caller's thread: the attempt keeps the family that
-// answered first, and its server is the protocol's server from now on
+// the commit, on the caller's thread (tla/RNClientRace.tla CallerCommit): the
+// attempt keeps the family that answered first, and its server is the
+// protocol's server from now on
 
 static void rocketnet_client_race_commit( rocketnet_client_transport_t * transport, rocketnet_client_race_t * race, int family )
 {
@@ -1950,6 +1964,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                 []( void * ) {},
                 []( void * ) -> uint64_t
                 { return 0; },
+                NULL,
                 NULL
             };
             client_transport->io.operations = &seam_transport_ops;
@@ -2122,6 +2137,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             race->operations.wake = inner->wake ? rocketnet_client_race_wake : NULL;
             race->operations.send_failures = inner->send_failures ? rocketnet_client_race_send_failures : NULL;
             race->operations.connect = NULL;    // both sockets are connected above
+            race->operations.close = NULL;      // the race closes its losing family itself
             race->family[0] = client_transport->io;
             race->family[1] = race_io;
             race->server_address[0] = client_transport->protocol.server_address;
@@ -2393,6 +2409,9 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
 // completion drains it); on the I/O-core path, where the caller keeps the
 // simulator, sends every copy it holds and then publishes quit.
 
+// tla/RNClientRace.tla CallerStop: the reading thread is asked to exit; it
+// still owns the losing family's handles until it has.
+
 void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_transport )
 {
     if ( !rocketnet_api_null_guard( client_transport ) || client_transport->stop_requested )
@@ -2431,6 +2450,8 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
 
 // tla/RNClientIoShutdown.tla BeginPoll and PollReturn: reads the worker's
 // completion flag and returns without waiting.
+
+// tla/RNClientRace.tla ReaderExit: that flag is the reading thread's exit.
 
 bool rocketnet_client_transport_stopped( const rocketnet_client_transport_t * client_transport )
 {
@@ -2501,6 +2522,10 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 // generation before the next one runs, as the synchronous destroy and the
 // next connect do here.
 // tla/RNClientIoShutdown.tla Done: the freed endpoint's terminal state.
+
+// tla/RNClientRace.tla CallerJoin and CallerDestroy: the reading thread is
+// joined, then the caller's thread frees both race families, the losing
+// one's handles already closed by the reading thread.
 
 void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_transport )
 {

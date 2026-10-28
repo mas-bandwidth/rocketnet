@@ -55,6 +55,7 @@ inline int rn_standard_hex_nibble( char c )
         return c - 'a' + 10;
     if ( c >= 'A' && c <= 'F' )
         return c - 'A' + 10;
+
     return -1;
 }
 
@@ -71,16 +72,19 @@ inline int rn_standard_hex_decode( const char * hex, uint8_t * out, int capacity
         const int nibble = rn_standard_hex_nibble( *p );
         if ( nibble < 0 )
             return -1;
+
         if ( high < 0 )
         {
             high = nibble;
             continue;
         }
+
         if ( count >= capacity )
             return -1;
         out[count++] = (uint8_t) ( ( high << 4 ) | nibble );
         high = -1;
     }
+
     return high < 0 ? count : -1;
 }
 
@@ -121,6 +125,7 @@ inline int rn_standard_vectors_walk( const rn_standard_vector_t * table, int cou
                     table[i].id, first, expected_bytes, actual_bytes );
         rocketnet_unit_check( first < 0 );
     }
+
     return count;
 }
 

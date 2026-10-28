@@ -89,6 +89,7 @@ static void test_prefilter_counters_are_assigned_not_added()
         1201,
     };
     rocketnet_counters_apply_prefilter( &counters, first );
+
     for ( int counter = 0; counter < ROCKETNET_NUM_COUNTERS; counter++ )
     {
         int mapped = -1;
@@ -113,6 +114,7 @@ static void test_prefilter_counters_are_assigned_not_added()
         2411,
     };
     rocketnet_counters_apply_prefilter( &counters, second );
+
     for ( int counter = 0; counter < ROCKETNET_NUM_COUNTERS; counter++ )
     {
         int mapped = -1;

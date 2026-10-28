@@ -36,6 +36,7 @@ enum client_required_memory_case_t
 static void client_required_memory_config( int which, struct rocketnet_client_config_t * config )
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
+
     switch ( which )
     {
         case CLIENT_REQUIRED_MEMORY_NO_CHANNELS:         config->num_channels = 0; break;
@@ -52,14 +53,17 @@ static void client_required_memory_config( int which, struct rocketnet_client_co
 static void test_client_required_memory_validates()
 {
     // the defaults: create succeeds and required_memory gives a size
+
     struct rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_required_memory( &config ) > 0 );
 
     // each config create refuses: required_memory gives 0
+
     for ( int i = 0; i < CLIENT_REQUIRED_MEMORY_NUM_CASES; i++ )
     {
         client_required_memory_config( i, &config );
+
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         check( rocketnet_client_create( NULL, &config, &status ) == NULL );
         check( status != ROCKETNET_STATUS_OK );

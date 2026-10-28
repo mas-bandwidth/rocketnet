@@ -125,6 +125,7 @@ static void check_row( bool ok, int row, const char * cite )
         printf( "address table row %d failed: %s\n", row, cite );
         fflush( stdout );
     }
+
     rocketnet_unit_check( ok );
 }
 
@@ -132,7 +133,9 @@ static void address_acceptance_table()
 {
     struct rocketnet_address_t forms[k_native_form_count];
     for ( int f = 0; f < k_native_form_count; ++f )
+    {
         rocketnet_unit_check( rocketnet_address_parse( &forms[f], k_native_forms[f] ) );
+    }
 
     for ( int i = 0; i < k_case_count; ++i )
     {
@@ -141,7 +144,9 @@ static void address_acceptance_table()
         struct rocketnet_address_t from;
         memset( &from, 0, sizeof( from ) );
         if ( row->source != NULL )
+        {
             check_row( rocketnet_address_parse( &from, row->source ), i, row->cite );
+        }
 
         const struct rocketnet_address_t before = from;
 
@@ -164,8 +169,9 @@ static void address_acceptance_table()
 
             if ( row->source == NULL )
             {
-                // NONE equals nothing, not even itself.
+                // NONE equals nothing, not even itself
                 check_row( !rocketnet_address_equal( &from, &from ), i, row->cite );
+
                 struct rocketnet_address_t other;
                 memset( &other, 0, sizeof( other ) );
                 check_row( !rocketnet_address_equal( &from, &other ), i, row->cite );
@@ -173,7 +179,7 @@ static void address_acceptance_table()
         }
         else
         {
-            // dropped, not canonicalised: the mapped ipv6 form is unchanged.
+            // dropped, not canonicalised: the mapped ipv6 form is unchanged
             check_row( from.type == ROCKETNET_ADDRESS_IPV6, i, row->cite );
             check_row( rocketnet_address_equal( &from, &before ), i, row->cite );
         }
@@ -201,7 +207,6 @@ static void property_random_address( struct rocketnet_address_t * address )
     memset( address, 0, sizeof( *address ) );
 
     const uint32_t choice = property_next_u32() % 8u;
-
     if ( choice == 0u )
     {
         address->type = ROCKETNET_ADDRESS_NONE;
@@ -214,6 +219,7 @@ static void property_random_address( struct rocketnet_address_t * address )
     if ( choice <= 4u )
     {
         address->type = ROCKETNET_ADDRESS_IPV4;
+
         const uint32_t ip = ( choice == 1u ) ? 0u : property_next_u32();
         memcpy( address->data.ipv4, &ip, 4 );
     }
@@ -221,7 +227,9 @@ static void property_random_address( struct rocketnet_address_t * address )
     {
         address->type = ROCKETNET_ADDRESS_IPV6;
         for ( int i = 0; i < 8; ++i )
+        {
             address->data.ipv6[i] = (uint16_t) property_next_u32();
+        }
     }
 }
 
@@ -239,16 +247,21 @@ static void address_equality_property()
         property_random_address( &b );
         property_random_address( &c );
 
-        // reflexive except for NONE.
+        // reflexive except for NONE
+
         const bool want_self = ( a.type != ROCKETNET_ADDRESS_NONE );
         rocketnet_unit_check( rocketnet_address_equal( &a, &a ) == want_self );
 
-        // symmetric.
+        // symmetric
+
         rocketnet_unit_check( rocketnet_address_equal( &a, &b ) == rocketnet_address_equal( &b, &a ) );
 
-        // transitive.
+        // transitive
+
         if ( rocketnet_address_equal( &a, &b ) && rocketnet_address_equal( &b, &c ) )
+        {
             rocketnet_unit_check( rocketnet_address_equal( &a, &c ) );
+        }
     }
 }
 

@@ -18,6 +18,7 @@
 
 // Each table opens through rocketnet_client_transport_io_open with the fake as the
 // context and closes with destroy counted once.
+
 static void test_fake_client_transport_io_opens_with_all_eight()
 {
     const rocketnet_client_transport_io_operations_t * tables[] = {
@@ -25,6 +26,7 @@ static void test_fake_client_transport_io_opens_with_all_eight()
         &rocketnet_fake_client_operations_io,
         &rocketnet_fake_client_operations_batch
     };
+
     for ( int i = 0; i < 3; i++ )
     {
         rocketnet_fake_client_transport_io_t fake = {};
@@ -43,6 +45,7 @@ static void test_fake_client_transport_io_opens_with_all_eight()
 
 // wait is false with nothing; wake makes the next wait true; the following
 // wait is false again; a pushed datagram makes wait true without consuming it.
+
 static void test_fake_client_wake_is_level_triggered()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -66,6 +69,7 @@ static void test_fake_client_wake_is_level_triggered()
 // Three pushed datagrams of 10, 20 and 30 bytes from distinct ports drain by
 // receive_batch in order with stride 2048: 2, then 1, then 0, addresses and
 // bytes matching.
+
 static void test_fake_client_receive_batch_layout()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -99,6 +103,7 @@ static void test_fake_client_receive_batch_layout()
 
 // wait honors readable: a datagram counts only when readable is true, and a
 // wake returns regardless of readable and is consumed by the next wait.
+
 static void test_fake_client_wait_honors_readable()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -120,6 +125,7 @@ static void test_fake_client_wait_honors_readable()
 
 // The io table opens with wait and wake set and batch null; the batch table
 // opens with the batch callbacks set.
+
 static void test_fake_client_io_table_opens_with_wait_and_wake()
 {
     rocketnet_fake_client_transport_io_t fake = {};
@@ -250,7 +256,9 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES], server_secret[RN_TEST_SERVER_SECRET_KEY_BYTES];
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x5A ^ i );
+    }
     rocketnet_unit_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public, server_secret ) == ROCKETNET_STATUS_OK );
 
@@ -264,6 +272,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+
     int status = -1;
     rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
     rocketnet_unit_check( server != NULL && status == ROCKETNET_STATUS_OK );
@@ -271,6 +280,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
 
     char server_string[64];
     snprintf( server_string, sizeof( server_string ), "127.0.0.1:%u", (unsigned) rocketnet_server_transport_port( server ) );
+
     rocketnet_address_t server_address;
     rocketnet_unit_check( rocketnet_address_parse( &server_address, server_string ) );
 
@@ -288,9 +298,11 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+
     rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_at_timestamp(
         NULL, token, &client_config, time, 1000, &operations, NULL );
     rocketnet_unit_check( client != NULL );
+
     rocketnet_client_io_t * io = rocketnet_client_transport_client_io( client );
     rocketnet_unit_check( io != NULL );
 
@@ -303,13 +315,17 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
         rocketnet_server_transport_send_packets( server );
         rocketnet_client_io_step( io, false );
     }
+
     rocketnet_unit_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     while ( io->send.ready_count > 0 || io->send_ring >= 0 )
+    {
         rocketnet_client_io_step( io, false );
+    }
 
     // send_packet hands rings A and B off; the I/O side does not step, so the
     // third is deferred (ring C holds a committed packet) and the disconnect
     // burst joins ring C, deferred again
+
     const uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
     rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
     rocketnet_client_transport_send_packets( client );
@@ -319,6 +335,7 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     rocketnet_unit_check( io->send.ready_count == 2 );
     rocketnet_client_transport_send_packet( client, payload, (int) sizeof( payload ) );
     rocketnet_client_transport_send_packets( client );
+
     const uint64_t deferred_before = rocketnet_client_transport_counters( client )->values[ROCKETNET_COUNTER_CLIENT_SEND_DEFERRED];
     rocketnet_unit_check( deferred_before >= 1 );
 
@@ -332,18 +349,24 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     // payload was sealed under the session disconnect ended, and the
     // connection reset emptied the Filling ring before the burst went in, so
     // ring C carries the burst alone.
+
     rn_test_client_transport_stop_and_destroy( client );
+
     const int sent = fake_disconnect_record.count - sent_before_disconnect;
     rocketnet_unit_check( sent == 2 + ROCKETNET_CLIENT_NUM_DISCONNECT_PACKETS );
     for ( int i = sent_before_disconnect; i < fake_disconnect_record.count; i++ )
+    {
         rocketnet_unit_check( rocketnet_address_equal( &fake_disconnect_record.to[i], &server_address ) );
+    }
 
     rocketnet_server_transport_stop( server );
+
     for ( int i = 0; i < 1000 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
     {
         time += 0.01;
         rocketnet_server_transport_update( server, time );
     }
+
     rn_test_server_transport_stop_and_destroy( server );
 }
 

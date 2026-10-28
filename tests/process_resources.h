@@ -82,7 +82,7 @@
 #if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#endif
+#endif // #ifndef WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <psapi.h>
 #include <tlhelp32.h>
@@ -95,10 +95,10 @@
 #include <errno.h>
 #if defined( __GLIBC__ )
 #include <malloc.h>
-#endif
+#endif // #if defined( __GLIBC__ )
 #include <sys/mman.h>
 #include <unistd.h>
-#endif
+#endif // #if defined( _WIN32 )
 
 #define PROCESS_RESOURCES_HANDLES 0
 #define PROCESS_RESOURCES_THREADS 1
@@ -109,7 +109,7 @@
 #define PROCESS_RESOURCES_COUNT 4
 #else
 #define PROCESS_RESOURCES_COUNT 3
-#endif
+#endif // #if defined( _WIN32 )
 
 struct process_resources_t
 {
@@ -132,7 +132,7 @@ static inline const char * process_resources_name( int index )
         case PROCESS_RESOURCES_HANDLES: return "fds";
         case PROCESS_RESOURCES_THREADS: return "threads";
         case PROCESS_RESOURCES_MEMORY:  return "resident_bytes";
-#endif
+#endif // #if defined( _WIN32 )
         default: return "unknown";
     }
 }
@@ -146,7 +146,7 @@ static inline int64_t process_resources_page_bytes( void )
 #else
     const long page = sysconf( _SC_PAGESIZE );
     return page > 0 ? (int64_t) page : 4096;
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 #if !defined( _WIN32 ) && !defined( __APPLE__ )
@@ -156,6 +156,7 @@ static inline int64_t process_resources_count_directory( const char * path )
     DIR * directory = opendir( path );
     if ( !directory )
         return -1;
+
     int64_t count = 0;
     struct dirent * entry = NULL;
     while ( ( entry = readdir( directory ) ) != NULL )
@@ -164,7 +165,9 @@ static inline int64_t process_resources_count_directory( const char * path )
             continue;
         count++;
     }
+
     closedir( directory );
+
     return count;
 }
 
@@ -173,8 +176,10 @@ static inline int64_t process_resources_resident_bytes( void )
     FILE * file = fopen( "/proc/self/status", "r" );
     if ( !file )
         return -1;
+
     char line[256];
     int64_t bytes = -1;
+
     while ( fgets( line, sizeof( line ), file ) )
     {
         if ( strncmp( line, "VmRSS:", 6 ) == 0 )
@@ -183,11 +188,13 @@ static inline int64_t process_resources_resident_bytes( void )
             break;
         }
     }
+
     fclose( file );
+
     return bytes;
 }
 
-#endif
+#endif // #if !defined( _WIN32 ) && !defined( __APPLE__ )
 
 #if defined( _WIN32 )
 // Windows only: a thread's start address (ThreadQuerySetWin32StartAddress),
@@ -205,27 +212,33 @@ typedef LONG( WINAPI * process_resources_query_thread_t )( HANDLE thread, int in
 static inline int process_resources_thread_is_os( DWORD thread_id, uintptr_t * start_offset )
 {
     *start_offset = 0;
+
     HMODULE ntdll = GetModuleHandleW( L"ntdll.dll" );
     if ( !ntdll )
         return 0;
+
     process_resources_query_thread_t query = (process_resources_query_thread_t) (void *) GetProcAddress( ntdll, "NtQueryInformationThread" );
     if ( !query )
         return 0;
+
     HANDLE thread = OpenThread( THREAD_QUERY_INFORMATION, FALSE, thread_id );
     if ( !thread )
         return 0;
+
     void * start_address = NULL;
     const int query_set_win32_start_address = 9; // ThreadQuerySetWin32StartAddress
     const LONG status = query( thread, query_set_win32_start_address, &start_address, (ULONG) sizeof( start_address ), NULL );
     CloseHandle( thread );
     if ( status < 0 || !start_address )
         return 0;
+
     HMODULE start_module = NULL;
     if ( !GetModuleHandleExW( GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR) start_address, &start_module ) )
         return 0;
     if ( start_module != ntdll )
         return 0;
     *start_offset = (uintptr_t) start_address - (uintptr_t) ntdll;
+
     return 1;
 }
 
@@ -241,16 +254,20 @@ static inline int process_resources_walk_threads( int64_t * threads, int64_t * o
 {
     *threads = -1;
     *os_threads = -1;
+
     HANDLE thread_list = CreateToolhelp32Snapshot( TH32CS_SNAPTHREAD, 0 );
     if ( thread_list == INVALID_HANDLE_VALUE )
         return 0;
+
     THREADENTRY32 entry;
     memset( &entry, 0, sizeof( entry ) );
     entry.dwSize = sizeof( entry );
+
     const DWORD self_pid = GetCurrentProcessId();
     int64_t program_count = 0;
     int64_t os_count = 0;
     int ok = 0;
+
     if ( Thread32First( thread_list, &entry ) )
     {
         for ( ;; )
@@ -262,13 +279,16 @@ static inline int process_resources_walk_threads( int64_t * threads, int64_t * o
                 {
                     os_count++;
                     if ( print_label )
+                    {
                         printf( "soak resources: %s os_thread id=%lu start=ntdll+0x%llx\n", print_label, (unsigned long) entry.th32ThreadID, (unsigned long long) start_offset );
+                    }
                 }
                 else
                 {
                     program_count++;
                 }
             }
+
             entry.dwSize = sizeof( entry );
             if ( !Thread32Next( thread_list, &entry ) )
             {
@@ -277,27 +297,33 @@ static inline int process_resources_walk_threads( int64_t * threads, int64_t * o
             }
         }
     }
+
     CloseHandle( thread_list );
     if ( !ok )
         return 0;
     *threads = program_count;
     *os_threads = os_count;
+
     return 1;
 }
-#endif
+#endif // #if defined( _WIN32 )
 
 // reads every count into *resources; returns 1 when every count was read
 
 static inline int process_resources_read( struct process_resources_t * resources )
 {
     for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
+    {
         resources->values[i] = -1;
+    }
 
 #if defined( _WIN32 )
 
     DWORD handles = 0;
     if ( GetProcessHandleCount( GetCurrentProcess(), &handles ) )
+    {
         resources->values[PROCESS_RESOURCES_HANDLES] = (int64_t) handles;
+    }
 
     process_resources_walk_threads( &resources->values[PROCESS_RESOURCES_THREADS], &resources->values[PROCESS_RESOURCES_OS_THREADS], NULL );
 
@@ -305,7 +331,9 @@ static inline int process_resources_read( struct process_resources_t * resources
     memset( &memory, 0, sizeof( memory ) );
     memory.cb = sizeof( memory );
     if ( GetProcessMemoryInfo( GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *) &memory, sizeof( memory ) ) )
+    {
         resources->values[PROCESS_RESOURCES_MEMORY] = (int64_t) memory.PrivateUsage;
+    }
 
 #elif defined( __APPLE__ )
 
@@ -317,7 +345,9 @@ static inline int process_resources_read( struct process_resources_t * resources
         {
             const int used = proc_pidinfo( getpid(), PROC_PIDLISTFDS, 0, fds, fd_bytes );
             if ( used >= 0 )
+            {
                 resources->values[PROCESS_RESOURCES_HANDLES] = (int64_t) ( used / (int) PROC_PIDLISTFD_SIZE );
+            }
             free( fds );
         }
     }
@@ -338,13 +368,14 @@ static inline int process_resources_read( struct process_resources_t * resources
     resources->values[PROCESS_RESOURCES_THREADS] = process_resources_count_directory( "/proc/self/task" );
     resources->values[PROCESS_RESOURCES_MEMORY] = process_resources_resident_bytes();
 
-#endif
+#endif // #if defined( _WIN32 )
 
     for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
     {
         if ( resources->values[i] < 0 )
             return 0;
     }
+
     return 1;
 }
 
@@ -355,7 +386,9 @@ static inline void process_resources_peak( struct process_resources_t * peak, co
     for ( int i = 0; i < PROCESS_RESOURCES_COUNT; i++ )
     {
         if ( sample->values[i] > peak->values[i] )
+        {
             peak->values[i] = sample->values[i];
+        }
     }
 }
 
@@ -365,9 +398,14 @@ static inline int64_t process_resources_memory_allowance_bytes( double seconds_s
 {
     int64_t periods = seconds_since_start > 0.0 ? (int64_t) ( seconds_since_start / 600.0 ) : 0;
     if ( (double) periods * 600.0 < seconds_since_start )
+    {
         periods++;
+    }
     if ( periods < 1 )
+    {
         periods = 1;
+    }
+
     return periods * process_resources_page_bytes();
 }
 
@@ -380,14 +418,16 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
         return 0;
     if ( index == PROCESS_RESOURCES_MEMORY )
         return end <= start + process_resources_memory_allowance_bytes( seconds_since_start );
+
     // the handle (fd) count fails on growth only: a fall is not a leak (on
     // Windows the handles of the OS's retiring pool workers close with them)
+
     if ( index == PROCESS_RESOURCES_HANDLES )
         return end <= start;
 #if defined( _WIN32 )
     if ( index == PROCESS_RESOURCES_OS_THREADS )
         return end <= start;
-#endif
+#endif // #if defined( _WIN32 )
     return end == start;
 }
 
@@ -399,19 +439,35 @@ static inline int process_resources_flat( int index, int64_t start, int64_t end,
 // [vdso] and [vsyscall] are left alone; a mapping the kernel refuses (no
 // read permission, for one) is skipped.
 
+// A shadow-memory sanitizer (tsan, asan, msan) reserves terabytes of private
+// mappings for its shadow; populating them faults the reservation in (111 GB
+// resident, then a SEGV in madvise, under the tsan soak), so a sanitized build
+// reports the touch as not available.
+
+#if defined( __SANITIZE_THREAD__ ) || defined( __SANITIZE_ADDRESS__ )
+#define PROCESS_RESOURCES_SANITIZER_SHADOW 1
+#elif defined( __has_feature )
+#if __has_feature( thread_sanitizer ) || __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
+#define PROCESS_RESOURCES_SANITIZER_SHADOW 1
+#endif // #if __has_feature( thread_sanitizer ) || __has_feature( address_sanitizer ) || __has_feature( memory_sanitizer )
+#endif // #if defined( __SANITIZE_THREAD__ ) || defined( __SANITIZE_ADDRESS__ )
+
 static inline int64_t process_resources_touch_all( void )
 {
-#if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ )
+#if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ ) && !defined( PROCESS_RESOURCES_SANITIZER_SHADOW )
     FILE * file = fopen( "/proc/self/maps", "r" );
     if ( !file )
         return -1;
+
     char line[512];
     int64_t populated = 0;
     int unsupported = 0;
+
     while ( fgets( line, sizeof( line ), file ) )
     {
         unsigned long long start = 0;
         unsigned long long end = 0;
+
         char perms[8] = { 0 };
         if ( sscanf( line, "%llx-%llx %7s", &start, &end, perms ) != 3 )
             continue;
@@ -419,17 +475,19 @@ static inline int64_t process_resources_touch_all( void )
             continue;
         if ( strstr( line, "[vvar" ) || strstr( line, "[vdso]" ) || strstr( line, "[vsyscall]" ) )
             continue;
+
         const int advice = perms[1] == 'w' ? MADV_POPULATE_WRITE : MADV_POPULATE_READ;
         if ( madvise( (void *) (uintptr_t) start, (size_t) ( end - start ), advice ) == 0 )
             populated += (int64_t) ( end - start );
         else if ( errno == EINVAL )
             unsupported = 1;
     }
+
     fclose( file );
     return unsupported && populated == 0 ? -1 : populated;
 #else
     return -1;
-#endif
+#endif // #if !defined( _WIN32 ) && !defined( __APPLE__ ) && defined( MADV_POPULATE_WRITE ) && defined( MADV_POPULATE_READ )
 }
 
 // THE WARM-UP, its first half: glibc keeps every freed heap page instead of
@@ -443,7 +501,7 @@ static inline int process_resources_keep_freed_pages( void )
     return mallopt( M_TRIM_THRESHOLD, 0x7fffffff ) == 1;
 #else
     return 0;
-#endif
+#endif // #if defined( __GLIBC__ ) && !defined( _WIN32 ) && !defined( __APPLE__ )
 }
 
 // Linux only: Rss and Private_Dirty from /proc/self/smaps_rollup, in bytes,
@@ -457,6 +515,7 @@ static inline int process_resources_smaps( int64_t * rss_bytes, int64_t * privat
     FILE * file = fopen( "/proc/self/smaps_rollup", "r" );
     if ( !file )
         return 0;
+
     char line[256];
     while ( fgets( line, sizeof( line ), file ) )
     {
@@ -465,8 +524,9 @@ static inline int process_resources_smaps( int64_t * rss_bytes, int64_t * privat
         else if ( strncmp( line, "Private_Dirty:", 14 ) == 0 )
             *private_dirty_bytes = (int64_t) strtoll( line + 14, NULL, 10 ) * 1024;
     }
+
     fclose( file );
-#endif
+#endif // #if !defined( _WIN32 ) && !defined( __APPLE__ )
     return *rss_bytes >= 0 && *private_dirty_bytes >= 0;
 }
 

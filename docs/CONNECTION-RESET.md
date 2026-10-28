@@ -22,7 +22,7 @@ naming `<struct>.<member>`.
 | `rocketnet_client_protocol_t` | `packet_filter`, `send_rate`, `counters`, `defer_payload_acks` | configuration and this connection's counters | KEEP | the object is destroyed with the connection; public session counters are read from the connection that is held |
 | | `state` | terminal state / disconnect reason | KEEP | observable until the next connection attempt |
 | | `token`, `signed_fields`, `server_address` | parsed attempt and server | RESET | belongs to one attempt |
-| | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
+| | `connection_salt`, ephemeral keypair, `return_cookie`, `has_cookie`, `latest_cookie`, `has_latest_cookie`, `send_latest_cookie` | handshake material | RESET | secret and attempt material must not cross attempts |
 | | `session_nonce`, `keys`, `stored_response` | session key state | RESET | one session only; key copies retire before erasure |
 | | `client_index`, `max_clients` | assigned server slot | RESET | learned by this session |
 | | handshake/session sequences, fragment payload id | wire sequence spaces | RESET | fresh sequence spaces start at one |

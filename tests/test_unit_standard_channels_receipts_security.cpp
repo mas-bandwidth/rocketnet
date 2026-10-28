@@ -79,6 +79,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
                                  ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) == 1 );
 
         rn_endpoint_begin_update( &endpoint );
+
         static uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         int packet_count = 0;
         int selected_bytes = -1;
@@ -97,6 +98,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
 
             check( ( frame[0] & ROCKETNET_MESSAGE_FLAG_CODE_MASK ) == ROCKETNET_MESSAGE_CODE_RELIABLE );
             check( ( frame[0] & ROCKETNET_MESSAGE_FLAG_BLOCK ) != 0 );
+
             const uint32_t chunk_bytes = (uint32_t) frame[1] + ( (uint32_t) frame[2] << 8 );
             check( chunk_bytes == ( fragment == 0 ? ROCKETNET_MESSAGE_FRAGMENT_BYTES : (uint32_t) bytes - ROCKETNET_MESSAGE_FRAGMENT_BYTES ) );
             check( frame[8] == (uint8_t) fragment && frame[9] == 0 );
@@ -107,19 +109,24 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
             {
                 check( frame[3] == 1 && frame[4] == 0 && frame[5] == 0 );
                 check( frame[6] == ROCKETNET_MESSAGE_FRAGMENT_BYTES / 16 && frame[7] == 0 );
+
                 selected_bytes = written;
                 if ( capacity < written )
                 {
                     rn_arena_destroy( arena );
                     return -1;
                 }
+
                 memcpy( out, frame, (size_t) written );
             }
+
             rn_endpoint_packet_sent( &endpoint, (uint64_t) fragment + 1, written + 64, 1000.0 );
             packet_count++;
         }
+
         check( packet_count == 2 );
         check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
+
         rn_arena_destroy( arena );
         return selected_bytes;
     }

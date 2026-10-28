@@ -106,8 +106,11 @@ static void test_xdp_transport_receive_ring_returns_descriptors_the_staging_buff
 {
     fake_rx_ring_t ring;
     memset( &ring, 0, sizeof( ring ) );
+
     for ( uint32_t i = 0; i < FAKE_RING_SIZE; i++ )
+    {
         rocketnet_unit_check( fake_kernel_post( &ring, 100 + i ) );
+    }
 
     uint64_t taken[FAKE_RING_SIZE];
     memset( taken, 0, sizeof( taken ) );
@@ -117,16 +120,21 @@ static void test_xdp_transport_receive_ring_returns_descriptors_the_staging_buff
 
     // every peeked descriptor is consumed or returned: the user's cached
     // consumer is the consumer the kernel reads
+
     rocketnet_unit_check( ring.cached_cons == ring.consumer );
     rocketnet_unit_check( ring.producer - ring.consumer == FAKE_RING_SIZE - first );
 
     // the next peek sees the skipped descriptors first
+
     uint32_t index = 0;
     const uint32_t again = fake_peek( &ring, FAKE_RING_SIZE, &index );
     rocketnet_unit_check( again == FAKE_RING_SIZE - first );
     rocketnet_unit_check( index == first );
+
     for ( uint32_t i = 0; i < again; i++ )
+    {
         rocketnet_unit_check( ring.addr[( index + i ) & ( FAKE_RING_SIZE - 1 )] == 103 + i );
+    }
 }
 
 // A full staging buffer takes nothing: every peeked descriptor goes back,
@@ -135,16 +143,23 @@ static void test_xdp_transport_receive_ring_full_staging_returns_every_descripto
 {
     fake_rx_ring_t ring;
     memset( &ring, 0, sizeof( ring ) );
+
     for ( uint32_t i = 0; i < 4; i++ )
+    {
         rocketnet_unit_check( fake_kernel_post( &ring, 200 + i ) );
+    }
 
     uint64_t taken[FAKE_RING_SIZE];
     rocketnet_unit_check( receive_pass( &ring, FAKE_RING_SIZE, 0, taken ) == 0 );
     rocketnet_unit_check( ring.cached_cons == 0 && ring.consumer == 0 );
 
     rocketnet_unit_check( receive_pass( &ring, FAKE_RING_SIZE, FAKE_RING_SIZE, taken ) == 4 );
+
     for ( uint32_t i = 0; i < 4; i++ )
+    {
         rocketnet_unit_check( taken[i] == 200 + i );
+    }
+
     rocketnet_unit_check( ring.cached_cons == ring.consumer && ring.consumer == 4 );
 }
 
@@ -162,7 +177,9 @@ static void test_xdp_transport_receive_ring_conserves_frames_and_never_stalls()
     uint64_t fill[FAKE_UMEM_FRAMES];
     uint32_t fill_count = 0;
     for ( uint32_t i = 0; i < FAKE_UMEM_FRAMES; i++ )
+    {
         fill[fill_count++] = i;
+    }
 
     const uint32_t staging_cap = 3;
     uint32_t staged = 0;
@@ -171,12 +188,18 @@ static void test_xdp_transport_receive_ring_conserves_frames_and_never_stalls()
     for ( int pass = 0; pass < 64; pass++ )
     {
         // the kernel fills the RX ring from the fill queue
+
         while ( fill_count > 0 && fake_kernel_post( &ring, fill[fill_count - 1] ) )
+        {
             fill_count--;
+        }
 
         // the application drains the staging buffer every other pass
+
         if ( pass % 2 == 1 )
+        {
             staged = 0;
+        }
 
         uint32_t index = 0;
         const uint32_t peeked = fake_peek( &ring, FAKE_RING_SIZE, &index );
@@ -191,17 +214,21 @@ static void test_xdp_transport_receive_ring_conserves_frames_and_never_stalls()
             took++;
             staged++;
         }
+
         rocketnet_xdp_receive_ring_finish( peeked, took, fake_cancel, fake_release, &ring );
-        for ( uint32_t i = 0; i < took; i++ )
-            fill[fill_count++] = taken[i];
+        memcpy( fill + fill_count, taken, took * sizeof( taken[0] ) );
+        fill_count += took;
+
         received += took;
 
         // every frame has exactly one owner: the fill queue or the RX ring
         // as the kernel sees it (producer - consumer); none is lost
+
         rocketnet_unit_check( ring.cached_cons == ring.consumer );
         rocketnet_unit_check( fill_count + ( ring.producer - ring.consumer ) == FAKE_UMEM_FRAMES );
 
         // liveness: a pass with staging room takes while the ring holds frames
+
         rocketnet_unit_check( took == ( room < peeked ? room : peeked ) );
         rocketnet_unit_check( peeked > 0 || room == 0 );
     }

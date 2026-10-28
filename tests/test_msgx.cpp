@@ -16,26 +16,31 @@ static bool refuse_send, refuse_receive, interrupt_send;
 static ssize_t controlled_send( int s, const rocketnet_msghdr_x_t * messages, u_int count, int flags )
 {
     ++send_calls;
+
     if ( interrupt_send )
     {
         errno = EINTR;
         return -1;
     }
+
     if ( refuse_send )
     {
         errno = ENOTSUP;
         return -1;
     }
+
     return real_send( s, messages, count, flags );
 }
 static ssize_t controlled_receive( int s, rocketnet_msghdr_x_t * messages, u_int count, int flags )
 {
     ++receive_calls;
+
     if ( refuse_receive )
     {
         errno = ENOTSUP;
         return -1;
     }
+
     return real_receive( s, messages, count, flags );
 }
 
@@ -56,18 +61,25 @@ static void drain( rocketnet_platform_socket_t * socket, const rocketnet_address
             CHECK( !seen[data[i][0]] && rocketnet_address_equal( &from[i], &address ) );
             seen[data[i][0]] = true;
             for ( int j = 1; j < 32; ++j )
+            {
                 CHECK( data[i][j] == uint8_t( data[i][0] + j ) );
+            }
             ++received;
         }
+
         if ( !count )
+        {
             rocketnet_platform_sleep( 0.001 );
+        }
     }
+
     CHECK( received == expected );
 }
 
 // Send failures by errno: pure counting on a zeroed table, no socket and no
 // clock. The first failure of each call and errno kind reports first, every
 // later one only counts, and the format names each nonzero count once.
+
 static void test_msgx_send_errnos_count()
 {
     rocketnet_platform_send_errnos_t errnos;
@@ -86,10 +98,15 @@ static void test_msgx_send_errnos_count()
     CHECK( rocketnet_platform_send_errnos_format( &errnos, text, sizeof( text ) ) == 0 && text[0] == '\0' );
 
     // first EAGAIN on sendmsg_x reports first; the next 999 only count
+
     CHECK( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EAGAIN ) );
     for ( int i = 0; i < 999; ++i )
+    {
         CHECK( !rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDMSG_X, EWOULDBLOCK ) );
+    }
+
     // the same errno on another call is its own first
+
     CHECK( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_REPLAY, EAGAIN ) );
     CHECK( rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, ENOTSUP ) );
     CHECK( !rocketnet_platform_send_errnos_count( &errnos, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, 100000 ) );
@@ -102,7 +119,9 @@ static void test_msgx_send_errnos_count()
 
     CHECK( rocketnet_platform_send_errnos_format( &errnos, text, sizeof( text ) ) == 3 );
     CHECK( strcmp( text, "sendto other=2 sendmsg_x EAGAIN=1000 replay sendto EAGAIN=1" ) == 0 );
+
     // a short buffer keeps what fit and stays terminated
+
     char small[20];
     CHECK( rocketnet_platform_send_errnos_format( &errnos, small, sizeof( small ) ) == 1 );
     CHECK( strcmp( small, "sendto other=2" ) == 0 );
@@ -115,14 +134,18 @@ int main()
     CHECK( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
     rocketnet_forbid_xdp_commit();
     test_msgx_send_errnos_count();
-    // The TX and RX workers share one msgx socket: a re-probe clears only the
-    // expired pause it read, so a fresh pause set by the other worker wins.
+
+    // the TX and RX workers share one msgx socket: a re-probe clears only the
+    // expired pause it read, so a fresh pause set by the other worker wins
+
     CHECK( rocketnet_msgx_test_pause_expiry_race() );
     real_send = rocketnet_sendmsg_x;
     real_receive = rocketnet_recvmsg_x;
     CHECK( real_send && real_receive );
+
     rocketnet_address_t address;
     CHECK( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+
     auto * socket = rocketnet_platform_socket_create_with_pump( NULL, &address,
                                                                 ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, 1024 * 1024, 1024 * 1024, "msgx" );
     CHECK( socket && strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
@@ -131,15 +154,21 @@ int main()
 
     uint8_t data[80][32];
     rocketnet_platform_send_t sends[80];
+
     for ( int i = 0; i < 80; ++i )
     {
         for ( int j = 0; j < 32; ++j )
+        {
             data[i][j] = uint8_t( i + j );
+        }
         sends[i] = { &address, data[i], 32 };
     }
-    // More than two msgx chunks: one unsupported syscall pauses the pump;
-    // the complete unsent tail falls back and later chunks stay portable.
+
+    // more than two msgx chunks: one unsupported syscall pauses the pump;
+    // the complete unsent tail falls back and later chunks stay portable
+
     refuse_send = true;
+
     double before = rocketnet_platform_time();
     rocketnet_platform_socket_send_packets( socket, sends, 80 );
     CHECK( send_calls == 1 && socket->msgx_down_until >= before + ROCKETNET_MSGX_RETRY_SECONDS );
@@ -152,6 +181,7 @@ int main()
 
     // Advance only the stored deadline, not wall clock or the production
     // retry interval. The next real batch call must perform the re-probe.
+
     refuse_send = false;
     socket->msgx_down_until = rocketnet_platform_time() - 0.001;
     rocketnet_platform_socket_send_packets( socket, sends, 1 );
@@ -161,6 +191,7 @@ int main()
     printf( "test_msgx_transport_send_pause_fallback_reprobe\n" );
 
     rocketnet_platform_socket_send_packets( socket, sends, 4 );
+
     int receive_before = receive_calls;
     refuse_receive = true;
     before = rocketnet_platform_time();
@@ -179,7 +210,9 @@ int main()
     // the per-packet path; this assertion does not wait for packet delivery.
     // The refused batch counts once in send_failures (its delivered prefix
     // is indeterminate); its replay, which sends everything, counts nothing.
+
     interrupt_send = true;
+
     const int calls_before_interrupt = send_calls;
     const uint64_t failures_before_interrupt = rocketnet_platform_socket_send_failures( socket );
     rocketnet_platform_socket_send_packets( socket, sends, 4 );

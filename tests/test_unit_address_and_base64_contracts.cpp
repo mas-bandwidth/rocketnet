@@ -71,6 +71,7 @@ static void test_base64_decode_data_never_returns_negative()
     {
         uint8_t output[16];
         memset( output, 0xEE, sizeof( output ) );
+
         const int result = rocketnet_base64_decode_data( k_decode_cases[i].input,
                                                          output,
                                                          k_decode_cases[i].output_size );
@@ -80,6 +81,7 @@ static void test_base64_decode_data_never_returns_negative()
                     i, k_decode_cases[i].what, result );
             fflush( stdout );
         }
+
         rocketnet_unit_check( result >= 0 );
     }
 }
@@ -99,6 +101,7 @@ static void test_base64_encode_refuses_length_over_int_max()
 {
     uint8_t input[16];
     memset( input, 0x5A, sizeof( input ) );
+
     char output[16];
     memset( output, 0x7E, sizeof( output ) );
 
@@ -121,19 +124,21 @@ static void test_address_ipv6_with_port_fits_the_buffer()
     memset( &address, 0, sizeof( address ) );
     address.type = ROCKETNET_ADDRESS_IPV6;
     for ( int i = 0; i < 8; ++i )
+    {
         address.data.ipv6[i] = 0xFFFF;
+    }
     address.port = 65535;
 
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     const char * rendered = rocketnet_address_to_string( &address, buffer );
 
     const char * expected = "[ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff]:65535";
-
     if ( strcmp( rendered, expected ) != 0 )
     {
         printf( "longest ipv6 rendering was \"%s\", expected \"%s\"\n", rendered, expected );
         fflush( stdout );
     }
+
     rocketnet_unit_check( strcmp( rendered, expected ) == 0 );
     rocketnet_unit_check( strlen( rendered ) < ROCKETNET_MAX_ADDRESS_STRING_LENGTH );
 }
@@ -190,18 +195,21 @@ static void test_address_to_string_without_port_each_type()
 
     struct rocketnet_address_t ipv4;
     rocketnet_unit_check( rocketnet_address_parse( &ipv4, "203.0.113.10:40000" ) );
+
     const char * ipv4_text = rocketnet_address_to_string_without_port( &ipv4, buffer );
     rocketnet_unit_check( ipv4_text == buffer );
     rocketnet_unit_check( strcmp( ipv4_text, "203.0.113.10" ) == 0 );
 
     struct rocketnet_address_t ipv6;
     rocketnet_unit_check( rocketnet_address_parse( &ipv6, "[2001:db8::1]:40000" ) );
+
     const char * ipv6_text = rocketnet_address_to_string_without_port( &ipv6, buffer );
     rocketnet_unit_check( ipv6_text == buffer );
     rocketnet_unit_check( strcmp( ipv6_text, "2001:db8::1" ) == 0 );
 
     struct rocketnet_address_t none;
     memset( &none, 0, sizeof( none ) );
+
     const char * none_text = rocketnet_address_to_string_without_port( &none, buffer );
     rocketnet_unit_check( none_text == buffer );
     rocketnet_unit_check( strcmp( none_text, "NONE" ) == 0 );
@@ -248,6 +256,7 @@ static void test_address_to_string_forms_pinned()
 
         struct rocketnet_address_t address;
         memset( &address, 0, sizeof( address ) );
+
         if ( c.input )
         {
             rocketnet_unit_check( rocketnet_address_parse( &address, c.input ) );
@@ -260,22 +269,26 @@ static void test_address_to_string_forms_pinned()
         char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
 
         memset( buffer, 'x', sizeof( buffer ) );
+
         const char * with_port = rocketnet_address_to_string( &address, buffer );
         if ( with_port != buffer || strcmp( with_port, c.with_port ) != 0 )
         {
             printf( "address case %d to_string was \"%s\", expected \"%s\"\n", i, with_port, c.with_port );
             fflush( stdout );
         }
+
         rocketnet_unit_check( with_port == buffer );
         rocketnet_unit_check( strcmp( with_port, c.with_port ) == 0 );
 
         memset( buffer, 'x', sizeof( buffer ) );
+
         const char * without_port = rocketnet_address_to_string_without_port( &address, buffer );
         if ( without_port != buffer || strcmp( without_port, c.without_port ) != 0 )
         {
             printf( "address case %d to_string_without_port was \"%s\", expected \"%s\"\n", i, without_port, c.without_port );
             fflush( stdout );
         }
+
         rocketnet_unit_check( without_port == buffer );
         rocketnet_unit_check( strcmp( without_port, c.without_port ) == 0 );
     }
@@ -295,7 +308,9 @@ static void test_address_anonymize_leaves_other_types_untouched()
     memset( &none.data, 0xA5, sizeof( none.data ) );
     none.port = 7;
     rocketnet_address_anonymize( &none );
+
     const uint8_t * none_bytes = (const uint8_t *) &none.data;
+
     for ( size_t i = 0; i < sizeof( none.data ); ++i )
     {
         if ( none_bytes[i] != 0xA5 )
@@ -303,8 +318,10 @@ static void test_address_anonymize_leaves_other_types_untouched()
             printf( "anonymized NONE address data byte %d was 0x%02x, expected 0xa5\n", (int) i, none_bytes[i] );
             fflush( stdout );
         }
+
         rocketnet_unit_check( none_bytes[i] == 0xA5 );
     }
+
     rocketnet_unit_check( none.port == 0 );
     rocketnet_unit_check( none.type == ROCKETNET_ADDRESS_NONE );
 
@@ -347,6 +364,7 @@ static void test_address_to_string_ipv4_widest_is_complete()
         printf( "widest ipv4 rendering was \"%s\", expected \"255.255.255.255:65535\"\n", with_port );
         fflush( stdout );
     }
+
     rocketnet_unit_check( with_port == buffer );
     rocketnet_unit_check( strcmp( with_port, "255.255.255.255:65535" ) == 0 );
 
@@ -355,6 +373,7 @@ static void test_address_to_string_ipv4_widest_is_complete()
     rocketnet_unit_check( strcmp( without_port, "255.255.255.255" ) == 0 );
 
     address.port = 0;
+
     const char * zero_port = rocketnet_address_to_string( &address, buffer );
     rocketnet_unit_check( strcmp( zero_port, "255.255.255.255" ) == 0 );
 }
@@ -372,13 +391,16 @@ static void test_wycheproof_files_load_and_count()
     int num_groups = 0;
 
     // chacha20_poly1305_test.json pins the aead hex fields key iv aad msg ct
-    // tag.
+    // tag
+
     rocketnet_unit_check( wycheproof_load( "chacha20_poly1305_test.json", tests, &num_tests, &num_groups ) );
     rocketnet_unit_check( (int) tests.size() == num_tests );
     rocketnet_unit_check( num_tests == 325 );
     rocketnet_unit_check( num_groups == 10 );
+
     static const char * chacha_fields[] = { "key", "iv", "aad", "msg", "ct", "tag" };
     int chacha_valid = 0, chacha_invalid = 0, chacha_acceptable = 0;
+
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
@@ -390,7 +412,9 @@ static void test_wycheproof_files_load_and_count()
             chacha_acceptable++;
         else
             rocketnet_unit_check( 0 );
+
         std::vector<uint8_t> bytes;
+
         for ( int f = 0; f < 6; f++ )
         {
             std::map<std::string, std::string>::const_iterator it = tests[i].fields.find( chacha_fields[f] );
@@ -398,14 +422,18 @@ static void test_wycheproof_files_load_and_count()
             rocketnet_unit_check( wycheproof_hex( it->second, bytes ) );
         }
     }
+
     rocketnet_unit_check( chacha_valid == 256 && chacha_invalid == 69 && chacha_acceptable == 0 );
 
-    // x25519_test.json pins the hex fields public private shared.
+    // x25519_test.json pins the hex fields public private shared
+
     rocketnet_unit_check( wycheproof_load( "x25519_test.json", tests, &num_tests, &num_groups ) );
     rocketnet_unit_check( (int) tests.size() == num_tests );
     rocketnet_unit_check( num_tests == 518 );
+
     static const char * x25519_fields[] = { "public", "private", "shared" };
     int x25519_valid = 0, x25519_invalid = 0, x25519_acceptable = 0;
+
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
@@ -417,7 +445,9 @@ static void test_wycheproof_files_load_and_count()
             x25519_acceptable++;
         else
             rocketnet_unit_check( 0 );
+
         std::vector<uint8_t> bytes;
+
         for ( int f = 0; f < 3; f++ )
         {
             std::map<std::string, std::string>::const_iterator it = tests[i].fields.find( x25519_fields[f] );
@@ -425,14 +455,18 @@ static void test_wycheproof_files_load_and_count()
             rocketnet_unit_check( wycheproof_hex( it->second, bytes ) );
         }
     }
+
     rocketnet_unit_check( x25519_valid == 264 && x25519_acceptable == 254 && x25519_invalid == 0 );
 
-    // ed25519_test.json pins msg and sig, and the group publicKey.pk.
+    // ed25519_test.json pins msg and sig, and the group publicKey.pk
+
     rocketnet_unit_check( wycheproof_load( "ed25519_test.json", tests, &num_tests, &num_groups ) );
     rocketnet_unit_check( (int) tests.size() == num_tests );
     rocketnet_unit_check( num_tests == 151 );
     rocketnet_unit_check( num_groups == 78 );
+
     int ed25519_valid = 0, ed25519_invalid = 0, ed25519_acceptable = 0;
+
     for ( size_t i = 0; i < tests.size(); i++ )
     {
         rocketnet_unit_check( tests[i].tc_id == (int) i + 1 );
@@ -444,6 +478,7 @@ static void test_wycheproof_files_load_and_count()
             ed25519_acceptable++;
         else
             rocketnet_unit_check( 0 );
+
         std::vector<uint8_t> bytes;
         std::map<std::string, std::string>::const_iterator msg = tests[i].fields.find( "msg" );
         std::map<std::string, std::string>::const_iterator sig = tests[i].fields.find( "sig" );
@@ -455,6 +490,7 @@ static void test_wycheproof_files_load_and_count()
         rocketnet_unit_check( wycheproof_hex( sig->second, bytes ) );
         rocketnet_unit_check( wycheproof_hex( pk->second, bytes ) );
     }
+
     rocketnet_unit_check( ed25519_valid == 88 && ed25519_invalid == 63 && ed25519_acceptable == 0 );
 }
 
