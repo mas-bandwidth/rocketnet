@@ -391,16 +391,18 @@ inline bool suite_name_is_test_snake_case( const std::string & name )
     return previous != '_';
 }
 
-// The suite's order, simplest first: helpers, packet, acks, transport basics,
-// each transport type, client/server, messages. A case's layer is the first
+// The suite's order, simplest first: core (init, allocator, logging), helpers,
+// packet, acks, transport basics, each transport type, client/server, messages. A case's layer is the first
 // rule whose area word its name starts with (after test_); the cases keep
 // their registration order within a layer.
 
 inline int suite_layer_of( const std::string & name )
 {
     static const char * const layers[][48] = {
-        // helpers: platform, time, base64, config, logging, memory
-        { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "bounded", "base64", "hash", "copy", "address", "anonymize", "random", "config", "log", "memory", "allocator", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
+        // core: init, allocator, logging, status names
+        { "log", "allocator", "status_name", NULL },
+        // helpers: platform, time, base64, config, memory
+        { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "bounded", "base64", "hash", "copy", "address", "anonymize", "random", "config", "memory", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
         // packet: wire, crypto, tokens, prefilter, fragments
         { "wire", "crypto", "wycheproof", "token", "connect_token", "protocol", "signed", "prefilter", "packet", "sealed", "unsealed", "open_sealed", "fragment", "reassembly", "cookie", "standard", "serialize", "replay", "integrity", "keyed", "encryption", "used", "hostile", "tampered", "vectors", "salt", "response", "admission", "payload", "max", "large", "small", "chunk", "span", "builder", "coalesce", "v4", "ipv4", "ipv6", "reused", "parse", NULL },
         // acks: ack, window, sequence, receipts

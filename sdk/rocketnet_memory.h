@@ -38,7 +38,7 @@ inline bool rocketnet_memory_add( uint64_t & total, uint64_t count, uint64_t str
     return true;
 }
 
-// the allocator's alignment and ownership header, measured in its defining TU
+// the bytes rocketnet_malloc adds to each allocation
 uint64_t rocketnet_allocation_overhead();
 
 inline uint64_t rocketnet_memory_allocations( std::initializer_list<uint64_t> sizes )
@@ -128,21 +128,14 @@ uint64_t rocketnet_server_transport_ladder_allocator_bytes( const rocketnet_serv
 struct rocketnet_client_transport_config_t;
 uint64_t rocketnet_client_transport_ladder_allocator_bytes( const rocketnet_client_transport_config_t * config );
 
-// Zero an object's raw storage except its buffers, before it is constructed:
-// skip lists the buffers as (offset, bytes) spans, ascending and disjoint.
-// A buffer's bytes are written before they are read, below the count that
-// names them, so only its count is state, set after construction; its pages
-// are touched only by use. Zero only what is state (owner, 2026-10-22).
+// Zero an object's raw storage before it is constructed, except its buffers:
+// skip lists them as (offset, bytes) spans, ascending and disjoint. A buffer
+// is written before it is read, so its pages are touched only by use.
 //
-// The zeroed state survives the default-initialization that follows
-// (`new ( p ) T;`, never `T()`, which would zero the buffers too) because the
-// types constructed this way have implicit constructors only: their own
-// members are left as the bytes are, and the only user-provided constructors
-// inside them are std::atomic's, which set their own value. GCC's lifetime
-// dead-store elimination clobbers an object only at the start of a
-// user-provided constructor, so it never discards these stores. The destroy
-// tests in test_unit_secrets_wiped.cpp construct both transports over a 0xC5
-// canary, so a lost store fails them.
+// Construct with `new ( p ) T;`, never `T()`, which would zero the buffers
+// too. The types built this way have implicit constructors only (std::atomic
+// members set their own value), so GCC's lifetime dead-store elimination
+// never discards these stores.
 struct rocketnet_span_t
 {
     size_t offset;

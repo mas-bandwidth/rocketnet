@@ -64,40 +64,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_POWER_OF_TWO_AT_LEAST( 1 ) == 1 && ROCKETNET_
 //          status-returning lifecycle forms
 // -----------------------------------------
 
-// the int-status forms of rocketnet_init and rocketnet_term, which the
-// public calls wrap, and the allocator seam the unit tests install directly.
-// The public calls return the same code as enum rocketnet_status_t
+// the int-status forms the public rocketnet_init and rocketnet_term wrap
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif // #ifdef __cplusplus
 
-// rocketnet_init with the exact status code in status, when not NULL, on
-// every return path. It returns true on success. A failure logs one error
-// line. context goes to init's own allocations, platform discovery among
-// them. NULL for both allocator functions is the system allocator
+// returns true on success; writes the status when status is not NULL
 bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
 
-/**
- * @brief Terminates the library and returns why termination did or did not occur.
- *
- * Call after every client and server is destroyed and every SDK allocation is
- * released. A failure logs one error line. Do not race termination with other
- * SDK work.
- *
- * @return The section-2.1 code: ROCKETNET_STATUS_OK on termination,
- * ROCKETNET_STATUS_NOT_INITIALIZED if the library is not initialized (nothing
- * to terminate) or is transitioning, or ROCKETNET_STATUS_LIVE_ALLOCATIONS while
- * SDK allocations remain and the term refuses.
- */
 int rocketnet_term_ex( void );
 
-// replaces the allocator outside init, for tests that allocate without
-// initializing the library. Both functions are required. Returns
-// ROCKETNET_STATUS_OK, INVALID_ARGUMENT for a NULL function,
-// ALREADY_INITIALIZED after init or during the transition, or
-// LIVE_ALLOCATIONS with outstanding allocations. A refusal logs one line
+// replaces the allocator without init, for tests. both functions are required
 int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) );
 
 // the connection a public client holds (NULL while DISCONNECTED) and the
@@ -139,8 +118,6 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 #define ROCKETNET_CONNECTION_TYPE_WIFI                                 2
 /** @brief Connection classification for cellular access. */
 #define ROCKETNET_CONNECTION_TYPE_CELLULAR                             3
-/** @brief Largest defined connection classification value. */
-#define ROCKETNET_CONNECTION_TYPE_MAX                                  3
 
 #define ROCKETNET_PLATFORM_UNKNOWN                                     0
 #define ROCKETNET_PLATFORM_WINDOWS                                     1
@@ -171,8 +148,6 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 #else
 #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_LINUX
 #endif // #if defined( _WIN32 )
-
-#define ROCKETNET_PLATFORM_HAS_IPV6 1
 
 #if !defined( ROCKETNET_UNREAL_ENGINE )
 #define ROCKETNET_UNREAL_ENGINE 0
@@ -235,46 +210,7 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 #define ROCKETNET_LITTLE_ENDIAN 0
 #endif // #if !defined(ROCKETNET_LITTLE_ENDIAN)
 
-#if defined( _MSC_VER ) && _MSC_VER < 1700
-typedef __int32 int32_t;
-typedef __int64 int64_t;
-#define PRId64 "I64d"
-#define SCNd64 "I64d"
-#define PRIx64 "I64x"
-#define SCNx64 "I64x"
-#else
 #include <inttypes.h>
-#endif // #if defined( _MSC_VER ) && _MSC_VER < 1700
-
-#if defined( _MSC_VER ) && _MSC_VER < 1900
-
-#define snprintf c99_snprintf
-#define vsnprintf c99_vsnprintf
-
-__inline int c99_vsnprintf( char * outBuf, size_t size, const char * format, va_list ap )
-{
-    int count = -1;
-    if ( size != 0 )
-        count = _vsnprintf_s( outBuf, size, _TRUNCATE, format, ap );
-    if ( count == -1 )
-        count = _vscprintf( format, ap );
-
-    return count;
-}
-
-__inline int c99_snprintf( char * outBuf, size_t size, const char * format, ... )
-{
-    int count;
-    va_list ap;
-
-    va_start( ap, format );
-    count = c99_vsnprintf( outBuf, size, format, ap );
-    va_end( ap );
-
-    return count;
-}
-
-#endif // #if defined( _MSC_VER ) && _MSC_VER < 1900
 
 #ifndef ROCKETNET_ASSERTS
 #ifdef NDEBUG
@@ -284,9 +220,7 @@ __inline int c99_snprintf( char * outBuf, size_t size, const char * format, ... 
 #endif // #ifdef NDEBUG
 #endif // #ifndef ROCKETNET_ASSERTS
 
-// the process-wide assert callback the rocketnet_assert macro calls. It is internal
-// and never exported: a caller installs a callback with rocketnet_assert_function,
-// the only way in, and NULL there restores the default
+// the assert callback, set through rocketnet_assert_function; never exported
 #if defined( __GNUC__ ) || defined( __clang__ )
 #define ROCKETNET_INTERNAL __attribute__((visibility("hidden")))
 #else
@@ -308,22 +242,11 @@ do                                                                              
 #define rocketnet_assert( ignore ) ((void)0)
 #endif // #if ROCKETNET_ASSERTS
 
-// internal to the SDK. rocketnet_library_initialized reads the lifecycle state
-// once for an entry point that must refuse before init; the create paths call
-// it at entry, never per packet. rocketnet_api_misuse_record increments the
-// count above from any refused misuse. The default allocator callbacks let a
-// caller restore them after taking the allocator
-/** @brief Internal lifecycle-state query used by SDK entry points. @return Whether initialization has completed and the library is active. */
 bool rocketnet_library_initialized( void );
-/** @brief Internal helper that increments the process-wide refused-call count. */
+
 void rocketnet_api_misuse_record( void );
 
-// the public boundary's NULL guard. Every exported entry point calls this once
-// per pointer it would dereference, at the top, before any work: a NULL is a
-// counted no-op that increments rocketnet_api_misuse_count and, in a debug
-// build, fires rocketnet_assert. The entry point returns its documented value
-// when the guard says false. The check is one predictable branch, never in a
-// loop and never on an internal call
+// an exported call's NULL check: a NULL counts one misuse and asserts
 static inline bool rocketnet_api_null_guard( const void * p )
 {
     if ( p != NULL )
@@ -335,9 +258,7 @@ static inline bool rocketnet_api_null_guard( const void * p )
     return false;
 }
 
-/** @brief Internal default allocator callback. @param context Opaque context, ignored. @param bytes Number of bytes requested. @return Allocated storage or NULL. */
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
-/** @brief Internal default deallocator callback. @param context Opaque context, ignored. @param p Original pointer returned by the default allocator. */
 void rocketnet_default_free_function( void * context, void * p );
 
 // internal to the SDK. The transport updates and the message object's update
@@ -659,12 +580,10 @@ void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_
 // asserts, field by field, that each public struct and its table agree in
 // name, order, offset and size, so the two cannot drift
 
-// the longest single rocketnet_sleep, in seconds: its microsecond count fits
-// a 32-bit int
+// the longest single rocketnet_sleep: its microsecond count fits a 32-bit int.
+// rocketnet_sleep_clamp makes a negative, zero or NaN request 0 and caps the rest
 #define ROCKETNET_SLEEP_MAX_SECONDS 2000.0
 
-// the duration rocketnet_sleep passes to the platform: 0 for a negative, zero
-// or NaN request, ROCKETNET_SLEEP_MAX_SECONDS for a longer or infinite one
 double rocketnet_sleep_clamp( double seconds );
 #if ROCKETNET_DEV
 uint64_t rocketnet_sleep_platform_dispatch_count_for_test( void );
