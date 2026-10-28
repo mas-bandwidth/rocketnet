@@ -396,7 +396,7 @@ jobs:
 
       - name: Ambient config isolation and passing output
         if: contains(matrix.leg, 'b')
-        run: python3 tools/check_test_environment.py ./bin/test
+        run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }}
 
       # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
       # on the host at once: the check prints the limit, the per-server need
@@ -1117,7 +1117,7 @@ jobs:
 
       - name: Ambient config isolation and passing output
         if: matrix.leg == 'b'
-        run: python tools/check_test_environment.py ./bin/Release/test.exe
+        run: python tools/check_test_environment.py ./bin/Release/test.exe --production
 
       - name: "Functional: native driver contract"
         if: matrix.leg == 'b'

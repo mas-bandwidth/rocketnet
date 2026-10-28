@@ -288,7 +288,11 @@ def run_binary(binary, env, timeout):
 
 
 def main():
-    binary = Path(sys.argv[1] if len(sys.argv) > 1 else "bin/test").resolve()
+    args = [arg for arg in sys.argv[1:] if arg != "--production"]
+    # --production: the binary links the production library (ROCKETNET_DEV=OFF),
+    # which compiles no in-memory environment table and so no restoration test
+    production = "--production" in sys.argv[1:]
+    binary = Path(args[0] if args else "bin/test").resolve()
     functional = "functional" in binary.name
 
     env = os.environ.copy()
@@ -327,7 +331,7 @@ def main():
     if result.returncode:
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
     names = check_shape(result.stdout.splitlines(), "SDK suite")
-    if "test_suite_environment" not in names:
+    if not production and "test_suite_environment" not in names:
         sys.exit("SDK suite did not execute its environment restoration test")
 
     reg_all, reg_always = registered_unit_names()
