@@ -1090,8 +1090,11 @@ BPF object, static/shared libraries, examples and XDP test executables. Run
 `./bin/test_xdp_compat` for the legacy loader/attachment adapter contract checks
 (no kernel operations), `./bin/test` for the unit suite, and
 `python3 tools/check_package.py build` for relocated C/C++ consumers of both
-libraries. Jammy's liburing 2.1 lacks multishot receive, so the existing
-io_uring guard leaves that transport unavailable; XDP is independent of it.
+libraries. Jammy's liburing 2.1 lacks multishot receive, so configure prints
+`liburing found without multishot receive` and does not build the io_uring
+transport: it is absent from the transport list, as in a build without
+liburing, and the production ladder is `xdp -> gso -> portable`. XDP is
+independent of it.
 
 Compilation and linking in an Ubuntu 22.04 container qualify its toolchain and
 userspace libraries only. The host supplies the container's kernel. Loading,
