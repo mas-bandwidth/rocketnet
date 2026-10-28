@@ -1041,7 +1041,6 @@ struct rocketnet_client_memory_plan_t
 // connection, so the plan carries its bytes.
 #define ROCKETNET_CLIENT_LINK_SIMULATOR_SLOTS 512
 
-#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 struct rocketnet_portable_io_client_layout_t
 {
     void * context;
@@ -1077,7 +1076,6 @@ struct rocketnet_platform_wake_layout_t
     void * context;
 };
 #endif // #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) )
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 // Mirrors of the native client I/O records, member for member, so the plan
 // counts the bytes their creates allocate: the gso client's one record
