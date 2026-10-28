@@ -258,7 +258,7 @@ ServerSendSession(t, i) ==
     /\ cSeen' = cSeen \ {i}
 
 Init ==
-    /\ cstate = 0 /\ cAttempt = 0 /\ cKept = "none" /\ cLatest = "none" /\ ~cAltLatest
+    /\ cstate = 0 /\ cAttempt = 0 /\ cKept = "none" /\ cLatest = "none" /\ cAltLatest = FALSE
     /\ cKeys = NoKeys
     /\ cEph = FALSE /\ cIndex = FALSE
     /\ cSinceSend = 0 /\ cSinceRecv = 0 /\ cAge = 0 /\ cSeen = {}

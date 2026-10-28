@@ -184,7 +184,7 @@ static void test_connection_reset_inventory_covers_every_field()
         else
             keep_fields++;
     }
-    check( reset_fields == 34 );
+    check( reset_fields == 37 );
     check( keep_fields == 9 );
 
     reset_walk_passes( rocketnet_reset_inventory_matches( "rocketnet_encryption_mapping_t",
@@ -1524,6 +1524,9 @@ static void test_connection_reset_connect_from_each_failure_state()
         memset( client.client_ephemeral_secret_key, 0xA5, sizeof( client.client_ephemeral_secret_key ) );
         memset( client.return_cookie, 0xA5, sizeof( client.return_cookie ) );
         client.has_cookie = 1;
+        memset( client.latest_cookie, 0xA5, sizeof( client.latest_cookie ) );
+        client.has_latest_cookie = 1;
+        client.send_latest_cookie = 1;
         memset( client.stored_response, 0xA5, sizeof( client.stored_response ) );
         client.client_index = 3;
         client.send_sequence_handshake = 7;
@@ -1557,6 +1560,9 @@ static void test_connection_reset_connect_from_each_failure_state()
         check( memcmp( client.session_nonce, zeros, sizeof( client.session_nonce ) ) == 0 );
         check( memcmp( client.return_cookie, zeros, sizeof( client.return_cookie ) ) == 0 );
         check( client.has_cookie == 0 );
+        check( memcmp( client.latest_cookie, zeros, sizeof( client.latest_cookie ) ) == 0 );
+        check( client.has_latest_cookie == 0 );
+        check( client.send_latest_cookie == 0 );
         check( memcmp( client.stored_response, zeros, sizeof( client.stored_response ) ) == 0 );
         check( client.client_index == -1 );
         rocketnet_replay_protection_t no_replay;
