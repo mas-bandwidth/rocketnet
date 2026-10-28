@@ -49,6 +49,7 @@ static void api_polish_followups_assert( const char * condition, const char * fu
 static void test_api_polish_followups()
 {
     // rocketnet_quiet suppresses and resumes the one log sink
+
     const enum rocketnet_log_level_t saved = rocketnet_log_level_current();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_log_function( api_polish_followups_log, NULL );
@@ -63,10 +64,12 @@ static void test_api_polish_followups()
     rocketnet_log_level( saved );
 
     // the last code is CONNECT_TOKEN_PORT_ZERO, and one past it is no code
+
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) -31 ), "CONNECT_TOKEN_PORT_ZERO" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) -32 ), "UNKNOWN" ) == 0 );
 
     // every level name matches its enum: WARN is "warn"
+
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_ERROR ), "ERROR" ) == 0 );
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_WARN ), "WARN" ) == 0 );
@@ -75,6 +78,7 @@ static void test_api_polish_followups()
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_SPAM ), "SPAM" ) == 0 );
 
     // the setter is the one way in: it writes the internal pointer, and NULL restores the default
+
     rocketnet_assert_function_t original = rn_assert_function;
     rocketnet_assert_function( api_polish_followups_assert );
     check( rn_assert_function == api_polish_followups_assert );

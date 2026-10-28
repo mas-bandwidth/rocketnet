@@ -37,6 +37,7 @@ static const char * const source_audit_cases[] = {
 // no case runs against an environment the operator chose. The audit cases
 // read the environment the same way they did there, so this binary clears the
 // same names before it runs them.
+
 static int source_audit_clear_environment()
 {
 #if defined( _WIN32 )
@@ -51,17 +52,19 @@ static int source_audit_clear_environment()
     const int cleared_client = unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
     const int cleared_ipv4 = unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" );
     const int cleared_ipv6 = unsetenv( "ROCKETNET_SERVER_IPV6_ADDRESS" );
-#endif
+#endif // #if defined( _WIN32 )
     return cleared || cleared_server || cleared_client || cleared_ipv4 || cleared_ipv6;
 }
 
 // --run <case> runs one named case of the list above and nothing else.
+
 static int source_audit_case_named( const char * name )
 {
     const size_t count = sizeof( source_audit_cases ) / sizeof( source_audit_cases[0] );
     for ( size_t i = 0; i < count; i++ )
         if ( strcmp( source_audit_cases[i], name ) == 0 )
             return 1;
+
     return 0;
 }
 
@@ -82,11 +85,13 @@ int main( int argc, char ** argv )
             fflush( stdout );
             return 1;
         }
+
         const int rc = rocketnet_unit_tests_run_named( argv[2] );
         printf( "source audit case %s %s (rc=%d)\n", argv[2], rc == 0 ? "passed" : "failed", rc );
         fflush( stdout );
         return rc == 0 ? 0 : 1;
     }
+
     if ( argc != 1 )
     {
         printf( "usage: source_audit [--run <case>]\n" );
@@ -96,6 +101,7 @@ int main( int argc, char ** argv )
 
     const size_t count = sizeof( source_audit_cases ) / sizeof( source_audit_cases[0] );
     int failed = 0;
+
     for ( size_t i = 0; i < count; i++ )
     {
         const int rc = rocketnet_unit_tests_run_named( source_audit_cases[i] );
@@ -106,10 +112,12 @@ int main( int argc, char ** argv )
             failed++;
         }
     }
+
     if ( failed == 0 )
     {
         printf( "\n*** SOURCE AUDIT PASSED ***\n\n" );
         fflush( stdout );
     }
+
     return failed ? 1 : 0;
 }

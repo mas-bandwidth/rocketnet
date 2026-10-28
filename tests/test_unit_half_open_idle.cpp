@@ -64,6 +64,7 @@ static void half_open_server_setup( struct half_open_server_t * test, double han
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -115,6 +116,7 @@ static void half_open_build_request( uint8_t * request,
     const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
     check( rocketnet_generate_cookie_mac( cookie_mac, address, rocketnet_test_salt, cookie_expire, cookie_key ) );
+
     uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
     rocketnet_write_uint64( &cookie, cookie_expire );
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
@@ -124,6 +126,7 @@ static int half_open_send_request( struct half_open_server_t * test, const uint8
 {
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
     int response_bytes = 0;
+
     return rocketnet_server_protocol_process_connection_request( &test->server, &test->client_address,
                                                                  request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
                                                                  ROCKETNET_TEST_CREATE_TS, now,
@@ -144,17 +147,20 @@ static void half_open_idle_timeout_removes_and_refreshes()
 
     int index = rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address );
     check( index != -1 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
     check( mapping->control->established == 0 );
     check( mapping->control->handshake_deadline == 1060.0 );
     check( mapping->control->last_receive_time == 1000.0 );
 
     // one second inside the idle timeout: the mapping lives
+
     rocketnet_server_protocol_update( &test.server, 1001.0 );
     check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == index );
 
     // a repeated request is traffic: it refreshes the idle clock, so the
     // mapping survives a point past the original idle deadline
+
     check( half_open_send_request( &test, request, 1005.0 ) == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
     mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
     check( mapping->control->last_receive_time == 1005.0 );
@@ -165,6 +171,7 @@ static void half_open_idle_timeout_removes_and_refreshes()
 
     // no request for ten seconds after 1005: the idle deadline, earlier
     // than the handshake deadline, removes it and counts it as idle
+
     rocketnet_server_protocol_update( &test.server, 1015.0 );
     check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
     check( test.counters.values[ROCKETNET_COUNTER_MAPPING_IDLE_TIMEOUT] == 1 );
@@ -187,6 +194,7 @@ static void half_open_handshake_deadline_wins_when_earlier()
     check( rocketnet_encryption_map_entry( test.server.encryption_map, index )->control->handshake_deadline == 1001.0 );
 
     // the handshake deadline fires first, so its own counter names the removal
+
     rocketnet_server_protocol_update( &test.server, 1001.5 );
     check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == -1 );
     check( test.counters.values[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED] == 1 );

@@ -20,7 +20,10 @@ static void * socket_create( void * context, rocketnet_address_t * bind )
                                                                 ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
                                                                 ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, "portable" );
     if ( socket )
+    {
         ++external_test_creates;
+    }
+
     return socket;
 }
 static void * server_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
@@ -66,9 +69,12 @@ static bool replay_mark( void *, const rocketnet_address_t * address, uint32_t h
 {
     external_test_replay_last_address = *address;
     if ( high_water > external_test_replay_max_high_water )
+    {
         external_test_replay_max_high_water = high_water;
+    }
     external_test_replay_has_address = true;
     ++external_test_replay_marks;
+
     return true;
 }
 static void replay_commit( void * ) {}

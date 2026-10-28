@@ -56,6 +56,7 @@ static void client_trusts_mint( uint8_t * token_data )
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = client_trusts_timeout_seconds;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -72,10 +73,12 @@ static void client_trusts_mint( uint8_t * token_data )
 }
 
 // connects at 1000.0 and sends the first request at 1000.0
+
 static void client_trusts_connect( struct rocketnet_client_protocol_t * client, struct rocketnet_counters_t * counters )
 {
     memset( counters, 0, sizeof( *counters ) );
     rocketnet_client_protocol_init( client, counters );
+
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_trusts_mint( token_data );
     check( rocketnet_client_protocol_connect( client, token_data, 1000.0, ROCKETNET_TEST_CREATE_TS ) );
@@ -89,11 +92,13 @@ static void client_trusts_connect( struct rocketnet_client_protocol_t * client, 
 }
 
 // a cookie echoing the attempt's salt: what anyone who saw the request can send
+
 static void client_trusts_deliver_cookie( struct rocketnet_client_protocol_t * client, double time )
 {
     uint8_t cookie[ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES];
     rocketnet_write_connection_cookie_packet( cookie, client->packet_filter, client->connection_salt,
                                               ROCKETNET_TEST_CREATE_TS + 3, rocketnet_test_cookie_mac );
+
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     check( rocketnet_client_protocol_process_packet( client, cookie, ROCKETNET_CONNECTION_COOKIE_WIRE_BYTES, time,
@@ -103,6 +108,7 @@ static void client_trusts_deliver_cookie( struct rocketnet_client_protocol_t * c
 // a cookie in requesting cookie (1) and again in sending connection request
 // (2) is stored and advances the client, but leaves the receive time at the
 // attempt's start, so the token timeout still runs from 1000.0
+
 static void test_client_cookie_does_not_refresh_idle_timer()
 {
     static struct rocketnet_client_protocol_t client;
@@ -123,6 +129,7 @@ static void test_client_cookie_does_not_refresh_idle_timer()
 
     // just inside the timeout the attempt still stands; at the timeout,
     // counted from the attempt's start and not from either cookie, it ends
+
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client, 1004.9, packet, &packet_bytes );
@@ -134,6 +141,7 @@ static void test_client_cookie_does_not_refresh_idle_timer()
 // a cookie gives no round-trip sample, and leaving requesting cookie disarms
 // the stamp, so the next sample measures from the first request of sending
 // connection request, never from the attempt's first request
+
 static void test_client_cookie_takes_no_rtt_sample()
 {
     static struct rocketnet_client_protocol_t client;
@@ -147,6 +155,7 @@ static void test_client_cookie_takes_no_rtt_sample()
     check( client.state_first_send_time == -1.0 );
 
     // the first request of sending connection request arms the stamp afresh
+
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client, 1000.2, packet, &packet_bytes );
@@ -155,6 +164,7 @@ static void test_client_cookie_takes_no_rtt_sample()
 
     // a second cookie in sending connection request neither samples nor
     // disarms: the challenge still owns that sample
+
     client_trusts_deliver_cookie( &client, 1000.25 );
     check( client.rtt_estimate == 0.0 );
     check( client.state_first_send_time == 1000.2 );
@@ -274,6 +284,7 @@ static double client_trusts_time( void * context )
 }
 
 // a connect token naming 127.0.0.1:40000
+
 static void client_trusts_transport_token( uint8_t * token )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -284,6 +295,7 @@ static void client_trusts_transport_token( uint8_t * token )
     signed_fields.expire_timestamp = 1ULL << 40;
     signed_fields.timeout_seconds = 300;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 127, 0, 0, 1, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_KEY_BYTES );
@@ -293,6 +305,7 @@ static void client_trusts_transport_token( uint8_t * token )
 
 // the transport connects its socket to the dialed server once, before the
 // first send or receive, and every send then goes to that server
+
 static void test_client_transport_connects_socket_to_server()
 {
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
@@ -302,9 +315,11 @@ static void test_client_transport_connects_socket_to_server()
     client_trusts_clock_t clock = { 1000.0 };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_trusts_transport_token( token );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.time_callback = client_trusts_time;
+
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven( &clock, token, &config, clock.now, &operations, fake );
     check( transport != NULL );
 
@@ -319,7 +334,9 @@ static void test_client_transport_connects_socket_to_server()
     rocketnet_client_io_step( rocketnet_client_transport_client_io( transport ), false );
     check( fake->num_sent > 0 );
     for ( int i = 0; i < fake->num_sent; i++ )
+    {
         check( rocketnet_address_equal( &fake->sent[i].address, &server ) );
+    }
     check( fake->connect_calls == 1 );
 
     rn_test_client_transport_stop_and_destroy( transport );
@@ -329,6 +346,7 @@ static void test_client_transport_connects_socket_to_server()
 
 // a connect the kernel refuses refuses the transport: it is closed, nothing
 // is sent, and with no other rung the create fails as the ladder exhausted
+
 static void test_client_transport_refuses_when_connect_fails()
 {
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
@@ -336,12 +354,15 @@ static void test_client_transport_refuses_when_connect_fails()
 
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
     fake->refuse_connect = true;
+
     client_trusts_clock_t clock = { 1000.0 };
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     client_trusts_transport_token( token );
+
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     config.time_callback = client_trusts_time;
+
     int status = ROCKETNET_STATUS_OK;
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_ex( &clock, token, &config, clock.now, &operations, fake, &status );
     check( transport == NULL );

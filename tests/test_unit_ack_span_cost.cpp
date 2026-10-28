@@ -27,6 +27,7 @@ static void ack_cost_free( void *, void * pointer ) { free( pointer ); }
 // sleeps. Cost is the actual predecessor reads, separate from hash probes or
 // ACK invocations. Ascending, descending and interleaved orders all used to
 // read k*(k-1)/2 slots, even though span release ignores that computed rank.
+
 static void ack_span_cost_case( uint32_t count, int order )
 {
     rocketnet_message_config_t config;
@@ -35,43 +36,55 @@ static void ack_span_cost_case( uint32_t count, int order )
     config.receive_message_buffer_bytes = 512 * 1024;
     config.send_message_buffer_bytes = 2 * 1024 * 1024;
     rocketnet_unit_check( rocketnet_message_validate_config( &config ) );
+
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
     rocketnet_unit_check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     rn_region_carve( region );
+
     rn_window_send_t send;
     rn_window_send_init( &send, region, 0 );
+
     rn_window_ack_t ack;
     rn_window_ack_init( &ack, &send, region, &config );
+
     const uint64_t allocations = ack_cost_allocations;
     const uint32_t descriptors = region->descriptors_free;
     const uint32_t bytes = count * ROCKETNET_MESSAGE_FRAGMENT_BYTES;
     const uint32_t d = rn_region_send_alloc_span( region, (int) bytes );
     rocketnet_unit_check( d != RN_DESCRIPTOR_NONE );
+
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
     rocketnet_unit_check( descriptor->flags & RN_SEND_FLAG_SPAN );
     descriptor->flags |= RN_SEND_FLAG_RECEIPT_RELIABLE;
     descriptor->serial = 77;
+
     uint64_t first = 0, position = 0;
     rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
                                                             bytes, d, &first, &position ) == count );
     rocketnet_unit_check( first == 0 );
+
     for ( uint32_t i = 0; i < count; i++ )
     {
         const uint64_t number = first + i;
         rn_window_ack_commit_packet( &ack, i + 1, &number, 1, 1000.0 );
     }
+
     // Two retransmission entries outlive their first completion. One is
     // acknowledged immediately, one after the descriptor has been reused.
+
     const uint64_t repeated = order == 1 ? count - 1 : 0;
     rn_window_ack_commit_packet( &ack, count + 1, &repeated, 1, 1000.001 );
     rn_window_ack_commit_packet( &ack, count + 2, &repeated, 1, 1000.002 );
 
     bool seen[256] = {};
     rocketnet_unit_check( count <= 256 );
+
     uint64_t expected_u = 0;
     rn_window_ack_receipt_begin_update( &ack );
     rn_window_ack_cost_reset();
+
     for ( uint32_t step = 0; step < count; step++ )
     {
         const uint32_t part = order == 0 ? step : order == 1 ? count - 1 - step
@@ -79,13 +92,18 @@ static void ack_span_cost_case( uint32_t count, int order )
         rocketnet_unit_check( !seen[part] );
         seen[part] = true;
         while ( expected_u < count && seen[expected_u] )
+        {
             expected_u++;
+        }
+
         const double now = 1000.01 + (double) step * 0.001;
         rocketnet_unit_check( rn_window_ack_on_ack( &ack, part + 1, now ) == 1 );
         rocketnet_unit_check( rn_window_ack_on_ack( &ack, part + 1, now ) == 0 );
         rocketnet_unit_check( rn_window_ack_on_ack( &ack, 10000, now ) == 0 );
         if ( step == 0 )
+        {
             rocketnet_unit_check( rn_window_ack_on_ack( &ack, count + 1, now ) == 1 );
+        }
         rocketnet_unit_check( descriptor->fragments_acked == step + 1 );
         rocketnet_unit_check( send.U == expected_u );
         rocketnet_unit_check( send.U_prime == ( step + 1 == count ? count : 0 ) );
@@ -94,6 +112,7 @@ static void ack_span_cost_case( uint32_t count, int order )
         rocketnet_unit_check( region->descriptors_free == descriptors - ( step + 1 < count ? 1 : 0 ) );
         rocketnet_unit_check( ack.receipt_tail == ( step + 1 == count ? 1 : 0 ) );
     }
+
     const rn_ack_cost_t cost = rn_window_ack_cost_read();
     printf( "span ACK cost: fragments=%u order=%d predecessor_visits=%llu completed_numbers=%llu\n",
             count, order, (unsigned long long) cost.predecessor_visits, (unsigned long long) cost.completed_numbers );
@@ -103,12 +122,14 @@ static void ack_span_cost_case( uint32_t count, int order )
     rocketnet_unit_check( region->span_first == RN_DESCRIPTOR_NONE && region->span_last == RN_DESCRIPTOR_NONE );
     rocketnet_unit_check( region->span_head == 0 && region->span_tail == 0 );
     rn_window_ack_receipt_end_update( &ack );
+
     rocketnet_message_receipt_t receipt[2];
     rocketnet_unit_check( rn_window_ack_receipts( &ack, receipt, 2 ) == 1 );
     rocketnet_unit_check( receipt[0].serial == 77 && receipt[0].status == ROCKETNET_RECEIPT_STATUS_ACKED );
 
-    // A distinct late packet ACK still finds its map entry, but its old
-    // number cannot acknowledge a new message using the released descriptor.
+    // a distinct late packet ACK still finds its map entry, but its old
+    // number cannot acknowledge a new message using the released descriptor
+
     const uint32_t reused = rn_region_send_alloc_span( region, (int) bytes );
     rocketnet_unit_check( reused == d );
     rocketnet_unit_check( rn_window_send_first_write_block( &send, ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED,
@@ -129,7 +150,9 @@ static void ack_span_cost_size( uint32_t count )
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, ack_cost_malloc, ack_cost_free ) == ROCKETNET_STATUS_OK );
     for ( int order = 0; order < 3; order++ )
+    {
         ack_span_cost_case( count, order );
+    }
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -138,22 +161,27 @@ static void ack_span_cost_size( uint32_t count )
 // descriptors_fresh is at its high-water mark, drain it, then freeing N
 // spans oldest-first (and, again, newest-first) may examine only a small
 // constant number of descriptors per free, never N * descriptors_fresh.
+
 static void test_ack_span_edge_free_visits_bounded()
 {
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, ack_cost_malloc, ack_cost_free ) == ROCKETNET_STATUS_OK );
+
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
     config.client_send_kbps = config.server_send_kbps = 0;
     config.send_queue_messages = 64;
     rocketnet_unit_check( rocketnet_message_validate_config( &config ) );
+
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
     rocketnet_unit_check( arena );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
     rn_region_carve( region );
 
     uint32_t taken[64];
     uint32_t filled = 0;
+
     while ( region->descriptors_free > 0 )
     {
         const uint32_t d = rn_region_send_alloc( region, 10 );
@@ -161,25 +189,35 @@ static void test_ack_span_edge_free_visits_bounded()
         rocketnet_unit_check( filled < 64 );
         taken[filled++] = d;
     }
+
     rocketnet_unit_check( filled > 16 );
+
     const uint32_t fresh = region->descriptors_fresh;
     rocketnet_unit_check( fresh == filled );
     for ( uint32_t i = 0; i < filled; i++ )
+    {
         rn_region_send_free( region, taken[i] );
+    }
     rocketnet_unit_check( region->descriptors_fresh == fresh );
 
     const uint32_t N = 16;
+
     for ( int newest_first = 0; newest_first < 2; newest_first++ )
     {
         uint32_t spans[16];
+
         for ( uint32_t i = 0; i < N; i++ )
         {
             spans[i] = rn_region_send_alloc_span( region, (int) RN_SPAN_MIN_BYTES );
             rocketnet_unit_check( spans[i] != RN_DESCRIPTOR_NONE );
         }
+
         rn_span_cost_reset();
         for ( uint32_t step = 0; step < N; step++ )
+        {
             rn_region_send_free( region, newest_first ? spans[N - 1 - step] : spans[step] );
+        }
+
         const rn_span_cost_t cost = rn_span_cost_read();
         printf( "span edge free: newest_first=%d spans=%u descriptors_fresh=%u edge_visits=%llu\n",
                 newest_first, N, fresh, (unsigned long long) cost.edge_visits );
@@ -188,6 +226,7 @@ static void test_ack_span_edge_free_visits_bounded()
         rocketnet_unit_check( region->span_first == RN_DESCRIPTOR_NONE && region->span_last == RN_DESCRIPTOR_NONE );
         rocketnet_unit_check( region->span_head == 0 && region->span_tail == 0 );
     }
+
     rn_arena_destroy( arena );
     rocketnet_term();
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -201,4 +240,4 @@ REGISTER_UNIT_TEST( test_ack_span_cost_64 );
 REGISTER_UNIT_TEST( test_ack_span_cost_128 );
 REGISTER_UNIT_TEST( test_ack_span_cost_256 );
 
-#endif
+#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )

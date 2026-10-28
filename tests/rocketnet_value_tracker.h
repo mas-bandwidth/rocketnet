@@ -107,10 +107,12 @@ inline void rocketnet_value_tracker_calculate( rocketnet_value_tracker_t * track
     rocketnet_assert( tracker->num_samples > 0 );
 
     double sum = 0.0;
+
     for ( int i = 0; i < tracker->num_samples; i++ )
     {
         sum += (double) tracker->values[i];
     }
+
     *avg_value = float( sum / double( tracker->num_samples ) );
 
     rocketnet_value_tracker_reset( tracker );

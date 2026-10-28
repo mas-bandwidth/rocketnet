@@ -47,11 +47,11 @@
 #if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
-#endif
+#endif // #ifndef WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #else
 #include <sys/mman.h>
-#endif
+#endif // #if defined( _WIN32 )
 
 // the line a case process prints to report its bound, then the bound in MiB
 #define PLAN_RSS_LINE "plan_rss_bound_mb="
@@ -97,6 +97,7 @@ inline std::atomic<uint64_t> & plan_rss_peak()
 }
 
 // every allocation the counter served: plan_rss_installed reads it
+
 inline std::atomic<uint64_t> & plan_rss_calls()
 {
     static std::atomic<uint64_t> calls( 0 );
@@ -124,7 +125,7 @@ inline void * plan_rss_map( size_t bytes )
 #else
     void * block = mmap( NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0 );
     return block == MAP_FAILED ? NULL : block;
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 inline void plan_rss_unmap( void * block, size_t bytes )
@@ -134,7 +135,7 @@ inline void plan_rss_unmap( void * block, size_t bytes )
     VirtualFree( block, 0, MEM_RELEASE );
 #else
     munmap( block, bytes );
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 inline void * plan_rss_malloc( void * context, size_t bytes )
@@ -143,9 +144,11 @@ inline void * plan_rss_malloc( void * context, size_t bytes )
     plan_rss_calls().fetch_add( 1 );
     if ( bytes > SIZE_MAX - sizeof( plan_rss_header_t ) - PLAN_RSS_MAP_GRANULE )
         return NULL;
+
     const size_t total = bytes + sizeof( plan_rss_header_t );
     size_t mapped_bytes = 0;
     void * block = NULL;
+
     if ( total >= PLAN_RSS_MAP_BYTES )
     {
         mapped_bytes = ( total + PLAN_RSS_MAP_GRANULE - 1 ) & ~(size_t) ( PLAN_RSS_MAP_GRANULE - 1 );
@@ -155,12 +158,15 @@ inline void * plan_rss_malloc( void * context, size_t bytes )
     {
         block = malloc( total );
     }
+
     if ( !block )
         return NULL;
+
     plan_rss_header_t * header = (plan_rss_header_t *) block;
     header->bytes = bytes;
     header->mapped_bytes = mapped_bytes;
     plan_rss_count( bytes );
+
     return header + 1;
 }
 
@@ -169,6 +175,7 @@ inline void plan_rss_free( void * context, void * p )
     (void) context;
     if ( !p )
         return;
+
     plan_rss_header_t * header = ( (plan_rss_header_t *) p ) - 1;
     plan_rss_uncount( header->bytes );
     if ( header->mapped_bytes )
@@ -178,6 +185,7 @@ inline void plan_rss_free( void * context, void * p )
 }
 
 // planned bytes the SDK holds outside the allocator (the header comment)
+
 inline void plan_rss_count_outside_allocator( uint64_t bytes )
 {
     plan_rss_count( bytes );
@@ -189,6 +197,7 @@ inline void plan_rss_uncount_outside_allocator( uint64_t bytes )
 }
 
 // the bound: the plan's peak in whole MiB plus the slack
+
 inline long plan_rss_bound_mb()
 {
     const uint64_t mib = 1024 * 1024;
@@ -199,18 +208,22 @@ inline long plan_rss_bound_mb()
 // installed allocator's rocketnet_malloc, free( block ) its rocketnet_free.
 // The caller probes only an initialised library with no allocator context,
 // so the probe never calls a case's allocator whose context has gone
+
 inline bool plan_rss_installed( void * ( *allocate )( void * context, size_t bytes ), void ( *release )( void * context, void * p ) )
 {
     const uint64_t before = plan_rss_calls().load();
     void * block = allocate( NULL, 1 );
     if ( !block )
         return false;
+
     const bool counted = plan_rss_calls().load() != before;
     release( NULL, block );
+
     return counted;
 }
 
 // the report line of a case process that kept the counter
+
 inline void plan_rss_report()
 {
     printf( PLAN_RSS_LINE "%ld\n", plan_rss_bound_mb() );

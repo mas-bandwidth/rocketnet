@@ -36,7 +36,7 @@
 
 #ifndef ROCKETNET_COUNTERS_CHECK
 #error "name the suite's check before including counters_expect.h: #define ROCKETNET_COUNTERS_CHECK <check>"
-#endif
+#endif // #ifndef ROCKETNET_COUNTERS_CHECK
 
 #include "rocketnet_internal.h"
 #include "rocketnet_counters.h"
@@ -85,11 +85,13 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
             ok = false;
             continue;
         }
+
         if ( is_named[e->counter] )
         {
             lines += std::string( "  " ) + rocketnet_counter_name( e->counter ) + " is named twice\n";
             ok = false;
         }
+
         is_named[e->counter] = true;
         named[e->counter] += e->delta;
     }
@@ -106,7 +108,9 @@ inline bool rocketnet_counters_expect_core( const struct rocketnet_counters_t * 
         const uint64_t actual = backwards ? was - now : now - was;
         const bool matches = is_named[i] ? ( !backwards && actual == named[i] ) : !moved;
         if ( !matches )
+        {
             ok = false;
+        }
 
         char line[256];
         if ( is_named[i] )
@@ -167,23 +171,30 @@ inline int rocketnet_counters_refusals( const struct rocketnet_counters_t * coun
 {
     std::string lines;
     int moved = 0;
+
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
     {
         if ( rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL || counters->values[i] == 0 )
             continue;
+
         bool explained = false;
         for ( int j = 0; allowed && allowed[j] != -1; j++ )
             if ( allowed[j] == i )
                 explained = true;
         if ( explained )
             continue;
+
         char line[128];
         snprintf( line, sizeof( line ), "  %s = %llu\n", rocketnet_counter_name( i ), (unsigned long long) counters->values[i] );
         lines += line;
         moved++;
     }
+
     if ( report && report_bytes > 0 )
+    {
         snprintf( report, (size_t) report_bytes, "%s", moved ? ( std::string( "refusals moved on a run that should be clean:\n" ) + lines ).c_str() : "" );
+    }
+
     return moved;
 }
 

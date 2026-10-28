@@ -56,9 +56,12 @@ static void test_ack_block_empty_read_across_wrap()
     {
         struct rocketnet_ack_block_t block;
         memset( &block, 0xA5, sizeof( block ) );
+
         const int bytes = rocketnet_ack_block_read( &block, data, (int) sizeof( data ), highest_sent[i] );
         if ( bytes != ROCKETNET_ACK_BLOCK_MIN_BYTES )
+        {
             printf( "ack block wrap: empty block refused at highest sent %llu\n", (unsigned long long) highest_sent[i] );
+        }
         check( bytes == ROCKETNET_ACK_BLOCK_MIN_BYTES );
         check( block.largest == 0 );
         check( block.first_range_length == 0 );
@@ -73,7 +76,6 @@ static void test_ack_block_empty_read_across_wrap()
 static void test_ack_block_nonempty_read_across_wrap()
 {
     const uint64_t highest_opened[] = { ACK_BLOCK_WRAP_2_32 - 3, ACK_BLOCK_WRAP_2_32, ACK_BLOCK_WRAP_2_32 + 4 };
-
     for ( size_t i = 0; i < sizeof( highest_opened ) / sizeof( highest_opened[0] ); i++ )
     {
         const uint64_t h = highest_opened[i];
@@ -84,9 +86,13 @@ static void test_ack_block_nonempty_read_across_wrap()
         struct rocketnet_replay_protection_t replay;
         memset( &replay, 0, sizeof( replay ) );
         for ( uint64_t s = h - 9; s <= h - 7; s++ )
+        {
             rocketnet_replay_advance( &replay, s );
+        }
         for ( uint64_t s = h - 4; s <= h; s++ )
+        {
             rocketnet_replay_advance( &replay, s );
+        }
         check( replay.highest_opened == h );
 
         uint8_t data[ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * 8];
@@ -97,6 +103,7 @@ static void test_ack_block_nonempty_read_across_wrap()
         {
             struct rocketnet_ack_block_t block;
             memset( &block, 0, sizeof( block ) );
+
             const int bytes = rocketnet_ack_block_read( &block, data, written, h + ahead );
             check( bytes == written );
             check( block.largest == h );

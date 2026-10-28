@@ -20,12 +20,14 @@
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 static void backend_seed_fill( uint8_t * seed, uint8_t basis )
 {
     for ( int i = 0; i < RN_TEST_BACKEND_SEED_BYTES; i++ )
+    {
         seed[i] = (uint8_t) ( basis + i * 13 + 7 );
+    }
 }
 
 static const uint64_t backend_seed_protocol_id = 0x1122334455667788ULL;
@@ -167,7 +169,7 @@ void test_backend_keypair_from_seed_null_refused()
 
 #if ROCKETNET_ASSERTS
     rocketnet_unit_check( backend_keypair_from_seed_asserts == 3 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
 }
 

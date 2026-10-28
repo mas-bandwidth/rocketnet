@@ -50,6 +50,7 @@ static void half_open_gate_server_setup( struct half_open_gate_server_t * test )
 
     struct rocketnet_server_protocol_t * server = &test->server;
     server->protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memcpy( server->packet_filter, tag, ROCKETNET_FILTER_VALUE_BYTES );
     memcpy( server->backend_public_key, rocketnet_test_backend_public_key, 32 );
@@ -81,6 +82,7 @@ static void half_open_gate_server_teardown( struct half_open_gate_server_t * tes
 
 // a valid connection request carrying a valid return cookie: the server
 // answers it with a challenge and holds a mapping with no slot
+
 static void half_open_gate_challenge( struct half_open_gate_server_t * test )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
@@ -91,6 +93,7 @@ static void half_open_gate_challenge( struct half_open_gate_server_t * test )
     signed_fields.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
     signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };   // 203.0.113.10:40000
     memcpy( signed_fields.ipv4_address, server_address, 6 );
     memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
@@ -105,6 +108,7 @@ static void half_open_gate_challenge( struct half_open_gate_server_t * test )
 
     uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
     check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
     struct rocketnet_connect_token_t token;
     rocketnet_read_connect_token( &token, token_data );
 
@@ -113,9 +117,11 @@ static void half_open_gate_challenge( struct half_open_gate_server_t * test )
     rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
                                                rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
+
     const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
     uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
     check( rocketnet_generate_cookie_mac( cookie_mac, &test->client_address, rocketnet_test_salt, cookie_expire, test->server.cookie_key ) );
+
     uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
     rocketnet_write_uint64( &cookie, cookie_expire );
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
@@ -130,10 +136,12 @@ static void half_open_gate_challenge( struct half_open_gate_server_t * test )
 
 // a sealed packet of the given type and size from the client's address: a
 // valid prefilter header, a nonzero sequence, and sealed bytes nobody sealed
+
 static int half_open_gate_send( struct half_open_gate_server_t * test, uint8_t packet_type, int packet_bytes, uint32_t sequence )
 {
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     memset( packet, 0x5A, sizeof( packet ) );
+
     uint8_t * p = packet;
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     rocketnet_write_prefilter_header( &p, packet_type, tag );
@@ -144,6 +152,7 @@ static int half_open_gate_send( struct half_open_gate_server_t * test, uint8_t p
     uint8_t payload[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
     int payload_client_index = -1;
+
     return rocketnet_server_protocol_process_packet( &test->server, &test->client_address, packet, packet_bytes,
                                                      ROCKETNET_TEST_CREATE_TS, 1000.5, response, &response_bytes,
                                                      payload, &payload_bytes, &payload_client_index );
@@ -187,18 +196,22 @@ static void test_server_half_open_session_packet_dropped_unopened()
         check( half_open_gate_send( &test, rows[i].type, rows[i].bytes, (uint32_t) ( i + 1 ) ) == ROCKETNET_SERVER_PROCESS_IGNORED );
 
         // dropped at the gate: no AEAD open was attempted
+
         const struct rocketnet_crypto_tally_t tally_after = rocketnet_crypto_tally_get();
         check( tally_after.aead_open == tally_before.aead_open );
 
         // counted as what it is: a packet for a mapping with no slot, never
         // as a packet that failed to open
+
         check( test.counters.values[rows[i].received] == before.values[rows[i].received] + 1 );
         check( test.counters.values[rows[i].not_connected] == before.values[rows[i].not_connected] + 1 );
         check( test.counters.values[rows[i].did_not_open] == before.values[rows[i].did_not_open] );
 
         // the mapping lives, unslotted, with no integrity failure and a
         // session window that has not moved
+
         check( rocketnet_encryption_map_find( test.server.encryption_map, &test.client_address ) == index );
+
         const struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( test.server.encryption_map, index );
         check( mapping->control->client_index == -1 );
         check( mapping->integrity_failures == 0 );
@@ -211,6 +224,7 @@ static void test_server_half_open_session_packet_dropped_unopened()
         const uint64_t did_not_open_before = test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN];
         const struct rocketnet_crypto_tally_t tally_before = rocketnet_crypto_tally_get();
         check( half_open_gate_send( &test, ROCKETNET_CONNECTION_RESPONSE_PACKET, ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES, 1 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
         const struct rocketnet_crypto_tally_t tally_after = rocketnet_crypto_tally_get();
         check( tally_after.aead_open == tally_before.aead_open + 1 );
         check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_DID_NOT_OPEN] == did_not_open_before + 1 );

@@ -17,8 +17,10 @@ static void test_reliable_disabled_before_and_enabled_after()
 {
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
+
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, NULL );
     check( arena != NULL );
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     rn_channels_t disabled;
@@ -27,6 +29,7 @@ static void test_reliable_disabled_before_and_enabled_after()
 
     rn_channels_t enabled;
     check( rn_channels_init( &enabled, region, 1, 0 ) );
+
     uint8_t * payload = rn_channels_start( &enabled, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE, 16 );
     check( payload != NULL );
     memset( payload, 0xA5, 16 );
@@ -77,10 +80,14 @@ static void reliable_test_send( reliable_test_node_t * node, const uint8_t * dat
 static int reliable_test_write( reliable_test_node_t * node, double now, reliable_test_packet_t * packets, int capacity )
 {
     alignas( 16 ) uint8_t frames[8][ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+
     uint8_t * pointers[8];
     check( capacity > 0 && capacity <= 8 );
     for ( int i = 0; i < capacity; i++ )
+    {
         pointers[i] = frames[i];
+    }
+
     const int count = rn_ordered_write( &node->ordered, now, pointers, capacity );
     for ( int i = 0; i < count; i++ )
     {
@@ -90,6 +97,7 @@ static int reliable_test_write( reliable_test_node_t * node, double now, reliabl
         memcpy( packets[i].data, frames[i], (size_t) packets[i].bytes );
         rn_ordered_commit( &node->ordered, i, packets[i].id, now );
     }
+
     return count;
 }
 
@@ -109,9 +117,11 @@ static void test_reliable_exactly_once_any_order_under_loss_dup_reorder()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t sender, receiver;
     reliable_test_init( &sender, &config );
     reliable_test_init( &receiver, &config );
+
     reliable_test_packet_t packets[3];
     const uint8_t values[3] = { 11, 22, 33 };
 
@@ -121,7 +131,8 @@ static void test_reliable_exactly_once_any_order_under_loss_dup_reorder()
         check( reliable_test_write( &sender, 1.0 + i * 0.01, &packets[i], 1 ) == 1 );
     }
 
-    // The first number is lost initially. Later numbers deliver without it.
+    // the first number is lost initially. Later numbers deliver without it.
+
     for ( int i = 2; i >= 0; i-- )
     {
         check( rn_ordered_receive( &receiver.ordered, packets[i].data, packets[i].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -133,16 +144,19 @@ static void test_reliable_exactly_once_any_order_under_loss_dup_reorder()
         rn_ordered_end_update( &receiver.ordered );
     }
 
-    // A different packet carrying the same reliable number is still a duplicate.
+    // a different packet carrying the same reliable number is still a duplicate
+
     reliable_test_packet_t resent[3];
     const int n = reliable_test_write( &sender, 1.5, resent, 3 );
     check( n > 0 );
+
     for ( int i = 0; i < n; i++ )
     {
         check( rn_ordered_receive( &receiver.ordered, resent[i].data, resent[i].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         check( rn_ordered_deliveries( &receiver.ordered ) == 0 );
         rn_ordered_end_update( &receiver.ordered );
     }
+
     check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] >= 1 );
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
@@ -154,21 +168,28 @@ static void test_reliable_chunked_delivered_whole()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t sender, receiver;
     reliable_test_init( &sender, &config );
     reliable_test_init( &receiver, &config );
+
     const uint32_t bytes = 2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17;
     uint8_t data[2 * ROCKETNET_MESSAGE_FRAGMENT_BYTES + 17];
     for ( uint32_t i = 0; i < bytes; i++ )
+    {
         data[i] = (uint8_t) ( i * 7 + 3 );
+    }
     reliable_test_send( &sender, data, bytes );
+
     reliable_test_packet_t packets[4];
     const int n = reliable_test_write( &sender, 1.0, packets, 4 );
     check( n == 3 );
+
     for ( int i = 2; i >= 0; i-- )
     {
         check( rn_ordered_receive( &receiver.ordered, packets[i].data, packets[i].bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         check( rn_ordered_deliveries( &receiver.ordered ) == ( i == 0 ? 1u : 0u ) );
+
         if ( i == 0 )
         {
             const rn_delivery_t & delivery = receiver.region->deliveries[0];
@@ -176,8 +197,10 @@ static void test_reliable_chunked_delivered_whole()
             check( delivery.data >= receiver.region->receive_ring && delivery.data < receiver.region->receive_ring + receiver.region->ring_bytes );
             check( memcmp( delivery.data, data, bytes ) == 0 );
         }
+
         rn_ordered_end_update( &receiver.ordered );
     }
+
     rn_arena_destroy( sender.arena );
     rn_arena_destroy( receiver.arena );
 }
@@ -188,15 +211,19 @@ static void test_reliable_packet_fit_boundary()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t sender;
     reliable_test_init( &sender, &config );
+
     uint8_t data[1409];
     memset( data, 0x5A, sizeof( data ) );
+
     reliable_test_packet_t packets[2];
 
     reliable_test_send( &sender, data, 1408 );
     check( sender.region->send_descriptors[sender.region->channel_send[0].queue_head].fragments == 1 );
     check( reliable_test_write( &sender, 1.0, packets, 2 ) == 1 );
+
     rocketnet_message_reader_t reader;
     rocketnet_message_record_t record;
     check( rocketnet_message_reader_begin( &reader, packets[0].data, packets[0].bytes, &sender.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -205,6 +232,7 @@ static void test_reliable_packet_fit_boundary()
     reliable_test_send( &sender, data, 1409 );
     check( sender.region->send_descriptors[sender.region->channel_send[0].queue_head].fragments == 2 );
     check( reliable_test_write( &sender, 1.01, packets, 2 ) == 2 );
+
     for ( int i = 0; i < 2; i++ )
     {
         check( rocketnet_message_reader_begin( &reader, packets[i].data, packets[i].bytes, &sender.ordered.limits ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -212,9 +240,11 @@ static void test_reliable_packet_fit_boundary()
         check( record.fragment == (uint32_t) i && record.fragments == 1 );
     }
 
-    // A sender may schedule code 2 on a valid channel, but the wire has no
-    // channel field and the receiver presents it on channel 0.
+    // a sender may schedule code 2 on a valid channel, but the wire has no
+    // channel field and the receiver presents it on channel 0
+
     check( sender.region->num_channels > 1 );
+
     uint8_t * other = rn_channels_start( &sender.ordered.channels, 1, ROCKETNET_CHANNEL_TYPE_RELIABLE, 1 );
     check( other != NULL );
     *other = 9;
@@ -231,29 +261,35 @@ static void test_rnchannel_reliable_witness_replays()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
 
     // RNChannelTypes BrokenReliableTwice: a new packet id cannot make the same
     // reliable number fresh. The receive window refuses the second arrival.
+
     rocketnet_message_record_t record;
     memset( &record, 0, sizeof( record ) );
+
     const uint8_t byte = 7;
     record.code = ROCKETNET_MESSAGE_CODE_RELIABLE;
     record.data = &byte;
     record.bytes = 1;
+
     uint32_t slot = RN_DESCRIPTOR_NONE;
     check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
     check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_DUPLICATE );
 
-    // Exactly one window beyond the next read number is a violation, not a
-    // stale or fresh application delivery.
+    // exactly one window beyond the next read number is a violation, not a
+    // stale or fresh application delivery
+
     record.number = 1 + node.region->window;
     check( rn_window_receive_accept( &node.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_VIOLATION );
     check( node.ordered.receive.violation == ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW );
 
     // At the 24-bit wrap, adjacent numbers remain adjacent in the receiver's
     // reconstructed sequence. A retry of the pre-wrap number is still stale.
+
     rn_region_reset( node.region );
     rn_window_receive_init( &node.ordered.receive, node.region, ROCKETNET_MESSAGE_U24_MASK );
     record.number = ROCKETNET_MESSAGE_U24_MASK;
@@ -291,13 +327,16 @@ static void test_reliable_no_allocation_after_create()
 
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t sender, receiver;
     reliable_test_init( &sender, &config );
     reliable_test_init( &receiver, &config );
+
     const uint64_t created = reliable_allocator_calls;
 
     const uint8_t data[3] = { 1, 2, 3 };
     reliable_test_send( &sender, data, 3 );
+
     reliable_test_packet_t packet;
     check( reliable_test_write( &sender, 1.0, &packet, 1 ) == 1 );
     check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
@@ -316,10 +355,12 @@ REGISTER_UNIT_TEST( test_reliable_no_allocation_after_create );
 
 // A control record frees its number's descriptor and is never an application
 // view (rn_channels_dispatch_reliable, sdk/rocketnet_channel_reliable.cpp).
+
 static void test_reliable_control_record_frees_its_number()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
 
@@ -351,10 +392,12 @@ REGISTER_UNIT_TEST( test_reliable_control_record_frees_its_number );
 // A channel set whose mask does not enable code 2 refuses it
 // (rn_channels_dispatch, sdk/rocketnet_channel.cpp, by wire code): counted
 // TYPE_NOT_ENABLED, the error set, and no delivery.
+
 static void test_reliable_record_on_a_disabled_mask_is_refused()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
 
@@ -385,10 +428,12 @@ REGISTER_UNIT_TEST( test_reliable_record_on_a_disabled_mask_is_refused );
 // A record whose number layer 3 never accepted stands alone: code 2 fills the
 // not-live slot's descriptor from the record and delivers
 // (rn_channels_descriptor, finding 11), so no violation is counted.
+
 static void test_reliable_record_without_a_live_number_stands_alone()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
 
@@ -469,6 +514,7 @@ static void reliable_block_case( int order )
 
     rocketnet_message_config_t config;
     reliable_block_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
     check( count <= node.region->window );
@@ -477,15 +523,22 @@ static void reliable_block_case( int order )
     uint32_t * arrival = (uint32_t *) malloc( count * sizeof( uint32_t ) );
     check( data && arrival );
     for ( uint32_t i = 0; i < total; i++ )
+    {
         data[i] = (uint8_t) ( i * 131 + ( i >> 8 ) * 7 + 1 );
+    }
     for ( uint32_t i = 0; i < count; i++ )
+    {
         arrival[i] = order == RELIABLE_BLOCK_REVERSED ? count - 1 - i : i;
+    }
+
     if ( order == RELIABLE_BLOCK_SHUFFLED )
     {
         uint32_t seed = 0x2545F491u;
+
         for ( uint32_t i = count - 1; i > 0; i-- )
         {
             seed = seed * 1664525u + 1013904223u;
+
             const uint32_t j = ( seed >> 8 ) % ( i + 1 );
             const uint32_t swap = arrival[i];
             arrival[i] = arrival[j];
@@ -495,45 +548,55 @@ static void reliable_block_case( int order )
 
 #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
     rn_channels_block_cost_reset();
-#endif
+#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
 
     uint32_t delivered = 0;
+
     for ( uint32_t i = 0; i < count; i++ )
     {
         const rocketnet_message_record_t record = reliable_block_record( data, total, 0, arrival[i] );
         rn_delivery_t delivery;
         const int result = reliable_block_arrive( &node, &record, &delivery );
+
         if ( i + 1 < count )
         {
             check( result == ROCKETNET_CHANNEL_DISPATCH_HELD );
             continue;
         }
+
         check( result == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
         check( delivery.code == ROCKETNET_CHANNEL_TYPE_RELIABLE && delivery.bytes == (int) total );
         check( delivery.data == node.region->receive_ring );
         check( memcmp( delivery.data, data, total ) == 0 );
         delivered++;
     }
+
     check( delivered == 1 );
     check( node.ordered.channels.deliveries == 1 );
     check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_NONE );
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK] == 0 );
 
 #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
-    // Every chunk does bounded work: the block's completion never rescans the
-    // descriptors already in (a 1 MiB block in order was ~415k visits).
+    // every chunk does bounded work: the block's completion never rescans the
+    // descriptors already in (a 1 MiB block in order was ~415k visits)
+
     const rn_block_cost_t cost = rn_channels_block_cost_read();
     check( cost.chunks == count );
     check( cost.descriptor_visits <= 3 * (uint64_t) count );
-#endif
+#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
 
-    // The update's end releases every number of the block, and no block
-    // state outlives it.
+    // the update's end releases every number of the block, and no block
+    // state outlives it
+
     rn_ordered_end_update( &node.ordered );
     for ( uint32_t i = 0; i < count; i++ )
+    {
         check( node.region->receive_descriptors[i].live == 0 );
+    }
     for ( uint32_t i = 0; i < node.region->held_entries; i++ )
+    {
         check( node.region->held_index[i].used == 0 );
+    }
 
     free( arrival );
     free( data );
@@ -576,6 +639,7 @@ static void reliable_block_refused_case( int wrong )
 
     rocketnet_message_config_t config;
     reliable_block_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
 
@@ -583,6 +647,7 @@ static void reliable_block_refused_case( int wrong )
     memset( data, 0x3C, sizeof( data ) );
 
     rn_delivery_t delivery;
+
     for ( uint32_t i = 0; i < 2; i++ )
     {
         const rocketnet_message_record_t record = reliable_block_record( data, total, 0, i );
@@ -624,12 +689,15 @@ REGISTER_UNIT_TEST( test_reliable_block_chunk_with_wrong_count_is_refused );
 // not-live slot's descriptor from the record and delivers (rn_channels_descriptor),
 // instead of counting SLOT_COLLISION; a slot live under another number is still
 // SLOT_COLLISION.
+
 static void test_reliable_dispatch_stands_alone()
 {
     rocketnet_message_config_t config;
     reliable_test_config( &config );
+
     reliable_test_node_t node;
     reliable_test_init( &node, &config );
+
     const uint64_t collision_before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION];
 
     static const uint8_t data[16] = { 0x5A };
@@ -642,6 +710,7 @@ static void test_reliable_dispatch_stands_alone()
     record.bytes = 1;
 
     // not-live slot: filled from the record, delivered once
+
     rn_delivery_t delivery;
     check( rn_channels_dispatch( &node.ordered.channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
     check( node.ordered.channels.deliveries == 1 );
@@ -649,6 +718,7 @@ static void test_reliable_dispatch_stands_alone()
     check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION] == collision_before );
 
     // a slot live for another number: still SLOT_COLLISION
+
     const uint32_t W = node.region->window;
     rocketnet_message_record_t occupant;
     memset( &occupant, 0, sizeof( occupant ) );
@@ -657,6 +727,7 @@ static void test_reliable_dispatch_stands_alone()
     occupant.number = 0;
     occupant.data = data;
     occupant.bytes = 1;
+
     uint32_t slot = RN_DESCRIPTOR_NONE;
     check( rn_window_receive_accept( &node.ordered.receive, &occupant, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
     check( node.region->receive_descriptors[slot].live == 1 );
