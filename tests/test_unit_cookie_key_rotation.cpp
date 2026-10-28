@@ -75,6 +75,7 @@ static void rocketnet_rotation_server_setup( struct rocketnet_rotation_server_t 
     rocketnet_unit_check( rocketnet_address_parse( &server->advertised_ipv4, "203.0.113.10:40000" ) );
     memcpy( server->cookie_key, rocketnet_test_cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
     server->cookie_rotation_seconds = period_seconds;
     server->cookie_key_rotation_time = ROCKETNET_ROTATION_TEST_START_TIME + (double) period_seconds;
     server->previous_cookie_key_expire_time = 0.0;
@@ -451,7 +452,7 @@ static void test_handshake_budget_reopens_after_update()
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
 
-    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+    const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
 
@@ -487,7 +488,7 @@ static void test_cookie_requests_spend_no_handshake_budget()
     struct rocketnet_rotation_server_t test;
     rocketnet_rotation_server_setup( &test, 0 );
 
-    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+    const int budget = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
 

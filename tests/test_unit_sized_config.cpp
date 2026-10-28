@@ -498,6 +498,9 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 9, true );
     SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 64, true );
     SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 1024, true );
+    SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 1, true );
+    SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 16, true );
+    SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 1024, true );
 
     // transport fields out of range: refused
 
@@ -515,6 +518,8 @@ static void test_sized_config_server_create_checks_the_config()
     SIZED_CONFIG_SERVER_CREATE( c.handshake_deadline_seconds = 61, false );
     SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 0, false );
     SIZED_CONFIG_SERVER_CREATE( c.disconnect_packets_per_update = 1025, false );
+    SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 0, false );
+    SIZED_CONFIG_SERVER_CREATE( c.handshakes_per_update = 1025, false );
 
     // a transport list that does not parse: refused
 
@@ -742,16 +747,20 @@ static void test_public_light_config_honours_caller_size()
     struct rocketnet_server_config_t full_server;
     check( rocketnet_server_light_config( &full_server ) == ROCKETNET_STATUS_OK );
     check( full_server.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
+    check( full_server.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
 }
 
-// The appended public field is revision 2. A revision-1 caller's last bytes
-// are never read, so its server uses the new default; a current caller's value
-// is copied exactly once into the resolved transport config.
+// The appended public fields are revision 2: the disconnect allowance and
+// the handshake work budget, which lies in what would otherwise be the
+// revision's trailing padding. A revision-1 caller's last bytes are never
+// read, so its server uses the new defaults; a current caller's values are
+// copied exactly once into the resolved transport config.
 static void test_public_server_disconnect_allowance_revision_and_copy()
 {
     struct rocketnet_server_config_t defaults;
     check( rocketnet_server_default_config( &defaults ) == ROCKETNET_STATUS_OK );
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
+    check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
     check( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( defaults ) );
 
@@ -792,6 +801,20 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
         uint32_t kbps = 0;
         check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
         check( transport.disconnect_packets_per_update == values[i] );
+        check( transport.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
+    }
+
+    const int budgets[] = { 1, 16, 1024 };
+    for ( int i = 0; i < COUNT( budgets ); i++ )
+    {
+        struct rocketnet_server_config_t config;
+        check( rocketnet_server_default_config( &config ) == ROCKETNET_STATUS_OK );
+        config.handshakes_per_update = budgets[i];
+        struct rocketnet_server_transport_config_t transport;
+        struct rocketnet_message_config_t message;
+        uint32_t kbps = 0;
+        check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+        check( transport.handshakes_per_update == budgets[i] );
     }
 }
 

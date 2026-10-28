@@ -3642,7 +3642,7 @@ The values this section introduces are:
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
-| handshake work budget | `1024` | requests per update | default post-cookie connection requests one server processes in one update |
+| handshake work budget | `16` | requests per update | default post-cookie connection requests one server processes in one update |
 | failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |
 | failed-signature window | `10` | seconds | the period over which the failed-signature budget is counted |
 
@@ -3660,7 +3660,7 @@ input: the timing defaults above, in the order stated, each as a little-endian u
 0a 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00
 3c 00 00 00 00 00 00 00 0a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
-00 04 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
+10 00 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00
 ```
 

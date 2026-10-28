@@ -1460,6 +1460,16 @@ struct rocketnet_server_config_t
     /// notification copies rather than exceeding this allowance.
 
     int disconnect_packets_per_update;
+
+    /// ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE sets the handshake work budget:
+    /// the most connection requests with a valid cookie the server processes
+    /// in one update, each one signature verification and, for a valid token,
+    /// the key exchange. Range is 1 .. 1024. Default is 16. A request past it
+    /// is dropped unanswered and counted in handshakes_dropped_over_budget;
+    /// the client sends it again and a later update processes it, so a mass
+    /// join or a flood of requests spreads across updates.
+
+    int handshakes_per_update;
 };
 
 /// Messages

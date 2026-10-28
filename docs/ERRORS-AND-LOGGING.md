@@ -414,8 +414,9 @@ status code and the accompanying `ERROR` log line:
      - `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`) or
        `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`): check
        `s.handshakes_dropped_over_budget` in `rocketnet_server_stats_t` (which
-       increments when handshake replies are rate-limited) and check path MTU /
-       packet loss.
+       increments when a connection request waits past the server's
+       `handshakes_per_update` budget; raise it if a mass join times out) and
+       check path MTU / packet loss.
      - `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`): the server explicitly
        rejected the connection. Check `s.connections_denied_full` in
        `rocketnet_server_stats_t` (all `max_clients` slots are occupied) and

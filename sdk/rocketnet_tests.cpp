@@ -2619,6 +2619,7 @@ static void rocketnet_test_server_setup( struct rocketnet_test_server_t * test )
 
     memcpy( server->cookie_key, rocketnet_test_cookie_key, 32 );
     server->cookie_lifetime_seconds = 3;
+    server->handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
     server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
@@ -3298,7 +3299,7 @@ void rocketnet_test_cookie_bounds_signature_verifies()
         const int slots = ROCKETNET_SIGNATURE_VERIFY_TABLE_SLOTS;
         rocketnet_check( failures == (uint64_t) ( num_sources + ( rounds - 1 ) * ( num_sources - slots ) ) );
         rocketnet_check( refused == (uint64_t) ( ( rounds - 1 ) * slots ) );
-        rocketnet_check( test.server.counters->handshakes_processed_this_update <= (uint64_t) ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE );
+        rocketnet_check( test.server.counters->handshakes_processed_this_update <= (uint64_t) ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE );
 
         rocketnet_test_server_teardown( &test );
     }
@@ -4321,7 +4322,7 @@ void rocketnet_test_handshake_work_budget_per_update()
     rocketnet_test_server_setup( &other );
 
     const int num_requests = 16000;
-    const int budget = ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE;
+    const int budget = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
 
     uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
     uint8_t response[ROCKETNET_RECEIVE_CEILING];
@@ -13514,6 +13515,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, disconnect_packets_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshakes_per_update ),
 };
 
 #undef RN_TEST_CONFIG_FIELD

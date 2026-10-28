@@ -340,6 +340,37 @@ static void test_config_env_disconnect_allowance_range()
     check( !env_names_disconnect_allowance_resolves( "1025", &resolved ) );
 }
 REGISTER_UNIT_TEST( test_config_env_disconnect_allowance_range );
+
+static bool env_names_handshake_budget_resolves( const char * value, int * resolved_value )
+{
+    env_names_setenv( "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE", value );
+    struct rocketnet_server_transport_config_t transport;
+    struct rocketnet_message_config_t message;
+    uint32_t kbps = 0;
+    const bool resolved = rocketnet_server_config_resolve( NULL, true, &transport, &message, &kbps );
+    env_names_unsetenv( "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" );
+    *resolved_value = transport.handshakes_per_update;
+    int num_fields = 0;
+    const rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
+    return resolved && rocketnet_config_validate( "server", &transport, fields, num_fields );
+}
+
+static void test_config_env_handshake_budget_range()
+{
+    const int values[] = { 1, 16, 1024 };
+    for ( int i = 0; i < (int) ( sizeof( values ) / sizeof( values[0] ) ); i++ )
+    {
+        char text[16];
+        snprintf( text, sizeof( text ), "%d", values[i] );
+        int resolved = 0;
+        check( env_names_handshake_budget_resolves( text, &resolved ) );
+        check( resolved == values[i] );
+    }
+    int resolved = -1;
+    check( !env_names_handshake_budget_resolves( "0", &resolved ) );
+    check( !env_names_handshake_budget_resolves( "1025", &resolved ) );
+}
+REGISTER_UNIT_TEST( test_config_env_handshake_budget_range );
 #endif // #if ROCKETNET_DEV
 
 

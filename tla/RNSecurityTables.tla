@@ -50,6 +50,15 @@
 (* 2026-10-24: the one-sided rollover, under which a clock stepped back    *)
 (* keeps a spent window open for the length of the correction             *)
 (* (FloodWindowBounded).                                                   *)
+(* VerifyBudget is the server config's handshakes_per_update, any value    *)
+(* in 1 .. 1024 (default 16): a request past it in one update is dropped   *)
+(* and the client sends it again at its send rate, so the honest request   *)
+(* is enabled again after every update while the flood takes the budget.  *)
+(* FloodSpec assumes the budget is fair to it in that sense (strong        *)
+(* fairness): a flood of any size within the budget delays it but never    *)
+(* holds it back forever.  FloodSpecWeakHonest drops that assumption to    *)
+(* weak fairness, which a flood that takes the whole budget first in every *)
+(* update defeats, so the fairness is what liveness rests on.              *)
 (* Spec leaves the flood variables at their initial values.                *)
 (*                                                                         *)
 (* The request-claim table (rocketnet_used_token_history_claim_can_record, *)
@@ -448,7 +457,7 @@ ClaimsSpec == Init /\ [][ClaimsNext]_vars
 \* code before 2026-10-20, `if ( empty_slot == -1 ) return 0;`) a source
 \* the full table does not hold is refused too.  Every request here has
 \* passed the cookie gate and spends one unit of the per-update handshake
-\* work budget (VerifyBudget, ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE),
+\* work budget (VerifyBudget, the server config's handshakes_per_update),
 \* checked before this gate.  The flood keeps the window spent for longer
 \* than one honest attempt runs (the handshake deadline, 5 s, is under the
 \* window, 10 s).
@@ -484,7 +493,10 @@ Forge(f) ==
 
 \* the honest client's request: a valid token, so the verify passes and
 \* nothing is recorded; it gets the challenge.  It retransmits at the send
-\* rate, so a request refused by the work budget arrives again later.
+\* rate, so a request the work budget drops (handshakes_per_update spent,
+\* CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED) arrives again in a later
+\* update: while floodVerifies = VerifyBudget it waits, and FloodUpdate
+\* enables it again.
 HonestRequest ==
     /\ honest = "start"
     /\ floodVerifies < VerifyBudget
@@ -525,6 +537,12 @@ FloodNext == (\E f \in Forgers : Forge(f)) \/ HonestRequest \/ HonestResponse \/
 \* takes the budget, hence strong fairness for it
 FloodSpec == Init /\ [][FloodNext]_vars
              /\ SF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
+\* the reversed witness of that fairness: weak fairness only.  The flood
+\* takes the whole budget before the honest request in every update, so the
+\* request is never continuously enabled and never has to run
+\* (MCRNSecurityTablesBrokenUnfairBudget.cfg, HonestConnectsUnderFlood).
+FloodSpecWeakHonest == Init /\ [][FloodNext]_vars
+             /\ WF_vars(HonestRequest) /\ WF_vars(HonestResponse) /\ WF_vars(FloodUpdate)
 
 \* No global lockout: an honest client with a valid token connects while
 \* forging sources keep the failed-signature budget spent and the source

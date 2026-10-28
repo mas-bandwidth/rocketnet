@@ -10,19 +10,10 @@
 
 #include <stdint.h>
 
-// the handshake work budget: the most post-cookie handshakes (connection
-// requests whose cookie validated) one update will process, per server. A
-// request past the budget is dropped before any asymmetric work and counted,
-// so a flood of staged attempts cannot spend the whole update on signature
-// verification. Lives in this header so the protocol ladder and the test
-// share one number rather than copying it.
-/**
- * @brief Maximum cookie-validated connection requests processed per server update.
- *
- * Requests beyond this limit are refused before asymmetric signature
- * verification and increment `ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
- */
-#define ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE      1024
+// the handshake work budget is the server config field handshakes_per_update
+// (ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE in rocketnet_internal.h): a
+// request past it is dropped before any asymmetric work and counted in
+// CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED.
 
 // returned by rocketnet_server_protocol_process_connection_request when the
 // handshake budget is exhausted: the next value after
@@ -520,7 +511,7 @@ struct rocketnet_counters_t
     // the current update. Reset by the protocol sweep once per update, so the
     // cap is enforced per server rather than process-wide; the drop it causes
     // is the published counter above.
-    /** @brief Internal per-server count of cookie-validated requests processed in this update. */
+    /** @brief Internal per-server count of cookie-validated requests processed in this update, against handshakes_per_update. */
     uint64_t handshakes_processed_this_update;
 };
 

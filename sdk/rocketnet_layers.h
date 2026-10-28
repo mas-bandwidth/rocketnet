@@ -28,7 +28,7 @@ extern "C"
 #define ROCKETNET_CONFIG_REVISION_BYTES( end, align ) ( ( ( end ) + ( align ) - 1 ) / ( align ) * ( align ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_1 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, reliable_message_timeout_ms ) + sizeof( int ), sizeof( void * ) )
-#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, disconnect_packets_per_update ) + sizeof( int ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, handshakes_per_update ) + sizeof( int ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and unfragmented payload limits.
 /// Internal; fragments retain their separate, unrounded stride bound.
@@ -798,6 +798,8 @@ struct rocketnet_server_transport_config_t
     char second_public_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     /** @brief Whole-server disconnect notification packets sealed per update; 1 through 1024, default 64. */
     int disconnect_packets_per_update;
+    /** @brief Cookie-validated connection requests processed per update; 1 through 1024, default 16. */
+    int handshakes_per_update;
 };
 
 // a NULL config is a counted no-op
