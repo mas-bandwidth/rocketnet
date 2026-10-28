@@ -16,6 +16,7 @@
 
 #include "bench_common.h"
 
+#include <fcntl.h>
 #include <sys/wait.h>
 
 static int failures;
@@ -40,8 +41,12 @@ static int validate_exit_status( const struct bench_send_health_t * health )
     }
     if ( child == 0 )
     {
-        freopen( "/dev/null", "w", stdout );
-        freopen( "/dev/null", "w", stderr );
+        int null_fd = open( "/dev/null", O_WRONLY );
+        if ( null_fd >= 0 )
+        {
+            dup2( null_fd, STDOUT_FILENO );
+            dup2( null_fd, STDERR_FILENO );
+        }
         bench_send_validate( health );
         _exit( 0 );
     }
