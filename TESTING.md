@@ -227,6 +227,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnsentmap (3 required) | planned for the final deliverable |
 | TLA+ model check: rnserverstats (8 required) | planned for the final deliverable |
 | TLA+ model check: rnupdateclock (2 required) | planned for the final deliverable |
+| TLA+ model check: clientrace (5 required) | planned for the final deliverable |
 | TLA+ model check: rnwrittenring (3 required) | planned for the final deliverable |
 | TLA+ model check: rngsohandoff (2 required) | planned for the final deliverable |
 | TLA+ model check: rnchannelqueues (2 required) | planned for the final deliverable |
