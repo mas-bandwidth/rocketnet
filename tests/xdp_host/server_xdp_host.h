@@ -76,4 +76,4 @@ uint64_t rocketnet_xdp_host_last_redirect_key( void );
 }
 #endif // #ifdef __cplusplus
 
-#endif // #ifndef ROCKETNET_TESTS_XDP_HOST_SERVER_XDP_HOST_H
+#endif // ROCKETNET_TESTS_XDP_HOST_SERVER_XDP_HOST_H

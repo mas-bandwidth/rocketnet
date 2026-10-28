@@ -71,4 +71,4 @@ static inline int rocketnet_test_case_env_time_scale( double * scale )
     return 1;
 }
 
-#endif // #ifndef ROCKETNET_TESTS_TIME_SCALE_H
+#endif // ROCKETNET_TESTS_TIME_SCALE_H

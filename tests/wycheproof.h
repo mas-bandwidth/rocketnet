@@ -522,4 +522,4 @@ inline bool wycheproof_load( const char * file_name,
     return true;
 }
 
-#endif // #ifndef ROCKETNET_TESTS_WYCHEPROOF_H
+#endif // ROCKETNET_TESTS_WYCHEPROOF_H
