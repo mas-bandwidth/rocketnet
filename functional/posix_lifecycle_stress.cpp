@@ -458,7 +458,9 @@ static void posix_xdp_setup()
     posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set lo up" );
     posix_xdp_run( "ip -n " POSIX_XDP_NETNS " link set " POSIX_XDP_FAR " up" );
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 }
 
 #endif // #if defined(__linux__) && ROCKETNET_XDP

@@ -2181,7 +2181,9 @@ static void * posix_port_server_create( int kind, uint16_t port )
         struct rocketnet_server_gso_t * gso = rocketnet_server_gso_create( NULL, &address, 2, 0 );
         if ( gso )
         {
+#if ROCKETNET_DEV
             posix_check( rocketnet_server_gso_num_queues( gso ) == 2 );
+#endif // #if ROCKETNET_DEV
         }
 
         return gso;
@@ -2674,7 +2676,9 @@ static void posix_xdp_weather( int ipv6 )
 
     // the server: pinned to xdp, one queue, on the near end
 
+#if ROCKETNET_DEV
     rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
