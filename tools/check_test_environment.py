@@ -129,6 +129,64 @@ def _register_names(path):
     return names
 
 
+# A simple guard is one macro tested for truth or definition, possibly
+# negated: #if X, #if !X, #ifdef X, #ifndef X, #if defined( X ) and
+# #if !defined( X ). Any other condition is opaque and excludes nothing.
+SIMPLE_IF_RE = re.compile(r"^\s*#\s*if\s+(!?)\s*([A-Za-z_][A-Za-z0-9_]*)\s*$")
+DEFINED_IF_RE = re.compile(r"^\s*#\s*if\s+(!?)\s*defined\s*\(?\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)?\s*$")
+IFDEF_RE = re.compile(r"^\s*#\s*if(n?)def\s+([A-Za-z_][A-Za-z0-9_]*)\s*$")
+
+
+def _guard_literal(line):
+    # (macro test, polarity), or None for an opaque condition
+    m = SIMPLE_IF_RE.match(line)
+    if m:
+        return (m.group(2), not m.group(1))
+    m = DEFINED_IF_RE.match(line)
+    if m:
+        return ("defined " + m.group(2), not m.group(1))
+    m = IFDEF_RE.match(line)
+    if m:
+        return ("defined " + m.group(2), not m.group(1))
+    return None
+
+
+def _register_guards(path):
+    # [(name, guard)]: guard is the frozenset of simple literals that must hold
+    # for the registration to compile
+    names = []
+    try:
+        text = path.read_text()
+    except OSError:
+        return names
+    stack = []
+    for line in _mask_comments_and_literals(text).splitlines():
+        if IF_RE.match(line):
+            stack.append(_guard_literal(line))
+            continue
+        if ELIF_RE.match(line):
+            if stack:
+                stack[-1] = None
+            continue
+        if ELSE_RE.match(line):
+            if stack and stack[-1] is not None:
+                stack[-1] = (stack[-1][0], not stack[-1][1])
+            continue
+        if ENDIF_RE.match(line):
+            if stack:
+                stack.pop()
+            continue
+        for m in REGISTER_RE.finditer(line):
+            names.append((m.group(1), frozenset(literal for literal in stack if literal is not None)))
+    return names
+
+
+def _guards_exclusive(a, b):
+    # two registrations never compile together when one guard needs a macro
+    # test true and the other needs it false
+    return any((macro, not polarity) in b for macro, polarity in a)
+
+
 def registered_unit_names():
     all_names = set()
     always = set()
@@ -140,18 +198,24 @@ def registered_unit_names():
     # and channels tables before the unit-file registry, and the registry runs
     # a name's first registration only (rocketnet_unit_file_find in
     # test_unit_registry.h), so a repeated name never runs its later test.
-    # The registrar aborts on the first repeat; this names every one.
+    # The registrar aborts on the first repeat; this names every one. Two
+    # registrations under mutually exclusive guards (a ROCKETNET_DEV case and
+    # its !ROCKETNET_DEV production twin) never reach one binary together.
     table_names = set(all_names)
     seen = {}
     duplicates = []
     for path in sorted(REPO.glob("tests/test_unit_*.cpp")):
         for name, unconditional in _register_names(path):
-            if name in seen or name in table_names:
-                duplicates.append("%s (%s, %s)" % (name, seen.get(name, "registry table"), path.name))
-            seen.setdefault(name, path.name)
             all_names.add(name)
             if unconditional:
                 always.add(name)
+        for name, guard in _register_guards(path):
+            earlier = seen.setdefault(name, [])
+            clash = name in table_names or any(not _guards_exclusive(guard, other) for _, other in earlier)
+            if clash:
+                first = earlier[0][0] if earlier else "registry table"
+                duplicates.append("%s (%s, %s)" % (name, first, path.name))
+            earlier.append((path.name, guard))
     if duplicates:
         sys.exit("unit test names registered more than once: " + "; ".join(duplicates))
     return all_names, always
