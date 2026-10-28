@@ -9397,7 +9397,7 @@ void rocketnet_test_ack_block_build()
             s += (uint64_t) ( 1 + rocketnet_random_uint64() % 3 );       // skips leave holes
         }
 
-        int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * ( rocketnet_random_uint64() % 64 );
+        int capacity = ROCKETNET_ACK_BLOCK_MIN_BYTES + 4 * (int) ( rocketnet_random_uint64() % 64 );
         int built_bytes = rocketnet_ack_block_build( built, capacity, &replay );
         rocketnet_check( built_bytes >= ROCKETNET_ACK_BLOCK_MIN_BYTES );
         rocketnet_check( built_bytes <= capacity );
