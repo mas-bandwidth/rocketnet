@@ -35,6 +35,10 @@ on:
   schedule:
     - cron: "0 12 */2 * *"
   workflow_dispatch:
+  # TEMPORARY: the first run of a new workflow file, which workflow_dispatch
+  # cannot start until the file is on the default branch; removed before merge
+  push:
+    branches: [nightly/impaired-soak]
 
 jobs:
   impaired-soak-linux:
@@ -44,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
       - uses: actions/checkout@v4
@@ -103,7 +107,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
       - uses: actions/checkout@v4
@@ -141,7 +145,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
       - uses: actions/checkout@v4
@@ -182,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ (github.event_name == 'workflow_dispatch' || github.event_name == 'push') && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
       - uses: actions/checkout@v4
