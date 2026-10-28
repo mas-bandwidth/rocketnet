@@ -155,6 +155,15 @@ incrementing `count`, and `front`, `reopen` and `retire` read only a slot made
 visible by that count. Zero-initializing the whole queue would add behavior
 cost without changing the invariant.
 
+`rocketnet_server_uring_linux.cpp` `preprocessorErrorDirective`
+`c208577b92a8d27b` is the intended refusal of a hand build that defines
+`ROCKETNET_IO_URING` against a liburing without `IORING_RECV_MULTISHOT`
+(liburing before 2.3, as on Ubuntu 22.04). cppcheck does not read the system
+`liburing.h`, so it evaluates the configuration in which that macro is absent
+and reports the `#error`. Configure checks the macro and leaves
+`ROCKETNET_IO_URING` unset in that case (cmake/RocketNetDependencies.cmake),
+so no CMake build reaches the directive.
+
 ## Baseline shrinkage
 
 The clang-tidy baseline shrank from 390 to 333 findings. The removed entries
