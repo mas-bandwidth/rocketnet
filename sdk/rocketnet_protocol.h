@@ -151,6 +151,22 @@ uint64_t rocketnet_reconstruct_sequence( uint32_t wire_sequence, uint64_t highes
 
 uint64_t rocketnet_reconstruct_near( uint32_t wire_value, uint64_t expected );
 
+// The session types' shared receive rules, for both ends (the standard's
+// packet size table and t15.3): the wire floor of each type (0 for any other
+// type), the opened type data each carries behind its ack block, whether its
+// sequence is ack-eligible as soon as it opens (a payload becomes eligible
+// when it is accepted, a fragment when reassembly accepts it), and whether it
+// adds to the ack debt (a standalone ack never does: that is what makes the
+// ack conversation terminate).
+
+int rocketnet_session_min_wire_bytes( uint8_t packet_type );
+
+bool rocketnet_session_type_data_fits( uint8_t packet_type, int type_data_bytes );
+
+bool rocketnet_session_ack_eligible_on_open( uint8_t packet_type );
+
+bool rocketnet_session_elicits_ack( uint8_t packet_type );
+
 // The cookie: address validation before any asymmetric work. The MAC is a
 // 16-byte keyed generichash over the exact input encoding from the standard:
 // family byte, the address bytes as the token encodes them, the port

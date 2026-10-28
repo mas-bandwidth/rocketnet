@@ -1121,17 +1121,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // enforced by the prefilter; the response's exact size is proven by its
     // open, as before.
 
-    int min_wire_bytes = 0;
-
-    switch ( packet_type )
-    {
-        case ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET: min_wire_bytes = ROCKETNET_CONNECTION_KEEP_ALIVE_MIN_WIRE_BYTES; break;
-        case ROCKETNET_CONNECTION_PAYLOAD_PACKET:    min_wire_bytes = ROCKETNET_CONNECTION_PAYLOAD_MIN_WIRE_BYTES; break;
-        case ROCKETNET_CONNECTION_DISCONNECT_PACKET: min_wire_bytes = ROCKETNET_CONNECTION_DISCONNECT_MIN_WIRE_BYTES; break;
-        case ROCKETNET_CONNECTION_ACK_PACKET:        min_wire_bytes = ROCKETNET_CONNECTION_ACK_MIN_WIRE_BYTES; break;
-        case ROCKETNET_CONNECTION_FRAGMENT_PACKET:   min_wire_bytes = ROCKETNET_CONNECTION_FRAGMENT_MIN_WIRE_BYTES; break;
-        default:                                     break;
-    }
+    const int min_wire_bytes = rocketnet_session_min_wire_bytes( packet_type );
 
     if ( min_wire_bytes != 0 && packet_bytes < min_wire_bytes )
     {
@@ -1294,11 +1284,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     const uint8_t * type_data = opened + block_bytes;
     int type_data_bytes = opened_bytes - block_bytes;
 
-    if ( ( packet_type == ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET && type_data_bytes != 8 ) ||
-         ( packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET && ( type_data_bytes < 1 || type_data_bytes > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) ) ||
-         ( packet_type == ROCKETNET_CONNECTION_DISCONNECT_PACKET && type_data_bytes != 0 ) ||
-         ( packet_type == ROCKETNET_CONNECTION_ACK_PACKET && type_data_bytes != 0 ) ||
-         ( packet_type == ROCKETNET_CONNECTION_FRAGMENT_PACKET && type_data_bytes < ROCKETNET_FRAGMENT_HEADER_BYTES + 1 ) )
+    if ( !rocketnet_session_type_data_fits( packet_type, type_data_bytes ) )
     {
         rocketnet_spam( "server ignored sealed packet. wrong opened size" );
         counters[type_counters->wrong_opened_size]++;
@@ -1315,8 +1301,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // later: the payload when it is accepted, the fragment when reassembly
     // accepts it (below).
 
-    if ( packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET &&
-         packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+    if ( rocketnet_session_ack_eligible_on_open( packet_type ) )
         rocketnet_replay_advance( &mapping->accepted_session, sequence );
 
     mapping->control->last_receive_time = current_time;
@@ -1347,9 +1332,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                 server->acked_connection_ids[i] = connection_id;
         }
 
-        if ( packet_type != ROCKETNET_CONNECTION_ACK_PACKET &&
-             packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET &&
-             packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET )
+        if ( rocketnet_session_elicits_ack( packet_type ) )
             endpoint->ack_debt++;
     }
 
