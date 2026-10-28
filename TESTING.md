@@ -58,12 +58,13 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | App Nap and timer coalescing keep client timing | macOS | planned for the final deliverable |
 | MemorySanitizer (msan.yml) | Linux | ✅ |
 | Big-endian system build and suites | Linux | planned for the final deliverable |
+| Ubuntu 22.04, 24.04 and 26.04 LTS virtual machines: dev and production builds, unit and functional suites, package check | Linux | planned for the final deliverable |
 | Windows lifecycle stress: portable, IOCP and RIO cells are registered; execution remains unqualified | Windows | ❌ |
 | Windows lifecycle stress: five 1000-cycle real-loopback cases cover init/term, endpoint create/destroy, connect/disconnect and restart | Windows | ❌ |
 | Windows lifecycle stress: SDK identities are checked separately; process-wide handle deltas are unattributed and not ownership evidence; threads stay flat, heap growth is bounded and same-host time is diagnostic | Windows | ❌ |
 | Windows lifecycle ledger: balanced generations, raw-value reuse, stale-close child termination and capacity overflow | Windows | ❌ |
 | Live XDP test (an XDP server, a client on every test machine) | Linux | planned for the final deliverable |
-| complete | 3 of 10 | 30% |
+| complete | 3 of 11 | 27% |
 
 ## Historical preview-1 baseline: tests per transport
 

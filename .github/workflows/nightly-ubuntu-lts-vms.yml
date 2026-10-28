@@ -1,0 +1,391 @@
+# Nightly Ubuntu LTS virtual machines: 22.04, 24.04 and 26.04.
+#
+# ci.yml builds and runs the suites on the fleet hosts themselves, so it
+# proves one Ubuntu release, one kernel and one set of packages: whatever the
+# host has installed. This workflow proves the supported LTS releases from
+# their own stock images. Each leg boots the official amd64 cloud image of
+# one release under qemu with KVM, cloud-init and the image's own kernel,
+# installs that release's stock packages (BUILDING.md, "Dependencies, per
+# platform"), and builds and runs the tree inside the guest.
+#
+# What each leg covers, inside the guest:
+#   - the development build (default) and the production build
+#     (-DROCKETNET_DEV=OFF), both Release, with the strict warning set and
+#     warnings as errors, and a check that neither build log carries a
+#     single "warning:" line;
+#   - ./bin/test, ./bin/functional and python3 tools/check_package.py build;
+#   - on 22.04 only: configure must print the legacy-libbpf XDP line, and
+#     ./bin/test_xdp_compat runs (BUILDING.md, "Ubuntu 22.04 build
+#     compatibility"). libxdp-dev is not installed there; jammy has none.
+#   - the guest's uname -r and lsb_release, in the log and the job summary.
+#
+# What it does not cover: an attached XDP data plane (the guest's virtio NIC
+# is not the deployment NIC), and performance. The guest is a quiet KVM
+# machine, not a measured bench. This is not a per-commit gate; a red night
+# is a finding to read.
+#
+# Images: each release's cloud image is cached on the runner host under
+# ~/.cache/rocketnet-nightly/cloud-images, keyed by its SHA256. Every run
+# fetches that release's SHA256SUMS and its GPG signature, checks the
+# signature against the pinned UEC image signing key, and checks the cached
+# image's SHA256 against it before use. A new point image (a new SHA256)
+# downloads once, and the older images of that release are removed. The
+# guest boots from a throwaway qcow2 overlay, so the cached image is never
+# written. The teardown step always runs and stops the guest.
+#
+# Guest settings: net.core.rmem_max and wmem_max are raised to 4 MiB, the
+# ceiling the fleet hosts that run the native suite grant (the same setting
+# nightly-bigendian-system.yml gives its guest). The kernel is the image's
+# own and is not changed.
+#
+# Timeout: a leg measured at about 15 minutes (boot about 1, packages about
+# 2, two builds, then the suites); 60 minutes is that with room, the same
+# cap nightly-channel-seeds.yml and nightly-channels-stress.yml give a build
+# plus a suite run on this runner label.
+#
+# Schedule: 30 4 * * * UTC, before the first nightly of the day (05:30), so
+# the three legs do not hold fleet runners the other nightlies need.
+
+name: nightly ubuntu lts vms
+
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ubuntu-lts-vm:
+    name: ubuntu ${{ matrix.version }} vm
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        series: [jammy, noble, resolute]
+        include:
+          - series: jammy
+            version: "22.04"
+            packages: cmake build-essential clang libbpf-dev liburing-dev xxd python3 lsb-release
+          - series: noble
+            version: "24.04"
+            packages: cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd python3 lsb-release
+          - series: resolute
+            version: "26.04"
+            packages: cmake build-essential clang libbpf-dev libxdp-dev liburing-dev xxd python3 lsb-release
+    concurrency:
+      group: nightly-ubuntu-lts-vms-${{ matrix.ref }}-${{ matrix.series }}
+      cancel-in-progress: true
+    env:
+      SERIES: ${{ matrix.series }}
+      VERSION: ${{ matrix.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's qemu packages and KVM are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "WORK=${RUNNER_TEMP}/ubuntu-lts-vm-${SERIES}" >> "$GITHUB_ENV"
+          missing=0
+          for tool in qemu-system-x86_64 qemu-img cloud-localds gpg flock ssh scp; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+            echo "KVM-MISSING /dev/kvm is not read-write for $(id -un) on $RUNNER_NAME"
+            missing=1
+          fi
+          exit "$missing"
+
+      - name: Verify the ${{ matrix.version }} cloud image (cached by SHA256)
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          rm -rf "$WORK"
+          mkdir -p "$WORK"
+          cd "$WORK"
+
+          BASE="https://cloud-images.ubuntu.com/releases/${SERIES}/release"
+          IMAGE="ubuntu-${VERSION}-server-cloudimg-amd64.img"
+          # Pinned fingerprint of the UEC Image Automatic Signing Key.
+          # Any other key is a failed verification, and the image is not used.
+          PIN=D2EB44626FDDC30B513D5BB71A5D6C4C7DB87C81
+
+          curl -fsSL --retry 3 -o SHA256SUMS "$BASE/SHA256SUMS"
+          curl -fsSL --retry 3 -o SHA256SUMS.gpg "$BASE/SHA256SUMS.gpg"
+          export GNUPGHOME="$WORK/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          gpg --batch --keyid-format long --keyserver hkps://keyserver.ubuntu.com --recv-keys "$PIN"
+          FP=$(gpg --batch --with-colons --fingerprint "$PIN" | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "signing-key fingerprint ${FP}"
+          test "$FP" = "$PIN"
+          gpg --batch --status-fd 1 --keyid-format long --verify SHA256SUMS.gpg SHA256SUMS | tee gpg-status.txt
+          grep -q '^\[GNUPG:\] GOODSIG ' gpg-status.txt
+          grep -q "^\[GNUPG:\] VALIDSIG ${PIN} " gpg-status.txt
+          SUM=$(awk -v f="*${IMAGE}" '$2 == f {print $1}' SHA256SUMS)
+          test -n "$SUM"
+          echo "image ${IMAGE} sha256 ${SUM}"
+
+          CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/rocketnet-nightly/cloud-images/${SERIES}"
+          mkdir -p "$CACHE"
+          CACHED="$CACHE/${SUM}.img"
+          # One leg per host per release fetches at a time; the others wait
+          # and then find the verified file.
+          exec 9>"$CACHE/.lock"
+          flock 9
+          if [ -f "$CACHED" ] && echo "${SUM}  ${CACHED}" | sha256sum -c --status -; then
+            echo "cache hit ${CACHED}"
+          else
+            echo "cache miss: downloading ${BASE}/${IMAGE}"
+            rm -f "$CACHED" "$CACHE/download.tmp"
+            curl -fL --retry 3 -o "$CACHE/download.tmp" "$BASE/$IMAGE"
+            echo "${SUM}  $CACHE/download.tmp" | sha256sum -c -
+            mv "$CACHE/download.tmp" "$CACHED"
+          fi
+          # Older point images of this release are not used again.
+          find "$CACHE" -maxdepth 1 -name '*.img' ! -name "${SUM}.img" -print -delete
+          # The overlay pins the image it was made from; keep a hard link in
+          # the work directory so a concurrent prune cannot remove it.
+          ln -f "$CACHED" "$WORK/base.img"
+          flock -u 9
+          echo "${SUM}  $WORK/base.img" | sha256sum -c -
+
+      - name: Boot the ${{ matrix.version }} guest (KVM, cloud-init, stock kernel)
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          set -euo pipefail
+          cd "$WORK"
+          qemu-img create -f qcow2 -F qcow2 -b "$WORK/base.img" "$WORK/overlay.qcow2" 24G
+          ssh-keygen -t ed25519 -f "$WORK/guest_key" -N "" -q
+          chmod 600 "$WORK/guest_key"
+          PUB=$(cat "$WORK/guest_key.pub")
+          cat > "$WORK/user-data" << EOF
+          #cloud-config
+          hostname: lts-guest
+          ssh_pwauth: false
+          package_update: false
+          package_upgrade: false
+          users:
+            - name: runner
+              sudo: ALL=(ALL) NOPASSWD:ALL
+              groups: sudo
+              shell: /bin/bash
+              lock_passwd: true
+              ssh_authorized_keys:
+                - ${PUB}
+          EOF
+          printf 'instance-id: rn-lts-%s-%s\nlocal-hostname: lts-guest\n' "$SERIES" "$GITHUB_RUN_ID" > "$WORK/meta-data"
+          cloud-localds "$WORK/seed.img" "$WORK/user-data" "$WORK/meta-data"
+
+          CPUS=$(( $(nproc) / 2 ))
+          [ "$CPUS" -le 8 ] || CPUS=8
+          [ "$CPUS" -ge 2 ] || CPUS=2
+          PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')
+          echo "$PORT" > "$WORK/port"
+          echo "guest ssh port ${PORT}, ${CPUS} vcpus, 8 GiB"
+          : > "$WORK/serial.log"
+          qemu-system-x86_64 \
+            -machine q35,accel=kvm \
+            -cpu host \
+            -m 8192 \
+            -smp "$CPUS" \
+            -display none \
+            -daemonize \
+            -pidfile "$WORK/qemu.pid" \
+            -serial file:"$WORK/serial.log" \
+            -drive "file=$WORK/overlay.qcow2,if=virtio,format=qcow2,cache=writeback" \
+            -drive "file=$WORK/seed.img,if=virtio,format=raw" \
+            -netdev "user,id=net0,hostfwd=tcp:127.0.0.1:${PORT}-:22" \
+            -device virtio-net-pci,netdev=net0 \
+            >"$WORK/qemu.log" 2>&1
+          echo "qemu pid $(cat "$WORK/qemu.pid")"
+
+          # The steps below reach the guest through these two wrappers.
+          cat > "$WORK/g" << EOF
+          #!/bin/sh
+          exec ssh -i "$WORK/guest_key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=5 -o ServerAliveInterval=30 -o LogLevel=ERROR runner@127.0.0.1 "\$@"
+          EOF
+          cat > "$WORK/gcp" << EOF
+          #!/bin/sh
+          exec scp -i "$WORK/guest_key" -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o LogLevel=ERROR "\$@"
+          EOF
+          chmod +x "$WORK/g" "$WORK/gcp"
+
+          ok=0
+          for i in $(seq 1 60); do
+            if ! kill -0 "$(cat "$WORK/qemu.pid")" 2>/dev/null; then
+              echo "qemu exited before ssh"
+              tail -n 60 "$WORK/serial.log" || true
+              exit 1
+            fi
+            if "$WORK/g" true 2>/dev/null; then
+              ok=1
+              echo "ssh up at try ${i}"
+              break
+            fi
+            sleep 5
+          done
+          if [ "$ok" != 1 ]; then
+            echo "ssh did not come up"
+            tail -n 60 "$WORK/serial.log" || true
+            exit 1
+          fi
+          "$WORK/g" 'cloud-init status --wait >/dev/null || true; cloud-init status'
+
+      - name: Record the guest kernel and release
+        shell: bash
+        run: |
+          set -euo pipefail
+          KERNEL=$("$WORK/g" 'uname -r')
+          RELEASE=$("$WORK/g" 'lsb_release -ds')
+          CODENAME=$("$WORK/g" 'lsb_release -cs')
+          echo "guest kernel ${KERNEL}"
+          echo "guest release ${RELEASE} (${CODENAME})"
+          "$WORK/g" 'uname -a; lsb_release -a 2>/dev/null; nproc; free -m'
+          test "$CODENAME" = "$SERIES"
+          {
+            echo "### Ubuntu ${VERSION} (${SERIES}) guest"
+            echo ""
+            echo "- uname -r: \`${KERNEL}\`"
+            echo "- lsb_release: \`${RELEASE}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Copy the checked-out tree into the guest
+        shell: bash
+        run: |
+          set -euo pipefail
+          tar -C "$GITHUB_WORKSPACE" --exclude ./.git --exclude ./build --exclude ./bin -cf "$WORK/src.tar" .
+          "$WORK/gcp" "$WORK/src.tar" runner@127.0.0.1:src.tar
+          "$WORK/g" 'mkdir -p ~/src && tar -C ~/src -xf ~/src.tar && rm ~/src.tar'
+
+      - name: Install the stock packages (BUILDING.md)
+        shell: bash
+        timeout-minutes: 15
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          set -euo pipefail
+          "$WORK/g" "sudo DEBIAN_FRONTEND=noninteractive apt-get update -y && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ${PACKAGES}"
+          "$WORK/g" 'gcc --version | head -1; clang --version | head -1; cmake --version | head -1; dpkg-query -W libbpf-dev liburing-dev; dpkg-query -W libxdp-dev 2>/dev/null || echo "libxdp-dev not installed"'
+          # The guest gets the socket buffer ceiling the fleet hosts grant.
+          "$WORK/g" 'sudo sysctl -w net.core.rmem_max=4194304 net.core.wmem_max=4194304'
+
+      - name: Build development Release (strict warnings, zero warnings)
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'cd ~/src && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_STRICT_WARNINGS=ON -DROCKETNET_WARNINGS_AS_ERRORS=ON 2>&1 | tee configure-dev.log; exit ${PIPESTATUS[0]}'
+          "$WORK/g" 'cd ~/src && grep -E "XDP|io_uring" configure-dev.log || true'
+          if [ "$SERIES" = jammy ]; then
+            "$WORK/g" 'cd ~/src && grep -F "XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)" configure-dev.log'
+          fi
+          "$WORK/g" 'cd ~/src && cmake --build build --parallel 2>&1 | tee build-dev.log; exit ${PIPESTATUS[0]}'
+          if "$WORK/g" 'cd ~/src && grep -n "warning:" build-dev.log'; then
+            echo "the development build printed warnings"
+            exit 1
+          fi
+          echo "development build: zero warnings"
+
+      - name: Build production Release (-DROCKETNET_DEV=OFF, zero warnings)
+        shell: bash
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'cd ~/src && cmake -S . -B build-prod -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF -DROCKETNET_STRICT_WARNINGS=ON -DROCKETNET_WARNINGS_AS_ERRORS=ON -DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$HOME/src/build-prod/bin -DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$HOME/src/build-prod/bin 2>&1 | tee configure-prod.log; exit ${PIPESTATUS[0]}'
+          if [ "$SERIES" = jammy ]; then
+            "$WORK/g" 'cd ~/src && grep -F "XDP: using legacy AF_XDP APIs from libbpf (Ubuntu 22.04)" configure-prod.log'
+          fi
+          "$WORK/g" 'cd ~/src && cmake --build build-prod --parallel 2>&1 | tee build-prod.log; exit ${PIPESTATUS[0]}'
+          if "$WORK/g" 'cd ~/src && grep -n "warning:" build-prod.log'; then
+            echo "the production build printed warnings"
+            exit 1
+          fi
+          echo "production build: zero warnings"
+
+      - name: Unit suite (./bin/test)
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'cd ~/src && echo "unit cases registered: $(./bin/test --list | wc -l)" && TIMEFORMAT="UNIT_SEC=%R" && time ./bin/test'
+
+      - name: XDP legacy-libbpf adapter contract (./bin/test_xdp_compat)
+        if: matrix.series == 'jammy'
+        shell: bash
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'cd ~/src && TIMEFORMAT="XDP_COMPAT_SEC=%R" && time ./bin/test_xdp_compat'
+
+      - name: Functional suite (./bin/functional)
+        shell: bash
+        timeout-minutes: 25
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'cd ~/src && echo "functional cases registered: $(./bin/functional --list | wc -l)" && TIMEFORMAT="FUNC_SEC=%R" && time ./bin/functional'
+
+      - name: Install and relocate the SDK; run C/C++ consumers (check_package.py)
+        shell: bash
+        timeout-minutes: 15
+        run: |
+          set -euo pipefail
+          "$WORK/g" 'cd ~/src && TIMEFORMAT="PACKAGE_SEC=%R" && time python3 tools/check_package.py build'
+
+      - name: Collect the guest logs
+        if: failure()
+        shell: bash
+        run: |
+          mkdir -p "$WORK/logs"
+          cp "$WORK/serial.log" "$WORK/qemu.log" "$WORK/logs/" 2>/dev/null || true
+          for f in configure-dev.log build-dev.log configure-prod.log build-prod.log; do
+            "$WORK/gcp" "runner@127.0.0.1:src/$f" "$WORK/logs/$f" 2>/dev/null || true
+          done
+
+      - name: Artifact name for the ref
+        id: refslug
+        if: failure()
+        shell: bash
+        env:
+          REF: ${{ matrix.ref }}
+        run: echo "slug=${REF//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the guest logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ubuntu-${{ matrix.series }}-vm-logs-${{ steps.refslug.outputs.slug }}
+          path: ${{ env.WORK }}/logs
+          if-no-files-found: ignore
+
+      - name: Tear down the guest
+        if: always()
+        shell: bash
+        run: |
+          if [ -f "$WORK/qemu.pid" ]; then
+            pid=$(cat "$WORK/qemu.pid")
+            if kill -0 "$pid" 2>/dev/null; then
+              "$WORK/g" 'sudo poweroff' >/dev/null 2>&1 || true
+              for i in $(seq 1 20); do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+              done
+              if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                sleep 2
+                kill -9 "$pid" 2>/dev/null || true
+              fi
+            fi
+            echo "guest stopped (qemu pid ${pid})"
+          fi
+          rm -rf "$WORK"
