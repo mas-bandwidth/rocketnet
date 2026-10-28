@@ -578,6 +578,27 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 
 [Source data](docs/roadmap.sexp)
 
+## Final contraction pass
+
+The last pass before v1.0.0: the library shrunk to the size and readability of netcode and yojimbo, one layer at a time from the bottom, with no change a caller can see. The public API, the wire format and every guarantee stay as they are; the existing unit, functional and soak suites and the TLA+ models guard each layer while it shrinks.
+
+| feature | Linux | macOS | Windows |
+|---|:---:|:---:|:---:|
+| Each layer's job written in one sentence, and the list corrected by the owner before any code changes | ❌ | — | — |
+| Layer 1, init, allocator, logging and assertions: contracted | ❌ | ❌ | ❌ |
+| Layer 2, leaf utilities (address, hash, base64, bounded containers): contracted | ❌ | ❌ | ❌ |
+| Layer 3, platform (threads, mutexes, clocks, sockets): contracted, with far fewer preprocessor branches | ❌ | ❌ | ❌ |
+| Layer 4, transport protocol (token, cookie, handshake, keys, replay, acks, packets): contracted | ❌ | ❌ | ❌ |
+| Layer 5, message layer (reliability, ordering, fragmentation, receipts, receive queue): contracted | ❌ | ❌ | ❌ |
+| Layer 6, runtime transports: there is no driver; a driver is the transport. The sdk/rocketnet_driver* files and names are folded into the transports, each as small as its platform allows | ❌ | ❌ | ❌ |
+| Layer 7, public C API: contracted, with no change to rocketnet.h behaviour | ❌ | ❌ | ❌ |
+| Comments say what the code does, not why a review was satisfied | ❌ | ❌ | ❌ |
+| Tests and tools contracted alongside: library tests out of sdk/, no case kept only for a deleted mechanism | ❌ | ❌ | ❌ |
+| The library is readable end to end in an afternoon: sdk/ total recorded before and after | ❌ | ❌ | ❌ |
+| complete | 0% | 0% | 0% |
+
+[Source data](docs/roadmap.sexp)
+
 ## Release and process
 
 | feature | Linux | macOS | Windows |
