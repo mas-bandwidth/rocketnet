@@ -32,7 +32,7 @@
 
 #ifndef ACK_RUN_BOUND
 #define ACK_RUN_BOUND 4096
-#endif
+#endif // #ifndef ACK_RUN_BOUND
 
 #define ROCKETNET_ACK_VISIT_TEST_HOOKS 1
 #include "rocketnet_ack.cpp"
@@ -98,7 +98,9 @@ int harness_ack_apply_run( void )
             expected_new++;
             expected_largest = sequence;
             if ( sequence <= rocketnet_ack_stats_eligible_top( highest ) )
+            {
                 eligible_unacked++;
+            }
         }
     }
 
@@ -145,7 +147,7 @@ int harness_ack_apply_run( void )
     __CPROVER_assume( expected_new > 0 );
     __CPROVER_assert( g_ack_visit_count == 0,
                       "negative control reaches the production ACK operation" );
-#endif
+#endif // #if defined( ACK_NEGATIVE_CONTROL )
 
     return 0;
 }

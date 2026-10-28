@@ -34,7 +34,7 @@
 #include <sodium.h>
 #else
 #include "../../sodium/sodium.h"
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 #include <stdint.h>
 #include <string.h>
@@ -67,13 +67,15 @@ struct ctv_input_t
 static void ctv_fill_user_data( int pattern, uint8_t * user_data )
 {
     static const char text[] = "rocketnet connect token vector user data ";
+
     for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
     {
         switch ( pattern )
         {
-            case 0:  user_data[i] = 0; break;
-            case 1:  user_data[i] = (uint8_t) i; break;
-            case 2:  user_data[i] = 0xff; break;
+            case 0: user_data[i] = 0; break;
+            case 1: user_data[i] = (uint8_t) i; break;
+            case 2: user_data[i] = 0xff; break;
+
             default: user_data[i] = (uint8_t) text[i % ( (int) sizeof( text ) - 1 )]; break;
         }
     }
@@ -190,27 +192,37 @@ static std::string ctv_hex( const uint8_t * bytes, int count )
 {
     static const char digits[] = "0123456789abcdef";
     std::string out;
+
     for ( int i = 0; i < count; i++ )
     {
         out += digits[bytes[i] >> 4];
         out += digits[bytes[i] & 0xf];
     }
+
     return out;
 }
 
 static std::string ctv_hex_u64( uint64_t value )
 {
     uint8_t bytes[8];
+
     for ( int i = 0; i < 8; i++ )
+    {
         bytes[i] = (uint8_t) ( value >> ( 56 - 8 * i ) );
+    }
+
     return ctv_hex( bytes, 8 );
 }
 
 static std::string ctv_hex_u32( uint32_t value )
 {
     uint8_t bytes[4];
+
     for ( int i = 0; i < 4; i++ )
+    {
         bytes[i] = (uint8_t) ( value >> ( 24 - 8 * i ) );
+    }
+
     return ctv_hex( bytes, 4 );
 }
 
@@ -228,6 +240,7 @@ static void ctv_field( std::string & out, const char * key, const std::string & 
 static bool ctv_generate_json( std::string & out )
 {
     out.clear();
+
     uint8_t backend_seed[32];
     if ( crypto_sign_ed25519_sk_to_seed( backend_seed, rocketnet_test_backend_secret_key ) != 0 )
         return false;
@@ -249,6 +262,7 @@ static bool ctv_generate_json( std::string & out )
         const struct ctv_input_t * input = &ctv_inputs[v];
         uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
         ctv_fill_user_data( input->user_data_pattern, user_data );
+
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         if ( ctv_mint( input, token ) != 1 )
         {
@@ -256,6 +270,7 @@ static bool ctv_generate_json( std::string & out )
             out.clear();
             return false;
         }
+
         uint8_t flags = input->address_flags;
 
         out += "    {\n";
@@ -281,6 +296,7 @@ static bool ctv_generate_json( std::string & out )
     out += "  ]\n";
     out += "}\n";
     sodium_memzero( backend_seed, sizeof( backend_seed ) );
+
     return true;
 }
 
@@ -301,6 +317,7 @@ int main( int argc, char ** argv )
                          "writes the connect token known-answer vectors (tests/connect_token_vectors.json) to <output path>\n" );
         return 2;
     }
+
     const std::string path = argv[1];
 
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
@@ -311,6 +328,7 @@ int main( int argc, char ** argv )
 
     std::string generated;
     const bool minted = ctv_generate_json( generated );
+
     rocketnet_term();
     if ( !minted )
     {
@@ -320,6 +338,7 @@ int main( int argc, char ** argv )
 
     // written beside the destination, then renamed over it, so a reader never
     // sees half a file
+
     const std::string temp = path + ".tmp";
     FILE * file = rocketnet_test_fopen( temp, "wb" );
     if ( !file )
@@ -327,6 +346,7 @@ int main( int argc, char ** argv )
         fprintf( stderr, "error: cannot open %s for writing\n", temp.c_str() );
         return 1;
     }
+
     const bool written = fwrite( generated.data(), 1, generated.size(), file ) == generated.size();
     if ( fclose( file ) != 0 || !written )
     {
@@ -334,19 +354,21 @@ int main( int argc, char ** argv )
         return 1;
     }
 #if defined( _WIN32 )
-    // The Windows CRT rename refuses to replace an existing destination.
+    // the Windows CRT rename refuses to replace an existing destination
+
     const std::wstring wide_temp = rocketnet_test_wide_path( temp );
     const std::wstring wide_path = rocketnet_test_wide_path( path );
     if ( MoveFileExW( wide_temp.c_str(), wide_path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH ) == 0 )
 #else
     if ( rename( temp.c_str(), path.c_str() ) != 0 )
-#endif
+#endif // #if defined( _WIN32 )
     {
         fprintf( stderr, "error: renaming %s to %s failed\n", temp.c_str(), path.c_str() );
         return 1;
     }
 
     printf( "wrote %s: %d vectors, %d bytes\n", path.c_str(), ctv_input_count, (int) generated.size() );
+
     return 0;
 }
 

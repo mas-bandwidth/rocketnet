@@ -44,7 +44,7 @@
 // pinned tag into its own path).
 #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
 #include "netcode.h"
-#endif
+#endif // #if defined( ROCKETNET_DIFFERENTIAL_NETCODE_DIR )
 
 // --- the case model -----------------------------------------------------
 
@@ -92,6 +92,7 @@ static void encode_ipv6_token_address( uint8_t out[18], const uint16_t groups[8]
         out[2 * i] = (uint8_t) ( groups[i] & 0xff );
         out[2 * i + 1] = (uint8_t) ( ( groups[i] >> 8 ) & 0xff );
     }
+
     out[16] = (uint8_t) ( port & 0xff );
     out[17] = (uint8_t) ( ( port >> 8 ) & 0xff );
 }
@@ -120,6 +121,7 @@ static int differential_handshake( struct rocketnet_server_protocol_t * server,
         rocketnet_client_protocol_update( client, time, packet, &packet_bytes );
         if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
             break;
+
         if ( packet_bytes > 0 )
         {
             response_bytes = 0;
@@ -130,9 +132,11 @@ static int differential_handshake( struct rocketnet_server_protocol_t * server,
                 rocketnet_client_protocol_process_packet( client, response, response_bytes, time,
                                                           payload, sizeof( payload ), &payload_bytes );
         }
+
         if ( rocketnet_client_slots_num_connected( server->client_slots ) > connected_before )
             return 1;
     }
+
     return 0;
 }
 
@@ -150,6 +154,7 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
     struct rocketnet_counters_t replay_counters;
     memset( &first_counters, 0, sizeof( first_counters ) );
     memset( &replay_counters, 0, sizeof( replay_counters ) );
+
     struct rocketnet_client_protocol_t first;
     struct rocketnet_client_protocol_t replay;
     rocketnet_client_protocol_init( &first, &first_counters );
@@ -184,7 +189,9 @@ static void rocketnet_decide_replay( struct rocketnet_server_protocol_t * server
          counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
         strcpy( d->reason, "replay" );
     else
+    {
         strcpy( d->reason, "refused" );
+    }
 }
 
 static void rocketnet_server_setup( struct rocketnet_server_protocol_t * server, struct rocketnet_counters_t * counters, uint64_t now )
@@ -224,36 +231,64 @@ static void rocketnet_server_teardown( struct rocketnet_server_protocol_t * serv
 static void rocketnet_classify( const struct rocketnet_counters_t * counters, struct decision_t * d )
 {
     if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] )
+    {
         strcpy( d->reason, "expired" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE] )
+    {
         strcpy( d->reason, "future" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG] )
+    {
         strcpy( d->reason, "lifetime" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TIMEOUT_INVALID] )
+    {
         strcpy( d->reason, "timeout" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_ADDRESS_NOT_ADVERTISED] )
+    {
         strcpy( d->reason, "address" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_BAD_ADDRESS_FLAGS] )
+    {
         strcpy( d->reason, "address" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_PROTOCOL_ID] )
+    {
         strcpy( d->reason, "protocol" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_VERSION] )
+    {
         strcpy( d->reason, "version" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] )
+    {
         strcpy( d->reason, "signature" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK] )
+    {
         strcpy( d->reason, "open" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SEALED_MISMATCH] )
+    {
         strcpy( d->reason, "mismatch" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED] ||
               counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_CONNECTED] )
         strcpy( d->reason, "replay" );
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] )
+    {
         strcpy( d->reason, "full" );
+    }
     else if ( counters->values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SERVER_KEY] )
+    {
         strcpy( d->reason, "server-key" );
+    }
     else
+    {
         strcpy( d->reason, "refused" );
+    }
 }
 
 static void rocketnet_admit_request( struct rocketnet_server_protocol_t * server, const struct rocketnet_counters_t * counters,
@@ -320,6 +355,7 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
     sf.expire_timestamp = (uint64_t) ( (int64_t) now + c->expire_offset );
     sf.timeout_seconds = c->timeout_seconds;
     sf.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+
     switch ( c->address_mode )
     {
         case 1:
@@ -328,6 +364,7 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
         case 2:
         {
             static const uint16_t v6[8] = { 0x2001, 0x0db8, 0, 0, 0, 0, 0, 0x0010 };
+
             sf.address_flags = ROCKETNET_ADDRESS_FLAG_IPV6;
             encode_ipv6_token_address( sf.ipv6_address, v6, 40000 );
             break;
@@ -339,6 +376,7 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
             encode_ipv4_token_address( sf.ipv4_address, 203, 0, 113, 10, 40000 );
             break;
     }
+
     memcpy( sf.server_public_key, rocketnet_test_server_public_key, ROCKETNET_KEY_BYTES );
 
     pf.client_id = ROCKETNET_TEST_CLIENT_ID;
@@ -364,12 +402,17 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
         rocketnet_read_connect_token( &ct, token );
 
         if ( c->flip_authenticator )
+        {
             ct.signature[0] ^= 0xff;
+        }
 
         uint32_t slots = c->occupied_slots;
         const int max_slots = rocketnet_client_slots_max_clients( server.client_slots );
         if ( slots > (uint32_t) max_slots )
+        {
             slots = (uint32_t) max_slots;
+        }
+
         for ( uint32_t i = 0; i < slots; i++ )
         {
             uint8_t dummy[ROCKETNET_USER_DATA_BYTES];
@@ -383,6 +426,7 @@ static struct decision_t rocketnet_decide_case( const struct differential_case_t
 
 out:
     rocketnet_server_teardown( &server );
+
     return d;
 }
 
@@ -444,7 +488,10 @@ extern "C" int netcode_log_sink( const char * fmt, ... )
     size_t used = strlen( g_netcode_log );
     size_t add = strlen( line );
     if ( used + add + 1 < sizeof( g_netcode_log ) )
+    {
         memcpy( g_netcode_log + used, line, add + 1 );
+    }
+
     return 0;
 }
 
@@ -480,6 +527,7 @@ extern "C" int netcode_receive_nothing( void * context, struct netcode_address_t
     (void) from;
     (void) packet_data;
     (void) max_packet_bytes;
+
     return 0;
 }
 
@@ -492,7 +540,9 @@ static void nc_private_key( uint8_t key[NETCODE_KEY_BYTES] )
 {
     int i;
     for ( i = 0; i < NETCODE_KEY_BYTES; i++ )
+    {
         key[i] = (uint8_t) ( 0x40 + i );
+    }
 }
 
 static int nc_mint( uint8_t token[NETCODE_CONNECT_TOKEN_BYTES], const char * server_address,
@@ -533,6 +583,7 @@ static struct netcode_server_t * nc_open_server( const char * address, int max_c
         netcode_server_destroy( server );
         return NULL;
     }
+
     return server;
 }
 
@@ -556,37 +607,59 @@ static int nc_capture_request( struct netcode_client_t * client, uint8_t * out, 
         return 0;
     memcpy( out, g_from_client.packets[0].data, (size_t) g_from_client.packets[0].bytes );
     *out_bytes = g_from_client.packets[0].bytes;
+
     return 1;
 }
 
 static void nc_classify( char * reason, size_t reason_size )
 {
     const char * decision = "refuse:unclassified";
+
     if ( strstr( g_netcode_log, "server sent connection challenge packet" ) )
+    {
         decision = "accept";
+    }
     else if ( strstr( g_netcode_log, "connect token expired" ) )
+    {
         decision = "refuse:expired";
+    }
     else if ( strstr( g_netcode_log, "bad version info" ) )
+    {
         decision = "refuse:version";
+    }
     else if ( strstr( g_netcode_log, "wrong protocol id" ) )
+    {
         decision = "refuse:protocol";
+    }
     else if ( strstr( g_netcode_log, "failed to decrypt" ) )
+    {
         decision = "refuse:signature";
+    }
     else if ( strstr( g_netcode_log, "whitelist" ) )
+    {
         decision = "refuse:address";
+    }
     else if ( strstr( g_netcode_log, "already been used" ) )
+    {
         decision = "refuse:replay";
+    }
     else if ( strstr( g_netcode_log, "server is full" ) )
+    {
         decision = "refuse:full";
+    }
+
     snprintf( reason, reason_size, "%s", decision );
     if ( strcmp( decision, "refuse:unclassified" ) == 0 )
+    {
         fprintf( stderr, "netcode live unclassified log:\n%s\n", g_netcode_log );
+    }
 }
 
 static void nc_feed( struct netcode_server_t * server, struct netcode_address_t * from,
                      const uint8_t * packet, int bytes )
 {
     uint8_t copy[NC_PIPE_BYTES];
+
     if ( bytes <= 0 || bytes > NC_PIPE_BYTES )
         return;
     memcpy( copy, packet, (size_t) bytes );
@@ -612,22 +685,26 @@ static int nc_occupy_one_slot( struct netcode_server_t * server, const uint8_t *
     int connected;
 
     const int connected_before = netcode_server_num_connected_clients( server );
+
     snprintf( occupant_address, sizeof( occupant_address ), "198.51.100.%d:41000", 20 + ( idx % 180 ) );
     client = nc_open_client( occupant_address );
     if ( !client )
         return 0;
+
     if ( !nc_mint( token, NC_SERVER_ADDRESS, 60, 15, 0x0ccULL + (uint64_t) idx,
                    NC_PROTOCOL_ID, private_key ) )
     {
         netcode_client_destroy( client );
         return 0;
     }
+
     netcode_client_connect( client, token );
     if ( !nc_capture_request( client, request, &request_bytes ) )
     {
         netcode_client_destroy( client );
         return 0;
     }
+
     if ( !nc_parse( &from, occupant_address ) || !nc_parse( &server_address, NC_SERVER_ADDRESS ) )
     {
         netcode_client_destroy( client );
@@ -635,6 +712,7 @@ static int nc_occupy_one_slot( struct netcode_server_t * server, const uint8_t *
     }
 
     nc_feed( server, &from, request, request_bytes );
+
     for ( i = 0; i < g_from_server.count; i++ )
     {
         netcode_client_process_packet( client, &server_address,
@@ -644,11 +722,15 @@ static int nc_occupy_one_slot( struct netcode_server_t * server, const uint8_t *
 
     g_from_client.count = 0;
     netcode_client_update( client, 0.2 );
+
     for ( i = 0; i < g_from_client.count; i++ )
+    {
         nc_feed( server, &from, g_from_client.packets[i].data, g_from_client.packets[i].bytes );
+    }
 
     connected = netcode_server_num_connected_clients( server ) > connected_before;
     netcode_client_destroy( client );
+
     return connected;
 }
 
@@ -660,23 +742,39 @@ static int netcode_decide_case_live( const struct differential_case_t * c, uint6
                                      char * reason, size_t reason_size )
 {
     (void) now;
+
     int expire_seconds = 60;
+
     {
         int64_t e = c->expire_offset;
         if ( e < 0 )
+        {
             e = 0;
+        }
+
         if ( e > 0x7fffffffLL )
+        {
             e = 0x7fffffffLL;
+        }
+
         expire_seconds = (int) e;
     }
+
     const int timeout_seconds = (int) c->timeout_seconds;
     const int max_clients = 8;
     uint64_t protocol_id = NC_PROTOCOL_ID;
+
     if ( c->protocol_wrong )
+    {
         protocol_id = NC_PROTOCOL_ID ^ 0x1ULL;
+    }
+
     const char * token_address = NC_SERVER_ADDRESS;
+
     if ( c->address_mode )
+    {
         token_address = NC_OTHER_ADDRESS;
+    }
 
     uint8_t private_key[NETCODE_KEY_BYTES];
     uint8_t token[NETCODE_CONNECT_TOKEN_BYTES];
@@ -690,7 +788,9 @@ static int netcode_decide_case_live( const struct differential_case_t * c, uint6
 
     unsigned occupy = c->occupied_slots;
     if ( occupy > (unsigned) max_clients )
+    {
         occupy = (unsigned) max_clients;
+    }
 
     server = nc_open_server( NC_SERVER_ADDRESS, max_clients, NC_PROTOCOL_ID, private_key );
     if ( !server )
@@ -715,7 +815,10 @@ static int netcode_decide_case_live( const struct differential_case_t * c, uint6
                               0x1000ULL + (uint64_t) ( now & 0xff ), protocol_id, private_key ) )
     {
         if ( client )
+        {
             netcode_client_destroy( client );
+        }
+
         netcode_server_destroy( server );
         snprintf( reason, reason_size, "refuse:mint" );
         return 0;
@@ -731,10 +834,13 @@ static int netcode_decide_case_live( const struct differential_case_t * c, uint6
         snprintf( reason, reason_size, "refuse:mint" );
         return 0;
     }
+
     netcode_client_destroy( client );
 
     if ( c->flip_authenticator )
+    {
         request[request_bytes - 1] ^= 0xff;
+    }
 
     nc_feed( server, &from, request, request_bytes );
 
@@ -747,11 +853,13 @@ static int netcode_decide_case_live( const struct differential_case_t * c, uint6
             snprintf( reason, reason_size, "refuse:mint" );
             return 0;
         }
+
         nc_feed( server, &replay_from, request, request_bytes );
     }
 
     nc_classify( reason, reason_size );
     netcode_server_destroy( server );
+
     return strncmp( reason, "accept", 6 ) == 0;
 }
 
@@ -780,6 +888,7 @@ static inline int stricter_class_permitted( const char * reason )
         return 1;
     if ( strcmp( reason, "future" ) == 0 )
         return 1;
+
     return 0;
 }
 

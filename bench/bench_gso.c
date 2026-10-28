@@ -33,10 +33,10 @@
 
 #ifndef UDP_SEGMENT
 #define UDP_SEGMENT 103
-#endif
+#endif // #ifndef UDP_SEGMENT
 #ifndef UDP_GRO
 #define UDP_GRO 104
-#endif
+#endif // #ifndef UDP_GRO
 
 #define GSO_RECV_VLEN     8
 #define GSO_RECV_BUFFER   65536
@@ -50,12 +50,14 @@ static void run_receiver( int port, double warmup, double window, int windows )
         perror( "setsockopt UDP_GRO" );
         exit( 1 );
     }
+
     struct sockaddr_in address = bench_address( "0.0.0.0", port );
     if ( bind( fd, (struct sockaddr *) &address, sizeof( address ) ) < 0 )
     {
         perror( "bind" );
         exit( 1 );
     }
+
     bench_report_buffers( fd );
 
     static uint8_t buffers[GSO_RECV_VLEN][GSO_RECV_BUFFER];
@@ -97,6 +99,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
         {
             int bytes = (int) messages[i].msg_len;
             int segment_size = bytes;
+
             for ( struct cmsghdr * cmsg = CMSG_FIRSTHDR( &messages[i].msg_hdr ); cmsg; cmsg = CMSG_NXTHDR( &messages[i].msg_hdr, cmsg ) )
             {
                 if ( cmsg->cmsg_level == IPPROTO_UDP && cmsg->cmsg_type == UDP_GRO )
@@ -105,10 +108,13 @@ static void run_receiver( int port, double warmup, double window, int windows )
                     break;
                 }
             }
-            if ( segment_size <= 0 )
-                segment_size = bytes;
 
-            /* split the coalesced buffer and touch every segment */
+            if ( segment_size <= 0 )
+            {
+                segment_size = bytes;
+            }
+
+            // split the coalesced buffer and touch every segment
             for ( int offset = 0; offset < bytes; offset += segment_size )
             {
                 int this_segment = bytes - offset < segment_size ? bytes - offset : segment_size;
@@ -140,6 +146,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     struct bench_send_health_t health;
     memset( &health, 0, sizeof( health ) );
+
     uint64_t sent = 0;
     uint64_t syscalls = 0;
     uint64_t batch_index = 0;
@@ -153,6 +160,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     {
         int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
+
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
@@ -160,7 +168,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
         if ( !skip )
         {
-            /* one contiguous run of equal-size segments, filled in place */
+            // one contiguous run of equal-size segments, filled in place
             for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
             {
                 bench_fill_packet( buffer + i * size, size, flow, sequence++ );
@@ -176,22 +184,33 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             msg.msg_iovlen = 1;
             msg.msg_control = control;
             msg.msg_controllen = sizeof( control );
+
             struct cmsghdr * cmsg = CMSG_FIRSTHDR( &msg );
             cmsg->cmsg_level = IPPROTO_UDP;
             cmsg->cmsg_type = UDP_SEGMENT;
             cmsg->cmsg_len = CMSG_LEN( sizeof( uint16_t ) );
+
             uint16_t segment_size = (uint16_t) size;
             memcpy( CMSG_DATA( cmsg ), &segment_size, sizeof( segment_size ) );
 
             ssize_t result = sendmsg( fd, &msg, 0 );
             const int error = errno;
+
             syscalls++;
+
             if ( bench_fault( "send-short" ) )
+            {
                 result = size;
+            }
+
             if ( bench_fault( "send-zero" ) )
+            {
                 result = 0;
+            }
+
             // sendmsg returns bytes. Only whole accepted segments count;
             // any partial segment and the remaining messages are refusals.
+
             sent += bench_send_batch_observe( &health, "sendmsg (UDP_SEGMENT)",
                                               result >= 0 ? (int) ( result / size ) : 0, BENCH_BATCH_SIZE,
                                               result < 0 ? error : EIO );
@@ -199,6 +218,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
+
     bench_send_validate( &health );
     printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=%llu back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
@@ -210,15 +230,21 @@ int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
     bench_fault_init();
+
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
+    {
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
+    }
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )
+    {
         run_sender( argv[2], atoi( argv[3] ), atof( argv[4] ), bench_parse_sender_options( argc, argv, 5 ) );
+    }
     else
     {
         fprintf( stderr, "usage: bench_gso recv <port> <warmup> <window> <windows>\n"
                          "       bench_gso send <ip> <port> <seconds> [drop-half] [pace=<pps>]\n" );
         return 1;
     }
+
     return 0;
 }

@@ -26,14 +26,14 @@
 #ifdef __cplusplus
 extern "C"
 {
-#endif
+#endif // #ifdef __cplusplus
 void __ESBMC_assume( bool );
 void __ESBMC_assert( bool, const char * );
 bool __ESBMC_r_ok( void *, unsigned long );
 uint16_t rocketnet_esbmc_nondet_ushort( void );
 #ifdef __cplusplus
 }
-#endif
+#endif // #ifdef __cplusplus
 #define __CPROVER_assume( c ) __ESBMC_assume( (bool) ( c ) )
 #define __CPROVER_assert( c, m ) __ESBMC_assert( (bool) ( c ), ( m ) )
 #define __CPROVER_r_ok( p, n ) __ESBMC_r_ok( (void *) ( p ), (unsigned long) ( n ) )
@@ -46,7 +46,7 @@ uint16_t rocketnet_esbmc_nondet_ushort( void );
 uint16_t nondet_ushort( void );
 #else
 #include "esbmc_shim.h"
-#endif
+#endif // #if defined( TEST_PRE_FIX_ESBMC_R_OK )
 
 int main( void )
 {
@@ -73,10 +73,12 @@ int main( void )
     uint8_t stack_buf[64];
     uint16_t sb = nondet_ushort();
     __CPROVER_assume( sb <= 64 );
+
     const uint8_t * tail = stack_buf + ( 64 - sb );
     __CPROVER_assert( __CPROVER_r_ok( tail, (size_t) sb ),
                       "symbolic tail slice of stack buffer is readable" );
 
     free( buf );
+
     return 0;
 }

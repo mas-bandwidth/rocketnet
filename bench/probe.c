@@ -102,10 +102,10 @@ struct probe_io_uring_buf_reg
 
 #ifndef __NR_io_uring_setup
 #define __NR_io_uring_setup     425
-#endif
+#endif // #ifndef __NR_io_uring_setup
 #ifndef __NR_io_uring_register
 #define __NR_io_uring_register  427
-#endif
+#endif // #ifndef __NR_io_uring_register
 
 static const struct
 {
@@ -125,16 +125,16 @@ static const struct
 /* UDP socket options: numeric so the probe builds against old libc headers */
 #ifndef UDP_SEGMENT
 #define UDP_SEGMENT 103
-#endif
+#endif // #ifndef UDP_SEGMENT
 #ifndef UDP_GRO
 #define UDP_GRO 104
-#endif
+#endif // #ifndef UDP_GRO
 #ifndef SO_ATTACH_REUSEPORT_CBPF
 #define SO_ATTACH_REUSEPORT_CBPF 51
-#endif
+#endif // #ifndef SO_ATTACH_REUSEPORT_CBPF
 #ifndef SO_ATTACH_REUSEPORT_EBPF
 #define SO_ATTACH_REUSEPORT_EBPF 52
-#endif
+#endif // #ifndef SO_ATTACH_REUSEPORT_EBPF
 
 static void print_sysctl( const char * path, const char * name )
 {
@@ -144,12 +144,14 @@ static void print_sysctl( const char * path, const char * name )
         printf( "  %-32s absent (%s)\n", name, strerror( errno ) );
         return;
     }
+
     char buf[128] = { 0 };
     if ( fgets( buf, sizeof( buf ), f ) )
     {
         buf[strcspn( buf, "\n" )] = 0;
         printf( "  %-32s %s\n", name, buf );
     }
+
     fclose( f );
 }
 
@@ -173,16 +175,19 @@ static void probe_io_uring( void )
 
     struct probe_io_uring_params params;
     memset( &params, 0, sizeof( params ) );
+
     int ring_fd = (int) syscall( __NR_io_uring_setup, 4, &params );
     if ( ring_fd < 0 )
     {
         printf( "  %-32s NO (%s)\n", "io_uring_setup", strerror( errno ) );
         return;
     }
+
     printf( "  %-32s YES (features=0x%x)\n", "io_uring_setup", params.features );
 
     static struct probe_io_uring_probe probe;
     memset( &probe, 0, sizeof( probe ) );
+
     int result = (int) syscall( __NR_io_uring_register, ring_fd, PROBE_IORING_REGISTER_PROBE, &probe, 256 );
     if ( result < 0 )
     {
@@ -191,6 +196,7 @@ static void probe_io_uring( void )
     else
     {
         printf( "  %-32s last_op=%d\n", "IORING_REGISTER_PROBE", probe.last_op );
+
         for ( size_t i = 0; i < sizeof( interesting_ops ) / sizeof( interesting_ops[0] ); i++ )
         {
             int op = interesting_ops[i].op;
@@ -213,24 +219,30 @@ static void probe_io_uring( void )
         reg.bgid = 0;
         result = (int) syscall( __NR_io_uring_register, ring_fd, PROBE_IORING_REGISTER_PBUF_RING, &reg, 1 );
         if ( result < 0 )
+        {
             printf( "  %-32s NO (%s)\n", "IORING_REGISTER_PBUF_RING", strerror( errno ) );
+        }
         else
         {
             printf( "  %-32s YES\n", "IORING_REGISTER_PBUF_RING" );
             syscall( __NR_io_uring_register, ring_fd, PROBE_IORING_UNREGISTER_PBUF_RING, &reg, 1 );
         }
+
         munmap( ring_mem, 4096 );
     }
 
     close( ring_fd );
 
-    /* SQPOLL wants privileges on older kernels: attempt it, record the answer */
+    // SQPOLL wants privileges on older kernels: attempt it, record the answer
     memset( &params, 0, sizeof( params ) );
     params.flags = PROBE_IORING_SETUP_SQPOLL;
     params.sq_thread_idle = 100;
+
     int sqpoll_fd = (int) syscall( __NR_io_uring_setup, 4, &params );
     if ( sqpoll_fd < 0 )
+    {
         printf( "  %-32s NO (%s)\n", "IORING_SETUP_SQPOLL", strerror( errno ) );
+    }
     else
     {
         printf( "  %-32s YES\n", "IORING_SETUP_SQPOLL" );
@@ -258,15 +270,23 @@ static void probe_udp_gso_gro( void )
 
     int value = 1200;
     if ( setsockopt( fd, IPPROTO_UDP, UDP_SEGMENT, &value, sizeof( value ) ) == 0 )
+    {
         printf( "  %-32s YES\n", "UDP_SEGMENT (GSO)" );
+    }
     else
+    {
         printf( "  %-32s NO (%s)\n", "UDP_SEGMENT (GSO)", strerror( errno ) );
+    }
 
     value = 1;
     if ( setsockopt( fd, IPPROTO_UDP, UDP_GRO, &value, sizeof( value ) ) == 0 )
+    {
         printf( "  %-32s YES\n", "UDP_GRO" );
+    }
     else
+    {
         printf( "  %-32s NO (%s)\n", "UDP_GRO", strerror( errno ) );
+    }
 
     close( fd );
 }
@@ -284,7 +304,7 @@ static void probe_interface_features( void )
 
     int fd = socket( AF_INET, SOCK_DGRAM, 0 );
 
-    /* kernel feature-string names (ETH_SS_FEATURES), not ethtool display names */
+    // kernel feature-string names (ETH_SS_FEATURES), not ethtool display names
     static const char * wanted[] = { "tx-udp-segmentation", "rx-gro", "rx-gro-hw", "rx-udp-gro-forwarding" };
 
     for ( struct if_nameindex * ifc = interfaces; ifc->if_index != 0; ifc++ )
@@ -307,6 +327,7 @@ static void probe_interface_features( void )
             printf( "  %-16s ETHTOOL_GSSET_INFO failed (%s)\n", ifc->if_name, strerror( errno ) );
             continue;
         }
+
         uint32_t count = sset_info.buf[0];
 
         size_t strings_bytes = sizeof( struct ethtool_gstrings ) + (size_t) count * ETH_GSTRING_LEN;
@@ -315,12 +336,14 @@ static void probe_interface_features( void )
             printf( "  %-16s string table size overflow\n", ifc->if_name );
             continue;
         }
+
         struct ethtool_gstrings * strings = calloc( 1, strings_bytes );
         if ( !strings )
         {
             printf( "  %-16s failed to allocate string table (%s)\n", ifc->if_name, strerror( errno ) );
             continue;
         }
+
         strings->cmd = ETHTOOL_GSTRINGS;
         strings->string_set = ETH_SS_FEATURES;
         strings->len = count;
@@ -339,6 +362,7 @@ static void probe_interface_features( void )
             free( strings );
             continue;
         }
+
         struct ethtool_gfeatures * features = calloc( 1, sizeof( struct ethtool_gfeatures ) + feature_words * sizeof( struct ethtool_get_features_block ) );
         if ( !features )
         {
@@ -346,6 +370,7 @@ static void probe_interface_features( void )
             free( strings );
             continue;
         }
+
         features->cmd = ETHTOOL_GFEATURES;
         features->size = (uint32_t) feature_words;
         ifr.ifr_data = (void *) features;
@@ -358,9 +383,11 @@ static void probe_interface_features( void )
         }
 
         printf( "  %s:\n", ifc->if_name );
+
         for ( size_t w = 0; w < sizeof( wanted ) / sizeof( wanted[0] ); w++ )
         {
             int found = 0;
+
             for ( uint32_t i = 0; i < count; i++ )
             {
                 const char * name = (const char *) strings->data + i * ETH_GSTRING_LEN;
@@ -372,8 +399,11 @@ static void probe_interface_features( void )
                     break;
                 }
             }
+
             if ( !found )
+            {
                 printf( "    %-30s (not present)\n", wanted[w] );
+            }
         }
 
         free( strings );
@@ -404,25 +434,31 @@ static void probe_reuseport_steering( void )
         return;
     }
 
-    /* classic BPF: return 0 -> steer everything to socket index 0 */
+    // classic BPF: return 0 -> steer everything to socket index 0
     struct sock_filter cbpf_code[] = { { 0x06, 0, 0, 0 } };       /* BPF_RET | BPF_K, 0 */
     struct sock_fprog cbpf_prog = { 1, cbpf_code };
     if ( setsockopt( fd, SOL_SOCKET, SO_ATTACH_REUSEPORT_CBPF, &cbpf_prog, sizeof( cbpf_prog ) ) == 0 )
+    {
         printf( "  %-32s YES\n", "SO_ATTACH_REUSEPORT_CBPF" );
+    }
     else
+    {
         printf( "  %-32s NO (%s)\n", "SO_ATTACH_REUSEPORT_CBPF", strerror( errno ) );
+    }
 
-    /* eBPF: load an SK_REUSEPORT program (mov r0, 0; exit) then attach */
+    // eBPF: load an SK_REUSEPORT program (mov r0, 0; exit) then attach
     struct bpf_insn ebpf_code[] = {
         { .code = 0xb7, .dst_reg = 0, .src_reg = 0, .off = 0, .imm = 0 },   /* mov64 r0, 0 */
         { .code = 0x95, .dst_reg = 0, .src_reg = 0, .off = 0, .imm = 0 },   /* exit */
     };
+
     union bpf_attr attr;
     memset( &attr, 0, sizeof( attr ) );
     attr.prog_type = BPF_PROG_TYPE_SK_REUSEPORT;
     attr.insn_cnt = 2;
     attr.insns = (uint64_t) (uintptr_t) ebpf_code;
     attr.license = (uint64_t) ( uintptr_t ) "GPL";
+
     int prog_fd = (int) syscall( __NR_bpf, BPF_PROG_LOAD, &attr, sizeof( attr ) );
     if ( prog_fd < 0 )
     {
@@ -431,9 +467,14 @@ static void probe_reuseport_steering( void )
     else
     {
         if ( setsockopt( fd, SOL_SOCKET, SO_ATTACH_REUSEPORT_EBPF, &prog_fd, sizeof( prog_fd ) ) == 0 )
+        {
             printf( "  %-32s YES\n", "SO_ATTACH_REUSEPORT_EBPF" );
+        }
         else
+        {
             printf( "  %-32s NO: attach refused (%s)\n", "SO_ATTACH_REUSEPORT_EBPF", strerror( errno ) );
+        }
+
         close( prog_fd );
     }
 
@@ -449,5 +490,6 @@ int main( void )
     probe_udp_gso_gro();
     probe_interface_features();
     probe_reuseport_steering();
+
     return 0;
 }

@@ -71,6 +71,7 @@ static const char * windows_socket_errors_host( bool ipv6 )
 static void windows_socket_errors_clear_env()
 {
     // the case pins its own transports: an ambient pin must not override them
+
     _putenv_s( "ROCKETNET_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
     _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
@@ -102,7 +103,10 @@ static void windows_socket_errors_oversize( std::vector<windows_socket_errors_da
         windows_socket_errors_datagram_t datagram;
         datagram.bytes.resize( (size_t) sizes[i] );
         for ( int j = 0; j < sizes[i]; j++ )
+        {
             datagram.bytes[(size_t) j] = (uint8_t) ( j * 31 + 7 );
+        }
+
         datagrams.push_back( datagram );
     }
 }
@@ -112,15 +116,20 @@ static void windows_socket_errors_runt_and_garbage( std::vector<windows_socket_e
     uint64_t state = WINDOWS_SOCKET_ERRORS_GARBAGE_SEED;
     windows_socket_errors_datagram_t empty;
     datagrams.push_back( empty );
+
     windows_socket_errors_datagram_t one;
     one.bytes.push_back( (uint8_t) windows_socket_errors_next( &state ) );
     datagrams.push_back( one );
+
     for ( int length = 2; length <= 1400; length++ )
     {
         windows_socket_errors_datagram_t datagram;
         datagram.bytes.resize( (size_t) length );
         for ( int j = 0; j < length; j++ )
+        {
             datagram.bytes[(size_t) j] = (uint8_t) windows_socket_errors_next( &state );
+        }
+
         datagrams.push_back( datagram );
     }
 }
@@ -139,9 +148,11 @@ static void windows_socket_errors_sender_open( windows_socket_errors_sender_t * 
 {
     sender->handle = socket( ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP );
     windows_socket_errors_require( sender->handle != INVALID_SOCKET );
+
     int send_buffer = 4 * 1024 * 1024;
     setsockopt( sender->handle, SOL_SOCKET, SO_SNDBUF, (const char *) &send_buffer, sizeof( send_buffer ) );
     memset( &sender->to, 0, sizeof( sender->to ) );
+
     if ( ipv6 )
     {
         sockaddr_in6 * to = (sockaddr_in6 *) &sender->to;
@@ -192,18 +203,25 @@ static void windows_socket_errors_sleep_to( double next )
 {
     const double now = rocketnet_platform_time();
     if ( next > now )
+    {
         rocketnet_platform_sleep( next - now );
+    }
 }
 
 static void windows_socket_errors_tick( windows_socket_errors_session_t * session )
 {
     const double now = rocketnet_platform_time();
+
     session->sequence++;
+
     uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
 
     rocketnet_client_transport_update( session->client, now );
     while ( rocketnet_client_transport_receive_packet( session->client, payload, (int) sizeof( payload ) ) > 0 )
+    {
         session->client_received++;
+    }
+
     if ( rocketnet_client_transport_state( session->client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED )
     {
         memset( payload, 0, WINDOWS_SOCKET_ERRORS_PAYLOAD_BYTES );
@@ -212,6 +230,7 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
     }
 
     rocketnet_server_transport_update( session->server, now );
+
     const int num_payloads = rocketnet_server_transport_num_payloads( session->server );
     for ( int i = 0; i < num_payloads; i++ )
     {
@@ -221,6 +240,7 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
         windows_socket_errors_require( client_index == session->client_index || session->client_index < 0 );
         session->server_received++;
     }
+
     for ( int client_index = 0; client_index < 4; client_index++ )
     {
         if ( !rocketnet_server_transport_is_client_connected( session->server, client_index ) )
@@ -228,6 +248,7 @@ static void windows_socket_errors_tick( windows_socket_errors_session_t * sessio
         memset( payload, 0x5a, WINDOWS_SOCKET_ERRORS_PAYLOAD_BYTES );
         rocketnet_server_transport_send_packet( session->server, client_index, payload, WINDOWS_SOCKET_ERRORS_PAYLOAD_BYTES );
     }
+
     rocketnet_server_transport_send_packets( session->server );
 
     session->next += WINDOWS_SOCKET_ERRORS_TICK;
@@ -245,6 +266,7 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 4;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", transport->transport );
+
     char bind[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( bind, sizeof( bind ), "%s:0", windows_socket_errors_host( transport->ipv6 ) );
     session->server = rocketnet_server_transport_create( NULL, bind, &server_config );
@@ -253,8 +275,10 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
 
     char server_address[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( server_address, sizeof( server_address ), "%s:%d", windows_socket_errors_host( transport->ipv6 ), rocketnet_server_transport_port( session->server ) );
+
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     windows_socket_errors_require( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), (uint64_t) time( NULL ), connect_token, sizeof( connect_token ) ) == ROCKETNET_STATUS_OK );
+
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
@@ -262,7 +286,9 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
     windows_socket_errors_require( session->client != NULL );
 
     session->next = rocketnet_platform_time();
+
     const double start = session->next;
+
     while ( rocketnet_client_transport_state( session->client ) != ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED ||
             rocketnet_server_transport_num_connected_clients( session->server ) != 1 )
     {
@@ -270,13 +296,18 @@ static void windows_socket_errors_session_start( windows_socket_errors_session_t
         windows_socket_errors_require( rocketnet_client_transport_state( session->client ) > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED );
         windows_socket_errors_require( rocketnet_platform_time() - start < 10.0 );
     }
+
     session->client_index = rocketnet_client_transport_client_index( session->client );
     windows_socket_errors_require( rocketnet_server_transport_is_client_connected( session->server, session->client_index ) );
 
     // half a second of traffic before anything is measured
+
     const double warm = rocketnet_platform_time();
     while ( rocketnet_platform_time() - warm < 0.5 )
+    {
         windows_socket_errors_tick( session );
+    }
+
     windows_socket_errors_require( session->server_received > 0 && session->client_received > 0 );
 }
 
@@ -293,34 +324,45 @@ static void windows_socket_errors_session_finish( windows_socket_errors_session_
 static uint64_t windows_socket_errors_refusals( const struct rocketnet_counters_t * counters )
 {
     uint64_t sum = 0;
+
     for ( int i = 0; i < ROCKETNET_NUM_COUNTERS; i++ )
         if ( rocketnet_counter_class( i ) == ROCKETNET_COUNTER_CLASS_REFUSAL )
+        {
             sum += rocketnet_counter_value( counters, i );
+        }
+
     return sum;
 }
 
 static uint64_t windows_socket_errors_transport_drops( windows_socket_errors_session_t * session )
 {
     void * instance = rocketnet_server_transport_io_name_for_testing( session->server );
+
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
     {
         uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
         rocketnet_server_iocp_counters( (rocketnet_server_iocp_t *) instance, counters );
+
         // Size drops now also enter the server's public prefilter counters.
         // Keep this aggregate one event per datagram while retaining the
         // transport's legacy RECEIVE_DROPPED total for its direct readers.
+
         return counters[ROCKETNET_IOCP_RECEIVE_DROPPED] -
                counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT] -
                counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE];
     }
+
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
     {
         uint64_t counters[ROCKETNET_RIO_NUM_COUNTERS];
         rocketnet_server_rio_counters( (rocketnet_server_rio_t *) instance, counters );
+
         // RECEIVE_DROPPED_SIZE is represented by PREFILTER_TOO_LARGE above;
         // failed completions are still transport-only drops.
+
         return counters[ROCKETNET_RIO_COUNTER_RECEIVE_FAILED];
     }
+
     return 0;
 }
 
@@ -336,10 +378,12 @@ static uint64_t windows_socket_errors_server_counted( windows_socket_errors_sess
 static int windows_socket_errors_pending( windows_socket_errors_session_t * session )
 {
     void * instance = rocketnet_server_transport_io_name_for_testing( session->server );
+
     if ( strcmp( session->transport.transport, "iocp" ) == 0 )
         return rocketnet_server_iocp_pending( (rocketnet_server_iocp_t *) instance );
     if ( strcmp( session->transport.transport, "rio" ) == 0 )
         return rocketnet_server_rio_pending( (rocketnet_server_rio_t *) instance );
+
     return -1;
 }
 
@@ -352,10 +396,14 @@ static int windows_socket_errors_receives_in_flight( windows_socket_errors_sessi
     while ( rocketnet_platform_time() - start < 0.25 )
     {
         windows_socket_errors_tick( session );
+
         const int pending = windows_socket_errors_pending( session );
         if ( pending < fewest )
+        {
             fewest = pending;
+        }
     }
+
     return fewest;
 }
 
@@ -363,12 +411,16 @@ static void windows_socket_errors_inject( windows_socket_errors_session_t * sess
 {
     windows_socket_errors_sender_t sender;
     windows_socket_errors_sender_open( &sender, session->transport.ipv6, port );
+
     for ( size_t i = 0; i < datagrams.size(); i++ )
     {
         windows_socket_errors_sender_send( &sender, &datagrams[i] );
         if ( ( i + 1 ) % WINDOWS_SOCKET_ERRORS_SENDS_PER_TICK == 0 )
+        {
             windows_socket_errors_tick( session );
+        }
     }
+
     windows_socket_errors_sender_close( &sender );
 }
 
@@ -393,9 +445,13 @@ static void windows_server_drops( const windows_socket_errors_transport_t * tran
 
     // drain: every datagram reaches its counter, and the live pair keeps
     // exchanging
+
     const double drain = rocketnet_platform_time();
     while ( rocketnet_platform_time() - drain < 0.5 )
+    {
         windows_socket_errors_tick( &session );
+    }
+
     const int in_flight_after = windows_socket_errors_receives_in_flight( &session );
     const uint64_t counted = windows_socket_errors_server_counted( &session ) - counted_before;
     const uint64_t sent = (uint64_t) datagrams.size();
@@ -407,6 +463,7 @@ static void windows_server_drops( const windows_socket_errors_transport_t * tran
     fflush( stdout );
 
     // every dropped datagram is counted: no silent drop
+
     windows_socket_errors_require( counted == sent );
     windows_socket_errors_require( in_flight_after == in_flight_before );
     windows_socket_errors_require( rocketnet_client_transport_state( session.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
@@ -437,8 +494,11 @@ static void windows_server_counts_prefilter_size( const windows_socket_errors_tr
 {
     windows_socket_errors_session_t session;
     windows_socket_errors_session_start( &session, transport );
+
     const uint64_t before = rocketnet_counter_value( rocketnet_server_transport_counters( session.server ), counter );
+
     windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
+
     const double drain = rocketnet_platform_time();
     uint64_t counted = 0;
     while ( rocketnet_platform_time() - drain < 0.5 )
@@ -448,6 +508,7 @@ static void windows_server_counts_prefilter_size( const windows_socket_errors_tr
         if ( counted == datagrams.size() )
             break;
     }
+
     printf( "%s %s: sent %llu, prefilter size counter %llu\n", name, windows_socket_errors_label( transport ),
             (unsigned long long) datagrams.size(), (unsigned long long) counted );
     fflush( stdout );
@@ -502,13 +563,21 @@ static void windows_socket_errors_prefilter_classify( const windows_socket_error
 {
     const int bytes = (int) datagram->bytes.size();
     if ( bytes < ROCKETNET_PREFILTER_BYTES )
+    {
         expect->too_short++;
+    }
     else if ( bytes > ROCKETNET_RECEIVE_CEILING )
+    {
         expect->too_large++;
+    }
     else if ( datagram->bytes[1] != ROCKETNET_FILTER_EPOCH_UNKEYED )
+    {
         expect->wrong_epoch++;
+    }
     else
+    {
         expect->wrong_value++;
+    }
 }
 
 static void windows_socket_errors_prefilter_read( struct rocketnet_client_transport_t * client, windows_socket_errors_prefilter_t * out )
@@ -546,29 +615,38 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     windows_socket_errors_runt_and_garbage( datagrams );
 
     // a quiet quarter second, then the client's refusals are the baseline
+
     const double quiet = rocketnet_platform_time();
     while ( rocketnet_platform_time() - quiet < 0.25 )
+    {
         windows_socket_errors_tick( &session );
+    }
 
     const uint16_t port = rocketnet_client_transport_test_bound_port( session.client );
     windows_socket_errors_require( port != 0 );
+
     rocketnet_address_t client_address;
     char client_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     snprintf( client_string, sizeof( client_string ), "%s:%d", windows_socket_errors_host( ipv6 ), (int) port );
     windows_socket_errors_require( rocketnet_address_parse( &client_address, client_string ) );
+
     rocketnet_platform_socket_t * server_socket = rocketnet_portable_server_test_socket( rocketnet_server_transport_io_name_for_testing( session.server ) );
     windows_socket_errors_require( server_socket != NULL );
 
     // leg 1: from the server's socket, to the prefilter
+
     windows_socket_errors_prefilter_t expect;
     memset( &expect, 0, sizeof( expect ) );
+
     windows_socket_errors_prefilter_t prefilter_before;
     windows_socket_errors_prefilter_read( session.client, &prefilter_before );
+
     const uint64_t refusals_before = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) );
     const uint64_t foreign_before = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE );
     const uint64_t server_received_before = session.server_received;
     const uint64_t client_received_before = session.client_received;
     uint64_t sent_from_server = 0;
+
     for ( size_t i = 0; i < datagrams.size(); i++ )
     {
         if ( datagrams[i].bytes.empty() )
@@ -577,13 +655,20 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
         windows_socket_errors_prefilter_classify( &datagrams[i], &expect );
         sent_from_server++;
         if ( sent_from_server % WINDOWS_SOCKET_ERRORS_SENDS_PER_TICK == 0 )
+        {
             windows_socket_errors_tick( &session );
+        }
     }
+
     const double drain = rocketnet_platform_time();
     while ( rocketnet_platform_time() - drain < 0.5 )
+    {
         windows_socket_errors_tick( &session );
+    }
+
     windows_socket_errors_prefilter_t prefilter_after;
     windows_socket_errors_prefilter_read( session.client, &prefilter_after );
+
     const uint64_t too_short = prefilter_after.too_short - prefilter_before.too_short;
     const uint64_t too_large = prefilter_after.too_large - prefilter_before.too_large;
     const uint64_t wrong_epoch = prefilter_after.wrong_epoch - prefilter_before.wrong_epoch;
@@ -592,26 +677,35 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
     const uint64_t server_leg_foreign = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) - foreign_before;
 
     // leg 2: from the raw test socket, a foreign source the connected socket drops
+
     const uint64_t refusals_mid = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) );
     const uint64_t foreign_mid = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE );
     windows_socket_errors_prefilter_t prefilter_mid;
     windows_socket_errors_prefilter_read( session.client, &prefilter_mid );
     windows_socket_errors_inject( &session, port, datagrams );
+
     const double drain_foreign = rocketnet_platform_time();
     while ( rocketnet_platform_time() - drain_foreign < 0.5 )
+    {
         windows_socket_errors_tick( &session );
+    }
+
     const uint64_t foreign_refusals = windows_socket_errors_refusals( rocketnet_client_transport_counters( session.client ) ) - refusals_mid;
     const uint64_t foreign_drops = rocketnet_counter_value( rocketnet_client_transport_counters( session.client ), ROCKETNET_COUNTER_CLIENT_RECEIVE_FOREIGN_SOURCE ) - foreign_mid;
     windows_socket_errors_prefilter_t prefilter_end;
     windows_socket_errors_prefilter_read( session.client, &prefilter_end );
+
     const bool prefilter_unchanged = memcmp( &prefilter_end, &prefilter_mid, sizeof( prefilter_end ) ) == 0;
 
     // after both floods the I/O thread still receives: a fresh run of ticks
     // delivers the server's payloads
+
     const uint64_t client_received_mid = session.client_received;
     const double after = rocketnet_platform_time();
     while ( rocketnet_platform_time() - after < 0.5 )
+    {
         windows_socket_errors_tick( &session );
+    }
 
     printf( "windows_client_drops_oversize_and_garbage %s: from the server %llu (too short %llu of %llu, too large %llu of %llu, wrong epoch %llu of %llu, wrong value %llu of %llu, refusals %llu, foreign %llu); from a foreign source %llu (foreign source %llu, refusals %llu, prefilter %s); client received %llu payloads during and %llu after, server received %llu\n",
             ipv6 ? "ipv6" : "ipv4", (unsigned long long) sent_from_server,
@@ -625,6 +719,7 @@ static void windows_client_drops_oversize_and_garbage( bool ipv6 )
 
     // every dropped datagram is counted, once, on the counter its source,
     // size and bytes name
+
     windows_socket_errors_require( too_short == expect.too_short );
     windows_socket_errors_require( too_large == expect.too_large );
     windows_socket_errors_require( wrong_epoch == expect.wrong_epoch );
@@ -652,6 +747,7 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 {
     rocketnet_address_t bind_address;
     rocketnet_address_parse( &bind_address, ipv6 ? "[::1]:0" : "127.0.0.1:0" );
+
     rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.5f, 64 * 1024, 64 * 1024 );
     windows_socket_errors_require( socket != NULL );
     windows_socket_errors_require( bind_address.port != 0 );
@@ -660,8 +756,10 @@ static void windows_per_packet_receive_counts_empty_datagram( bool ipv6 )
 
     windows_socket_errors_sender_t sender;
     windows_socket_errors_sender_open( &sender, ipv6, bind_address.port );
+
     windows_socket_errors_datagram_t empty;
     windows_socket_errors_sender_send( &sender, &empty );
+
     windows_socket_errors_datagram_t real;
     real.bytes.resize( 64, 0x5a );
     windows_socket_errors_sender_send( &sender, &real );

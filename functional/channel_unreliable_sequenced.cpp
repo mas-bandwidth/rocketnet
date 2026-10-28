@@ -21,14 +21,20 @@ static void sequenced_functional_check( bool condition, const char * label )
 static void sequenced_state_bytes( uint32_t state, uint8_t bytes[4] )
 {
     for ( int i = 0; i < 4; i++ )
+    {
         bytes[i] = (uint8_t) ( state >> ( i * 8 ) );
+    }
 }
 
 static uint32_t sequenced_state_read( const uint8_t * bytes )
 {
     uint32_t state = 0;
+
     for ( int i = 0; i < 4; i++ )
+    {
         state |= (uint32_t) bytes[i] << ( i * 8 );
+    }
+
     return state;
 }
 
@@ -42,21 +48,26 @@ void state_stream_never_goes_backwards_over_lossy_link()
     uint32_t last = 0;
     uint32_t delivered = 0;
     uint32_t accepted = 0;
+
     for ( uint32_t tick = 1; tick <= 120 + 600; tick++ )
     {
         if ( tick <= 120 )
         {
             uint8_t bytes[4];
             sequenced_state_bytes( tick, bytes );
+
             const int type = tick == 60 ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED;
             sequenced_functional_check( rocketnet_channel_harness_client_send( &h, 0, type, bytes, 4 ) != 0, "send" );
             accepted++;
         }
+
         rocketnet_channel_harness_pump( &h, 1.0 / 60.0 );
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             sequenced_functional_check( d.bytes == 4, "payload length" );
+
             const uint32_t state = sequenced_state_read( d.data );
             sequenced_functional_check( state > last, "state moved backwards or duplicated" );
             last = state;
@@ -82,44 +93,59 @@ void large_unreliable_sequenced_uses_transport_fragments()
     // UNRELIABLE_SEQUENCED send too big for one packet's record is promoted
     // to RELIABLE_SEQUENCED (the promotion rule), and is
     // counted, never fragmented.
+
     rocketnet_channel_harness_t h;
     sequenced_functional_check( rocketnet_channel_harness_create( &h ) != 0, "large harness create" );
     sequenced_functional_check( rocketnet_channel_harness_connect( &h, 60 * 5 ) != 0, "large connect" );
+
     rocketnet_message_client_t * client = h.message_client;
 
     const int message_bytes = 2000;
     uint8_t * write = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, message_bytes );
     sequenced_functional_check( write != NULL, "large client start" );
     for ( int i = 0; i < message_bytes; i++ )
+    {
         write[i] = (uint8_t) ( i * 37 + 11 );
+    }
+
     sequenced_functional_check( rocketnet_message_client_finish( client, message_bytes ) != 0, "large client finish" );
     uint8_t * promoted = rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                          ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES );
     sequenced_functional_check( promoted != NULL, "oversize unreliable start promotes" );
     if ( promoted )
+    {
         rocketnet_message_client_abort( client );
+    }
+
     rocketnet_message_config_t default_config;
     rocketnet_message_default_config( &default_config );
     sequenced_functional_check( rocketnet_message_client_start( client, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED,
                                                                 (int) default_config.max_message_bytes + 1 ) == NULL,
                                 "configured message maximum refused before enqueue" );
 
-    // Five seconds of the test clock at 60 updates a second.
+    // Five seconds of the test clock at 60 updates a second
+
     int received = 0;
     for ( int update = 0; update < 60 * 5 && !received; update++ )
     {
         sequenced_functional_check( rocketnet_channel_harness_pump( &h, 1.0 / 60.0 ) != 0, "large progress" );
+
         rocketnet_channel_delivery_t d;
         while ( rocketnet_channel_harness_server_collect( &h, 0, &d ) )
         {
             sequenced_functional_check( d.bytes == message_bytes, "large delivered length" );
             for ( int i = 0; i < d.bytes; i++ )
+            {
                 sequenced_functional_check( d.data[i] == (uint8_t) ( i * 37 + 11 ), "large delivered bytes" );
+            }
+
             received++;
         }
     }
+
     sequenced_functional_check( received == 1, "large fragment reassembly" );
     sequenced_functional_check( rocketnet_channel_harness_overflows( &h ) == 0, "large delivery ring overflow" );
+
     const rocketnet_counters_t * counters = rocketnet_message_client_counters( client );
     sequenced_functional_check( counters->values[ROCKETNET_COUNTER_MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED] == 1, "large unreliable promotion counted" );
     printf( "test_large_unreliable_sequenced_uses_transport_fragments: bytes=%d delivered=%d promoted=%llu\n",

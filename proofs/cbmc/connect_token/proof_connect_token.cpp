@@ -49,7 +49,7 @@ unsigned char nondet_uchar( void );
 #define PROOF_R_OK( p, n ) __CPROVER_r_ok( (p), (size_t) (n) )
 #define PROOF_W_OK( p, n ) __CPROVER_w_ok( (p), (size_t) (n) )
 #define PROOF_HAVOC( p, n ) __CPROVER_havoc_slice( (p), (size_t) (n) )
-#endif
+#endif // #ifndef __CPROVER__
 
 /* the tally lives in the sdk unit that is compiled in the library; the proof,
    like that unit, holds the one definition */
@@ -83,6 +83,7 @@ int crypto_box_seal_open( unsigned char * m,
         return -1;
 
     PROOF_HAVOC( m, ROCKETNET_PRIVATE_BLOCK_BYTES );
+
     return 0;
 }
 
@@ -109,10 +110,15 @@ int crypto_generichash( unsigned char * out,
                         size_t keylen )
 {
     __CPROVER_assert( PROOF_R_OK( in, inlen ), "generichash reads its input" );
+
     if ( keylen > 0 )
+    {
         __CPROVER_assert( PROOF_R_OK( key, keylen ), "generichash reads its key" );
+    }
+
     __CPROVER_assert( PROOF_W_OK( out, outlen ), "generichash writes its output" );
     PROOF_HAVOC( out, outlen );
+
     return 0;
 }
 
@@ -128,6 +134,7 @@ int crypto_box_seal( unsigned char * c, const unsigned char * m,
     __CPROVER_assert( PROOF_W_OK( c, mlen + ROCKETNET_SEALED_BLOCK_BYTES - ROCKETNET_PRIVATE_BLOCK_BYTES ),
                       "seal writes the sealed plaintext" );
     PROOF_HAVOC( c, mlen + ROCKETNET_SEALED_BLOCK_BYTES - ROCKETNET_PRIVATE_BLOCK_BYTES );
+
     return 0;
 }
 
@@ -145,9 +152,13 @@ int crypto_generichash_init( crypto_generichash_state * state,
                              const size_t outlen )
 {
     if ( keylen > 0 )
+    {
         __CPROVER_assert( PROOF_R_OK( key, keylen ), "generichash_init reads its key" );
+    }
+
     __CPROVER_assert( PROOF_W_OK( state, sizeof( *state ) ), "generichash_init writes its state" );
     PROOF_HAVOC( state, sizeof( *state ) );
+
     return 0;
 }
 
@@ -159,6 +170,7 @@ int crypto_generichash_update( crypto_generichash_state * state,
     __CPROVER_assert( PROOF_R_OK( in, inlen ), "generichash_update reads its input" );
     __CPROVER_assert( PROOF_W_OK( state, sizeof( *state ) ), "generichash_update writes its state" );
     PROOF_HAVOC( state, sizeof( *state ) );
+
     return 0;
 }
 
@@ -182,6 +194,7 @@ int crypto_box_easy( unsigned char * c, const unsigned char * m,
     __CPROVER_assert( PROOF_R_OK( sk, ROCKETNET_KEY_BYTES ), "box_easy reads the secret key" );
     __CPROVER_assert( PROOF_W_OK( c, mlen + 16 ), "box_easy writes the ciphertext and tag" );
     PROOF_HAVOC( c, mlen + 16 );
+
     return 0;
 }
 
@@ -192,12 +205,15 @@ int crypto_sign_detached( unsigned char * sig, unsigned long long * siglen_p,
     __CPROVER_assert( PROOF_R_OK( m, mlen ), "sign reads its message" );
     __CPROVER_assert( PROOF_R_OK( sk, ROCKETNET_SIGNATURE_BYTES ), "sign reads its secret key" );
     __CPROVER_assert( PROOF_W_OK( sig, ROCKETNET_SIGNATURE_BYTES ), "sign writes the signature" );
+
     if ( siglen_p != NULL )
     {
         __CPROVER_assert( PROOF_W_OK( siglen_p, 8 ), "sign writes the signature length" );
         *siglen_p = ROCKETNET_SIGNATURE_BYTES;
     }
+
     PROOF_HAVOC( sig, ROCKETNET_SIGNATURE_BYTES );
+
     return 0;
 }
 
@@ -242,22 +258,27 @@ void harness_read_signed_connect_data( void )
     __CPROVER_assert( output.version == version, "version is read at its offset" );
 
     p = signed_data + ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID;
+
     const uint64_t protocol_id = rocketnet_read_uint64( &p );
     __CPROVER_assert( output.protocol_id == protocol_id, "protocol id is read at its offset" );
 
     p = signed_data + ROCKETNET_SIGNED_OFFSET_CREATE;
+
     const uint64_t create = rocketnet_read_uint64( &p );
     __CPROVER_assert( output.create_timestamp == create, "create timestamp is read at its offset" );
 
     p = signed_data + ROCKETNET_SIGNED_OFFSET_EXPIRE;
+
     const uint64_t expire = rocketnet_read_uint64( &p );
     __CPROVER_assert( output.expire_timestamp == expire, "expire timestamp is read at its offset" );
 
     p = signed_data + ROCKETNET_SIGNED_OFFSET_TIMEOUT;
+
     const int32_t timeout = (int32_t) rocketnet_read_uint32( &p );
     __CPROVER_assert( output.timeout_seconds == timeout, "timeout is read at its offset" );
 
     p = signed_data + ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS;
+
     const uint8_t flags = rocketnet_read_uint8( &p );
     __CPROVER_assert( output.address_flags == flags, "address flags are read at their offset" );
 
@@ -345,6 +366,7 @@ void harness_private_consistent( void )
     const uint8_t * p = signed_data + ROCKETNET_SIGNED_OFFSET_PROTOCOL_ID;
     const uint64_t signed_protocol_id = rocketnet_read_uint64( &p );
     p = signed_data + ROCKETNET_SIGNED_OFFSET_EXPIRE;
+
     const uint64_t signed_expire = rocketnet_read_uint64( &p );
 
     __CPROVER_assert( result == 0 || result == 1, "consistency returns 0 or 1" );
@@ -371,5 +393,6 @@ int main( void )
     harness_open_connect_token_private();
     harness_private_consistent();
     harness_connect_token_identifier();
+
     return 0;
 }

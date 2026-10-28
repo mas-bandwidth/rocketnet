@@ -50,12 +50,14 @@ static const int nw_teardown_errors[] = { ECANCELED, ENOTCONN, ECONNRESET, ECONN
 static void nw_check_error( const char * call, nw_error_t error )
 {
     int code = EAGAIN;                          /* no error: the ordinary case */
+
     if ( error != NULL )
     {
         code = nw_error_get_error_code( error );
         if ( nw_error_get_error_domain( error ) != nw_error_domain_posix )
             code = EIO;                         /* not an errno; refuse under a code never tolerated */
     }
+
     bench_receive_refused_or_empty_except( call, code, nw_teardown_errors,
                                            (int) ( sizeof( nw_teardown_errors ) / sizeof( nw_teardown_errors[0] ) ) );
 }
@@ -87,6 +89,7 @@ static void nw_receive_loop( nw_connection_t connection )
                   nw_error_get_error_domain( error ) == nw_error_domain_posix ? "posix" : "non-posix",
                   nw_error_get_error_code( error ) );
           fflush( stdout );
+
           return;
       }
 
@@ -126,6 +129,7 @@ static void run_receiver( int port, double warmup, double window, int windows )
 
     char port_string[16];
     snprintf( port_string, sizeof( port_string ), "%d", port );
+
     nw_endpoint_t local = nw_endpoint_create_host( "0.0.0.0", port_string );
     nw_parameters_set_local_endpoint( parameters, local );
 
@@ -166,6 +170,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
 
     char port_string[16];
     snprintf( port_string, sizeof( port_string ), "%d", port );
+
     nw_endpoint_t endpoint = nw_endpoint_create_host( ip, port_string );
     nw_connection_t connection = nw_connection_create( endpoint, parameters );
 
@@ -173,6 +178,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     nw_connection_set_queue( connection, queue );
 
     dispatch_semaphore_t ready = dispatch_semaphore_create( 0 );
+
     nw_connection_set_state_changed_handler( connection, ^( nw_connection_state_t state, nw_error_t error ) {
       (void) error;
       if ( state == nw_connection_state_ready )
@@ -187,7 +193,9 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     dispatch_semaphore_wait( ready, DISPATCH_TIME_FOREVER );
 
     uint8_t packet[BENCH_MAX_PACKET];
+
     __block uint64_t sent = 0;
+
     uint64_t completions = 0;
     uint64_t batch_index = 0;
     uint64_t sequence = 0;
@@ -203,6 +211,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
     {
         int size = bench_sizes[batch_index % BENCH_NUM_SIZES];
         int skip = options.drop_half && ( batch_index & 1 );
+
         batch_index++;
 
         if ( bench_pace_wait( start, sent, options.pace_pps ) >= deadline )
@@ -217,6 +226,7 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
             {
                 bench_fill_packet( packet, size, flow, sequence++ );
                 flow = ( flow + 1 ) % BENCH_NUM_FLOWS;
+
                 dispatch_data_t data = dispatch_data_create( packet, (size_t) size, queue, DISPATCH_DATA_DESTRUCTOR_DEFAULT );
                 nw_connection_send( connection, data, NW_CONNECTION_DEFAULT_MESSAGE_CONTEXT, true, ^( nw_error_t error ) {
                     /* a send completion that failed is not a sent packet, and
@@ -232,12 +242,16 @@ static void run_sender( const char * ip, int port, double seconds, struct bench_
                 } );
                 dispatch_release( data );
             }
+
             for ( int i = 0; i < BENCH_BATCH_SIZE; i++ )
+            {
                 dispatch_semaphore_wait( batch_done, DISPATCH_TIME_FOREVER );
+            }
         }
     }
 
     double elapsed = (double) ( bench_time_ns() - start ) / 1e9;
+
     bench_send_validate( &nw_send_health );
     printf( "SENDER pkts=%llu secs=%.3f pps=%.0f syscalls=0 back_pressure=%llu refused=%llu\n",
             (unsigned long long) sent, elapsed, (double) sent / elapsed,
@@ -249,15 +263,21 @@ int main( int argc, char ** argv )
 {
     setvbuf( stdout, NULL, _IOLBF, 0 );
     bench_fault_init();
+
     if ( argc >= 6 && strcmp( argv[1], "recv" ) == 0 )
+    {
         run_receiver( atoi( argv[2] ), atof( argv[3] ), atof( argv[4] ), atoi( argv[5] ) );
+    }
     else if ( argc >= 5 && strcmp( argv[1], "send" ) == 0 )
+    {
         run_sender( argv[2], atoi( argv[3] ), atof( argv[4] ), bench_parse_sender_options( argc, argv, 5 ) );
+    }
     else
     {
         fprintf( stderr, "usage: bench_nw recv <port> <warmup> <window> <windows>\n"
                          "       bench_nw send <ip> <port> <seconds> [drop-half] [pace=<pps>]\n" );
         return 1;
     }
+
     return 0;
 }

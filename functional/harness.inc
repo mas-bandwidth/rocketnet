@@ -19,15 +19,15 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #include "rocketnet_server_iocp.h"
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #if ROCKETNET_XDP
 #include "rocketnet_server_socket.h"
-#endif
+#endif // #if ROCKETNET_XDP
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -50,20 +50,33 @@ static const uint64_t rocketnet_functional_production_protocol_id = UINT64_C( 0x
 static void rocketnet_functional_production_keys( uint8_t * backend_public, uint8_t * backend_secret, uint8_t * server_public, uint8_t * server_secret )
 {
     uint8_t seed[32];
+
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x50 + i );
+    }
+
     if ( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) != ROCKETNET_STATUS_OK )
+    {
         exit( 1 );
+    }
+
     for ( int i = 0; i < 32; i++ )
+    {
         server_secret[i] = (uint8_t) ( 0x70 + i );
+    }
+
     if ( crypto_scalarmult_base( server_public, server_secret ) != 0 )
+    {
         exit( 1 );
+    }
 }
 const uint8_t rocketnet_functional_production_backend_secret_key[64] = { 0 };
 void rocketnet_functional_production_server_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !config )
         return;
+
     uint8_t backend_public[32], backend_secret[64], server_public[32], server_secret[32];
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
     rocketnet_server_transport_default_config_current( config );
@@ -71,6 +84,7 @@ void rocketnet_functional_production_server_config( struct rocketnet_server_tran
     memcpy( config->backend_public_key, backend_public, 32 );
     memcpy( config->server_public_key, server_public, 32 );
     memcpy( config->server_secret_key, server_secret, 32 );
+
     static const uint8_t production_filter[4] = { 0x51, 0x52, 0x53, 0x54 };
     memcpy( config->packet_filter, production_filter, sizeof( production_filter ) );
 }
@@ -78,6 +92,7 @@ enum rocketnet_status_t rocketnet_functional_production_write_token( const char 
 {
     uint8_t backend_public[32], backend_secret[64], server_public[32], server_secret[32];
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
+
     const char * addresses[1] = { server_address_string };
     return rocketnet_write_production_connect_token( backend_secret, server_public, rocketnet_functional_production_protocol_id, addresses, 1, client_id, current_timestamp, current_timestamp + 30, 10, NULL, connect_token, connect_token_bytes );
 }
@@ -85,21 +100,31 @@ enum rocketnet_status_t rocketnet_functional_production_create_token( const char
 {
     uint8_t backend_public[32], backend_secret[64], server_public[32], server_secret[32];
     rocketnet_functional_production_keys( backend_public, backend_secret, server_public, server_secret );
+
     const char * addresses[2];
     int count = 0;
+
     if ( server_address_ipv4 )
+    {
         addresses[count++] = server_address_ipv4;
+    }
+
     if ( server_address_ipv6 )
+    {
         addresses[count++] = server_address_ipv6;
+    }
+
     if ( count == 0 || !server_public_key || !connect_token )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     enum rocketnet_status_t status = rocketnet_write_production_connect_token( backend_secret, server_public_key, protocol_id, addresses, count, client_id, unix_timestamp, unix_timestamp + (uint64_t) expire_seconds, timeout_seconds, user_data, token, sizeof( token ) );
     if ( status != ROCKETNET_STATUS_OK )
         return status;
+
     return rocketnet_base64_encode_data( token, sizeof( token ), connect_token, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) > 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
-#endif
+#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/socket.h>
@@ -107,7 +132,7 @@ enum rocketnet_status_t rocketnet_functional_production_create_token( const char
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#endif
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
@@ -121,7 +146,7 @@ static int setenv( const char * name, const char * value, int overwrite )
 
 static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // The unix timestamp a functional case stamps on a connect token, from the
 // clock that judges the token. The server transport reads game_clock_epoch
@@ -152,6 +177,7 @@ static void rocketnet_test_log_capture( void * context, enum rocketnet_log_level
 {
     (void) context;
     (void) length;
+
     char line[ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES];
     const int line_length = snprintf( line, sizeof( line ), "%s", message );
     if ( line_length < 0 || (size_t) line_length >= sizeof( line ) )
@@ -181,7 +207,10 @@ static void rocketnet_test_log_ring_dump()
     const int lines = rocketnet_test_log_ring_lines < ROCKETNET_FUNCTIONAL_LOG_RING_LINES ? rocketnet_test_log_ring_lines : ROCKETNET_FUNCTIONAL_LOG_RING_LINES;
     const int first = rocketnet_test_log_ring_lines - lines;
     for ( int i = 0; i < lines; i++ )
+    {
         printf( "%s\n", rocketnet_test_log_ring[( first + i ) % ROCKETNET_FUNCTIONAL_LOG_RING_LINES] );
+    }
+
     rocketnet_test_log_ring_lines = 0;
 }
 
@@ -224,9 +253,13 @@ static void rocketnet_test_env_clear( struct rocketnet_test_env_guard_t * guard,
 static void rocketnet_test_env_restore( struct rocketnet_test_env_guard_t * guard )
 {
     if ( guard->was_set )
+    {
         setenv( guard->name, guard->saved, 1 );
+    }
     else
+    {
         unsetenv( guard->name );
+    }
 }
 
 static void rocketnet_test_capture_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
@@ -234,8 +267,10 @@ static void rocketnet_test_capture_log( void * context, enum rocketnet_log_level
     (void) context;
     (void) length;
     (void) level;
+
     char line[1024];
     snprintf( line, sizeof( line ), "%s", message );
+
     const size_t used = strlen( rocketnet_test_captured_log );
     snprintf( rocketnet_test_captured_log + used, sizeof( rocketnet_test_captured_log ) - used, "%s\n", line );
 }
@@ -257,6 +292,7 @@ class rocketnet_test_environment_t
         for ( const auto & entry : entries )
             if ( entry.name == name )
                 return;
+
         char value[4096];
         const bool present = rocketnet_test_getenv( name, value, sizeof( value ) ) != 0;
         entries.push_back( { name, value, present } );
@@ -278,6 +314,7 @@ public:
                 clear( name );
             }
         }
+
         clear( "ROCKETNET_SERVER_IPV4_ADDRESS" );
         clear( "ROCKETNET_SERVER_IPV6_ADDRESS" );
         clear( "ROCKETNET_SERVER_NUM_OS_CPUS" );
@@ -299,6 +336,7 @@ void rocketnet_test_config_out_of_range_refuses_create()
     struct rocketnet_test_env_guard_t guard;
     rocketnet_test_env_save( &guard, "ROCKETNET_SERVER_MAX_CLIENTS" );
     setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "0", 1 );
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     rocketnet_check( rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config, rocketnet_platform_time() ) == NULL );
@@ -323,12 +361,14 @@ uint16_t rocketnet_test_free_port()
     {
         rocketnet_address_t address;
         rocketnet_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
+
         struct rocketnet_platform_socket_t * scratch = rocketnet_platform_socket_create( NULL, &address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, 65536, 65536 );
         rocketnet_check( scratch );
         rocketnet_check( address.port != 0 );
 
         char probe_address[64];
         snprintf( probe_address, sizeof( probe_address ), "127.0.0.1:%d", (int) address.port );
+
         rocketnet_address_t probe;
         rocketnet_check( rocketnet_address_parse( &probe, probe_address ) );
 
@@ -342,6 +382,7 @@ uint16_t rocketnet_test_free_port()
             break;
         }
     }
+
     rocketnet_check( port != 0 );
     return port;
 }
@@ -367,7 +408,9 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
     {
         char address[64];
         rocketnet_test_free_loopback_address( address, sizeof( address ) );
+
         int status = ROCKETNET_STATUS_OK;
+
         struct rocketnet_server_transport_t * server =
             rocketnet_server_transport_create_ex( NULL, address, config, rocketnet_platform_time(), &status );
         if ( server )
@@ -375,5 +418,6 @@ struct rocketnet_server_transport_t * rocketnet_test_server_transport_create_on_
         if ( status != ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED )
             return NULL;
     }
+
     return NULL;
 }

@@ -73,8 +73,11 @@ static void bench_run( rn_region_t * region, int num_items, int packets_per_upda
     bench_fill( num_items );
 
     uint8_t * frames[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
+
     for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_MAX_PACKETS; p++ )
+    {
         frames[p] = bench_frames[p];
+    }
 
     struct rn_packet_builder_t builder;
     if ( !rn_packet_builder_init( &builder, region, NULL, NULL, packets_per_update, BENCH_PAYLOAD_BYTES ) )
@@ -84,18 +87,25 @@ static void bench_run( rn_region_t * region, int num_items, int packets_per_upda
     }
 
     int packets = 0;
+
     for ( int call = 0; call < BENCH_CALLS; call++ )
     {
         memcpy( bench_items, bench_plan, sizeof( bench_items[0] ) * (size_t) num_items );
+
         const auto start = std::chrono::steady_clock::now();
+
         packets = rn_packet_builder_write( &builder, bench_items, num_items, frames, ROCKETNET_PACKET_BUILDER_MAX_PACKETS );
+
         const auto finish = std::chrono::steady_clock::now();
         bench_ns[call] = (double) std::chrono::duration_cast<std::chrono::nanoseconds>( finish - start ).count();
     }
 
     int taken = 0;
+
     for ( int i = 0; i < num_items; i++ )
+    {
         taken += bench_items[i].taken ? 1 : 0;
+    }
 
     std::sort( bench_ns, bench_ns + BENCH_CALLS );
     printf( "items %4d  packets_per_update %2d  packets %2d  taken %3d  median_ns %9.0f  best_ns %9.0f\n", num_items, packets_per_update, packets, taken, bench_ns[BENCH_CALLS / 2], bench_ns[0] );
@@ -115,15 +125,20 @@ int main()
         fprintf( stderr, "packet_builder_cost: rn_arena_create failed\n" );
         return 1;
     }
+
     rn_region_t * region = rn_arena_region( arena, 0 );
 
     static const int sizes[] = { 32, 128, 512 };
     static const int packet_counts[] = { 1, 16 };
+
     for ( int c = 0; c < 2; c++ )
         for ( int s = 0; s < 3; s++ )
+        {
             bench_run( region, sizes[s], packet_counts[c] );
+        }
 
     rn_arena_destroy( arena );
     rocketnet_term();
+
     return 0;
 }
