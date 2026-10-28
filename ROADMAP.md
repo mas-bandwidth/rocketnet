@@ -593,7 +593,7 @@ The last pass before v1.0.0: the library shrunk to the size and readability of n
 | Layer 6, runtime transports: there is no driver; a driver is the transport. The sdk/rocketnet_driver* files and names are folded into the transports, each as small as its platform allows | ❌ | ❌ | ❌ |
 | Layer 7, public C API: contracted, with no change to rocketnet.h behaviour | ❌ | ❌ | ❌ |
 | Comments say what the code does, not why a review was satisfied | ❌ | ❌ | ❌ |
-| Tests and tools contracted alongside: library tests out of sdk/, no case kept only for a deleted mechanism | ❌ | ❌ | ❌ |
+| Tests and tools contracted alongside: library tests out of sdk/, unit cases run in layer order from layer 1 up, no case kept only for a deleted mechanism | ❌ | ❌ | ❌ |
 | The library is readable end to end in an afternoon: sdk/ total recorded before and after | ❌ | ❌ | ❌ |
 | complete | 0% | 0% | 0% |
 

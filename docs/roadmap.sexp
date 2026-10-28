@@ -493,7 +493,7 @@
     (:feature "Layer 6, runtime transports: there is no driver; a driver is the transport. The sdk/rocketnet_driver* files and names are folded into the transports, each as small as its platform allows" :cells (n n n) :note "owner, 2026-10-28: \"I cut the concept of driver. A driver *is* the transport. There should be no driver.\" Six sdk/rocketnet_driver* files remain at f981340d")
     (:feature "Layer 7, public C API: contracted, with no change to rocketnet.h behaviour" :cells (n n n) :note "planned for the final deliverable")
     (:feature "Comments say what the code does, not why a review was satisfied" :cells (n n n) :note "planned for the final deliverable")
-    (:feature "Tests and tools contracted alongside: library tests out of sdk/, no case kept only for a deleted mechanism" :cells (n n n) :note "planned for the final deliverable; sdk/rocketnet_tests.cpp is 16,426 lines at f981340d")
+    (:feature "Tests and tools contracted alongside: library tests out of sdk/, unit cases run in layer order from layer 1 up, no case kept only for a deleted mechanism" :cells (n n n) :note "owner, 2026-10-28: \"this layer set, is the order that your unit tests should test things in too\"; sdk/rocketnet_tests.cpp is 16,426 lines at f981340d")
     (:feature "The library is readable end to end in an afternoon: sdk/ total recorded before and after" :cells (n n n) :note "sdk/ is 98,906 lines at f981340d")))
   (:id "release"
    :title "Release and process"
