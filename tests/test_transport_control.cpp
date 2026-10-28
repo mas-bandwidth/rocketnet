@@ -6,7 +6,6 @@
 #include "../sdk/rocketnet_replay.h"
 #include "../sdk/rocketnet_fragment.h"
 // This target compiles the transport into its own deterministic fixture.
-#define ROCKETNET_XDP_STAGING_TEST_HOOKS 1
 static bool fail_seal;
 static int checked_seals;
 static bool check_arena_copy;
@@ -16,7 +15,6 @@ static int controlled_seal( rocketnet_server_protocol_t * server, int client_ind
 #define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "../sdk/rocketnet_server_transport.cpp"
 #undef rocketnet_server_protocol_seal_payload_frame
-#undef ROCKETNET_XDP_STAGING_TEST_HOOKS
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 

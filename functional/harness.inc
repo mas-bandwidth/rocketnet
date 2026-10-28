@@ -39,7 +39,7 @@
 
 #include "../tests/portable_crt.h"
 
-#if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#if !ROCKETNET_DEV
 #include "rocketnet_base64.h"
 #include <sodium.h>
 // Production functional shim: test-owned production keys (never the published
@@ -124,7 +124,7 @@ enum rocketnet_status_t rocketnet_functional_production_create_token( const char
 
     return rocketnet_base64_encode_data( token, sizeof( token ), connect_token, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) > 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
 }
-#endif // #if defined( ROCKETNET_FUNCTIONAL_PRODUCTION ) && ROCKETNET_FUNCTIONAL_PRODUCTION
+#endif // #if !ROCKETNET_DEV
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <sys/socket.h>

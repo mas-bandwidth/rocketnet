@@ -157,13 +157,11 @@ int rocketnet_encryption_map_next( const struct rocketnet_encryption_map_t * map
 
 int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map_t * map );
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 // The keyed hashes this map has computed since create: one per find, add and
 // remove. The unit suite pins the receive path's cost per packet with it.
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 // Deterministic probe accounting and handle access for the DEV-only
 // collision/stale-generation oracles. Probes are counted at the actual index
 // cell inspection. The home slot exposes no key material; it lets a test
@@ -176,6 +174,6 @@ bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map
                                            struct rn_sequence_buffer_handle_t * handle );
 bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_map_t * map,
                                                   const struct rn_sequence_buffer_handle_t * handle );
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H

@@ -158,12 +158,12 @@ int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, co
 
 int rocketnet_message_writer_add_in_place( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
-#if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#if ROCKETNET_DEV
 // test builds only (the unit suite's library, never the release library): the
 // payload copies writer_add has made, from a send store into a frame -- the
 // message-to-packet copy a fitting unreliable send never makes.
 uint64_t rn_message_payload_copy_count();
-#endif // #if defined( ROCKETNET_MESSAGE_COPY_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // writes the RECORDS form byte. Returns the payload's length L, or 0 when no
 // record was added (an empty plan writes nothing).

@@ -458,7 +458,7 @@ static inline bool rn_descriptor_schedule_live( const rn_send_descriptor_t * des
            descriptor->enqueue_ticket != 0;
 }
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Present only in the unit-test library; counts descriptors examined by
 // rn_span_unlink's edge search, never production state.
 struct rn_span_cost_t
@@ -467,7 +467,7 @@ struct rn_span_cost_t
 };
 void rn_span_cost_reset();
 rn_span_cost_t rn_span_cost_read();
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // at connect: every table back to its empty state, every free list
 // emptied (the descriptor pool and the store's classes are lazy,

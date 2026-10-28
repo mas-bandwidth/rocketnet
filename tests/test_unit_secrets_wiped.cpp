@@ -903,13 +903,9 @@ static long secrets_wiped_destroy_rss_bound_mb()
     const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
     return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + 2 * endpoint ), 64 );
 }
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 SUITE_CASE_RSS_BOUND( test_secrets_wiped_destroy_writes_only_keys, secrets_wiped_destroy_rss_bound_mb );
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_secrets_wiped_destroy_writes_only_keys );
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_after_client_leaves );
 REGISTER_UNIT_TEST( test_secrets_wiped_user_data_with_client_connected );
@@ -918,13 +914,12 @@ REGISTER_UNIT_TEST( test_secrets_wiped_user_data_at_slots_and_map_destroy );
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_owned_writes_nothing );
 REGISTER_UNIT_TEST( test_secrets_wiped_arena_destroy_in_block_writes_nothing );
 
-#if defined( ROCKETNET_SECRET_WIPE_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the config parse's base64 staging (sdk/rocketnet_config.cpp)
 // ---------------------------------------------------------------------------
 
-#if ROCKETNET_DEV
 extern void ( *rocketnet_config_decode_staging_hook )( const uint8_t * staging, int bytes );
 
 static uint8_t secrets_wiped_staging[256];
@@ -1017,7 +1012,6 @@ static void test_secrets_wiped_config_staging_on_refused_parse()
 
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_parse );
 REGISTER_UNIT_TEST( test_secrets_wiped_config_staging_on_refused_parse );
-#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the private block staging of a token open (sdk/rocketnet_connect_token.cpp)
@@ -1089,7 +1083,7 @@ static void test_secrets_wiped_token_block_on_refused_open()
 REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_open );
 REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_refused_open );
 
-#endif // #if defined(ROCKETNET_SECRET_WIPE_TEST_HOOKS)
+#endif // #if ROCKETNET_DEV
 
 // Unassigned token-user-data storage has no secret to erase. Only live slots
 // are wiped at destroy; released slots were already wiped at release.
@@ -1206,7 +1200,7 @@ static void test_client_slots_release_of_free_slot_is_refused()
 
 REGISTER_UNIT_TEST( test_client_slots_release_of_free_slot_is_refused );
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 
 // The encryption map's index is deliberately keyed, so deterministic collision
 // cases discover addresses with the same private home slot through the DEV-only
@@ -1360,9 +1354,7 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
 REGISTER_UNIT_TEST( test_encryption_map_flat_index_collisions_and_churn_are_bounded );
 REGISTER_UNIT_TEST( test_encryption_map_stale_generation_reset_and_secret_ownership );
 
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_DEV
 static int secrets_wiped_span_nonzero_bytes( const secrets_wiped_watch_t * watch, int span_index )
 {
     check( span_index >= 0 && span_index < watch->spans );
@@ -1389,9 +1381,7 @@ static int secrets_wiped_planted_message_live()
 
     return found;
 }
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing()
 {
     rocketnet_term();

@@ -34,7 +34,6 @@
 #define ACK_RUN_BOUND 4096
 #endif // #ifndef ACK_RUN_BOUND
 
-#define ROCKETNET_ACK_VISIT_TEST_HOOKS 1
 #include "rocketnet_ack.cpp"
 
 static void proof_set_bit( uint64_t * words, uint64_t slot )

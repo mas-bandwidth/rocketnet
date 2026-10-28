@@ -105,7 +105,7 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio );
 uint64_t rocketnet_server_rio_allocation_bytes();
 
-#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#if ROCKETNET_DEV
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio );
 // The fault seam, compiled only into the test executable. The next count
 // events at a fault point fail with status, as the host fails them: a send or
@@ -135,7 +135,7 @@ int rocketnet_server_rio_test_handed_phases( rocketnet_server_rio_t * rio );
 // worker and no posted phase has a send outstanding (takes the transport
 // mutex: the main test thread only)
 bool rocketnet_server_rio_test_send_idle( rocketnet_server_rio_t * rio );
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#endif // #if ROCKETNET_DEV
 
 #if defined( _WIN32 )
 bool rocketnet_server_rio_available();

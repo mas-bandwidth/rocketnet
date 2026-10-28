@@ -820,7 +820,7 @@ static void test_receive_boundaries()
 
 // ---------------------------------------------------------------------------
 // Fault cases: each failure path of the IOCP and RIO transports, injected
-// through the test-only fault seams (ROCKETNET_IOCP_TESTS, ROCKETNET_RIO_TESTS)
+// through the test-only fault seams (ROCKETNET_DEV)
 // on a live loopback exchange. Each checks that every frame or slot returns,
 // the counter moves, and traffic in both directions resumes after the fault.
 

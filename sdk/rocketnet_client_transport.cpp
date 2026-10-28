@@ -240,9 +240,9 @@ struct rocketnet_client_legacy_receive_state_t
     int fill;
     int returned[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
     int returned_count = 0;
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     unsigned test_busy_mask = 0;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 };
 
 /*
@@ -351,7 +351,7 @@ static void rocketnet_client_transport_construct( rocketnet_client_transport_t *
         client->receive_buffer[i].num_packets = 0;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
 #define TRANSPORT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, field, -1 ),
@@ -365,9 +365,7 @@ bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size
                                               sizeof( rocketnet_client_transport_t ), alignof( rocketnet_client_transport_t ),
                                               failure, failure_bytes );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_transport_t * client )
 {
     if ( !client || client->io_thread )
@@ -407,9 +405,7 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
            client->received_packets.num_packets == 0 && client->received_packets.receive_index == 0 &&
            client->stats_counted == 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client )
 {
     rocketnet_assert( client );
@@ -418,9 +414,7 @@ void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet
 
     client->stats_counted = 1;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketnet_client_transport_t * client,
                                                                  char * failure, size_t failure_bytes )
 {
@@ -448,7 +442,7 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
 
     return member == NULL;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // Every refusal reaches here before a worker is successfully created. No
 // thread owns transport storage, so failed construction is already quiescent.
@@ -502,7 +496,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 // setting in force at the send holds the packet, and the change itself
 // removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
 // stubs below stand in for the development build's functions there.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
 extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
 extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
@@ -536,7 +530,7 @@ static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, i
     (void) reverse_window;
     return 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // The deterministic drop and reverse patterns (tla/Link.tla "everynth" and
 // ReverseWindow) are on when the config names either and the link simulator
@@ -1146,12 +1140,12 @@ struct rocketnet_thread_record_layout_t
 // Test seam for socket-free, thread-free client memory plan unit testing.
 static bool rocketnet_client_memory_plan_seam_enabled = false;
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 {
     rocketnet_client_memory_plan_seam_enabled = enable;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static bool rocketnet_client_transport_memory_plan( const rocketnet_client_transport_config_t * config,
                                                     const char * transport, rocketnet_client_memory_plan_t & plan )
@@ -1356,7 +1350,6 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven( vo
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context, ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, 0 );
 }
 
-#if ROCKETNET_TEST_SEAMS
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
                                                                                            const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
                                                                                            const rocketnet_client_transport_io_operations_t * operations, void * transport_context )
@@ -1367,7 +1360,6 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context,
                                                        ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, current_timestamp );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token,
                                                                                       const struct rocketnet_client_transport_config_t * config, double time,
@@ -1399,7 +1391,7 @@ rocketnet_client_io_t * rocketnet_client_transport_client_io( rocketnet_client_t
 #endif // #if ROCKETNET_DEV
 }
 
-#if ROCKETNET_TEST_SEAMS && ROCKETNET_DEV
+#if ROCKETNET_DEV
 // Private state seam for the client refusal unit. It makes a deterministic
 // connected session without a socket or clock, exposes only the fields whose
 // immobility is the refusal contract, and gives that unit one live mutation
@@ -1485,7 +1477,7 @@ void rocketnet_client_transport_mutate_refusal_state_for_test(
     else
         rocketnet_assert( 0 );
 }
-#endif // #if ROCKETNET_TEST_SEAMS && ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
 
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
                                                                                   const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
@@ -2485,7 +2477,7 @@ static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t
     client_transport->stopped.store( true, std::memory_order_release );
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     const size_t protocol = offsetof( rocketnet_client_transport_t, protocol );
@@ -2506,7 +2498,7 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 
     return count;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // tla/RNClientIo.tla Join and Free: the I/O thread is joined before the
 // transport is freed.
@@ -2781,12 +2773,12 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
 
 static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
 {
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     if ( client_transport->receive_buffer_index.test_busy_mask & phase )
         return false;
 #else
     (void) phase;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     return rocketnet_platform_mutex_try_acquire( &client_transport->mutex );
 }
 
@@ -3740,12 +3732,12 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
 
 // test seam: the port the client socket is bound to, so a functional test
 // sends datagrams at it
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 uint16_t rocketnet_client_transport_test_bound_port( rocketnet_client_transport_t * client_transport )
 {
     return client_transport ? client_transport->bound_port : 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 const struct rocketnet_counters_t * rocketnet_client_transport_counters( rocketnet_client_transport_t * client_transport )
 {
@@ -3834,7 +3826,7 @@ void rocketnet_client_transport_stats( rocketnet_client_transport_t * client_tra
     stats->bytes_received = client_transport->client_stats.bytes_received;
 }
 
-#if defined( ROCKETNET_ACK_STATS_TEST_HOOKS )
+#if ROCKETNET_DEV
 // One in-memory transport. No socket, thread, or wall clock. The caller frees
 // it with rocketnet_client_transport_ack_stats_close_for_test.
 
@@ -3907,7 +3899,7 @@ void rocketnet_client_ack_stats_public_client_for_test_free( struct rocketnet_cl
 
     rocketnet_client_transport_ack_stats_close_for_test( transport );
 }
-#endif // #if defined( ROCKETNET_ACK_STATS_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // RNBufferHandoff ProducerExchange on the BASE path: the receive worker
 // always holds one buffer (fill), reads datagrams into it outside the mutex,
@@ -4005,7 +3997,7 @@ static void rocketnet_client_receive_packets( rocketnet_client_transport_t * cli
     }
 }
 
-#if ROCKETNET_TEST_SEAMS && ROCKETNET_DEV
+#if ROCKETNET_DEV
 void rocketnet_client_transport_step_legacy_for_test( rocketnet_client_transport_t * client_transport, double time )
 {
     rocketnet_assert( client_transport && client_transport->step_driven &&
@@ -4053,7 +4045,7 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
     if ( free_count )
         *free_count = state->handoff.free_count;
 }
-#endif // #if ROCKETNET_TEST_SEAMS && ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV
 
 // tla/RNBufferHandoff.tla WorkerExit: on receive the worker exits once quit is
 // seen.
@@ -4087,7 +4079,7 @@ static void rocketnet_client_thread_function( void * data )
 // simulator applies them before its next send. No simulator work happens under
 // the lock. Stop transfers the simulator to the worker; a stopped transport
 // cannot be reconfigured.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     rocketnet_assert( client_transport );
@@ -4106,7 +4098,7 @@ bool rocketnet_client_transport_network_simulator( struct rocketnet_client_trans
 
     return true;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_client_transport_defer_payload_acks( struct rocketnet_client_transport_t * transport )
 {

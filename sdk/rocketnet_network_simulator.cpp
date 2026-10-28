@@ -5,7 +5,7 @@
 
 #include "rocketnet_network_simulator.h"
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 #include "rocketnet_protocol.h"
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
@@ -1156,4 +1156,4 @@ void rocketnet_network_simulator_test_reset_index_stats( struct rocketnet_networ
     memset( &simulator->index_stats, 0, sizeof( simulator->index_stats ) );
 }
 
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV

@@ -7,9 +7,9 @@
 #include "../sdk/rocketnet_test_seams.h"
 #include <string.h>
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 extern thread_local unsigned long long g_sequenced_hold_visit_count;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static rocketnet_message_record_t hot_cold_record( int code, uint32_t channel,
                                                    uint32_t ordering, uint32_t sequencing, const uint8_t * data, int bytes )
@@ -253,13 +253,13 @@ static void test_sequenced_hold_pool_constant_time()
 
     // The delivered holds return at the end of the update; the pass visits
     // exactly the delivered holds, no more.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     g_sequenced_hold_visit_count = 0;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     rn_channels_end_update( &channels );
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     rocketnet_unit_check( g_sequenced_hold_visit_count == 4096 );
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     for ( uint32_t slot = 0; slot < region->holds; ++slot )
     {
         rocketnet_unit_check( region->sequenced_messages_held[slot].used == 0 );
@@ -285,17 +285,17 @@ static void test_sequenced_hold_pool_constant_time()
 
     // An update with no delivered hold touches no hold entry, and a take
     // from the returned pool visits none either.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     g_sequenced_hold_visit_count = 0;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     rn_channels_end_update( &channels );
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     rocketnet_unit_check( g_sequenced_hold_visit_count == 0 );
 
     record = hot_cold_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 130, 129, &held_byte, 1 );
     rocketnet_unit_check( rn_channels_dispatch( &channels, &record, &delivery ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
     rocketnet_unit_check( g_sequenced_hold_visit_count == 0 );
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     rn_arena_destroy( arena );
 }
 

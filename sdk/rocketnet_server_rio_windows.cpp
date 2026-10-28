@@ -94,7 +94,7 @@ struct rocketnet_server_rio_t
     RIO_CQ send_cq = RIO_INVALID_CQ;
     RIO_CQ receive_cq = RIO_INVALID_CQ;
     RIO_RQ request_queue = RIO_INVALID_RQ;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t socket_generation = 0;
     uint64_t wake_generation = 0;
     uint64_t notify_generation = 0;
@@ -102,7 +102,7 @@ struct rocketnet_server_rio_t
     uint64_t send_cq_generation = 0;
     uint64_t receive_cq_generation = 0;
     uint64_t request_queue_generation = 0;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     std::atomic<bool> stopping{ false };
 
@@ -154,14 +154,12 @@ struct rocketnet_server_rio_t
 
     std::atomic<uint64_t> counters[ROCKETNET_RIO_NUM_COUNTERS]{};
     rocketnet_server_socket_process_packets_t process;
-#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#if ROCKETNET_DEV
     bool test_hold_send = false;
     std::atomic<int> test_faults[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
     std::atomic<int> test_fault_status[ROCKETNET_RIO_TEST_NUM_FAULTS]{};
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
     bool test_try_fails = false;                // main's next tries fail, as under contention
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
 };
 
 static_assert( offsetof( rocketnet_server_rio_t, outstanding ) == 64, "the rio's aligned members have no implicit padding" );
@@ -169,7 +167,7 @@ static_assert( offsetof( rocketnet_server_rio_t, outstanding ) == 64, "the rio's
 // The fault seam (rocketnet_server_rio_test_fail_next) exists only in the
 // test executable. Elsewhere the check is the constant false, so the
 // production paths carry no test branch.
-#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#if ROCKETNET_DEV
 static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, int * status )
 {
     int left = rio->test_faults[fault].load( std::memory_order_acquire );
@@ -187,9 +185,9 @@ static bool rocketnet_rio_test_fault( rocketnet_server_rio_t * rio, int fault, i
 #define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) rocketnet_rio_test_fault( rio, fault, status )
 #else
 #define ROCKETNET_RIO_TEST_FAULT( rio, fault, status ) ( (void) (status), false )
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
 
 // This table exists only in test builds, compiled into the library like the
 // filter-epoch seam. The worker pass substitutes dequeue, receive repost and
@@ -209,25 +207,25 @@ struct rocketnet_rio_test_function_table_t
 
 static const rocketnet_rio_test_function_table_t * rocketnet_rio_test_functions = NULL;
 
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
 
 // The worker's RIO calls on its queues, through the test table when a unit
 // seam installed one.
 static ULONG rocketnet_rio_dequeue( rocketnet_server_rio_t * rio, RIO_CQ cq, RIORESULT * results, ULONG max_results )
 {
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
     if ( rocketnet_rio_test_functions )
         return rocketnet_rio_test_functions->dequeue( cq, results, max_results );
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
     return rio->rio.RIODequeueCompletion( cq, results, max_results );
 }
 
 static BOOL rocketnet_rio_send_call( rocketnet_server_rio_t * rio, RIO_BUF * data, RIO_BUF * address, DWORD flags, void * request_context )
 {
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
     if ( rocketnet_rio_test_functions && rocketnet_rio_test_functions->send )
         return rocketnet_rio_test_functions->send( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
     return rio->rio.RIOSendEx( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
 }
 
@@ -383,7 +381,7 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     int injected = 0;
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_POST, &injected ) )
         return false;
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
     if ( rocketnet_rio_test_functions )
     {
         if ( !rocketnet_rio_test_functions->receive( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
@@ -474,7 +472,7 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
 
     if ( rio->socket != INVALID_SOCKET )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         const bool have_request_queue = rio->request_queue != RIO_INVALID_RQ;
         if ( have_request_queue && !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_RIO_RQ,
                                                                            (uintptr_t) rio->request_queue, rio->request_queue_generation ) )
@@ -485,21 +483,21 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
                 rocketnet_lifecycle_track_close_end( rio->request_queue_generation, false );
             return false;
         }
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( closesocket( rio->socket ) != 0 )
         {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             rocketnet_lifecycle_track_close_end( rio->socket_generation, false );
             if ( have_request_queue )
                 rocketnet_lifecycle_track_close_end( rio->request_queue_generation, false );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             return false;
         }
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         rocketnet_lifecycle_track_close_end( rio->socket_generation, true );
         if ( have_request_queue )
             rocketnet_lifecycle_track_close_end( rio->request_queue_generation, true );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         rio->socket = INVALID_SOCKET;
     }
 
@@ -524,13 +522,13 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
     if ( rio->mutex.ok )
     {
         rocketnet_platform_mutex_acquire( &rio->mutex );
-#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#if ROCKETNET_DEV
         if ( rio->test_hold_send )
         {
             rocketnet_platform_mutex_release( &rio->mutex );
             return false;
         }
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#endif // #if ROCKETNET_DEV
         while ( rio->send_ready_count > 0 )
         {
             const int phase = rio->send_ready[rio->send_ready_head];
@@ -633,40 +631,40 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
 
     if ( rio->send_cq != RIO_INVALID_CQ )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->send_cq, rio->send_cq_generation ) )
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         {
             rio->rio.RIOCloseCompletionQueue( rio->send_cq );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             rocketnet_lifecycle_track_close_end( rio->send_cq_generation, true );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         }
     }
 
     if ( rio->receive_cq != RIO_INVALID_CQ )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->receive_cq, rio->receive_cq_generation ) )
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         {
             rio->rio.RIOCloseCompletionQueue( rio->receive_cq );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             rocketnet_lifecycle_track_close_end( rio->receive_cq_generation, true );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         }
     }
 
     if ( rio->buffer_id != RIO_INVALID_BUFFERID )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_RIO_BUFFER, (uintptr_t) rio->buffer_id, rio->buffer_generation ) )
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         {
             rio->rio.RIODeregisterBuffer( rio->buffer_id );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             rocketnet_lifecycle_track_close_end( rio->buffer_generation, true );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         }
     }
 
@@ -674,7 +672,7 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
         rocketnet_free( context, rio->region );
     if ( rio->notify )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) rio->notify, rio->notify_generation ) )
         {
             const BOOL closed = CloseHandle( rio->notify );
@@ -682,12 +680,12 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
         }
 #else
         CloseHandle( rio->notify );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     }
 
     if ( rio->wake )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) rio->wake, rio->wake_generation ) )
         {
             const BOOL closed = CloseHandle( rio->wake );
@@ -695,7 +693,7 @@ void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio )
         }
 #else
         CloseHandle( rio->wake );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     }
 
     if ( rio->mutex.ok )
@@ -745,21 +743,21 @@ bool rocketnet_server_rio_available()
     SOCKET socket = WSASocketW( AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO );
     if ( socket == INVALID_SOCKET )
         return false;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const uint64_t probe_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket,
                                                                       "rio extension probe socket" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) socket );
     RIO_EXTENSION_FUNCTION_TABLE table;
     const bool available = rocketnet_rio_load_table( socket, &table );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket, probe_generation ) )
         return false;
     const int closed = closesocket( socket );
     rocketnet_lifecycle_track_close_end( probe_generation, closed == 0 );
 #else
     closesocket( socket );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     return available;
 }
 
@@ -810,12 +808,12 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     rio->wake = CreateEventW( NULL, FALSE, FALSE, NULL );
     rio->notify = CreateEventW( NULL, FALSE, FALSE, NULL );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->wake )
         rio->wake_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) rio->wake, "rio wake event" );
     if ( rio->notify )
         rio->notify_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) rio->notify, "rio notify event" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !rio->wake || !rio->notify )
         goto failed;
     notification.Type = RIO_EVENT_COMPLETION;
@@ -827,10 +825,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     address_bytes = rio->ipv6 ? (int) sizeof( sockaddr_in6 ) : (int) sizeof( sockaddr_in );
 
     rio->socket = WSASocketW( rio->ipv6 ? AF_INET6 : AF_INET, SOCK_DGRAM, IPPROTO_UDP, NULL, 0, WSA_FLAG_REGISTERED_IO );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->socket != INVALID_SOCKET )
         rio->socket_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) rio->socket, "rio socket" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->socket == INVALID_SOCKET
 #if ROCKETNET_DEV
          || fail_stage == 1
@@ -884,10 +882,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
         goto failed;
     memset( rio->region, 0, (size_t) rio->layout.total_bytes );
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->buffer_id != RIO_INVALID_BUFFERID )
         rio->buffer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_BUFFER, (uintptr_t) rio->buffer_id, "rio buffer registration" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->buffer_id == RIO_INVALID_BUFFERID
 #if ROCKETNET_DEV
          || fail_stage == 3
@@ -898,17 +896,17 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // both completion queues notify the worker's one event after RIONotify
 
     rio->send_cq = rio->rio.RIOCreateCompletionQueue( ROCKETNET_RIO_SEND_FRAMES, &notification );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->send_cq != RIO_INVALID_CQ )
         rio->send_cq_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->send_cq, "rio send completion queue" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->send_cq == RIO_INVALID_CQ )
         goto failed;
     rio->receive_cq = rio->rio.RIOCreateCompletionQueue( ROCKETNET_RIO_RECEIVES, &notification );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->receive_cq != RIO_INVALID_CQ )
         rio->receive_cq_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_CQ, (uintptr_t) rio->receive_cq, "rio receive completion queue" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->receive_cq == RIO_INVALID_CQ
 #if ROCKETNET_DEV
          || fail_stage == 4
@@ -920,10 +918,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     rio->request_queue = rio->rio.RIOCreateRequestQueue( rio->socket, ROCKETNET_RIO_RECEIVES, 1, ROCKETNET_RIO_SEND_FRAMES, 1,
                                                          rio->receive_cq, rio->send_cq, NULL );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->request_queue != RIO_INVALID_RQ )
         rio->request_queue_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_RIO_RQ, (uintptr_t) rio->request_queue, "rio socket-owned request queue" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->request_queue == RIO_INVALID_RQ
 #if ROCKETNET_DEV
          || fail_stage == 5
@@ -1046,10 +1044,10 @@ void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio )
         return;                  // nothing staged
     if ( count > ROCKETNET_RIO_SEND_QUEUE_SIZE )
         count = ROCKETNET_RIO_SEND_QUEUE_SIZE;
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
     if ( rio->test_try_fails )
         return;
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
     if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) )
         return;
     const int next = ( phase + 1 ) % ROCKETNET_RIO_SEND_PHASES;
@@ -1266,9 +1264,9 @@ static bool rocketnet_rio_worker_pass( rocketnet_server_rio_t * rio )
     rocketnet_platform_mutex_acquire( &rio->mutex );
 
     if ( rio->send_ready_count > 0
-#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#if ROCKETNET_DEV
          && !rio->test_hold_send
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#endif // #if ROCKETNET_DEV
     )
     {
         phase = rio->send_ready[rio->send_ready_head];
@@ -1378,10 +1376,10 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
     rio->process.num_packets = 0;
     if ( rio->stopping.load( std::memory_order_acquire ) )
         return;
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
     if ( rio->test_try_fails )
         return;
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
     if ( !rocketnet_platform_mutex_try_acquire( &rio->mutex ) )
         return;
     const bool wake = rio->free_count == 0 && rio->exposed_count > 0;
@@ -1418,7 +1416,7 @@ void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio )
     }
 }
 
-#if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#if ROCKETNET_DEV
 
 struct rocketnet_rio_overflow_test_state_t
 {
@@ -1491,11 +1489,11 @@ static rocketnet_server_rio_t * rocketnet_rio_test_fixture()
     rio->slot_bytes = (int *) rocketnet_rio_test_zeroed( ROCKETNET_RIO_SEND_FRAMES * sizeof( int ) );
     ok = ok && rio->region && rio->banks && rio->slot_bytes && rocketnet_platform_mutex_create( &rio->mutex );
     rio->wake = ok ? CreateEventW( NULL, FALSE, FALSE, NULL ) : NULL;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rio->wake )
         rio->wake_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) rio->wake,
                                                                "rio unit fixture wake event" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !ok || !rio->wake )
     {
         if ( rio->mutex.ok )
@@ -1528,7 +1526,7 @@ static rocketnet_server_rio_t * rocketnet_rio_test_fixture()
 static void rocketnet_rio_test_fixture_free( rocketnet_server_rio_t * rio )
 {
     rocketnet_rio_test_functions = NULL;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) rio->wake, rio->wake_generation ) )
     {
         const BOOL closed = CloseHandle( rio->wake );
@@ -1536,7 +1534,7 @@ static void rocketnet_rio_test_fixture_free( rocketnet_server_rio_t * rio )
     }
 #else
     CloseHandle( rio->wake );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_platform_mutex_destroy( &rio->mutex );
     rocketnet_free( NULL, rio->slot_bytes );
     rocketnet_free( NULL, rio->banks );
@@ -1807,7 +1805,7 @@ bool rocketnet_server_rio_test_worker_handoff()
     return valid;
 }
 
-#endif // #if ROCKETNET_DEV && ( defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS ) || defined( ROCKETNET_RIO_TESTS ) )
+#endif // #if ROCKETNET_DEV
 
 // tla/RNRioDriver.tla TransportReads: the views of the exposed bank
 rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets( rocketnet_server_rio_t * rio )
@@ -1826,7 +1824,7 @@ int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio )
     return rocketnet_rio_outstanding_sends( rio ) + rio->posted_receives.load( std::memory_order_relaxed );
 }
 
-#if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#if ROCKETNET_DEV
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio )
 {
     return (uintptr_t) rio->socket;
@@ -1879,7 +1877,7 @@ int rocketnet_server_rio_test_retry_receives( rocketnet_server_rio_t * rio )
 {
     return rio->num_retry.load( std::memory_order_relaxed );
 }
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_RIO_TESTS )
+#endif // #if ROCKETNET_DEV
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 

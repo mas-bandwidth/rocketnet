@@ -72,12 +72,12 @@ const rocketnet_client_gso_syscalls_t rocketnet_client_gso_kernel_syscalls = {
     rocketnet_client_gso_kernel_read_address,
 };
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 std::atomic<bool> rocketnet_client_gso_test_disable_segment{ false };
 std::atomic<uint64_t> rocketnet_client_gso_test_segment_messages_sent{ 0 };
 std::atomic<bool> rocketnet_client_gso_test_disable_gro{ false };
 std::atomic<uint64_t> rocketnet_client_gso_test_gro_batches{ 0 };
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 bool rocketnet_client_gso_init( rocketnet_client_gso_t * gso, const rocketnet_client_gso_syscalls_t * syscalls, void * syscall_context, int socket, bool probe_segment )
 {
@@ -197,9 +197,9 @@ static void rocketnet_client_gso_send_chunk( rocketnet_client_gso_t * gso, const
                 if ( gso->message_num_packets[i] > 1 )
                 {
                     gso->segment_messages_sent++;
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
                     rocketnet_client_gso_test_segment_messages_sent.fetch_add( 1, std::memory_order_relaxed );
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
                 }
             }
 
@@ -388,9 +388,9 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         if ( num_segments > 1 )
         {
             gso->gro_batches++;
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
             rocketnet_client_gso_test_gro_batches.fetch_add( 1, std::memory_order_relaxed );
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         }
 
         for ( int s = 0; s < num_segments; s++ )
@@ -464,17 +464,17 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     }
 
     bool probe_segment = true;
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( rocketnet_client_gso_test_disable_segment.load( std::memory_order_relaxed ) )
         probe_segment = false;
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     const bool segment = rocketnet_client_gso_init( &client->gso, &rocketnet_client_gso_kernel_syscalls, client->socket, client->socket->handle, probe_segment );
 
     bool probe_gro = true;
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( rocketnet_client_gso_test_disable_gro.load( std::memory_order_relaxed ) )
         probe_gro = false;
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     const bool gro = rocketnet_client_gso_init_receive( &client->gso, probe_gro );
     rocketnet_info( "gso client: UDP_SEGMENT %s, UDP_GRO %s", segment ? "yes" : "no (plain sendmmsg)", gro ? "yes" : "no (plain recvmmsg)" );
 

@@ -13,7 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 static uint64_t ack_cost_allocations;
 static void * ack_cost_malloc( void *, size_t bytes )
@@ -240,4 +240,4 @@ REGISTER_UNIT_TEST( test_ack_span_cost_64 );
 REGISTER_UNIT_TEST( test_ack_span_cost_128 );
 REGISTER_UNIT_TEST( test_ack_span_cost_256 );
 
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV

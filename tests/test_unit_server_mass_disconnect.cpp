@@ -8,7 +8,7 @@
 // clients calling rocketnet_client_disconnect in the same update. Both run
 // over the in-process loopback transport with time as an argument starting at
 // 1000.0; the bound on each call's work is a count the transport keeps under
-// ROCKETNET_TEST_SEAMS, never wall time (tla/ServerSession.tla DisconnectAll,
+// ROCKETNET_DEV, never wall time (tla/ServerSession.tla DisconnectAll,
 // DrainDisconnectBurst). The same population joining at once is the
 // handshake burst the per-update handshake work budget spreads across updates
 // (tla/RNSecurityTables.tla HonestRequest).
@@ -55,9 +55,7 @@ static int mass_disconnect_setenv( const char * name, const char * value )
 {
     return rocketnet_test_env_setenv( name, value, 1 );
 }
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 static int mass_disconnect_unsetenv( const char * name )
 {
     return rocketnet_test_env_unsetenv( name );

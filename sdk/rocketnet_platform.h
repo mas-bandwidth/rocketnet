@@ -33,7 +33,7 @@ static inline int rocketnet_platform_clz64( uint64_t value )
 #endif // #if defined( _MSC_VER )
 }
 
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( __cplusplus )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( __cplusplus )
 // Private static-development-library fixture interface. Never compiled into a
 // production or shared library. RIO IDs are resources, not Windows HANDLEs.
 enum rocketnet_lifecycle_resource_kind_t
@@ -123,7 +123,7 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
 
 #define ROCKETNET_PLATFORM_GETENV_MAX_BYTES 4096
 
-#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV
 /** Installs the unit suite's empty in-memory environment. */
 void rocketnet_platform_test_environment_install( void );
 
@@ -135,7 +135,7 @@ void rocketnet_platform_test_environment_unset( const char * name );
 
 /** Removes every variable while keeping the in-memory environment installed. */
 void rocketnet_platform_test_environment_reset( void );
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 uint16_t rocketnet_platform_ntohs( uint16_t in );
 
@@ -325,22 +325,22 @@ uint64_t rocketnet_platform_send_errnos_read( struct rocketnet_platform_send_err
 
 int rocketnet_platform_send_errnos_format( struct rocketnet_platform_send_errnos_t * errnos, char * buffer, size_t size );
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 // test only: the next count sends on the socket fail with error without reaching the kernel
 void rocketnet_platform_socket_fail_next_sends( struct rocketnet_platform_socket_t * socket, int count, int error );
 
 // test only: lets a functional case find the socket a transport created
 int rocketnet_platform_sockets_for_testing( struct rocketnet_platform_socket_t ** sockets, int max_sockets );
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#if defined( ROCKETNET_RECEIVE_TEST_HOOKS )
+#if ROCKETNET_DEV
 struct sockaddr_storage;
 // test only: writes one datagram and its source, returns its size; -1 means drained
 typedef int ( *rocketnet_platform_receive_hook_t )( void * user, void * packet_data, int max_packet_size, struct sockaddr_storage * from );
 
 // test only: replaces the kernel read on this socket; NULL clears it
 void rocketnet_platform_socket_set_receive_hook( struct rocketnet_platform_socket_t * socket, rocketnet_platform_receive_hook_t hook, void * user );
-#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+#endif // #if ROCKETNET_DEV
 
 // the name of the pump path live behind the seam ("portable", "msgx"), for
 // logging and for tests that pin the degradation contract
@@ -678,18 +678,18 @@ struct rocketnet_platform_socket_t
     rocketnet_platform_socket_handle_t handle;
     uint64_t send_failures;     // datagrams a failed send dropped; atomic, monotonic
     uint64_t send_replay_failures; // refused sends of a sendmsg_x replay; zero here; atomic, monotonic
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t lifecycle_generation;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
 struct rocketnet_platform_thread_t
 {
     void * context;
     HANDLE handle;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t lifecycle_generation;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
 struct rocketnet_platform_mutex_t

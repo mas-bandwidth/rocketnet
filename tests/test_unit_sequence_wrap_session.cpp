@@ -73,7 +73,6 @@
 #define SEQUENCE_WRAP_FIELD_LIMIT 0xFFFFFFFFULL
 #define SEQUENCE_WRAP_MAX_PACKETS 16384
 
-#if ROCKETNET_DEV
 static void sequence_wrap_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
 static void sequence_wrap_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
 
@@ -358,7 +357,6 @@ static void sequence_wrap_check_counters( const char * name, const struct rocket
 
 static void test_sequence_wrap_session_both_directions( void )
 {
-#if ROCKETNET_TEST_SEAMS
     char start_text[32];
     snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_START );
     sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
@@ -483,7 +481,6 @@ static void test_sequence_wrap_session_both_directions( void )
 
     rn_test_message_client_stop_and_destroy( pair.client );
     rn_test_message_server_stop_and_destroy( pair.server );
-#endif // #if ROCKETNET_TEST_SEAMS
 }
 
 // test_sequence_wrap_session_starts_at_wrap_edge: both sessions start at
@@ -506,7 +503,6 @@ static void test_sequence_wrap_session_both_directions( void )
 
 static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 {
-#if ROCKETNET_TEST_SEAMS
     char start_text[32];
     snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_EDGE_START );
     sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
@@ -593,9 +589,7 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 
     rn_test_message_client_stop_and_destroy( pair.client );
     rn_test_message_server_stop_and_destroy( pair.server );
-#endif // #if ROCKETNET_TEST_SEAMS
 }
-#endif // #if ROCKETNET_DEV
 
 // rocketnet_reconstruct_near (sdk/rocketnet_protocol.cpp) on its own, no
 // session: of the three candidates sharing the wire value in their low 32

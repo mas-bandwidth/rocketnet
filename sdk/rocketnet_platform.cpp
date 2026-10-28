@@ -16,10 +16,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <atomic>
-#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV
 #include <map>
 #include <string>
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
@@ -47,7 +47,7 @@ extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
     return rocketnet_direct_allocation_total.load( std::memory_order_relaxed );
 }
 
-#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 // The unit suite installs this table before main. Reads then stop at the
 // table, including an absent name, so ambient process values cannot enter a
@@ -110,7 +110,7 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
     return true;
 }
 
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -546,13 +546,12 @@ int rocketnet_platform_send_errnos_format( rocketnet_platform_send_errnos_t * er
     return written;
 }
 
-// Test-only receive seam, compiled into the unit suite's hook library only
-// (CMakeLists.txt, rocketnet_test_hooks). While a hook is set for one socket,
+// Test-only receive seam, compiled in under ROCKETNET_DEV only. While a hook is set for one socket,
 // the single-packet receive path on that socket takes each datagram from the
 // hook instead of the kernel, so a unit case drives the drop-and-retry of a
 // refused source with no socket. Other sockets never see the hook.
 
-#if defined( ROCKETNET_RECEIVE_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 static rocketnet_platform_socket_t * rocketnet_platform_receive_hook_socket = NULL;
 static rocketnet_platform_receive_hook_t rocketnet_platform_receive_hook_function = NULL;
@@ -575,7 +574,7 @@ static bool rocketnet_platform_receive_hooked( rocketnet_platform_socket_t * soc
     return true;
 }
 
-#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+#endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 // The file status flags a non-blocking socket is set to: the descriptor's
 // current flags (fcntl F_GETFL) with O_NONBLOCK added. F_SETFL replaces the
@@ -593,9 +592,8 @@ int rocketnet_platform_nonblocking_flags( int flags )
 // arms. A registry of live sockets lets a case find a transport's socket. The
 // send path pays one relaxed load while nothing is armed.
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-#define ROCKETNET_PLATFORM_SEND_SEAM 1
 #define ROCKETNET_PLATFORM_TEST_SOCKETS 256
 
 struct rocketnet_platform_test_socket_t
@@ -728,7 +726,7 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
     return inject;
 }
 
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // ---------------------------------------------------
 
@@ -937,11 +935,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
         return test_result;
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
     const char * value = getenv( var );
@@ -1358,18 +1356,18 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     }
 
 #if defined( __APPLE__ ) && TARGET_OS_OSX
-#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#if ROCKETNET_DEV
     if ( rocketnet_platform_create_receive_hook )
         rocketnet_platform_create_receive_hook( socket->handle );
-#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#endif // #if ROCKETNET_DEV
     socket->msgx = batch_pump && rocketnet_sendmsg_x && rocketnet_recvmsg_x && socket_type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING;
 #else // #if defined( __APPLE__ ) && TARGET_OS_OSX
     (void) batch_pump;
 #endif // #if defined( __APPLE__ ) && TARGET_OS_OSX
 
-#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     rocketnet_platform_test_register( socket );
-#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
     return socket;
 }
@@ -1396,9 +1394,9 @@ void rocketnet_platform_socket_destroy( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
 
-#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#if ROCKETNET_DEV
     rocketnet_platform_test_unregister( socket );
-#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#endif // #if ROCKETNET_DEV
 
 #if defined( __APPLE__ )
     char failures[512];
@@ -1490,9 +1488,9 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
     }
 
     int error = 0;
-#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#if ROCKETNET_DEV
     if ( !rocketnet_platform_send_failure_should_inject( socket, &error ) )
-#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#endif // #if ROCKETNET_DEV
     {
         if ( rocketnet_platform_sendto( socket, packet_data, packet_bytes, (const sockaddr *) &storage, storage_bytes ) >= 0 )
             return;
@@ -1626,9 +1624,9 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
         memset( &sockaddr_from, 0, sizeof( sockaddr_from ) );
         int result;
 
-#if defined( ROCKETNET_RECEIVE_TEST_HOOKS )
+#if ROCKETNET_DEV
         if ( !rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
-#endif // #if defined( ROCKETNET_RECEIVE_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         {
             result = (int) rocketnet_platform_receive_one( socket, packet_data, max_packet_size, overflow, overflow_bytes, &sockaddr_from );
             if ( result < 0 )
@@ -1914,9 +1912,9 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
     return "msgx";
 }
 
-#if defined( ROCKETNET_MSGX_TEST_HOOKS )
+#if ROCKETNET_DEV
 static thread_local void ( *rocketnet_msgx_before_expiry_clear )( rocketnet_platform_socket_t * ) = NULL;
-#endif // #if defined( ROCKETNET_MSGX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // tla/RNMsgxPause.tla Probe, ObserveExpired, ClearIfUnchanged and PollPaused:
 // an expired pause is cleared only if it is still the value observed, so a
@@ -1931,10 +1929,10 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
     {
         if ( rocketnet_platform_time() < down_until )
             return false;
-#if defined( ROCKETNET_MSGX_TEST_HOOKS )
+#if ROCKETNET_DEV
         if ( rocketnet_msgx_before_expiry_clear )
             rocketnet_msgx_before_expiry_clear( socket );
-#endif // #if defined( ROCKETNET_MSGX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         double cleared = 0.0;
         if ( __atomic_compare_exchange( &socket->msgx_down_until, &down_until, &cleared, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED ) )
         {
@@ -1946,7 +1944,7 @@ static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
     return true;
 }
 
-#if defined( ROCKETNET_MSGX_TEST_HOOKS )
+#if ROCKETNET_DEV
 bool rocketnet_msgx_test_pause_expiry_race()
 {
     rocketnet_platform_socket_t socket = {};
@@ -1963,7 +1961,7 @@ bool rocketnet_msgx_test_pause_expiry_race()
 
     return !active && rocketnet_msgx_down_until( &socket ) > rocketnet_platform_time();
 }
-#endif // #if defined( ROCKETNET_MSGX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // tla/RNMsgxPause.tla Pause: one retry deadline shared by TX and RX
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
@@ -2033,11 +2031,11 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
 
             ssize_t result = -1;
             int injected_error = 0;
-#if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#if ROCKETNET_DEV
             if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
                 errno = injected_error;
             else
-#endif // #if defined( ROCKETNET_PLATFORM_SEND_SEAM )
+#endif // #if ROCKETNET_DEV
                 result = rocketnet_sendmsg_x( socket->handle, msg + offset, (u_int) ( count - offset ), 0 );
             (void) injected_error;
 
@@ -2750,7 +2748,7 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 #include <mswsock.h>
 #include <stdlib.h>
 
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static_assert( sizeof( uintptr_t ) == 8 && ATOMIC_LLONG_LOCK_FREE == 2 && ATOMIC_POINTER_LOCK_FREE == 2 &&
                    ATOMIC_INT_LOCK_FREE == 2,
                "Windows lifecycle ledger needs lock-free x64 atomics" );
@@ -2932,7 +2930,7 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result )
 
     return result->errors == 0;
 }
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 #pragma comment( lib, "WS2_32.lib" )
 
@@ -3098,11 +3096,11 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#if ROCKETNET_DEV
     int test_result = 0;
     if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
         return test_result;
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_ENVIRONMENT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
     // getenv_s with no buffer reports the bytes the value needs, terminator
@@ -3176,9 +3174,9 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         rocketnet_free( context, thread );
         return NULL;
     }
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     thread->lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_THREAD, (uintptr_t) thread->handle, "platform thread" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     return thread;
 }
@@ -3192,16 +3190,16 @@ void rocketnet_platform_thread_join( rocketnet_platform_thread_t * thread )
 void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_THREAD, (uintptr_t) thread->handle, thread->lifecycle_generation ) )
         return;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const BOOL closed = CloseHandle( thread->handle );
     rocketnet_lifecycle_track_close_end( thread->lifecycle_generation, closed != 0 );
 #else
     CloseHandle( thread->handle );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_free( thread->context, thread );
 }
 
@@ -3289,13 +3287,13 @@ struct rocketnet_platform_sleep_timer_t
 {
     HANDLE handle;
     bool tried;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t lifecycle_generation;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     ~rocketnet_platform_sleep_timer_t()
     {
         if ( handle )
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         {
             if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) handle, lifecycle_generation ) )
             {
@@ -3305,16 +3303,16 @@ struct rocketnet_platform_sleep_timer_t
         }
 #else
             CloseHandle( handle );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     }
 };
 
 static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = {
     NULL,
     false,
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     0,
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
 void rocketnet_platform_sleep( double time )
@@ -3331,11 +3329,11 @@ void rocketnet_platform_sleep( double time )
     {
         rocketnet_platform_sleep_timer.tried = true;
         rocketnet_platform_sleep_timer.handle = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( rocketnet_platform_sleep_timer.handle )
             rocketnet_platform_sleep_timer.lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER,
                                                                                                   (uintptr_t) rocketnet_platform_sleep_timer.handle, "platform sleep timer" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     }
 
     if ( rocketnet_platform_sleep_timer.handle )
@@ -3518,9 +3516,9 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
         rocketnet_free( context, s );
         return NULL;
     }
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     s->lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) s->handle, "platform socket" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     // IMPORTANT: tell windows we don't want to receive any connection or network
     // reset reports for this socket, otherwise a receive errors out after a remote endpoint
@@ -3690,7 +3688,7 @@ bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
 
     if ( rocketnet_platform_socket_handle_is_valid( socket->handle ) )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) socket->handle,
                                                      socket->lifecycle_generation ) )
             return false;
@@ -3698,7 +3696,7 @@ bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
         rocketnet_lifecycle_track_close_end( socket->lifecycle_generation, closed == 0 );
 #else
         closesocket( socket->handle );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         socket->handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
     }
 
@@ -3878,7 +3876,7 @@ receive_again:
         DWORD bytes_received = 0;
         DWORD flags = 0;
 
-#if defined( ROCKETNET_RECEIVE_TEST_HOOKS )
+#if ROCKETNET_DEV
         if ( rocketnet_platform_receive_hooked( socket, packet_data, max_packet_size, &sockaddr_from, sizeof( sockaddr_from ), &result ) )
         {
             // Preserve the drained sentinel so batch receive cannot manufacture empty packets.
@@ -3888,7 +3886,7 @@ receive_again:
                 continue;
             break;
         }
-#endif // #if defined(ROCKETNET_RECEIVE_TEST_HOOKS)
+#endif // #if ROCKETNET_DEV
 
         int status = WSARecvFrom( socket->handle, buffers, 2, &bytes_received, &flags, (sockaddr *) &sockaddr_from, &from_length, NULL, NULL );
 
@@ -3987,10 +3985,10 @@ struct rocketnet_platform_wake_t
     rocketnet_platform_socket_handle_t socket_handle;
     WSAEVENT read_event;
     HANDLE wake_event;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t read_generation;
     uint64_t wake_generation;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
 // docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
@@ -4003,10 +4001,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     wake->context = context;
     wake->socket_handle = socket ? socket->handle : INVALID_SOCKET;
     wake->read_event = WSA_INVALID_EVENT;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     wake->read_generation = 0;
     wake->wake_generation = 0;
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( socket )
     {
         wake->read_event = WSACreateEvent();
@@ -4015,13 +4013,13 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
             rocketnet_free( context, wake );
             return NULL;
         }
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         wake->read_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event,
                                                                 "platform WSA read event" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( WSAEventSelect( (SOCKET) socket->handle, wake->read_event, FD_READ ) != 0 )
         {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
             {
                 const BOOL closed = WSACloseEvent( wake->read_event );
@@ -4029,7 +4027,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
             }
 #else
             WSACloseEvent( wake->read_event );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             rocketnet_free( context, wake );
             return NULL;
         }
@@ -4041,17 +4039,17 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
     // manual-reset behavior.
 
     wake->wake_event = CreateEvent( NULL, socket ? TRUE : FALSE, FALSE, NULL );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event )
         wake->wake_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event,
                                                                 "platform wake event" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( wake->wake_event == NULL )
     {
         if ( socket )
         {
             WSAEventSelect( (SOCKET) socket->handle, NULL, 0 );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
             {
                 const BOOL closed = WSACloseEvent( wake->read_event );
@@ -4059,7 +4057,7 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
             }
 #else
             WSACloseEvent( wake->read_event );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         }
 
         rocketnet_free( context, wake );
@@ -4084,27 +4082,27 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 
         WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
         wake->socket_handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
             return false;
         const BOOL read_closed = WSACloseEvent( wake->read_event );
         rocketnet_lifecycle_track_close_end( wake->read_generation, read_closed != 0 );
 #else
         WSACloseEvent( wake->read_event );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         wake->read_event = WSA_INVALID_EVENT;
     }
 
     if ( wake->wake_event != NULL )
     {
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->wake_event, wake->wake_generation ) )
             return false;
         const BOOL closed = CloseHandle( wake->wake_event );
         rocketnet_lifecycle_track_close_end( wake->wake_generation, closed != 0 );
 #else
         CloseHandle( wake->wake_event );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
         wake->wake_event = NULL;
     }
 
@@ -4298,19 +4296,19 @@ bool rocketnet_platform_client_ipv6_available()
     SOCKET probe = socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );
     if ( probe == INVALID_SOCKET )
         return false;
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     const uint64_t probe_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe,
                                                                       "platform IPv6 probe socket" );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) probe );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_SOCKET, (uintptr_t) probe, probe_generation ) )
         return false;
     const int closed = closesocket( probe );
     rocketnet_lifecycle_track_close_end( probe_generation, closed == 0 );
 #else
     closesocket( probe );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     return true;
 #else
     int probe = (int) ::socket( AF_INET6, SOCK_DGRAM, IPPROTO_UDP );

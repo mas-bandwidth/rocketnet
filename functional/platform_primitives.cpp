@@ -88,12 +88,12 @@ void rocketnet_test_frame_sync_wait()
     // the assertion is pacing and accounting, never precision -- precision
     // was the issue #56 measurement campaign's job, and CI runners are noisy.
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
     rocketnet_lifecycle_track_begin();
 
     rocketnet_lifecycle_resources_t before_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
     int create_status = ROCKETNET_STATUS_INVALID_ARGUMENT;
     struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create_ex( NULL, 250.0, &create_status );
@@ -104,14 +104,14 @@ void rocketnet_test_frame_sync_wait()
     const HANDLE timer_handle = frame_sync->waitable_timer;
     rocketnet_check( timer_handle != NULL && timer_handle != INVALID_HANDLE_VALUE );
     rocketnet_check( !rocketnet_windows_handle_is_closed( timer_handle ) );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_lifecycle_resources_t live_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &live_resources ) );
     rocketnet_check( live_resources.errors == 0 );
     rocketnet_check( live_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] + 1 );
     rocketnet_check( live_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] );
     rocketnet_check( live_resources.live_count == before_resources.live_count + 1 );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     const double start = rocketnet_platform_time();
@@ -137,7 +137,7 @@ void rocketnet_test_frame_sync_wait()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_lifecycle_resources_t after_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
     rocketnet_check( after_resources.errors == 0 );
@@ -145,7 +145,7 @@ void rocketnet_test_frame_sync_wait()
     rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
     rocketnet_check( after_resources.live_count == before_resources.live_count );
     rocketnet_lifecycle_track_end();
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 
@@ -156,12 +156,12 @@ void rocketnet_test_frame_sync_wait()
 // (test_frame_sync_create_refuses_invalid_rates).
 void rocketnet_test_frame_sync_lifecycle()
 {
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
     rocketnet_lifecycle_track_begin();
 
     rocketnet_lifecycle_resources_t before_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
     struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, 60.0 );
     rocketnet_check( frame_sync );
@@ -186,7 +186,7 @@ void rocketnet_test_frame_sync_lifecycle()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_lifecycle_resources_t after_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
     rocketnet_check( after_resources.errors == 0 );
@@ -194,7 +194,7 @@ void rocketnet_test_frame_sync_lifecycle()
     rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
     rocketnet_check( after_resources.live_count == before_resources.live_count );
     rocketnet_lifecycle_track_end();
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 
@@ -254,12 +254,12 @@ void rocketnet_test_frame_sync_create_ex_success_status()
     rocketnet_check( rocketnet_init_ex( state, rocketnet_frame_sync_create_ex_malloc, rocketnet_frame_sync_create_ex_free, &status ) );
     rocketnet_check( status == ROCKETNET_STATUS_OK );
 
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
     rocketnet_lifecycle_track_begin();
 
     rocketnet_lifecycle_resources_t before_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
 
     const int live_before = state->live;
     const int calls_before = state->calls;
@@ -285,7 +285,7 @@ void rocketnet_test_frame_sync_create_ex_success_status()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_check( rocketnet_windows_handle_is_closed( timer_handle ) );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_lifecycle_resources_t after_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
     rocketnet_check( after_resources.errors == 0 );
@@ -293,7 +293,7 @@ void rocketnet_test_frame_sync_create_ex_success_status()
     rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] + 1 );
     rocketnet_check( after_resources.live_count == before_resources.live_count );
     rocketnet_lifecycle_track_end();
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     // a clean term is OK and leaves no allocation behind
@@ -492,12 +492,12 @@ void rocketnet_test_frame_sync_high_resolution_timer_required()
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     DWORD handles_before = 0;
     rocketnet_check( GetProcessHandleCount( GetCurrentProcess(), &handles_before ) != 0 );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_lifecycle_track_begin();
 
     rocketnet_lifecycle_resources_t before_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &before_resources ) );
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     struct rocketnet_platform_priority_calls_t fake = *rocketnet_platform_priority_calls_real();
@@ -533,7 +533,7 @@ void rocketnet_test_frame_sync_high_resolution_timer_required()
     DWORD handles_after = 0;
     rocketnet_check( GetProcessHandleCount( GetCurrentProcess(), &handles_after ) != 0 );
     rocketnet_check( handles_after <= handles_before );
-#if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     rocketnet_lifecycle_resources_t after_resources;
     rocketnet_check( rocketnet_lifecycle_track_read( &after_resources ) );
     rocketnet_check( after_resources.errors == 0 );
@@ -541,7 +541,7 @@ void rocketnet_test_frame_sync_high_resolution_timer_required()
     rocketnet_check( after_resources.created[ROCKETNET_LIFECYCLE_TIMER] == before_resources.created[ROCKETNET_LIFECYCLE_TIMER] );
     rocketnet_check( after_resources.closed[ROCKETNET_LIFECYCLE_TIMER] == before_resources.closed[ROCKETNET_LIFECYCLE_TIMER] );
     rocketnet_lifecycle_track_end();
-#endif // #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
     rocketnet_log_function( NULL, NULL );

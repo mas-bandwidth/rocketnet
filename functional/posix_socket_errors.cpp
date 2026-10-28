@@ -33,7 +33,7 @@
 // defined in functional/harness.inc: the connect token timestamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -3102,4 +3102,4 @@ void rocketnet_test_linux_xdp_receive_weather_ipv6()
 
 #endif // #if defined(__linux__)
 
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS

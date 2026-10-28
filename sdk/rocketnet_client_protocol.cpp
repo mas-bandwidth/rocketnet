@@ -256,11 +256,11 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     crypto_box_keypair( client->client_ephemeral_public_key, client->client_ephemeral_secret_key );
 
     client->send_sequence_handshake = 1;
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     client->send_sequence_session = rocketnet_dev_session_sequence_start();     // 1 unless the DEV seam moves it
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV
     client->send_sequence_session = 1;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
     client->attempt_start_time = current_time;
     client->last_receive_time = current_time;

@@ -8,7 +8,7 @@
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
-#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#if ROCKETNET_DEV
 static void test_loopback_shutdown_send_drops_contended_without_waiting()
 {
     rocketnet_server_transport_config_t config;
@@ -75,4 +75,4 @@ static void test_loopback_shutdown_send_drops_contended_without_waiting()
 }
 
 REGISTER_UNIT_TEST( test_loopback_shutdown_send_drops_contended_without_waiting );
-#endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV

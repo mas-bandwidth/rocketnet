@@ -40,7 +40,7 @@
 // the disconnect reasons (enum rocketnet_disconnect_reason_t)
 #include "rocketnet.h"
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Present only in the unit-test library; counts actual work, not ACK calls.
 struct rn_ack_cost_t
 {
@@ -49,9 +49,7 @@ struct rn_ack_cost_t
 };
 void rn_window_ack_cost_reset();
 rn_ack_cost_t rn_window_ack_cost_read();
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
 
-#if ROCKETNET_DEV
 
 // The resend gap record (development builds only; a release build has neither
 // the fields nor the code). For each delay class (0: single-packet records,

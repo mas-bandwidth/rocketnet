@@ -109,7 +109,7 @@ struct portable_server_t
     std::atomic<uint64_t> dropped_by_path[PORTABLE_TX_DROP_PATHS] = {}; // the paths of dropped, by PORTABLE_TX_DROP_*
     int publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY; // main only: why the last publish try failed
 
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#if ROCKETNET_DEV
     bool stop_publish_saw_quit = false;
     bool force_publish_busy = false;
     bool force_rx_acquire_busy = false;
@@ -117,7 +117,7 @@ struct portable_server_t
     bool skip_socket_send = false;
     std::atomic<int> test_sent_banks{ 0 };
     std::atomic<int> test_rx_full_waits{ 0 };
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     int producer = 0; // main thread only
     int free_index[PORTABLE_TX_BANKS] = { 1, 2, 0 };
@@ -253,13 +253,13 @@ static bool portable_tx_publish( portable_server_t * server )
 
     server->publish_refusal = PORTABLE_TX_DROP_HANDOFF_BUSY;
 
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( server->stopping.load( std::memory_order_relaxed ) && server->quit.load( std::memory_order_relaxed ) )
         server->stop_publish_saw_quit = true;
 
     if ( server->force_publish_busy )
         return false;
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) )
         return false;
@@ -309,10 +309,10 @@ static void portable_tx_worker( void * arg )
 
         if ( index < 0 )
         {
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#if ROCKETNET_DEV
             if ( server->after_worker_empty )
                 server->after_worker_empty( server );
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
             // empty and quit were observed together under the handoff lock.
             // A stop publication after an earlier empty observation must win.
@@ -326,11 +326,11 @@ static void portable_tx_worker( void * arg )
 
         portable_tx_bank_t * bank = &server->bank[index];
 
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#if ROCKETNET_DEV
         if ( server->skip_socket_send )
             server->test_sent_banks.fetch_add( 1, std::memory_order_relaxed );
         else
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         {
             for ( int i = 0; i < bank->count; ++i )
                 bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
@@ -398,10 +398,10 @@ static bool portable_rx_acquire( portable_server_t * server )
     if ( server->rx_consumer >= 0 && server->rx_cursor < server->rx_bank[server->rx_consumer].count )
         return true;
 
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( server->force_rx_acquire_busy )
         return false;
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     if ( !rocketnet_platform_mutex_try_acquire( &server->rx_mutex ) )
         return false;
@@ -450,9 +450,9 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 
     if ( !portable_rx_publish( server ) )
     {
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#if ROCKETNET_DEV
         server->test_rx_full_waits.fetch_add( 1, std::memory_order_relaxed );
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         return PORTABLE_RX_WAIT_FULL;
     }
 
@@ -812,7 +812,7 @@ static uint64_t portable_socket_send_failures( void * transport )
 }
 #endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 bool rocketnet_portable_tx_test_drained( void * transport )
 {
     // development library only. Sends leave the main thread when the worker takes
@@ -831,9 +831,7 @@ bool rocketnet_portable_tx_test_drained( void * transport )
 
     return drained;
 }
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#if ROCKETNET_DEV
 rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * transport )
 {
     // development library only: the platform socket under a portable or msgx
@@ -843,9 +841,7 @@ rocketnet_platform_socket_t * rocketnet_portable_server_test_socket( void * tran
 
     return ( (portable_server_t *) transport )->socket;
 }
-#endif // #if ROCKETNET_DEV
 
-#if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
 bool rocketnet_portable_tx_test_handoff()
 {
     // no socket or worker: each path is forced at an exact ownership transition
@@ -1353,7 +1349,7 @@ bool rocketnet_portable_rx_test_worker_steps()
     return valid;
 #endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 }
-#endif // #if defined( ROCKETNET_PORTABLE_TX_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static const rocketnet_server_transport_io_operations_t portable_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,

@@ -11,12 +11,12 @@
 #include <math.h>
 #include <string.h>
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Unit-library instrumentation only: no production state or per-ACK writes.
 static thread_local rn_ack_cost_t rn_ack_cost;
 void rn_window_ack_cost_reset() { memset( &rn_ack_cost, 0, sizeof( rn_ack_cost ) ); }
 rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
@@ -915,9 +915,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
                 continue;
         }
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
         rn_ack_cost.completed_numbers++;
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
         if ( slot->descriptor != RN_DESCRIPTOR_NONE && slot->descriptor < region->queue )
         {
@@ -932,9 +932,9 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             {
                 for ( uint16_t j = 0; j < slot->fragment; j++ )
                 {
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
                     rn_ack_cost.predecessor_visits++;
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
                     const uint64_t prev_num = slot->number - (uint64_t) ( slot->fragment - j );
                     const rn_send_number_t * prev_slot = &region->send_numbers[prev_num & ( W - 1 )];

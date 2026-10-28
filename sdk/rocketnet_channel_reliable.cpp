@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-#if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Unit-library instrumentation only: no production state or per-chunk writes.
 static thread_local rn_block_cost_t rn_block_cost;
 void rn_channels_block_cost_reset() { memset( &rn_block_cost, 0, sizeof( rn_block_cost ) ); }
@@ -15,7 +15,7 @@ rn_block_cost_t rn_channels_block_cost_read() { return rn_block_cost; }
 #define RN_BLOCK_COST( field ) ( rn_block_cost.field++ )
 #else
 #define RN_BLOCK_COST( field ) ( (void) 0 )
-#endif // #if defined( ROCKETNET_BLOCK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static uint64_t rn_reliable_round16( uint64_t bytes )
 {

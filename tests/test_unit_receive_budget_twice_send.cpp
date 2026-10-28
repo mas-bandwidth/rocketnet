@@ -109,7 +109,7 @@ REGISTER_UNIT_TEST( test_iocp_transport_receive_budget_twice_send );
 REGISTER_UNIT_TEST( test_rio_transport_receive_budget_twice_send );
 #endif // #if defined( _WIN32 )
 
-#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
+#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
 #include <errno.h>
 
@@ -262,4 +262,4 @@ static void test_io_uring_transport_receive_budget_twice_send_reap_no_overflow()
 
 REGISTER_UNIT_TEST( test_io_uring_transport_receive_budget_twice_send_reap_no_overflow );
 
-#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )

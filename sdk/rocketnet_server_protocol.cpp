@@ -1203,10 +1203,10 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     int opened_bytes = rocketnet_open_sealed_packet( opened, NULL, ROCKETNET_RECEIVE_CEILING, packet_data, packet_bytes, packet_type,
                                                      sequence, server->protocol_id, mapping->connection_salt,
                                                      ephemeral, key );
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     if ( opened_bytes >= 0 && packet_type == ROCKETNET_CONNECTION_PAYLOAD_PACKET )
         server->test_payload_writes++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     if ( opened_bytes < 0 )
     {
         rocketnet_spam( "server ignored sealed packet. did not open" );
@@ -1565,9 +1565,9 @@ int rocketnet_server_protocol_process_packet_capacity( struct rocketnet_server_p
     if ( payload && *out_payload_bytes > 0 )
     {
         memcpy( out_payload, payload, (size_t) *out_payload_bytes );
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
         server->test_payload_writes++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     }
 
     return outcome;

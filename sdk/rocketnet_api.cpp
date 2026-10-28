@@ -977,12 +977,12 @@ struct rocketnet_client_t * rocketnet_client_create( void * context, const struc
     return rn_client_create( context, config, NULL, status );
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 struct rocketnet_client_t * rocketnet_client_create_testing( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
 {
     return rn_client_create( context, config, testing, status );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
@@ -2304,7 +2304,7 @@ bool rocketnet_server_running( const struct rocketnet_server_t * server )
     return server->running != NULL;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     if ( max < 1 )
@@ -2315,7 +2315,7 @@ int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, in
 
     return 1;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // tla/ServerSession.tla Destroy: from any state; a running server is
 // stopped first, then the object goes.
@@ -2912,7 +2912,7 @@ void rocketnet_server_client_stats( const struct rocketnet_server_t * server, in
 // connection's threads do not move, and a production library refuses the
 // simulator and carries none of its memory.
 
-#if ROCKETNET_DEV || defined( ROCKETNET_LINK_SIMULATOR_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 static bool rn_network_simulator_valid( const char * who, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
@@ -2968,4 +2968,4 @@ void rocketnet_server_network_simulator( struct rocketnet_server_t * server, int
         (void) rocketnet_server_transport_network_simulator( transport, latency_ms, jitter_ms, packet_loss_percent, duplicate_percent );
 }
 
-#endif // ROCKETNET_DEV || defined(ROCKETNET_LINK_SIMULATOR_TEST_HOOKS)
+#endif // ROCKETNET_DEV

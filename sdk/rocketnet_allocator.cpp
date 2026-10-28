@@ -40,14 +40,14 @@ static_assert( sizeof( ( (rn_send_descriptor_t *) 0 )->reserved ) >= 2, "a send 
 static_assert( sizeof( rn_store_class_t ) >= 32, "a store class header stays a small fixed record" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
 
-#if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#if ROCKETNET_DEV
 static thread_local rn_span_cost_t rn_span_cost;
 void rn_span_cost_reset() { memset( &rn_span_cost, 0, sizeof( rn_span_cost ) ); }
 rn_span_cost_t rn_span_cost_read() { return rn_span_cost; }
 #define RN_SPAN_COST_VISIT() ( rn_span_cost.edge_visits++ )
 #else
 #define RN_SPAN_COST_VISIT() ( (void) 0 )
-#endif // #if defined( ROCKETNET_ACK_COST_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static uint64_t rn_align64( uint64_t value )
 {

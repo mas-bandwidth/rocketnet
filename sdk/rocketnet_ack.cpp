@@ -14,12 +14,12 @@
 #include <math.h>
 #include <limits.h>
 
-#if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#if ROCKETNET_DEV
 // Unit-library instrumentation only: each sequence visit during process_block.
 // Per thread, so independent endpoints on different threads never share it;
 // production and development libraries carry no such state.
 thread_local unsigned long long g_ack_visit_count = 0;
-#endif // #if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                           the ack block
@@ -1442,9 +1442,9 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
 
     auto visit = [&]( uint64_t sequence )
     {
-#if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#if ROCKETNET_DEV
         g_ack_visit_count++;
-#endif // #if defined( ROCKETNET_ACK_VISIT_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
         struct rocketnet_sent_packet_record_t * record = &endpoint->sent[sequence % ROCKETNET_SENT_PACKET_BUFFER_SIZE];
 
         // a set bit names a held, unacknowledged record; a mismatch is a

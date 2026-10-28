@@ -223,7 +223,7 @@ struct rocketnet_server_gso_t
 
     struct rocketnet_server_socket_process_packets_t process_packets;
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
     // the test seam: the next recvmmsg calls on any worker, and the next
     // sendmmsg calls of a flush, answer -1 with the given errno without
     // reaching the kernel
@@ -231,10 +231,10 @@ struct rocketnet_server_gso_t
     std::atomic<int> test_fail_receive_error{ 0 };
     std::atomic<int> test_fail_sends{ 0 };
     std::atomic<int> test_fail_send_error{ 0 };
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 };
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 // development library only: the create flags every following create ORs in,
 // so a transport-level case can force the plain tiers
@@ -295,7 +295,7 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
     return ready;
 }
 
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#endif // #if ROCKETNET_DEV
 
 // tla/RNGsoHandoff.tla TxMainLock and TxPublish: main's frame boundary
 // try-publishes exactly one complete bank. All fill threads have joined; no
@@ -763,7 +763,7 @@ static void rocketnet_server_gso_worker( void * data )
             }
 
             int count;
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
             int pending = queue->gso->test_fail_receives.load();
             if ( pending > 0 && queue->gso->test_fail_receives.compare_exchange_strong( pending, pending - 1 ) )
             {
@@ -926,7 +926,7 @@ static void rocketnet_server_gso_abort_create( rocketnet_server_gso_t * gso )
 
 struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
 {
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
     flags |= rocketnet_server_gso_test_create_flags.load();
 
     // development library only: ROCKETNET_TEST_GSO_PLAIN=1 forces the plain
@@ -936,7 +936,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     char test_plain[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
     if ( rocketnet_platform_getenv( "ROCKETNET_TEST_GSO_PLAIN", test_plain, sizeof( test_plain ) ) > 0 && strcmp( test_plain, "1" ) == 0 )
         flags |= ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO;
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
@@ -1500,7 +1500,7 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
         while ( sent < num_messages )
         {
             int result;
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
             int pending = gso->test_fail_sends.load( std::memory_order_acquire );
             if ( pending > 0 && gso->test_fail_sends.compare_exchange_strong( pending, pending - 1 ) )
             {
@@ -1648,7 +1648,7 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_gso_process_
     return &gso->process_packets;
 }
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 // The RNGsoHandoff transitions, stepped on the calling thread with a faked
 // transport: packet bytes are written straight into the worker's buffer
@@ -1817,7 +1817,7 @@ bool rocketnet_server_gso_test_worker_handoff()
     return valid;
 }
 
-#endif // #if defined(ROCKETNET_SEND_ERROR_TEST_HOOKS)
+#endif // #if ROCKETNET_DEV
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 

@@ -16,7 +16,9 @@ import tempfile
 import check_exports
 
 
-HOOK_MACROS = (
+# The per-feature test switches this repository used to have. ROCKETNET_DEV is
+# the one switch now; none of these may come back.
+RETIRED_SWITCHES = (
     "ROCKETNET_TEST_SEAMS",
     "ROCKETNET_ACK_VISIT_TEST_HOOKS",
     "ROCKETNET_ACK_COST_TEST_HOOKS",
@@ -39,7 +41,16 @@ HOOK_MACROS = (
     "ROCKETNET_RIO_TESTS",
     "ROCKETNET_XDP_TESTS",
     "ROCKETNET_TEST_CLOCK_WRAP",
+    "ROCKETNET_PLATFORM_SEND_SEAM",
+    "ROCKETNET_SPIKE_TRACKING",
+    "ROCKETNET_ENABLE_MEMORY_CHECKS",
+    "rocketnet_test_hooks",
 )
+
+# Where a retired switch would be read or defined.
+SWITCH_SCAN_DIRS = ("sdk", "tests", "functional", "fuzz", "examples", "proofs", "oss-fuzz", ".github", "cmake")
+SWITCH_SCAN_FILES = ("CMakeLists.txt", "Makefile", "client.c", "server.c", "soak.c", "load.c")
+SWITCH_SCAN_SUFFIXES = (".h", ".hpp", ".c", ".cpp", ".inc", ".txt", ".cmake", ".yml", ".yaml", ".sh", ".py", ".sexp", "Makefile")
 
 FORBIDDEN_PUBLIC_HEADER_TOKENS = (
     "_for_test",
@@ -49,7 +60,7 @@ FORBIDDEN_PUBLIC_HEADER_TOKENS = (
     "rocketnet_reset_member_t",
     "ROCKETNET_RESET_MEMBER",
     "rocketnet_network_simulator",
-) + HOOK_MACROS
+)
 
 FORBIDDEN_DEV0_SYMBOLS = (
     "rocketnet_write_connect_token_deterministic",
@@ -66,6 +77,18 @@ FORBIDDEN_DEV0_SYMBOLS = (
 )
 
 
+def retired_switch_problems(repo_root: Path, path: Path) -> list[str]:
+    try:
+        text = path.read_text(errors="replace")
+    except OSError:
+        return []
+    found = []
+    for name in RETIRED_SWITCHES:
+        if re.search(rf"\b{name}\b", text):
+            found.append(f"{path.relative_to(repo_root)} names retired switch {name} (ROCKETNET_DEV is the one switch)")
+    return found
+
+
 def check_sources(repo_root: Path) -> list[str]:
     problems = []
     public_header = (repo_root / "sdk" / "rocketnet.h").read_text()
@@ -73,11 +96,18 @@ def check_sources(repo_root: Path) -> list[str]:
         if token in public_header:
             problems.append(f"sdk/rocketnet.h exposes test-scaffolding token: {token}")
 
-    seams_header = (repo_root / "sdk" / "rocketnet_test_seams.h").read_text()
-    for macro in HOOK_MACROS:
-        expected_error = f'#error "{macro} requires ROCKETNET_DEV=1"'
-        if expected_error not in seams_header:
-            problems.append(f"sdk/rocketnet_test_seams.h missing DEV=0 compile refusal: {expected_error}")
+    for scan_dir in SWITCH_SCAN_DIRS:
+        base = repo_root / scan_dir
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*")):
+            if not path.is_file() or not (path.suffix in SWITCH_SCAN_SUFFIXES or path.name == "Makefile"):
+                continue
+            problems += retired_switch_problems(repo_root, path)
+    for name in SWITCH_SCAN_FILES:
+        path = repo_root / name
+        if path.is_file():
+            problems += retired_switch_problems(repo_root, path)
 
     token_header = (repo_root / "sdk" / "rocketnet_connect_token.h").read_text()
     if "#if ROCKETNET_DEV" not in token_header or "rocketnet_write_connect_token_deterministic" not in token_header:
@@ -108,14 +138,11 @@ def check_sources(repo_root: Path) -> list[str]:
         problems.append("docs/TEST-SCAFFOLDING.md is missing")
     else:
         doc_text = doc_path.read_text()
-        for macro in HOOK_MACROS:
-            if macro not in doc_text:
-                problems.append(f"docs/TEST-SCAFFOLDING.md does not document {macro}")
         for sym in (
+            "ROCKETNET_DEV",
             "rocketnet_write_connect_token_deterministic",
             "rocketnet_box_seal_with_ephemeral",
             "rocketnet_reset_inventory_matches",
-            "rocketnet_test_hooks",
         ):
             if sym not in doc_text:
                 problems.append(f"docs/TEST-SCAFFOLDING.md does not document {sym}")
@@ -132,20 +159,13 @@ def check_build_dir(build_dir: Path) -> list[str]:
     if "ROCKETNET_DEV:BOOL=OFF" not in cache_text and "ROCKETNET_DEV:UNINITIALIZED=OFF" not in cache_text:
         problems.append(f"{cache_path} was not configured with ROCKETNET_DEV=OFF")
 
-    for hook_archive in list(build_dir.rglob("*rocketnet_test_hooks*")):
-        if hook_archive.suffix in (".a", ".lib", ".so", ".dylib", ".dll"):
-            problems.append(f"DEV=0 build produced hook library artifact: {hook_archive}")
-
     compile_commands_path = build_dir / "compile_commands.json"
     if compile_commands_path.is_file():
         entries = json.loads(compile_commands_path.read_text(errors="replace"))
         for entry in entries:
             command = entry.get("command", "") or " ".join(entry.get("arguments", []))
             output = entry.get("output", "")
-            if "rocketnet_test_hooks" in output or "rocketnet_test_hooks" in command:
-                problems.append(f"DEV=0 compile_commands.json contains rocketnet_test_hooks entry: {output}")
-                break
-            # Production libraries, test support, and unit test binary must not compile with test hooks in DEV=0.
+            # Production libraries, test support, and unit test binary must compile with ROCKETNET_DEV=0 and no retired switch.
             if any(
                 part in output
                 for part in (
@@ -155,9 +175,11 @@ def check_build_dir(build_dir: Path) -> list[str]:
                     "CMakeFiles/test.dir/",
                 )
             ):
-                for macro in HOOK_MACROS:
-                    if re.search(rf"(^|\s)[-/]D{macro}(=1|\s|$)", command):
-                        problems.append(f"DEV=0 target {output} compiled with {macro}")
+                if re.search(r"(^|\s)[-/]DROCKETNET_DEV=1(\s|$)", command):
+                    problems.append(f"DEV=0 target {output} compiled with ROCKETNET_DEV=1")
+                for macro in RETIRED_SWITCHES:
+                    if re.search(rf"(^|\s)[-/]D{macro}(=|\s|$)", command):
+                        problems.append(f"DEV=0 target {output} compiled with retired switch {macro}")
     return problems
 
 
@@ -248,21 +270,15 @@ def run_red_controls(repo_root: Path, cxx: str | None) -> list[str]:
         problems.append(f"Baseline DEV=0 header compile failed unexpectedly:\n{res.stdout}\n{res.stderr}")
         return problems
 
-    # 3. Every HOOK_MACRO with ROCKETNET_DEV=0 must fail compilation.
-    for macro in HOOK_MACROS:
-        res = compile_snippet(
-            compiler,
-            repo_root,
-            '#include "rocketnet_test_seams.h"\nint x;\n',
-            ["ROCKETNET_DEV=0", f"{macro}=1"],
-        )
-        combined = f"{res.stdout}\n{res.stderr}"
-        if res.returncode == 0:
-            problems.append(f"Red control failed: {macro}=1 with ROCKETNET_DEV=0 compiled instead of failing")
-        elif f"{macro} requires ROCKETNET_DEV=1" not in combined:
-            problems.append(
-                f"Red control for {macro}=1 failed without expected diagnostic '{macro} requires ROCKETNET_DEV=1':\n{combined}"
-            )
+    # 3. The one remaining seam with a public name is undeclared when ROCKETNET_DEV=0.
+    res = compile_snippet(
+        compiler,
+        repo_root,
+        '#include "rocketnet_test_seams.h"\nvoid * p = (void *)&rocketnet_dev_session_sequence_start;\n',
+        ["ROCKETNET_DEV=0"],
+    )
+    if res.returncode == 0:
+        problems.append("Red control failed: rocketnet_dev_session_sequence_start remained declared under ROCKETNET_DEV=0")
 
     # 4. Deterministic token helper and reset-inventory walker must be undeclared when ROCKETNET_DEV=0.
     for symbol, header in (
@@ -276,25 +292,6 @@ def run_red_controls(repo_root: Path, cxx: str | None) -> list[str]:
         res = compile_snippet(compiler, repo_root, snippet, ["ROCKETNET_DEV=0"])
         if res.returncode == 0:
             problems.append(f"Red control failed: {symbol} remained declared under ROCKETNET_DEV=0 in {header}")
-
-    # 5. CMake configure with ROCKETNET_DEV=OFF and a test hook macro must fail at configure time.
-    cmake_bin = shutil.which("cmake")
-    if cmake_bin:
-        for flag_args, label in (
-            (["-DROCKETNET_DEV=OFF", "-DROCKETNET_TEST_SEAMS=1"], "-DROCKETNET_TEST_SEAMS=1"),
-            (
-                ["-DROCKETNET_DEV=OFF", "-DCMAKE_CXX_FLAGS=-DROCKETNET_ACK_VISIT_TEST_HOOKS=1"],
-                "CMAKE_CXX_FLAGS=-DROCKETNET_ACK_VISIT_TEST_HOOKS=1",
-            ),
-        ):
-            with tempfile.TemporaryDirectory() as tmpbuild:
-                cmd = [cmake_bin, "-S", str(repo_root), "-B", tmpbuild] + flag_args
-                res = subprocess.run(cmd, capture_output=True, text=True)
-                combined = f"{res.stdout}\n{res.stderr}"
-                if res.returncode == 0:
-                    problems.append(f"CMake red control ({label}) succeeded instead of failing")
-                elif "requires ROCKETNET_DEV=ON" not in combined:
-                    problems.append(f"CMake red control ({label}) failed without expected message:\n{combined}")
 
     return problems
 
@@ -337,11 +334,11 @@ def main() -> int:
             print(f"ERROR: {problem}", file=sys.stderr)
         return 1
 
-    summary = [f"Source & header boundary clean ({len(HOOK_MACROS)} hook macros guarded)"]
+    summary = [f"Source & header boundary clean ({len(RETIRED_SWITCHES)} retired switches absent)"]
     if args.build is not None:
-        summary.append(f"build dir {args.build} has no hook library or hook defines in DEV=0")
+        summary.append(f"build dir {args.build} compiles with ROCKETNET_DEV=0 and no retired switch")
     if args.red_controls:
-        summary.append(f"all {len(HOOK_MACROS)} macro + 5 symbol + 2 CMake negative controls refused as expected")
+        summary.append("1 seam + 5 symbol negative controls refused as expected")
     print("; ".join(summary))
     return 0
 

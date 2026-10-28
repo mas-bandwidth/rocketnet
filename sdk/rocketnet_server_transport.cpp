@@ -304,9 +304,9 @@ struct rocketnet_server_transport_t
     struct rocketnet_network_simulator_t * link_simulator;
     rocketnet_address_t link_simulator_from;
     rocketnet_platform_mutex_t link_simulator_mutex;
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (tla/ServerSession.tla
     // DrainDisconnectBurst). A disconnect ends the slot at once; when this
@@ -371,25 +371,21 @@ static void rocketnet_server_transport_construct( rocketnet_server_transport_t *
 }
 
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 void rocketnet_server_transport_poison_slot_for_test( struct rocketnet_server_transport_t * server, int client_index )
 {
     rocketnet_assert( server );
     rocketnet_assert( client_index >= 0 && client_index < server->client_wire_totals_capacity );
     memset( &server->client_wire_totals[client_index], 0xA5, sizeof( server->client_wire_totals[client_index] ) );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 bool rocketnet_server_transport_connection_state_clean_for_test( struct rocketnet_server_transport_t * server )
 {
     return server && server->protocol.encryption_map && server->protocol.client_slots &&
            rocketnet_encryption_map_num_mappings( server->protocol.encryption_map ) == 0 &&
            rocketnet_client_slots_num_connected( server->protocol.client_slots ) == 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_TEST_SEAMS
 bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_transport_t * server, int client_index,
                                                      char * failure, size_t failure_bytes )
 {
@@ -445,7 +441,7 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
 
     return member == NULL;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static void rocketnet_server_wire_totals_add_sent( struct rocketnet_server_transport_t * server_transport,
                                                    int client_index, const rocketnet_address_t * address,
@@ -568,7 +564,7 @@ static bool rocketnet_server_transport_staged( const rocketnet_server_transport_
 
 // The unit seam: the send capacity the next create reads. 0 keeps the
 // default. It is consumed by that create so one case cannot shape another.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 static int rocketnet_server_test_create_send_capacity = 0;
 
 void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
@@ -576,9 +572,9 @@ void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
     rocketnet_server_test_create_send_capacity =
         packets > 0 && packets <= ROCKETNET_SERVER_MAX_SEND_PACKETS ? packets : 0;
 }
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV
 static const int rocketnet_server_test_create_send_capacity = 0;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t * server_transport )
 {
@@ -633,7 +629,7 @@ static void rocketnet_server_transport_io_send_packets( rocketnet_server_transpo
 // setting in force at the send holds the packet, and the change itself
 // removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
 // stubs below stand in for the development build's functions there.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
 extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
 extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
@@ -657,7 +653,7 @@ static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, i
     (void) reverse_window;
     return 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // The link simulator is active when the setting in force changes the packets:
 // any loss, latency, jitter or duplicate, or either pattern.  With all of
@@ -699,14 +695,14 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
         transport->io.operations->send_batch( transport->io.instance, &send, 1 );
         return true;
     }
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     if ( transport->link_busy_sends_for_test > 0 )
     {
         transport->link_busy_sends_for_test--;
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
         return false;
     }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     if ( !rocketnet_platform_mutex_try_acquire( &transport->link_simulator_mutex ) )
     {
         rocketnet_platform_atomic_add_u64( &transport->counters.values[ROCKETNET_COUNTER_SEND_RING_FULL], 1 );
@@ -725,7 +721,7 @@ static bool rocketnet_server_link_send( rocketnet_server_transport_t * transport
 // new settings as a config record under the tiny mutex and the thread that owns
 // the simulator applies them before its next send. No simulator work happens
 // under the lock.
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent )
 {
     rocketnet_assert( server_transport );
@@ -751,7 +747,7 @@ void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_tran
     rocketnet_assert( server_transport );
     server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // Returns the number of sends the link took and marks each one in accepted[],
 // so the caller charges every send on its own result (the per-client totals
@@ -997,7 +993,7 @@ static void rocketnet_server_abort_send_frame( struct rocketnet_server_transport
 // rocketnet_server_transport_default_config lives in rocketnet_config.cpp,
 // written from the config table so every default is declared exactly once
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_config_t * config )
 {
     if ( !rocketnet_api_null_guard( config ) )
@@ -1009,7 +1005,7 @@ void rocketnet_server_transport_dev_config( struct rocketnet_server_transport_co
     memcpy( config->server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( config->server_secret_key, rocketnet_dev_server_secret_key, 32 );
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 static int rocketnet_server_config_has_keys( const struct rocketnet_server_transport_config_t * config )
 {
@@ -1606,9 +1602,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
     server_transport->disconnect_seals_left = server_transport->disconnect_packets_per_update;
     server_transport->disconnect_update_prepared = 0;
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     rocketnet_server_test_create_send_capacity = 0;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     const int max_fragmented_messages = config->max_fragmented_messages > 0 ? config->max_fragmented_messages : ROCKETNET_DEFAULT_REASSEMBLY_SLOTS;
 
     const int development_keys = memcmp( config->server_public_key, rocketnet_dev_server_public_key, 32 ) == 0 ||
@@ -2029,7 +2025,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     return server_transport;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max )
 {
     const size_t protocol = offsetof( rocketnet_server_transport_t, protocol );
@@ -2049,7 +2045,7 @@ int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t *
 
     return count;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * server_transport )
 {
@@ -2244,7 +2240,7 @@ static void rocketnet_server_update_stats( struct rocketnet_server_transport_t *
     }
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp )
 {
     rocketnet_assert( server_transport );
@@ -2261,7 +2257,7 @@ void rocketnet_server_transport_test_receive_work( const struct rocketnet_server
     *map_hashes = rocketnet_encryption_map_test_hashes( server_transport->protocol.encryption_map );
     *payload_writes = server_transport->protocol.test_payload_writes;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport )
 {
@@ -2307,11 +2303,11 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     rocketnet_server_update_stats( server_transport, time );
 
     const double current_time = time;
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : ( server_transport->game_clock_epoch != 0 ? server_transport->game_clock_epoch + (uint64_t) current_time : ( uint64_t )::time( NULL ) );
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV
     const uint64_t current_timestamp = server_transport->game_clock_epoch != 0 ? server_transport->game_clock_epoch + (uint64_t) current_time : ( uint64_t )::time( NULL );
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
     server_transport->payloads.num_payloads = 0;
 
@@ -3619,7 +3615,7 @@ static void rocketnet_server_transport_drain_disconnect_bursts( struct rocketnet
         server_transport->send_staged++;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 uint64_t rocketnet_server_transport_disconnect_seals_for_test( struct rocketnet_server_transport_t * server_transport )
 {
     rocketnet_assert( server_transport );
@@ -3643,7 +3639,7 @@ int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_s
         *count = server_transport->disconnect_burst_count;
     return 1;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // tla/RNDriverSendStaging.tla DisconnectClient
 static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_server_transport_t * server_transport, int client_index, bool shutdown )
@@ -3789,7 +3785,7 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
     return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
 }
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 // development library only: the transport instance behind the transport, for a
 // functional case that drives a native transport's test seam
 void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_transport_t * server_transport )
@@ -3797,7 +3793,7 @@ void * rocketnet_server_transport_io_name_for_testing( struct rocketnet_server_t
     rocketnet_assert( server_transport );
     return server_transport->io.instance;
 }
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport )
 {
@@ -3988,7 +3984,7 @@ void rocketnet_server_transport_accept_payload( struct rocketnet_server_transpor
 
 #endif // #ifndef ROCKETNET_CONFORMANCE_DEFAULTS_ONLY
 
-#if defined( ROCKETNET_XDP_STAGING_TEST_HOOKS ) && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+#if ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
 // Unit-only fixture for the public flush path; no transport create, socket,
 // mutex, thread or clock is involved. The two calls have identical counters.
 static void rocketnet_server_transport_test_count_flush( void * context )
@@ -4088,4 +4084,4 @@ int rocketnet_server_transport_test_staged_simulator_flush()
 
     return result;
 }
-#endif // #if defined( ROCKETNET_XDP_STAGING_TEST_HOOKS ) && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )
+#endif // #if ROCKETNET_DEV && !defined( ROCKETNET_CONFORMANCE_DEFAULTS_ONLY )

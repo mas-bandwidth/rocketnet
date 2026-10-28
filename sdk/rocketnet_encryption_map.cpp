@@ -31,15 +31,13 @@ struct rocketnet_encryption_map_t
     struct rocketnet_address_t * address;                    // hot: full key; NONE is the free state
     struct rocketnet_encryption_mapping_control_t * control; // hot: timeout walk
     struct rocketnet_encryption_mapping_t * mapping;        // cold: same index
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     mutable uint64_t test_hashes;                           // keyed hashes computed, for the unit suite
-#endif // #if ROCKETNET_TEST_SEAMS
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
     mutable uint64_t test_probes;                           // flat index cells inspected by bounded DEV oracles
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 };
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 static uint64_t rocketnet_dev_session_sequence_start_from_env( void )
 {
     char text[64];
@@ -68,7 +66,7 @@ uint64_t rocketnet_dev_session_sequence_start( void )
     static const uint64_t start = rocketnet_dev_session_sequence_start_from_env();
     return start;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 uint64_t rocketnet_encryption_map_allocation_bytes( int capacity )
 {
@@ -103,9 +101,9 @@ struct rocketnet_encryption_map_t * rocketnet_encryption_map_create( void * cont
     map->next_generation = 1;
     randombytes_buf( map->hash_key, sizeof( map->hash_key ) );
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     (void) rocketnet_dev_session_sequence_start();          // the seam's one read, here at create
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
     map->index = (uint32_t *) rocketnet_malloc( context, sizeof( uint32_t ) * (size_t) capacity );
     map->free_indices = (uint32_t *) rocketnet_malloc( context, sizeof( uint32_t ) * (size_t) capacity );
@@ -195,9 +193,9 @@ static uint64_t rocketnet_encryption_map_hash( const struct rocketnet_encryption
 {
     const uint64_t value = rocketnet_encryption_map_hash_value( map, address );
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     map->test_hashes++;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
     return value;
 }
@@ -220,9 +218,9 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
         const int position = (int) ( ( (uint64_t) home + (uint64_t) probe ) % (uint64_t) map->capacity );
         const uint32_t candidate = map->index[position];
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
         map->test_probes++;
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
         if ( candidate == ROCKETNET_ENCRYPTION_INDEX_EMPTY )
         {
@@ -335,11 +333,11 @@ int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
     mapping->control->client_index = -1;
     mapping->control->handshake_deadline = handshake_deadline;
     mapping->send_sequence_handshake = 1;
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     mapping->send_sequence_session = rocketnet_dev_session_sequence_start();    // 1 unless the DEV seam moves it
-#else // #if ROCKETNET_TEST_SEAMS
+#else // #if ROCKETNET_DEV
     mapping->send_sequence_session = 1;
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
     mapping->send_fragment_payload_id = 1;
 
     map->index[index_position] = (uint32_t) index;
@@ -463,15 +461,13 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
     return map->capacity - map->num_free;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
     return map->test_hashes;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
 uint64_t rocketnet_encryption_map_test_probes( const struct rocketnet_encryption_map_t * map )
 {
     rocketnet_assert( map );
@@ -515,4 +511,4 @@ bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_ma
     rocketnet_assert( map );
     return handle != NULL && rocketnet_encryption_map_remove_handle( map, *handle );
 }
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV

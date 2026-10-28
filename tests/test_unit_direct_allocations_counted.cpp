@@ -25,16 +25,16 @@
 #include "../sdk/rocketnet_uring_codec.h"
 #endif // #if defined( __linux__ )
 
-#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
+#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 #define DIRECT_COUNT_URING_CASE 1
 #else
 #define DIRECT_COUNT_URING_CASE 0
-#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
-#if defined( _WIN32 ) && defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS )
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
+#if defined( _WIN32 ) && ROCKETNET_DEV
 #define DIRECT_COUNT_RIO_CASE 1
 #else
 #define DIRECT_COUNT_RIO_CASE 0
-#endif // #if defined( _WIN32 ) && defined( ROCKETNET_RIO_OVERFLOW_TEST_HOOKS )
+#endif // #if defined( _WIN32 ) && ROCKETNET_DEV
 
 #include <stdint.h>
 #include <stdio.h>

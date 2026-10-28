@@ -12,7 +12,7 @@
 // flight. No socket, worker or clock here: the counts are pure, and the bank
 // case plays the worker by hand at exact handoff transitions.
 
-// Compiled only into rocketnet_test_hooks (sdk/rocketnet_driver_builtin.cpp).
+// Needs ROCKETNET_DEV (sdk/rocketnet_driver_builtin.cpp).
 bool rocketnet_portable_tx_test_sizing();
 bool rocketnet_portable_tx_test_drop_paths();
 

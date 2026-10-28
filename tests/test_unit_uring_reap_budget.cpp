@@ -30,7 +30,7 @@
 
 #define check rocketnet_unit_check
 
-#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
+#if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )
 
 #define URING_FAKE_CAPACITY             ( 1 << 18 )
 
@@ -547,4 +547,4 @@ REGISTER_UNIT_TEST( test_io_uring_transport_reap_send_retires_under_receive_pres
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_destroy_after_saturation );
 REGISTER_UNIT_TEST( test_io_uring_transport_receive_without_a_buffer_is_counted );
 
-#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && defined( ROCKETNET_URING_REAP_TEST_HOOKS ) && defined( ROCKETNET_IO_URING )
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT ) && ROCKETNET_DEV && defined( ROCKETNET_IO_URING )

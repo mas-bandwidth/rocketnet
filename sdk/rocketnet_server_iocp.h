@@ -114,9 +114,7 @@ int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );
 // ROCKETNET_IOCP_DISABLE_* bits), so a functional case can run the whole server
 // transport on the per-datagram path. Zero, the default, changes nothing.
 void rocketnet_server_iocp_test_force_flags( int flags );
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV && defined( ROCKETNET_IOCP_TESTS )
 uintptr_t rocketnet_server_iocp_test_socket( rocketnet_server_iocp_t * iocp );
 // TX tests can hold worker service or the short publication mutex separately.
 void rocketnet_server_iocp_test_hold_tx( rocketnet_server_iocp_t * iocp, bool hold );
@@ -160,6 +158,6 @@ enum rocketnet_server_iocp_test_fault_t
 };
 void rocketnet_server_iocp_test_fail_next( rocketnet_server_iocp_t * iocp, int fault, int count, int status );
 int rocketnet_server_iocp_test_faults_left( rocketnet_server_iocp_t * iocp, int fault );
-#endif // #if ROCKETNET_DEV && defined( ROCKETNET_IOCP_TESTS )
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_IOCP_H

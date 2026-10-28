@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The server's receive work per packet, counted through the ROCKETNET_TEST_SEAMS
+// The server's receive work per packet, counted through the ROCKETNET_DEV
 // receive-work seam (rocketnet_server_transport_test_receive_work): the keyed
 // hashes of the encryption map, and the writes of payload plaintext. One
 // accepted session packet costs exactly one encryption-map lookup, however

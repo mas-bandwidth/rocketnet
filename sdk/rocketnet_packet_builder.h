@@ -108,10 +108,10 @@ struct rn_packet_builder_plan_t
     uint8_t class_group_begin[ROCKETNET_SEND_CLASS_UNRELIABLE + 1];
     uint8_t class_group_end[ROCKETNET_SEND_CLASS_UNRELIABLE + 1];
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
     uint64_t plan_operations;                   // bounded grouping/tag/suffix operations in this call
     uint64_t selection_operations;              // current group heads inspected in this call
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 };
 
 struct rn_packet_builder_t
@@ -142,12 +142,12 @@ struct rn_packet_builder_t
     } packet[ROCKETNET_PACKET_BUILDER_MAX_PACKETS];
 };
 
-#if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 // The calling thread's last completed flat plan, for operation-bound and tag
 // checks. This development-only record is not part of a connection and is
 // absent from ROCKETNET_DEV=0 builds.
 const struct rn_packet_builder_plan_t * rn_packet_builder_test_last_plan( void );
-#endif // #if ROCKETNET_DEV && ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 // Binds a builder to one connection. Allocates nothing. packets_per_update
 // is clamped to ROCKETNET_PACKET_BUILDER_MAX_PACKETS; payload_capacity outside

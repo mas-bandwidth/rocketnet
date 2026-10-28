@@ -214,16 +214,14 @@ struct rocketnet_server_uring_t
 
     struct rocketnet_server_socket_process_packets_t process_packets;
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
     // the test seam: a queue whose multishot is cancelled so its terminating
     // CQE carries this error in place of -ECANCELED (zero: none pending), and
     // the next send SQEs prepared with no destination, so the kernel answers
     // each with a failed CQE
     int test_receive_error[ROCKETNET_URING_MAX_QUEUES];
     int test_fail_sends;
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
     // the unit suite's fake completion source (rocketnet_server_uring_test_create):
     // non-NULL means no kernel ring. its submission entries queue here until
     // a submit hands their user_data to the source, and a peek copies its
@@ -239,22 +237,22 @@ struct rocketnet_server_uring_t
     // entry (the failed re-arm the CQE handler can hit)
     bool test_no_ring;
     int test_arm_find_no_sqe;
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 };
 
 // the ring operations, each through the fake completion source when the
 // unit suite's seam is compiled in and the transport has one
 
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
 static_assert( sizeof( struct rocketnet_server_uring_test_completion_t ) == sizeof( struct io_uring_cqe ), "a fake completion is laid out as a cqe" );
 #define ROCKETNET_URING_FAKE( uring ) ( (uring)->test_source != NULL )
-#else // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#else // #if ROCKETNET_DEV
 #define ROCKETNET_URING_FAKE( uring ) false
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static struct io_uring_sqe * rocketnet_server_uring_ring_get_sqe( struct rocketnet_server_uring_t * uring )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         if ( uring->test_sqes_queued >= ROCKETNET_URING_ENTRIES )
@@ -265,31 +263,31 @@ static struct io_uring_sqe * rocketnet_server_uring_ring_get_sqe( struct rocketn
 
         return sqe;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     return io_uring_get_sqe( &uring->ring );
 }
 
 static unsigned rocketnet_server_uring_ring_sq_space( struct rocketnet_server_uring_t * uring )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
         return (unsigned) ( ROCKETNET_URING_ENTRIES - uring->test_sqes_queued );
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     return io_uring_sq_space_left( &uring->ring );
 }
 
 static unsigned rocketnet_server_uring_ring_sq_ready( struct rocketnet_server_uring_t * uring )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
         return (unsigned) uring->test_sqes_queued;
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     return io_uring_sq_ready( &uring->ring );
 }
 
 static int rocketnet_server_uring_ring_submit( struct rocketnet_server_uring_t * uring )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         const int count = uring->test_sqes_queued;
@@ -300,13 +298,13 @@ static int rocketnet_server_uring_ring_submit( struct rocketnet_server_uring_t *
 
         return count;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     return io_uring_submit( &uring->ring );
 }
 
 static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_t * uring, struct io_uring_cqe ** cqes, unsigned max )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         if ( max > ROCKETNET_URING_CQE_BATCH )
@@ -323,31 +321,31 @@ static unsigned rocketnet_server_uring_ring_peek( struct rocketnet_server_uring_
 
         return (unsigned) count;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     return io_uring_peek_batch_cqe( &uring->ring, cqes, max );
 }
 
 static void rocketnet_server_uring_ring_advance( struct rocketnet_server_uring_t * uring, unsigned count )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         uring->test_source->advance( uring->test_source->context, (int) count );
         return;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     io_uring_cq_advance( &uring->ring, count );
 }
 
 static unsigned rocketnet_server_uring_ring_cq_ready( struct rocketnet_server_uring_t * uring )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( ROCKETNET_URING_FAKE( uring ) )
     {
         const int ready = uring->test_source->ready( uring->test_source->context );
         return ready > 0 ? (unsigned) ready : 0;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
     return io_uring_cq_ready( &uring->ring );
 }
 
@@ -712,7 +710,7 @@ static struct io_uring_sqe * rocketnet_server_uring_get_sqe( struct rocketnet_se
 static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring, int queue_index )
 {
     struct rocketnet_server_uring_queue_t * queue = &uring->queues[queue_index];
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( uring->test_arm_find_no_sqe > 0 )
     {
         uring->test_arm_find_no_sqe--;
@@ -724,7 +722,7 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
         queue->armed = true;
         return true;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     struct io_uring_sqe * sqe = rocketnet_server_uring_get_sqe( uring );
     if ( !sqe )
@@ -934,7 +932,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 
     if ( kind == ROCKETNET_URING_TAG_RECV )
     {
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
         struct io_uring_cqe injected;
         if ( uring->test_receive_error[queue_index] != 0 && ( cqe->flags & IORING_CQE_F_MORE ) == 0 && cqe->res == -ECANCELED )
         {
@@ -943,7 +941,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
             uring->test_receive_error[queue_index] = 0;
             cqe = &injected;
         }
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
         if ( cqe->res >= 0 )
             rocketnet_server_uring_receive_cqe( uring, queue_index, cqe );
@@ -1016,9 +1014,9 @@ static void rocketnet_server_uring_submit( struct rocketnet_server_uring_t * uri
 
 static void rocketnet_server_uring_wait( struct rocketnet_server_uring_t * uring, double seconds )
 {
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     uring->test_wait_calls++;
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     if ( ROCKETNET_URING_FAKE( uring ) )
         return;
@@ -1044,7 +1042,7 @@ static void rocketnet_server_uring_abort_create( rocketnet_server_uring_t * urin
     rocketnet_server_uring_destroy( uring );
 }
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t * uring, int queue_index, int error )
 {
@@ -1079,9 +1077,7 @@ bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ur
            uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
 }
 
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#if ROCKETNET_TEST_SEAMS
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
     rocketnet_assert( uring );
@@ -1093,9 +1089,7 @@ void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * 
     rocketnet_assert( uring );
     uring->test_stall_destroy = false;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
 
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 
 // the no-kernel-ring seam: a fake transport with queues but no ring. the test
 // owns it through these calls only. both blocks come from the counted
@@ -1259,7 +1253,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
     return uring;
 }
 
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues )
 {
@@ -1785,14 +1779,14 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
             rocketnet_assert( run >= 1 );
             info->run_packets = run;
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
             if ( uring->test_fail_sends > 0 )
             {
                 uring->test_fail_sends--;
                 info->message.msg_name = NULL;
                 info->message.msg_namelen = 0;
             }
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
             struct io_uring_sqe * sqe = rocketnet_server_uring_ring_get_sqe( uring );
             rocketnet_assert( sqe );
@@ -1879,13 +1873,13 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
 {
     rocketnet_assert( uring );
 
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( uring->test_no_ring )
     {
         rocketnet_server_uring_rearm_unarmed( uring );
         return;
     }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == ROCKETNET_URING_RECEIVE_BUDGET &&
          rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
@@ -1979,14 +1973,14 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring )
     (void) uring;
 }
 
-#if ROCKETNET_TEST_SEAMS
+#if ROCKETNET_DEV
 void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * ) {}
 
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring )
 {
     (void) uring;
 }
-#endif // #if ROCKETNET_TEST_SEAMS
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring )
 {
@@ -2047,18 +2041,16 @@ struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_proces
     return NULL;
 }
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *, int, int ) {}
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t *, int ) {}
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * ) { return true; }
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void *, int, const struct rocketnet_server_uring_test_source_t * )
 {
     return NULL;
 }
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 #endif // #if defined( ROCKETNET_URING_BUILT ) && ROCKETNET_URING_BUILT
 

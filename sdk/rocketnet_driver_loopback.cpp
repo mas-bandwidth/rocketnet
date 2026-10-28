@@ -81,7 +81,7 @@ static rocketnet_loopback_state_t & loopback_state()
     return init.state;
 }
 
-#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#if ROCKETNET_DEV
 static bool loopback_test_send_contention = false;
 
 void rocketnet_loopback_test_send_contention( bool busy ) { loopback_test_send_contention = busy; }
@@ -96,14 +96,14 @@ void rocketnet_loopback_test_queue_indices( void * instance, uint32_t * head, ui
     *tail = ep->tail;
     *capacity = ep->capacity;
 }
-#endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 static bool loopback_try_send_lock( rocketnet_loopback_state_t & state )
 {
-#if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#if ROCKETNET_DEV
     if ( loopback_test_send_contention )
         return false;
-#endif // #if defined( ROCKETNET_LOOPBACK_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
     return rocketnet_platform_mutex_try_acquire( &state.mutex );
 }

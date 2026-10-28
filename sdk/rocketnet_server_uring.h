@@ -168,7 +168,7 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * uring );
 
-#if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
+#if ROCKETNET_DEV
 // development library only. fail_receive cancels the queue's multishot
 // receive and hands its terminating CQE to the reap with error (negative
 // errno) in place of -ECANCELED, the path a kernel-side receive failure
@@ -178,9 +178,7 @@ void rocketnet_server_uring_test_fail_receive( struct rocketnet_server_uring_t *
 void rocketnet_server_uring_test_fail_sends( struct rocketnet_server_uring_t * uring, int count );
 // main thread: no staged slot waiting and no send without its CQE.
 bool rocketnet_server_uring_test_send_idle( struct rocketnet_server_uring_t * uring );
-#endif // #if defined( ROCKETNET_SEND_ERROR_TEST_HOOKS )
 
-#if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
 // unit suite only (the test hook library): a transport over a fake completion
 // source, with no kernel ring and no socket. the source stands in for the
 // completion queue: peek copies at most max completions, oldest first, and
@@ -227,7 +225,7 @@ void rocketnet_server_uring_test_multishot_ends( struct rocketnet_server_uring_t
 bool rocketnet_server_uring_test_queue_armed( struct rocketnet_server_uring_t * uring, int queue_index );
 uint64_t rocketnet_server_uring_test_counter( struct rocketnet_server_uring_t * uring, int counter );
 int rocketnet_server_uring_test_wait_calls( struct rocketnet_server_uring_t * uring );
-#endif // #if defined( ROCKETNET_URING_REAP_TEST_HOOKS )
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_uring_num_queues( struct rocketnet_server_uring_t * uring );
 
