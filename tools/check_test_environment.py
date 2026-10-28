@@ -189,14 +189,25 @@ def _guards_exclusive(a, b):
 
 # Unit sources a production (ROCKETNET_DEV=OFF) test binary does not compile
 # (CMakeLists.txt): the two registry tables, the loopback transport unit and
-# the results file it includes, and the Windows RIO overflow seam.
-PRODUCTION_ABSENT = {
+# the results file it includes, the Windows RIO overflow seam, and every file
+# in CMakeLists.txt's ROCKETNET_DEV_ONLY_*_TEST_SOURCES lists, read from there.
+PRODUCTION_ABSENT_FIXED = {
     "rocketnet_tests.cpp",
     "test_channels.cpp",
     "test_unit_driver_loopback.cpp",
     "test_unit_driver_results_checked.cpp",
     "test_unit_rio_overflow_seam.cpp",
 }
+DEV_ONLY_LIST_RE = re.compile(r"set\(\s*ROCKETNET_DEV_ONLY_\w+_TEST_SOURCES\s+([^)]*)\)")
+
+
+def production_absent():
+    absent = set(PRODUCTION_ABSENT_FIXED)
+    text = (REPO / "CMakeLists.txt").read_text()
+    for m in DEV_ONLY_LIST_RE.finditer(text):
+        for entry in m.group(1).split():
+            absent.add(Path(entry).name)
+    return absent
 
 
 def registered_unit_names(production=False):
@@ -214,13 +225,14 @@ def registered_unit_names(production=False):
     # The registrar aborts on the first repeat; this names every one. Two
     # registrations under mutually exclusive guards (a ROCKETNET_DEV case and
     # its !ROCKETNET_DEV production twin) never reach one binary together.
+    absent = production_absent() if production else set()
     table_names = set(all_names)
     seen = {}
     duplicates = []
     for path in sorted(REPO.glob("tests/test_unit_*.cpp")):
         for name, unconditional in _register_names(path):
             all_names.add(name)
-            if unconditional and not (production and path.name in PRODUCTION_ABSENT):
+            if unconditional and path.name not in absent:
                 always.add(name)
         for name, guard in _register_guards(path):
             earlier = seen.setdefault(name, [])
