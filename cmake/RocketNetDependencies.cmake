@@ -81,13 +81,28 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND ROCKETNET_IO_URING AND NOT TARGET Rock
     else()
         find_library(ROCKETNET_Uring_LIBRARY NAMES uring)
         find_path(ROCKETNET_Uring_INCLUDE_DIR NAMES liburing.h)
+        # the transport needs multishot receive (IORING_RECV_MULTISHOT, liburing
+        # 2.3 and later). An older liburing, such as Ubuntu 22.04's 2.1, is
+        # treated as absent: no link, no ROCKETNET_IO_URING, and the io_uring
+        # row leaves the transport registry, so neither auto nor a pin can reach
+        # a transport that was never built
+        if(ROCKETNET_Uring_LIBRARY AND ROCKETNET_Uring_INCLUDE_DIR)
+            include(CheckSymbolExists)
+            set(CMAKE_REQUIRED_INCLUDES "${ROCKETNET_Uring_INCLUDE_DIR}")
+            check_symbol_exists(IORING_RECV_MULTISHOT "liburing.h" ROCKETNET_URING_HAS_RECV_MULTISHOT)
+            unset(CMAKE_REQUIRED_INCLUDES)
+            if(NOT ROCKETNET_URING_HAS_RECV_MULTISHOT)
+                message(STATUS "liburing found without multishot receive (IORING_RECV_MULTISHOT, liburing 2.3 or later): the io_uring server transport is not built")
+                set(ROCKETNET_Uring_LIBRARY "")
+            endif()
+        endif()
     endif()
     if(ROCKETNET_Uring_LIBRARY AND ROCKETNET_Uring_INCLUDE_DIR)
         add_library(RocketNet::Uring UNKNOWN IMPORTED)
         set_target_properties(RocketNet::Uring PROPERTIES
             IMPORTED_LOCATION "${ROCKETNET_Uring_LIBRARY}"
             INTERFACE_INCLUDE_DIRECTORIES "${ROCKETNET_Uring_INCLUDE_DIR}")
-    else()
+    elseif(NOT DEFINED ROCKETNET_URING_HAS_RECV_MULTISHOT)
         message(STATUS "liburing not found: the io_uring server transport is built to refuse")
     endif()
 endif()

@@ -47,7 +47,9 @@ static void public_step_identity( public_step_identity_t * identity )
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0xA5 ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( identity->server_public, identity->server_secret ) == ROCKETNET_STATUS_OK );
 }
@@ -65,6 +67,7 @@ static void public_step_token( uint16_t port, const uint8_t * server_public, con
 {
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) port );
+
     const char * addresses[] = { address };
     check( rocketnet_write_production_connect_token( identity->backend_secret, server_public,
                                                      PUBLIC_STEP_PROTOCOL, addresses, 1, 0x5EED, 1000, 1ULL << 40, 300, NULL,
@@ -72,10 +75,12 @@ static void public_step_token( uint16_t port, const uint8_t * server_public, con
 }
 
 // The string token for a running server, sealed to the key the server made.
+
 static void public_step_token_string( const rocketnet_server_t * server, const public_step_identity_t * identity, char * token_string )
 {
     uint8_t server_public[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
     rocketnet_server_public_key( server, server_public );
+
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     public_step_token( rocketnet_server_port( server ), server_public, identity, token );
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
@@ -102,6 +107,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 
     rocketnet_server_config_t server_config;
     public_step_server_config( &server_config, identity );
+
     char bind[64];
     snprintf( bind, sizeof( bind ), "127.0.0.1:%u", (unsigned) fixed_port );
     pair->server = rocketnet_server_create( NULL, bind, NULL, &server_config, NULL );
@@ -110,6 +116,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_step_token_string( pair->server, identity, token );
+
     rocketnet_client_test_config_t client_config;
     public_step_client_config( &client_config );
     pair->threads_before_client = thread_count ? thread_count() : -1;
@@ -122,10 +129,13 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
 static void public_step_pair_stop_server_and_wait( public_step_pair_t * pair )
 {
     rocketnet_server_stop( pair->server );
-    // Poll the completion query within a fixed budget; do not sleep.
+
+    // poll the completion query within a fixed budget; do not sleep
+
     for ( int step = 0; step < 32 && !rocketnet_server_stopped( pair->server ); step++ )
     {
     }
+
     check( rocketnet_server_stopped( pair->server ) );
 }
 
@@ -138,6 +148,7 @@ static void public_step_pair_destroy( public_step_pair_t * pair )
 
 // RNClientIo CallerStep: update and send_packets execute the non-blocking I/O
 // step on this caller's thread; no I/O-thread action exists in this mode.
+
 static void public_step_pump( public_step_pair_t * pair )
 {
     public_step_now = pair->time;
@@ -151,7 +162,9 @@ static void public_step_pump( public_step_pair_t * pair )
 static void public_step_connect( public_step_pair_t * pair )
 {
     for ( int i = 0; i < 400 && rocketnet_client_state( pair->client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         public_step_pump( pair );
+    }
     check( rocketnet_client_state( pair->client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_server_client_connected( pair->server, 0 ) != 0 );
 }

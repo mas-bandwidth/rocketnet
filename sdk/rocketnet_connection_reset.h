@@ -34,6 +34,7 @@ struct rn_message_object_t;
     X( RESET, token ) X( RESET, signed_fields ) X( RESET, server_address ) \
     X( RESET, connection_salt ) X( RESET, client_ephemeral_public_key ) \
     X( RESET, client_ephemeral_secret_key ) X( RESET, return_cookie ) X( RESET, has_cookie ) \
+    X( RESET, latest_cookie ) X( RESET, has_latest_cookie ) X( RESET, send_latest_cookie ) \
     X( RESET, session_nonce ) X( RESET, keys ) X( RESET, stored_response ) \
     X( RESET, client_index ) X( RESET, max_clients ) \
     X( RESET, send_sequence_handshake ) X( RESET, send_sequence_session ) \
@@ -182,4 +183,4 @@ bool rocketnet_server_transport_slot_clean_for_test( struct rocketnet_server_tra
 
 #endif // #if ROCKETNET_DEV
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H
+#endif // ROCKETNET_SDK_ROCKETNET_CONNECTION_RESET_H

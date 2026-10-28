@@ -28,11 +28,15 @@ static std::string xdp_host_read_file( const char * relative )
         fflush( stdout );
         return text;
     }
+
     char buffer[4096];
     size_t got;
     while ( ( got = fread( buffer, 1, sizeof( buffer ), file ) ) > 0 )
+    {
         text.append( buffer, got );
+    }
     fclose( file );
+
     return text;
 }
 
@@ -44,10 +48,12 @@ static std::string xdp_host_lexical_code( const std::string & source )
     bool string_literal = false;
     bool char_literal = false;
     bool escaped = false;
+
     for ( size_t i = 0; i < code.size(); i++ )
     {
         const char c = code[i];
         const char next = i + 1 < code.size() ? code[i + 1] : '\0';
+
         if ( line_comment )
         {
             if ( c == '\n' )
@@ -56,6 +62,7 @@ static std::string xdp_host_lexical_code( const std::string & source )
                 code[i] = ' ';
             continue;
         }
+
         if ( block_comment )
         {
             if ( c == '*' && next == '/' )
@@ -68,10 +75,13 @@ static std::string xdp_host_lexical_code( const std::string & source )
                 code[i] = ' ';
             continue;
         }
+
         if ( string_literal || char_literal )
         {
             if ( c != '\n' )
+            {
                 code[i] = ' ';
+            }
             if ( escaped )
                 escaped = false;
             else if ( c == '\\' )
@@ -83,6 +93,7 @@ static std::string xdp_host_lexical_code( const std::string & source )
             }
             continue;
         }
+
         if ( c == '/' && next == '/' )
         {
             code[i] = ' ';
@@ -114,7 +125,10 @@ static std::string xdp_host_lexical_code( const std::string & source )
     {
         size_t line_end = code.find( '\n', line_start );
         if ( line_end == std::string::npos )
+        {
             line_end = code.size();
+        }
+
         const std::string line = code.substr( line_start, line_end - line_start );
         const size_t first = line.find_first_not_of( " \t\r" );
         const std::string directive = first == std::string::npos ? std::string() : line.substr( first );
@@ -131,6 +145,7 @@ static std::string xdp_host_lexical_code( const std::string & source )
         }
         line_start = line_end + 1;
     }
+
     return active;
 }
 
@@ -149,7 +164,9 @@ static void test_xdp_transport_host_every_counter_has_a_case()
         size_t end = at + strlen( "#define " );
         size_t stop = end;
         while ( stop < wire.size() && ( isalnum( (unsigned char) wire[stop] ) || wire[stop] == '_' ) )
+        {
             stop++;
+        }
         names.push_back( wire.substr( end, stop - end ) );
         at = stop;
     }
@@ -157,10 +174,12 @@ static void test_xdp_transport_host_every_counter_has_a_case()
     rocketnet_unit_check( (int) names.size() == ROCKETNET_SERVER_XDP_NUM_COUNTERS );
 
     int missing = 0;
+
     for ( size_t i = 0; i < names.size(); i++ )
     {
         const std::string needle = std::string( "XDP_HOST_" ) + "COUNTS";
         bool present = false;
+
         for ( size_t occurrence = self.find( needle ); occurrence != std::string::npos;
               occurrence = self.find( needle, occurrence + needle.size() ) )
         {
@@ -168,6 +187,7 @@ static void test_xdp_transport_host_every_counter_has_a_case()
             const size_t close = open == std::string::npos ? std::string::npos : self.find( ')', open + 1 );
             if ( close == std::string::npos )
                 continue;
+
             const size_t token = self.find( names[i], open + 1 );
             if ( token != std::string::npos && token < close &&
                  ( token == open + 1 || !( isalnum( (unsigned char) self[token - 1] ) || self[token - 1] == '_' ) ) &&
@@ -178,6 +198,7 @@ static void test_xdp_transport_host_every_counter_has_a_case()
                 break;
             }
         }
+
         if ( !present )
         {
             printf( "test_xdp_transport_host_every_counter_has_a_case: %s has no case\n", names[i].c_str() );
@@ -185,6 +206,7 @@ static void test_xdp_transport_host_every_counter_has_a_case()
             missing++;
         }
     }
+
     rocketnet_unit_check( missing == 0 );
 }
 

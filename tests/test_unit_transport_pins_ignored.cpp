@@ -55,6 +55,7 @@ static void test_unit_transport_pins_ignored()
     pins_set( "ROCKETNET_CLIENT_TRANSPORT", "io_uring" );
 
     // the suite's isolation step: clears the pins for the run
+
     rocketnet_unit_prepare();
 
     rocketnet_public_link_simulator_test_development( 1 );
@@ -114,6 +115,7 @@ static void test_unit_transport_pins_ignored()
         connected = rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                     rocketnet_server_transport_is_client_connected( server, 0 );
     }
+
     rocketnet_unit_check( connected );
 
     rn_test_client_transport_stop_and_destroy( client );

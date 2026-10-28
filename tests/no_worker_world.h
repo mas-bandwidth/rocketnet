@@ -44,6 +44,7 @@ static no_worker_world_t g_no_worker_world;
 // The smallest message tables both ends accept, so a thousand clients and a
 // thousand-slot server fit the suite's resident-set bound: one 8-byte
 // unreliable message each way per update needs no more.
+
 static void no_worker_message_config( rocketnet_server_config_t * server, rocketnet_client_config_t * client )
 {
     if ( server )
@@ -57,6 +58,7 @@ static void no_worker_message_config( rocketnet_server_config_t * server, rocket
         server->send_message_buffer_bytes = 12288;
         server->send_queue_messages = 64;
     }
+
     if ( client )
     {
         client->num_channels = 1;
@@ -79,7 +81,9 @@ static void no_worker_server_create( no_worker_world_t * world, int max_clients 
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x3C ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, world->backend_public, world->backend_secret ) == ROCKETNET_STATUS_OK );
     check( rocketnet_generate_server_keypair( world->server_public, world->server_secret ) == ROCKETNET_STATUS_OK );
 
@@ -101,6 +105,7 @@ static void no_worker_server_create( no_worker_world_t * world, int max_clients 
 static void no_worker_clients_create( no_worker_world_t * world, int num_clients )
 {
     world->num_clients = num_clients;
+
     for ( int i = 0; i < num_clients; i++ )
     {
         rocketnet_client_test_config_t config;
@@ -109,6 +114,7 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
         config.step_driven = true;
         config.time_callback = no_worker_clock;
         no_worker_message_config( NULL, &config );
+
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         world->clients[i] = rocketnet_client_create( NULL, &config, &status );
         check( world->clients[i] != NULL && status == ROCKETNET_STATUS_OK );
@@ -118,17 +124,22 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
 static void no_worker_server_stop_and_wait( no_worker_world_t * world )
 {
     rocketnet_server_stop( world->server );
-    // Poll the completion query within a fixed budget; do not sleep.
+
+    // poll the completion query within a fixed budget; do not sleep
+
     for ( int step = 0; step < 32 && !rocketnet_server_stopped( world->server ); step++ )
     {
     }
+
     check( rocketnet_server_stopped( world->server ) );
 }
 
 static void no_worker_world_destroy( no_worker_world_t * world )
 {
     for ( int i = 0; i < world->num_clients; i++ )
+    {
         rn_test_client_stop_and_destroy( world->clients[i] );
+    }
     no_worker_server_stop_and_wait( world );
     rocketnet_server_destroy( world->server );
     world->num_clients = 0;
@@ -139,7 +150,9 @@ static void no_worker_connect_all( no_worker_world_t * world )
 {
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
+
     const char * addresses[] = { address };
+
     for ( int i = 0; i < world->num_clients; i++ )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -158,40 +171,50 @@ static void no_worker_connect_all( no_worker_world_t * world )
 // last update); then the server updates (taking those packets and their acks),
 // takes its messages, sends one message to every connected slot and its
 // packets. dt is the step to the next update.
+
 static void no_worker_step( no_worker_world_t * world, bool send_messages, double dt )
 {
     no_worker_now = world->time;
+
     for ( int i = 0; i < world->num_clients; i++ )
     {
         rocketnet_client_update( world->clients[i], world->time );
+
         while ( rocketnet_client_receive_messages( world->clients[i] ) != NULL )
         {
         }
+
         if ( send_messages && rocketnet_client_state( world->clients[i] ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
             uint8_t * out = rocketnet_client_start_message( world->clients[i], NO_WORKER_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE, 8 );
             check( out != NULL );
+
             if ( out )
             {
                 memset( out, 0x11, 8 );
                 check( rocketnet_client_finish_message( world->clients[i], 8 ) != 0 );
             }
         }
+
         rocketnet_client_send_packets( world->clients[i] );
     }
 
     rocketnet_server_update( world->server, world->time );
+
     while ( rocketnet_server_receive_messages( world->server ) != NULL )
     {
     }
+
     if ( send_messages )
     {
         for ( int slot = 0; slot < NO_WORKER_CLIENTS; slot++ )
         {
             if ( !rocketnet_server_client_connected( world->server, slot ) )
                 continue;
+
             uint8_t * out = rocketnet_server_start_message( world->server, (uint64_t) slot, NO_WORKER_CHANNEL, ROCKETNET_RELIABILITY_UNRELIABLE, 8 );
             check( out != NULL );
+
             if ( out )
             {
                 memset( out, 0x22, 8 );
@@ -199,6 +222,7 @@ static void no_worker_step( no_worker_world_t * world, bool send_messages, doubl
             }
         }
     }
+
     rocketnet_server_send_packets( world->server );
     world->time += dt;
 }
@@ -207,7 +231,9 @@ static int no_worker_connected_slots( no_worker_world_t * world )
 {
     int connected = 0;
     for ( int slot = 0; slot < NO_WORKER_CLIENTS; slot++ )
+    {
         connected += rocketnet_server_client_connected( world->server, slot ) ? 1 : 0;
+    }
     return connected;
 }
 

@@ -359,4 +359,4 @@ inline bool rocketnet_send_budget_settle( struct rocketnet_send_budget_t * budge
     return true;
 }
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H
+#endif // ROCKETNET_SDK_ROCKETNET_SEND_BUDGET_H

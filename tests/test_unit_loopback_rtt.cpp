@@ -84,6 +84,7 @@ static int loopback_rtt_finish( void * transport, struct rocketnet_packet_contex
         loopback_rtt_seam.send_time[loopback_rtt_seam.packets] = loopback_rtt_clock;
         loopback_rtt_seam.packets++;
     }
+
     return wire_bytes;
 }
 
@@ -96,15 +97,21 @@ static int loopback_rtt_acked( void * transport, const int ** client_index, cons
         {
             if ( loopback_rtt_seam.packet_id[i] != ( *packet_ids )[k] )
                 continue;
+
             const double sample = loopback_rtt_clock - loopback_rtt_seam.send_time[i];
             if ( loopback_rtt_seam.samples == 0 || sample < loopback_rtt_seam.sample_min )
+            {
                 loopback_rtt_seam.sample_min = sample;
+            }
             if ( loopback_rtt_seam.samples == 0 || sample > loopback_rtt_seam.sample_max )
+            {
                 loopback_rtt_seam.sample_max = sample;
+            }
             loopback_rtt_seam.samples++;
             break;
         }
     }
+
     return count;
 }
 
@@ -162,6 +169,7 @@ static bool loopback_rtt_pair_setup( struct loopback_rtt_pair_t * pair )
 
     pair->client = rocketnet_message_client_create( NULL, token, &client_config, NULL, NULL, 0, 0 );
     rocketnet_unit_check( pair->client != NULL );
+
     return pair->client != NULL;
 }
 
@@ -178,6 +186,7 @@ struct loopback_rtt_measures_t
 
 // one step: both sides update at the step's time, the receiver drains, the
 // sender queues one message while sending, both flush
+
 static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool send, struct loopback_rtt_measures_t * m )
 {
     pair->time += LOOPBACK_RTT_DT;
@@ -189,20 +198,25 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
     {
         const uint8_t * data = NULL;
         int bytes = 0;
+
         for ( ;; )
         {
             const int got = side == LOOPBACK_RTT_SERVER ? rocketnet_message_client_receive( pair->client, 0, &data, &bytes )
                                                         : rocketnet_message_server_receive( pair->server, 0, 0, &data, &bytes );
             if ( !got )
                 break;
+
             if ( bytes == 8 && data[0] == 0xE7 )
             {
                 uint32_t index = 0;
                 memcpy( &index, data + 4, sizeof( index ) );
                 if ( (int) index != m->received )
+                {
                     m->in_order = 0;
+                }
                 m->received++;
             }
+
             if ( side == LOOPBACK_RTT_SERVER )
                 rocketnet_message_client_release( pair->client, data );
             else
@@ -215,6 +229,7 @@ static void loopback_rtt_step( struct loopback_rtt_pair_t * pair, int side, bool
         uint8_t message[8] = { 0xE7, 0, 0, 0, 0, 0, 0, 0 };
         const uint32_t index = (uint32_t) m->sent;
         memcpy( message + 4, &index, sizeof( index ) );
+
         const uint32_t id = side == LOOPBACK_RTT_SERVER ? rocketnet_message_server_send( pair->server, 0, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) ) : rocketnet_message_client_send( pair->client, 0, ROCKETNET_RELIABILITY_RELIABLE_ORDERED, message, sizeof( message ) );
         rocketnet_unit_check( id != 0 );
         m->sent++;
@@ -228,13 +243,16 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
 {
     memset( m, 0, sizeof( *m ) );
     m->in_order = 1;
+
     struct loopback_rtt_pair_t pair;
     rocketnet_unit_check( loopback_rtt_pair_setup( &pair ) );
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                                    rocketnet_message_server_client_connected( pair.server, 0 ) );
           i++ )
+    {
         loopback_rtt_step( &pair, side, false, NULL );
+    }
     rocketnet_unit_check( rocketnet_message_server_client_connected( pair.server, 0 ) );
     rocketnet_unit_check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
@@ -247,7 +265,9 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
     sender->link.acked = loopback_rtt_acked;
 
     for ( int round = 0; round < LOOPBACK_RTT_ROUNDS + LOOPBACK_RTT_SETTLE; round++ )
+    {
         loopback_rtt_step( &pair, side, round < LOOPBACK_RTT_ROUNDS, m );
+    }
 
     sender->link.finish_packet = loopback_rtt_seam.finish_next;
     sender->link.acked = loopback_rtt_seam.acked_next;
@@ -275,11 +295,13 @@ static void loopback_rtt_check( int side )
     loopback_rtt_run( side, &m );
 
     // every message delivered once, in order, on a link that loses nothing
+
     rocketnet_unit_check( m.sent == LOOPBACK_RTT_ROUNDS );
     rocketnet_unit_check( m.received == m.sent );
     rocketnet_unit_check( m.in_order == 1 );
 
-    // Every sample and its smoothed value follow the two-step loopback cadence.
+    // every sample and its smoothed value follow the two-step loopback cadence
+
     const double low = LOOPBACK_RTT_DT - 1e-9;
     const double high = 4.0 * LOOPBACK_RTT_DT + 1e-9;
     rocketnet_unit_check( loopback_rtt_seam.samples > 0 );
@@ -288,6 +310,7 @@ static void loopback_rtt_check( int side )
     rocketnet_unit_check( m.srtt >= low && m.srtt <= high );
 
     // nothing delivered is resent
+
     rocketnet_unit_check( m.resent == 0 );
     rocketnet_unit_check( m.duplicate == 0 );
 }
@@ -301,25 +324,33 @@ REGISTER_UNIT_TEST( test_loopback_transport_rtt_client_sends );
 
 // Retain a full maximum resend delay payload budget without acknowledging any record.
 // Exercise each documented typical fixed-pool size and the large-span path.
+
 static void test_max_resend_delay_payload_reserve_without_acks()
 {
     const int budgets[] = { 1000, 10000 };
     const int payloads[] = { 128, 512, 1024, 1153, 16384 };
+
     for ( int side = 0; side < 2; ++side )
     {
         rocketnet_message_config_t config;
         rocketnet_message_default_config( &config );
         config.client_send_kbps = config.server_send_kbps = budgets[side];
+
         rocketnet_counters_t counters;
         memset( &counters, 0, sizeof( counters ) );
+
         rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
         rocketnet_unit_check( arena != NULL );
+
         rn_region_t * region = rn_arena_region( arena, 0 );
         rocketnet_unit_check( config.message_resend_delay_max_ms > 0 );
+
         const uint64_t budget = (uint64_t) budgets[side] * 125 * (uint64_t) config.message_resend_delay_max_ms / 1000;
+
         for ( int p = 0; p < 5; ++p )
         {
             rn_region_carve( region );
+
             uint64_t held = 0;
             while ( held < budget )
             {
@@ -328,8 +359,10 @@ static void test_max_resend_delay_payload_reserve_without_acks()
                 rocketnet_unit_check( descriptor != RN_DESCRIPTOR_NONE );
                 held += (uint64_t) bytes;
             }
+
             rocketnet_unit_check( !rn_region_exhausted( region ) );
         }
+
         printf( "maximum resend delay reserve: %d kbps, %llu payload bytes, %llu bytes/connection, %llu bytes/1000\n",
                 budgets[side], (unsigned long long) budget,
                 (unsigned long long) rocketnet_message_connection_bytes( &config ),

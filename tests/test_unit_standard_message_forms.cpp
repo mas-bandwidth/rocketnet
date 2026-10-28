@@ -732,7 +732,9 @@ static const struct standard_message_vector_input_t standard_message_forms_input
 static void standard_message_forms_data( uint8_t * out, int bytes )
 {
     for ( int i = 0; i < bytes; i++ )
+    {
         out[i] = (uint8_t) ( i * 7 + 3 );
+    }
 }
 
 static int standard_message_forms_generate( const char * id, uint8_t * out, int capacity )
@@ -750,10 +752,12 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
             standard_message_forms_data( out, input->bytes );
             return rocketnet_message_single_finish( out, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES, input->bytes );
         }
+
         static uint8_t data[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
         if ( input->bytes < 1 || input->bytes > (int) sizeof( data ) )
             return -1;
         standard_message_forms_data( data, input->bytes );
+
         if ( strncmp( id, "m3.", 3 ) == 0 )
         {
             if ( strcmp( id, "m3.block-wide-last" ) == 0 )
@@ -764,6 +768,7 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
                 data[1] = 0x69;
             }
         }
+
         struct rocketnet_message_record_t record;
         memset( &record, 0, sizeof( record ) );
         record.code = input->code;
@@ -777,12 +782,14 @@ static int standard_message_forms_generate( const char * id, uint8_t * out, int 
         record.fragments = input->fragments;
         record.data = data;
         record.bytes = input->bytes;
+
         struct rocketnet_message_writer_t writer;
         rocketnet_message_writer_begin( &writer, out, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
         if ( !rocketnet_message_writer_add( &writer, &record ) )
             return -1;
         return rocketnet_message_writer_finish( &writer );
     }
+
     return -1;
 }
 
@@ -790,6 +797,7 @@ static void test_standard_message_forms_vectors()
 {
     const int count = (int) ( sizeof( standard_message_forms_table ) / sizeof( standard_message_forms_table[0] ) );
     rocketnet_unit_check( rn_standard_vectors_walk( standard_message_forms_table, count, standard_message_forms_generate ) == count );
+
     uint8_t scratch[2];
     rocketnet_unit_check( standard_message_forms_generate( "m2.no-such-vector", scratch, (int) sizeof( scratch ) ) == -1 );
     rocketnet_unit_check( rocketnet_message_single_capacity( ROCKETNET_MAX_PACKET_PAYLOAD_BYTES ) == ROCKETNET_MESSAGE_SINGLE_BYTES );

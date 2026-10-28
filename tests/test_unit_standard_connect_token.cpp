@@ -19,7 +19,7 @@
 #include <sodium.h>
 #else
 #include "../sodium/sodium.h"
-#endif
+#endif // #if defined( ROCKETNET_USE_SYSTEM_SODIUM )
 
 static const uint8_t rn_test_wrong_server_public_key[32] = {
     0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc,
@@ -73,6 +73,7 @@ static int rn_test_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned
     uint8_t nonce[crypto_box_NONCEBYTES];
     if ( crypto_scalarmult_base( epk, esk ) != 0 )
         return -1;
+
     crypto_generichash_state state;
     if ( crypto_generichash_init( &state, NULL, 0, crypto_box_NONCEBYTES ) != 0 ||
          crypto_generichash_update( &state, epk, crypto_box_PUBLICKEYBYTES ) != 0 ||
@@ -82,6 +83,7 @@ static int rn_test_seal_with_ephemeral( uint8_t * c, const uint8_t * m, unsigned
     if ( crypto_box_easy( c + crypto_box_PUBLICKEYBYTES, m, mlen, nonce, server_public_key, esk ) != 0 )
         return -1;
     memcpy( c, epk, crypto_box_PUBLICKEYBYTES );
+
     return 0;
 }
 
@@ -136,11 +138,14 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
     {
         if ( capacity < ROCKETNET_CONNECT_TOKEN_BYTES )
             return -1;
+
         // a private block whose protocol id disagrees with the signed one
+
         rn_test_fill_signed( &sf );
         rn_test_fill_private( &pf );
         pf.expire_timestamp = ROCKETNET_TEST_EXPIRE_TS;
         pf.protocol_id = ROCKETNET_TEST_PROTOCOL_ID + 1;
+
         uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
         rocketnet_write_connect_token_private( &pf, private_block );
         if ( rn_test_seal_with_ephemeral( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
@@ -149,6 +154,7 @@ static int standard_connect_token_generate( const char * id, uint8_t * out, int 
 
         uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
         rocketnet_write_signed_connect_data( &sf, signed_buffer );
+
         uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
         crypto_sign_detached( signature, NULL, signed_buffer, sizeof( signed_buffer ), rocketnet_test_backend_secret_key );
 
@@ -178,6 +184,7 @@ static void test_standard_connect_token_vectors()
 #endif // #if ROCKETNET_DEV
 
     // the frozen token's identifier is the t3 twin
+
     uint8_t identifier[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
     rocketnet_connect_token_identifier( identifier, rocketnet_test_frozen_token );
     rocketnet_unit_check( memcmp( identifier, rocketnet_test_token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0 );
@@ -189,9 +196,11 @@ static void test_standard_connect_token_vectors()
     struct rocketnet_connect_token_private_t opened;
 
     // production fresh-ephemeral token minting opens and verifies cleanly
+
     rn_test_fill_signed( &sf );
     rn_test_fill_private( &pf );
     rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
+
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature, rocketnet_test_backend_public_key ) );
     rocketnet_unit_check( rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
@@ -201,6 +210,7 @@ static void test_standard_connect_token_vectors()
     // server-side refusal that its vector names.
 
     // bad address flags: the flag byte carries a bit beyond IPv4 and IPv6
+
     rn_test_fill_signed( &sf );
     sf.address_flags = 0x05;
     rn_test_fill_private( &pf );
@@ -209,13 +219,14 @@ static void test_standard_connect_token_vectors()
                                                                        rocketnet_test_token_vector_ephemeral_secret[1], token ) );
 #else
     rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
-#endif
+#endif // #if ROCKETNET_DEV
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( parsed.signed_connect_data[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] == 0x05 );
     rocketnet_unit_check( ( parsed.signed_connect_data[ROCKETNET_SIGNED_OFFSET_ADDRESS_FLAGS] & ~( ROCKETNET_ADDRESS_FLAG_IPV4 | ROCKETNET_ADDRESS_FLAG_IPV6 ) ) != 0 );
 
     // wrong server key: the block is sealed to another server public key, so
     // the server's own key cannot open it, even though the signature verifies
+
     rn_test_fill_signed( &sf );
     memcpy( sf.server_public_key, rn_test_wrong_server_public_key, 32 );
     rn_test_fill_private( &pf );
@@ -224,16 +235,18 @@ static void test_standard_connect_token_vectors()
                                                                        rocketnet_test_token_vector_ephemeral_secret[2], token ) );
 #else
     rocketnet_unit_check( rocketnet_write_connect_token( &sf, &pf, rocketnet_test_backend_secret_key, token ) );
-#endif
+#endif // #if ROCKETNET_DEV
     rocketnet_read_connect_token( &parsed, token );
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( parsed.signed_connect_data, parsed.signature, rocketnet_test_backend_public_key ) );
     rocketnet_unit_check( !rocketnet_open_connect_token_private( &opened, parsed.signed_connect_data, rocketnet_test_server_public_key, rocketnet_test_server_secret_key ) );
 
     // sealed mismatch: the block opens but its inner protocol id disagrees
     // with the signed one
+
     rn_test_fill_signed( &sf );
     rn_test_fill_private( &pf );
     pf.protocol_id = ROCKETNET_TEST_PROTOCOL_ID + 1;
+
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
     rocketnet_write_connect_token_private( &pf, private_block );
 #if ROCKETNET_DEV
@@ -242,9 +255,10 @@ static void test_standard_connect_token_vectors()
 #else
     rocketnet_unit_check( crypto_box_seal( sf.sealed_private_block, private_block, ROCKETNET_PRIVATE_BLOCK_BYTES,
                                            rocketnet_test_server_public_key ) == 0 );
-#endif
+#endif // #if ROCKETNET_DEV
     uint8_t signed_buffer[ROCKETNET_SIGNED_CONNECT_DATA_BYTES];
     rocketnet_write_signed_connect_data( &sf, signed_buffer );
+
     uint8_t signature[ROCKETNET_SIGNATURE_BYTES];
     crypto_sign_detached( signature, NULL, signed_buffer, sizeof( signed_buffer ), rocketnet_test_backend_secret_key );
     rocketnet_unit_check( rocketnet_verify_signed_connect_data( signed_buffer, signature, rocketnet_test_backend_public_key ) );

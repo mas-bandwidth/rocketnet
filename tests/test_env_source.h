@@ -57,9 +57,12 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
         if ( rocketnet_platform_getenv( name, probe, sizeof( probe ) ) != 0 )
             return 0;
     }
-    // An empty value is stored present and empty on every platform, so a
-    // case can reach the set-but-empty branch that the Windows CRT cannot.
+
+    // an empty value is stored present and empty on every platform, so a
+    // case can reach the set-but-empty branch that the Windows CRT cannot
+
     rocketnet_platform_test_environment_set( name, value );
+
     return 0;
 }
 
@@ -79,6 +82,7 @@ static inline void rocketnet_test_env_restore()
 // DEV=0 has no in-memory overlay: cases that exercise the real environment
 // read set the process environment directly. The runner clears every config
 // name before each case (tests/test.cpp), so cases stay isolated.
+
 static inline int rocketnet_test_env_setenv( const char * name, const char * value, int overwrite )
 {
 #if defined( _WIN32 )
@@ -93,12 +97,13 @@ static inline int rocketnet_test_env_setenv( const char * name, const char * val
         if ( present )
             return 0;
     }
+
     return _putenv_s( name, value );
 #else
     if ( !overwrite && getenv( name ) )
         return 0;
     return setenv( name, value, 1 );
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 static inline int rocketnet_test_env_unsetenv( const char * name )
@@ -107,7 +112,7 @@ static inline int rocketnet_test_env_unsetenv( const char * name )
     return _putenv_s( name, "" );
 #else
     return unsetenv( name );
-#endif
+#endif // #if defined( _WIN32 )
 }
 
 static inline void rocketnet_test_env_restore()

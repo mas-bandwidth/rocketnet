@@ -5,6 +5,6 @@
 #include "rocketnet_counters.h"
 #include "rocketnet_server.h"
 half-open idle deadline	ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS	10
-handshake work budget	ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE	1024
+handshake work budget	ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE	16
 failed-signature budget	ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET	90
 failed-signature window	ROCKETNET_SIGNATURE_VERIFY_FAILURE_WINDOW_SECONDS	10

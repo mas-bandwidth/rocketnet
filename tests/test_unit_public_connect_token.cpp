@@ -46,7 +46,9 @@ static const char * const public_token_one_address[] = {
 static void public_token_fill_user_data( uint8_t * user_data )
 {
     for ( int i = 0; i < ROCKETNET_USER_DATA_BYTES; i++ )
+    {
         user_data[i] = (uint8_t) ( i * 7 + 3 );
+    }
 }
 
 static void public_token_make_keys( uint8_t * backend_public_key, uint8_t * backend_secret_key,
@@ -116,11 +118,14 @@ static int public_token_connection_request( const uint8_t * token, uint8_t * pac
     rocketnet_client_protocol_init( &client, &counters );
     client.reassembly = rocketnet_reassembly_set_create( NULL, 1, 4, 16384, 8 );
     rocketnet_unit_check( client.reassembly );
+
     rocketnet_reassembly_set_begin_update( client.reassembly );
     rocketnet_unit_check( rocketnet_client_protocol_connect( &client, token, 1000.0,
                                                              public_token_create_timestamp ) == 1 );
+
     rocketnet_client_protocol_update( &client, 1000.0, packet, packet_bytes );
     rocketnet_reassembly_set_destroy( client.reassembly );
+
     return *packet_bytes;
 }
 
@@ -258,7 +263,7 @@ static void public_token_expected_null_assert( const char *, const char *, const
 {
     public_token_expected_null_asserts++;
 }
-#endif
+#endif // #if ROCKETNET_ASSERTS
 
 void test_public_connect_token_null_or_short_buffer_refused()
 {
@@ -275,7 +280,7 @@ void test_public_connect_token_null_or_short_buffer_refused()
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     public_token_expected_null_asserts = 0;
     rocketnet_assert_function( public_token_expected_null_assert );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_addresses, 2,
                                                                     public_token_client_id, public_token_create_timestamp,
@@ -284,8 +289,9 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
+
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     memset( token, 0xa5, sizeof( token ) );
@@ -296,13 +302,15 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     user_data, token,
                                                                     ROCKETNET_CONNECT_TOKEN_BYTES - 1 ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     for ( int i = 0; i < (int) sizeof( token ); i++ )
+    {
         rocketnet_unit_check( token[i] == 0xa5 );
+    }
 
 #if ROCKETNET_ASSERTS
     saved_assert = rn_assert_function;
     public_token_expected_null_asserts = 0;
     rocketnet_assert_function( public_token_expected_null_assert );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     rocketnet_unit_check( rocketnet_write_production_connect_token( NULL, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 1,
                                                                     public_token_client_id, public_token_create_timestamp,
@@ -311,8 +319,9 @@ void test_public_connect_token_null_or_short_buffer_refused()
                                                                     sizeof( token ) ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
+
     rocketnet_unit_check( public_token_expected_null_asserts == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
 
     rocketnet_unit_check( rocketnet_write_production_connect_token( backend_secret_key, server_public_key,
                                                                     public_token_protocol_id, public_token_one_address, 0,
@@ -360,8 +369,10 @@ void test_public_connect_token_sealed_block_varies()
 
     rocketnet_unit_check( memcmp( fields_a.sealed_private_block, fields_b.sealed_private_block,
                                   ROCKETNET_SEALED_BLOCK_BYTES ) != 0 );
+
     // the sealed block opens with the ephemeral public key, so a fixed
     // ephemeral key shows here even though the session keys still differ
+
     rocketnet_unit_check( memcmp( fields_a.sealed_private_block, fields_b.sealed_private_block,
                                   ROCKETNET_KEY_BYTES ) != 0 );
     rocketnet_unit_check( memcmp( token_a, token_b, ROCKETNET_CONNECT_TOKEN_BYTES ) != 0 );

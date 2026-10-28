@@ -37,10 +37,12 @@ static void test_rio_transport_overflow_seam()
 
     // The queued tail is delivered by the next update. The seam contains two
     // full banks, so both calls stay within the per-call receive bound.
+
     check( packet_counts[1] == ROCKETNET_RIO_RECEIVES );
     check( counters[ROCKETNET_RIO_NUM_COUNTERS + ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED] ==
            2 * ROCKETNET_RIO_RECEIVES );
     check( repost_calls == 2 * ROCKETNET_RIO_RECEIVES );
+
     for ( int i = 0; i < ROCKETNET_RIO_NUM_COUNTERS; ++i )
     {
         if ( i == ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED )
@@ -60,4 +62,4 @@ static void test_rio_transport_worker_handoff()
 
 REGISTER_UNIT_TEST( test_rio_transport_worker_handoff );
 
-#endif
+#endif // #if defined( _WIN32 )

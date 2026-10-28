@@ -90,6 +90,7 @@ static struct server_replay_marks_client_t server_replay_marks_add_client( struc
     struct server_replay_marks_client_t client;
     client.mapping = rocketnet_encryption_map_add( fixture->map, address, ROCKETNET_REPLAY_MARKS_TEST_HANDSHAKE_DEADLINE );
     rocketnet_unit_check( client.mapping >= 0 );
+
     const uint64_t owner_generation = rocketnet_encryption_map_owner_generation( fixture->map, client.mapping );
     client.slot = rocketnet_client_slots_assign( fixture->slots, client_id, client.mapping,
                                                  owner_generation, user_data );
@@ -104,6 +105,7 @@ static bool server_replay_marks_record_forget( void * context, const struct rock
 {
     struct server_replay_marks_recording_t * recording = (struct server_replay_marks_recording_t *) context;
     rocketnet_unit_check( recording->count < ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS );
+
     struct server_replay_marks_call_t * call = &recording->calls[recording->count++];
     call->kind = SERVER_REPLAY_MARKS_FORGET;
     call->address = *address;
@@ -111,6 +113,7 @@ static bool server_replay_marks_record_forget( void * context, const struct rock
     if ( recording->forget_refusals == 0 )
         return true;
     recording->forget_refusals--;
+
     return false;
 }
 
@@ -118,6 +121,7 @@ static bool server_replay_marks_record_mark( void * context, const struct rocket
 {
     struct server_replay_marks_recording_t * recording = (struct server_replay_marks_recording_t *) context;
     rocketnet_unit_check( recording->count < ROCKETNET_REPLAY_MARKS_TEST_MAX_CALLS );
+
     struct server_replay_marks_call_t * call = &recording->calls[recording->count++];
     call->kind = SERVER_REPLAY_MARKS_MARK;
     call->address = *address;
@@ -125,6 +129,7 @@ static bool server_replay_marks_record_mark( void * context, const struct rocket
     if ( recording->mark_refusals == 0 )
         return true;
     recording->mark_refusals--;
+
     return false;
 }
 
@@ -178,6 +183,7 @@ static void test_server_replay_marks_mark_connected_slots_once()
 
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 3 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 41 );
     server_replay_marks_check_mark( &recording.calls[1], &b, 7 );
     server_replay_marks_check_mark( &recording.calls[2], &c, 0 );
@@ -191,6 +197,7 @@ static void test_server_replay_marks_mark_connected_slots_once()
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 42 );
 
     server_replay_marks_fixture_destroy( &fixture );
@@ -216,6 +223,7 @@ static void test_server_replay_marks_forget_released_slots_first()
 
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 2 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
     server_replay_marks_check_mark( &recording.calls[1], &b, 0 );
 
@@ -226,6 +234,7 @@ static void test_server_replay_marks_forget_released_slots_first()
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 2 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
     server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
 
@@ -255,6 +264,7 @@ static void test_server_replay_marks_follow_an_address_change()
 
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
@@ -266,6 +276,7 @@ static void test_server_replay_marks_follow_an_address_change()
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 2 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
     server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
 
@@ -291,6 +302,7 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
 
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
 
     rocketnet_client_slots_release( fixture.slots, client_a.slot );
@@ -306,6 +318,7 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     recording.forget_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
 
     // the retry lands the old forget and only then marks the new address
@@ -313,6 +326,7 @@ static void test_server_replay_marks_refused_forget_keeps_the_slot()
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 2 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
     server_replay_marks_check_mark( &recording.calls[1], &b, 9 );
 
@@ -342,6 +356,7 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
 
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 5 );
 
     rocketnet_client_slots_release( fixture.slots, client.slot );
@@ -355,6 +370,7 @@ static void test_server_replay_marks_forget_a_connected_slot_without_a_mapping()
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
 
     memset( &recording, 0, sizeof( recording ) );
@@ -385,6 +401,7 @@ static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
 
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     rocketnet_client_slots_release( fixture.slots, client.slot );
@@ -392,15 +409,18 @@ static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
 
     // A full pending buffer refuses this unmarked slot's forget. Its seen
     // identity remains responsible, so the next walk asks for it again.
+
     memset( &recording, 0, sizeof( recording ) );
     recording.forget_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_forget( &recording.calls[0], &a );
 
     memset( &recording, 0, sizeof( recording ) );
@@ -423,6 +443,7 @@ static void test_server_replay_marks_refused_mark_is_owed()
     const struct rocketnet_address_t a = server_replay_marks_address( "198.51.100.7:50000" );
 
     // first seen at zero, refused, owed, then queued
+
     const struct server_replay_marks_client_t client = server_replay_marks_add_client( &fixture, &a, 100, 0 );
 
     struct server_replay_marks_recording_t recording;
@@ -430,11 +451,13 @@ static void test_server_replay_marks_refused_mark_is_owed()
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     memset( &recording, 0, sizeof( recording ) );
@@ -442,22 +465,26 @@ static void test_server_replay_marks_refused_mark_is_owed()
     rocketnet_unit_check( recording.count == 0 );
 
     // an advance refused twice is asked for each walk until queued
+
     rocketnet_encryption_map_entry( fixture.map, client.mapping )->replay_session.highest_opened = 9;
     memset( &recording, 0, sizeof( recording ) );
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 9 );
 
     memset( &recording, 0, sizeof( recording ) );
@@ -466,6 +493,7 @@ static void test_server_replay_marks_refused_mark_is_owed()
 
     // a reconnect into the same slot before any walk: its zero mark (a fall
     // below the slot's mark) refused, then asked again and queued
+
     rocketnet_client_slots_release( fixture.slots, client.slot );
     rocketnet_encryption_map_remove_current( fixture.map, client.mapping );
     const struct server_replay_marks_client_t again = server_replay_marks_add_client( &fixture, &a, 200, 0 );
@@ -475,11 +503,13 @@ static void test_server_replay_marks_refused_mark_is_owed()
     recording.mark_refusals = 1;
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     memset( &recording, 0, sizeof( recording ) );
     server_replay_marks_walk( &fixture, &recording );
     rocketnet_unit_check( recording.count == 1 );
+
     server_replay_marks_check_mark( &recording.calls[0], &a, 0 );
 
     memset( &recording, 0, sizeof( recording ) );

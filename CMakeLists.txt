@@ -1001,8 +1001,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_warning_floor(${test_target})
     endforeach()
     if(NOT ROCKETNET_DEV)
-        add_executable(test_production_client_lifecycle tests/test_unit_public_step_driven_client.cpp)
-        target_compile_definitions(test_production_client_lifecycle PRIVATE ROCKETNET_PRODUCTION_LIFECYCLE_EXECUTABLE=1)
+        add_executable(test_production_client_lifecycle functional/production_client_lifecycle.cpp)
         target_link_libraries(test_production_client_lifecycle PRIVATE rocketnet)
         rocketnet_warning_floor(test_production_client_lifecycle)
     endif()
@@ -1251,6 +1250,11 @@ if(ROCKETNET_BUILD_TOOLS)
     add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
     add_executable(instruction_count bench/instruction_count.cpp)
     add_executable(ack_block_build_cost bench/ack_block_build_cost.cpp)
+    # One unit of the handshake work budget (bench/handshake_cost.cpp): the
+    # measured cost behind the handshakes_per_update default.
+    add_executable(handshake_cost bench/handshake_cost.cpp)
+    target_compile_features(handshake_cost PRIVATE cxx_std_11)
+    rocketnet_use_sodium(handshake_cost)
     # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
     # installed, and reaches no shipped SDK/API surface. The required .c path
     # is compiled as C++ so it can compose the private protocol and AF_XDP
@@ -1289,7 +1293,7 @@ if(ROCKETNET_BUILD_TOOLS)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(server_receive_cost)
     target_link_libraries(keygen PRIVATE rocketnet)
-    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost)
+    foreach(tool soak load load_split soak_sim transport_memory client_main_thread_cost ack_block_build_cost handshake_cost)
         target_link_libraries(${tool} PRIVATE rocketnet_dev)
     endforeach()
     target_link_libraries(instruction_count PRIVATE rocketnet_dev)

@@ -2451,7 +2451,7 @@ The state numbers:
 <a id="t11.1"></a>
 ### t11.1. Cookie processing
 
-A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes, replacing any cookie already stored, and MUST send nothing in response. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change. The client trusts only the server: a cookie's salt rides in the clear, so anyone who sees the request can echo it, and an accepted cookie MUST NOT refresh the client's last-received time and MUST NOT be taken as a round-trip sample. Both come only from the connection challenge and the packets after it that open under the attempt's keys.
+A connection cookie packet MUST be processed in requesting cookie (1) and sending connection request (2) and MUST be ignored in every other state. A client MUST refuse a packet whose size is not the cookie packet size of [t8 Packet formats](#t8), and MUST ignore one whose echoed connection salt is not the attempt's salt. A client that accepts a cookie MUST store its last 24 bytes and MUST send nothing in response. The first cookie accepted in an attempt is the kept cookie, and no later cookie replaces it. A cookie accepted in sending connection request (2) MUST replace only the latest cookie, and once a latest cookie is stored the client's requests MUST alternate between the kept cookie and the latest cookie, starting with the kept cookie, so the kept cookie goes out on at least every second request. In requesting cookie (1) the accepted cookie MUST move the client to sending connection request (2); in sending connection request (2) the state MUST NOT change. The client trusts only the server: a cookie's salt rides in the clear, so anyone who sees the request can echo it, and an accepted cookie MUST NOT refresh the client's last-received time and MUST NOT be taken as a round-trip sample. Both come only from the connection challenge and the packets after it that open under the attempt's keys. For the same reason a cookie never displaces the kept cookie: a forged cookie can cost the client a request, but no packet that does not open under the attempt's keys moves the handshake backwards, and a genuine fresh cookie, sent by the server once the kept cookie has expired, still goes out on every second request.
 
 <a id="t11.2"></a>
 ### t11.2. Challenge and denial processing order
@@ -2484,12 +2484,12 @@ A session packet opens under the session keys from sending connection response (
 | any negative state | connect | | ignore | unchanged |
 | any negative state | any other event | | ignore | unchanged |
 | requesting cookie (1) | update, send due | | send request with a zero return cookie | requesting cookie (1) |
-| requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes | sending connection request (2) |
+| requesting cookie (1) | cookie | size correct, salt matches | store the last 24 bytes as the kept cookie | sending connection request (2) |
 | requesting cookie (1) | cookie | size wrong or salt differs | ignore | requesting cookie (1) |
 | requesting cookie (1) | timeout | no authenticated packet for the token timeout since the attempt began | | cookie request timed out (-2) |
 | requesting cookie (1) | total deadline | token lifetime elapsed | | connect token expired (-7) |
-| sending connection request (2) | update, send due | | send request with the stored cookie | sending connection request (2) |
-| sending connection request (2) | cookie | size correct, salt matches | replace the stored cookie | sending connection request (2) |
+| sending connection request (2) | update, send due | | send request with the kept cookie, or, once a latest cookie is stored, with the kept and the latest cookie in turn | sending connection request (2) |
+| sending connection request (2) | cookie | size correct, salt matches | replace the latest cookie; the kept cookie stays | sending connection request (2) |
 | sending connection request (2) | cookie | size wrong or salt differs | ignore | sending connection request (2) |
 | sending connection request (2) | challenge | size correct, opens | derive keys; erase the ephemeral secret; build the response | sending connection response (3) |
 | sending connection request (2) | challenge | size wrong | refuse as WRONG_SIZE | sending connection request (2) |
@@ -3642,7 +3642,7 @@ The values this section introduces are:
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
-| handshake work budget | `1024` | requests per update | default post-cookie connection requests one server processes in one update |
+| handshake work budget | `16` | requests per update | default post-cookie connection requests one server processes in one update |
 | failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |
 | failed-signature window | `10` | seconds | the period over which the failed-signature budget is counted |
 
@@ -3660,7 +3660,7 @@ input: the timing defaults above, in the order stated, each as a little-endian u
 0a 00 00 00 00 00 00 00 03 00 00 00 00 00 00 00
 3c 00 00 00 00 00 00 00 0a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00 01 00 00 00 00 00 00 00
-00 04 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
+10 00 00 00 00 00 00 00 5a 00 00 00 00 00 00 00
 0a 00 00 00 00 00 00 00
 ```
 

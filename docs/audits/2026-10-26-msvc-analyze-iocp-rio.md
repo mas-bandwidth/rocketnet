@@ -1,7 +1,7 @@
 # Audit: Windows MSVC `/analyze` on IOCP and RIO Transports (2026-10-26)
 
 - **Date:** 2026-10-27
-- **Runner:** `captain` (native Windows 11 x64, `MSBuild version 18.5.0-release-26180-04+c5bc3ed94`)
+- **Runner:** a Windows 11 x64 MSVC bench (native Windows 11 x64, `MSBuild version 18.5.0-release-26180-04+c5bc3ed94`)
 - **Compiler / Toolset:** `Microsoft (R) C/C++ Optimizing Compiler Version 19.51.36260 for x64` (Visual Studio 18 2026 Community, `vcvars64.bat`)
 - **CMake:** `cmake version 4.4.0-rc2` (`-G "Visual Studio 18 2026" -A x64`)
 - **Base Commit:** `100803606f932ff822f5fbe5b6682811cf37412d` (in-scope files identical at `origin/main` `0dc33a950e75d182f76a6a28f06e588da7b4be65`)
@@ -19,7 +19,7 @@
 
 Previously, the static-analysis triage (`docs/audits/2026-10-26-static-analysis-triage.md`) covered Linux `clang-tidy` and `cppcheck`, while Windows `rocketnet_server_iocp_windows.cpp` and `rocketnet_server_rio_windows.cpp` were only built with MSVC `/W4 /WX` in CI without `/analyze`.
 
-This audit configures, builds, and executes the actual Windows IOCP and RIO server/client transport implementations and test suites on `captain` under MSVC `/analyze` in two separate `Release` build trees:
+This audit configures, builds, and executes the actual Windows IOCP and RIO server/client transport implementations and test suites on a Windows 11 x64 MSVC bench under MSVC `/analyze` in two separate `Release` build trees:
 
 1. **`ROCKETNET_DEV=ON`** (`src-on`) — development build with test seams (`ROCKETNET_DEV=1`, `ROCKETNET_TEST_SEAMS=1`) and fault-injection hooks (`ROCKETNET_IOCP_TESTS=1`, `ROCKETNET_RIO_TESTS=1`, `ROCKETNET_RIO_OVERFLOW_TEST_HOOKS=1`).
 2. **`ROCKETNET_DEV=OFF`** (`src-off`) — production build without test seams (`ROCKETNET_DEV=0`), plus the production-only `test_windows_transports_production` target that links `rocketnet` (`ROCKETNET_DEV=0`) directly.
@@ -79,7 +79,7 @@ CMake's `Modules/Platform/Windows-MSVC.cmake` initializes `CMAKE_C_FLAGS_INIT="/
 
 ### 2.3 Build Steps and Retained Build Logs
 
-All builds were executed on `captain` under `winlock` using:
+All builds were executed on the Windows x64 MSVC bench under its exclusive bench lock using:
 
 ```bat
 cmake --build build --config Release --parallel 16 --target <targets...>
@@ -126,7 +126,7 @@ Both `sdk/rocketnet_server_iocp_windows.cpp` (compiled in `rocketnet`, `rocketne
   - Note: Production and dev library targets (`rocketnet`, `rocketnet_dev`, `rocketnet_shared`, `rocketnet_shared_dev`, `test_windows_transports_production`) emit **0** warnings on `sdk/rocketnet_server_rio_windows.cpp`.
 - **Verbatim Tool Diagnostic:**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_rio_windows.cpp(1544): warning C6326: Potential comparison of a constant with another constant. [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\test_iocp.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_rio_windows.cpp(1544): warning C6326: Potential comparison of a constant with another constant. [C:\job\src-on\build\test_iocp.vcxproj]
   ```
 - **Source Context (`sdk/rocketnet_server_rio_windows.cpp:1541-1551` in `rocketnet_server_rio_test_worker_handoff`):**
   ```cpp
@@ -152,7 +152,7 @@ Both `sdk/rocketnet_server_iocp_windows.cpp` (compiled in `rocketnet`, `rocketne
   - `ROCKETNET_DEV=OFF`: `rocketnet`, `rocketnet_dev`, `rocketnet_shared`, `rocketnet_shared_dev`, `test_transport_control`
 - **Verbatim Tool Diagnostic:**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_transport.cpp(841): warning C6262: Function uses '25020' bytes of stack.  Consider moving some data to heap. [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\rocketnet.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_transport.cpp(841): warning C6262: Function uses '25020' bytes of stack.  Consider moving some data to heap. [C:\job\src-on\build\rocketnet.vcxproj]
   ```
 - **Source Context (`sdk/rocketnet_server_transport.cpp:840-874` in `rocketnet_server_flush_control_buffer`):**
   ```cpp
@@ -180,8 +180,8 @@ Both `sdk/rocketnet_server_iocp_windows.cpp` (compiled in `rocketnet`, `rocketne
   - `ROCKETNET_DEV=OFF`: `rocketnet`, `rocketnet_dev`, `rocketnet_shared`, `rocketnet_shared_dev`, `test_transport_control`
 - **Verbatim Tool Diagnostics:**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_transport.cpp(906): warning C6386: Buffer overrun while writing to 'send_buffer->to':  the writable size is '20000' bytes, but 'index' bytes might be written.: Lines: 886, 887, 888, 898, 900, 902, 905, 906 [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\rocketnet.vcxproj]
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_transport.cpp(907): warning C6386: Buffer overrun while writing to 'send_buffer->packet_bytes':  the writable size is '4000' bytes, but 'index' bytes might be written.: Lines: 886, 887, 888, 898, 900, 902, 905, 906, 907 [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\rocketnet.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_transport.cpp(906): warning C6386: Buffer overrun while writing to 'send_buffer->to':  the writable size is '20000' bytes, but 'index' bytes might be written.: Lines: 886, 887, 888, 898, 900, 902, 905, 906 [C:\job\src-on\build\rocketnet.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_transport.cpp(907): warning C6386: Buffer overrun while writing to 'send_buffer->packet_bytes':  the writable size is '4000' bytes, but 'index' bytes might be written.: Lines: 886, 887, 888, 898, 900, 902, 905, 906, 907 [C:\job\src-on\build\rocketnet.vcxproj]
   ```
 - **Source Context (`sdk/rocketnet_server_transport.cpp:862, 884-909` in `rocketnet_server_flush_control_buffer` and `rocketnet_server_reserve_send_frame`):**
   ```cpp
@@ -212,8 +212,8 @@ Both `sdk/rocketnet_server_iocp_windows.cpp` (compiled in `rocketnet`, `rocketne
   - `ROCKETNET_DEV=OFF`: `rocketnet`, `rocketnet_dev`, `rocketnet_shared`, `rocketnet_shared_dev`, `test_transport_control`
 - **Verbatim Tool Diagnostics:**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_transport.cpp(1029): warning C6326: Potential comparison of a constant with another constant. [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\rocketnet.vcxproj]
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_transport.cpp(1030): warning C6326: Potential comparison of a constant with another constant. [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\rocketnet.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_transport.cpp(1029): warning C6326: Potential comparison of a constant with another constant. [C:\job\src-on\build\rocketnet.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_transport.cpp(1030): warning C6326: Potential comparison of a constant with another constant. [C:\job\src-on\build\rocketnet.vcxproj]
   ```
 - **Source Context (`sdk/rocketnet_server_transport.cpp:1022-1035` in `rocketnet_server_transport_memory_plan`):**
   ```cpp
@@ -241,7 +241,7 @@ Both `sdk/rocketnet_server_iocp_windows.cpp` (compiled in `rocketnet`, `rocketne
   - Note: Does not fire in `ROCKETNET_DEV=ON` (`rocketnet_dev`, `rocketnet_shared_dev`), where `ROCKETNET_TEST_SEAMS` is `1`.
 - **Verbatim Tool Diagnostic:**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-off\sdk\rocketnet_server_transport.cpp(1523): warning C6326: Potential comparison of a constant with another constant. [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-off\build\rocketnet.vcxproj]
+  C:\job\src-off\sdk\rocketnet_server_transport.cpp(1523): warning C6326: Potential comparison of a constant with another constant. [C:\job\src-off\build\rocketnet.vcxproj]
   ```
 - **Source Context (`sdk/rocketnet_server_transport.cpp:564-574` and `1520-1525`):**
   ```cpp
@@ -271,7 +271,7 @@ Both `sdk/rocketnet_server_iocp_windows.cpp` (compiled in `rocketnet`, `rocketne
   - `ROCKETNET_DEV=OFF`: `rocketnet`, `rocketnet_dev`, `rocketnet_shared`, `rocketnet_shared_dev`, `test_transport_control`
 - **Verbatim Tool Diagnostic:**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\sdk\rocketnet_server_transport.cpp(3218): warning C6262: Function uses '29048' bytes of stack.  Consider moving some data to heap. [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\rocketnet.vcxproj]
+  C:\job\src-on\sdk\rocketnet_server_transport.cpp(3218): warning C6262: Function uses '29048' bytes of stack.  Consider moving some data to heap. [C:\job\src-on\build\rocketnet.vcxproj]
   ```
 - **Source Context (`sdk/rocketnet_server_transport.cpp:3217-3251` in `rocketnet_server_transport_send_packets_impl`):**
   ```cpp
@@ -296,7 +296,7 @@ Although `tests/test_iocp.cpp` is outside `PATHS`, `test_iocp.vcxproj` is built 
 
 - **Verbatim Tool Diagnostic (`on-lib-build.log` / `off-lib-build.log`):**
   ```text
-  C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\tests\test_iocp.cpp(549): warning C28182: Dereferencing NULL pointer. 'batch->packet_data[0]' contains the same NULL value as 'view' did. : Lines: 532, 533, 534, 535, 536, 538, 539, 540, 541, 542, 543, 545, 546, 547, 549, 550, 552, 543, 545, 546, 547, 549 [C:\rowan-jobs\rn-windows-msvc-analyze-iocp-rio\src-on\build\test_iocp.vcxproj]
+  C:\job\src-on\tests\test_iocp.cpp(549): warning C28182: Dereferencing NULL pointer. 'batch->packet_data[0]' contains the same NULL value as 'view' did. : Lines: 532, 533, 534, 535, 536, 538, 539, 540, 541, 542, 543, 545, 546, 547, 549, 550, 552, 543, 545, 546, 547, 549 [C:\job\src-on\build\test_iocp.vcxproj]
   ```
 - **Source Context (`tests/test_iocp.cpp:542-554` in `test_receive_publication_never_waits`):**
   ```cpp
@@ -333,7 +333,7 @@ For completeness across `rocketnet`, `rocketnet_dev`, `rocketnet_shared`, `rocke
 
 ## 5. Runtime Execution Verification (`ROCKETNET_DEV=ON` and `ROCKETNET_DEV=OFF`)
 
-All tests were executed on `captain` under `winlock` using the `/analyze`-built binaries in `src-on/bin/Release/` and `src-off/bin/Release/`.
+All tests were executed on the Windows x64 MSVC bench under its exclusive bench lock using the `/analyze`-built binaries in `src-on/bin/Release/` and `src-off/bin/Release/`.
 
 ### 5.1 Dedicated IOCP/RIO Executables and Unit Suite
 

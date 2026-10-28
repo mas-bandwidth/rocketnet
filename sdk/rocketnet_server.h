@@ -29,7 +29,7 @@
 // so a counted source cannot be reset by churning fresh addresses. A failing
 // source the full table cannot record is verified again on its next request;
 // the verifies of all such sources are bounded by the per-update handshake
-// work budget (ROCKETNET_HANDSHAKE_WORK_BUDGET_PER_UPDATE), which runs before
+// work budget (the server config's handshakes_per_update), which runs before
 // this budget, and each source needs a valid cookie for its own address. The
 // whole budget decays when the window rolls over, so a source that exhausted
 // it is not refused forever, and because the table is a fixed part of the
@@ -83,4 +83,4 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 // after abort, or a modified or wrong-owner context is a different refusal
 // and still asserts in a debug build.
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_H

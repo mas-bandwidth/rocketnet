@@ -264,4 +264,4 @@ int rocketnet_send_arena_owns( const struct rocketnet_send_arena_t * arena, cons
 
 void rocketnet_send_arena_reset( struct rocketnet_send_arena_t * arena );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_FRAGMENT_H
+#endif // ROCKETNET_SDK_ROCKETNET_FRAGMENT_H

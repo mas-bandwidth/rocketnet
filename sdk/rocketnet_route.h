@@ -160,4 +160,4 @@ static inline bool parse_kernel_route( const struct nlmsghdr * msg_ptr, rocketne
     return true;
 }
 #endif // #if defined( __linux__ )
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_ROUTE_H
+#endif // ROCKETNET_SDK_ROCKETNET_ROUTE_H

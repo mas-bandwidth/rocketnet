@@ -143,4 +143,4 @@ void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t *
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_socket_process_packets( struct rocketnet_server_socket_t * server_socket );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H
+#endif // ROCKETNET_SDK_ROCKETNET_SERVER_SOCKET_H

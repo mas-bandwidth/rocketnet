@@ -151,8 +151,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnrioworker` | 9 | The RIO transport's I/O worker (README-RNRioWorker.md): a safety control for both directions, receive and send liveness controls, a two-bank backpressure control, and five reversed witnesses: a phase reopened before it is idle (`FillPhaseOwnedByMain`), an unbounded dequeue (`ExactDelivery`), exit before the drain (`FreedOnlyWhenDrained`), no wake on a returned bank (`EveryDatagramConsumed`) and a stop that discards a handed phase (`StopSendsHanded`) |
 | `ackblockwrap` | 2 | The ack block reader across the wire sequence wrap (README-AckBlockWrap.md): the control, the empty block recognised on its wire fields at any highest sent (every invariant), and the reversed witness that makes the empty test on the reconstructed largest (`EmptyRecognised`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 411 cases
-in 57 groups, 392 required and 19 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 413 cases
+in 57 groups, 394 required and 19 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

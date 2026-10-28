@@ -200,4 +200,4 @@ int rocketnet_generate_cookie_mac( uint8_t * mac,
                                    uint64_t cookie_expire_timestamp,
                                    const uint8_t * cookie_key );
 
-#endif // #ifndef ROCKETNET_SDK_ROCKETNET_PROTOCOL_H
+#endif // ROCKETNET_SDK_ROCKETNET_PROTOCOL_H

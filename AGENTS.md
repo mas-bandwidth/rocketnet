@@ -54,7 +54,7 @@ RocketNet is a low-level, connection-oriented client/server UDP transport and me
 
 - **One public header:** [sdk/rocketnet.h](sdk/rocketnet.h). Include it directly from C or C++ (`#include "rocketnet.h"`); the header provides its own `extern "C"` guards when compiled as C++.
 - **One link library:** `RocketNet::rocketnet` (or the `rocketnet` CMake target when embedded via `add_subdirectory`).
-- **Version macros:** `ROCKETNET_VERSION` is one comparable integer, `ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH` (`10000` for 1.0.0, and for v1.0.0-preview-2, since the prerelease is not in the integer; a development build uses `255` for each part). The text form is `ROCKETNET_VERSION_FULL` (`"v1.0.0-preview-2"` for this release, or `"dev"` in a development build). `rocketnet_version()` returns the integer the library was built with; compare it with `ROCKETNET_VERSION` to catch a header and a shared library from different releases.
+- **Version macros:** `ROCKETNET_VERSION` is one comparable integer, `ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH` (`10000` for 1.0.0, and for v1.0.0-preview-3, since the prerelease is not in the integer; a development build uses `255` for each part). The text form is `ROCKETNET_VERSION_FULL` (`"v1.0.0-preview-3"` for this release, or `"dev"` in a development build). `rocketnet_version()` returns the integer the library was built with; compare it with `ROCKETNET_VERSION` to catch a header and a shared library from different releases.
 - **Demonstrated 1000-client server configuration (`ROCKETNET_MAX_CLIENTS`):** The default and demonstrated server configuration supports up to `1000` clients (`0 .. max_clients - 1`) under its stated workload, topology, and deployment conditions (preserving the existing 4096-byte XDP frame/ring configuration). Above 1000 clients, users must research, stabilize, and qualify their own configuration. Clients are addressed by an `int` slot index `0 .. max_clients - 1`; `rocketnet_client_index` returns the client's own index while connected and `-1` otherwise, and only `rocketnet_server_start_message` takes a `uint64_t` destination id (a client index today, a flow id with `ROCKETNET_FLOW_ID_BIT` set later). Create allocates each client and server as one block through the allocator (`rocketnet_client_required_memory` and `rocketnet_server_required_memory` give the lifecycle peak, aligned to `ROCKETNET_ALLOCATION_ALIGNMENT`). Connect and start then allocate the transport through the same allocator, before any traffic: sockets, worker threads, I/O rings and buffers, and on the server its per-client protocol tables. All allocation happens up front at create, connect and start; update, receive, start/finish/abort message and send packets never allocate.
 - **Up to 32 channels (`ROCKETNET_MAX_CHANNELS`) and 8 delivery modes:** Every message is sent on a channel `0 .. num_channels - 1` with one of eight reliability modes.
 
@@ -407,7 +407,12 @@ A production server refuses that published key.
 
 Tokens bind the client ID, protocol ID, server addresses, lifetime and signed
 user data. The server verifies the signature, opens the token with its own
-key and enforces expiry and replay checks. A dual-family client selects a
+key and enforces expiry and replay checks. On the server, read a connected
+slot's client ID with `rocketnet_server_client_id` and its user data with
+`rocketnet_server_client_user_data( server, client_index, user_data )`, which
+copies `ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES` and returns true from connect
+until the slot is released; release wipes the server's copy, and a free slot
+writes zeros and returns false. A dual-family client selects a
 family it can open; this is not a guarantee of fallback after a reachability
 failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 
