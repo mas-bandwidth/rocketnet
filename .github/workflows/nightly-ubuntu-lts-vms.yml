@@ -52,6 +52,10 @@ on:
   schedule:
     - cron: "30 4 * * *"
   workflow_dispatch:
+  # Temporary: workflow_dispatch needs the file on the default branch, so the
+  # first trial runs on push to this branch. Reverted before review.
+  push:
+    branches: [ci/nightly-ubuntu-lts-vms]
 
 permissions:
   contents: read
@@ -64,7 +68,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        ref: ${{ github.event_name != 'schedule' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         series: [jammy, noble, resolute]
         include:
           - series: jammy
