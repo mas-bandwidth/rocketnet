@@ -61,7 +61,8 @@ the object, which stays valid. Poll `rocketnet_client_disconnected()` or
 - `rocketnet_server_client_user_data()` copies the 256 bytes of connect-token
   user data for a connected client into the caller's buffer.
 - The server configuration's `handshakes_per_update` caps the connection
-  requests a server processes in one update (1 to 1024, default 16). A request
+  requests with a valid cookie that a server processes in one update (1 to
+  1024, default 16; it was a fixed 1024). A request
   past the cap is dropped unanswered and counted in
   `handshakes_dropped_over_budget`; the client sends it again, so a mass join
   or a request flood spreads across updates. Create refuses a value outside
@@ -115,6 +116,12 @@ wire-affecting change is listed with its section of the standard:
   recognised on its wire fields at any highest sent sequence.
   [TRANSPORT.md t15.1](../standard/TRANSPORT.md#t15),
   t15.3, t15.4 and t15.6; [MESSAGES.md m1.4](../standard/MESSAGES.md#m1)
+- **Kept cookie.** The first accepted cookie is kept for the connection
+  attempt; a later cookie only alternates with it and never replaces it.
+  [TRANSPORT.md t11](../standard/TRANSPORT.md#t11)
+- **Handshake budget.** The default per-update handshake budget is 16 (it was
+  1024).
+  [TRANSPORT.md t12](../standard/TRANSPORT.md#t12)
 - **Unreliable packing.** Small unreliable messages are packed into shared
   transport packets.
   [MESSAGES.md m2](../standard/MESSAGES.md#m2)
@@ -166,7 +173,8 @@ t7, t13, t15, t17, t19, m9, m11 and m13) change no rule.
 - **Security hardening.** The embedded XDP program reads the SDK's limits and
   refuses a mismatch. Connect-token user data and staged configuration
   secrets are wiped. A forged challenge cookie no longer displaces the
-  client's kept cookie, and handshake work per update is capped.
+  client's kept cookie, and the per-update handshake budget is now
+  configurable, default 16 (it was a fixed 1024).
 - **Client family race.** When a client tries both address families, the
   losing socket is closed on the thread that reads it and freed on the
   caller's thread.
@@ -221,8 +229,7 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
 - Sixteen TLA+ cases end at their time bound and are not reported as passes;
   some CBMC proofs and the full big-endian system run are owed. Some
   functional tests still assert wall-clock timing.
-- A replayed connection response refreshes a slot's receive time. A security
-  review of the whole library is not yet done.
+- A complete security review of the whole library is not yet done.
 
 The [qualification index](QUALIFICATION-v1.0.0-preview-3.md) records the
 tested head and every gate, including those still owed at tag time. The

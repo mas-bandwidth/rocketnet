@@ -88,9 +88,9 @@ time is recorded only as under the timeout.
   wire cases, which ran at `81e8b473`. The inputs differ between those two
   commits only in `soak_sim.cpp`, `tools/tidy_dispositions.txt` and the
   static-analysis triage document; none is built into `bin/functional`.
-- The commit that adds this section changes only this document. By the rule
-  for carried results above, the results below are carried to it from
-  `471b3fbc`, and its inputs differ from `471b3fbc` only in this file.
+- The release commit's inputs differ from `471b3fbc` only in this document
+  and the release notes. By the rule for carried results above, the results
+  below are carried to it from `471b3fbc`.
 
 ### Native suites at `471b3fbc`
 
@@ -308,8 +308,7 @@ pass.
 - **Proofs and models**: sixteen TLA+ cases end at their time bound in
   `tla/RUNS.tsv`; some CBMC proofs and the full big-endian system run are
   owed.
-- **Security**: a review of the whole library, and the replayed-response and
-  cookie-rewind issues listed in the [release notes](RELEASE-NOTES-v1.0.0-preview-3.md).
+- **Security**: a complete review of the whole library.
 
 The [release notes](RELEASE-NOTES-v1.0.0-preview-3.md) give the known limits
 for users of this preview.
