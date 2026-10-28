@@ -354,12 +354,16 @@ static void test_counters_every_counter_has_a_class()
         const char * name = rocketnet_counter_name( i );
         check( name != NULL );
         if ( strcmp( name, expected ) != 0 )
+        {
             printf( "counter %d is %s, expected %s: the indices never move\n", i, name, expected );
+        }
         check( strcmp( name, expected ) == 0 );
 
         const int counter_class = rocketnet_counter_class( i );
         if ( counter_class < 0 || counter_class >= ROCKETNET_NUM_COUNTER_CLASSES )
+        {
             printf( "counter %s has no class\n", name );
+        }
         check( counter_class >= 0 && counter_class < ROCKETNET_NUM_COUNTER_CLASSES );
         check( counter_class == counters_rows[i].counter_class );
         check( rocketnet_counter_class_name( counter_class ) != NULL );
@@ -367,29 +371,40 @@ static void test_counters_every_counter_has_a_class()
 
         // the family column names a RECEIVED counter, and a RECEIVED counter
         // is an arrival
+
         const int family = counters_rows[i].family;
         check( family == ROCKETNET_COUNTER_NONE || ( family >= 0 && family < ROCKETNET_NUM_COUNTERS ) );
         check( family != i );
+
         if ( family != ROCKETNET_COUNTER_NONE )
         {
             if ( counters_rows[family].counter_class != ROCKETNET_COUNTER_CLASS_ARRIVAL )
+            {
                 printf( "counter %s sums into %s, which is not an arrival counter\n", name, counters_rows[family].name );
+            }
             check( counters_rows[family].counter_class == ROCKETNET_COUNTER_CLASS_ARRIVAL );
         }
+
         // every arrival counter heads a family, but the packet entry's
         // PACKETS_RECEIVED, which counts before any type dispatches
+
         if ( counters_rows[i].counter_class == ROCKETNET_COUNTER_CLASS_ARRIVAL && i != ROCKETNET_COUNTER_PACKETS_RECEIVED )
         {
             if ( !counters_is_received( i ) )
+            {
                 printf( "arrival counter %s has no outcomes\n", name );
+            }
             check( counters_is_received( i ) );
         }
     }
 
     // exactly four classes, each used, and each named as the API names it
+
     check( ROCKETNET_NUM_COUNTER_CLASSES == 4 );
     for ( int c = 0; c < ROCKETNET_NUM_COUNTER_CLASSES; c++ )
+    {
         check( per_class[c] > 0 );
+    }
     check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_REFUSAL ), "refusal" ) == 0 );
     check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_EXPECTED ), "expected" ) == 0 );
     check( strcmp( rocketnet_counter_class_name( ROCKETNET_COUNTER_CLASS_PATH_LOSS ), "path_loss" ) == 0 );
@@ -398,10 +413,12 @@ static void test_counters_every_counter_has_a_class()
     check( rocketnet_counter_class_name( ROCKETNET_NUM_COUNTER_CLASSES ) == NULL );
 
     // an index outside the list has no class
+
     check( rocketnet_counter_class( -1 ) == -1 );
     check( rocketnet_counter_class( ROCKETNET_NUM_COUNTERS ) == -1 );
 
     // the classes the counter list's rules name, by counter
+
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_RING_FULL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_MESSAGE_SEND_STORE_FULL ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
     check( rocketnet_counter_class( ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW ) == ROCKETNET_COUNTER_CLASS_REFUSAL );
@@ -437,7 +454,9 @@ static void counters_balanced_family( struct rocketnet_counters_t * counters, in
 {
     counters->values[outcome]++;
     for ( int c = received; c != ROCKETNET_COUNTER_NONE; c = counters_rows[c].family )
+    {
         counters->values[c]++;
+    }
 }
 
 static int counters_first_outcome( int received )
@@ -455,13 +474,14 @@ static void counters_expected_null_assert( const char *, const char *, const cha
 {
     counters_expected_null_asserts++;
 }
-#endif
+#endif // #if ROCKETNET_ASSERTS
 
 static void test_counters_conservation_reports_the_first_unbalanced_family()
 {
     char report[256];
 
     // a fresh block is balanced, and says nothing
+
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
     snprintf( report, sizeof( report ), "%s", "not written" );
@@ -469,23 +489,27 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
     check( report[0] == '\0' );
 
     // one request refused for its size: the arrival and the one outcome
+
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED]++;
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE]++;
     check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
     check( rocketnet_counters_conserved( &counters, NULL, 0 ) == 1 );
 
     // the outcome removed: the request family is named, with both sums
+
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE]--;
     check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
     check( strcmp( report, "CONNECTION_REQUEST_RECEIVED received=1 outcomes=0" ) == 0 );
     check( rocketnet_counters_conserved( &counters, NULL, 0 ) == 0 );
 
     // an extra outcome is as unbalanced as a missing one
+
     counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE] += 2;
     check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
     check( strcmp( report, "CONNECTION_REQUEST_RECEIVED received=1 outcomes=2" ) == 0 );
 
     // side counters are outside every family: they move without unbalancing
+
     memset( &counters, 0, sizeof( counters ) );
     counters.values[ROCKETNET_COUNTER_ACK_UNKNOWN_SEQUENCE] += 5;
     counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_REASSEMBLED] += 3;
@@ -494,32 +518,42 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
 
     // every family in the list: balanced with one outcome, and unbalanced,
     // naming exactly that family, when the outcome is taken away
+
     int families = 0;
+
     for ( int received = 0; received < ROCKETNET_NUM_COUNTERS; received++ )
     {
         if ( !counters_is_received( received ) )
             continue;
         families++;
+
         const int outcome = counters_first_outcome( received );
         check( outcome >= 0 );
 
         memset( &counters, 0, sizeof( counters ) );
         counters_balanced_family( &counters, received, outcome );
         if ( !rocketnet_counters_conserved( &counters, report, sizeof( report ) ) )
+        {
             printf( "family %s does not balance with one outcome: %s\n", counters_rows[received].name, report );
+        }
         check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 1 );
 
         counters.values[outcome]--;
         check( rocketnet_counters_conserved( &counters, report, sizeof( report ) ) == 0 );
+
         char expected[256];
         snprintf( expected, sizeof( expected ), "%s received=1 outcomes=0", counters_rows[received].name );
         if ( strcmp( report, expected ) != 0 )
+        {
             printf( "family %s reported as: %s\n", counters_rows[received].name, report );
+        }
         check( strcmp( report, expected ) == 0 );
     }
+
     check( families == 15 );               // seven at the server, eight at the client
 
     // two families unbalanced: the one whose RECEIVED counter comes first
+
     memset( &counters, 0, sizeof( counters ) );
     counters.values[ROCKETNET_COUNTER_PAYLOAD_RECEIVED] = 2;
     counters.values[ROCKETNET_COUNTER_CONNECTION_RESPONSE_RECEIVED] = 1;
@@ -530,6 +564,7 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
     check( strcmp( report, "PAYLOAD_RECEIVED received=2 outcomes=0" ) == 0 );
 
     // a short report buffer is cut, never overrun, and stays terminated
+
     char tiny[10];
     memset( tiny, 'x', sizeof( tiny ) );
     check( rocketnet_counters_conserved( &counters, tiny, sizeof( tiny ) ) == 0 );
@@ -537,17 +572,18 @@ static void test_counters_conservation_reports_the_first_unbalanced_family()
     check( strncmp( tiny, "PAYLOAD_RE", 9 ) == 0 );
 
     // a NULL block is not conserved
+
     const uint64_t misuse_before = rocketnet_api_misuse_count();
 #if ROCKETNET_ASSERTS
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     counters_expected_null_asserts = 0;
     rocketnet_assert_function( counters_expected_null_assert );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     check( rocketnet_counters_conserved( NULL, report, sizeof( report ) ) == 0 );
 #if ROCKETNET_ASSERTS
     rocketnet_assert_function( saved_assert );
     check( counters_expected_null_asserts == 1 );
-#endif
+#endif // #if ROCKETNET_ASSERTS
     check( rocketnet_api_misuse_count() == misuse_before + 1 );
 }
 
@@ -569,6 +605,7 @@ static void test_counters_expect_fails_on_an_unnamed_move()
     char report[4096];
 
     // the two named moves, exactly: passes, and says nothing
+
     snprintf( report, sizeof( report ), "%s", "not written" );
     check( rocketnet_counters_expect_core( &before, &after,
                                            { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
@@ -577,6 +614,7 @@ static void test_counters_expect_fails_on_an_unnamed_move()
     check( report[0] == '\0' );
 
     // a third counter moved: false, and the report names that counter
+
     after.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] += 1;
     check( !rocketnet_counters_expect_core( &before, &after,
                                             { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
@@ -586,13 +624,16 @@ static void test_counters_expect_fails_on_an_unnamed_move()
     check( strstr( report, "unnamed move" ) != NULL );
 
     // the report shows every nonzero delta by name, the named ones included
+
     check( strstr( report, "CONNECTION_REQUEST_RECEIVED" ) != NULL );
     check( strstr( report, "CONNECTION_REQUEST_WRONG_SIZE" ) != NULL );
 
     // a counter that did not move is not in the report
+
     check( strstr( report, "KEEP_ALIVE_RECEIVED" ) == NULL );
 
     // a named counter that moved by a different amount fails
+
     after.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_NO_SLOTS] -= 1;
     check( !rocketnet_counters_expect_core( &before, &after,
                                             { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 2 },
@@ -602,6 +643,7 @@ static void test_counters_expect_fails_on_an_unnamed_move()
 
     // a named counter that did not move at all fails, and a named delta of
     // zero holds a counter still
+
     check( !rocketnet_counters_expect_core( &before, &after,
                                             { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 },
                                               { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 },
@@ -615,10 +657,12 @@ static void test_counters_expect_fails_on_an_unnamed_move()
                                            report, sizeof( report ) ) );
 
     // nothing moved and nothing named
+
     check( rocketnet_counters_expect_core( &before, &before, {}, report, sizeof( report ) ) );
     check( rocketnet_counters_expect_core( &before, &before, {}, NULL, 0 ) );
 
     // the asserting form passes on the exact move
+
     rocketnet_counters_expect( &before, &after, { { ROCKETNET_COUNTER_CONNECTION_REQUEST_RECEIVED, 1 }, { ROCKETNET_COUNTER_CONNECTION_REQUEST_WRONG_SIZE, 1 } } );
 
     struct rocketnet_counters_t balanced;

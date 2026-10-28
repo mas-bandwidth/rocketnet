@@ -25,6 +25,7 @@ static void test_dst_check_ordered_out_of_order_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 42 );
+
     double time = 1000.0;
     rocketnet_dst_check_ordered( &st, time, 3, 0 );
     rocketnet_unit_check( st.failed == 0 );
@@ -37,6 +38,7 @@ static void test_dst_check_reliable_duplicate_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 43 );
+
     double time = 1000.0;
     rec_send( &st, 2, 5 );
     rocketnet_dst_check_reliable_once( &st, time, 2, 5 );
@@ -50,6 +52,7 @@ static void test_dst_check_reliable_missing_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 44 );
+
     double time = 1000.0;
     rec_send( &st, 2, 0 );
     rec_send( &st, 2, 1 );
@@ -65,6 +68,7 @@ static void test_dst_check_sequenced_backwards_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 45 );
+
     double time = 1000.0;
     rocketnet_dst_check_sequenced( &st, time, 4, 10 );
     rocketnet_unit_check( st.failed == 0 );
@@ -77,6 +81,7 @@ static void test_dst_check_unreliable_duplicate_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 46 );
+
     double time = 1000.0;
     rocketnet_dst_check_unreliable_once( &st, time, 0, 7 );
     rocketnet_unit_check( st.failed == 0 );
@@ -89,6 +94,7 @@ static void test_dst_check_ack_undelivered_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 47 );
+
     double time = 1000.0;
     rocketnet_dst_check_opened( &st, 2, 0 );
     rocketnet_dst_check_opened( &st, 2, 1 );
@@ -104,6 +110,7 @@ static void test_dst_check_stale_session_payload_fails()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 48 );
+
     double time = 1000.0;
     rocketnet_dst_check_stale_session( &st, time, 5, 3, 1 );
     rocketnet_dst_check_stale_session_payload( &st, time, 5, 3, 1 );
@@ -117,6 +124,7 @@ static void test_dst_check_clean_sequence_passes()
 {
     static struct rocketnet_dst_check_state_t st;
     rocketnet_dst_check_init( &st, 1, 49 );
+
     double time = 1000.0;
 
     rocketnet_dst_check_ordered( &st, time, 3, 0 );
@@ -180,6 +188,7 @@ REGISTER_UNIT_TEST( test_dst_check_whole_message_over_65535_bytes );
 // The messages are sent at step 100 of a run that ends at step 4000, so a type
 // 4 of the quiet window is owed: only a type 4 sent in the last steps of the
 // run is still on the wire.
+
 static void sequenced_send( struct rocketnet_dst_check_state_t * st, int type, uint32_t seq )
 {
     rocketnet_dst_check_sent( st, 1001.0, 17, 8, type, seq, 1, 1, 0, 64 );
@@ -209,8 +218,10 @@ static void test_dst_check_sequenced_superseded_type4_passes()
     sequenced_send( &st, 4, 120 );
     sequenced_deliver( &st, 4, 120 );
     rocketnet_dst_check_settle( &st );
-    // The type 4 is sent after the quiet start, a newer type 1 follows on the
-    // channel and is delivered, and the type 4 is superseded and dropped.
+
+    // the type 4 is sent after the quiet start, a newer type 1 follows on the
+    // channel and is delivered, and the type 4 is superseded and dropped
+
     sequenced_send( &st, 4, 129 );
     sequenced_send( &st, 1, 142 );
     sequenced_deliver( &st, 1, 142 );
@@ -227,8 +238,10 @@ static void test_dst_check_sequenced_older_type1_does_not_serve_type4()
     sequenced_send( &st, 4, 120 );
     sequenced_deliver( &st, 4, 120 );
     rocketnet_dst_check_settle( &st );
-    // Only a type 1 sent before the type 4 is delivered: it does not
-    // supersede the later type 4, which is still owed.
+
+    // only a type 1 sent before the type 4 is delivered: it does not
+    // supersede the later type 4, which is still owed
+
     sequenced_send( &st, 1, 141 );
     sequenced_send( &st, 4, 129 );
     sequenced_deliver( &st, 1, 141 );
@@ -242,6 +255,7 @@ REGISTER_UNIT_TEST( test_dst_check_sequenced_older_type1_does_not_serve_type4 );
 // A later type 4 of the quiet window is newer than the delivery that
 // superseded the first one, so the channel owes it: the delivery that
 // served the first type 4 does not serve the second.
+
 static void test_dst_check_sequenced_later_type4_raises_the_requirement()
 {
     static struct rocketnet_dst_check_state_t st;
@@ -249,12 +263,16 @@ static void test_dst_check_sequenced_later_type4_raises_the_requirement()
     sequenced_send( &st, 4, 120 );
     sequenced_deliver( &st, 4, 120 );
     rocketnet_dst_check_settle( &st );
-    // The first type 4 of the quiet window, then a type 1 that supersedes it.
+
+    // the first type 4 of the quiet window, then a type 1 that supersedes it
+
     sequenced_send( &st, 4, 129 );
     sequenced_send( &st, 1, 142 );
     sequenced_deliver( &st, 1, 142 );
     rocketnet_unit_check( st.failed == 0 );
-    // A second type 4 of the quiet window is newer than that delivery.
+
+    // a second type 4 of the quiet window is newer than that delivery
+
     sequenced_send( &st, 4, 130 );
     sequenced_end( &st );
     rocketnet_unit_check( st.failed == 1 );

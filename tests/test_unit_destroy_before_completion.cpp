@@ -48,7 +48,10 @@ static void * db_allocator_malloc( void * context, size_t bytes )
     db_allocator_t * state = (db_allocator_t *) context;
     void * memory = malloc( bytes );
     if ( memory && state )
+    {
         state->live++;
+    }
+
     return memory;
 }
 
@@ -56,7 +59,9 @@ static void db_allocator_free( void * context, void * memory )
 {
     db_allocator_t * state = (db_allocator_t *) context;
     if ( memory && state )
+    {
         state->live--;
+    }
     free( memory );
 }
 
@@ -84,6 +89,7 @@ static void db_log_capture( void * context, enum rocketnet_log_level_t level, co
     if ( level != ROCKETNET_LOG_LEVEL_ERROR )
         return;
     db_error_lines++;
+
     const size_t copied = length < sizeof( db_last_error ) - 1 ? length : sizeof( db_last_error ) - 1;
     memcpy( db_last_error, message, copied );
     db_last_error[copied] = '\0';
@@ -103,7 +109,9 @@ static void db_identity( db_identity_t * identity )
 {
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
+    {
         seed[i] = (uint8_t) ( 0x3C ^ i );
+    }
     check( rocketnet_generate_backend_keypair_from_seed( seed, identity->backend_public, identity->backend_secret ) == ROCKETNET_STATUS_OK );
 }
 
@@ -156,17 +164,23 @@ static void db_connect( db_world_t * world, uint64_t client_id )
 {
     char address[64];
     snprintf( address, sizeof( address ), "127.0.0.1:%u", (unsigned) rocketnet_server_port( world->server ) );
+
     const char * addresses[] = { address };
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rn_test_server_token_string( world->identity.backend_secret, world->server,
                                         DESTROY_BEFORE_COMPLETION_PROTOCOL, addresses, 1, client_id, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
     check( rocketnet_client_connect( world->client, token ) == ROCKETNET_STATUS_OK );
     for ( int i = 0; i < 400 && rocketnet_client_state( world->client ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+    {
         db_pump( world );
+    }
     check( rocketnet_client_state( world->client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+
     const int index = rocketnet_client_index( world->client );
     for ( int i = 0; i < 400 && !rocketnet_server_client_connected( world->server, index ); i++ )
+    {
         db_pump( world );
+    }
     check( rocketnet_server_client_connected( world->server, index ) != 0 );
 }
 
@@ -189,6 +203,7 @@ static void db_complete_server( db_world_t * world )
 // DONE-WHEN (1): a connected client and a running server are destroyed without
 // the completion poll, and every allocation the pair made returns to the count
 // before create.
+
 static void test_destroy_before_completion_frees_everything()
 {
     rocketnet_quiet( 1 );
@@ -200,13 +215,15 @@ static void test_destroy_before_completion_frees_everything()
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( rocketnet_init_ex( &state, db_allocator_malloc, db_allocator_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
+
     const int before = state.live;
 
     db_world_t world;
     db_world_create( &world, &state );
     db_connect( &world, 0xD5001ULL );
 
-    // The release path: no completion poll before either destroy.
+    // the release path: no completion poll before either destroy
+
     rocketnet_client_destroy( world.client );
     rocketnet_server_destroy( world.server );
 
@@ -223,6 +240,7 @@ REGISTER_UNIT_TEST( test_destroy_before_completion_frees_everything );
 // DONE-WHEN (2): one error line and one misuse count per early destroy, naming
 // the call and the completion function that was skipped; neither moves for a
 // destroy after completion.
+
 static void test_destroy_before_completion_is_logged()
 {
     rocketnet_assert_function( db_assert_recorder );
@@ -235,6 +253,7 @@ static void test_destroy_before_completion_is_logged()
     db_connect( &early, 0xD6001ULL );
 
     db_error_lines = 0;
+
     uint64_t misuse = rocketnet_api_misuse_count();
     rocketnet_client_destroy( early.client );
     check( db_error_lines == 1 );

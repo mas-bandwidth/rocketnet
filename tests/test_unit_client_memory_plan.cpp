@@ -36,11 +36,14 @@ static void * plan_alloc( void * context, size_t bytes )
         state->total_bytes += bytes;
         state->live++;
     }
+
     void * base = malloc( bytes + 128 );
     if ( !base )
         return NULL;
+
     uintptr_t address = ( ( (uintptr_t) base + sizeof( void * ) + 63 ) & ~(uintptr_t) 63 ) + 16;
     memcpy( (void *) ( address - sizeof( void * ) ), &base, sizeof( base ) );
+
     return (void *) address;
 }
 
@@ -48,7 +51,10 @@ static void plan_free( void * context, void * pointer )
 {
     plan_counting_allocator_t * state = (plan_counting_allocator_t *) context;
     if ( state )
+    {
         state->live--;
+    }
+
     void * base = NULL;
     memcpy( &base, (uint8_t *) pointer - sizeof( void * ), sizeof( base ) );
     free( base );
@@ -94,6 +100,7 @@ static void test_client_memory_plan_non_step_driven()
 
     plan_counting_allocator_t state = { 0, 0 };
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+
     int status = -1;
     check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
@@ -102,6 +109,7 @@ static void test_client_memory_plan_non_step_driven()
     // create (on Windows, get_connection_type fetches the adapter list with
     // rocketnet_platform_adapters_fetch and frees it); the plan covers create
     // alone, so the count starts here
+
     state.total_bytes = 0;
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
@@ -139,6 +147,7 @@ static void test_client_memory_plan_step_driven()
 
     plan_counting_allocator_t state = { 0, 0 };
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+
     int status = -1;
     check( rocketnet_init_ex( &state, plan_alloc, plan_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
@@ -147,6 +156,7 @@ static void test_client_memory_plan_step_driven()
     // create (on Windows, get_connection_type fetches the adapter list with
     // rocketnet_platform_adapters_fetch and frees it); the plan covers create
     // alone, so the count starts here
+
     state.total_bytes = 0;
 
     struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
@@ -169,6 +179,7 @@ static void test_client_memory_plan_step_driven()
 
 // The client plan answers bytes for "msgx" only where the registry offers it
 // (macOS); on every other platform, iOS included, the name has no plan.
+
 static void test_client_memory_plan_msgx_only_on_macos()
 {
     struct rocketnet_client_transport_config_t config;
@@ -181,7 +192,7 @@ static void test_client_memory_plan_msgx_only_on_macos()
     check( msgx_bytes > 0 );
 #else
     check( msgx_bytes == 0 );
-#endif
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
 REGISTER_UNIT_TEST( test_client_memory_plan_non_step_driven );

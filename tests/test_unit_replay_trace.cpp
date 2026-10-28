@@ -218,19 +218,32 @@ static void replay_trace_compare( const replay_window_ref_t & model, const struc
     int dn = 0;
     dynamic[dn++] = f;
     dynamic[dn++] = f + 1;
+
     // sequence 0 is out of the ring and the real code asserts it away
     // (rocketnet_replay_already_received, sdk/rocketnet_replay.cpp);
     // the model's already_received is likewise undefined at 0, so a probe
     // set built from highest == 0 must never emit it.
+
     if ( h != 0 )
+    {
         dynamic[dn++] = h;
+    }
+
     dynamic[dn++] = h + 1;
     if ( h > 1 )
+    {
         dynamic[dn++] = h - 1;
+    }
+
     if ( f > 1 )
+    {
         dynamic[dn++] = f - 1;
+    }
+
     for ( int i = 0; i < dn; i++ )
+    {
         rocketnet_unit_check( model.already_received( dynamic[i] ) == ( rocketnet_replay_already_received( &real, dynamic[i] ) != 0 ) );
+    }
 }
 
 static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_replay_protection_t & real, int depth )
@@ -241,7 +254,8 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
     if ( depth >= 5 )
         return;
 
-    // Connect: once; it moves no window state on the real struct.
+    // Connect: once; it moves no window state on the real struct
+
     if ( !model.connected )
     {
         int saved = model.connected;
@@ -263,6 +277,7 @@ static void replay_trace_dfs( replay_window_ref_t & model, struct rocketnet_repl
         // so its Receive always advances, and rocketnet_replay_advance is the
         // code's advance. The server's gate before the advance (the rule,
         // GateBeforeAdvance = TRUE) is asserted by the witness below.
+
         model.receive( s );
         rocketnet_replay_advance( &real, s );
 
@@ -288,6 +303,7 @@ static void test_replay_window_model_trace()
 
     // the enumeration actually drove the ring past its floor and the
     // long-skip branch, not a degenerate prefix
+
     rocketnet_unit_check( g_replay_trace_steps >= 1000 );
 }
 
@@ -311,20 +327,27 @@ static void test_replay_long_skip_clears_the_whole_window()
 
     // the reversed witness, scaled to the real width: advance(2), advance(300),
     // advance(4397) -- the skip 300 -> 4397 is 4097, at least one window.
+
     rocketnet_replay_advance( &replay, 2 );
     rocketnet_replay_advance( &replay, 300 );
     rocketnet_replay_advance( &replay, 4397 );
 
     // a genuine packet 4396 is inside the retained range and never opened; the
     // rule says it must be accepted, not refused as already received.
+
     rocketnet_unit_check( !rocketnet_replay_already_received( &replay, 4396 ) );
 
     // the card's own shape at full width: fill 1..W, jump to 3W. every
     // sequence 2W+257 .. 3W-1 is new and must not read as received.
+
     struct rocketnet_replay_protection_t full;
     memset( &full, 0, sizeof( full ) );
+
     for ( uint64_t s = 1; s <= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS; s++ )
+    {
         rocketnet_replay_advance( &full, s );
+    }
+
     rocketnet_replay_advance( &full, 3ULL * ROCKETNET_REPLAY_WINDOW_BITS );
     rocketnet_unit_check( !rocketnet_replay_already_received( &full, 2ULL * ROCKETNET_REPLAY_WINDOW_BITS + 257 ) );
     rocketnet_unit_check( !rocketnet_replay_already_received( &full, 3ULL * ROCKETNET_REPLAY_WINDOW_BITS - 1 ) );
@@ -339,6 +362,7 @@ static void test_slotless_packet_never_moves_the_session_window()
 {
     struct rocketnet_server_protocol_t server;
     memset( &server, 0, sizeof( server ) );
+
     struct rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
 
@@ -353,18 +377,22 @@ static void test_slotless_packet_never_moves_the_session_window()
 
     int mapping_index = rocketnet_encryption_map_add( server.encryption_map, &client_address, 1000.0 );
     rocketnet_unit_check( mapping_index != -1 );
+
     struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server.encryption_map, mapping_index );
     rocketnet_unit_check( mapping->control->client_index == -1 );
 
     // the lost-response race the standard names: a mapping with session keys
     // but no slot yet. set the keys directly, as the challenge step would.
+
     memcpy( mapping->keys.session_client_to_server, rocketnet_test_session_c2s_key, ROCKETNET_KEY_BYTES );
     memcpy( mapping->connection_salt, rocketnet_test_salt, ROCKETNET_CONNECTION_SALT_BYTES );
 
     // a session payload sealed under the session key, at sequence 1: the fresh
     // 7-byte ack block then four payload bytes.
+
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MIN_BYTES + 4];
     memset( plaintext, 0, ROCKETNET_ACK_BLOCK_MIN_BYTES );
+
     const uint8_t type_data[4] = { 1, 2, 3, 4 };
     memcpy( plaintext + ROCKETNET_ACK_BLOCK_MIN_BYTES, type_data, 4 );
 
@@ -387,10 +415,12 @@ static void test_slotless_packet_never_moves_the_session_window()
                                                            payload_out, &payload_out_bytes, &payload_client_index );
 
     // the packet is refused as not connected ...
+
     rocketnet_unit_check( result == ROCKETNET_SERVER_PROCESS_IGNORED );
     rocketnet_unit_check( counters.values[ROCKETNET_COUNTER_PAYLOAD_NOT_CONNECTED] == 1 );
 
-    // ... and the rule: the window of a mapping without a slot never moves.
+    // ... and the rule: the window of a mapping without a slot never moves
+
     rocketnet_unit_check( mapping->replay_session.highest_opened == 0 );
 
     rocketnet_encryption_map_destroy( server.encryption_map );

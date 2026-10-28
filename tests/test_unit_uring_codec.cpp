@@ -15,7 +15,7 @@
 #if !defined( _WIN32 )
 #include <arpa/inet.h>
 #include <sys/socket.h>
-#endif
+#endif // #if !defined( _WIN32 )
 
 #include "test_unit_registry.h"
 
@@ -27,7 +27,7 @@
 #define ROCKETNET_URING_CODEC_ACTIVE 1
 #else
 #define ROCKETNET_URING_CODEC_ACTIVE 0
-#endif
+#endif // #if defined( __linux__ ) && defined( IORING_RECV_MULTISHOT )
 
 #if ROCKETNET_URING_CODEC_ACTIVE
 static void put_u32_native( uint8_t * b, uint32_t v )
@@ -65,20 +65,25 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
 {
     // an IPv4 sockaddr_in name, msg_namelen = sizeof(sockaddr_storage),
     // controllen 0, and a 64-byte payload.
+
     uint8_t buf[208];
     memset( buf, 0xA5, sizeof( buf ) );
     put_u32_native( buf + 0, 16 );
     put_u32_native( buf + 4, 0 );
     put_u32_native( buf + 8, 64 );
     put_u32_native( buf + 12, 0 );
+
     struct sockaddr_in in4;
     memset( &in4, 0, sizeof( in4 ) );
     in4.sin_family = AF_INET;
     in4.sin_port = htons( 40000 );
     in4.sin_addr.s_addr = htonl( 0x7f000001u );
     memcpy( buf + 16, &in4, sizeof( in4 ) );
+
     for ( int i = 0; i < 64; ++i )
+    {
         buf[16 + (int) sizeof( struct sockaddr_storage ) + i] = (uint8_t) i;
+    }
 
     const uint8_t * name;
     const uint8_t * payload;
@@ -92,23 +97,31 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
     rocketnet_unit_check( memcmp( name, &in4, 16 ) == 0 );
     rocketnet_unit_check( payload_bytes == 64 );
     rocketnet_unit_check( payload == buf + 16 + (int) sizeof( struct sockaddr_storage ) );
-    for ( int i = 0; i < 64; ++i )
-        rocketnet_unit_check( payload[i] == (uint8_t) i );
 
-    // the same with an IPv6 name.
+    for ( int i = 0; i < 64; ++i )
+    {
+        rocketnet_unit_check( payload[i] == (uint8_t) i );
+    }
+
+    // the same with an IPv6 name
+
     memset( buf, 0xA5, sizeof( buf ) );
     put_u32_native( buf + 0, 28 );
     put_u32_native( buf + 4, 0 );
     put_u32_native( buf + 8, 64 );
     put_u32_native( buf + 12, 0 );
+
     struct sockaddr_in6 in6;
     memset( &in6, 0, sizeof( in6 ) );
     in6.sin6_family = AF_INET6;
     in6.sin6_port = htons( 40000 );
     in6.sin6_addr.s6_addr[15] = 1;
     memcpy( buf + 16, &in6, sizeof( in6 ) );
+
     for ( int i = 0; i < 64; ++i )
+    {
         buf[16 + (int) sizeof( struct sockaddr_storage ) + i] = (uint8_t) ( 64 - i );
+    }
 
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
                               buf, (int) sizeof( buf ), (int) sizeof( struct sockaddr_storage ), 0,
@@ -118,8 +131,11 @@ static void test_io_uring_transport_codec_recvmsg_parses_name_and_payload()
     rocketnet_unit_check( memcmp( name, &in6, sizeof( in6 ) ) == 0 );
     rocketnet_unit_check( payload_bytes == 64 );
     rocketnet_unit_check( payload == buf + 16 + (int) sizeof( struct sockaddr_storage ) );
+
     for ( int i = 0; i < 64; ++i )
+    {
         rocketnet_unit_check( payload[i] == (uint8_t) ( 64 - i ) );
+    }
 }
 
 static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_buffers()
@@ -131,13 +147,15 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
 
     // short buffer: cannot hold header plus both reserved areas (16+32+8=56
     // > 55).
+
     uint8_t shortbuf[55];
     memset( shortbuf, 0, sizeof( shortbuf ) );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
                               shortbuf, (int) sizeof( shortbuf ), 32, 8,
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 
-    // name truncated: buffer is big enough but out->namelen (16) > msg_namelen (8).
+    // name truncated: buffer is big enough but out->namelen (16) > msg_namelen (8)
+
     uint8_t buf[64];
     memset( buf, 0, sizeof( buf ) );
     put_u32_native( buf + 0, 16 );
@@ -148,7 +166,8 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
                               buf, (int) sizeof( buf ), 8, 0,
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_NAME_TRUNCATED );
 
-    // payload truncated via MSG_TRUNC.
+    // payload truncated via MSG_TRUNC
+
     memset( buf, 0, sizeof( buf ) );
     put_u32_native( buf + 0, 0 );
     put_u32_native( buf + 4, 0 );
@@ -160,6 +179,7 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
 
     // payload truncated: payloadlen exceeds the bytes left in the buffer (100
     // > 64-16-8=40).
+
     memset( buf, 0, sizeof( buf ) );
     put_u32_native( buf + 0, 0 );
     put_u32_native( buf + 4, 0 );
@@ -170,6 +190,7 @@ static void test_io_uring_transport_codec_recvmsg_refuses_truncation_and_short_b
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_PAYLOAD_TRUNCATED );
 
     // a zero-length payload accepted as OK with payload_bytes 0.
+
     uint8_t zerobuf[16];
     memset( zerobuf, 0, sizeof( zerobuf ) );
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
@@ -188,6 +209,7 @@ static void test_io_uring_transport_codec_recvmsg_refuses_negative_lengths()
     int payload_bytes;
 
     // a negative msg_controllen must be refused before any arithmetic uses it
+
     uint8_t buf[64];
     memset( buf, 0, sizeof( buf ) );
     put_u32_native( buf + 0, 16 );
@@ -199,11 +221,13 @@ static void test_io_uring_transport_codec_recvmsg_refuses_negative_lengths()
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 
     // a negative msg_namelen must be refused the same way
+
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
                               buf, (int) sizeof( buf ), -32, 0,
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
 
     // both negative
+
     rocketnet_unit_check( rocketnet_uring_recvmsg_parse(
                               buf, (int) sizeof( buf ), -16, -8,
                               &name, &name_bytes, &payload, &payload_bytes, NULL, NULL ) == ROCKETNET_URING_RECV_SHORT_BUFFER );
@@ -214,7 +238,8 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
     rocketnet_address_t out;
     struct sockaddr_storage ss;
 
-    // 127.0.0.1:40000 in a sockaddr_in.
+    // 127.0.0.1:40000 in a sockaddr_in
+
     memset( &ss, 0, sizeof( ss ) );
     ( (struct sockaddr_in *) &ss )->sin_family = AF_INET;
     ( (struct sockaddr_in *) &ss )->sin_port = htons( 40000 );
@@ -226,13 +251,16 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
     rocketnet_unit_check( out.data.ipv4[0] == 127 && out.data.ipv4[1] == 0 );
     rocketnet_unit_check( out.data.ipv4[2] == 0 && out.data.ipv4[3] == 1 );
 
-    // ::ffff:127.0.0.1:40000 on a dual stack socket becomes IPv4 127.0.0.1:40000.
+    // ::ffff:127.0.0.1:40000 on a dual stack socket becomes IPv4 127.0.0.1:40000
+
     memset( &ss, 0, sizeof( ss ) );
     struct sockaddr_in6 * in6 = (struct sockaddr_in6 *) &ss;
     in6->sin6_family = AF_INET6;
     in6->sin6_port = htons( 40000 );
+
     const uint8_t mapped[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1 };
     memcpy( &in6->sin6_addr, mapped, 16 );
+
     rocketnet_unit_check( rocketnet_uring_sockaddr_to_address(
         &ss, (int) sizeof( struct sockaddr_in6 ), true, &out ) );
     rocketnet_unit_check( out.type == ROCKETNET_ADDRESS_IPV4 );
@@ -240,25 +268,29 @@ static void test_io_uring_transport_codec_sockaddr_normalizes_v4_mapped()
     rocketnet_unit_check( out.data.ipv4[0] == 127 && out.data.ipv4[1] == 0 );
     rocketnet_unit_check( out.data.ipv4[2] == 0 && out.data.ipv4[3] == 1 );
 
-    // ::1:40000 stays IPv6.
+    // ::1:40000 stays IPv6
+
     memset( &ss, 0, sizeof( ss ) );
     in6 = (struct sockaddr_in6 *) &ss;
     in6->sin6_family = AF_INET6;
     in6->sin6_port = htons( 40000 );
     in6->sin6_addr.s6_addr[15] = 1;
+
     rocketnet_unit_check( rocketnet_uring_sockaddr_to_address(
         &ss, (int) sizeof( struct sockaddr_in6 ), true, &out ) );
     rocketnet_unit_check( out.type == ROCKETNET_ADDRESS_IPV6 );
     rocketnet_unit_check( out.port == 40000 );
     rocketnet_unit_check( out.data.ipv6[0] == 0 && out.data.ipv6[7] == 1 );
 
-    // AF_UNIX returns false.
+    // AF_UNIX returns false
+
     memset( &ss, 0, sizeof( ss ) );
     ss.ss_family = AF_UNIX;
     rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
         &ss, 16, false, &out ) );
 
-    // a name shorter than its family's sockaddr returns false.
+    // a name shorter than its family's sockaddr returns false
+
     memset( &ss, 0, sizeof( ss ) );
     ( (struct sockaddr_in *) &ss )->sin_family = AF_INET;
     rocketnet_unit_check( !rocketnet_uring_sockaddr_to_address(
@@ -285,6 +317,7 @@ static uint16_t gso_message_stride( const struct msghdr * message )
     rocketnet_unit_check( cmsg->cmsg_level == IPPROTO_UDP );
     rocketnet_unit_check( cmsg->cmsg_type == UDP_SEGMENT );
     rocketnet_unit_check( cmsg->cmsg_len == CMSG_LEN( sizeof( uint16_t ) ) );
+
     uint16_t stride = 0;
     memcpy( &stride, CMSG_DATA( cmsg ), sizeof( stride ) );
     return stride;
@@ -308,6 +341,7 @@ static void test_uring_gso_message_stride_and_tail()
 
     struct sockaddr_storage name;
     memset( &name, 0, sizeof( name ) );
+
     const socklen_t namelen = (socklen_t) sizeof( struct sockaddr_in );
 
     struct msghdr message;
@@ -326,11 +360,13 @@ static void test_uring_gso_message_stride_and_tail()
         rocketnet_unit_check( message.msg_namelen == namelen );
         rocketnet_unit_check( message.msg_iov == iovecs );
         rocketnet_unit_check( message.msg_iovlen == 4 );
+
         for ( int i = 0; i < 4; i++ )
         {
             rocketnet_unit_check( iovecs[i].iov_base == wire[i] );
             rocketnet_unit_check( iovecs[i].iov_len == 400 );
         }
+
         rocketnet_unit_check( message.msg_control == control );
         rocketnet_unit_check( message.msg_controllen == ROCKETNET_URING_GSO_CONTROL_BYTES );
         rocketnet_unit_check( gso_message_stride( &message ) == 400 );
@@ -382,6 +418,7 @@ static void test_uring_gso_message_stride_and_tail()
         const int run = rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof( control ), &name, namelen,
                                                      wire, bytes, to, 3, 64, 65000 );
         to[2] = a;
+
         rocketnet_unit_check( run == 2 );
         rocketnet_unit_check( message.msg_iovlen == 2 );
     }
@@ -393,6 +430,7 @@ static void test_uring_gso_message_stride_and_tail()
         rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof( control ), &name, namelen,
                                                            wire, bytes, to, 3, 64, 65000 ) == 1 );
         rocketnet_unit_check( message.msg_control == NULL );
+
         const int aborted[2] = { 0, 400 };
         rocketnet_unit_check( rocketnet_uring_gso_message( &message, iovecs, control, (int) sizeof( control ), &name, namelen,
                                                            wire, aborted, to, 2, 64, 65000 ) == 0 );
@@ -427,12 +465,14 @@ static int gro_buffer_build( uint8_t * buf, int buf_bytes, int control_written, 
     put_u32_native( buf + 4, (uint32_t) control_written );
     put_u32_native( buf + 8, (uint32_t) payload_bytes );
     put_u32_native( buf + 12, out_flags );
+
     struct sockaddr_in in4;
     memset( &in4, 0, sizeof( in4 ) );
     in4.sin_family = AF_INET;
     in4.sin_port = htons( 40000 );
     in4.sin_addr.s_addr = htonl( 0x7f000001u );
     memcpy( buf + 16, &in4, sizeof( in4 ) );
+
     if ( cmsg_len > 0 )
     {
         struct cmsghdr header;
@@ -443,8 +483,12 @@ static int gro_buffer_build( uint8_t * buf, int buf_bytes, int control_written, 
         memcpy( buf + 16 + name_area, &header, sizeof( header ) );
         memcpy( buf + 16 + name_area + CMSG_LEN( 0 ), &stride, sizeof( stride ) );
     }
+
     for ( int i = 0; i < payload_bytes; ++i )
+    {
         buf[16 + name_area + control_area + i] = (uint8_t) i;
+    }
+
     return 16 + name_area + control_area + payload_bytes;
 }
 

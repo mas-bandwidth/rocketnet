@@ -18,7 +18,7 @@
 #if !defined( _WIN32 )
 #include <netinet/in.h>
 #include <sys/socket.h>
-#endif
+#endif // #if !defined( _WIN32 )
 
 #include <stdint.h>
 #include <string.h>

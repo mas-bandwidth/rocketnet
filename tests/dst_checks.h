@@ -29,7 +29,7 @@
 
 #ifndef ROCKETNET_DST_MAX_CLIENTS
 #define ROCKETNET_DST_MAX_CLIENTS 16
-#endif
+#endif // #ifndef ROCKETNET_DST_MAX_CLIENTS
 
 // One stream is (receiving session, send channel, type). A server slot s is
 // session s; client i is session 16 + i. 32 * 9 * 8 = 2304.
@@ -218,6 +218,7 @@ static inline void rocketnet_dst_check_fail( struct rocketnet_dst_check_state_t 
 }
 
 // The core prints the line; a unit case that wants the fire stays silent.
+
 static inline void rocketnet_dst_check_report( struct rocketnet_dst_check_state_t * st )
 {
     if ( !st->failed )
@@ -235,6 +236,7 @@ static inline int rocketnet_dst_check_stream_index( int session, int channel, in
         return 0;
     if ( type < 0 || type >= 8 )
         return 0;
+
     return ( session * 9 + channel ) * 8 + type;
 }
 
@@ -244,15 +246,18 @@ static inline int rocketnet_dst_check_stream_index( int session, int channel, in
 // the checks fail naming the table, index, base and lap instead of aliasing.
 // The tables that never resolve an entry (opened, unreliable_delivered,
 // receipt_seen) pass base 0.
+
 static inline int rocketnet_dst_check_lap( struct rocketnet_dst_check_state_t * st,
                                            const char * table, uint32_t base, uint32_t i )
 {
     if ( i < base || i - base < ROCKETNET_DST_CHECK_SEQ_BITS )
         return 0;
+
     char what[192];
     snprintf( what, sizeof( what ), "table=%s seq=%u base=%u lap=%u",
               table, i, base, ( i - base ) / ROCKETNET_DST_CHECK_SEQ_BITS );
     rocketnet_dst_check_fail( st, "dst_lap", what );
+
     return 1;
 }
 
@@ -264,6 +269,7 @@ static inline int rocketnet_dst_check_bit( struct rocketnet_dst_check_state_t * 
         return 1;                       // resolved below the oldest unresolved index
     if ( rocketnet_dst_check_lap( st, table, base, i ) )
         return 0;
+
     return ( bits[( i % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] >> ( i % 8 ) ) & 1;
 }
 
@@ -281,6 +287,7 @@ static inline void rocketnet_dst_check_set_bit( struct rocketnet_dst_check_state
 // Moves the reliable base past the contiguous delivered sequences and clears
 // the slot each one vacates, so the index 4096 later starts clean instead of
 // inheriting the resolved sequence's bit.
+
 static inline void rocketnet_dst_check_reliable_resolve( struct rocketnet_dst_check_stream_t * s )
 {
     while ( s->has_last_sent && s->reliable_base <= s->last_sent_seq )
@@ -332,12 +339,14 @@ static inline struct rocketnet_dst_check_sequenced_channel_t * rocketnet_dst_che
 
 // Records the size the sender drew for a sequence. Called where the harness
 // builds a payload, before the message object sees it.
+
 static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t * st,
                                              double time, int session, int channel, int type,
                                              uint32_t sequence, uint32_t generation, uint64_t identity,
                                              uint32_t epoch, int bytes )
 {
     (void) time;
+
     struct rocketnet_dst_check_stream_t * s =
         rocketnet_dst_check_stream( st, session, channel, type, generation, identity );
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
@@ -350,23 +359,29 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
             s->reliable_sent_count++;
         }
     }
+
     if ( !lap )
     {
-        // Exact at every legal size: a non-negative int fits uint32_t, no clamp.
+        // exact at every legal size: a non-negative int fits uint32_t, no clamp
         s->sent_size[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = bytes > 0 ? (uint32_t) bytes : 0;
         s->sent_size_set[sequence % ROCKETNET_DST_CHECK_SEQ_BITS] = 1;
     }
+
     s->last_sent_seq = sequence;
     s->last_sent_step = st->step;
     s->has_last_sent = 1;
     rocketnet_dst_check_reliable_resolve( s );
     if ( reliable && !lap )
+    {
         s->outstanding_bytes += (uint32_t) bytes;
+    }
+
     if ( channel == 8 && ( type == 1 || type == 4 ) )
     {
         s->sequenced_epoch = epoch;
         s->sequenced_has_epoch = 1;
     }
+
     if ( type == 1 || type == 4 )
     {
         struct rocketnet_dst_check_sequenced_channel_t * c =
@@ -385,7 +400,9 @@ static inline void rocketnet_dst_check_sent( struct rocketnet_dst_check_state_t 
                 // does not serve this send either, so the served index
                 // starts empty.
                 if ( c->quiet_required_set && c->quiet_required_epoch != epoch )
+                {
                     c->quiet_served_set = 0;
+                }
                 c->quiet_required_set = 1;
                 c->quiet_required_index = c->send_count;
                 c->quiet_required_epoch = epoch;
@@ -513,6 +530,7 @@ static inline int rocketnet_dst_check_unreliable_once( struct rocketnet_dst_chec
 
 // Records a sequence the receiving session opened (the opened set of an ack
 // check).
+
 static inline void rocketnet_dst_check_opened( struct rocketnet_dst_check_state_t * st,
                                                int stream, uint32_t seq )
 {
@@ -542,14 +560,17 @@ static inline int rocketnet_dst_check_acked( struct rocketnet_dst_check_state_t 
 // ReconnectObservesNothing, RNSlots::ReusedSlotStartsClean and RNSimFaults::
 // DeliverOnlyToLiveGeneration. A delivery's generation and incarnation equal
 // the receiving session's, compared separately.
+
 static inline int rocketnet_dst_check_stale_session( struct rocketnet_dst_check_state_t * st,
                                                      double time, int stream, uint32_t generation,
                                                      int incarnation )
 {
     (void) time;
+
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
     s->expected_generation = generation;
     s->expected_incarnation = incarnation;
+
     return 0;
 }
 
@@ -558,6 +579,7 @@ static inline int rocketnet_dst_check_stale_session_payload( struct rocketnet_ds
                                                              int incarnation )
 {
     (void) time;
+
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
     if ( generation != s->expected_generation || incarnation != s->expected_incarnation )
     {
@@ -567,6 +589,7 @@ static inline int rocketnet_dst_check_stale_session_payload( struct rocketnet_ds
         rocketnet_dst_check_fail( st, "stale_session_payload", what );
         return 1;
     }
+
     return 0;
 }
 
@@ -599,6 +622,7 @@ static inline int rocketnet_dst_check_liveness_delivered( struct rocketnet_dst_c
 
 // Mirrors RNChannel::WholeMessagesOnly and FragmentsAndAcks::DeliveredExact:
 // the delivery's length matches the size recorded when its sequence was sent.
+
 static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_state_t * st,
                                                      int stream, uint32_t seq, int bytes )
 {
@@ -607,6 +631,7 @@ static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_
         return 0;
     if ( rocketnet_dst_check_lap( st, "sent_size", s->reliable_base, seq ) )
         return 1;
+
     const uint32_t at = seq % ROCKETNET_DST_CHECK_SEQ_BITS;
     if ( s->sent_size_set[at] && ( bytes < 0 || s->sent_size[at] != (uint32_t) bytes ) )  // a negative delivery is itself a mismatch
     {
@@ -616,12 +641,14 @@ static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_
         rocketnet_dst_check_fail( st, "whole_message", what );
         return 1;
     }
+
     return 0;
 }
 
 // Mirrors RNChannel::OrderedTraceUnchangedBySequenced and RNChannelTypes::
 // OrderedTraceUnchangedBySequenced: on channel 8 the ordered deliveries alone
 // are the ordered sends, in order.
+
 static inline int rocketnet_dst_check_ordered_unchanged( struct rocketnet_dst_check_state_t * st,
                                                          int stream, uint32_t seq )
 {
@@ -631,6 +658,7 @@ static inline int rocketnet_dst_check_ordered_unchanged( struct rocketnet_dst_ch
         s->unchanged_seen = 1;
         s->unchanged_expect = 0;
     }
+
     if ( seq != s->unchanged_expect )
     {
         char what[160];
@@ -639,7 +667,9 @@ static inline int rocketnet_dst_check_ordered_unchanged( struct rocketnet_dst_ch
         rocketnet_dst_check_fail( st, "ordered_unchanged_by_sequenced", what );
         return 1;
     }
+
     s->unchanged_expect++;
+
     return 0;
 }
 
@@ -650,6 +680,7 @@ static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_
 
 // The ordered delivery rule over the sender's recorded sequences: strictly
 // increasing, and no earlier sent sequence is still undelivered.
+
 static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_check_state_t * st,
                                                        int stream, uint32_t seq )
 {
@@ -661,10 +692,12 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
         rocketnet_dst_check_fail( st, "ordered_in_order", what );
         return 1;
     }
+
     for ( uint32_t earlier = 0; earlier < seq && earlier < ROCKETNET_DST_CHECK_SEQ_BITS; earlier++ )
     {
         if ( !rocketnet_dst_check_bit( st, s->reliable_sent, s->reliable_base, earlier, "reliable_sent" ) )
             continue;
+
         if ( !rocketnet_dst_check_bit( st, s->reliable_delivered, s->reliable_base, earlier, "reliable_delivered" ) )
         {
             char what[200];
@@ -673,8 +706,10 @@ static inline int rocketnet_dst_check_ordered_runtime( struct rocketnet_dst_chec
             return 1;
         }
     }
+
     s->ordered_last = seq;
     s->ordered_has_last = 1;
+
     return 0;
 }
 
@@ -689,14 +724,17 @@ static inline int rocketnet_dst_check_unchanged_runtime( struct rocketnet_dst_ch
         rocketnet_dst_check_fail( st, "ordered_unchanged_by_sequenced", what );
         return 1;
     }
+
     s->unchanged_seen = 1;
     s->unchanged_last = seq;
+
     return 0;
 }
 
 // One delivery, all the per-delivery rows. expected_generation is the
 // receiving session's generation (0 when the session is not live), and
 // expected_incarnation the session's server incarnation.
+
 static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_state_t * st,
                                                  double time, int session, int channel, int type,
                                                  uint32_t sequence, uint32_t generation, int incarnation,
@@ -714,10 +752,14 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
     rocketnet_dst_check_opened( st, stream, sequence );
 
     if ( type == 2 || type == 3 || type == 6 || type == 7 )
+    {
         rocketnet_dst_check_reliable_once( st, time, stream, sequence );
+    }
 
     if ( type == 4 )
+    {
         rocketnet_dst_check_set_bit( st, s->reliable_delivered, s->reliable_base, sequence, "reliable_delivered" );
+    }
     rocketnet_dst_check_reliable_resolve( s );
 
     if ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 )
@@ -729,10 +771,14 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
     }
 
     if ( type == 3 || type == 7 || ( channel == 8 && type == 3 ) )
+    {
         rocketnet_dst_check_ordered_runtime( st, stream, sequence );
+    }
 
     if ( channel == 8 && type == 3 )
+    {
         rocketnet_dst_check_unchanged_runtime( st, stream, sequence );
+    }
 
     if ( type == 1 || type == 4 )
     {
@@ -741,8 +787,9 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
         else
             rocketnet_dst_check_sequenced( st, time, stream, sequence );
 
-        // The cross-type view: a delivery of either type at or above the
-        // newest type 4 quiet-window send, in its epoch, serves that send.
+        // the cross-type view: a delivery of either type at or above the
+        // newest type 4 quiet-window send, in its epoch, serves that send
+
         struct rocketnet_dst_check_sequenced_channel_t * c =
             rocketnet_dst_check_sequenced_channel( st, session, channel, identity );
         const uint32_t index = c ? c->index_of[type == 4][sequence % ROCKETNET_DST_CHECK_SEQ_BITS] : 0;
@@ -754,6 +801,7 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
                 c->delivered_index = index;
                 c->delivered_epoch = epoch;
             }
+
             if ( c->quiet_required_set && epoch == c->quiet_required_epoch &&
                  ( !c->quiet_served_set || index > c->quiet_served_index ) )
             {
@@ -764,23 +812,31 @@ static inline void rocketnet_dst_check_delivery( struct rocketnet_dst_check_stat
     }
 
     if ( type == 0 || type == 5 )
+    {
         rocketnet_dst_check_unreliable_once( st, time, stream, sequence );
+    }
 
     if ( type == 5 || type == 6 || type == 7 )
+    {
         rocketnet_dst_check_receipt_one_outcome( st, stream, type, sequence );
+    }
 
     if ( type == 6 || type == 7 )
+    {
         rocketnet_dst_check_receipt_acked_delivered( st, stream, sequence );
+    }
 }
 
 // Mirrors RNReceipts::ExactlyOneOutcomePerReceiptSerial and
 // LossOnlyForUnreliableReceipt. A receipt serial of types 5, 6, 7 gets one
 // outcome; the delivery is the outcome this run observes.
+
 static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_check_state_t * st,
                                                            int stream, int type, uint32_t seq )
 {
     struct rocketnet_dst_check_stream_t * s = &st->stream[stream];
     (void) type;
+
     if ( rocketnet_dst_check_bit( st, s->receipt_seen, 0, seq, "receipt_seen" ) )
     {
         char what[160];
@@ -788,7 +844,9 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
         rocketnet_dst_check_fail( st, "receipt_one_outcome", what );
         return 1;
     }
+
     rocketnet_dst_check_set_bit( st, s->receipt_seen, 0, seq, "receipt_seen" );
+
     return 0;
 }
 
@@ -796,6 +854,7 @@ static inline int rocketnet_dst_check_receipt_one_outcome( struct rocketnet_dst_
 // RNChannelTypes::EveryReliableAckedAndDelivered (safety side): an ACKED
 // receipt for types 6 and 7 names a message the receiver delivered; by the last
 // step on a live session it is delivered.
+
 static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_dst_check_state_t * st,
                                                                int stream, uint32_t seq )
 {
@@ -807,6 +866,7 @@ static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_
         rocketnet_dst_check_fail( st, "receipt_acked_delivered", what );
         return 1;
     }
+
     return 0;
 }
 
@@ -814,17 +874,20 @@ static inline int rocketnet_dst_check_receipt_acked_delivered( struct rocketnet_
 // CurrentOnlyWhileLive and ServerSession::TokenAdmitsOnce. No two connected
 // slots hold one client_id; a client_id reaches connected once per server
 // incarnation. Called every step, after the server update.
+
 static inline void rocketnet_dst_check_slot( struct rocketnet_dst_check_state_t * st, int slot,
                                              int connected, uint64_t client_id, int incarnation )
 {
     if ( slot < 0 || slot >= ROCKETNET_DST_MAX_CLIENTS )
         return;
+
     if ( connected )
     {
         for ( int other = 0; other < ROCKETNET_DST_MAX_CLIENTS; other++ )
         {
             if ( other == slot || !st->slot_connected[other] )
                 continue;
+
             if ( st->slot_client_id[other] == client_id && client_id != 0 )
             {
                 char what[200];
@@ -834,6 +897,7 @@ static inline void rocketnet_dst_check_slot( struct rocketnet_dst_check_state_t 
                 return;
             }
         }
+
         if ( st->slot_client_id[slot] != client_id )
         {
             for ( unsigned i = 0; i < st->admitted_count; i++ )
@@ -847,9 +911,13 @@ static inline void rocketnet_dst_check_slot( struct rocketnet_dst_check_state_t 
                     return;
                 }
             }
+
             if ( st->admitted_count < ROCKETNET_DST_CHECK_MAX_PACKETS )
+            {
                 st->admitted_client_id[st->admitted_count++] = client_id;
+            }
         }
+
         st->slot_client_id[slot] = client_id;
         st->slot_connected[slot] = 1;
         st->slot_incarnation[slot] = incarnation;
@@ -863,11 +931,13 @@ static inline void rocketnet_dst_check_slot( struct rocketnet_dst_check_state_t 
 
 // Mirrors ClientSession::ConnectReachesConnectedOrError (safety side): a
 // terminal client state outside the explained windows of section 3.
+
 static inline void rocketnet_dst_check_client_state( struct rocketnet_dst_check_state_t * st, int client,
                                                      int state, int terminal_explained )
 {
     if ( client < 0 || client >= ROCKETNET_DST_MAX_CLIENTS )
         return;
+
     const int terminal = state < 0;
     if ( terminal && !terminal_explained )
     {
@@ -875,16 +945,19 @@ static inline void rocketnet_dst_check_client_state( struct rocketnet_dst_check_
         snprintf( what, sizeof( what ), "client=%d terminal state=%d", client, state );
         rocketnet_dst_check_fail( st, "client_terminal", what );
     }
+
     st->client_state[client] = state;
 }
 
 // Mirrors RNSimFaults::RestartIsFresh: a restarted client connects only under
 // a generation never used before.
+
 static inline void rocketnet_dst_check_generation( struct rocketnet_dst_check_state_t * st, int client,
                                                    uint64_t generation )
 {
     if ( client < 0 || client >= ROCKETNET_DST_MAX_CLIENTS )
         return;
+
     if ( generation <= st->generation_high[client] )
     {
         char what[160];
@@ -892,23 +965,29 @@ static inline void rocketnet_dst_check_generation( struct rocketnet_dst_check_st
                   client, (unsigned long long) generation, (unsigned long long) st->generation_high[client] );
         rocketnet_dst_check_fail( st, "fresh_generation", what );
     }
+
     if ( generation > st->generation_high[client] )
+    {
         st->generation_high[client] = generation;
+    }
 }
 
 // Mirrors ReplayWindow::Monotone and HighestIsReceived: within a session the
 // receiver's replay_session.highest_opened never decreases.
+
 static inline void rocketnet_dst_check_replay( struct rocketnet_dst_check_state_t * st, int session,
                                                uint64_t generation, uint64_t highest_opened )
 {
     if ( session < 0 || session >= ROCKETNET_DST_CHECK_MAX_SESSIONS )
         return;
+
     if ( st->replay_generation[session] != generation )
     {
         st->replay_generation[session] = generation;
         st->replay_high[session] = highest_opened;
         return;
     }
+
     if ( highest_opened < st->replay_high[session] )
     {
         char what[160];
@@ -916,12 +995,14 @@ static inline void rocketnet_dst_check_replay( struct rocketnet_dst_check_state_
                   (unsigned long long) highest_opened, (unsigned long long) st->replay_high[session] );
         rocketnet_dst_check_fail( st, "replay_monotone", what );
     }
+
     st->replay_high[session] = highest_opened;
 }
 
 // Mirrors RNSimFaults::CrashedEndpointSilent: an endpoint (the server or a client) that is not up sends and
 // receives nothing. No crash fault is injected (docs/DST.md, "Fault kinds");
 // every endpoint is up, so the check runs and holds.
+
 static inline void rocketnet_dst_check_crashed_silent( struct rocketnet_dst_check_state_t * st, int endpoint,
                                                        int live, int sent_or_received )
 {
@@ -955,6 +1036,7 @@ static inline void rocketnet_dst_check_clock( struct rocketnet_dst_check_state_t
 // Mirrors ClientSession::ConnectReachesConnectedOrError, ServerSession::
 // HandshakeResolves and RNSimFaults::EveryLiveClientConnects: every live
 // client is connected and the server holds its session by the last step.
+
 static inline void rocketnet_dst_check_liveness_connected( struct rocketnet_dst_check_state_t * st,
                                                            int client, int live, int connected )
 {
@@ -967,28 +1049,33 @@ static inline void rocketnet_dst_check_liveness_connected( struct rocketnet_dst_
 }
 
 // The reliable bytes sent on a session and not yet delivered at the receiver.
+
 static inline uint64_t rocketnet_dst_check_outstanding( struct rocketnet_dst_check_state_t * st, int session )
 {
     uint64_t total = 0;
     for ( int channel = 0; channel < 9; channel++ )
         for ( int type = 0; type < 8; type++ )
             total += st->stream[rocketnet_dst_check_stream_index( session, channel, type )].outstanding_bytes;
+
     return total;
 }
 
 // The newest type 4 sequence this stream delivered (every sequence below the
 // reliable base is delivered), for the failure line.
+
 static inline uint32_t rocketnet_dst_check_type4_newest( const struct rocketnet_dst_check_stream_t * s )
 {
     uint32_t newest = s->reliable_base > 0 ? s->reliable_base - 1 : 0;
     for ( uint32_t seq = s->reliable_base; seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
         if ( ( s->reliable_delivered[( seq % ROCKETNET_DST_CHECK_SEQ_BITS ) / 8] >> ( seq % 8 ) ) & 1 )
             newest = seq;
+
     return newest;
 }
 
 // Marks the sequences that were sent before the fault window ended: the
 // quiet window is the liveness bound, so only those are due at the last step.
+
 static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_t * st )
 {
     for ( int i = 0; i < ROCKETNET_DST_CHECK_MAX_STREAMS; i++ )
@@ -1000,6 +1087,7 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
         s->quiet_start_seq = s->last_sent_seq;
         s->settled = 1;
     }
+
     for ( int i = 0; i < ROCKETNET_DST_CHECK_MAX_SESSIONS * 9; i++ )
     {
         struct rocketnet_dst_check_sequenced_channel_t * c = &st->sequenced[i];
@@ -1014,6 +1102,7 @@ static inline void rocketnet_dst_check_settle( struct rocketnet_dst_check_state_
 // Called at the last step: every reliable message sent on a stream whose
 // session is still live is delivered. The harness passes the live flag per
 // session (0 the server, i + 1 client i).
+
 static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t * st, double /* time */,
                                             const int * session_live, const uint64_t * live_identity )
 {
@@ -1021,6 +1110,7 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
     {
         if ( !session_live[session] )
             continue;
+
         for ( int channel = 0; channel < 9; channel++ )
         {
             for ( int type = 0; type < 8; type++ )
@@ -1029,11 +1119,12 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     &st->stream[rocketnet_dst_check_stream_index( session, channel, type )];
                 if ( !s->seen || s->identity != live_identity[session] )
                     continue;
+
                 if ( type == 2 || type == 3 || type == 6 || type == 7 )
                 {
-                    // Messages sent after the fault window ended, inside the
+                    // messages sent after the fault window ended, inside the
                     // quiet window, are due; the last 20 may still be in
-                    // flight.
+                    // flight
                     const uint32_t settled = s->last_sent_seq > 20 ? s->last_sent_seq - 20 : 0;
                     for ( uint32_t seq = s->quiet_start_seq + 1;
                           seq <= settled && seq < s->reliable_base + ROCKETNET_DST_CHECK_SEQ_BITS; seq++ )
@@ -1051,6 +1142,7 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                         }
                     }
                 }
+
                 if ( type == 4 && s->has_last_sent && s->last_sent_seq > s->quiet_start_seq )
                 {
                     // Sequenced delivery never goes backwards and drops what a
@@ -1064,9 +1156,11 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     const struct rocketnet_dst_check_sequenced_channel_t * c =
                         &st->sequenced[session * 9 + channel];
                     const int served = c->quiet_served_set && c->quiet_served_index >= c->quiet_required_index;
-                    // A type 4 sent in the last steps of the run is still on
+
+                    // a type 4 sent in the last steps of the run is still on
                     // the wire: the simulator's longest delay is under the
-                    // slack above, so it is not owed yet.
+                    // slack above, so it is not owed yet
+
                     const int in_flight = c->quiet_required_set &&
                                           st->step - c->quiet_required_step < ROCKETNET_DST_CHECK_IN_FLIGHT_STEPS;
                     if ( !served && !in_flight )
@@ -1087,6 +1181,7 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
 }
 
 // Mirrors the counter law of rocketnet_counters_conserved (no model).
+
 static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_state_t * st,
                                                      const struct rocketnet_counters_t * counters,
                                                      const char * end )
@@ -1094,6 +1189,7 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
     // "<end>: <report>" fits the check state's detail[256] (dst_checks.h:120):
     // end is "server" or "clients" (dst_harness.h:1264-1265), and the report
     // is one counter name and two u64 (sdk/rocketnet_counters.cpp:137)
+
     char report[240];
     if ( !rocketnet_counters_conserved( counters, report, sizeof( report ) ) )
     {
@@ -1107,6 +1203,7 @@ static inline void rocketnet_dst_check_conservation( struct rocketnet_dst_check_
 // the faults this run injects is a FAIL. The duplicate fault (or the dup-storm
 // schedule) is the one that can replay a packet, so it is the one that
 // explains a replayed ACK or a payload taken twice.
+
 static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst_check_state_t * st,
                                                             const struct rocketnet_counters_t * counters,
                                                             const char * end,
@@ -1117,6 +1214,7 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
         const uint64_t value = rocketnet_counter_value( counters, i );
         if ( value == 0 || rocketnet_counter_class( i ) != ROCKETNET_COUNTER_CLASS_REFUSAL )
             continue;
+
         const int explained =
             i == ROCKETNET_COUNTER_SEND_HISTORY_OVERFLOW ||
             // A replayed standalone ACK is a benign refusal when the
@@ -1158,6 +1256,7 @@ static inline void rocketnet_dst_check_unexplained_refusal( struct rocketnet_dst
 }
 
 // No model: the harness's allocations balance across a seed.
+
 static inline void rocketnet_dst_check_leak( struct rocketnet_dst_check_state_t * st )
 {
     if ( st->allocation_balance != 0 )
@@ -1170,6 +1269,7 @@ static inline void rocketnet_dst_check_leak( struct rocketnet_dst_check_state_t 
 
 // The seam's ack join key: a packet id maps to the stream and sequence its
 // frame was sealed under.
+
 static inline void rocketnet_dst_check_issued( struct rocketnet_dst_check_state_t * st, uint64_t packet_id )
 {
     const uint32_t at = (uint32_t) ( packet_id % ROCKETNET_DST_CHECK_MAX_PACKETS );
@@ -1179,6 +1279,7 @@ static inline void rocketnet_dst_check_issued( struct rocketnet_dst_check_state_
 // Mirrors RNReceipts::AckedMeansPacketOpened: a link ack names a packet this
 // endpoint issued. The join key the seam surfaces is the packet id recorded
 // when the frame was sealed.
+
 static inline void rocketnet_dst_check_ack_id( struct rocketnet_dst_check_state_t * st, uint64_t packet_id )
 {
     const uint32_t at = (uint32_t) ( packet_id % ROCKETNET_DST_CHECK_MAX_PACKETS );

@@ -36,7 +36,7 @@
 #include <io.h>
 #else
 #include <dirent.h>
-#endif
+#endif // #if defined( _WIN32 )
 
 #define ROCKETNET_PCAPNG_LINKTYPE_IPV4              228
 #define ROCKETNET_PCAPNG_LINKTYPE_USER0             147
@@ -126,18 +126,23 @@ inline void rocketnet_pcapng_put_u16( std::vector<uint8_t> & out, uint32_t value
 inline void rocketnet_pcapng_put_u32( std::vector<uint8_t> & out, uint32_t value )
 {
     for ( int i = 0; i < 4; i++ )
+    {
         out.push_back( (uint8_t) ( ( value >> ( 8 * i ) ) & 0xFF ) );
+    }
 }
 
 inline void rocketnet_pcapng_pad4( std::vector<uint8_t> & out )
 {
     while ( out.size() % 4 )
+    {
         out.push_back( 0 );
+    }
 }
 
 inline void rocketnet_pcapng_close_block( std::vector<uint8_t> & out, size_t start )
 {
     rocketnet_pcapng_pad4( out );
+
     const uint32_t total = (uint32_t) ( out.size() - start + 4 );
     rocketnet_pcapng_put_u32( out, total );
     out[start + 4] = (uint8_t) ( total & 0xFF );
@@ -161,6 +166,7 @@ inline void rocketnet_pcapng_write_header( std::vector<uint8_t> & out )
     rocketnet_pcapng_close_block( out, start );
 
     const int linktypes[2] = { ROCKETNET_PCAPNG_LINKTYPE_IPV4, ROCKETNET_PCAPNG_LINKTYPE_USER0 };
+
     for ( int i = 0; i < 2; i++ )
     {
         start = out.size();
@@ -187,8 +193,11 @@ inline size_t rocketnet_pcapng_write_packet( std::vector<uint8_t> & out, int int
     rocketnet_pcapng_put_u32( out, (uint32_t) bytes );
     rocketnet_pcapng_put_u32( out, (uint32_t) bytes );
     if ( bytes > 0 )
+    {
         out.insert( out.end(), data, data + bytes );
+    }
     rocketnet_pcapng_pad4( out );
+
     if ( comment && comment[0] )
     {
         const size_t length = strlen( comment );
@@ -199,7 +208,9 @@ inline size_t rocketnet_pcapng_write_packet( std::vector<uint8_t> & out, int int
         rocketnet_pcapng_put_u16( out, ROCKETNET_PCAPNG_OPT_ENDOFOPT );
         rocketnet_pcapng_put_u16( out, 0 );
     }
+
     rocketnet_pcapng_close_block( out, start );
+
     return out.size() - start;
 }
 
@@ -209,7 +220,9 @@ inline size_t rocketnet_pcapng_packet_block_bytes( int bytes, const char * comme
 {
     size_t total = 28 + ( ( (size_t) bytes + 3 ) & ~(size_t) 3 ) + 4;
     if ( comment && comment[0] )
+    {
         total += 4 + ( ( strlen( comment ) + 3 ) & ~(size_t) 3 ) + 4;
+    }
     return total;
 }
 
@@ -223,6 +236,7 @@ inline void rocketnet_pcapng_ipv4_udp_frame( std::vector<uint8_t> & out,
                                              const uint8_t * datagram, int bytes )
 {
     out.clear();
+
     const uint32_t total = 20 + 8 + (uint32_t) bytes;
     const uint8_t header[20] = {
         0x45,
@@ -247,14 +261,21 @@ inline void rocketnet_pcapng_ipv4_udp_frame( std::vector<uint8_t> & out,
         (uint8_t) destination_address,
     };
     out.insert( out.end(), header, header + 20 );
+
     uint32_t sum = 0;
     for ( size_t i = 0; i < 20; i += 2 )
+    {
         sum += ( (uint32_t) out[i] << 8 ) | out[i + 1];
+    }
     while ( sum >> 16 )
+    {
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+    }
+
     const uint16_t checksum = (uint16_t) ~sum;
     out[10] = (uint8_t) ( checksum >> 8 );
     out[11] = (uint8_t) checksum;
+
     const uint32_t udp_length = 8 + (uint32_t) bytes;
     const uint8_t udp[8] = {
         (uint8_t) ( source_port >> 8 ),
@@ -268,7 +289,9 @@ inline void rocketnet_pcapng_ipv4_udp_frame( std::vector<uint8_t> & out,
     };
     out.insert( out.end(), udp, udp + 8 );
     if ( bytes > 0 )
+    {
         out.insert( out.end(), datagram, datagram + bytes );
+    }
 }
 
 // -----------------------------------------
@@ -296,7 +319,9 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
 {
     packets.clear();
     if ( error_offset )
+    {
         *error_offset = 0;
+    }
     if ( bytes > ROCKETNET_PCAPNG_MAX_FILE_BYTES )
         return ROCKETNET_PCAPNG_FILE_OVER_CAP;
 
@@ -307,10 +332,14 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
     while ( offset < bytes )
     {
         if ( error_offset )
+        {
             *error_offset = offset;
+        }
+
         const size_t remaining = bytes - offset;
         if ( remaining < 12 )
             return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+
         const uint8_t * block = buffer + offset;
         const uint32_t type = rocketnet_pcapng_get_u32( block );
         const uint32_t total = rocketnet_pcapng_get_u32( block + 4 );
@@ -340,6 +369,7 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
         {
             if ( body_bytes < 8 )
                 return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+
             const int linktype = (int) rocketnet_pcapng_get_u16( body );
             if ( linktype != ROCKETNET_PCAPNG_LINKTYPE_IPV4 && linktype != ROCKETNET_PCAPNG_LINKTYPE_USER0 )
                 return ROCKETNET_PCAPNG_UNKNOWN_LINKTYPE;
@@ -349,9 +379,11 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
         {
             if ( body_bytes < 20 )
                 return ROCKETNET_PCAPNG_TRUNCATED_BLOCK;
+
             const uint32_t interface_id = rocketnet_pcapng_get_u32( body );
             if ( interface_id >= interfaces.size() )
                 return ROCKETNET_PCAPNG_UNKNOWN_INTERFACE;
+
             const uint64_t high = rocketnet_pcapng_get_u32( body + 4 );
             const uint64_t low = rocketnet_pcapng_get_u32( body + 8 );
             const uint32_t captured = rocketnet_pcapng_get_u32( body + 12 );
@@ -359,6 +391,7 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
             const uint32_t room = body_bytes - 20;
             if ( captured != original || captured > room )
                 return ROCKETNET_PCAPNG_BAD_PACKET_LENGTH;
+
             const uint32_t padded = ( captured + 3 ) & ~3u;
             if ( padded > room )
                 return ROCKETNET_PCAPNG_BAD_PACKET_LENGTH;
@@ -370,34 +403,42 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
             packet.data.assign( body + 20, body + 20 + captured );
 
             // options: code u16, length u16, value padded to 4; endofopt ends them
+
             uint32_t option = 20 + padded;
             while ( option < body_bytes )
             {
                 if ( body_bytes - option < 4 )
                     return ROCKETNET_PCAPNG_BAD_OPTION;
+
                 const uint32_t code = rocketnet_pcapng_get_u16( body + option );
                 const uint32_t length = rocketnet_pcapng_get_u16( body + option + 2 );
                 if ( code == ROCKETNET_PCAPNG_OPT_ENDOFOPT )
                     break;
+
                 const uint32_t value_room = body_bytes - option - 4;
                 const uint32_t value_padded = ( length + 3 ) & ~3u;
                 if ( value_padded > value_room )
                     return ROCKETNET_PCAPNG_BAD_OPTION;
                 if ( code == ROCKETNET_PCAPNG_OPT_COMMENT )
+                {
                     packet.comment.assign( (const char *) body + option + 4, length );
+                }
                 option += 4 + value_padded;
             }
+
             packets.push_back( packet );
         }
         else
         {
             return ROCKETNET_PCAPNG_UNKNOWN_BLOCK;
         }
+
         offset += total;
     }
 
     if ( !section )
         return ROCKETNET_PCAPNG_NOT_A_SECTION;
+
     return ROCKETNET_PCAPNG_OK;
 }
 
@@ -407,14 +448,19 @@ inline int rocketnet_pcapng_read_buffer( const uint8_t * buffer, size_t bytes,
 inline int rocketnet_pcapng_read_file( const std::string & path, std::vector<uint8_t> & image )
 {
     image.clear();
+
     FILE * file = rocketnet_test_fopen( path, "rb" );
     if ( !file )
         return ROCKETNET_PCAPNG_CANNOT_OPEN;
+
     uint8_t chunk[4096];
     size_t n;
     while ( image.size() <= ROCKETNET_PCAPNG_MAX_FILE_BYTES && ( n = fread( chunk, 1, sizeof( chunk ), file ) ) > 0 )
+    {
         image.insert( image.end(), chunk, chunk + n );
+    }
     fclose( file );
+
     return image.size() > ROCKETNET_PCAPNG_MAX_FILE_BYTES ? ROCKETNET_PCAPNG_FILE_OVER_CAP : ROCKETNET_PCAPNG_OK;
 }
 
@@ -429,19 +475,27 @@ inline int rocketnet_pcapng_udp_payload( const std::vector<uint8_t> & frame,
 {
     if ( frame.size() < 28 )
         return 0;
+
     const uint8_t * p = frame.data();
     if ( p[0] != 0x45 || p[9] != 17 )
         return 0;
+
     const uint32_t total = ( (uint32_t) p[2] << 8 ) | p[3];
     if ( total != frame.size() )
         return 0;
+
     uint32_t sum = 0;
     for ( int i = 0; i < 20; i += 2 )
+    {
         sum += ( (uint32_t) p[i] << 8 ) | p[i + 1];
+    }
     while ( sum >> 16 )
+    {
         sum = ( sum & 0xFFFF ) + ( sum >> 16 );
+    }
     if ( sum != 0xFFFF )
         return 0;
+
     const uint32_t udp_length = ( (uint32_t) p[24] << 8 ) | p[25];
     if ( udp_length != total - 20 )
         return 0;
@@ -451,6 +505,7 @@ inline int rocketnet_pcapng_udp_payload( const std::vector<uint8_t> & frame,
     *destination_port = (uint16_t) ( ( p[22] << 8 ) | p[23] );
     *datagram = p + 28;
     *bytes = (int) ( total - 28 );
+
     return 1;
 }
 
@@ -468,8 +523,11 @@ inline void rocketnet_pcapng_list( const std::string & directory, std::vector<st
         do
         {
             if ( !( found.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY ) )
+            {
                 names.push_back( rocketnet_test_wide_to_utf8( found.cFileName, (int) wcslen( found.cFileName ) ) );
+            }
         } while ( FindNextFileW( handle, &found ) );
+
         FindClose( handle );
     }
 #else
@@ -481,11 +539,14 @@ inline void rocketnet_pcapng_list( const std::string & directory, std::vector<st
         {
             const std::string name = entry->d_name;
             if ( name.size() > 7 && name.compare( name.size() - 7, 7, ".pcapng" ) == 0 )
+            {
                 names.push_back( name );
+            }
         }
+
         closedir( dir );
     }
-#endif
+#endif // #if defined( _WIN32 )
     for ( size_t i = 1; i < names.size(); i++ )
         for ( size_t j = i; j > 0 && names[j] < names[j - 1]; j-- )
             names[j].swap( names[j - 1] );

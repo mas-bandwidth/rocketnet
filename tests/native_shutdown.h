@@ -9,7 +9,7 @@
 
 #ifdef __cplusplus
 #include "../sdk/rocketnet_driver.h"
-#endif
+#endif // #ifdef __cplusplus
 
 // Native functional/benchmark cleanup. Explicitly bounded waiting belongs to
 // the harness, never to stop/stopped. Preserve the suite's outer watchdog.
@@ -17,6 +17,7 @@
 // (rn_cli_bounded_wait, 10 second bound); this header supplies each native
 // type's completion query and step, and passes the harness clock and sleep
 // in at those call sites.
+
 static inline int rn_native_client_transport_is_stopped( void * object )
 {
     return rocketnet_client_transport_stopped( (struct rocketnet_client_transport_t *) object );
@@ -98,17 +99,20 @@ static inline void rn_native_backend_stop_and_destroy( transport_t * transport,
     if ( transport )
     {
         stop( transport );
+
         rn_native_backend_wait_t<transport_t> wait = { transport, stopped };
         rn_cli_bounded_wait( &wait, rn_native_backend_is_stopped<transport_t>, NULL, rocketnet_time, rocketnet_sleep, "backend" );
     }
+
     destroy( transport );
 }
-#endif
+#endif // #ifdef __cplusplus
 
 static inline void rn_native_message_client_stop_and_destroy( struct rocketnet_message_client_t * message )
 {
     if ( !message )
         return;
+
     struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( message );
     rocketnet_client_transport_stop( transport );
     rn_native_client_transport_wait_stopped( transport );
@@ -119,6 +123,7 @@ static inline void rn_native_message_server_stop_and_destroy( struct rocketnet_m
 {
     if ( !message )
         return;
+
     struct rocketnet_server_transport_t * transport = rocketnet_message_server_transport( message );
     rocketnet_server_transport_stop( transport );
     rn_native_server_transport_wait_stopped( transport );

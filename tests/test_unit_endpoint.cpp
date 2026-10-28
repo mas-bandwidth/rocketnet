@@ -110,7 +110,9 @@ static void ep_hash( uint64_t * trace, const void * data, size_t bytes )
 {
     const uint8_t * p = (const uint8_t *) data;
     for ( size_t i = 0; i < bytes; i++ )
+    {
         *trace = ( *trace ^ p[i] ) * 1099511628211ULL;
+    }
 }
 
 static void ep_config( rocketnet_message_config_t * config )
@@ -134,6 +136,7 @@ static void ep_side_create( ep_side_t * side, const rocketnet_message_config_t *
     memset( &side->counters, 0, sizeof( side->counters ) );
     side->arena = rn_arena_create( NULL, config, 1, &side->counters );
     check( side->arena != NULL );
+
     rn_endpoint_config_t endpoint_config;
     memset( &endpoint_config, 0, sizeof( endpoint_config ) );
     endpoint_config.config = config;
@@ -160,10 +163,12 @@ static uint64_t ep_counter( const ep_side_t * side, int counter )
 }
 
 // the application on `from` sends its next message, if the endpoint takes it
+
 static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
 {
     if ( from->next_index >= EP_MESSAGES )
         return false;
+
     const uint32_t index = from->next_index;
     const uint64_t pick = ep_random( random ) % 10;
     const int kind = pick < 5 ? EP_KIND_ORDERED : ( pick < 8 ? EP_KIND_RELIABLE : EP_KIND_UNRELIABLE );
@@ -171,13 +176,16 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     const int reliability = kind == EP_KIND_ORDERED ? ROCKETNET_RELIABILITY_RELIABLE_ORDERED : ( kind == EP_KIND_RELIABLE ? ROCKETNET_RELIABILITY_RELIABLE : ROCKETNET_RELIABILITY_UNRELIABLE );
 
     // the message: its index, its kind, then filler up to its size
+
     const int bytes = 8 + (int) ( ep_random( random ) % 200 );
     uint8_t data[256];
     memset( data, 0, sizeof( data ) );
     memcpy( data, &index, 4 );
     data[4] = (uint8_t) kind;
     for ( int i = 8; i < bytes; i++ )
+    {
         data[i] = (uint8_t) ( index + (uint32_t) i );
+    }
 
     const uint32_t serial = rn_endpoint_send( &from->endpoint, data, bytes, reliability, ROCKETNET_PRIORITY_MEDIUM, channel, 0 );
     if ( serial == 0 )
@@ -187,26 +195,34 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
     from->channel_of[index] = channel;
     from->sent[index] = 1;
     if ( kind == EP_KIND_ORDERED )
+    {
         to->ordered_order[channel].push_back( index );
+    }
     from->next_index++;
+
     return true;
 }
 
 static void ep_deliver( ep_side_t * side, ep_side_t * remote, const rn_delivery_t * delivery, ep_stats_t * stats )
 {
     check( delivery->bytes >= 8 );
+
     uint32_t index;
     memcpy( &index, delivery->data, 4 );
     check( index < EP_MESSAGES );
     check( remote->sent[index] );                                 // only what the other side sent
+
     const int kind = delivery->data[4];
     check( kind == remote->kind_of[index] );
     if ( kind == EP_KIND_ORDERED )
         check( (int) delivery->channel == remote->channel_of[index] );   // codes 0 and 2 carry no channel on the wire (9.1)
     for ( int i = 8; i < delivery->bytes; i++ )
+    {
         check( delivery->data[i] == (uint8_t) ( index + (uint32_t) i ) );
+    }
     side->delivered[index]++;
     check( side->delivered[index] == 1 );                       // ReliableExactlyOnce's at most once, UnreliableAtMostOnce
+
     if ( kind == EP_KIND_ORDERED )
     {
         // OrderedInOrder: the next ordered message of its channel, in send order
@@ -215,10 +231,12 @@ static void ep_deliver( ep_side_t * side, ep_side_t * remote, const rn_delivery_
         check( side->ordered_order[channel][side->ordered_next[channel]] == index );
         side->ordered_next[channel]++;
     }
+
     ep_hash( &stats->trace, &index, sizeof( index ) );
 }
 
 // one update of one side: the endpoint's events in, then its actions out
+
 static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_t * random, ep_stats_t * stats )
 {
     rn_endpoint_t * endpoint = &side->endpoint;
@@ -227,6 +245,7 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
     side->batch.clear();
 
     // acks the transport brought back (RNEndpoint OnAcked)
+
     for ( size_t k = 0; k < side->acks.size(); )
     {
         if ( side->acks[k].arrive <= now )
@@ -241,6 +260,7 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
     rn_endpoint_tick( endpoint, now );
 
     // payloads the transport opened (RNEndpoint OnPayload), in arrival order
+
     for ( ;; )
     {
         int best = -1;
@@ -257,15 +277,18 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
         for ( size_t k = 0; k < side->opened.size(); k++ )
             if ( side->opened[k] == packet.id )
                 seen = true;
+
         if ( seen )
         {
             stats->replay_dropped++;                            // the transport's replay window
             side->batch.pop_back();
             continue;
         }
+
         side->opened.push_back( packet.id );
 
         // P2: the transport acks what it opened, over a lossy path
+
         if ( ep_random( random ) % 100 < 25 )
             stats->acks_lost++;
         else
@@ -281,30 +304,40 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
         rn_endpoint_on_payload( endpoint, packet.data, packet.bytes, out, 256, &count, now );
         check( count >= 0 && count < 256 );
         for ( int i = 0; i < count; i++ )
+        {
             ep_deliver( side, remote, &out[i], stats );
+        }
     }
+
     rn_endpoint_config_tick( endpoint, 1, now );                  // the stand-in transport is connected throughout
     check( rn_endpoint_error( endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     // the application sends a few
+
     for ( int i = 0; i < 3; i++ )
         if ( !ep_send_next( side, remote, random ) )
             break;
 
     // while something is in flight, the endpoint names a deadline
+
     if ( endpoint->ordered.send.U < endpoint->ordered.send.next )
+    {
         check( rn_endpoint_deadline( endpoint ) < RN_ENDPOINT_NO_DEADLINE );
+    }
 
     // RNEndpoint WritePacket, PacketFailed: the write pass into frames the
     // stand-in transport supplies, under ids it assigns
+
     for ( ;; )
     {
         const int request = rn_endpoint_next_packet_bytes( endpoint, now );
         if ( request == 0 )
             break;
         check( request > 0 && request <= ROCKETNET_MAX_PACKET_PAYLOAD_BYTES );
+
         ep_packet_t packet;
         packet.id = side->next_packet_id++;
+
         const int bytes = rn_endpoint_write_packet( endpoint, packet.data, (int) sizeof( packet.data ), packet.id, now );
         if ( bytes == 0 )
             continue;
@@ -319,6 +352,7 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
             rn_endpoint_packet_failed( endpoint, packet.id, now );
             continue;
         }
+
         rn_endpoint_packet_sent( endpoint, packet.id, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), now );
 
         if ( fate < 24 )
@@ -326,14 +360,20 @@ static void ep_update( ep_side_t * side, ep_side_t * remote, double now, uint64_
             stats->lost++;
             continue;
         }
+
         const int copies = fate < 34 ? 2 : 1;
         if ( copies == 2 )
+        {
             stats->duplicated++;
+        }
+
         for ( int c = 0; c < copies; c++ )
         {
             packet.arrive = now + 0.005 + (double) ( ep_random( random ) % 60 ) * 0.001;
             if ( !remote->inbound.empty() && packet.arrive < remote->inbound.back().arrive )
+            {
                 stats->reordered++;
+            }
             remote->inbound.push_back( packet );
         }
     }
@@ -343,20 +383,24 @@ static bool ep_done( const ep_side_t * side, const ep_side_t * remote )
 {
     // everything sent, every reliable message of the other side delivered, and
     // nothing in flight
+
     if ( side->next_index < EP_MESSAGES || remote->next_index < EP_MESSAGES )
         return false;
     for ( int k = 0; k < EP_MESSAGES; k++ )
         if ( remote->kind_of[k] != EP_KIND_UNRELIABLE && side->delivered[k] != 1 )
             return false;
+
     return side->endpoint.ordered.send.U == side->endpoint.ordered.send.next;
 }
 
 // Two endpoints back to back, time a loop variable from 1000.0. Returns the
 // steps it took; the sides are left for the caller's checks.
+
 static int ep_back_to_back( ep_side_t * a, ep_side_t * b, uint64_t seed, ep_stats_t * stats )
 {
     memset( stats, 0, sizeof( *stats ) );
     stats->trace = 1469598103934665603ULL;
+
     uint64_t random = seed;
 
     rn_endpoint_reset( &a->endpoint, 1000.0 );
@@ -372,15 +416,18 @@ static int ep_back_to_back( ep_side_t * a, ep_side_t * b, uint64_t seed, ep_stat
         ep_update( b, a, now, &random, stats );
         if ( ep_done( a, b ) && ep_done( b, a ) )
             break;
+
         const double deadline = rn_endpoint_deadline( &a->endpoint );
         ep_hash( &stats->trace, &deadline, sizeof( deadline ) );
     }
+
     return step;
 }
 
 static void ep_check_properties( const ep_side_t * side, const ep_side_t * remote )
 {
     int unreliable_sent = 0, unreliable_delivered = 0;
+
     for ( int k = 0; k < EP_MESSAGES; k++ )
     {
         check( remote->sent[k] );
@@ -393,6 +440,7 @@ static void ep_check_properties( const ep_side_t * side, const ep_side_t * remot
         else
             check( side->delivered[k] == 1 );                   // ReliableExactlyOnce
     }
+
     for ( int c = 0; c < EP_ORDERED_CHANNELS; c++ )
         check( side->ordered_next[c] == side->ordered_order[c].size() );   // OrderedInOrder, all of them
     check( unreliable_sent > 0 );
@@ -419,6 +467,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
     ep_check_properties( b, a );
 
     // the array did all it is meant to
+
     check( stats.lost > 0 );
     check( stats.duplicated > 0 );
     check( stats.replay_dropped > 0 );
@@ -432,6 +481,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
 
     // CONFIG (10.3): each end announced its CONFIG, and took and matched
     // the other side's through the same lossy array
+
     check( a->endpoint.ordered.config_announced && b->endpoint.ordered.config_announced );
     check( a->endpoint.ordered.config_received && b->endpoint.ordered.config_received );
 
@@ -455,6 +505,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
     }
 
     // a reset starts a fresh connection on the same region
+
     rn_endpoint_reset( &a->endpoint, 1000.0 + steps * EP_STEP );
     check( a->endpoint.ordered.send.next == 0 );
     check( a->endpoint.unreliable_count == 0 );
@@ -525,6 +576,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
     uint64_t traces[2];
     int steps[2];
+
     for ( int run = 0; run < 2; run++ )
     {
         ep_side_t * a = new ep_side_t();
@@ -535,6 +587,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 
         // after init: not one allocator call from reset, send, write, ack,
         // payload, tick, receipts, error or deadline
+
         const uint64_t mallocs = ep_mallocs;
         const uint64_t frees = ep_frees;
 #if defined( ROCKETNET_TEST_CLOCK_WRAP ) && ROCKETNET_TEST_CLOCK_WRAP
@@ -546,6 +599,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
         check( steps[run] < EP_MAX_STEPS );
         ep_check_properties( a, b );
         ep_check_properties( b, a );
+
         rocketnet_message_receipt_t receipts[16];
         rn_endpoint_take_receipts( &a->endpoint, receipts, 16 );
         rn_endpoint_deadline( &a->endpoint );
@@ -566,6 +620,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
     // no clock: time is only the argument, so the same inputs give the same
     // packets, deliveries and deadlines, run after run, whatever the wall
     // clock reads between them
+
     check( steps[0] == steps[1] );
     check( traces[0] == traces[1] );
 
@@ -577,21 +632,27 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
 // an uncapped endpoint's large sequenced state, larger than one packet, is
 // written whole and never touches the bucket: no charge, no settle, no
 // refusal, no drop. Simulated time from 1000.0; no transport but this loop.
+
 static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 {
     rocketnet_message_config_t config;
     ep_config( &config );
+
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
+
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena != NULL );
+
     rn_endpoint_config_t endpoint_config;
     memset( &endpoint_config, 0, sizeof( endpoint_config ) );
     endpoint_config.config = &config;
     endpoint_config.send_kbps = -1;
     endpoint_config.max_payload_bytes = 4 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
     rn_endpoint_t endpoint;
     rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+
     const double now = 1000.0;
     rn_endpoint_reset( &endpoint, now );
     check( endpoint.send_budget_enabled == 0 );
@@ -599,34 +660,41 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
     const int bytes = 3000;
     uint8_t * p = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, bytes, endpoint_config.max_payload_bytes );
     check( p != NULL );
+
     if ( p )
     {
         memset( p, 0x5a, (size_t) bytes );
         check( rn_endpoint_finish( &endpoint, bytes, 0 ) != 0 );
     }
+
     check( endpoint.unreliable_count == 0 );
     check( endpoint.ordered.channels.ready_head != RN_DESCRIPTOR_NONE );
 
     rn_endpoint_begin_update( &endpoint );
     rn_endpoint_tick( &endpoint, now );
     rn_endpoint_config_tick( &endpoint, 1, now );
+
     static uint8_t frame[4 * ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     uint64_t packet_id = 1;
     int large_written = 0;
     int bounded_packets_written = 0;
+
     for ( int i = 0; i < 16; i++ )
     {
         const int request = rn_endpoint_next_packet_bytes( &endpoint, now );
         if ( request == 0 )
             break;
         check( request > 0 && request <= (int) sizeof( frame ) );
+
         const int written = rn_endpoint_write_packet( &endpoint, frame, (int) sizeof( frame ), packet_id, now );
         if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
             large_written++;
         else if ( written > 0 )
             bounded_packets_written++;
-        // An oversized code-1 send has been promoted and fragmented across
-        // ordinary bounded reliable packets; uncapped budget still charges none.
+
+        // an oversized code-1 send has been promoted and fragmented across
+        // ordinary bounded reliable packets; uncapped budget still charges none
+
         if ( written > ROCKETNET_MAX_PACKET_PAYLOAD_BYTES )
             rn_endpoint_packet_sent( &endpoint, packet_id, written + 64, now );
         else if ( written > 0 )
@@ -649,17 +717,21 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
 // next_packet_bytes for the zero that normally closes the write pass. New
 // updates still refill the bucket, offer reliable work first, and drop an
 // unreliable record only when that update's remaining budget cannot pay it.
+
 static void test_endpoint_capacity_cut_starts_new_write_pass()
 {
     rocketnet_message_config_t config;
     ep_config( &config );
+
     rocketnet_counters_t counters = {};
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena != NULL );
+
     rn_endpoint_config_t endpoint_config = {};
     endpoint_config.config = &config;
     endpoint_config.send_kbps = 64;
     endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
     rn_endpoint_t endpoint;
     rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
     rn_endpoint_reset( &endpoint, 1000.0 );
@@ -668,6 +740,7 @@ static void test_endpoint_capacity_cut_starts_new_write_pass()
     {
         uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 1000, endpoint_config.max_payload_bytes );
         check( message != NULL );
+
         if ( message )
         {
             memset( message, 0x50 + i, 1000 );
@@ -678,28 +751,36 @@ static void test_endpoint_capacity_cut_starts_new_write_pass()
     uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     rn_endpoint_begin_update( &endpoint );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+
     const int first = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
     check( first > 0 );
     if ( first > 0 )
+    {
         rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, first ), 1000.0 );
+    }
     check( endpoint.unreliable_count == 1 );
     check( endpoint.write_phase == RN_ENDPOINT_WRITE_UNRELIABLE );
 
     uint8_t * reliable = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 1000, endpoint_config.max_payload_bytes );
     check( reliable != NULL );
+
     if ( reliable )
     {
         memset( reliable, 0x7a, 1000 );
         check( rn_endpoint_finish( &endpoint, 1000, 0 ) != 0 );
     }
+
     rn_endpoint_begin_update( &endpoint );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) > 0 );
     check( endpoint.packet_kind == RN_ENDPOINT_PACKET_ORDERED );
     check( endpoint.budget.last_time == 1000.25 );
+
     const int second = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 2, 1000.25 );
     check( second > 0 );
     if ( second > 0 )
+    {
         rn_endpoint_packet_sent( &endpoint, 2, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, second ), 1000.25 );
+    }
     check( endpoint.written == 1 );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) > 0 );
     check( rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 3, 1000.25 ) == 0 );
@@ -710,45 +791,57 @@ static void test_endpoint_capacity_cut_starts_new_write_pass()
 }
 
 // A reliable block keeps its unsent chunks across the same capacity cut.
+
 static void test_endpoint_reliable_continues_after_capacity_cut()
 {
     rocketnet_message_config_t config;
     ep_config( &config );
     config.packets_per_update = 1;
+
     rocketnet_counters_t counters = {};
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena != NULL );
+
     rn_endpoint_config_t endpoint_config = {};
     endpoint_config.config = &config;
     endpoint_config.send_kbps = 64;
     endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
     rn_endpoint_t endpoint;
     rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
     rn_endpoint_reset( &endpoint, 1000.0 );
 
     uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 3000, endpoint_config.max_payload_bytes );
     check( message != NULL );
+
     if ( message )
     {
         memset( message, 0x5a, 3000 );
         check( rn_endpoint_finish( &endpoint, 3000, 0 ) != 0 );
     }
+
     uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
     rn_endpoint_begin_update( &endpoint );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+
     const int first = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
     check( first > 0 );
     if ( first > 0 )
+    {
         rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, first ), 1000.0 );
+    }
     check( endpoint.write_phase == RN_ENDPOINT_WRITE_RELIABLE );
 
     rn_endpoint_begin_update( &endpoint );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) > 0 );
     check( endpoint.packet_kind == RN_ENDPOINT_PACKET_ORDERED );
+
     const int second = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 2, 1000.25 );
     check( second > 0 );
     if ( second > 0 )
+    {
         rn_endpoint_packet_sent( &endpoint, 2, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, second ), 1000.25 );
+    }
     check( endpoint.budget.last_time == 1000.25 );
     check( endpoint.written == 1 );
     check( rn_endpoint_next_packet_bytes( &endpoint, 1000.25 ) == 0 );
@@ -764,17 +857,21 @@ REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
 
 // Interior cancel and a stale epoch become holes. Expire frees only those
 // generations and the receipt trace matches the oracle. Time is the argument.
+
 static void test_endpoint_unreliable_holes_match_oracle()
 {
     rocketnet_message_config_t config;
     ep_config( &config );
+
     rocketnet_counters_t counters = {};
     rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
     check( arena != NULL );
+
     rn_endpoint_config_t endpoint_config = {};
     endpoint_config.config = &config;
     endpoint_config.send_kbps = 0;
     endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
     rn_endpoint_t endpoint;
     rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
     rn_endpoint_reset( &endpoint, 1000.0 );
@@ -783,6 +880,7 @@ static void test_endpoint_unreliable_holes_match_oracle()
     uint32_t index[4];
     uint32_t serial[4];
     uint32_t generation[4];
+
     for ( int i = 0; i < 4; i++ )
     {
         uint8_t * data = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 16, endpoint_config.max_payload_bytes );
@@ -791,24 +889,30 @@ static void test_endpoint_unreliable_holes_match_oracle()
         serial[i] = rn_endpoint_finish( &endpoint, 16, 0 );
         check( serial[i] != 0 );
     }
-    // The flat unreliable walk: live descriptors in enqueue_ticket order.
+
+    // the flat unreliable walk: live descriptors in enqueue_ticket order
+
     uint32_t seen = 0;
     uint32_t after = 0;
+
     while ( seen < 4 )
     {
         uint32_t best = RN_DESCRIPTOR_NONE;
         uint32_t best_ticket = 0;
+
         for ( uint32_t d = 0; d < endpoint.region->descriptors_fresh; d++ )
         {
             const rn_send_descriptor_t * descriptor = &endpoint.region->send_descriptors[d];
             if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->enqueue_ticket <= after )
                 continue;
+
             if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
             {
                 best = d;
                 best_ticket = descriptor->enqueue_ticket;
             }
         }
+
         if ( best == RN_DESCRIPTOR_NONE )
             break;
         after = best_ticket;
@@ -817,7 +921,9 @@ static void test_endpoint_unreliable_holes_match_oracle()
         check( endpoint.region->send_descriptors[best].serial == serial[seen] );
         seen++;
     }
+
     check( seen == 4 );
+
     const uint32_t epoch = endpoint.region->schedule_epoch;
     check( rn_endpoint_cancel_unreliable( &endpoint, index[1], generation[1] + 1, epoch ) == false );
     check( endpoint.unreliable_count == 4 );
@@ -827,32 +933,39 @@ static void test_endpoint_unreliable_holes_match_oracle()
     rn_endpoint_expire_unreliable( &endpoint );
     check( endpoint.unreliable_count == 2 );
     check( endpoint.unreliable_holes == 0 );
+
     uint32_t order[2];
     uint32_t n = 0;
     uint32_t after_order = 0;
+
     while ( n < 2 )
     {
         uint32_t best = RN_DESCRIPTOR_NONE;
         uint32_t best_ticket = 0;
+
         for ( uint32_t d = 0; d < endpoint.region->descriptors_fresh; d++ )
         {
             const rn_send_descriptor_t * descriptor = &endpoint.region->send_descriptors[d];
             if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->enqueue_ticket <= after_order )
                 continue;
+
             if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
             {
                 best = d;
                 best_ticket = descriptor->enqueue_ticket;
             }
         }
+
         if ( best == RN_DESCRIPTOR_NONE )
             break;
         after_order = best_ticket;
         order[n++] = endpoint.region->send_descriptors[best].serial;
     }
+
     const uint32_t oracle[2] = { serial[0], serial[3] };
     check( n == 2 && order[0] == oracle[0] && order[1] == oracle[1] );
     rn_endpoint_tick( &endpoint, 1000.0 );
+
     rocketnet_message_receipt_t receipts[8];
     const int got = rn_endpoint_take_receipts( &endpoint, receipts, 8 );
     check( got == 2 );
@@ -860,12 +973,16 @@ static void test_endpoint_unreliable_holes_match_oracle()
     check( receipts[0].serial == serial[2] || receipts[1].serial == serial[2] );
     check( receipts[0].status == ROCKETNET_RECEIPT_STATUS_LOSS );
     check( receipts[1].status == ROCKETNET_RECEIPT_STATUS_LOSS );
+
     uint8_t * again = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 16, endpoint_config.max_payload_bytes );
     check( again != NULL );
+
     const uint32_t reused = endpoint.pending_descriptor;
     const uint32_t reused_generation = endpoint.region->send_descriptors[reused].generation;
     if ( reused == index[1] )
+    {
         check( reused_generation != generation[1] );
+    }
     check( rn_endpoint_finish( &endpoint, 16, 0 ) != 0 );
     check( rn_endpoint_cancel_unreliable( &endpoint, reused, reused_generation + 1, epoch ) == false );
     check( endpoint.unreliable_count == 3 );

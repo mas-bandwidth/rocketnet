@@ -62,6 +62,7 @@ static void wso_write_junk_packet( uint8_t * packet, int packet_bytes, uint8_t p
 {
     static const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
     memset( packet, 0x5A, (size_t) packet_bytes );
+
     uint8_t * p = packet;
     rocketnet_write_prefilter_header( &p, packet_type, tag );
 }
@@ -93,6 +94,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
     // 1. One byte short and one byte long, in every client state: size check
     // runs before state check, counts WRONG_SIZE, and moves neither
     // DID_NOT_OPEN nor integrity_failures.
+
     for ( size_t s = 0; s < sizeof( states ) / sizeof( states[0] ); s++ )
     {
         const int state = states[s];
@@ -103,8 +105,10 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
             struct rocketnet_client_protocol_t client;
 
             wso_init_client( &client, &counters, state );
+
             const int challenge_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES + deltas[d];
             wso_write_junk_packet( packet, challenge_bytes, ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+
             struct rocketnet_counters_t before = counters;
             time += 0.001;
             check( !rocketnet_client_protocol_process_packet( &client, packet, challenge_bytes, time,
@@ -117,6 +121,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
                           { ROCKETNET_COUNTER_CLIENT_CHALLENGE_WRONG_SIZE, 1 } } );
 
             wso_init_client( &client, &counters, state );
+
             const int denied_bytes = ROCKETNET_CONNECTION_DENIED_WIRE_BYTES + deltas[d];
             wso_write_junk_packet( packet, denied_bytes, ROCKETNET_CONNECTION_DENIED_PACKET );
             before = counters;
@@ -140,6 +145,7 @@ static void test_client_wrong_size_counts_wrong_size_not_integrity()
         wso_init_client( &client, &counters, ROCKETNET_CLIENT_TRANSPORT_STATE_SENDING_CONNECTION_REQUEST );
 
         wso_write_junk_packet( packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES, ROCKETNET_CONNECTION_CHALLENGE_PACKET );
+
         struct rocketnet_counters_t before = counters;
         time += 0.001;
         check( !rocketnet_client_protocol_process_packet( &client, packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES, time,

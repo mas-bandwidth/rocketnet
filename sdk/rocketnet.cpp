@@ -816,8 +816,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         rocketnet_log_level_override_apply( log_level_override );
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
-    rocketnet_info( "platform is %s (%s)", rocketnet_platform_name( rocketnet_platform_id() ),
-                    rocketnet_connection_name( rocketnet_platform_connection_type() ) );
+    rocketnet_info( "platform is %s", rocketnet_platform_name( rocketnet_platform_id() ) );
 
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );

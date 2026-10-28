@@ -373,6 +373,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->max_timeout_seconds = config->max_timeout_seconds;
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
     transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
+    transport->handshakes_per_update = config->handshakes_per_update;
     if ( read_env && !rn_dev_simulator_env( "server", transport ) )
     {
         if ( failure )
@@ -655,6 +656,7 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_min_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, message_resend_delay_max_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, reliable_message_timeout_ms ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, disconnect_packets_per_update ),
     ROCKETNET_SERVER_CONFIG_BYTES_2,
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
@@ -1716,6 +1718,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->max_timeout_seconds = transport->max_timeout_seconds;
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->disconnect_packets_per_update = transport->disconnect_packets_per_update;
+    config->handshakes_per_update = transport->handshakes_per_update;
     config->transport = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
 
@@ -2502,6 +2505,28 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, i
         return 0;
 
     return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
+}
+
+static_assert( ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES == ROCKETNET_USER_DATA_BYTES, "connect token user data bytes" );
+
+// the slot's copy of its token's user data, read where client_id is read: a
+// slot without a connected client, or a stopped server, writes zeros
+
+bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server, int client_index, uint8_t * user_data )
+{
+    if ( !rocketnet_api_null_guard( user_data ) )
+        return false;
+
+    memset( user_data, 0, ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES );
+
+    if ( !rocketnet_api_null_guard( server ) )
+        return false;
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return false;
+
+    return rocketnet_server_transport_client_user_data( rn_server_transport( server ), slot, user_data );
 }
 
 // The slot ends at once, before the next update, in every query and send: a

@@ -438,6 +438,7 @@ int main( int argc, char ** argv )
     rocketnet_address_parse( &server.advertised_ipv4, "203.0.113.10:40000" );
     randombytes_buf( server.cookie_key, ROCKETNET_COOKIE_KEY_BYTES );
     server.cookie_lifetime_seconds = 3;
+    server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
     server.cookie_rotation_seconds = 60;
     server.cookie_key_rotation_time = 100.0 + (double) server.cookie_rotation_seconds;
     server.handshake_deadline_seconds = 5.0;

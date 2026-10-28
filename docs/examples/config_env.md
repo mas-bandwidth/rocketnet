@@ -74,3 +74,15 @@ bounded deferred ring is full, older work is retained and the new redundant
 copies may be dropped rather than exceeding the allowance. Zero and values
 above 1024 are refused with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`; zero does
 not mean unlimited.
+
+## Handshake work
+
+`handshakes_per_update` has the same precedence rules. Its environment name is
+`ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE`, its default is 16, and its valid
+range is 1 through 1024. It is the most connection requests with a valid
+cookie that the server processes in one update, each one a signature
+verification and, for a valid token, the key exchange. A request past it is
+dropped unanswered and counted in `handshakes_dropped_over_budget`; the client
+sends it again, so a mass join or a flood of requests is spread across
+updates. Zero and values above 1024 are refused with
+`ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
