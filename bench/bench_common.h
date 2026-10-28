@@ -62,6 +62,8 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <time.h>
+#include <signal.h>
+#include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -107,6 +109,10 @@ static inline uint64_t bench_time_ns( void )
                       count must exclude them, while validation permits it
       sqe-exhausted   the io_uring submission queue reports empty, the
                       NULL that bench_uring used to dereference
+      send-connrefused-window
+                      one send, 4 s into the run (inside a smoke pair's
+                      measured window), reports ECONNREFUSED; the sample
+                      must be refused
 
     A fault that produces no abort is a finding about the harness, which
     is the entire reason the switch exists.
@@ -179,6 +185,87 @@ static inline void bench_receive_refused_or_empty( const char * call, int error 
 }
 
 /*
+    Stopping the sender when the receiver's last window closes (PROTOCOL.md).
+
+    The sender is started for longer than the receiver measures, so that no
+    window ever runs short of traffic. Whatever it sends after the receiver
+    has closed is outside the sample -- and on a connected socket (io_uring,
+    Network.framework) those sends come back ECONNREFUSED once the closed
+    port's ICMP arrives, which the send-health rule below would otherwise
+    read as the host refusing the call.
+
+    Only the receiver knows when its last window closes, and it must say so
+    BEFORE it closes its socket, or a late refusal can beat the news. So the
+    pair runner writes the sender's pid to BENCH_SENDER_PIDFILE, and the
+    receiver, on its last window, sends the sender SIGUSR1 and then holds
+    its socket open for BENCH_STOP_GRACE_SECONDS. The sender stops at its
+    next batch, and every refusal it meets after the stop is counted as
+    late: reported on its own line, never part of the sample. A refusal
+    before the stop -- anywhere in the measured windows -- still fails the
+    sample exactly as before.
+*/
+
+#define BENCH_STOP_GRACE_SECONDS 1
+
+static volatile sig_atomic_t bench_stop_requested;
+
+static inline void bench_stop_handler( int signal_number )
+{
+    (void) signal_number;
+    bench_stop_requested = 1;
+}
+
+/* sender side: called from bench_parse_sender_options, so every sender has it */
+static inline void bench_stop_init( void )
+{
+    struct sigaction action;
+    memset( &action, 0, sizeof( action ) );
+    action.sa_handler = bench_stop_handler;
+    sigemptyset( &action.sa_mask );
+    action.sa_flags = SA_RESTART;
+    if ( sigaction( SIGUSR1, &action, NULL ) != 0 )
+    {
+        bench_fatal( "sigaction", strerror( errno ) );
+    }
+}
+
+/* receiver side: called once, when the last window has closed and before
+   the receiver returns to close its socket */
+static inline void bench_stop_sender( void )
+{
+    const char * path = getenv( "BENCH_SENDER_PIDFILE" );
+    if ( !path )
+        return;                                     /* a hand-run pair: nobody to tell */
+
+    long pid = 0;
+    FILE * file = fopen( path, "r" );
+    int read_ok = file && fscanf( file, "%ld", &pid ) == 1;
+    if ( file )
+        fclose( file );
+
+    if ( !read_ok || pid <= 0 )
+    {
+        printf( "STOP: no sender pid in %s; the runner stops the sender instead\n", path );
+        fflush( stdout );
+        return;
+    }
+
+    if ( kill( (pid_t) pid, SIGUSR1 ) != 0 )
+    {
+        printf( "STOP: kill(%ld, SIGUSR1) failed: %s\n", pid, strerror( errno ) );
+        fflush( stdout );
+        return;
+    }
+
+    struct timespec grace;
+    grace.tv_sec = BENCH_STOP_GRACE_SECONDS;
+    grace.tv_nsec = 0;
+    while ( nanosleep( &grace, &grace ) != 0 && errno == EINTR )
+    {
+    }
+}
+
+/*
     A send that returned < 0. ENOBUFS and EAGAIN are the socket buffer
     saying slow down: counted, dropped, carry on, exactly as the portable
     control always has. Anything else is the kernel refusing the shape of
@@ -195,6 +282,8 @@ struct bench_send_health_t
     uint64_t back_pressure;
     uint64_t consecutive_refusals;
     uint64_t fault_sends;
+    uint64_t late_refused;                          /* refused after the stop: outside the sample */
+    uint64_t first_observe_ns;
     int last_refusal_error;
 };
 
@@ -213,6 +302,24 @@ static inline int bench_send_observe( struct bench_send_health_t * health, const
     else if ( bench_fault( "send-backpressure" ) )
     {
         error = ++health->fault_sends % 32 != 0 ? ENOBUFS : 0;
+    }
+    else if ( bench_fault( "send-connrefused-window" ) && !bench_stop_requested )
+    {
+        uint64_t now = bench_time_ns();
+        if ( health->first_observe_ns == 0 )
+            health->first_observe_ns = now;
+        if ( health->fault_sends == 0 && now - health->first_observe_ns >= 4000000000ull )
+        {
+            health->fault_sends = 1;
+            error = ECONNREFUSED;
+        }
+    }
+
+    if ( error != 0 && bench_stop_requested )
+    {
+        health->late_refused++;
+        health->last_refusal_error = error;
+        return 0;
     }
 
     if ( error == 0 )
@@ -289,6 +396,13 @@ static inline int bench_send_batch_observe( struct bench_send_health_t * health,
 // intervening successes kept the early consecutive-refusal abort from firing.
 static inline void bench_send_validate( const struct bench_send_health_t * health )
 {
+    if ( health->late_refused != 0 )
+    {
+        printf( "SENDER late_refused=%llu last_errno=%d (%s) -- refused after the receiver's last window closed; outside the sample\n",
+                (unsigned long long) health->late_refused, health->last_refusal_error, strerror( health->last_refusal_error ) );
+        fflush( stdout );
+    }
+
     if ( health->refused == health->back_pressure )
         return;
 
@@ -535,7 +649,10 @@ static inline int bench_window_tick( struct bench_windows_t * w, uint64_t batch_
 
     w->window_index++;
     if ( w->window_index >= w->num_windows )
+    {
+        bench_stop_sender();
         return 1;
+    }
 
     w->window_start_ns = now;
     w->packets = 0;
@@ -591,6 +708,8 @@ static inline struct bench_sender_options_t bench_parse_sender_options( int argc
     struct bench_sender_options_t options;
     memset( &options, 0, sizeof( options ) );
 
+    bench_stop_init();
+
     for ( int i = first; i < argc; i++ )
     {
         if ( strcmp( argv[i], "drop-half" ) == 0 )
@@ -612,15 +731,23 @@ static inline struct bench_sender_options_t bench_parse_sender_options( int argc
 
 /* spin until the paced sender is allowed its next batch (returns current time) */
 
+/* a stopped sender gets UINT64_MAX, which every sender loop reads as its
+   deadline having passed, so the stop needs no per-harness code */
+
 static inline uint64_t bench_pace_wait( uint64_t start_ns, uint64_t sent, uint64_t pace_pps )
 {
     uint64_t now = bench_time_ns();
+
+    if ( bench_stop_requested )
+        return UINT64_MAX;
 
     if ( pace_pps == 0 )
         return now;
 
     for ( ;; )
     {
+        if ( bench_stop_requested )
+            return UINT64_MAX;
         uint64_t allowed = (uint64_t) ( (double) ( now - start_ns ) / 1e9 * (double) pace_pps );
         if ( sent < allowed )
             return now;
