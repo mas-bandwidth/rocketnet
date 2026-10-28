@@ -2,7 +2,7 @@
 
 A release is cut from `main`. Nothing is tagged from a feature branch, and a tag
 is never moved: if a tag is wrong, cut the next version, except for the
-explicit preview-2 recut authorization recorded below.
+explicit preview-2 and preview-3 recut authorizations recorded below.
 
 ## Version sites
 
@@ -159,8 +159,8 @@ resume after publication.
 
 Before tagging, reconcile the qualification record with the merged `main`
 commit and verify the version, wire-change and tag consistency checks directly.
-The tag names that exact commit. The explicit recut exception below is the
-only authorization to replace this preview tag.
+The tag names that exact commit. The explicit recut exceptions below are the
+only authorizations to replace a preview tag.
 
 ## Authorized preview-2 recut
 
@@ -177,6 +177,20 @@ Record the exact commit, configuration, commands and complete results. CI
 infrastructure remains outside the deliverable; recorded manual runs satisfy
 this requirement. This supersedes the earlier permission to defer those suites.
 Other unresolved limits remain explicit known issues.
+
+## Authorized preview-3 recut
+
+On 2026-10-28 the release owner explicitly requested replacing the
+`v1.0.0-preview-3` tag and GitHub release before delivery, after two memory
+findings in CI: the MemorySanitizer gate exhausting an amd runner, and the
+ThreadSanitizer loopback soak growing without bound. Neither is in the
+library. The soak growth was the harness defect already fixed by `f9bd9d3f`,
+an ancestor of the first tag. The MemorySanitizer gate is repaired in #600,
+which changes only tests and tools. This is an exception for this preview,
+not permission to move other tags. Preserve the superseded commit and
+tag-object identities in the qualification record. The acceptance
+requirement is the preview-2 recut requirement above, at the new release
+commit.
 
 ## Default CI requirements
 
@@ -239,8 +253,8 @@ also be the commit the tag points at, not a later merge.
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
    `v1.0.0-preview-3`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
-   reuse a tag after pushing it, except for the authorized preview-2 recut
-   above. Verify its consistency with the header before
+   reuse a tag after pushing it, except for the authorized preview-2 and
+   preview-3 recuts above. Verify its consistency with the header before
    pushing it. Release Check also performs this check on the tag push, and
    the space vendor gate runs there too.
 8. Publish the GitHub release for that tag.

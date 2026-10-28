@@ -70,6 +70,56 @@ time is recorded only as under the timeout.
 | | functional | `./bin/functional` | exit 0, 1391 cases | `*** ALL TESTS PASSED ***` | 204 |
 | | production build | `make clean && make ROCKETNET_DEV=OFF -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 18 |
 
+## Recut at `81b6d3ef` (2026-10-28)
+
+The first `v1.0.0-preview-3` tag (tag object `4ebaa060`, commit `389baeef`)
+was replaced before delivery under the recut authorization in
+[RELEASING.md](RELEASING.md#authorized-preview-3-recut). Two memory findings
+in CI led to it, and neither is in the library:
+
+- The ThreadSanitizer loopback soak growing without bound was the harness
+  defect fixed by `f9bd9d3f`, an ancestor of `389baeef`. Forty soak runs at
+  `389baeef` on hetzner2 passed with peak resident
+  memory between 597,888 and 598,908 KB.
+- The MemorySanitizer gate exhausted amd runners (clang 21). Six cases that
+  build a full 1000-slot server had MemorySanitizer poison the server's whole
+  reserved block, and on clang 18 the same cases had died at create while the
+  gate still reported success. #600 (`81b6d3ef`) gives those cases an
+  allocator for large blocks in MemorySanitizer builds only, runs
+  memory-bounded cases one at a time under MemorySanitizer, and fails the gate
+  on any fatal MemorySanitizer error. The gate passed at `7087e36a`, the
+  pull request head whose tree `81b6d3ef` squashes, on amd-2 (clang 21.1.8,
+  20 GB scope, peak 5.99 GB, 191 s) and hetzner2 (clang 18.1.3, 91 s).
+
+`81b6d3ef` changes only `tests/` and `tools/` against `389baeef`; the library
+sources are identical. The native suites ran again on a fresh clone at
+`81b6d3ef3b98869c3e83d56c9bc8d4b50cb02b23` with the commands of the
+`471b3fbc` table below, on the same benches and toolchains. Case, skip and
+warning counts equal the `471b3fbc` row on every platform. The full Windows
+functional suite, which includes
+`test_rio_transport_windows_server_create_destroy_1000`, passed. The Ubuntu 22.04 LTS VM results are carried from `471b3fbc`:
+the library is unchanged and the test change touches only MemorySanitizer
+builds and the order of memory-bounded cases under it.
+
+| Platform | Step | Command | Result | Last line | Seconds |
+| --- | --- | --- | --- | --- | ---: |
+| Linux x64, gcc 13.3.0 (Ubuntu 24.04.5), hetzner2 | build | `make -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 53 |
+| | unit | `./bin/test` | exit 0, 1299 cases | `*** ALL TESTS PASSED ***` | 22 |
+| | functional | `./bin/functional` | exit 0, 1521 cases, 21 skipped | `*** ALL TESTS PASSED ***` | 265 |
+| | production build | `make clean && make ROCKETNET_DEV=OFF -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 35 |
+| | docs | `make docs && make docs-undocumented` | exit 0, 0 warnings | `Generated html documentation in 338ms` (229 pages) | 1 |
+| macOS 27.2 arm64, Apple clang 21.0.0 | build | `make -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 23 |
+| | unit | `./bin/test` | exit 0, 1204 cases | `*** ALL TESTS PASSED ***` | 19 |
+| | functional | `./bin/functional` | exit 0, 1397 cases, 1 skipped | `*** ALL TESTS PASSED ***` | 207 |
+| | production build | `make clean && make ROCKETNET_DEV=OFF -j4` | exit 0, 0 warnings | `[100%] Built target functional` | 21 |
+| Windows 11 x64, MSVC 19.51.36260 | build | `cmake -B build-ON -A x64 -DROCKETNET_DEV=ON` then `cmake --build build-ON --config Release --parallel 4` | exit 0, 0 MSVC warnings | `Building Custom Rule .../CMakeLists.txt` | 177 |
+| | unit | `bin\Release\test.exe` | exit 0, 1174 cases | `*** ALL TESTS PASSED ***` | 43 |
+| | functional | `bin\Release\functional.exe` | exit 0, 1400 cases, 1 skipped | `*** ALL TESTS PASSED ***` | 469 |
+| | production build | `cmake -B build-OFF -A x64 -DROCKETNET_DEV=OFF` then `cmake --build build-OFF --config Release --parallel 4` | exit 0, 0 MSVC warnings | `Building Custom Rule .../CMakeLists.txt` | 145 |
+
+The recut release commit differs from `81b6d3ef` only in this document and
+RELEASING.md.
+
 ## Tag candidate `471b3fbc` (release/preview-3-gates)
 
 - Candidate head: `471b3fbc70ce88a0c7da2a73ce1b3e60415159dd` on
@@ -88,9 +138,10 @@ time is recorded only as under the timeout.
   wire cases, which ran at `81e8b473`. The inputs differ between those two
   commits only in `soak_sim.cpp`, `tools/tidy_dispositions.txt` and the
   static-analysis triage document; none is built into `bin/functional`.
-- The release commit's inputs differ from `471b3fbc` only in this document
-  and the release notes. By the rule for carried results above, the results
-  below are carried to it from `471b3fbc`.
+- The first tag's commit `389baeef` differs from `471b3fbc` only in this
+  document and the release notes. By the rule for carried results above, the
+  results below were carried to it from `471b3fbc`. The recut above
+  supersedes that tag.
 
 ### Native suites at `471b3fbc`
 
