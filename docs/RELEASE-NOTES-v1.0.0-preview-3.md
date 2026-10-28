@@ -58,6 +58,15 @@ the object, which stays valid. Poll `rocketnet_client_disconnected()` or
   simulator applies to a live connection.
 - A build can set the client limit with `-DROCKETNET_MAX_CLIENTS=N`, from 512
   to 32,768 (default 1000).
+- `rocketnet_server_client_user_data()` copies the 256 bytes of connect-token
+  user data for a connected client into the caller's buffer.
+- The server configuration's `handshakes_per_update` caps the connection
+  requests a server processes in one update (1 to 1024, default 16). A request
+  past the cap is dropped unanswered and counted in
+  `handshakes_dropped_over_budget`; the client sends it again, so a mass join
+  or a request flood spreads across updates. Create refuses a value outside
+  the range, so a configuration not filled by the default config call must
+  set it.
 
 ### Portable servers in production builds
 
@@ -147,15 +156,20 @@ t7, t13, t15, t17, t19, m9, m11 and m13) change no rule.
 - **Native clients.** Clients rank `gso` first on Linux, `msgx` on macOS and
   `iocp` on Windows, with `portable` last everywhere.
 - **Linux.** io_uring uses kernel send segmentation and receive coalescing.
-  AF_XDP serves IPv6 end to end and builds against stock Ubuntu 22.04
-  libraries. A hard-killed client or an ICMP error stalls no Linux server
-  transport.
+  AF_XDP serves IPv6 end to end and builds and runs against stock Ubuntu
+  22.04 libraries. On Ubuntu 22.04, whose liburing has no multishot receive,
+  io_uring is reported as not built rather than offered and refused. A
+  hard-killed client or an ICMP error stalls no Linux server transport.
 - **macOS and Windows.** The `msgx` server sizes its send banks to the client
   count. `iocp` uses one completion worker. The Windows stop bursts, the
   don't-fragment setting and the receive drop counts are fixed.
 - **Security hardening.** The embedded XDP program reads the SDK's limits and
   refuses a mismatch. Connect-token user data and staged configuration
-  secrets are wiped.
+  secrets are wiped. A forged challenge cookie no longer displaces the
+  client's kept cookie, and handshake work per update is capped.
+- **Client family race.** When a client tries both address families, the
+  losing socket is closed on the thread that reads it and freed on the
+  caller's thread.
 - **Backend examples.** The Go and C# examples under
   [examples/backend](../examples/backend) generate their own signing keypairs
   with `--keygen`, accept server registration with `PUT /servers/{id}`, and
@@ -207,9 +221,8 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
 - Sixteen TLA+ cases end at their time bound and are not reported as passes;
   some CBMC proofs and the full big-endian system run are owed. Some
   functional tests still assert wall-clock timing.
-- A replayed connection response refreshes a slot's receive time, and a forged
-  cookie can rewind a client's handshake (bounded). A security review of the
-  whole library is not yet done.
+- A replayed connection response refreshes a slot's receive time. A security
+  review of the whole library is not yet done.
 
 The [qualification index](QUALIFICATION-v1.0.0-preview-3.md) records the
 tested head and every gate, including those still owed at tag time. The
