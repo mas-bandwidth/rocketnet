@@ -429,11 +429,13 @@ uint64_t rocketnet_platform_socket_send_failures( rocketnet_platform_socket_t * 
     return rocketnet_platform_atomic_load_u64( &socket->send_failures );
 }
 
+#if ROCKETNET_DEV
 uint64_t rocketnet_platform_socket_send_replay_failures( rocketnet_platform_socket_t * socket )
 {
     rocketnet_assert( socket );
     return rocketnet_platform_atomic_load_u64( &socket->send_replay_failures );
 }
+#endif // #if ROCKETNET_DEV
 
 // Send failures by errno (rocketnet_platform.h). The counts are relaxed
 // atomics: the sending worker adds, the destroy that logs them reads after it
@@ -4226,6 +4228,7 @@ bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_str
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 }
 
+#if ROCKETNET_DEV
 bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, rocketnet_address_t * address )
 {
     addrinfo hints;
@@ -4266,6 +4269,7 @@ bool rocketnet_platform_hostname_resolve( const char * hostname, const char * po
 
     return false;
 }
+#endif // #if ROCKETNET_DEV
 
 uint16_t rocketnet_platform_preferred_client_port()
 {

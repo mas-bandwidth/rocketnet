@@ -1819,12 +1819,12 @@ void rocketnet_server_rio_counters( rocketnet_server_rio_t * rio, uint64_t * cou
         counters[i] = rio->counters[i].load( std::memory_order_relaxed );
 }
 
+#if ROCKETNET_DEV
 int rocketnet_server_rio_pending( rocketnet_server_rio_t * rio )
 {
     return rocketnet_rio_outstanding_sends( rio ) + rio->posted_receives.load( std::memory_order_relaxed );
 }
 
-#if ROCKETNET_DEV
 uintptr_t rocketnet_server_rio_test_socket( rocketnet_server_rio_t * rio )
 {
     return (uintptr_t) rio->socket;

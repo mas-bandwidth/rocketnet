@@ -251,7 +251,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
     randombytes_buf( client->connection_salt, sizeof( client->connection_salt ) );
 
-    rocketnet_crypto_tally.keypair++;
+    ROCKETNET_CRYPTO_TALLY( keypair );
 
     crypto_box_keypair( client->client_ephemeral_public_key, client->client_ephemeral_secret_key );
 
@@ -1491,6 +1491,7 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
     return wire_bytes;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,
                                              const uint8_t * payload_data,
                                              int payload_bytes,
@@ -1539,6 +1540,7 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
 
     return bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 // The fragmented send path. The payload id and the sequence block are each
 // one atomic add, so any number of fill threads split payloads
@@ -1630,6 +1632,7 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
     return bytes;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_t * client,
                                                const uint8_t * payload_data,
                                                int payload_bytes,
@@ -1676,6 +1679,7 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
 
     return fragment_count;
 }
+#endif // #if ROCKETNET_DEV
 
 // tla/ClientConnection.tla AppDisconnect
 // tla/ClientConnection.tla ClientDiscCopy: seals each copy of the disconnect

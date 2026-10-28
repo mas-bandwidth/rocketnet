@@ -212,11 +212,13 @@ int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protoc
                                                   int payload_bytes,
                                                   double current_time );
 
+#if ROCKETNET_DEV
 int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t * client,
                                              const uint8_t * payload_data,
                                              int payload_bytes,
                                              double current_time,
                                              uint8_t * out_packet );
+#endif // #if ROCKETNET_DEV
 
 // The fragmented send path, per _Fragmentation_. The payload id counter is
 // this attempt's, per direction, starting at one; a sequence block is
@@ -255,6 +257,7 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
 // fragment count, or 0 when the payload does not need fragmenting, does
 // not fit the fragment cap or max_packets, or the connection is not up.
 
+#if ROCKETNET_DEV
 int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_t * client,
                                                const uint8_t * payload_data,
                                                int payload_bytes,
@@ -262,6 +265,7 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
                                                uint8_t * out_packets,
                                                int * out_packet_bytes,
                                                int max_packets );
+#endif // #if ROCKETNET_DEV
 
 // The deliberate disconnect: fills the redundant burst -- ten sealed
 // disconnect packets at consecutive session sequences, each opening with

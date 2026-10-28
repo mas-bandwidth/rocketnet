@@ -613,6 +613,17 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})
         set(ROCKETNET_DEV_ONLY_SCAFFOLD_TEST_SOURCES
+            tests/test_unit_channel_receipts_reliable.cpp
+            tests/test_unit_client_io_decrypt.cpp
+            tests/test_unit_driver_create_out_of_memory.cpp
+            tests/test_unit_endpoint.cpp
+            tests/test_unit_half_open_session_unopened.cpp
+            tests/test_unit_message_boundary_sizes.cpp
+            tests/test_unit_standard_receiver_checks.cpp
+            tests/test_unit_standard_resend_and_budget.cpp
+            tests/test_unit_status_lifecycle_create_ex.cpp
+            tests/test_unit_unreliable_promotion.cpp
+            tests/test_unit_window_sequences.cpp
             tests/test_unit_ack_block_walk.cpp
             tests/test_unit_ack_span_cost.cpp
             tests/test_unit_ack_stats.cpp

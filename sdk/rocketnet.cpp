@@ -101,10 +101,12 @@ void rocketnet_thread_priority( bool enabled )
     rocketnet_platform_set_thread_priority_enabled( enabled );
 }
 
+#if ROCKETNET_DEV
 bool rocketnet_get_thread_priority( void )
 {
     return rocketnet_platform_thread_priority_enabled();
 }
+#endif // #if ROCKETNET_DEV
 
 uint64_t rocketnet_get_thread_priority_refusals( void )
 {

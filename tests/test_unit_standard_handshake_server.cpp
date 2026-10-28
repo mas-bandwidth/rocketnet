@@ -718,6 +718,7 @@ static void test_claim_released_when_response_binds_token()
 
 REGISTER_UNIT_TEST( test_claim_released_when_response_binds_token );
 
+#if ROCKETNET_DEV
 // A response may arrive after its token expires: opening it still proves the
 // pending request's keys, so establishing the slot releases that request
 // claim, but expiry prevents the response from adding a token binding.
@@ -777,6 +778,7 @@ static void test_claim_released_when_response_crosses_token_expiry()
 }
 
 REGISTER_UNIT_TEST( test_claim_released_when_response_crosses_token_expiry );
+#endif // #if ROCKETNET_DEV
 
 // Copied-request claim lifecycle (standard/TRANSPORT.md t12 rules 9 and 14;
 // tla/ReceiveOrder.tla ClaimCheck/ClaimWrite and tla/MCReceiveOrder.tla
@@ -802,6 +804,7 @@ static void handshake_server_copy_request_for_address( uint8_t * copied,
     memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
 }
 
+#if ROCKETNET_DEV
 static void handshake_server_check_only_counter_delta( const uint64_t * before,
                                                        const uint64_t * after,
                                                        int allowed_a, int allowed_b )
@@ -856,6 +859,7 @@ static void test_copied_request_claim_refuses_second_address()
 }
 
 REGISTER_UNIT_TEST( test_copied_request_claim_refuses_second_address );
+#endif // #if ROCKETNET_DEV
 
 static void test_copied_request_claim_released_at_handshake_deadline()
 {
@@ -900,6 +904,7 @@ static void test_copied_request_claim_released_at_handshake_deadline()
 
 REGISTER_UNIT_TEST( test_copied_request_claim_released_at_handshake_deadline );
 
+#if ROCKETNET_DEV
 static void test_copied_request_claim_released_at_half_open_idle()
 {
     struct handshake_server_t test;
@@ -945,3 +950,4 @@ static void test_copied_request_claim_released_at_half_open_idle()
 }
 
 REGISTER_UNIT_TEST( test_copied_request_claim_released_at_half_open_idle );
+#endif // #if ROCKETNET_DEV

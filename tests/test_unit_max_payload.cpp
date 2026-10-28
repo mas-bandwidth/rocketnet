@@ -397,6 +397,7 @@ static void test_limits_are_derived_from_the_packet_size()
 // open on the far side.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void test_sealed_packet_at_max_size_opens()
 {
     static struct max_payload_pair_t pair;
@@ -512,6 +513,7 @@ static void test_sealed_packet_at_max_size_opens()
 
     max_payload_pair_teardown( &pair );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // Both endpoints accept the sender's bounds and reject the first byte over.
@@ -685,7 +687,9 @@ static void test_client_drops_reserved_and_wrong_direction_types()
 
 REGISTER_UNIT_TEST( test_message_of_1400_bytes_is_one_unfragmented_packet );
 REGISTER_UNIT_TEST( test_limits_are_derived_from_the_packet_size );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_sealed_packet_at_max_size_opens );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_receive_ceiling_refuses_one_byte_over );
 REGISTER_UNIT_TEST( test_receive_payload_refuses_above_send_capacity );
 REGISTER_UNIT_TEST( test_client_drops_reserved_and_wrong_direction_types );

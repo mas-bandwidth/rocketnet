@@ -155,7 +155,9 @@ bool rocketnet_platform_inet_pton6( const char * address_string, uint16_t * addr
 
 bool rocketnet_platform_inet_ntop6( const uint16_t * address, char * address_string, size_t address_string_size );
 
+#if ROCKETNET_DEV
 bool rocketnet_platform_hostname_resolve( const char * hostname, const char * port, struct rocketnet_address_t * address );
+#endif // #if ROCKETNET_DEV
 
 // zero lets the socket choose an ephemeral port
 uint16_t rocketnet_platform_preferred_client_port( void );
@@ -277,8 +279,10 @@ uint64_t rocketnet_platform_receive_empties( void );
 // counts each dropped datagram and each refused sendmsg_x chunk once; the replay's refusals count in send_replay_failures
 uint64_t rocketnet_platform_socket_send_failures( struct rocketnet_platform_socket_t * socket );
 
+#if ROCKETNET_DEV
 // the replay may resend packets the kernel had delivered, so a refusal here may have reached the wire
 uint64_t rocketnet_platform_socket_send_replay_failures( struct rocketnet_platform_socket_t * socket );
+#endif // #if ROCKETNET_DEV
 
 // Send failures by errno. Each failed send call is counted by the call that
 // failed and the errno it returned, and the first failure of each call and

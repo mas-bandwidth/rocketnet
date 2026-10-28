@@ -697,6 +697,7 @@ bool rn_packet_builder_settle( struct rn_packet_builder_t * builder, int packet_
     return rocketnet_send_budget_settle( builder->budget, admitted, actual_wire_bytes );
 }
 
+#if ROCKETNET_DEV
 const uint64_t * rn_packet_builder_numbers( const struct rn_packet_builder_t * builder, int packet_index, uint32_t * out_count )
 {
     if ( out_count )
@@ -710,3 +711,4 @@ const uint64_t * rn_packet_builder_numbers( const struct rn_packet_builder_t * b
 
     return builder->packet[packet_index].numbers;
 }
+#endif // #if ROCKETNET_DEV

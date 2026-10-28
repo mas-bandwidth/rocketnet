@@ -276,7 +276,9 @@ struct rn_region_layout_t
 // false, with a log line naming the rule, for a refused config. NULL is the defaults.
 bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout );
 
+#if ROCKETNET_DEV
 const char * rn_region_part_name( int part );
+#endif // #if ROCKETNET_DEV
 
 // the message table's field descriptors, as the transports' (rocketnet_config.h)
 struct rocketnet_config_field_t;
@@ -349,10 +351,13 @@ void rn_send_store_free( rn_send_store_t * store, uint32_t handle );    // the w
 
 uint8_t * rn_send_store_chunk_data( const rn_send_store_t * store, uint32_t handle );
 
+#if ROCKETNET_DEV
 uint32_t rn_send_store_chunk_next( const rn_send_store_t * store, uint32_t handle );
+#endif // #if ROCKETNET_DEV
 
 inline int rn_send_store_chunk_class( uint32_t handle ) { return (int) ( handle >> 30 ); }
 
+#if ROCKETNET_DEV
 uint32_t rn_send_store_free_chunks( const rn_send_store_t * store, int class_index );
 
 uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_index );
@@ -360,6 +365,7 @@ uint32_t rn_send_store_total_chunks( const rn_send_store_t * store, int class_in
 // the chunk slot's current generation tag, or 0 for a handle the store did
 // not issue (a stale handle's tag never matches a live slot's next take)
 uint32_t rn_send_store_chunk_generation( const rn_send_store_t * store, uint32_t handle );
+#endif // #if ROCKETNET_DEV
 
 // ----------------------------------------------------------------
 //                              the region
@@ -496,7 +502,9 @@ void rn_region_exhaust( rn_region_t * region );
 
 bool rn_region_exhausted( const rn_region_t * region );
 
+#if ROCKETNET_DEV
 int rn_region_exhausted_reason( const rn_region_t * region );     // ROCKETNET_DISCONNECT_REASON_*
+#endif // #if ROCKETNET_DEV
 
 // RNConnectionMemory Kick, the decision: pure, allocation-free, called by the
 // owner every update. ROCKETNET_DISCONNECT_REASON_NONE, or the reason to end
@@ -626,7 +634,9 @@ uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t descripto
 // and returns the descriptor itself to Q when its last fragment is acked (6.4).
 void rn_region_send_free_fragment( rn_region_t * region, uint32_t descriptor, uint32_t chain_index );
 
+#if ROCKETNET_DEV
 bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t bytes );
+#endif // #if ROCKETNET_DEV
 
 // the receiver's only ring logic (4.3): a placement is 16-aligned and inside B
 bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes );
@@ -654,10 +664,14 @@ rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const
 
 void rn_arena_destroy( rn_arena_t * arena );
 
+#if ROCKETNET_DEV
 int rn_arena_num_regions( const rn_arena_t * arena );
+#endif // #if ROCKETNET_DEV
 
 rn_region_t * rn_arena_region( rn_arena_t * arena, int index );
 
+#if ROCKETNET_DEV
 uint64_t rn_arena_bytes( const rn_arena_t * arena );     // the block's size: rn_arena_required_bytes for its config
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_ALLOCATOR_H

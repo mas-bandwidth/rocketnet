@@ -531,6 +531,7 @@ static const rocketnet_client_transport_io_operations_t loopback_client_operatio
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport = { &loopback_server_operations, &loopback_client_operations };
 
+#if ROCKETNET_DEV
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance )
 {
     rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) instance;
@@ -552,3 +553,4 @@ int rocketnet_loopback_endpoints_live()
 
     return live;
 }
+#endif // #if ROCKETNET_DEV

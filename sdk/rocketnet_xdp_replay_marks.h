@@ -219,6 +219,7 @@ static inline bool rocketnet_xdp_replay_marks_mark( struct rocketnet_xdp_replay_
 // The pending forgets, in insertion order, any kept from the last commit
 // first.
 
+#if ROCKETNET_DEV
 static inline void rocketnet_xdp_replay_marks_forgets( const struct rocketnet_xdp_replay_marks_t * marks,
                                                        const struct rocketnet_server_xdp_replay_key_t ** keys,
                                                        uint32_t * count )
@@ -226,6 +227,7 @@ static inline void rocketnet_xdp_replay_marks_forgets( const struct rocketnet_xd
     *keys = marks->forgets;
     *count = marks->forget_count;
 }
+#endif // #if ROCKETNET_DEV
 
 // tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: a kept mark of 0 is a
 // new session's first mark that the kernel refused, so the old session's
@@ -262,6 +264,7 @@ static inline bool rocketnet_xdp_replay_marks_holds_greeting( const struct rocke
 // The pending marks: any kept from the last commit first, then in insertion
 // order.
 
+#if ROCKETNET_DEV
 static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_replay_marks_t * marks,
                                                      const struct rocketnet_server_xdp_replay_key_t ** keys,
                                                      const struct rocketnet_server_xdp_replay_value_t ** values,
@@ -271,5 +274,6 @@ static inline void rocketnet_xdp_replay_marks_marks( const struct rocketnet_xdp_
     *values = marks->mark_values;
     *count = marks->mark_count;
 }
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_XDP_REPLAY_MARKS_H

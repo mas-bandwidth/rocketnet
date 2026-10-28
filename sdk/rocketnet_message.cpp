@@ -14,6 +14,7 @@
 // between calls, so it is checked by known-answer vectors, the pack/parse
 // property test and the fuzz target (CHANNELS.md 3, layer 2 row).
 
+#if ROCKETNET_DEV
 const char * rocketnet_message_violation_name( int violation )
 {
     switch ( violation )
@@ -34,6 +35,7 @@ const char * rocketnet_message_violation_name( int violation )
         default:                                                return "unknown";
     }
 }
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                     the fields of a code

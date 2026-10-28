@@ -110,6 +110,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     return RN_WINDOW_RECEIVE_ACCEPT;
 }
 
+#if ROCKETNET_DEV
 // CHANNELS 6.1/6.3, RNWindow EndUpdate and held release: only the exact live
 // number may free its slot; R and received history never move backwards.
 // tla/RNWindow.tla EndUpdate
@@ -122,3 +123,4 @@ void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number )
     if ( descriptor->live && descriptor->number == number )
         descriptor->live = 0;
 }
+#endif // #if ROCKETNET_DEV

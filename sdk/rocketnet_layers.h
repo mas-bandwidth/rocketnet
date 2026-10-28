@@ -66,7 +66,9 @@ enum rocketnet_log_level_t rocketnet_log_level_current( void );
 /// own code and tests. Not exported.
 uint64_t rocketnet_api_misuse_count( void );
 uint64_t rocketnet_get_thread_priority_refusals( void );
+#if ROCKETNET_DEV
 bool rocketnet_get_thread_priority( void );
+#endif // #if ROCKETNET_DEV
 
 /** @brief Capacity in bytes of transport address strings, including the terminating NUL. */
 #define ROCKETNET_MAX_ADDRESS_STRING_LENGTH                256
@@ -596,8 +598,10 @@ int rocketnet_client_transport_state( struct rocketnet_client_transport_t * clie
 const char * rocketnet_client_transport_io_name( struct rocketnet_client_transport_t * client_transport );
 bool rocketnet_client_transport_network_simulator( struct rocketnet_client_transport_t * client_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
 bool rocketnet_server_transport_network_simulator( struct rocketnet_server_transport_t * server_transport, int latency_ms, int jitter_ms, int packet_loss_percent, int duplicate_percent );
+#if ROCKETNET_DEV
 /** @brief Makes the next `sends` link sends through an active simulator take the lock-miss path, for a unit test. */
 void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_transport_t * server_transport, int sends );
+#endif // #if ROCKETNET_DEV
 
 // a NULL client_transport is a counted no-op that returns 0
 /** @brief Read the server-assigned index of the connected client.
@@ -1010,8 +1014,10 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 // internal message-layer boundary: opens the shared disconnect allowance before pre-link kicks
 void rocketnet_server_transport_begin_message_update( struct rocketnet_server_transport_t * server_transport );
 
+#if ROCKETNET_DEV
 // unit tests only: supplies token-validation Unix time so update reads no wall clock
 void rocketnet_server_transport_set_test_timestamp( struct rocketnet_server_transport_t * server_transport, uint64_t timestamp );
+#endif // #if ROCKETNET_DEV
 
 // the payloads delivered by the last update, valid until the next update.
 // Iterated by index so the storage behind them stays the library's own --
@@ -1404,6 +1410,7 @@ int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_
  */
 int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id );
 
+#if ROCKETNET_DEV
 // the payload send capacity: how many payload frames one update may start.
 // Create sets the default, at least the configured client count; the first
 // call is the unit seam that makes the next create read `packets` instead
@@ -1413,6 +1420,7 @@ int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_tra
 void rocketnet_server_transport_set_create_send_capacity_for_test( int packets );
 /** @brief Returns the transport's payload send capacity. */
 int rocketnet_server_transport_send_capacity( const struct rocketnet_server_transport_t * server_transport );
+#endif // #if ROCKETNET_DEV
 /** @brief Returns the payload frames that may still start this update. */
 int rocketnet_server_transport_send_capacity_available( const struct rocketnet_server_transport_t * server_transport );
 
@@ -1480,8 +1488,10 @@ struct rocketnet_frame_sync_stats_t
     double wakeup_error_seconds;                    // the last wake's lateness past its deadline
 };
 
+#if ROCKETNET_DEV
 // a NULL frame_sync or stats is a counted no-op
 void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats );
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                           messages
@@ -1916,8 +1926,10 @@ const char * rocketnet_counter_name( int counter );
 // an index outside the counter list. Allocation-free; callable before init
 int rocketnet_counter_class( int counter );
 
+#if ROCKETNET_DEV
 // "refusal", "expected", "path_loss" or "arrival"; NULL for a value that is not a class
 const char * rocketnet_counter_class_name( int counter_class );
+#endif // #if ROCKETNET_DEV
 
 // 1 when every counter family balances: for each RECEIVED counter, its value
 // equals the sum of the outcomes that name it as their family. Otherwise 0,

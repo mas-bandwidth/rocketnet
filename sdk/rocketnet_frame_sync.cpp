@@ -608,6 +608,7 @@ void rocketnet_frame_sync_wait( struct rocketnet_frame_sync_t * frame_sync )
     frame_sync->frame++;
 }
 
+#if ROCKETNET_DEV
 void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, struct rocketnet_frame_sync_stats_t * stats )
 {
     if ( !rocketnet_api_null_guard( frame_sync ) )
@@ -624,3 +625,4 @@ void rocketnet_frame_sync_stats( struct rocketnet_frame_sync_t * frame_sync, str
     stats->guard_seconds = (double) rocketnet_frame_sync_guard_ns( frame_sync->guard_ewma_ns, frame_sync->guard_cap_ns ) / 1000000000.0;
     stats->wakeup_error_seconds = (double) frame_sync->wakeup_error_ns / 1000000000.0;
 }
+#endif // #if ROCKETNET_DEV

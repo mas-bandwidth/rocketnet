@@ -257,6 +257,7 @@ static void test_reliable_packet_fit_boundary()
 
 REGISTER_UNIT_TEST( test_reliable_packet_fit_boundary );
 
+#if ROCKETNET_DEV
 static void test_rnchannel_reliable_witness_replays()
 {
     rocketnet_message_config_t config;
@@ -303,6 +304,7 @@ static void test_rnchannel_reliable_witness_replays()
 }
 
 REGISTER_UNIT_TEST( test_rnchannel_reliable_witness_replays );
+#endif // #if ROCKETNET_DEV
 
 static uint64_t reliable_allocator_calls;
 

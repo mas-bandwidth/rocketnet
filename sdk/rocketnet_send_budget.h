@@ -140,6 +140,7 @@ inline double rocketnet_send_budget_depth_bytes( uint32_t kbps )
 // formula rocketnet_write_sealed_payload_in_place returns, from the macros it
 // uses. 0 for a block or payload length the seal path refuses.
 
+#if ROCKETNET_DEV
 inline int rocketnet_send_budget_wire_bytes( int ack_block_bytes, int payload_bytes )
 {
     if ( ack_block_bytes < ROCKETNET_ACK_BLOCK_MIN_BYTES || ack_block_bytes > ROCKETNET_ACK_BLOCK_MAX_BYTES )
@@ -148,6 +149,7 @@ inline int rocketnet_send_budget_wire_bytes( int ack_block_bytes, int payload_by
         return 0;
     return ROCKETNET_PACKET_OVERHEAD_BYTES + ack_block_bytes + payload_bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 // the most wire bytes a packet of this payload can take once the transport
 // adds its ack block: the seal paths cap the block at the room the send budget

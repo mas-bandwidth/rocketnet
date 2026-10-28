@@ -205,6 +205,7 @@ static void test_never_exceeds_budget_per_window()
 // covers every chunk's wire bytes.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static void large_message_case( uint32_t kbps, int expected_windows )
 {
     const int message_bytes = 256 * 1024;
@@ -287,6 +288,7 @@ static void test_large_message_paced_across_windows()
     check( rocketnet_send_budget_depth_bytes( 10000 ) == 125000.0 );
     check( rocketnet_send_budget_depth_bytes( 1 ) == (double) ROCKETNET_SEND_BUDGET );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // Each connection owns its budget: spending, refilling and changing one
@@ -528,6 +530,7 @@ static void test_runtime_change_takes_effect_next_window()
 // with their send times, and compare the transport's bandwidth_sent_kbps.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 static rocketnet_ack_endpoint_t g_endpoint;
 static rocketnet_replay_protection_t g_replay;
 static uint8_t g_frame[ROCKETNET_FRAME_STRIDE];
@@ -776,14 +779,19 @@ static void test_wire_bytes_boundaries()
     check( rocketnet_send_budget_max_wire_bytes( 0 ) == 0 );
     check( rocketnet_send_budget_max_wire_bytes( -1 ) == 0 );
 }
+#endif // #if ROCKETNET_DEV
 
 REGISTER_UNIT_TEST( test_never_exceeds_budget_per_window );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_large_message_paced_across_windows );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_budgets_are_per_connection );
 REGISTER_UNIT_TEST( test_reliable_waits_unreliable_drops );
 REGISTER_UNIT_TEST( test_class_order_retransmit_first );
 REGISTER_UNIT_TEST( test_runtime_change_takes_effect_next_window );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_wire_bytes_match_the_transport );
 REGISTER_UNIT_TEST( test_send_budget_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_wire_bytes_refuses_int_max );
 REGISTER_UNIT_TEST( test_wire_bytes_boundaries );
+#endif // #if ROCKETNET_DEV

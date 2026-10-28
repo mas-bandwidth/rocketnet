@@ -172,6 +172,29 @@ static pcapng_outcome_t pcapng_refused( int counter )
     return outcome;
 }
 
+// The corpus names a message refusal by the standard's name for it. The table
+// is the oracle's own: a production library does not carry
+// rocketnet_message_violation_name (sdk/rocketnet_message.cpp, ROCKETNET_DEV).
+static const char * pcapng_violation_name( int violation )
+{
+    switch ( violation )
+    {
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_FORM:              return "MESSAGE_BAD_FORM";
+        case ROCKETNET_MESSAGE_VIOLATION_TRUNCATED:             return "MESSAGE_TRUNCATED";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_FLAGS:             return "MESSAGE_BAD_FLAGS";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH:            return "MESSAGE_BAD_LENGTH";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL:           return "MESSAGE_BAD_CHANNEL";
+        case ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED:      return "MESSAGE_TYPE_NOT_ENABLED";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_BLOCK:             return "MESSAGE_BAD_BLOCK";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_RING:              return "MESSAGE_BAD_RING";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_SIZE:              return "MESSAGE_BAD_SIZE";
+        case ROCKETNET_MESSAGE_VIOLATION_BAD_CONTROL:           return "MESSAGE_BAD_CONTROL";
+        case ROCKETNET_MESSAGE_VIOLATION_NUMBER_OUTSIDE_WINDOW: return "MESSAGE_NUMBER_OUTSIDE_WINDOW";
+        case ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION:        return "MESSAGE_SLOT_COLLISION";
+        default:                                                return "unknown";
+    }
+}
+
 static pcapng_outcome_t pcapng_refused_by( const char * name )
 {
     pcapng_outcome_t outcome;
@@ -447,7 +470,7 @@ static pcapng_outcome_t pcapng_opened( pcapng_replay_t * replay, const std::vect
         const int violation = rocketnet_message_reader_begin( &reader, data, bytes, &replay->limits );
         if ( violation != ROCKETNET_MESSAGE_VIOLATION_NONE )
             return pcapng_refused_by( ( std::string( rocketnet_counter_name( ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION ) ) + " " +
-                                        rocketnet_message_violation_name( violation ) )
+                                        pcapng_violation_name( violation ) )
                                           .c_str() );
         struct rocketnet_message_record_t message;
         int records = 0;

@@ -60,6 +60,7 @@ int rocketnet_counter_class( int counter )
     return rocketnet_counter_classes[counter];
 }
 
+#if ROCKETNET_DEV
 const char * rocketnet_counter_class_name( int counter_class )
 {
     switch ( counter_class )
@@ -71,6 +72,7 @@ const char * rocketnet_counter_class_name( int counter_class )
         default:                                return NULL;
     }
 }
+#endif // #if ROCKETNET_DEV
 
 // RECEIVED == the sum of its family's outcomes, for every family, checked in
 // index order of the RECEIVED counter so the first unbalanced family is the

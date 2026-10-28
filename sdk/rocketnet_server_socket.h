@@ -41,7 +41,9 @@ bool rocketnet_server_socket_preflight( const char * public_address_string, int 
 
 void rocketnet_server_socket_forbid_commit();
 
+#if ROCKETNET_DEV
 void rocketnet_server_socket_allow_commit();
+#endif // #if ROCKETNET_DEV
 
 // Development-only, non-mutating pre-flight result control. The functional
 // suite uses it to drive the production pin and ladder decisions through

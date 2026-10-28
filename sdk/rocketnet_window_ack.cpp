@@ -1113,6 +1113,7 @@ int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
     return 0;
 }
 
+#if ROCKETNET_DEV
 uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -1134,3 +1135,4 @@ uint32_t rn_window_ack_refs_in_flight( const rn_window_ack_t * ack )
     rocketnet_assert( ack );
     return (uint32_t) ( ack->ref_tail - ack->ref_head );
 }
+#endif // #if ROCKETNET_DEV

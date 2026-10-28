@@ -299,12 +299,14 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
                                                   int payload_bytes,
                                                   double current_time );
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                              int client_index,
                                              const uint8_t * payload_data,
                                              int payload_bytes,
                                              double current_time,
                                              uint8_t * out_packet );
+#endif // #if ROCKETNET_DEV
 
 // the connected client's address, for fill-phase callers that build wire
 // frames without burning a sequence. returns 0 when not connected.
@@ -335,6 +337,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
                                              double current_time,
                                              uint8_t * out_packet );
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_t * server,
                                                int client_index,
                                                const uint8_t * payload_data,
@@ -343,6 +346,7 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
                                                uint8_t * out_packets,
                                                int * out_packet_bytes,
                                                int max_packets );
+#endif // #if ROCKETNET_DEV
 
 // Commit only after the message layer accepted the entire payload.
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence );

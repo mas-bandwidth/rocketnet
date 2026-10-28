@@ -42,12 +42,14 @@ ROCKETNET_STATIC_ASSERT( ( ROCKETNET_LOOPBACK_QUEUE_PACKETS & ( ROCKETNET_LOOPBA
 ROCKETNET_STATIC_ASSERT( ROCKETNET_LOOPBACK_QUEUE_PACKETS >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
                          "receive budget twice send: loopback queue holds at least twice the send batch" );
 
+#if ROCKETNET_DEV
 // A bound endpoint's count of datagrams dropped by the backend: over the
 // queue ceiling on send, or larger than the receive buffer on drain.
 uint64_t rocketnet_loopback_endpoint_dropped( void * instance );
 
 // The number of live endpoints in the process-wide table.
 int rocketnet_loopback_endpoints_live();
+#endif // #if ROCKETNET_DEV
 
 // The bytes a queue of this many datagrams allocates, before the allocator
 // header rocketnet_malloc adds.

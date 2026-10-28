@@ -88,7 +88,9 @@
 #define ROCKETNET_MESSAGE_VIOLATION_SLOT_COLLISION          12  // check 10, layer 3
 #define ROCKETNET_MESSAGE_NUM_VIOLATIONS                    13
 
+#if ROCKETNET_DEV
 const char * rocketnet_message_violation_name( int violation );
+#endif // #if ROCKETNET_DEV
 
 // one record as the wire carries it. Fields the record's code does not carry
 // are zero, so a parsed record packs back to the same bytes and a record

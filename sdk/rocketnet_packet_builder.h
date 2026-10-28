@@ -220,6 +220,8 @@ bool rn_packet_builder_settle( struct rn_packet_builder_t * builder, int packet_
 // The reliable numbers one written packet carried, and their count. NULL for
 // an index outside the last call.
 
+#if ROCKETNET_DEV
 const uint64_t * rn_packet_builder_numbers( const struct rn_packet_builder_t * builder, int packet_index, uint32_t * out_count );
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_PACKET_BUILDER_H

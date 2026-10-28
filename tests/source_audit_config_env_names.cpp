@@ -24,6 +24,10 @@
 
 #define check rocketnet_unit_check
 
+// rocketnet_client_config_resolve and rocketnet_server_config_resolve are
+// ROCKETNET_DEV code, so the audit runs in a development build.
+#if ROCKETNET_DEV
+
 #if defined( _WIN32 )
 static void env_names_setenv( const char * name, const char * value ) { _putenv_s( name, value ); }
 static void env_names_unsetenv( const char * name ) { _putenv_s( name, "" ); }
@@ -612,3 +616,5 @@ static void test_config_env_every_name_read_is_documented()
     }
 }
 REGISTER_UNIT_TEST( test_config_env_every_name_read_is_documented );
+
+#endif // #if ROCKETNET_DEV

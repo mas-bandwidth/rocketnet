@@ -659,7 +659,7 @@ static void check_component_create_sweeps( allocator_state & state )
                {
                    const int before = state.calls;
                    state.fail_at = before + 1;
-                   for ( int i = 0; i < rn_arena_num_regions( a ); ++i )
+                   for ( int i = 0; rn_arena_region( a, i ) != NULL; ++i )
                    {
                        rn_region_t * r = rn_arena_region( a, i );
                        check( r != NULL );

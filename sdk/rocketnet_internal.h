@@ -85,10 +85,12 @@ int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t 
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client );
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
+#if ROCKETNET_DEV
 // the address a created server serves for one family, after the
 // environment overrides. Writes it and returns true, or returns false when
 // the server does not serve that family. Reads no socket
 bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes );
+#endif // #if ROCKETNET_DEV
 
 // for tests that build the layers by hand: a public client holding an
 // existing connection, and a public server holding an existing running
@@ -96,6 +98,7 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 // no block of its own, so a connect or start after the adopted one ends
 // allocates its own, with default configs
 struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
+#if ROCKETNET_DEV
 struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
 
 // the secret bytes of an object, as spans of its allocation (offset, bytes):
@@ -105,6 +108,7 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
 int rocketnet_server_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_server_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
 int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t * bytes, int max );
+#endif // #if ROCKETNET_DEV
 
 #ifdef __cplusplus
 }

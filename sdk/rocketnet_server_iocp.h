@@ -104,7 +104,9 @@ enum rocketnet_server_iocp_counter_t
 };
 
 void rocketnet_server_iocp_counters( rocketnet_server_iocp_t * iocp, uint64_t * counters );
+#if ROCKETNET_DEV
 int rocketnet_server_iocp_pending( rocketnet_server_iocp_t * iocp );
+#endif // #if ROCKETNET_DEV
 // The ROCKETNET_IOCP_FEATURE_* bits in use now. USO clears itself when a live
 // segmented send is refused.
 int rocketnet_server_iocp_features( rocketnet_server_iocp_t * iocp );

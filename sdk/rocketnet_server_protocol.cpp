@@ -777,7 +777,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 
         uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
         uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
-        rocketnet_crypto_tally.keypair++;
+        ROCKETNET_CRYPTO_TALLY( keypair );
         crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
 
         if ( !rocketnet_derive_connection_keys( &keys,
@@ -2050,6 +2050,7 @@ int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protoc
     return wire_bytes;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t * server,
                                              int client_index,
                                              const uint8_t * payload_data,
@@ -2103,6 +2104,7 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
 
     return bytes;
 }
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_protocol_client_address( struct rocketnet_server_protocol_t * server,
                                               int client_index,
@@ -2224,6 +2226,7 @@ int rocketnet_server_protocol_seal_fragment( struct rocketnet_server_protocol_t 
     return bytes;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_t * server,
                                                int client_index,
                                                const uint8_t * payload_data,
@@ -2269,6 +2272,7 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
 
     return fragment_count;
 }
+#endif // #if ROCKETNET_DEV
 
 // tla/ServerConnection.tla ServerAppDisconnect
 // tla/ServerConnection.tla ServerDiscCopy: each of the burst's

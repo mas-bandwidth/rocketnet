@@ -253,10 +253,12 @@ void rn_window_ack_gaps_update( rn_window_ack_t * ack, double now );
 static inline void rn_window_ack_gaps_update( rn_window_ack_t *, double ) {}
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 // Number of live (unacked, non-evicted) packet entries currently in the sent-packet map.
 uint32_t rn_window_ack_entries_in_flight( const rn_window_ack_t * ack );
 
 // Span of reference slots currently occupied between ref_head and ref_tail (<= 16P).
 uint32_t rn_window_ack_refs_in_flight( const rn_window_ack_t * ack );
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_WINDOW_ACK_H

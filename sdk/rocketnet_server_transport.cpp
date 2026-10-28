@@ -576,10 +576,12 @@ void rocketnet_server_transport_set_create_send_capacity_for_test( int packets )
 static const int rocketnet_server_test_create_send_capacity = 0;
 #endif // #if ROCKETNET_DEV
 
+#if ROCKETNET_DEV
 int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t * server_transport )
 {
     return server_transport ? server_transport->send_capacity : 0;
 }
+#endif // #if ROCKETNET_DEV
 
 // How many payload frames may still start this update. The staged transports
 // keep their own staging, so the transport-side cap does not apply to them.

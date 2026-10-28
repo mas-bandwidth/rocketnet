@@ -1212,11 +1212,13 @@ void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
     rocketnet_free( allocation_context, gso );
 }
 
+#if ROCKETNET_DEV
 int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
     return gso->num_queues;
 }
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_gso_features( struct rocketnet_server_gso_t * gso )
 {

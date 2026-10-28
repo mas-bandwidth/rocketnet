@@ -84,6 +84,7 @@ static const struct rocketnet_config_field_t rn_server_budget_fields[] = {
     { "per_client_send_kbps", ROCKETNET_CONFIG_KIND_INT, 0, (int) sizeof( int ), (int64_t) INT_MIN, (int64_t) ROCKETNET_SEND_KBPS_UNLIMITED, 0 },
 };
 
+#if ROCKETNET_DEV
 const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields )
 {
     *num_fields = 1;
@@ -95,6 +96,7 @@ const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( i
     *num_fields = 1;
     return rn_server_budget_fields;
 }
+#endif // #if ROCKETNET_DEV
 
 static uint32_t rn_budget_kbps( int kbps )
 {
@@ -445,6 +447,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     return true;
 }
 
+#if ROCKETNET_DEV
 bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
                                       struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps )
 {
@@ -456,6 +459,7 @@ bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * c
 {
     return rn_server_split( config, read_env, transport, message, kbps );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------
 //                              client
@@ -1625,6 +1629,7 @@ struct rocketnet_message_server_t * rocketnet_server_message_server( struct rock
     return server ? ( server->running ? server->running : server->retiring ) : NULL;
 }
 
+#if ROCKETNET_DEV
 bool rocketnet_server_served_address( const struct rocketnet_server_t * server, int family, char * address, size_t address_bytes )
 {
     if ( !rocketnet_api_null_guard( server ) || !rocketnet_api_null_guard( address ) || address_bytes == 0 )
@@ -1665,6 +1670,7 @@ struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocke
     server->running = running;
     return server;
 }
+#endif // #if ROCKETNET_DEV
 
 // A destination id with ROCKETNET_FLOW_ID_BIT set is a flow id: reserved,
 // refused and counted until flows exist (ROCKETNET_STATUS_FLOW_ID_RESERVED).

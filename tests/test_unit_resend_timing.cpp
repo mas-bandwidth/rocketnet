@@ -35,7 +35,9 @@
 #define ROCKETNET_MESSAGE_CONFIG_ABI1_BYTES 60
 
 static const double resend_timing_start = 1000.0;
+#if ROCKETNET_DEV
 static const double resend_timing_tick = 1.0 / 60.0;
+#endif // #if ROCKETNET_DEV
 
 struct resend_timing_fixture_t
 {
@@ -91,6 +93,7 @@ static uint64_t resend_timing_send( resend_timing_fixture_t * f, double now, uin
     return packet_id;
 }
 
+#if ROCKETNET_DEV
 // One resend pass at now through the product walk (rn_ordered_write), reading
 // the numbers each written packet carries; returns how many it resent.
 static uint32_t resend_timing_write( resend_timing_fixture_t * f, double now, uint64_t * out, uint32_t max_numbers )
@@ -171,6 +174,7 @@ static void test_resend_delay_is_adaptive_resend_delay()
 }
 
 REGISTER_UNIT_TEST( test_resend_delay_is_adaptive_resend_delay );
+#endif // #if ROCKETNET_DEV
 
 // The equation honors caller bounds; the 2 s default is not an override
 // of an application's explicit maximum.
@@ -224,6 +228,7 @@ static void test_rtt_estimator_moves_five_percent()
 
 REGISTER_UNIT_TEST( test_rtt_estimator_moves_five_percent );
 
+#if ROCKETNET_DEV
 // test_no_backoff_between_resends: a record that is never acked repeats its
 // configured initial resend delay on every pass.
 static void test_no_backoff_between_resends()
@@ -287,6 +292,7 @@ static void test_first_resend_before_any_sample_at_resend_delay_initial()
 }
 
 REGISTER_UNIT_TEST( test_first_resend_before_any_sample_at_resend_delay_initial );
+#endif // #if ROCKETNET_DEV
 
 // test_config_refuses_fewer_than_four_attempts: reliable_message_timeout_ms must fit four
 // sends of the longest first delay, max( the 100 ms resend interval,
@@ -323,6 +329,7 @@ static void test_config_refuses_fewer_than_four_attempts()
 
 REGISTER_UNIT_TEST( test_config_refuses_fewer_than_four_attempts );
 
+#if ROCKETNET_DEV
 // test_resend_timing_witness_replays: the schedule of
 // tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
 // resend delay settings (resend_delay_initial 1000 ms, resend_delay_min 50 ms, resend_delay_max 2000 ms,
@@ -380,6 +387,7 @@ static void test_resend_timing_witness_replays()
 }
 
 REGISTER_UNIT_TEST( test_resend_timing_witness_replays );
+#endif // #if ROCKETNET_DEV
 
 // test_message_config_abi_size_is_unchanged: the ABI canary. The resend schedule's
 // interval and RTT scale are constants, so they add no field: revision 1's 15
@@ -405,6 +413,7 @@ REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 // build against the one-FIFO walk too and show where it differs.
 // ---------------------------------------------------------------------------
 
+#if ROCKETNET_DEV
 // Numbers a block of `bytes` (more than one fragment) and sends each chunk in
 // its own packet at now. Writes the chunk numbers to out_numbers and returns
 // how many there are.
@@ -620,3 +629,4 @@ static void test_both_fifos_walk_only_what_is_due()
 }
 
 REGISTER_UNIT_TEST( test_both_fifos_walk_only_what_is_due );
+#endif // #if ROCKETNET_DEV

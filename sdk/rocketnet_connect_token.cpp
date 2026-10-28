@@ -361,7 +361,7 @@ int rocketnet_verify_signed_connect_data( const uint8_t * signed_connect_data,
                                           const uint8_t * signature,
                                           const uint8_t * backend_public_key )
 {
-    rocketnet_crypto_tally.signature_verify++;
+    ROCKETNET_CRYPTO_TALLY( signature_verify );
     return crypto_sign_verify_detached( signature, signed_connect_data, ROCKETNET_SIGNED_CONNECT_DATA_BYTES, backend_public_key ) == 0;
 }
 
@@ -386,7 +386,7 @@ int rocketnet_open_connect_token_private( struct rocketnet_connect_token_private
     uint8_t private_block[ROCKETNET_PRIVATE_BLOCK_BYTES];
     ROCKETNET_TOKEN_PRIVATE_BLOCK_SEEN( private_block, (int) sizeof( private_block ), 0 );
 
-    rocketnet_crypto_tally.seal_open++;
+    ROCKETNET_CRYPTO_TALLY( seal_open );
 
     if ( crypto_box_seal_open( private_block,
                                signed_connect_data + ROCKETNET_SIGNED_OFFSET_SEALED_BLOCK,

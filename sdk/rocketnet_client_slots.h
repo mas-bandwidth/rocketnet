@@ -86,10 +86,10 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
 
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index );
 
+#if ROCKETNET_DEV
 // Unit-test poison/release/reuse witness for the private slot arrays.
 bool rocketnet_client_slots_reset_witness_for_test();
 
-#if ROCKETNET_DEV
 // Development-only ownership witness. The full client id, numeric slot and
 // uint64 generation are the exact same-object identity; a delayed witness
 // cannot release a replacement in the reused slot. Production release paths

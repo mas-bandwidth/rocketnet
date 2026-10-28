@@ -28,6 +28,8 @@ enum
 
 void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region, uint64_t first_number );
 int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_message_record_t * record, uint32_t * slot );
+#if ROCKETNET_DEV
 void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number );
+#endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_WINDOW_RECEIVE_H

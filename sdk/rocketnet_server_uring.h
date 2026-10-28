@@ -165,10 +165,10 @@ void rocketnet_server_uring_destroy( struct rocketnet_server_uring_t * uring );
 
 // Test seam: hold completion pending until test_resume_stop releases it.
 
+#if ROCKETNET_DEV
 void rocketnet_server_uring_test_stall_destroy( struct rocketnet_server_uring_t * uring );
 void rocketnet_server_uring_test_resume_stop( struct rocketnet_server_uring_t * uring );
 
-#if ROCKETNET_DEV
 // development library only. fail_receive cancels the queue's multishot
 // receive and hands its terminating CQE to the reap with error (negative
 // errno) in place of -ECANCELED, the path a kernel-side receive failure

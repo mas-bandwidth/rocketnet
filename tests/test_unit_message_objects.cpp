@@ -117,6 +117,7 @@ struct mo_net_t
     bool keep_log;
 };
 
+#if ROCKETNET_DEV
 static mo_net_t * mo_net_new()
 {
     mo_net_t * net = new mo_net_t();
@@ -425,6 +426,7 @@ static rn_message_link_t mo_link( mo_endpoint_t * e )
     link.destroy = NULL;                                        // the harness owns the pair
     return link;
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // objects on the pair
@@ -462,6 +464,7 @@ struct mo_pair_t
     double time;
 };
 
+#if ROCKETNET_DEV
 static rocketnet_message_server_t * mo_server_create( mo_net_t * net, const rocketnet_message_config_t * config, int slots, int32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
 {
     rn_message_link_t link = mo_link( net->server );
@@ -526,6 +529,7 @@ static uint64_t mo_align64( uint64_t bytes )
 {
     return ( bytes + 63 ) & ~(uint64_t) 63;
 }
+#endif // #if ROCKETNET_DEV
 
 struct mo_old_message_connection_hot_t
 {
@@ -536,6 +540,7 @@ struct mo_old_message_connection_hot_t
     int state;
 };
 
+#if ROCKETNET_DEV
 static uint64_t mo_message_object_layout_formula( const rocketnet_message_config_t * config, int connections, bool is_server, bool old_cursor_array )
 {
     rocketnet_message_config_t sized = *config;
@@ -607,6 +612,7 @@ static void test_receive_cursor_scalar_layout_and_exact_blocks()
         mo_net_free( net );
     }
 }
+#endif // #if ROCKETNET_DEV
 
 // every message the application received this update, released before the next
 
@@ -617,6 +623,7 @@ struct mo_received_t
     std::vector<uint8_t> bytes;
 };
 
+#if ROCKETNET_DEV
 static void mo_drain_server( mo_pair_t * pair, std::vector<mo_received_t> * out )
 {
     // the server's one receive queue across every slot, in batches: each
@@ -1575,6 +1582,7 @@ static void test_ordered_and_unreliable_end_to_end_in_memory()
     mo_end_to_end_up();
     mo_ordered_down_in_order();
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // R5: a server whose per-client memory is exhausted kicks that client with
@@ -1589,6 +1597,7 @@ static void mo_small_config( rocketnet_message_config_t * config )
     config->send_queue_messages = 16;
 }
 
+#if ROCKETNET_DEV
 static void test_server_kicks_exhausted_client_others_unaffected()
 {
     rocketnet_message_config_t config;
@@ -3175,6 +3184,7 @@ static void test_unreliable_over_a_lossy_link_arrives_intact_at_most_once()
         mo_pair_teardown( &pair );
     }
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the send room watch: a debug build warns once when the fullest send pool
@@ -3295,6 +3305,7 @@ struct mo_room_case_t
     int counter;                               // the pool that runs out first
 };
 
+#if ROCKETNET_DEV
 // every reliability and size the query is asked for at each step: each store
 // class, the spans, a promotion, and the refusals
 static const int mo_room_ask_reliabilities[] = {
@@ -3679,14 +3690,9 @@ REGISTER_UNIT_TEST( test_release_returns_room );
 // A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
 // The helpers set and unset the unit environment table on every platform.
 
-#if ROCKETNET_DEV
 static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_DEV
 static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
-#endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
 static void test_send_budget_message_env_is_not_read()
 {
     rocketnet_message_config_t config;
@@ -3709,7 +3715,6 @@ static void test_send_budget_message_env_is_not_read()
     mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
     mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
 }
-#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // the object's update clamps a bad time through rocketnet_clamp_update_time
@@ -4120,7 +4125,6 @@ static void test_previous_connection_ack_dropped_after_reconnect()
 // from 1000.0. The server's slot is reset for the new connection and announces
 // its CONFIG to it, so the two exchange messages from a fresh start.
 
-#if ROCKETNET_DEV
 #define RECONNECT_PROTOCOL 0x7A11C1C1E5EED0A1ULL
 #define RECONNECT_CLIENT_ID 0x5107ULL
 
@@ -4349,6 +4353,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
 // queues the 8 reliable ordered messages ids 100.. on channel 1, from the
 // server to slot 0 (to_client) or from client 0 to the server
 
+#if ROCKETNET_DEV
 static void mo_not_received_send( mo_pair_t * pair, bool to_client )
 {
     for ( int m = 0; m < MO_NOT_RECEIVED_MESSAGES; m++ )
@@ -4482,6 +4487,7 @@ static void test_message_full_drain_delivers_every_message_once_in_order()
     mo_full_drain_case( true );
     mo_full_drain_case( false );
 }
+#endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
 // RNSendBudget SendFailed (R6): a packet the transport refuses at finish is
@@ -4501,6 +4507,7 @@ struct mo_refund_mark_t
     uint64_t refusals;
 };
 
+#if ROCKETNET_DEV
 static void mo_refund_setup( mo_pair_t * pair )
 {
     mo_pair_setup( pair, 1, NULL, ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS, MO_REFUND_KBPS );
@@ -4706,9 +4713,7 @@ REGISTER_UNIT_TEST( test_send_budget_defaults_from_config );
 REGISTER_UNIT_TEST( test_send_budget_configured_value_honoured );
 REGISTER_UNIT_TEST( test_send_budget_zero_or_negative_is_uncapped );
 REGISTER_UNIT_TEST( test_set_send_kbps_zero_or_negative_uncaps );
-#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_budget_message_env_is_not_read );
-#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_objects_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_rnslots_witness_replays );
 REGISTER_UNIT_TEST( test_message_objects_client_clock_starts_at_first_update );
@@ -4718,7 +4723,9 @@ REGISTER_UNIT_TEST( test_unreliable_past_limit_promotes_counted_and_not_wedged )
 REGISTER_UNIT_TEST( test_unreliable_failed_packet_drops_and_counts_each_record );
 REGISTER_UNIT_TEST( test_unreliable_chunks_freed_when_written );
 REGISTER_UNIT_TEST( test_unreliable_over_a_lossy_link_arrives_intact_at_most_once );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_watch_crosses_once_and_rearms_below_half );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_send_room_query_says_no_exactly_when_a_start_exhausts );
 REGISTER_UNIT_TEST( test_send_room_warns_in_debug_builds_only );
 REGISTER_UNIT_TEST( test_update_time_bad_counted_once_never_stored_or_wedged );
@@ -4781,7 +4788,6 @@ REGISTER_UNIT_TEST( test_pending_start_cancelled_by_slot_reset );
 REGISTER_UNIT_TEST( test_slot_bound_this_update_keeps_its_first_payload );
 REGISTER_UNIT_TEST( test_previous_connection_payload_dropped_after_reconnect );
 REGISTER_UNIT_TEST( test_previous_connection_ack_dropped_after_reconnect );
-#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_same_client_id_reconnect_in_one_update_resets_the_slot );
 #endif // #if ROCKETNET_DEV
 

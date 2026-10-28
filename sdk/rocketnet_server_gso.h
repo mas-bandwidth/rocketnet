@@ -130,7 +130,9 @@ bool rocketnet_server_gso_stopped( struct rocketnet_server_gso_t * gso );
 // Requires stopped completion. Joins and frees synchronously.
 void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso );
 
+#if ROCKETNET_DEV
 int rocketnet_server_gso_num_queues( struct rocketnet_server_gso_t * gso );
+#endif // #if ROCKETNET_DEV
 
 int rocketnet_server_gso_features( struct rocketnet_server_gso_t * gso );
 

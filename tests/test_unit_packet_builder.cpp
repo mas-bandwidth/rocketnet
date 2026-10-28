@@ -65,6 +65,7 @@ static void valid_base_record( struct rocketnet_message_record_t * record, int c
 // several small records pack into one packet (9.3), each whole, in class order,
 // round robin across channels.
 
+#if ROCKETNET_DEV
 static void test_small_records_packed_several_per_packet()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
@@ -135,6 +136,7 @@ static void test_small_records_packed_several_per_packet()
 
     rn_arena_destroy( arena );
 }
+#endif // #if ROCKETNET_DEV
 
 // the builder obeys the budget and its class order: retransmits and ordered
 // progress first, then new reliable, then unreliable; a packet the budget
@@ -993,7 +995,9 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
     rn_arena_destroy( arena );
 }
 
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_small_records_packed_several_per_packet );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );

@@ -613,10 +613,12 @@ void rocketnet_server_socket_forbid_commit()
     rocketnet_server_socket_commit_forbidden_flag.store( true );
 }
 
+#if ROCKETNET_DEV
 void rocketnet_server_socket_allow_commit()
 {
     rocketnet_server_socket_commit_forbidden_flag.store( false );
 }
+#endif // #if ROCKETNET_DEV
 
 #if defined( ROCKETNET_DEV ) && ROCKETNET_DEV
 // The suite's development control: select the pre-flight answer so the

@@ -12130,6 +12130,7 @@ void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( 
 // getaddrinfo can open a socket (the nscd lookup on glibc), so name
 // resolution is a functional case, never a unit one.
 
+#if ROCKETNET_DEV
 static void rocketnet_test_hostname_resolve_localhost()
 {
     rocketnet_address_t address, ipv6;
@@ -12139,10 +12140,13 @@ static void rocketnet_test_hostname_resolve_localhost()
     rocketnet_check( ( address.type == ROCKETNET_ADDRESS_IPV4 && address.data.ipv4[0] == 127 ) ||
                      rocketnet_address_equal( &address, &ipv6 ) );
 }
+#endif // #if ROCKETNET_DEV
 
 extern void rocketnet_test_platform_thread();
 extern void rocketnet_test_frame_sync_wait();
+#if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_dropped_stats();
+#endif // #if ROCKETNET_DEV
 extern void rocketnet_test_frame_sync_lifecycle();
 extern void rocketnet_test_frame_sync_create_ex_success_status();
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -12219,10 +12223,14 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
     { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
+#if ROCKETNET_DEV
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_platform_thread", rocketnet_test_platform_thread, NULL },
     { "test_frame_sync_wait", rocketnet_test_frame_sync_wait, NULL },
+#if ROCKETNET_DEV
     { "test_frame_sync_dropped_stats", rocketnet_test_frame_sync_dropped_stats, NULL },
+#endif // #if ROCKETNET_DEV
     // moved from the unit suite: each creates or reads a real OS resource
     // (the Windows high-resolution waitable timer; the macOS descriptor table)
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle, NULL },

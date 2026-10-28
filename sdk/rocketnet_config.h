@@ -56,9 +56,11 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
 // the transport tables and the message table they are every env-backed field
 // of rocketnet_client_config_t and rocketnet_server_config_t.
 
+#if ROCKETNET_DEV
 const struct rocketnet_config_field_t * rocketnet_client_budget_config_fields( int * num_fields );
 
 const struct rocketnet_config_field_t * rocketnet_server_budget_config_fields( int * num_fields );
+#endif // #if ROCKETNET_DEV
 
 // the split create makes (sdk/rocketnet_api.cpp): a public config, NULL for
 // the defaults, into the transport config, the message config and the send
@@ -75,11 +77,13 @@ struct rocketnet_message_config_t;
 struct rocketnet_client_config_t;
 struct rocketnet_server_config_t;
 
+#if ROCKETNET_DEV
 bool rocketnet_client_config_resolve( const struct rocketnet_client_config_t * config, bool read_env,
                                       struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
 
 bool rocketnet_server_config_resolve( const struct rocketnet_server_config_t * config, bool read_env,
                                       struct rocketnet_server_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps );
+#endif // #if ROCKETNET_DEV
 
 // the per-endpoint derivation (ruling 11): "server" + "max_fragmented_messages" ->
 // "ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES" and "client" + "max_fragmented_messages" ->

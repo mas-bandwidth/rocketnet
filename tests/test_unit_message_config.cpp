@@ -101,6 +101,7 @@ struct mc_net_t
     bool keep_log;
 };
 
+#if ROCKETNET_DEV
 static mc_net_t * mc_net_new()
 {
     mc_net_t * net = new mc_net_t();
@@ -403,6 +404,7 @@ static void mc_config( rocketnet_message_config_t * config )
     config->message_resend_delay_max_ms = 400;
     config->reliable_message_timeout_ms = 120000;
 }
+#endif // #if ROCKETNET_DEV
 
 // the clock every case starts at: never 0.0, so a time field left at zero
 // shows up as an immediate timeout instead of passing by accident
@@ -418,6 +420,7 @@ struct mc_pair_t
     double time;
 };
 
+#if ROCKETNET_DEV
 static rocketnet_message_server_t * mc_server_create( mc_net_t * net, const rocketnet_message_config_t * config, int slots, int32_t kbps, void * memory = NULL, uint64_t memory_bytes = 0 )
 {
     rn_message_link_t link = mc_link( net->server );
@@ -477,6 +480,7 @@ static rn_message_connection_t * mc_client_connection( rocketnet_message_client_
 {
     return rn_message_object_connection( &client->object, 0 );
 }
+#endif // #if ROCKETNET_DEV
 
 // every message the application received this update, released before the next
 
@@ -490,6 +494,7 @@ struct mc_received_t
 // copies a received message; a zero-byte message copies nothing, so its data
 // pointer never reaches memmove (gcc 13 and 15 -Wnonnull on vector::assign)
 
+#if ROCKETNET_DEV
 static void mc_copy_bytes( std::vector<uint8_t> & to, const uint8_t * from, int bytes )
 {
     to.resize( (size_t) bytes );
@@ -951,6 +956,7 @@ static void test_message_config_never_received_is_reliable_timeout()
 
     mc_pair_teardown( &pair );
 }
+#endif // #if ROCKETNET_DEV
 
 // STANDARD.md labels the CONFIG defaults vector; this case regenerates it
 // from the library's own defaults (CHANNELS.md 13.4) and pins it byte for
@@ -1011,6 +1017,7 @@ static void test_config_vector_is_library_default()
 // old default of 256 entries: the burst evicts its own entries and their acks
 // are ignored.
 
+#if ROCKETNET_DEV
 static void test_message_config_sent_map_holds_a_window_burst()
 {
     rocketnet_message_config_t config;
@@ -1064,6 +1071,7 @@ static void test_message_config_sent_map_holds_a_window_burst()
 
     mc_pair_teardown( &pair );
 }
+#endif // #if ROCKETNET_DEV
 
 // The fuzz seed f8 0d 00 30 (fuzz/corpus_config/regress_config_f80d0030)
 // applies "0" to message_resend_delay_max_ms (range 10..60000, zero is not
@@ -1119,11 +1127,15 @@ static void test_message_config_resend_delay_cross_rule_refused()
     check( rocketnet_message_validate_config( &config ) );
 }
 
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
 REGISTER_UNIT_TEST( test_message_config_first_loss_still_verifies );
 REGISTER_UNIT_TEST( test_message_config_never_received_is_reliable_timeout );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_config_vector_is_library_default );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_sent_map_holds_a_window_burst );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );

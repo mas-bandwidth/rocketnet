@@ -278,6 +278,7 @@ static void test_unreliable_never_takes_a_number()
 // numbers the packet they name carried -- including a resend, whose packet is
 // keyed by the id the transport assigned to that send.
 
+#if ROCKETNET_DEV
 static void test_ack_feed_marks_only_carried_numbers()
 {
     rn_region_t * region = dispatch_region();
@@ -348,6 +349,7 @@ static void test_ack_feed_marks_only_carried_numbers()
 
     rn_region_reset( region );
 }
+#endif // #if ROCKETNET_DEV
 
 // the reversed witnesses of tla/README-RNChannel.md that concern dispatch and
 // the builder: the code refuses the broken step.
@@ -683,7 +685,9 @@ REGISTER_UNIT_TEST( test_dispatch_reaches_each_of_n_channels );
 REGISTER_UNIT_TEST( test_disabled_codes_are_refused_and_counted );
 REGISTER_UNIT_TEST( test_unreliable_delivered_as_a_view );
 REGISTER_UNIT_TEST( test_unreliable_never_takes_a_number );
+#if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_ack_feed_marks_only_carried_numbers );
+#endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_rnchannel_witness_replays );
 REGISTER_UNIT_TEST( test_unreliable_delivery_budget_drops_and_counts );
 REGISTER_UNIT_TEST( test_default_mask_enables_all_eight_types );
