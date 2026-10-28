@@ -11,9 +11,7 @@ summary.
 A cell fails when its run directory has no server receipt, when fewer than
 every client connected, when the server or any role saw a disconnect
 (a timeout or a lost connection), or when the merger's proof cell is not
-PASS. The 100 microsecond per-call target is reported, never gated: the
-`target` column says whether p99 of server_update and server_send_packets is
-inside it.
+PASS.
 
   python3 tools/real_load_report.py --out DIR CELL=RUN_DIR [CELL=RUN_DIR ...]
 
@@ -25,14 +23,13 @@ import json
 import os
 import sys
 
-TARGET_US = 100
 CALLS = ("server_update", "server_receive_messages", "server_start_message",
          "server_finish_message", "server_send_packets")
-TARGET_CALLS = ("server_update", "server_send_packets")
+TIMED_CALLS = ("server_update", "server_send_packets")
 COLUMNS = ("cell", "status", "clients", "connected", "disconnects", "unexpected_disconnects",
            "c2s_sent", "c2s_received", "s2c_sent", "s2c_received", "unreliable_lost",
            "sequenced_skipped", "update_p99_us", "update_p999_us", "update_max_us",
-           "send_p99_us", "send_p999_us", "send_max_us", "target", "reason")
+           "send_p99_us", "send_p999_us", "send_max_us", "reason")
 
 
 def fields_of(line, prefix):
@@ -120,7 +117,7 @@ def summarise(cell, run_dir):
     elif receipt is not None:
         reasons.append("no merger proof cell")
 
-    target = []
+    timed = 0
     for call, key in (("server_update", "update"), ("server_send_packets", "send")):
         fields = calls.get(call)
         if fields is None:
@@ -128,12 +125,10 @@ def summarise(cell, run_dir):
         row[f"{key}_p99_us"] = fields.get("p99_upper_us", "")
         row[f"{key}_p999_us"] = fields.get("p999_upper_us", "")
         row[f"{key}_max_us"] = fields.get("max_us", "")
-        p99 = to_int(fields.get("p99_upper_us"))
-        if p99 is not None:
-            target.append(p99 <= TARGET_US)
-    if receipt is not None and len(target) != len(TARGET_CALLS):
+        if to_int(fields.get("p99_upper_us")) is not None:
+            timed += 1
+    if receipt is not None and timed != len(TIMED_CALLS):
         reasons.append("server call timing missing")
-    row["target"] = ("inside" if all(target) else "outside") if len(target) == len(TARGET_CALLS) else "unknown"
     row["status"] = "FAIL" if reasons else "PASS"
     row["reason"] = "; ".join(reasons) if reasons else "-"
     row["calls"] = {call: {k: calls[call].get(k) for k in ("count", "p50_upper_us", "p99_upper_us",
@@ -144,11 +139,10 @@ def summarise(cell, run_dir):
 
 def markdown(rows, head):
     lines = [f"Real load, 1000 clients over the LAN, head `{head}`. "
-             f"Server call times are upper bounds in microseconds; the {TARGET_US} us target is "
-             "reported, not gated.", "",
+             "Server call times are upper bounds in microseconds.", "",
              "| cell | status | connected | disconnects | c2s sent/received | s2c sent/received "
-             "| unreliable lost | update p99 / p999 / max | send p99 / p999 / max | target | reason |",
-             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
+             "| unreliable lost | update p99 / p999 / max | send p99 / p999 / max | reason |",
+             "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |"]
     for row in rows:
         lines.append(
             f"| {row['cell']} | {row['status']} | {row['connected'] or '-'}/{row['clients'] or '-'} "
@@ -156,7 +150,7 @@ def markdown(rows, head):
             f"| {row['s2c_sent'] or '-'}/{row['s2c_received'] or '-'} | {row['unreliable_lost'] or '-'} "
             f"| {row['update_p99_us'] or '-'} / {row['update_p999_us'] or '-'} / {row['update_max_us'] or '-'} "
             f"| {row['send_p99_us'] or '-'} / {row['send_p999_us'] or '-'} / {row['send_max_us'] or '-'} "
-            f"| {row['target']} | {row['reason']} |")
+            f"| {row['reason']} |")
     return "\n".join(lines) + "\n"
 
 
@@ -184,7 +178,7 @@ def main(argv):
             handle.write(f"{args.date}\t{args.head}\t" + "\t".join(str(row[key]) for key in COLUMNS) + "\n")
     with open(os.path.join(args.out, "real-load.json"), "w", encoding="utf-8") as handle:
         json.dump({"schema": "real_load_v1", "date": args.date, "head": args.head,
-                   "target_us": TARGET_US, "cells": rows}, handle, indent=2)
+                   "cells": rows}, handle, indent=2)
         handle.write("\n")
     text = markdown(rows, args.head)
     with open(os.path.join(args.out, "real-load.md"), "w", encoding="utf-8") as handle:
@@ -194,7 +188,7 @@ def main(argv):
         print(f"real_load: cell={row['cell']} status={row['status']} connected={row['connected'] or 'na'} "
               f"disconnects={row['disconnects'] or 'na'} update_p99_us={row['update_p99_us'] or 'na'} "
               f"update_p999_us={row['update_p999_us'] or 'na'} send_p99_us={row['send_p99_us'] or 'na'} "
-              f"send_p999_us={row['send_p999_us'] or 'na'} target={row['target']} reason={row['reason']}")
+              f"send_p999_us={row['send_p999_us'] or 'na'} reason={row['reason']}")
     return 1 if any(row["status"] != "PASS" for row in rows) else 0
 
 

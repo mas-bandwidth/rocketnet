@@ -73,12 +73,12 @@ class RealLoadReportTest(unittest.TestCase):
         self.assertEqual((row["update_p99_us"], row["update_p999_us"], row["update_max_us"]),
                          ("40", "90", "310.500"))
         self.assertEqual(row["unreliable_lost"], "10")
-        self.assertEqual(row["target"], "inside")
 
-    def test_target_is_reported_never_gated(self):
+    def test_call_times_are_reported_never_gated(self):
         row = report.summarise("gso", self.cell("gso", server_log(p99={"server_update": 150})))
         self.assertEqual(row["status"], "PASS")
-        self.assertEqual(row["target"], "outside")
+        self.assertEqual(row["update_p99_us"], "150")
+        self.assertNotIn("target", row)
 
     def test_short_connect_fails(self):
         row = report.summarise("gso", self.cell("gso", server_log(connected=998)))
@@ -105,7 +105,7 @@ class RealLoadReportTest(unittest.TestCase):
     def test_missing_timing_fails(self):
         row = report.summarise("gso", self.cell("gso", server_log(drop_call="server_send_packets")))
         self.assertEqual(row["status"], "FAIL")
-        self.assertEqual(row["target"], "unknown")
+        self.assertIn("server call timing missing", row["reason"])
 
     def test_main_writes_artifacts_and_exit_status(self):
         good = self.cell("gso", server_log())

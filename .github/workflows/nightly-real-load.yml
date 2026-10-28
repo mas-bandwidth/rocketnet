@@ -27,9 +27,7 @@
 # unreliable_lost. The rows go to the job summary and the real-load artifact
 # (TSV, JSON, Markdown, and every cell's run directory). A cell fails the night
 # when fewer than every client connected, on any disconnect or timeout, or
-# when the proof cell is not PASS. The 100 microsecond per-call target is
-# reported (`target` inside or outside, on p99 of server_update and
-# server_send_packets) and is not a gate yet.
+# when the proof cell is not PASS. The call times are reported, never gated.
 #
 # Schedule: 03:00 UTC, before the 05:30 proofs and frame budget and every
 # later nightly. Five cells of 300 seconds plus builds take about an hour;
