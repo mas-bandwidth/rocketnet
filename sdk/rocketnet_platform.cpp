@@ -6169,7 +6169,12 @@ bool rocketnet_platform_wake_close( rocketnet_platform_wake_t * wake )
 
     if ( wake->read_event != WSA_INVALID_EVENT )
     {
+        // the socket's event selection is cleared once: a retry after a
+        // refused close must not select on a handle the socket's own close
+        // may have released for reuse
+
         WSAEventSelect( (SOCKET) wake->socket_handle, NULL, 0 );
+        wake->socket_handle = (rocketnet_platform_socket_handle_t) INVALID_SOCKET;
 #if defined( ROCKETNET_WINDOWS_LIFECYCLE_TRACK )
         if ( !rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_EVENT, (uintptr_t) wake->read_event, wake->read_generation ) )
             return false;
