@@ -187,13 +187,26 @@ def _guards_exclusive(a, b):
     return any((macro, not polarity) in b for macro, polarity in a)
 
 
-def registered_unit_names():
+# Unit sources a production (ROCKETNET_DEV=OFF) test binary does not compile
+# (CMakeLists.txt): the two registry tables, the loopback transport unit and
+# the results file it includes, and the Windows RIO overflow seam.
+PRODUCTION_ABSENT = {
+    "rocketnet_tests.cpp",
+    "test_channels.cpp",
+    "test_unit_driver_loopback.cpp",
+    "test_unit_driver_results_checked.cpp",
+    "test_unit_rio_overflow_seam.cpp",
+}
+
+
+def registered_unit_names(production=False):
     all_names = set()
     always = set()
     for rel in (("sdk", "rocketnet_tests.cpp"), ("tests", "test_channels.cpp")):
         a, p = _table_names(REPO.joinpath(*rel))
         all_names |= a
-        always |= p
+        if not production:
+            always |= p
     # A REGISTER_UNIT_TEST name is unique: test.cpp runs a name from the sdk
     # and channels tables before the unit-file registry, and the registry runs
     # a name's first registration only (rocketnet_unit_file_find in
@@ -207,7 +220,7 @@ def registered_unit_names():
     for path in sorted(REPO.glob("tests/test_unit_*.cpp")):
         for name, unconditional in _register_names(path):
             all_names.add(name)
-            if unconditional:
+            if unconditional and not (production and path.name in PRODUCTION_ABSENT):
                 always.add(name)
         for name, guard in _register_guards(path):
             earlier = seen.setdefault(name, [])
@@ -334,7 +347,7 @@ def main():
     if not production and "test_suite_environment" not in names:
         sys.exit("SDK suite did not execute its environment restoration test")
 
-    reg_all, reg_always = registered_unit_names()
+    reg_all, reg_always = registered_unit_names(production)
     assert_name_set(set(names), reg_all, reg_always, "SDK suite")
 
 
