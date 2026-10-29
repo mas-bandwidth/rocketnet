@@ -4,7 +4,7 @@
 */
 
 // Per-connection message memory and the kick on exhaustion
-// (tla/RNConnectionMemory.tla, tla/README-RNConnectionMemory.md,
+// (proofs/tla/RNConnectionMemory.tla, proofs/tla/README-RNConnectionMemory.md,
 // docs/CHANNELS.md 4). A server's regions are carved from one block at
 // create, one per client slot; a client's one region is the same arena with
 // one slot. Exhaustion is a sticky region state with the reason
@@ -117,7 +117,7 @@ static bool cm_bookkeeping_equal( const rn_region_t * a, const rn_region_t * b )
     if ( rn_connection_memory_decide( a ) != rn_connection_memory_decide( b ) )
         return false;
 
-    // the pools are lazy (tla/RNLazyPool.tla): their state is the free list,
+    // the pools are lazy (proofs/tla/RNLazyPool.tla): their state is the free list,
     // the free count and the watermark; the bytes of a descriptor or chunk
     // link at or past the watermark are not state and are not compared
 

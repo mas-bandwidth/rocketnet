@@ -1,16 +1,16 @@
 #!/bin/sh
-# check_agents_md.sh: verify AGENTS.md identifiers against sdk/rocketnet.h,
+# check_agents_md.sh: verify docs/AGENTS.md identifiers against sdk/rocketnet.h,
 # verify the user-facing guides' identifiers against the SDK and the
 # documented environment/example authorities, and compile + run the marked
 # complete programs in docs/INTEGRATION-EXAMPLE.md.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-AGENTS_MD="$ROOT/AGENTS.md"
+AGENTS_MD="$ROOT/docs/AGENTS.md"
 EXAMPLES_MD="$ROOT/docs/INTEGRATION-EXAMPLE.md"
 HEADER="$ROOT/sdk/rocketnet.h"
 ENVIRONMENT_MD="$ROOT/docs/ENVIRONMENT.md"
-GUIDES="$ROOT/README.md $ROOT/USAGE.md $ROOT/KEYS.md $ROOT/docs/GETTING-STARTED.md $ROOT/docs/PRODUCTION.md $ROOT/docs/MEMORY.md $ROOT/docs/INTEGRATION-EXAMPLE.md $ROOT/docs/ERRORS-AND-LOGGING.md"
+GUIDES="$ROOT/README.md $ROOT/docs/USAGE.md $ROOT/docs/KEYS.md $ROOT/docs/GETTING-STARTED.md $ROOT/docs/PRODUCTION.md $ROOT/docs/MEMORY.md $ROOT/docs/INTEGRATION-EXAMPLE.md $ROOT/docs/ERRORS-AND-LOGGING.md"
 
 usage() {
     echo "usage: $0 [identifiers|example|all]" >&2
@@ -41,7 +41,7 @@ run_identifiers() {
     missing=0
     for id in $IDS; do
         count=$((count + 1))
-        # AGENTS.md names public identifiers from sdk/rocketnet.h; the one
+        # docs/AGENTS.md names public identifiers from sdk/rocketnet.h; the one
         # other authority it may name is a documented environment variable.
         if ! grep -q -w "$id" "$HEADER" && ! grep -q -w "$id" "$ENVIRONMENT_MD"; then
             echo "missing in sdk/rocketnet.h: $id"
@@ -52,7 +52,7 @@ run_identifiers() {
         echo "error: $missing of $count identifiers missing from sdk/rocketnet.h" >&2
         exit 1
     fi
-    echo "checked $count identifiers in AGENTS.md against sdk/rocketnet.h"
+    echo "checked $count identifiers in docs/AGENTS.md against sdk/rocketnet.h"
 }
 
 run_guide_identifiers() {

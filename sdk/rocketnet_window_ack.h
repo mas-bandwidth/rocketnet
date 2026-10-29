@@ -15,7 +15,7 @@
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
-// tla/RNWindow.tla).
+// proofs/tla/RNWindow.tla).
 //
 // Pure over a carved region (rn_region_t, layer 1) and a sender window
 // (rn_window_send_t, section 6.2): allocates nothing, takes no locks, and
@@ -31,7 +31,7 @@
 //   - region->resend_fifo  : W entries of 16 bytes (prev/next slot links plus generation and owner epoch),
 //                            shared by the two resend sequences: a number is in at most one.
 //                            Capacity is W. An acked hole stays sequenced until a
-//                            named removal, so a walk still counts it (tla/RNChannelQueues.tla).
+//                            named removal, so a walk still counts it (proofs/tla/RNChannelQueues.tla).
 //
 // Each sent packet gets a fresh transport sequence `packet_id`, including
 // every resend. An ack of `packet_id` therefore measures the exact send that
@@ -56,7 +56,7 @@ rn_ack_cost_t rn_window_ack_cost_read();
 // 1: chunks of a block) it holds the extremes of the gap between a number's
 // send and its next resend, as measured where rn_window_ack_commit sets
 // last_send, against the class delay in force (docs/CHANNELS.md 6.4 "Resend";
-// tla/RNResendTiming.tla Walk). The walk resends a number at the first update
+// proofs/tla/RNResendTiming.tla Walk). The walk resends a number at the first update
 // whose delay has passed since its last send, so for every resend
 //
 //   delay at the resend <= gap < delay at the update before + the time between the two updates
@@ -91,14 +91,14 @@ struct rn_window_ack_t
 
     double srtt;                    // 5% smoothed RTT
     double rttvar;                  // deviation estimate
-    double resend_delay;                     // adaptive resend delay; retries do not back off (tla/RNResendTiming.tla)
+    double resend_delay;                     // adaptive resend delay; retries do not back off (proofs/tla/RNResendTiming.tla)
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
     int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 
     // Two resend sequences over the one flat array region->resend_fifo, one per
-    // delay class (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla
+    // delay class (docs/CHANNELS.md 6.4 "Resend"; proofs/tla/RNResendTiming.tla
     // SmallNeverHeldByChunk): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
     // is ordered by its entries' sequence keys and walked from its head while due.
@@ -147,7 +147,7 @@ static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 
 // The resend delay of a chunk of a block uses the same adaptive resend delay,
 // so a large block on a long path is not sent again before its acks can
-// return (docs/CHANNELS.md 6.4 "Resend"; tla/RNResendTiming.tla Delay("c")).
+// return (docs/CHANNELS.md 6.4 "Resend"; proofs/tla/RNResendTiming.tla Delay("c")).
 // It is capped at reliable_timeout / ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
 // (ChunkCap) so the attempts rule holds for chunks under any accepted
 // resend_delay_max; at defaults the 2 s resend delay stays below the 2.5 s chunk cap.
@@ -172,7 +172,7 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
 
 // The first slot of a class's resend sequence, or RN_RESEND_NONE, and
 // the slot after `slot` in that sequence, or RN_RESEND_NONE. Walkers follow
-// the resend_fifo array by its slot links (tla/RNChannelQueues.tla).
+// the resend_fifo array by its slot links (proofs/tla/RNChannelQueues.tla).
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
 
@@ -184,12 +184,12 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
 // carved region and an initialized sender window (docs/CHANNELS.md 6.4;
-// tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.
+// proofs/tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config );
 
 // Commits a sent packet carrying `count` reliable message numbers (1 <= count <= 16P)
 // under `packet_id` at time `now` (docs/CHANNELS.md 6.4 "On send" and "Eviction";
-// tla/RNWindow.tla WritePacket and WriteOldest).
+// proofs/tla/RNWindow.tla WritePacket and WriteOldest).
 // Updates each number's last_send = now (and first_send = now on its first send),
 // links or moves each number to the tail of the resend FIFO, evicts the oldest
 // sent-packet entry (counting MESSAGE_SENT_MAP_EVICTED) if the P-entry packet
@@ -212,8 +212,8 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
-// tla/RNResendTiming.tla Sample).
+// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; proofs/tla/RNWindow.tla ReceiveAck,
+// proofs/tla/RNResendTiming.tla Sample).
 // Looks up `packet_id` in sent_index in O(1). If absent (an ack of a keep-alive
 // or pure-unreliable packet, a duplicate ack, or an ack arriving after eviction),
 // does nothing and returns 0.

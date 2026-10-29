@@ -162,7 +162,7 @@ REGISTER_UNIT_TEST( test_fake_client_io_table_opens_with_wait_and_wake );
 #if ROCKETNET_DEV
 // ---------------------------------------------------------------------------
 // A deferred disconnect burst keeps the server address (docs/CLIENT-IO.md
-// _The protocol packet and disconnect_, tla/RNClientIo.tla SentToCommitted).
+// _The protocol packet and disconnect_, proofs/tla/RNClientIo.tla SentToCommitted).
 //
 // The client runs the I/O core on the loopback client operations with a no-op
 // wait and wake added (so rocketnet_client_transport_uses_io_thread is true)

@@ -4,7 +4,7 @@
 */
 
 // The slots machine (sdk/rocketnet_slots.h) against docs/CHANNELS.md 10.2 and
-// tla/RNSlots.tla Observe and Admit. The machine is driven alone: no object,
+// proofs/tla/RNSlots.tla Observe and Admit. The machine is driven alone: no object,
 // no transport, no time, no allocation.
 
 #include "test_unit_registry.h"

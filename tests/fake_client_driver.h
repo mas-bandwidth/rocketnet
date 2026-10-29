@@ -4,7 +4,7 @@
 */
 
 // An in-memory fake client transport for the I/O step's unit tests (docs/
-// CLIENT-IO.md "The I/O step", tla/RNClientIo.tla): no socket, no thread, no
+// CLIENT-IO.md "The I/O step", proofs/tla/RNClientIo.tla): no socket, no thread, no
 // time; wait never blocks. Unit tests drive the step with this transport on the
 // test's thread. Four callbacks are required (create/destroy/send/receive);
 // wait, wake, send_batch and receive_batch are optional, and the three

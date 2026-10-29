@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 6's packet builder, unit tier (docs/CHANNELS.md 9.3; tla/RNChannel.tla
-// WritePacket with tla/RNSendBudget.tla). No sockets, no threads, no wall
+// Layer 6's packet builder, unit tier (docs/CHANNELS.md 9.3; proofs/tla/RNChannel.tla
+// WritePacket with proofs/tla/RNSendBudget.tla). No sockets, no threads, no wall
 // clock: time is an argument.
 
 #include <stdio.h>
@@ -462,7 +462,7 @@ static void test_message_record_valid_refuses_each_shape()
     }
 }
 
-// The pick order is tla/RNScheduler.tla's IsHead, Boost, PickLevel and PickIn.
+// The pick order is proofs/tla/RNScheduler.tla's IsHead, Boost, PickLevel and PickIn.
 // What follows is BASE's picker (sdk/rocketnet_packet_builder.cpp before the
 // linear class pass), kept here verbatim in its logic: for every item, a scan
 // of every other item for the channel's head and boost, quadratic in the plan.

@@ -4,7 +4,7 @@
 */
 
 // The client and server message objects and their C API (docs/CHANNELS.md 10
-// to 12; tla/RNSlots.tla, tla/RNConnectionMemory.tla). The objects run over
+// to 12; proofs/tla/RNSlots.tla, proofs/tla/RNConnectionMemory.tla). The objects run over
 // the in-memory transport pair below, bound through the object's transport
 // seam (rn_message_link_t) exactly where the real transports bind: it hands
 // out frames at start_packet with the transport's packet id, takes them at
@@ -767,7 +767,7 @@ static void test_message_send_refused_counts_bad_arguments()
 
 // A client start before its transport is CONNECTED is dropped and counted
 // once in MESSAGE_SEND_NOT_CONNECTED (standard/MESSAGES.md m1.5,
-// tla/ClientSession.tla DropSend): NULL, never queued, never a fallback, and
+// proofs/tla/ClientSession.tla DropSend): NULL, never queued, never a fallback, and
 // nothing of it arrives once the transport connects.
 static int mo_asserts = 0;
 
@@ -2172,7 +2172,7 @@ static void test_budget_set_at_create_and_runtime()
 
 // ---------------------------------------------------------------------------
 // R6: the send budget is a configured default, and 0 or lower disables it
-// (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla)
+// (docs/CHANNELS.md 11.5; proofs/tla/RNSendBudget.tla)
 // ---------------------------------------------------------------------------
 
 static void test_send_budget_defaults_from_config()
@@ -2554,7 +2554,7 @@ static void test_message_objects_no_allocation_after_create()
 }
 
 // ---------------------------------------------------------------------------
-// tla/RNSlots.tla's five reversed witnesses, replayed against the objects:
+// proofs/tla/RNSlots.tla's five reversed witnesses, replayed against the objects:
 // each mutation's counterexample, step by step, and the property it broke
 // holding here
 // ---------------------------------------------------------------------------
@@ -3607,7 +3607,7 @@ static void test_send_room_warns_in_debug_builds_only()
 // A queued-path (region) start left pending across an update whose reset hits
 // its slot is cancelled by that reset (sdk/rocketnet_message_server.cpp,
 // rn_message_object_update: rn_message_connection_cancel_pending before each
-// connection reset; tla/RNSlots.tla NoPendingAcrossReset): the finish after
+// connection reset; proofs/tla/RNSlots.tla NoPendingAcrossReset): the finish after
 // it is a no-op that returns 0, the cancelled start is counted in
 // MESSAGE_SEND_REFUSED, nothing lands in the recarved region, and a later
 // start on every slot is accepted.
@@ -3909,9 +3909,9 @@ static void test_update_time_first_update_not_finite_refused()
 }
 
 // slots are keyed on the transport's connection id (P9a), and each batch entry
-// is admitted by the connection it was received for (P9b): tla/RNSlots.tla
+// is admitted by the connection it was received for (P9b): proofs/tla/RNSlots.tla
 // NoCrossConnectionApply, NoOwnEntryDropped, ReusedSlotStartsClean, and the
-// reversed witness tla/MCRNSlotsBrokenClientIdAsConnection.cfg
+// reversed witness proofs/tla/MCRNSlotsBrokenClientIdAsConnection.cfg
 // ---------------------------------------------------------------------------
 
 // A slot bound in this update keeps its own first entries (NoOwnEntryDropped):
@@ -4344,7 +4344,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
 #endif // #if ROCKETNET_DEV
 
 // ---------------------------------------------------------------------------
-// standard/MESSAGES.md m1.6, tla/RNChannel.tla EndUpdate: every delivery is
+// standard/MESSAGES.md m1.6, proofs/tla/RNChannel.tla EndUpdate: every delivery is
 // received before the next update. A delivery still in the receive queue at
 // update is API misuse: counted MESSAGE_NOT_RECEIVED, an assert in a debug
 // build, and that connection ends with MESSAGE_NOT_RECEIVED. Nothing is

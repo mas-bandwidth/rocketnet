@@ -11,7 +11,7 @@
 // copies with the same arithmetic as its fill ring reads
 // (xskq_cons_peek_addr_unchecked, net/xdp/xsk_queue.h): the kernel caches a
 // batch and publishes its consumer index only when the batch is used up. No
-// socket, no kernel object, no clock. Modelled in tla/RNXdpReceiveRing.tla.
+// socket, no kernel object, no clock. Modelled in proofs/tla/RNXdpReceiveRing.tla.
 //
 // The ring of twice the frames (ROCKETNET_XDP_FILL_RING_SIZE) is the design;
 // the ring of exactly the frames is the reversed witness, the shape the

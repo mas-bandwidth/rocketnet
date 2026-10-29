@@ -1699,7 +1699,7 @@ static void test_xdp_transport_host_type_and_size_sweep_matches_the_standard()
 }
 
 // ---------------------------------------------------------------------------
-// replay: the read-only high-water map (tla/RNXdpReplay.tla, KernelFilter).
+// replay: the read-only high-water map (proofs/tla/RNXdpReplay.tla, KernelFilter).
 // With an entry for the source address and port, a session packet whose
 // sequence is ROCKETNET_XDP_REPLAY_WINDOW or more behind the high-water
 // drops; inside the window or ahead it goes on; handshake types and sources

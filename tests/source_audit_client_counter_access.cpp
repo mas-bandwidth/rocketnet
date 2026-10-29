@@ -8,7 +8,7 @@
 // a cast of a public client pointer to struct rocketnet_message_client_t (or
 // any other internal struct) reads the wrong memory. The tools resolve the
 // connection through rocketnet_client_message_client instead. This audit
-// reads client.c, server.c, load.c and soak.c, collects every name declared
+// reads tests/client_server/client.c, tests/client_server/server.c, tests/load/load.c and tests/soak/soak.c, collects every name declared
 // as a struct rocketnet_client_t pointer, and refuses a cast of any of those
 // names to another struct pointer type. It first runs its detector on two
 // fixtures, one with the cast and one without, so a detector that finds
@@ -276,7 +276,7 @@ static void test_tools_never_cast_public_client_to_internal()
             failures.push_back( "detector witness: false cast " + found[i] );
     }
 
-    static const char * const files[] = { "client.c", "server.c", "load.c", "soak.c" };
+    static const char * const files[] = { "tests/client_server/client.c", "tests/client_server/server.c", "tests/load/load.c", "tests/soak/soak.c" };
     for ( size_t f = 0; f < sizeof( files ) / sizeof( files[0] ); f++ )
     {
         std::string text;

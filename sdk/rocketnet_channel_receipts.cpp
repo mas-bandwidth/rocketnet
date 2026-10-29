@@ -9,7 +9,7 @@
 // 0, 2 and 3. Raw wire codes 5, 6 and 7 are never valid dispatch inputs: the
 // receiver has no receipt flag and delivers the underlying base record.
 
-// tla/RNReceipts.tla WritePacket
+// proofs/tla/RNReceipts.tla WritePacket
 
 int rn_channels_reliable_receipt_base( int type )
 {

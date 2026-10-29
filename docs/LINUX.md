@@ -26,7 +26,7 @@ transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
 runtime qualification boundary.
 
 The XDP program is compiled at build time, never on the server host.
-`cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
+`cmake/EmbedXdp.cmake` compiles `sdk/xdp/server_xdp.c` to `server_xdp.o`
 with a clang that has the BPF target, against the kernel UAPI headers
 (`linux-libc-dev`, which `build-essential` pulls in) and libbpf's
 `bpf/bpf_helpers.h`, and embeds the object's bytes in the library;
@@ -542,7 +542,7 @@ cover a hard-killed client and the socket error paths per transport cell.
 `max_clients` defaults to it (`sdk/rocketnet_internal.h`).
 
 **File descriptors.** A server opens a fixed set of sockets, independent of
-`max_clients`: the plan's `sockets` field (`bench/transport_memory.cpp`).
+`max_clients`: the plan's `sockets` field (`benchmarks/transport_memory.cpp`).
 For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
 (the plan output in section 10). The default soft limit of 1024 is ample; the
 section 10 commands create 1000-client `gso` and four-queue `io_uring` servers
@@ -612,7 +612,7 @@ succeeds.
 **Memory.** `./bin/transport_memory <clients> <payload> <slots> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`bench/transport_memory.cpp`, `BUILDING.md`). At 1000 clients,
+(`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients,
 1416-byte payloads and 16 reassembly slots the plans are 483,668,499 bytes
 (`portable`), 625,876,730 (`gso`), 594,710,098 (`io_uring`) and 4,269,352,940
 (`xdp`, 7 queues, of which 1,879,048,192 UMEM). This entire numeric set is

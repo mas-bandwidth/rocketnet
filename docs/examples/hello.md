@@ -34,7 +34,7 @@ Each frame runs the calls in the order a game does: update, drain the one
 receive queue until `NULL`, simulate, queue with guarded `start_message` /
 `finish_message`, then send last. Sending last is what makes this
 frame's messages become available for sending without an avoidable frame of delay. See
-[docs/GETTING-STARTED.md](../GETTING-STARTED.md) and [USAGE.md](../../USAGE.md)
+[docs/GETTING-STARTED.md](../GETTING-STARTED.md) and [USAGE.md](../USAGE.md)
 for the full integration guide.
 
 ## Run it

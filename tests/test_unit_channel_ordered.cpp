@@ -4,7 +4,7 @@
 */
 
 // RELIABLE_ORDERED, code 3, end to end (docs/CHANNELS.md 6 to 9;
-// tla/RNChannel.tla): small messages packed and resent until a transport packet
+// proofs/tla/RNChannel.tla): small messages packed and resent until a transport packet
 // ack covers them, large messages cut into chunks that travel one to a packet
 // and are placed in the receiver's ring by index, one ordering sequence for
 // both. Two connections' message state exchange packets over
@@ -808,7 +808,7 @@ static void test_large_chunked_one_per_packet_and_delivered_whole()
 
 // the application sizes its sends to the connection's memory (R5): a start with
 // no room ends the connection. The room a run of spans can use contiguously is
-// what the ring leaves behind the tail (tla/RNRing.tla, PlaceSingle).
+// what the ring leaves behind the tail (proofs/tla/RNRing.tla, PlaceSingle).
 
 static uint64_t span_room( const node_t * node )
 {
@@ -1975,7 +1975,7 @@ static void test_ordered_no_allocation_after_create()
 // 10. the RNChannel witnesses, replayed on the code
 // ---------------------------------------------------------------------------
 
-// the model's instance (tla/README-RNChannel.md): channel 1 carries message 0
+// the model's instance (proofs/tla/README-RNChannel.md): channel 1 carries message 0
 // (small), message 2 (two chunks) and message 3 (small); channel 2 carries
 // message 1 (small). Reliable numbers {0}, {2,3}, {4}, {1}. Here channel 0 is
 // the model's channel 1 and channel 1 is its channel 2. Each message goes in

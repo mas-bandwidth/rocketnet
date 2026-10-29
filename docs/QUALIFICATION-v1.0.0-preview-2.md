@@ -23,7 +23,7 @@ unit and functional suites to pass on Linux, macOS and Windows at the final
 commit. The final tagged commit is
 `83d04c4d9df1b7f54fd6886455372b237f85740b` (v1.0.0-preview-2). One
 preview-2 functional gate status is recorded here, in
-[TESTING.md](../TESTING.md) and in the README: the functional gate is not
+[TESTING.md](TESTING.md) and in the README: the functional gate is not
 green at that commit. The macOS Debug socket receive-short condition and
 the s390x big-endian full-system run are known issues deferred to
 preview-3; the recorded manual runs and receipts below retain their
@@ -109,5 +109,5 @@ The evidence establishes copy mode, not zero-copy or line-rate throughput.
 
 The [release notes](RELEASE-NOTES-v1.0.0-preview-2.md) describe migration,
 including the requirement to request shutdown and wait for completion before
-destroying endpoints. The [testing tables](../TESTING.md) keep historical
+destroying endpoints. The [testing tables](TESTING.md) keep historical
 preview-1 evidence separate from this preview's recorded scope.

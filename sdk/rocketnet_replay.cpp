@@ -44,7 +44,7 @@ static void rocketnet_replay_clear_range( struct rocketnet_replay_protection_t *
         replay->window[begin / 64] &= ~( ( 1ULL << ( end - begin ) ) - 1 );
 }
 
-// tla/ReplayWindow.tla AlreadyReceived
+// proofs/tla/ReplayWindow.tla AlreadyReceived
 int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     rocketnet_assert( replay );
@@ -60,8 +60,8 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
     return rocketnet_replay_bit( replay, sequence );
 }
 
-// tla/ReplayWindow.tla Advance
-// tla/ReplayWindow.tla Receive: advances highest_opened, clears the skipped bits and sets the received sequence's bit
+// proofs/tla/ReplayWindow.tla Advance
+// proofs/tla/ReplayWindow.tla Receive: advances highest_opened, clears the skipped bits and sets the received sequence's bit
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     rocketnet_assert( replay );
@@ -76,13 +76,13 @@ void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, ui
         uint64_t skipped = sequence - replay->highest_opened;
         if ( skipped >= ROCKETNET_REPLAY_WINDOW_BITS )
         {
-            // TRANSPORT.md t14 Replay protection and tla/ReplayWindow.tla (Cleared):
+            // TRANSPORT.md t14 Replay protection and proofs/tla/ReplayWindow.tla (Cleared):
             // a full-window skip clears the whole ring (ClearedWords = Words).
             memset( replay->window, 0, sizeof( replay->window ) );
         }
         else
         {
-            // tla/ReplayWindow.tla Cleared: the same skipped bits, in at most two contiguous ranges.
+            // proofs/tla/ReplayWindow.tla Cleared: the same skipped bits, in at most two contiguous ranges.
             const int begin = (int) ( ( replay->highest_opened + 1 ) % ROCKETNET_REPLAY_WINDOW_BITS );
             const int end = begin + (int) skipped - 1;
             if ( end <= ROCKETNET_REPLAY_WINDOW_BITS )

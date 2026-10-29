@@ -11,7 +11,7 @@
 #include "rocketnet_internal.h"
 
 // N preallocated buffers crossing between one producer thread and one consumer
-// thread (api/BUFFER-HANDOFF-DECISION-20261021.md, tla/RNBufferHandoff.tla).
+// thread (docs/decisions/BUFFER-HANDOFF-DECISION-20261021.md, proofs/tla/RNBufferHandoff.tla).
 // Only buffer indices move, and only through the functions below, which the
 // caller runs with its handoff mutex held. Each is a few integer moves: no
 // copy, no clear, no transport call and no wake happen under the mutex.

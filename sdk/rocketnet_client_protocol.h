@@ -32,7 +32,7 @@ struct rocketnet_reassembly_set_t;
 struct rocketnet_counters_t;
 
 // The verdict a client I/O thread records for each datagram it worked
-// (tla/RNClientIoDecrypt.tla IoCheck and IoOpen, docs/CLIENT-IO-DECRYPT.md):
+// (proofs/tla/RNClientIoDecrypt.tla IoCheck and IoOpen, docs/CLIENT-IO-DECRYPT.md):
 // raw (not opened: a handshake packet, or anything while its copy of the open
 // key is not live), opened, or the rung that refused it before or at the AEAD.
 
@@ -49,7 +49,7 @@ enum
 struct rocketnet_client_protocol_t;
 
 // The open block hooks of a transport whose I/O thread opens session packets
-// (tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys): publish runs where
+// (proofs/tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys): publish runs where
 // the challenge commits the session keys, retire on every terminal state
 // before the keys are zeroed. NULL on every other path.
 
@@ -169,7 +169,7 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
                                               int out_payload_capacity,
                                               int * out_payload_bytes );
 
-// tla/RNClientIoDecrypt.tla UpdateConsume: processes one record of a receive
+// proofs/tla/RNClientIoDecrypt.tla UpdateConsume: processes one record of a receive
 // buffer a client I/O thread filled, in arrival order. A raw record is
 // rocketnet_client_protocol_process_packet unchanged. An opened record carries
 // the plaintext behind its wire header and the I/O thread's sequence: the

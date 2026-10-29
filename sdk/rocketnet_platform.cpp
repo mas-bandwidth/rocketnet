@@ -764,7 +764,7 @@ static bool rocketnet_platform_send_failure_should_inject( rocketnet_platform_so
 // buffer sizing"). A server updating at update_hz must hold one update's
 // inbound packets at max_clients in its socket: the portable transport's
 // receive worker stops reading while every receive bank waits for the next
-// update (tla/RNPortableRx.tla HoldOnFull), so the kernel holds the rest.
+// update (proofs/tla/RNPortableRx.tla HoldOnFull), so the kernel holds the rest.
 
 int rocketnet_server_receive_buffer_bytes( int max_clients, int receive_kbps_per_client, int update_hz )
 {
@@ -1745,7 +1745,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 // The linux client's batch send and receive (#client-io-linux-mmsg): the I/O
 // step sends a handed-off ring whole and drains into the receive buffer
-// (tla/RNClientIo.tla IoSend and IoReceive) in as few syscalls as
+// (proofs/tla/RNClientIo.tla IoSend and IoReceive) in as few syscalls as
 // sendmmsg/recvmmsg allow. A packet is sent, dropped or delivered exactly as
 // the per-packet calls would.
 
@@ -1938,7 +1938,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( rocketnet_platform_socket_t 
 //
 // A hard refusal (an errno outside UDP's ordinary weather) pauses the pump on
 // that socket: batch calls run portable until the pause expires, and the
-// first batch call after it is the re-probe (tla/RNMsgxPause.tla).
+// first batch call after it is the re-probe (proofs/tla/RNMsgxPause.tla).
 
 #define ROCKETNET_PLATFORM_HAS_BATCH_PUMP 1
 
@@ -1978,7 +1978,7 @@ const char * rocketnet_platform_socket_pump( rocketnet_platform_socket_t * socke
 static thread_local void ( *rocketnet_msgx_before_expiry_clear )( rocketnet_platform_socket_t * ) = NULL;
 #endif // #if ROCKETNET_DEV
 
-// tla/RNMsgxPause.tla Probe, ObserveExpired, ClearIfUnchanged and PollPaused:
+// proofs/tla/RNMsgxPause.tla Probe, ObserveExpired, ClearIfUnchanged and PollPaused:
 // an expired pause is cleared only if it is still the value observed, so a
 // fresh pause published by the other worker wins. FinishProbe abstracts a
 // successful batch call after the probe: the batch path stays active.
@@ -2026,7 +2026,7 @@ bool rocketnet_msgx_test_pause_expiry_race()
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNMsgxPause.tla Pause: one retry deadline shared by TX and RX
+// proofs/tla/RNMsgxPause.tla Pause: one retry deadline shared by TX and RX
 static void rocketnet_msgx_pause( rocketnet_platform_socket_t * socket, const char * which, int error )
 {
     rocketnet_msgx_set_down_until( socket, rocketnet_platform_time() + ROCKETNET_MSGX_RETRY_SECONDS );
@@ -2280,7 +2280,7 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 // and an EV_CLEAR EVFILT_USER trigger (docs/CLIENT-IO.md "The wake"). A set
 // made while no wait runs makes the next wait return at once, and that wait
 // consumes it. readable toggles the read filter in the same kevent call, so a
-// full buffer waits on the trigger alone (tla/RNClientIo.tla IoWait, IoWake).
+// full buffer waits on the trigger alone (proofs/tla/RNClientIo.tla IoWait, IoWake).
 
 #define ROCKETNET_PLATFORM_WAKE_KEVENT_IDENT 1
 
@@ -2396,7 +2396,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 #elif defined( __linux__ ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD // #if defined( __APPLE__ )
 
 // The wake on linux and the BSDs: a readable descriptor polled beside the
-// socket (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla IoWake, IoWait and
+// socket (docs/CLIENT-IO.md "The wake"; proofs/tla/RNClientIo.tla IoWake, IoWait and
 // Wake). Linux uses an eventfd, the BSDs a nonblocking pipe (OpenBSD has no
 // EVFILT_USER). Level-triggered: a set made while no wait runs makes the next
 // wait return at once, and the wait drains it. The BSD wake is event-only for
@@ -4038,7 +4038,7 @@ int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * sock
 
 // The client I/O wake on Windows: a manual-reset event beside an event the
 // socket signals on FD_READ (docs/CLIENT-IO.md "The wake" and
-// rocketnet-client-io-windows; tla/RNClientIo.tla's IoWait, IoWake and Wake).
+// rocketnet-client-io-windows; proofs/tla/RNClientIo.tla's IoWait, IoWake and Wake).
 // The wake is level-triggered: a set made while no wait runs leaves the event
 // signalled, so the next wait returns at once. FD_READ is re-armed by the
 // drain the I/O step runs to a would-block, so no readable datagram is missed.
@@ -4056,7 +4056,7 @@ struct rocketnet_platform_wake_t
 };
 
 // docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
-// manual-reset wake event (tla/RNClientIo.tla's Init: wake = FALSE)
+// manual-reset wake event (proofs/tla/RNClientIo.tla's Init: wake = FALSE)
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
@@ -4180,7 +4180,7 @@ void rocketnet_platform_wake_destroy( rocketnet_platform_wake_t * wake )
     rocketnet_free( wake->context, wake );
 }
 
-// tla/RNClientIo.tla's IoWait and IoWake: wait on the wake and, only when
+// proofs/tla/RNClientIo.tla's IoWait and IoWake: wait on the wake and, only when
 // readable is true, the socket (docs/CLIENT-IO.md "The wake": a full buffer
 // waits on the wake alone). The wake event is first in the array, so when both
 // are signalled WaitForMultipleObjects reports the wake and the wake is
@@ -4228,7 +4228,7 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     return false;
 }
 
-// tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
+// proofs/tla/RNClientIo.tla's Wake: set the level-triggered wake from any thread
 void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 {
     rocketnet_assert( wake );

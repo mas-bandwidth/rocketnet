@@ -12,7 +12,7 @@ interface and queues that the process may bind, and enough locked memory for
 the configured server capacity. Create or start reports a specific status when
 those requirements are unavailable; a pinned `xdp` selection never silently
 falls back. An ordered candidate list may name another transport explicitly.
-See [LINUX.md](LINUX.md) and [TRANSPORTS.md](../TRANSPORTS.md) for setup and
+See [LINUX.md](LINUX.md) and [TRANSPORTS.md](TRANSPORTS.md) for setup and
 selection.
 
 The short gates for this release are:

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check the embedded server_xdp.o against its sources.
 
-The library build compiles server_xdp/server_xdp.c to a BPF object and embeds
+The library build compiles sdk/xdp/server_xdp.c to a BPF object and embeds
 its bytes in build/generated/rocketnet_server_xdp.h (cmake/EmbedXdp.cmake).
 On Linux with xxd and a clang that has the BPF target this checks that
 
@@ -237,7 +237,7 @@ def main():
         # could never fail.
         changed = directory / "changed"
         copy_tree(source, changed, inputs, 1_000_000_000)
-        filter_source = changed / "server_xdp/server_xdp.c"
+        filter_source = changed / "sdk/xdp/server_xdp.c"
         filter_source.write_text(filter_source.read_text(encoding="utf-8")
                                  + "\nchar rocketnet_xdp_stale_probe[] SEC(\".rodata\") = \"stale\";\n",
                                  encoding="utf-8")

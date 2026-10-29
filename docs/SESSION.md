@@ -32,10 +32,10 @@ those helpers are compiled out and development keys, tokens, and the default
 test `packet_filter` are refused; your backend service holds the 64-byte
 Ed25519 signing secret key, registers each started server's
 `rocketnet_server_public_key` and bound addresses, and issues opaque token
-strings ([KEYS.md](../KEYS.md), [AGENTS.md](../AGENTS.md#before-production),
-[USAGE.md](../USAGE.md#connection-lifecycle)).
+strings ([KEYS.md](KEYS.md), [AGENTS.md](AGENTS.md#before-production),
+[USAGE.md](USAGE.md#connection-lifecycle)).
 
-[SECURITY.md](../SECURITY.md), [STANDARD.md](../STANDARD.md) and
+[SECURITY.md](SECURITY.md), [STANDARD.md](STANDARD.md) and
 [standard/TRANSPORT.md](../standard/TRANSPORT.md) define the shipped security
 and wire contracts. Backend-wide identity coordination and rotating keyed
 prefilters are planned extensions and are not part of this release.

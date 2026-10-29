@@ -166,7 +166,7 @@ disconnects under load:
      messages accumulate faster than ACKs arrive or `send_kbps` /
      `per_client_send_kbps` paces them out), the message layer treats region
      exhaustion on an attempted `start_message` as fatal to that connection
-     (`tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
+     (`proofs/tla/RNConnectionMemory.tla` `Kick`, requirement `R5`): `start_message`
      returns `NULL` and **immediately disconnects that connection** with
      `ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED` (transitioning
      the client to `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED`, `-12`).
@@ -235,7 +235,7 @@ disconnects under load:
      before the next `update` call (for example, calling `receive_messages`
      only once when more than one batch arrived, or skipping the
      receive step during a frame), the next `update` detects held undrained
-     messages (`tla/RNSlots.tla`), logs an `ERROR`, increments `api_misuses`,
+     messages (`proofs/tla/RNSlots.tla`), logs an `ERROR`, increments `api_misuses`,
      and disconnects the offending connection with
      `ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED` (client state
      `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED`, `-13`).
@@ -282,7 +282,7 @@ disconnects under load:
      `rocketnet_client_connect` initiates retirement of the old worker, keeps
      the negative public state visible, wipes the temporary token buffer, and
      returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` without counting
-     `api_misuses` (`tla/ClientSession.tla` `RetryPending`).
+     `api_misuses` (`proofs/tla/ClientSession.tla` `RetryPending`).
    - **Safe reconnect sequence**:
      1. Obtain a **fresh** connect token from the backend (a connect token is
         single-use once consumed by a server).
@@ -320,8 +320,8 @@ disconnects under load:
      client that went silent past its connection timeout, or a message-layer
      reason). At the start of the
      next `rocketnet_server_update`, before that slot index can be assigned to
-     any incoming connection (`tla/RNSlots.tla` `ResetFree`,
-     `tla/RNConnectionMemory.tla` `Reuse`), the server lazily resets the
+     any incoming connection (`proofs/tla/RNSlots.tla` `ResetFree`,
+     `proofs/tla/RNConnectionMemory.tla` `Reuse`), the server lazily resets the
      slot's connection region and per-slot statistics
      (`rocketnet_server_client_stats_t`), ensuring zero state or packet leakage
      between sessions.

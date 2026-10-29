@@ -522,7 +522,7 @@ static void test_transport_results_server_receive_checks_counts()
 }
 REGISTER_UNIT_TEST( test_transport_results_server_receive_checks_counts );
 
-// tla/ServerSession.tla: NoReceiveUnlessRunning and NoAdmitUnlessRunning.
+// proofs/tla/ServerSession.tla: NoReceiveUnlessRunning and NoAdmitUnlessRunning.
 // A stopping or stopped server reads no packet and admits no client.
 // rocketnet_server_update returns while !server->running
 // (sdk/rocketnet_api.cpp:1797). rocketnet_server_transport_update returns

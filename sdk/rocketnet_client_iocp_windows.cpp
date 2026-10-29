@@ -6,8 +6,8 @@
 // The iocp transport's client side: overlapped WSARecvFrom receives on a
 // completion port of the client's own, synchronous sends. See
 // sdk/rocketnet_client_iocp.h for the shape, docs/CLIENT-IO.md for the I/O
-// thread it runs under (tla/RNClientIo.tla, tla/RNBufferHandoff.tla), and
-// tla/RNClientIocp.tla for the posted-receive ownership it adds.
+// thread it runs under (proofs/tla/RNClientIo.tla, proofs/tla/RNBufferHandoff.tla), and
+// proofs/tla/RNClientIocp.tla for the posted-receive ownership it adds.
 //
 // The core (the first half) is portable C++ on the port seam and builds on
 // every platform, so the unit cases run anywhere; the Win32 binding (the
@@ -18,7 +18,7 @@
 
 #include <string.h>
 
-// tla/RNClientIocp.tla Post: the kernel owns the buffer until its completion
+// proofs/tla/RNClientIocp.tla Post: the kernel owns the buffer until its completion
 
 static void rocketnet_client_iocp_post( rocketnet_client_iocp_t * iocp, int receive )
 {
@@ -78,7 +78,7 @@ int rocketnet_client_iocp_init( rocketnet_client_iocp_t * iocp, const rocketnet_
     return iocp->num_posted;
 }
 
-// tla/RNClientIocp.tla Dequeue and DequeueWake: one dequeue of every
+// proofs/tla/RNClientIocp.tla Dequeue and DequeueWake: one dequeue of every
 // completion the port holds (up to one per receive, plus the wake), waiting
 // up to timeout_seconds for the first. A receive completion makes its buffer
 // ready, in completion order, or idle when it carried no datagram; the wake
@@ -145,7 +145,7 @@ static void rocketnet_client_iocp_retry_idle( rocketnet_client_iocp_t * iocp )
     }
 }
 
-// tla/RNClientIocp.tla Drain: the copy reads only a ready buffer, then Post
+// proofs/tla/RNClientIocp.tla Drain: the copy reads only a ready buffer, then Post
 // gives it back to the kernel
 
 int rocketnet_client_iocp_receive_batch( rocketnet_client_iocp_t * iocp, rocketnet_address_t * from, uint8_t * packet_data,
@@ -187,7 +187,7 @@ int rocketnet_client_iocp_receive_batch( rocketnet_client_iocp_t * iocp, rocketn
     return num_packets;
 }
 
-// tla/RNClientIo.tla IoWait: the wait on the port; DequeueWake consumes the wake
+// proofs/tla/RNClientIo.tla IoWait: the wait on the port; DequeueWake consumes the wake
 
 bool rocketnet_client_iocp_wait( rocketnet_client_iocp_t * iocp, bool readable, double timeout_seconds )
 {
@@ -205,7 +205,7 @@ bool rocketnet_client_iocp_wait( rocketnet_client_iocp_t * iocp, bool readable, 
     return readable && iocp->ready_count > 0;
 }
 
-// tla/RNClientIocp.tla Wake: at most one wake completion is on the port
+// proofs/tla/RNClientIocp.tla Wake: at most one wake completion is on the port
 
 void rocketnet_client_iocp_wake( rocketnet_client_iocp_t * iocp )
 {
@@ -215,7 +215,7 @@ void rocketnet_client_iocp_wake( rocketnet_client_iocp_t * iocp )
         iocp->port->post_wake( iocp->port_context );
 }
 
-// tla/RNClientIocp.tla Close, then Dequeue until Drained: Free is the caller's,
+// proofs/tla/RNClientIocp.tla Close, then Dequeue until Drained: Free is the caller's,
 // and only on true (FreedOnlyWhenDrained)
 
 bool rocketnet_client_iocp_close( rocketnet_client_iocp_t * iocp, int max_waits, double wait_seconds )
@@ -464,7 +464,7 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
     return client;
 }
 
-// tla/RNClientIocp.tla Close and the drain, then the port: every handle,
+// proofs/tla/RNClientIocp.tla Close and the drain, then the port: every handle,
 // and no memory. A drain that does not finish within max_waits keeps the
 // port open, and destroy drains again.
 
@@ -483,7 +483,7 @@ static bool rocketnet_client_iocp_close_handles( rocketnet_client_iocp_io_t * cl
 }
 
 // The family race closes its losing family here, on the reading thread
-// (tla/RNClientRace.tla ReaderStep): the socket closes and the receives it
+// (proofs/tla/RNClientRace.tla ReaderStep): the socket closes and the receives it
 // aborted are taken as far as they have already completed, with no wait,
 // so the kept family's I/O never stalls behind the drain; the port stays
 // open until they all have, and destroy, on the caller's thread, drains
@@ -495,7 +495,7 @@ static void rocketnet_client_iocp_close_operation( void * transport )
 }
 
 // RNClientIo Stop and destroy order (docs/CLIENT-IO.md): the I/O thread is
-// joined before this; tla/RNClientIocp.tla Close, the drain, then Free only
+// joined before this; proofs/tla/RNClientIocp.tla Close, the drain, then Free only
 // when every posted receive has completed.
 
 static void rocketnet_client_iocp_destroy( void * transport )

@@ -463,7 +463,7 @@ static std::vector<std::string> env_names_pass_reads()
 static void test_config_env_every_name_read_is_documented()
 {
     const std::vector<std::string> documented = env_names_public();
-    const std::vector<std::string> building = env_names_documented( "BUILDING.md" );
+    const std::vector<std::string> building = env_names_documented( "docs/BUILDING.md" );
     const std::vector<std::string> reads = env_names_pass_reads();
     check( !env_names_contains( documented, "ROCKETNET_SERVER_" ) );
     check( documented.size() == building.size() );

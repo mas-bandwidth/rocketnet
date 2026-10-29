@@ -3117,7 +3117,7 @@ void rocketnet_test_cookie_bounds_signature_verifies()
     // the window. a source the full table cannot remember has no recorded
     // failure and is verified on each request, because refusing it would
     // refuse every honest first-time source (no global lockout,
-    // tla/RNSecurityTables.tla HonestConnectsUnderFlood); those verifies are
+    // proofs/tla/RNSecurityTables.tla HonestConnectsUnderFlood); those verifies are
     // bounded per update by the handshake work budget. one host reaches this
     // with source ports alone, since the address carries the port.
     {
@@ -3378,7 +3378,7 @@ void rocketnet_test_request_path_state_refusals()
 
     // the first valid request claims the token for its address and is
     // answered with a challenge (STANDARD.md, Processing Connection
-    // Requests; tla/ReceiveOrder.tla, Claim). the claim lives until the
+    // Requests; proofs/tla/ReceiveOrder.tla, Claim). the claim lives until the
     // handshake deadline, so the same token from another address is refused
     // before any signature, seal or keypair work.
 
@@ -6017,7 +6017,7 @@ void rocketnet_test_client_terminal_states_wipe_secrets()
     // token's keys and the ephemeral secret. STANDARD.md requires both sides
     // to zero their own ephemeral secret once it is no longer needed for a
     // handshake in progress (1095-1098) and, on a denied, to "release all
-    // connection state" (2425-2426); tla/ClientConnection.tla holds the
+    // connection state" (2425-2426); proofs/tla/ClientConnection.tla holds the
     // states and their terminal transitions, whose invariant
     // KeysErasedWhenDown pins cKeys = NoKeys at state <= 0.
 
@@ -9309,7 +9309,7 @@ void rocketnet_test_ack_block_validity()
     // connection -- wire zero against a highest sent near the epoch boundary
     // reconstructs to 2^32 when the first range is nonzero, and the all-zero
     // wire block is the empty block at any highest sent
-    // (tla/AckBlockWrap.tla ReadBlock)
+    // (proofs/tla/AckBlockWrap.tla ReadBlock)
     {
         uint8_t * p = data;
         rocketnet_write_uint32( &p, 0 );
@@ -12387,7 +12387,7 @@ static void rocketnet_test_pass_cookie_gate_from( struct rocketnet_test_server_t
 
 // The first address to present a valid request owns its token until the
 // handshake deadline (STANDARD.md, Processing Connection Requests;
-// tla/ReceiveOrder.tla, Claim). An on-path attacker copies the real client's
+// proofs/tla/ReceiveOrder.tla, Claim). An on-path attacker copies the real client's
 // cookie-bearing request off the in-memory wire, earns a cookie at its own
 // address, and replays the request from there ahead of the real one. The
 // replay claims the token and reaches a challenge it cannot open, so the real
@@ -14030,7 +14030,7 @@ void rocketnet_test_public_send_kbps_default_and_negative()
 
 // A refused finish aborts the pending start (rn_message_object_finish, the
 // one path under rocketnet_client_finish_message and
-// rocketnet_server_finish_message; tla/RNSlots.tla FinishPending): finish with
+// rocketnet_server_finish_message; proofs/tla/RNSlots.tla FinishPending): finish with
 // 0 bytes, or more than were started, returns 0 and leaves no start pending,
 // so the next start is never refused as one already pending. A bare client
 // message object on an empty link: no transport, no socket, no clock.

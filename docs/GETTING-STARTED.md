@@ -6,7 +6,7 @@ repository root. The examples use development credentials on your own machine.
 
 ## 1. Build and link
 
-Install the [platform prerequisites](../BUILDING.md#prerequisites). On Linux
+Install the [platform prerequisites](BUILDING.md#prerequisites). On Linux
 or macOS:
 
 ```sh
@@ -35,7 +35,7 @@ shutdown. Other lines are library diagnostics. [Hello](examples/hello.md)
 uses an in-memory loopback hub, so this first check needs no network, port,
 or backend service. It still waits for asynchronous progress.
 
-To link your own program, follow [Installing and embedding](../BUILDING.md#installing-and-embedding-the-sdk).
+To link your own program, follow [Installing and embedding](BUILDING.md#installing-and-embedding-the-sdk).
 Use the [complete C integration example](INTEGRATION-EXAMPLE.md) if you want
 one self-contained program. Excerpts below explain particular steps; they
 are not separate complete programs.
@@ -76,7 +76,7 @@ after serving the client and cleaning up. Both exit nonzero on failure.
 
 A connect token is an opaque credential. A production client gets it from
 your backend; it never holds the backend signing secret. Read [Sessions](SESSION.md)
-for the handshake and [Keys](../KEYS.md) for ownership.
+for the handshake and [Keys](KEYS.md) for ownership.
 
 Check the return from `rocketnet_client_connect` independently of the create
 status. An accepted connect starts an attempt; it does not mean the handshake
@@ -138,8 +138,8 @@ From [examples/hello.c](../examples/hello.c), lines 213 to 224:
 If preflight returns false, this example defers until a later frame. Your game
 can defer reliable work or coalesce replaceable state. A true preflight does
 not replace checking the returned pointer. Never call finish after a refused
-start. See [Sending](../USAGE.md#sending-messages) and
-[Backpressure](../USAGE.md#asking-whether-there-is-room).
+start. See [Sending](USAGE.md#sending-messages) and
+[Backpressure](USAGE.md#asking-whether-there-is-room).
 
 ## 5. Choose reliability modes and channels
 
@@ -165,13 +165,13 @@ Keep each object and its allocator/callback contexts alive until destruction
 completes. A client state of `DISCONNECTED` alone does not establish worker
 completion. If a bounded wait expires, report that failure and retain the live
 storage; a timeout is not permission to free memory still owned by I/O.
-See [Connection lifecycle](../USAGE.md#connection-lifecycle).
+See [Connection lifecycle](USAGE.md#connection-lifecycle).
 
 ## 7. Threads
 
 Make public calls on one endpoint from one thread at a time. Your application
 owns any handoff between threads. Allocator and logging callbacks can run on
-network threads and must satisfy the [threading contract](../USAGE.md#threads).
+network threads and must satisfy the [threading contract](USAGE.md#threads).
 
 <a id="step-1-build-the-production-library-and-backend-examples-rocketnet_dev0"></a>
 
@@ -188,7 +188,7 @@ network threads and must satisfy the [threading contract](../USAGE.md#threads).
 Follow [Production integration](PRODUCTION.md) for the production build,
 backend keys, authenticated server registration, token issuance, and refusal
 handling. The example backend service needs application authentication before
-deployment. Read [qualification](../TESTING.md) before choosing a deployment size.
+deployment. Read [qualification](TESTING.md) before choosing a deployment size.
 
 ## If the examples do not finish
 
@@ -202,7 +202,7 @@ deployment. Read [qualification](../TESTING.md) before choosing a deployment siz
 
 ## Where to go next
 
-- [Integration guide](../USAGE.md): frame contracts, backpressure, receipts, lifecycle, configuration, and stats.
+- [Integration guide](USAGE.md): frame contracts, backpressure, receipts, lifecycle, configuration, and stats.
 - [Game loop example](examples/game_loop.md): a fixed-step simulation and the cost of the wrong frame order.
-- [Transports](../TRANSPORTS.md): platform selection and deployment requirements.
+- [Transports](TRANSPORTS.md): platform selection and deployment requirements.
 - [Documentation index](README.md): all reading paths, references, and engineering records.

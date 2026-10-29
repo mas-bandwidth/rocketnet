@@ -33,7 +33,7 @@ for 600 seconds (300 for AF_XDP), with minimum per-client rates of 276–283 kbp
 Read the individual records for topology, workload, measurements, and timing
 failures. The [preview-2 record](QUALIFICATION-v1.0.0-preview-2.md) separately
 records 60-second non-timing correctness rungs. None of these earlier-head
-results is a measurement of your current build. See [Testing](../TESTING.md).
+results is a measurement of your current build. See [Testing](TESTING.md).
 
 ## Server memory footprint
 

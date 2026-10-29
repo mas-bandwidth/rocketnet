@@ -1,7 +1,7 @@
 # Transport implementation reference
 
 This page is for SDK contributors implementing or reviewing a transport.
-Games use the public C API and choose carriers through [Transports](../TRANSPORTS.md).
+Games use the public C API and choose carriers through [Transports](TRANSPORTS.md).
 The internal interfaces here are not an application ABI. Platform setup is in
 the [deployment guide](DEPLOYING.md) and its linked host guides.
 
@@ -65,8 +65,8 @@ hub's records linearly under its mutex. `rocketnet_loopback_hub_destroy`
 refuses while any endpoint is registered (`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE`),
 keeping the hub; destroy it after the server and clients, before
 `rocketnet_term`. The registration lifecycle is modelled in
-`tla/LoopbackHub.tla` and the queue ring arithmetic in
-`tla/LoopbackHubLayout.tla`.
+`proofs/tla/LoopbackHub.tla` and the queue ring arithmetic in
+`proofs/tla/LoopbackHubLayout.tla`.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
 and `rocketnet_server_uring_leaked_transports` are internal transport helpers
@@ -116,7 +116,7 @@ event wait is replaced by the port; receive_batch copies each completed
 receive and re-posts it after the copy; sends are synchronous `WSASendTo`
 (overlapped send is rn-win-client-overlapped-send). Destroy closes the
 socket and dequeues until every posted receive has completed before it frees
-(`tla/RNClientIocp.tla`, FreedOnlyWhenDrained); a drain that does not finish
+(`proofs/tla/RNClientIocp.tla`, FreedOnlyWhenDrained); a drain that does not finish
 within `ROCKETNET_CLIENT_IOCP_DRAIN_WAITS` dequeues of one second leaks the
 transport rather than free memory the kernel may still write.
 
@@ -395,7 +395,7 @@ transport tests cover the real staged paths; hosted tests do not replace XDP
 hardware failure tests or per-platform line-rate measurements.
 
 Dispatch measurements and their limits are recorded in
-[bench/transport_fill.md](../bench/transport_fill.md).
+[benchmarks/transport_fill.md](../benchmarks/transport_fill.md).
 
 ## The RIO server transport
 
@@ -412,7 +412,7 @@ dropped-overflow receives, failed receive reposts, and RIO commit calls. Its
 three send phases and four receive banks are implemented in
 `rocketnet_rio_worker_pass` and `rocketnet_server_rio_receive_packets` in
 `sdk/rocketnet_server_rio_windows.cpp`; their ownership is modelled in
-`tla/RNRioWorker.tla`.
+`proofs/tla/RNRioWorker.tla`.
 
 ## Windows connection reset
 
@@ -486,7 +486,7 @@ cmsg (`ROCKETNET_URING_GRO_CONTROL_BYTES`), and one provided buffer may hold
 a coalesced receive of several datagrams: `rocketnet_uring_recvmsg_parse`
 returns the stride, `rocketnet_coalesce_split` cuts the buffer, and every
 segment is size-checked and copied into the fill bank before the buffer goes
-back to the ring (`tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A fill
+back to the ring (`proofs/tla/RNUringDriver.tla`, `ReturnAfterLastCopy`). A fill
 bank that fills mid-split drops and counts the rest as
 `RECEIVE_DROPPED_OVERFLOW`. `GRO_BATCHES` counts buffers that held more than
 one segment, and `GRO_CMSG_FAULTS` a truncated or malformed `UDP_GRO` cmsg,
@@ -529,11 +529,11 @@ normal cleanup. Existing leak counters remain diagnostic compatibility surfaces;
 completion, not a timeout, authorizes reclamation.
 The send staging (a send run as one send whose completion frees every slot of
 the run), the two receive banks, the per-call completion budget and destroy are
-modelled in `tla/RNUringDriver.tla`.
+modelled in `proofs/tla/RNUringDriver.tla`.
 
 ## The XDP receive filter
 
-`server_xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
+`sdk/xdp/server_xdp.c` accepts both address families. IPv4 is parsed as
 before (a 20-byte header, UDP). IPv6 is parsed as the fixed 40-byte header with
 UDP directly behind it. Both families then run one shared function: the
 destination port and address against the config map, the wire size bounds, the
@@ -682,9 +682,9 @@ verifies, and with room for the server's UMEM and queues (the default guest
 memory runs out and the server is killed). The case starts the server with
 `--max-clients 4`, so its message object is sized for the one client it
 connects rather than the example's default 1000 (`tests/test_xdp_filter.cpp`, the
-`--max-clients` option of `server.c`), and it gives the server and client a pipe it holds open as
+`--max-clients` option of `tests/client_server/server.c`), and it gives the server and client a pipe it holds open as
 stdin, because the server stops when its stdin reaches end of file
-(`check_stdin_closed` in `server.c`) and a guest run without a terminal starts there:
+(`check_stdin_closed` in `tests/client_server/server.c`) and a guest run without a terminal starts there:
 
 ```sh
 vng --run ~/vm-kernels/vmlinuz-$(uname -r) --memory 1536M --cpus 3 --append "irqaffinity=0 isolcpus=1-2 nohz_full=1-2" --rwdir <job> -- sudo ./bin/test_xdp_filter -v
@@ -703,7 +703,7 @@ learned or gateway MAC always wins over an answered entry, which never
 displaces a learned one. Any other reply that resolves to no MAC, among them
 every reply to an address no frame came from, is refused at start and counted
 as `SEND_NO_LINK_ADDRESS`, never sent and never counted as sent
-(`tla/RNXdpReplay.tla`: `NeverSeenNeverSentTo`, `HeldReplyFindsItsMac`).
+(`proofs/tla/RNXdpReplay.tla`: `NeverSeenNeverSentTo`, `HeldReplyFindsItsMac`).
 
 ## Embedded XDP source maintenance
 
@@ -717,7 +717,7 @@ or later) is not used.
 The filter's decisions also run as ordinary host C in the unit suite, with no
 kernel, no root and no BPF syscall. The `rocketnet_xdp_filter_host` target
 compiles `tests/xdp_host/server_xdp_host.c`, which includes
-`server_xdp/server_xdp.c` unchanged, with the BPF build's defines
+`sdk/xdp/server_xdp.c` unchanged, with the BPF build's defines
 (`-D__linux__ -D__BPF__ -ffreestanding`) and `tests/xdp_host/` first on that
 one target's include path. That directory is a shim: minimal `linux/*.h` and
 `bpf/bpf_helpers.h` with only the types, constants and map macros the filter
@@ -751,8 +751,8 @@ the compatible filter, configure with
 `-DROCKETNET_XDP_FILTER_HOST_SOURCE=<path>`; the default is the shipped file.
 
 The XDP program is compiled at build time and loaded from memory. On Linux,
-`cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
-with a clang that has the BPF target (the flags of `server_xdp/Makefile`, plus
+`cmake/EmbedXdp.cmake` compiles `sdk/xdp/server_xdp.c` to `server_xdp.o`
+with a clang that has the BPF target (the flags of `sdk/xdp/Makefile`, plus
 flags that keep checkout paths out of the object) and
 embeds the object's bytes in `build/generated/rocketnet_server_xdp.h` as
 `rocketnet_server_xdp_o`. `rocketnet_server_socket_create` opens those bytes

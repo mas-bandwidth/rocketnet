@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # RocketNet. Copyright 2026 Mas Bandwidth LLC.
 #
-# Renders ROADMAP.md from docs/roadmap.sexp, and TESTING.md from
+# Renders docs/ROADMAP.md from docs/roadmap.sexp, and docs/TESTING.md from
 # docs/testing.sexp: one section per area, a table of features with a mark per
 # column, and a closing "complete" row.
 #
-#   python3 tools/roadmap/render.py docs/roadmap.sexp ROADMAP.md          write the page
-#   python3 tools/roadmap/render.py --check docs/roadmap.sexp ROADMAP.md  exit 1 if it differs
+#   python3 tools/roadmap/render.py docs/roadmap.sexp docs/ROADMAP.md          write the page
+#   python3 tools/roadmap/render.py --check docs/roadmap.sexp docs/ROADMAP.md  exit 1 if it differs
 #
 # The page names its data file as given on the command line, and the make
 # target is that file's name without .sexp (make roadmap, make testing).
@@ -228,6 +228,7 @@ def set_of( columns ):
 
 def render( data, source="docs/roadmap.sexp" ):
     top = plist( data, "roadmap" )
+    source_link = source.split( "/" )[-1]  # generated pages live beside their data in docs/
     target = re.sub( r"\.sexp$", "", source.split( "/" )[-1] )
     all_apply = sym( top.get( "all-cells-apply" ) ) == "t"
     tables_only = sym( top.get( "tables-only" ) ) == "t"
@@ -258,7 +259,7 @@ def render( data, source="docs/roadmap.sexp" ):
         heading = area["title"] + ( " (next milestone)" if milestone == "next" else "" )
         lines += [ "## " + heading, "" ]
         if tables_only:
-            lines += [ "Source: [%s](%s), [tools/roadmap/render.py](tools/roadmap/render.py)" % ( source, source ), "" ]
+            lines += [ "Source: [%s](%s), [tools/roadmap/render.py](../tools/roadmap/render.py)" % ( source, source_link ), "" ]
         for para in ( [] if tables_only else text_list( area.get( "text" ) ) ):
             lines += [ para, "" ]
         rows = area["rows"]
@@ -284,7 +285,7 @@ def render( data, source="docs/roadmap.sexp" ):
             lines += [ "" ] + pending
         if owed:
             lines += [ "", "Planned for the final deliverable: " + owed_note ]
-        lines += [ "", "[Source data](%s)" % source, "" ]
+        lines += [ "", "[Source data](%s)" % source_link, "" ]
     for name in full_tests:
         for feature, aid in full_tests[name].items():
             if feature in specific_tests[name]:
@@ -414,7 +415,7 @@ def main( argv ):
         check = True
         argv = argv[1:]
     if len( argv ) != 2:
-        print( "usage: render.py [--check] docs/roadmap.sexp ROADMAP.md | docs/testing.sexp TESTING.md", file=sys.stderr )
+        print( "usage: render.py [--check] docs/roadmap.sexp docs/ROADMAP.md | docs/testing.sexp docs/TESTING.md", file=sys.stderr )
         return 2
     source, target = argv
     with open( source, encoding="utf-8" ) as f:

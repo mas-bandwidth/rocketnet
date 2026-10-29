@@ -149,7 +149,7 @@ endif()
 
 # The most clients one server holds (sdk/rocketnet.h ROCKETNET_MAX_CLIENTS).
 # 1000 is the supported default; -DROCKETNET_MAX_CLIENTS=10000 builds a larger
-# server, and every limit that serves all clients derives from it (BUILDING.md,
+# server, and every limit that serves all clients derives from it (docs/BUILDING.md,
 # "Maximum clients").
 set(ROCKETNET_MAX_CLIENTS 1000 CACHE STRING "Maximum clients per server (512..32768)")
 if(NOT ROCKETNET_MAX_CLIENTS MATCHES "^[0-9]+$")
@@ -183,7 +183,7 @@ endforeach()
 # directory and its subdirectories create (the libraries, tests, examples and
 # tools) and enters no target's INTERFACE, so neither the installed package
 # nor a parent project that adds this directory receives them: the strict
-# floating-point floor (BUILDING.md, "Floating point") and the memory budgets
+# floating-point floor (docs/BUILDING.md, "Floating point") and the memory budgets
 # the internal headers read (sdk/rocketnet_history.h:13, sdk/rocketnet_memory.h:7-11).
 if(MSVC)
     add_compile_options(/fp:precise)
@@ -522,9 +522,9 @@ else()
 endif()
 
 if(ROCKETNET_BUILD_EXAMPLES)
-    add_executable(client client.c)
+    add_executable(client tests/client_server/client.c)
     target_link_libraries(client PRIVATE rocketnet_dev)
-    add_executable(server server.c)
+    add_executable(server tests/client_server/server.c)
     target_link_libraries(server PRIVATE rocketnet_dev)
     add_executable(happy_server tools/happy_path/happy_server.c)
     target_link_libraries(happy_server PRIVATE rocketnet_dev)
@@ -552,7 +552,7 @@ if(ROCKETNET_BUILD_TESTS)
             VERBATIM)
     endif()
     # A real C translation unit must link the internal token helpers used by
-    # client.c and soak.c against their C++ implementation.
+    # tests/client_server/client.c and tests/soak/soak.c against their C++ implementation.
     add_executable(test_internal_c tools/internal_c/main.c)
     set_target_properties(test_internal_c PROPERTIES C_STANDARD 99 C_STANDARD_REQUIRED YES C_EXTENSIONS NO)
     target_link_libraries(test_internal_c PRIVATE rocketnet_dev)
@@ -748,7 +748,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/*.md"
         "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/go/main.go" "${CMAKE_CURRENT_SOURCE_DIR}/examples/backend/csharp/Backend/Program.cs"
         "${CMAKE_CURRENT_SOURCE_DIR}/docs/examples/*.md" )
-    list( APPEND ROCKETNET_EXAMPLE_MANIFEST_SOURCES "AGENTS.md" "README.md" "docs/GETTING-STARTED.md" "docs/CHANNELS.md" "docs/FLOWS.md" "docs/ERRORS-AND-LOGGING.md" )
+    list( APPEND ROCKETNET_EXAMPLE_MANIFEST_SOURCES "docs/AGENTS.md" "README.md" "docs/GETTING-STARTED.md" "docs/CHANNELS.md" "docs/FLOWS.md" "docs/ERRORS-AND-LOGGING.md" )
     string( REPLACE ";" "|" ROCKETNET_EXAMPLE_MANIFEST_LIST "${ROCKETNET_EXAMPLE_MANIFEST_SOURCES}" )
     set_property( SOURCE tests/source_audit_example_send_safety.cpp APPEND PROPERTY COMPILE_DEFINITIONS
         "ROCKETNET_SOURCE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}\""
@@ -887,7 +887,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     if(NOT ROCKETNET_USE_SYSTEM_SODIUM)
         set_property( SOURCE tests/test_unit_driver_loopback.cpp APPEND PROPERTY INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/sodium" )
     endif()
-    # The XDP filter as host C (tests/xdp_host/): server_xdp/server_xdp.c,
+    # The XDP filter as host C (tests/xdp_host/): sdk/xdp/server_xdp.c,
     # compiled unchanged with the BPF build's defines behind a shadow include
     # directory of minimal kernel and libbpf headers, so the unit suite judges
     # its decisions with no kernel, no root and no BPF syscall
@@ -898,7 +898,12 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # ROCKETNET_XDP_FILTER_HOST_SOURCE names the filter source to compile; the
     # default is the shipped file, and another value is for reproducing a
     # historical filter.
-    set(ROCKETNET_XDP_FILTER_HOST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c" CACHE FILEPATH
+    # Migrate only the former default in existing build caches; explicit
+    # historical/custom filter sources keep their configured path.
+    if(ROCKETNET_XDP_FILTER_HOST_SOURCE STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/server_xdp/server_xdp.c")
+        unset(ROCKETNET_XDP_FILTER_HOST_SOURCE CACHE)
+    endif()
+    set(ROCKETNET_XDP_FILTER_HOST_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/sdk/xdp/server_xdp.c" CACHE FILEPATH
         "XDP filter source the host-C unit target compiles")
     if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN" AND NOT WIN32)
         get_filename_component(ROCKETNET_XDP_FILTER_HOST_SOURCE_PATH "${ROCKETNET_XDP_FILTER_HOST_SOURCE}" ABSOLUTE)
@@ -916,7 +921,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     else()
         message(STATUS "XDP filter host-C target not built: needs GCC or Clang on a little-endian, non-Windows host")
     endif()
-    # Functional-tier binaries (BUILDING.md, "Test binaries and their tiers"):
+    # Functional-tier binaries (docs/BUILDING.md, "Test binaries and their tiers"):
     # test_lifecycle, test_production_client_lifecycle, test_transport,
     # test_serialize, test_transport_control,
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
@@ -1191,24 +1196,24 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
 endif()
 if(ROCKETNET_BUILD_TOOLS)
-    add_executable(soak soak.c)
-    add_executable(load load.c)
-    add_executable(load_split load_split.c)
-    add_executable(soak_sim soak_sim.cpp)
+    add_executable(soak tests/soak/soak.c)
+    add_executable(load tests/load/load.c)
+    add_executable(load_split tests/load/load_split.c)
+    add_executable(soak_sim tests/soak/soak_sim.cpp)
     # The deterministic simulation harness (docs/DST.md): one seed drives N
     # clients and a server over the in-memory wire, no socket and no clock.
     add_executable(dst tests/dst.cpp)
     target_link_libraries(dst PRIVATE rocketnet_dev)
     rocketnet_use_sodium(dst)
     target_compile_features(dst PRIVATE cxx_std_11)
-    add_executable(keygen keygen.cpp)
-    add_executable(transport_memory bench/transport_memory.cpp)
-    add_executable(client_main_thread_cost bench/client_main_thread_cost.cpp)
-    add_executable(instruction_count bench/instruction_count.cpp)
-    add_executable(ack_block_build_cost bench/ack_block_build_cost.cpp)
-    # One unit of the handshake work budget (bench/handshake_cost.cpp): the
+    add_executable(keygen tools/keygen.cpp)
+    add_executable(transport_memory benchmarks/transport_memory.cpp)
+    add_executable(client_main_thread_cost benchmarks/client_main_thread_cost.cpp)
+    add_executable(instruction_count benchmarks/instruction_count.cpp)
+    add_executable(ack_block_build_cost benchmarks/ack_block_build_cost.cpp)
+    # One unit of the handshake work budget (benchmarks/handshake_cost.cpp): the
     # measured cost behind the handshakes_per_update default.
-    add_executable(handshake_cost bench/handshake_cost.cpp)
+    add_executable(handshake_cost benchmarks/handshake_cost.cpp)
     target_compile_features(handshake_cost PRIVATE cxx_std_11)
     rocketnet_use_sodium(handshake_cost)
     # Benchmark-only fake-client traffic source. It is Linux/XDP-only, is not
@@ -1235,15 +1240,15 @@ if(ROCKETNET_BUILD_TOOLS)
             DEPENDS xdp_packet_blaster
             VERBATIM)
     endif()
-    # bench/transport_fill.cpp and bench/lease_cost.cpp are built by hand
-    # against each candidate's static library (bench/transport_fill.md,
-    # bench/lease_cost.py), so neither is a target here.
-    # The worst-case receive update (bench/server_receive_cost.cpp): the bench
+    # benchmarks/transport_fill.cpp and benchmarks/lease_cost.cpp are built by hand
+    # against each candidate's static library (benchmarks/transport_fill.md,
+    # benchmarks/lease_cost.py), so neither is a target here.
+    # The worst-case receive update (benchmarks/server_receive_cost.cpp): the bench
     # compiles sdk/rocketnet_server_transport.cpp into itself, as the unit
     # suite's loopback case does, to put a capture receive in front of the
     # loopback transport, so it takes the library's definitions and goes first
     # on the link line.
-    add_executable(server_receive_cost bench/server_receive_cost.cpp)
+    add_executable(server_receive_cost benchmarks/server_receive_cost.cpp)
     target_link_libraries(server_receive_cost PRIVATE rocketnet_dev)
     target_compile_definitions(server_receive_cost PRIVATE $<TARGET_PROPERTY:rocketnet_dev,COMPILE_DEFINITIONS>)
     target_compile_features(server_receive_cost PRIVATE cxx_std_11)
@@ -1300,6 +1305,13 @@ set(rocketnet_install_targets rocketnet)
 if(TARGET rocketnet_shared)
     list(APPEND rocketnet_install_targets rocketnet_shared)
 endif()
+# Internal harnesses use repository-relative test/helper includes.
+foreach(harness client server soak load load_split soak_sim)
+    if(TARGET ${harness})
+        target_include_directories(${harness} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    endif()
+endforeach()
+
 install(TARGETS ${rocketnet_install_targets} EXPORT RocketNetTargets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

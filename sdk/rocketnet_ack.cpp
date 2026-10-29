@@ -67,10 +67,10 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 
 // the empty block (largest 0, first range length 0, no ranges) is written
 // exactly while nothing is opened, and every other block has a first range
-// length of at least one (tla/AckBlockWrap.tla WriteBlock)
+// length of at least one (proofs/tla/AckBlockWrap.tla WriteBlock)
 
-// tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
-// tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
+// proofs/tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
+// proofs/tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
 
 int rocketnet_ack_block_build( uint8_t * output, int capacity, const struct rocketnet_replay_protection_t * replay )
 {
@@ -232,11 +232,11 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
         return 0;
 
     // the empty block is recognised on its wire fields, at any highest sent
-    // (tla/AckBlockWrap.tla ReadBlock, EmptyRecognised): wire largest 0,
+    // (proofs/tla/AckBlockWrap.tla ReadBlock, EmptyRecognised): wire largest 0,
     // first range length 0 and no ranges is the statement that nothing has
     // been opened yet. Reconstructing first would read a wire 0 as 2^32 once
     // highest sent reaches 2^31 and refuse it
-    // (tla/MCAckBlockWrapBrokenHalfRange.cfg). A block naming a sequence
+    // (proofs/tla/MCAckBlockWrapBrokenHalfRange.cfg). A block naming a sequence
     // always has a first range length of at least one, so a zero first range
     // length with anything else nonzero is malformed, and a genuine largest
     // whose low 32 bits are zero still reads nonempty.
@@ -253,7 +253,7 @@ int rocketnet_ack_block_read( struct rocketnet_ack_block_t * block, const uint8_
     }
 
     // every other block is evaluated on the reconstructed 64-bit largest
-    // (tla/AckBlockWrap.tla ReadBlock, LargestExact); a largest that
+    // (proofs/tla/AckBlockWrap.tla ReadBlock, LargestExact); a largest that
     // reconstructs to zero cannot hold a first range of one or more and is
     // refused by the bound below
 
@@ -367,7 +367,7 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 static_assert( ROCKETNET_ACK_RECEIVED_STATS_STORAGE_RECORDS <= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE,
                "received block summaries fit in reclaimed record words" );
 
-// tla/RNWrittenRing.tla Reset. Every field but the three record rings, which
+// proofs/tla/RNWrittenRing.tla Reset. Every field but the three record rings, which
 // a written bit guards (Write sets it, every Read checks it first): the
 // rings' payloads are never zeroed. Reset also clears the compact summaries
 // in the first 512 records' reclaimed stats words (2 KB across 12 KB of ring),
@@ -395,7 +395,7 @@ void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint )
 //                 the running stats aggregates
 // -----------------------------------------
 
-// tla/RNServerStats.tla. The aggregates hold exactly what
+// proofs/tla/RNServerStats.tla. The aggregates hold exactly what
 // rocketnet_ack_endpoint_update_stats would count over the same windows, so
 // the published numbers are current after every send, receive and ack. Every
 // published field matches the recompute exactly except jitter, which matches
@@ -566,7 +566,7 @@ static void rocketnet_ack_stats_sent_clear( struct rocketnet_ack_endpoint_t * en
 
 // moves the sent window from the current high-water mark to highest, before
 // the mark is raised and before the new record is written
-// tla/RNServerStats.tla Slide: moves the sent window to the new high-water mark, removing, crossing and entering records
+// proofs/tla/RNServerStats.tla Slide: moves the sent window to the new high-water mark, removing, crossing and entering records
 
 static void rocketnet_ack_stats_sent_advance( struct rocketnet_ack_endpoint_t * endpoint, uint64_t highest )
 {
@@ -886,7 +886,7 @@ static void rocketnet_ack_stats_received_clear_physical_range( struct rocketnet_
 
 // Clears the physical slots leaving the full retained window. Whole blocks
 // cost one visit and at most two edge blocks are rescanned.
-// tla/RNServerStats.tla Slide: fixed-block retention update.
+// proofs/tla/RNServerStats.tla Slide: fixed-block retention update.
 
 static void rocketnet_ack_stats_received_advance( struct rocketnet_ack_endpoint_t * endpoint, uint64_t highest )
 {
@@ -1057,10 +1057,10 @@ static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_
     endpoint->bandwidth_received_kbps = ( endpoint->stats_received_count > 0 && received_span > 0.0 ) ? (float) ( ( (double) endpoint->stats_received_bytes ) / received_span * 8.0 / 1000.0 ) : 0.0f;
 }
 
-// tla/RNSentHistory.tla Send
-// tla/FragmentsAndAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
-// tla/RNServerStats.tla Send: takes the sent sequence (past the high-water mark, or a refused stale one)
-// tla/RNServerStats.tla Write: removes the overwritten record from the aggregates, writes the ring slot and adds it
+// proofs/tla/RNSentHistory.tla Send
+// proofs/tla/FragmentsAndAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
+// proofs/tla/RNServerStats.tla Send: takes the sent sequence (past the high-water mark, or a refused stale one)
+// proofs/tla/RNServerStats.tla Write: removes the overwritten record from the aggregates, writes the ring slot and adds it
 
 enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( struct rocketnet_ack_endpoint_t * endpoint,
                                                                                 uint64_t sequence, int wire_bytes,
@@ -1147,7 +1147,7 @@ enum rocketnet_ack_sent_result_t rocketnet_ack_endpoint_record_sent_classified( 
     return result;
 }
 
-// tla/RNSentHistory.tla Send
+// proofs/tla/RNSentHistory.tla Send
 
 bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpoint,
                                          uint64_t sequence, int wire_bytes,
@@ -1158,7 +1158,7 @@ bool rocketnet_ack_endpoint_record_sent( struct rocketnet_ack_endpoint_t * endpo
                                                           aggregate_id, time ) == ROCKETNET_ACK_SENT_RECORDED;
 }
 
-// tla/RNSentHistory.tla Send
+// proofs/tla/RNSentHistory.tla Send
 
 void rocketnet_ack_count_sent_result( enum rocketnet_ack_sent_result_t result, uint64_t * lost_counter, uint64_t * overflow_counter )
 {
@@ -1195,7 +1195,7 @@ void rocketnet_ack_endpoint_mark_keep_alive( struct rocketnet_ack_endpoint_t * e
     rocketnet_platform_spin_unlock_u64( &endpoint->sent_lock );
 }
 
-// tla/FragmentsAndAcks.tla StartFragmented: draws the aggregate id and pins the packet id behind cnt fragment acks
+// proofs/tla/FragmentsAndAcks.tla StartFragmented: draws the aggregate id and pins the packet id behind cnt fragment acks
 
 uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t * endpoint,
                                                 uint64_t packet_id, int fragment_count )
@@ -1221,8 +1221,8 @@ uint64_t rocketnet_ack_endpoint_open_aggregate( struct rocketnet_ack_endpoint_t 
     return id;
 }
 
-// tla/RNServerStats.tla Send: takes any received sequence the remote end chose
-// tla/RNServerStats.tla Write: writes the exact-tagged ring slot and rebuilds its block
+// proofs/tla/RNServerStats.tla Send: takes any received sequence the remote end chose
+// proofs/tla/RNServerStats.tla Write: writes the exact-tagged ring slot and rebuilds its block
 
 void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * endpoint,
                                              uint64_t sequence, int wire_bytes, double time )
@@ -1237,7 +1237,7 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
     // mark. Replay admits sequences that far back (its window is wider than
     // this ring), but such a sequence is below the stats window base, so it
     // is never counted, and its slot holds a newer sequence of [base,
-    // highest] that the write would erase (tla/RNServerStats.tla Write,
+    // highest] that the write would erase (proofs/tla/RNServerStats.tla Write,
     // invariant RetainedIsNewest)
 
     if ( endpoint->highest_received_sequence >= ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE &&
@@ -1379,10 +1379,10 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
 
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
-// (tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
+// (proofs/tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
 // AckedMeansSurfaced, BurnedNeverNamed)
-// tla/RNSentHistory.tla ReceiveAck
-// tla/RNServerStats.tla Ack: marks each held, unacknowledged record acked and moves it to the acked aggregates
+// proofs/tla/RNSentHistory.tla ReceiveAck
+// proofs/tla/RNServerStats.tla Ack: marks each held, unacknowledged record acked and moves it to the acked aggregates
 
 static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
                                     uint64_t low, uint64_t high, double time,

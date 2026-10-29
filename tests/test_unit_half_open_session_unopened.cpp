@@ -8,7 +8,7 @@
 // connection, challenged but not yet answered -- is dropped as the type's
 // NOT_CONNECTED without an AEAD open. It is never counted DID_NOT_OPEN, it
 // never feeds the mapping's integrity-failure count, and the session window
-// never moves (tla/ReplayWindow.tla NoAdvanceBeforeConnect and
+// never moves (proofs/tla/ReplayWindow.tla NoAdvanceBeforeConnect and
 // NoOpenBeforeConnect). The connection response is the one sealed type a
 // half-open mapping exists to receive, so it alone still reaches the open.
 //

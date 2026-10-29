@@ -898,7 +898,7 @@ static void loopback_refusal_log_capture( void *, enum rocketnet_log_level_t, co
     g_loopback_refusal_log[copy] = '\0';
 }
 
-// tla/LoopbackHub.tla capacity: a hub of N clients takes N client endpoints
+// proofs/tla/LoopbackHub.tla capacity: a hub of N clients takes N client endpoints
 // and one server; the next of either is refused with one warning naming the
 // capacity, and a freed record takes the next endpoint.
 

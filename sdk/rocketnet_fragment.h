@@ -73,7 +73,7 @@ int rocketnet_fragment_plan( int payload_bytes, int * out_fragment_count, int * 
 // Storage is allocated once, at create, and never grown.
 
 // the stale rule's two bounds, per standard/TRANSPORT.md t16 and
-// tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
+// proofs/tla/FragmentsAndAcks.tla (StaleOnlyIfOlder). BEHIND: how far behind the
 // slot's occupant an id refuses as superseded -- the window of the stale
 // test before this rule, ROCKETNET_MAX_FRAGMENTS ids. It is also the most one
 // bad fragment can cost: it refuses only the ids of its slot's series that

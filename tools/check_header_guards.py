@@ -3,7 +3,7 @@
 
 Every tracked .h in the repository must be classified into either:
   - OWNED_GLOBS: repository-owned headers across bench, examples, functional,
-    fuzz, root (load_census.h), proofs, sdk, tests, and tools.
+    fuzz, proofs, sdk, tests, and tools.
   - EXCLUDED_HEADERS: vendored or mirrored kernel/BPF headers with explicit
     provenance. The excluded files are sodium/sodium.h,
     tests/xdp_host/bpf/bpf_helpers.h, tests/xdp_host/linux/bpf.h,
@@ -38,11 +38,11 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 
 OWNED_GLOBS = (
-    "bench/*.h",
+    "benchmarks/*.h",
     "examples/*.h",
     "functional/*.h",
     "fuzz/*.h",
-    "load_census.h",
+    "tests/load/load_census.h",
     "proofs/cbmc/*.h",
     "proofs/cbmc/fragment_reassembly/*.h",
     "sdk/*.h",

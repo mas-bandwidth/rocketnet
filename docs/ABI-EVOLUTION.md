@@ -112,7 +112,7 @@ contains the backend's public key and protocol id, plus an optional
 keypair; a supplied secret is copied and its public key derived during create.
 The backend signing secret never belongs in this config. Read the server public
 key through `rocketnet_server_public_key`; destroy wipes the server's secret
-copy. The caller wipes its supplied copy after create. See [Keys](../KEYS.md).
+copy. The caller wipes its supplied copy after create. See [Keys](KEYS.md).
 
 The internal transport and message configs keep oldest-first known-size lists
 in the internal layer header, checked in `sdk/rocketnet_abi.cpp`; the public

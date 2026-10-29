@@ -14,7 +14,7 @@
 
 #if defined( __linux__ ) && ROCKETNET_DEV
 
-// The GSO worker's handoffs (tla/RNGsoHandoff.tla), stepped on this thread
+// The GSO worker's handoffs (proofs/tla/RNGsoHandoff.tla), stepped on this thread
 // with a faked transport: no socket, no worker thread, no clock.
 static void test_server_gso_worker_handoff()
 {

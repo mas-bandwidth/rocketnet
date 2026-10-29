@@ -6,7 +6,7 @@
 // Token churn: one token, one live connection, and nothing more. A slot is
 // freed when its connection closes, and a fresh token at a server with a
 // free slot always connects, however many players have come and gone
-// before it (tla/RNSecurityTables.tla, OneTokenOneLiveConnection and
+// before it (proofs/tla/RNSecurityTables.tla, OneTokenOneLiveConnection and
 // ChurnNeverDenied; docs/SESSION.md, Token reuse).
 //
 // Every case runs client and server protocols in memory on mocked time that
@@ -466,7 +466,7 @@ REGISTER_UNIT_TEST( test_response_replay_does_not_refresh_connected_slot );
 // ---------------------------------------------------------------------------
 // The request-claim table's common capacity check is O(1) after its bounded
 // full-token index probe (sdk/rocketnet_token_tables.cpp;
-// tla/RNSecurityTables.tla, ClaimRecord, ClaimRelease,
+// proofs/tla/RNSecurityTables.tla, ClaimRecord, ClaimRelease,
 // FreeAndOrderPartitionSlots, LiveClaimNeverReplaced and
 // CanRecordMatchesScan). A released claim goes back on the free list, live
 // claims sit in a chronological slot array, and the capacity test reads the

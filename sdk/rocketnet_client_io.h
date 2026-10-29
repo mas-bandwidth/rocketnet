@@ -37,18 +37,18 @@ void rocketnet_client_io_wipe( void * data, size_t bytes );
 
 #define ROCKETNET_CLIENT_IO_BATCH 64
 // The idle wait's timeout. The I/O thread wakes on its socket or its wake
-// (tla/RNClientIo.tla IoWake needs no timeout); this only bounds a lost wake,
+// (proofs/tla/RNClientIo.tla IoWake needs no timeout); this only bounds a lost wake,
 // so an idle client wakes at most 20 times a second. At 1 ms, 1000 clients on
 // one host woke 340,000 times a second and starved threads for seconds.
 #define ROCKETNET_CLIENT_IO_GUARD_TIMEOUT_SECONDS 0.05    // a guard, never a cadence
 
 // The receive buffers: the I/O thread fills one, one waits ready, update
-// holds one (the triple buffer of tla/RNBufferHandoff.tla, MaxReady 1).
+// holds one (the triple buffer of proofs/tla/RNBufferHandoff.tla, MaxReady 1).
 
 #define ROCKETNET_CLIENT_IO_NUM_BUFFERS 3
 
 // The send rings: game threads fill one, and up to two wait for or are sent
-// by the I/O thread (tla/RNBufferHandoff.tla, MaxReady 2).
+// by the I/O thread (proofs/tla/RNBufferHandoff.tla, MaxReady 2).
 
 #define ROCKETNET_CLIENT_IO_NUM_RINGS 3
 
@@ -102,7 +102,7 @@ struct rocketnet_client_receive_buffer_t
 // The I/O thread's open block (docs/CLIENT-IO-DECRYPT.md): an I/O-owned copy
 // of the session open key, protocol id, connection salt and filter value, an
 // open epoch (0 none, odd live generation, a retired value), and the I/O
-// thread's own replay window (tla/RNClientIoDecrypt.tla epoch, ioKeys, ioWin).
+// thread's own replay window (proofs/tla/RNClientIoDecrypt.tla epoch, ioKeys, ioWin).
 // The main thread writes the copy then stores the epoch with release
 // (PublishKeys); to retire it stores retired with seq_cst before zeroing its
 // own keys (RetireKeys). The I/O thread loads the epoch with acquire at the top
@@ -123,7 +123,7 @@ struct rocketnet_client_io_open_t
     uint32_t loaded_epoch;          // the epoch the I/O thread last took; I/O thread only
 };
 
-// Both handoffs are rocketnet_buffer_handoff_t (tla/RNBufferHandoff.tla):
+// Both handoffs are rocketnet_buffer_handoff_t (proofs/tla/RNBufferHandoff.tla):
 // each ring and each receive buffer has one owner at a time, and only their
 // indices cross threads, under the transport's mutex, which covers nothing
 // else. The main thread only try-acquires it; the I/O thread acquires it.
@@ -221,7 +221,7 @@ inline void rocketnet_client_io_init( rocketnet_client_io_t * io, const rocketne
     io->prefilter_too_large = NULL;
 }
 
-// tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
+// proofs/tla/RNClientIoDecrypt.tla PublishKeys; main thread, where the challenge
 // derives the session keys. Writes the I/O-owned open copy, then stores the
 // live epoch with release; the I/O thread takes the copy at the top of its next
 // drain. One attempt per transport: a publish once the epoch has left none is
@@ -243,7 +243,7 @@ inline void rocketnet_client_io_publish_keys( rocketnet_client_io_t * io, const 
     io->open.epoch.store( ROCKETNET_CLIENT_IO_EPOCH_LIVE, std::memory_order_release );
 }
 
-// tla/RNClientIoDecrypt.tla RetireKeys; main thread, at the integrity limit,
+// proofs/tla/RNClientIoDecrypt.tla RetireKeys; main thread, at the integrity limit,
 // disconnect and destroy, before the main thread zeroes its own keys. Stores
 // retired with seq_cst and wakes the I/O thread, so a blocked I/O thread reads
 // the epoch and drops its copy (README-RNClientIoDecrypt.md, Findings). The
@@ -260,7 +260,7 @@ inline void rocketnet_client_io_retire_keys( rocketnet_client_io_t * io )
         io->transport->operations->wake( io->transport->instance );
 }
 
-// tla/RNClientIoDecrypt.tla IoDropKeys; I/O thread. Zeroes the copy and the
+// proofs/tla/RNClientIoDecrypt.tla IoDropKeys; I/O thread. Zeroes the copy and the
 // window; nothing opens after.
 
 inline void rocketnet_client_io_drop_keys( rocketnet_client_io_t * io )
@@ -275,7 +275,7 @@ inline void rocketnet_client_io_drop_keys( rocketnet_client_io_t * io )
     memset( &io->open.replay, 0, sizeof( io->open.replay ) );
 }
 
-// tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys; I/O thread,
+// proofs/tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys; I/O thread,
 // at the top of each drain. One acquire load of the epoch: a new live value
 // takes the copy and resets the I/O thread's window (IoTakeKeys), retired
 // zeroes the copy (IoDropKeys), no change keeps it (IoKeepKeys).
@@ -294,7 +294,7 @@ inline void rocketnet_client_io_take_keys( rocketnet_client_io_t * io )
         memset( &io->open.replay, 0, sizeof( io->open.replay ) );
 }
 
-// tla/RNClientIoDecrypt.tla IoCheck, the wire floor rung: the per-type size
+// proofs/tla/RNClientIoDecrypt.tla IoCheck, the wire floor rung: the per-type size
 // check the main thread runs first (sdk/rocketnet_wire.h); 0 for a type that
 // is not a session type.
 
@@ -311,7 +311,7 @@ inline int rocketnet_client_io_session_floor( int type )
     }
 }
 
-// tla/RNClientIoDecrypt.tla IoCheck then IoOpen; I/O thread, per datagram,
+// proofs/tla/RNClientIoDecrypt.tla IoCheck then IoOpen; I/O thread, per datagram,
 // before the fill is published. A datagram that is not a session packet, one from any
 // source but the dialed server (update drops it as junk before the protocol,
 // so it must not mark the I/O thread's window), or any datagram while the copy
@@ -383,8 +383,8 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
     *out_sequence = sequence;
 }
 
-// tla/RNClientIo.tla Stop: stores quit and may mark the filling ring final, and never waits.
-// tla/RNBufferHandoff.tla MainStop: the same store ends the producer and wakes the worker.
+// proofs/tla/RNClientIo.tla Stop: stores quit and may mark the filling ring final, and never waits.
+// proofs/tla/RNBufferHandoff.tla MainStop: the same store ends the producer and wakes the worker.
 // A filling ring with committed slots passes to the I/O thread with the quit store, so this
 // takes no mutex and never waits: no producer touches it afterwards, and the
 // I/O thread sends it after every ready ring, then exits. Then the wake.
@@ -409,9 +409,9 @@ inline void rocketnet_client_io_stop( rocketnet_client_io_t * io, uint64_t commi
         io->transport->operations->wake( io->transport->instance );
 }
 
-// tla/RNClientIo.tla HandOffTo: publishes the filling ring and names the next filling ring.
-// tla/RNClientIo.tla DeferTo: leaves the committed slots in the filling ring when the exchange cannot run.
-// tla/RNBufferHandoff.tla ProducerExchange: try-acquires the mutex and swaps the producer index.
+// proofs/tla/RNClientIo.tla HandOffTo: publishes the filling ring and names the next filling ring.
+// proofs/tla/RNClientIo.tla DeferTo: leaves the committed slots in the filling ring when the exchange cannot run.
+// proofs/tla/RNBufferHandoff.tla ProducerExchange: try-acquires the mutex and swaps the producer index.
 // A LATE result is the deferred hand-off of docs/CLIENT-IO.md _Reuse only
 // after sent_: no ring is free, or the I/O thread holds the mutex this
 // instant, so the committed slots stay in the Filling ring and leave with the
@@ -459,7 +459,7 @@ inline int rocketnet_client_io_hand_off( rocketnet_client_io_t * io, uint64_t co
     return ROCKETNET_CLIENT_RINGS_HANDED_OFF;
 }
 
-// tla/RNBufferHandoff.tla ConsumerExchange: gives back a buffer update
+// proofs/tla/RNBufferHandoff.tla ConsumerExchange: gives back a buffer update
 // still holds and takes the ready one, in one try-acquired index exchange;
 // wakes the I/O thread after releasing the mutex when it owed a publish.
 // False when the mutex was busy: nothing moved, and the next call retries.
@@ -483,8 +483,8 @@ inline bool rocketnet_client_io_receive_exchange( rocketnet_client_io_t * io, bo
     return true;
 }
 
-// tla/RNClientIo.tla Expose: returns the ready buffer and holds it for this update.
-// tla/RNClientIoDecrypt.tla Expose: the same ready buffer, for update to read in arrival order.
+// proofs/tla/RNClientIo.tla Expose: returns the ready buffer and holds it for this update.
+// proofs/tla/RNClientIoDecrypt.tla Expose: the same ready buffer, for update to read in arrival order.
 // Main thread, at update's start. Returns the ready
 // buffer and holds it, or NULL when none is ready or the mutex was busy (the
 // datagrams wait for the next update; none is lost).
@@ -499,8 +499,8 @@ inline rocketnet_client_receive_buffer_t * rocketnet_client_io_expose( rocketnet
     return io->receive_held >= 0 ? io->buffer[io->receive_held] : NULL;
 }
 
-// tla/RNClientIo.tla Return: gives the held buffer back so the I/O thread can fill it again.
-// tla/RNClientIoDecrypt.tla Return: the same give-back of the buffer update held.
+// proofs/tla/RNClientIo.tla Return: gives the held buffer back so the I/O thread can fill it again.
+// proofs/tla/RNClientIoDecrypt.tla Return: the same give-back of the buffer update held.
 // Main thread, at update's end. Gives the held buffer back
 // so the I/O thread can publish into it during the frame; a busy mutex keeps
 // it held until the next expose returns it.
@@ -514,7 +514,7 @@ inline void rocketnet_client_io_return( rocketnet_client_io_t * io )
     (void) rocketnet_client_io_receive_exchange( io, false );
 }
 
-// tla/RNClientIo.tla IoSend: sends each committed slot of one ring whose byte count is nonzero.
+// proofs/tla/RNClientIo.tla IoSend: sends each committed slot of one ring whose byte count is nonzero.
 // Slot i is at data + i * frame_stride +
 // wire_offset; a zero int byte count is an aborted slot and stays unsent.
 
@@ -567,22 +567,22 @@ inline void rocketnet_client_io_send_ring( rocketnet_client_io_t * io, int ring 
     }
 }
 
-// tla/RNClientIo.tla IoSend: sends every committed slot of the ring in hand.
-// tla/RNClientIo.tla IoReceive: reads datagrams into the fill buffer while it has room.
-// tla/RNClientIo.tla IoPublish: publishes a filled buffer and takes a free one.
-// tla/RNClientIo.tla IoOwe: leaves the fill buffer in hand when no free buffer is waiting.
-// tla/RNClientIo.tla IoWait: blocks when the step did no work and quit is clear.
-// tla/RNClientIo.tla IoWake: that wait returns when the socket or the wake is signalled.
-// tla/RNClientIo.tla IoClearWake: a wake already set makes that wait return at once and clears it.
-// tla/RNClientIo.tla IoExit: after the final ring is sent, stores stopped and leaves.
-// tla/RNClientIoDecrypt.tla IoReceive: the same drain opens each datagram before the buffer is published.
-// tla/RNClientIoDecrypt.tla IoPublish: publishes the fill buffer after the open.
-// tla/RNClientIoDecrypt.tla IoOwe: keeps the fill buffer when the publish cannot take a free one.
-// tla/RNClientIoDecrypt.tla IoWait: the same idle wait.
-// tla/RNClientIoDecrypt.tla IoWake: the same return from the idle wait.
-// tla/RNClientIoDecrypt.tla IoClearWake: the same already-set wake returning at once.
-// tla/RNBufferHandoff.tla WorkerWait: the idle worker waits on the wake.
-// tla/RNBufferHandoff.tla WorkerWakes: that wait returns and the worker runs again.
+// proofs/tla/RNClientIo.tla IoSend: sends every committed slot of the ring in hand.
+// proofs/tla/RNClientIo.tla IoReceive: reads datagrams into the fill buffer while it has room.
+// proofs/tla/RNClientIo.tla IoPublish: publishes a filled buffer and takes a free one.
+// proofs/tla/RNClientIo.tla IoOwe: leaves the fill buffer in hand when no free buffer is waiting.
+// proofs/tla/RNClientIo.tla IoWait: blocks when the step did no work and quit is clear.
+// proofs/tla/RNClientIo.tla IoWake: that wait returns when the socket or the wake is signalled.
+// proofs/tla/RNClientIo.tla IoClearWake: a wake already set makes that wait return at once and clears it.
+// proofs/tla/RNClientIo.tla IoExit: after the final ring is sent, stores stopped and leaves.
+// proofs/tla/RNClientIoDecrypt.tla IoReceive: the same drain opens each datagram before the buffer is published.
+// proofs/tla/RNClientIoDecrypt.tla IoPublish: publishes the fill buffer after the open.
+// proofs/tla/RNClientIoDecrypt.tla IoOwe: keeps the fill buffer when the publish cannot take a free one.
+// proofs/tla/RNClientIoDecrypt.tla IoWait: the same idle wait.
+// proofs/tla/RNClientIoDecrypt.tla IoWake: the same return from the idle wait.
+// proofs/tla/RNClientIoDecrypt.tla IoClearWake: the same already-set wake returning at once.
+// proofs/tla/RNBufferHandoff.tla WorkerWait: the idle worker waits on the wake.
+// proofs/tla/RNBufferHandoff.tla WorkerWakes: that wait returns and the worker runs again.
 
 inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 {
@@ -601,10 +601,10 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     bool worked = false;
 
-    // tla/RNClientIo.tla IoFinishRing: releases a ring whose slots were sent and clears the ring in hand.
-    // tla/RNClientIoShutdown.tla FinishRing: the same release, the sending ring becoming sent.
-    // tla/RNClientIoShutdown.tla TakeRing: takes the oldest handed-off ring into the sending hand.
-    // tla/RNBufferHandoff.tla ConsumerExchange: gives back the ring sent last step and takes the oldest ready one.
+    // proofs/tla/RNClientIo.tla IoFinishRing: releases a ring whose slots were sent and clears the ring in hand.
+    // proofs/tla/RNClientIoShutdown.tla FinishRing: the same release, the sending ring becoming sent.
+    // proofs/tla/RNClientIoShutdown.tla TakeRing: takes the oldest handed-off ring into the sending hand.
+    // proofs/tla/RNBufferHandoff.tla ConsumerExchange: gives back the ring sent last step and takes the oldest ready one.
     // The send runs outside the mutex. Once quit is stored this repeats until no ring is ready.
 
     do
@@ -627,9 +627,9 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     if ( quitting )
     {
-        // tla/RNClientIo.tla IoExit: no ring is left in hand, so the final ring is sent, then stopped is stored.
-        // tla/RNBufferHandoff.tla WorkerExit: the worker sends the final ring and does not wait again.
-        // tla/RNClientIoShutdown.tla WorkerExit: the same exit after the last ring.
+        // proofs/tla/RNClientIo.tla IoExit: no ring is left in hand, so the final ring is sent, then stopped is stored.
+        // proofs/tla/RNBufferHandoff.tla WorkerExit: the worker sends the final ring and does not wait again.
+        // proofs/tla/RNClientIoShutdown.tla WorkerExit: the same exit after the last ring.
         if ( io->send_final >= 0 )
             rocketnet_client_io_send_ring( io, io->send_final );
 
@@ -639,8 +639,8 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         return ROCKETNET_CLIENT_IO_EXITED;
     }
 
-    // tla/RNClientIo.tla IoReceive: drains datagrams into the buffer the I/O thread holds.
-    // tla/RNClientIoDecrypt.tla IoReceive: each of those datagrams is opened before the buffer is published.
+    // proofs/tla/RNClientIo.tla IoReceive: drains datagrams into the buffer the I/O thread holds.
+    // proofs/tla/RNClientIoDecrypt.tla IoReceive: each of those datagrams is opened before the buffer is published.
     // Every received datagram becomes a record, a runt or an oversize one
     // too: the main thread's prefilter (sdk/rocketnet_client_protocol.cpp,
     // sizes checked in sdk/rocketnet_protocol.cpp) refuses it and counts
@@ -649,7 +649,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 
     rocketnet_client_receive_buffer_t * buffer = io->buffer[io->receive_fill];
 
-    // tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys, IoKeepKeys: the epoch
+    // proofs/tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys, IoKeepKeys: the epoch
     // is read once at the top of the drain. The keys are published before the
     // connection response is handed off, and this read comes before the drain
     // of the step that sends it, so every reply to the response is received
@@ -757,11 +757,11 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
     }
 
-    // tla/RNClientIo.tla IoPublish: publishes the filled buffer and takes a free one when one is waiting.
-    // tla/RNClientIo.tla IoOwe: records the publish as owed when no free buffer is waiting.
-    // tla/RNClientIoDecrypt.tla IoPublish: publishes the fill buffer after each datagram was opened.
-    // tla/RNClientIoDecrypt.tla IoOwe: keeps that buffer when the publish cannot take a free one.
-    // tla/RNBufferHandoff.tla ProducerExchange: the worker publishes the filled buffer
+    // proofs/tla/RNClientIo.tla IoPublish: publishes the filled buffer and takes a free one when one is waiting.
+    // proofs/tla/RNClientIo.tla IoOwe: records the publish as owed when no free buffer is waiting.
+    // proofs/tla/RNClientIoDecrypt.tla IoPublish: publishes the fill buffer after each datagram was opened.
+    // proofs/tla/RNClientIoDecrypt.tla IoOwe: keeps that buffer when the publish cannot take a free one.
+    // proofs/tla/RNBufferHandoff.tla ProducerExchange: the worker publishes the filled buffer
     // when no buffer is waiting ready and one is free, taking the free one in
     // the same exchange. Otherwise the publish is owed: update's next exchange
     // reads it under the same mutex and wakes this thread, and the buffer keeps
@@ -784,14 +784,14 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
         }
     }
 
-    // tla/RNClientIo.tla IoWait: waits only when nothing was done.
-    // tla/RNClientIo.tla IoWake: the wait returns when the socket or the wake is signalled.
-    // tla/RNClientIo.tla IoClearWake: a wake already set makes that wait return at once and clears it.
-    // tla/RNClientIoDecrypt.tla IoWait: the same idle wait.
-    // tla/RNClientIoDecrypt.tla IoWake: the same return from that wait.
-    // tla/RNClientIoDecrypt.tla IoClearWake: the same already-set wake returning at once.
-    // tla/RNBufferHandoff.tla WorkerWait: the idle worker waits here.
-    // tla/RNBufferHandoff.tla WorkerWakes: that wait returns and the worker runs again.
+    // proofs/tla/RNClientIo.tla IoWait: waits only when nothing was done.
+    // proofs/tla/RNClientIo.tla IoWake: the wait returns when the socket or the wake is signalled.
+    // proofs/tla/RNClientIo.tla IoClearWake: a wake already set makes that wait return at once and clears it.
+    // proofs/tla/RNClientIoDecrypt.tla IoWait: the same idle wait.
+    // proofs/tla/RNClientIoDecrypt.tla IoWake: the same return from that wait.
+    // proofs/tla/RNClientIoDecrypt.tla IoClearWake: the same already-set wake returning at once.
+    // proofs/tla/RNBufferHandoff.tla WorkerWait: the idle worker waits here.
+    // proofs/tla/RNBufferHandoff.tla WorkerWakes: that wait returns and the worker runs again.
     // waitReadable: wait only when nothing was done.
     // readable is true only while the I/O thread's buffer has room. With a
     // full buffer this waits on the wake alone: a wait that also returned on
@@ -808,7 +808,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
     return worked ? ROCKETNET_CLIENT_IO_WORKED : ROCKETNET_CLIENT_IO_IDLE;
 }
 
-// tla/RNClientIo.tla IoExit: runs the step until it has stored stopped and returned exited.
+// proofs/tla/RNClientIo.tla IoExit: runs the step until it has stored stopped and returned exited.
 // The transport creates the thread with this function and joins it before closing the transport.
 
 inline void rocketnet_client_io_thread_function( void * data )

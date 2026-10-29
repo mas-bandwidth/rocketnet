@@ -3,7 +3,7 @@
 Use [Getting started](GETTING-STARTED.md) to build and run the examples already
 in the repository. This page is for a reader who wants a complete C program to
 copy into a separate project. Build and link against the same public header
-and library as described in [Building](../BUILDING.md).
+and library as described in [Building](BUILDING.md).
 
 ## Connect, exchange a message, and shut down
 

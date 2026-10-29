@@ -450,9 +450,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 // and, when it verifies, the sealed-block open, a keypair and the key
 // exchange. A request past it is dropped before any asymmetric work and
 // counted; the client's next request, at its send rate, is processed in a
-// later update (tla/RNSecurityTables.tla HonestRequest). One request costs
+// later update (proofs/tla/RNSecurityTables.tla HonestRequest). One request costs
 // about 130 to 190 us with a valid token and 42 to 67 us with a forged
-// signature on a Ryzen 7 255 (bench/handshake_cost.cpp), so the old fixed
+// signature on a Ryzen 7 255 (benchmarks/handshake_cost.cpp), so the old fixed
 // budget of 1024, now the ceiling, let one update run about 190 ms of
 // handshakes. The default of 16 bounds it to about 3 ms, and still seats a
 // 1000-client mass join in about 6.3 s when every client's request lands in

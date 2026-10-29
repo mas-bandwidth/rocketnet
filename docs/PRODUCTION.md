@@ -2,8 +2,8 @@
 
 This guide replaces the development-token shortcut with a backend that issues
 tokens for a running game server. Complete [Getting started](GETTING-STARTED.md)
-first. For key ownership and rotation, use [Keys](../KEYS.md); for operational
-limits, use [qualification](../TESTING.md) and [memory planning](MEMORY.md).
+first. For key ownership and rotation, use [Keys](KEYS.md); for operational
+limits, use [qualification](TESTING.md) and [memory planning](MEMORY.md).
 
 The Go and C# examples are token services. They are **not production services
 as shipped**: their HTTP registration and token endpoints do not authenticate
@@ -96,7 +96,7 @@ By default, `rocketnet_server_create` generates an X25519 keypair. This
 example uses that default. A deployment that needs a stable server identity
 can instead supply `config.server_secret_key` at create; it has no environment
 variable. Wipe the caller's copy after create. The server keeps its key across
-stop/start, and destroy wipes its copy. See [Keys](../KEYS.md#where-each-key-lives). After `rocketnet_server_start` succeeds, the server
+stop/start, and destroy wipes its copy. See [Keys](KEYS.md#where-each-key-lives). After `rocketnet_server_start` succeeds, the server
 exports its bound UDP address and 32-byte X25519 public key
 (`rocketnet_server_public_key`) so the backend can seal tokens to it. From
 [examples/backend_server.c](../examples/backend_server.c), lines 101 to 120 and

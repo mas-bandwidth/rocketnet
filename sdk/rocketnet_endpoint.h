@@ -24,7 +24,7 @@
 // come in (send, acked, payload, tick), actions go out (bytes into a frame the
 // caller supplies, deliveries, receipts, an error, a deadline). The endpoint
 // never reads a clock (time is the `now` argument), never calls the transport
-// and never allocates. tla/RNEndpoint.tla is its spec; each function names the
+// and never allocates. proofs/tla/RNEndpoint.tla is its spec; each function names the
 // action it implements.
 //
 // The message objects (sdk/rocketnet_message_object.h) hold one endpoint per
@@ -71,7 +71,7 @@ struct rn_endpoint_config_t
     X( serial, uint32_t serial ) /* the receipt serial of the last finished send (7.4) */ /* the start between start and finish (one at a time) */                                                                                          \
     X( pending_type, int pending_type ) /* -1 when no start is pending */                                                                             \
     X( pending_descriptor, uint32_t pending_descriptor ) /* UNRELIABLE: its send descriptor */                                                        \
-    X( pending_bytes, uint32_t pending_bytes ) /* the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla): */ /* a fitting unreliable message written in the transport frame start took */                                                                      \
+    X( pending_bytes, uint32_t pending_bytes ) /* the in-place unreliable send (docs/OUTGOING-BUILD.md, proofs/tla/RNOutgoingBuild.tla): */ /* a fitting unreliable message written in the transport frame start took */                                                                      \
     X( pending_in_place, int pending_in_place ) /* 1 while the pending start is written in place */                                                   \
     X( pending_channel, int pending_channel ) /* its channel */                                                                                       \
     X( pending_header, int pending_header ) /* its header bytes in front of the data (0: the SINGLE form) */                                          \
@@ -108,7 +108,7 @@ void rn_endpoint_init( struct rn_endpoint_t * endpoint, rn_region_t * region, co
 // bound to it fresh, so nothing of the previous connection is reachable.
 void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now );
 
-// tla/RNEndpoint.tla Reset, the CONFIG half (10.3): called when the connection
+// proofs/tla/RNEndpoint.tla Reset, the CONFIG half (10.3): called when the connection
 // this endpoint was reset for is connected, before anything else is queued.
 // This end's CONFIG control record takes the connection's first reliable
 // number and is resent until acked. No room is region exhaustion, which
@@ -119,7 +119,7 @@ void rn_endpoint_announce_config( struct rn_endpoint_t * endpoint, double now );
 //                          events in
 // ---------------------------------------------------------------
 
-// tla/RNSendBudget.tla SetKbps (R6): the runtime override. kbps 0 or lower
+// proofs/tla/RNSendBudget.tla SetKbps (R6): the runtime override. kbps 0 or lower
 // uncaps this connection; a positive value up to
 // ROCKETNET_SEND_BUDGET_MAX_KBPS caps it, initialising the bucket at now when
 // the connection was uncapped. Above the maximum is refused, unchanged.
@@ -148,7 +148,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
 void rn_endpoint_abort( struct rn_endpoint_t * endpoint );
 
 // The in-place send of a fitting unreliable message (docs/OUTGOING-BUILD.md,
-// tla/RNOutgoingBuild.tla StartInPlace and FinishInPlace): the owner starts a
+// proofs/tla/RNOutgoingBuild.tla StartInPlace and FinishInPlace): the owner starts a
 // transport frame and the message is written in it, with no copy between the
 // message layer and the transport. in_place_header answers the header bytes
 // in front of the data (0 for UNRELIABLE, the SINGLE form; 3 for the receipt
@@ -212,7 +212,7 @@ bool rn_endpoint_on_payload( struct rn_endpoint_t * endpoint, const uint8_t * pa
 // update for every connected endpoint, whether or not its write pass runs.
 void rn_endpoint_tick( struct rn_endpoint_t * endpoint, double now );
 
-// tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,
+// proofs/tla/RNEndpoint.tla Tick, the CONFIG half (10.3): called once per update,
 // after the update's payloads. The first call with transport_connected set
 // starts the wait for the remote endpoint's CONFIG; from then on, a call at
 // reliable_timeout or more after it, with the remote endpoint's CONFIG still not taken,

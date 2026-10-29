@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The ReplayWindow model trace (tla/ReplayWindow.tla, tla/MCReplayWindow.tla,
-// tla/README-ReplayWindow.md) driven against the real C++: a pure C++
+// The ReplayWindow model trace (proofs/tla/ReplayWindow.tla, proofs/tla/MCReplayWindow.tla,
+// proofs/tla/README-ReplayWindow.md) driven against the real C++: a pure C++
 // reference of the model's state -- the set of received sequences and the
 // window floor -- is stepped in lockstep with the code's
 // rocketnet_replay_already_received / rocketnet_replay_advance (and the
@@ -13,7 +13,7 @@
 // comparing after each step which sequences each side accepts as new.
 //
 // The reference carries the model's two fix constants (the CONSTANTS of
-// tla/ReplayWindow.tla) at the rule values the code now implements --
+// proofs/tla/ReplayWindow.tla) at the rule values the code now implements --
 // ClearedWords = Words
 // (a long skip clears the whole ring) and GateBeforeAdvance = TRUE (the server
 // checks the slot before it advances the window). The trace drives the raw
@@ -42,7 +42,7 @@
 // ---------------------------------------------------------------------------
 // The pure C++ reference of the model's state. W is the code's real width
 // (ROCKETNET_REPLAY_WINDOW_BITS); the model's small instance (W = 12,
-// Words = 6, WordBits = 2, tla/MCReplayWindow.cfg) is the same ring at that
+// Words = 6, WordBits = 2, proofs/tla/MCReplayWindow.cfg) is the same ring at that
 // width, and the small-alphabet sequences below are scaled to the real width
 // exactly as README-ReplayWindow.md scales the witness.
 // ---------------------------------------------------------------------------
@@ -51,11 +51,11 @@ static const int k_model_words = ROCKETNET_REPLAY_WINDOW_BITS / 64;
 
 struct replay_window_ref_t
 {
-    // model constants (the CONSTANTS of tla/ReplayWindow.tla)
+    // model constants (the CONSTANTS of proofs/tla/ReplayWindow.tla)
     int cleared_words;          // ClearedWords: words the long-skip branch clears
     int gate_before_advance;    // GateBeforeAdvance: check the slot before advancing
 
-    // model state (the VARIABLES of tla/ReplayWindow.tla)
+    // model state (the VARIABLES of proofs/tla/ReplayWindow.tla)
     uint64_t highest;                       // highest_opened
     uint64_t window[k_model_words];         // the ring, the code's exact bit layout
     std::set<uint64_t> received;            // ghost: in-range sequences that opened
@@ -73,7 +73,7 @@ struct replay_window_ref_t
         connected = 0;
     }
 
-    // Floor (tla/ReplayWindow.tla:108)
+    // Floor (proofs/tla/ReplayWindow.tla:108)
     uint64_t floor() const
     {
         return highest >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS ? highest - ROCKETNET_REPLAY_WINDOW_BITS + 1 : 1;
@@ -84,7 +84,7 @@ struct replay_window_ref_t
         return (int) ( s % ROCKETNET_REPLAY_WINDOW_BITS );
     }
 
-    // AlreadyReceived (tla/ReplayWindow.tla); the code's
+    // AlreadyReceived (proofs/tla/ReplayWindow.tla); the code's
     // rocketnet_replay_already_received.
     // TRANSPORT.md t14 Replay protection.
     int already_received( uint64_t s ) const
@@ -111,7 +111,7 @@ struct replay_window_ref_t
 
     void prune( std::set<uint64_t> & set_ )
     {
-        // received' = { t in received : t + W > highest } (tla/ReplayWindow.tla,
+        // received' = { t in received : t + W > highest } (proofs/tla/ReplayWindow.tla,
         // Advance); ascending,
         // so the dropped entries are the smallest.
         std::set<uint64_t>::iterator it = set_.begin();
@@ -119,7 +119,7 @@ struct replay_window_ref_t
             it = set_.erase( it );
     }
 
-    // Advance (tla/ReplayWindow.tla); the code's rocketnet_replay_advance.
+    // Advance (proofs/tla/ReplayWindow.tla); the code's rocketnet_replay_advance.
     // TRANSPORT.md t14 Replay protection.
     void advance( uint64_t s )
     {
@@ -128,7 +128,7 @@ struct replay_window_ref_t
             uint64_t skipped = s - highest;
             if ( skipped >= (uint64_t) ROCKETNET_REPLAY_WINDOW_BITS )
             {
-                // Cleared (tla/ReplayWindow.tla), the long-skip branch: clear every
+                // Cleared (proofs/tla/ReplayWindow.tla), the long-skip branch: clear every
                 // word, ClearedWords = Words.
                 for ( int w = 0; w < cleared_words; w++ )
                     window[w] = 0;
@@ -145,7 +145,7 @@ struct replay_window_ref_t
         prune( received );
     }
 
-    // Receive (tla/ReplayWindow.tla); the session receive gate.
+    // Receive (proofs/tla/ReplayWindow.tla); the session receive gate.
     // TRANSPORT.md t10 step 12 (a slotless mapping is ignored before the
     // mark), the rule GateBeforeAdvance = TRUE.
     void receive( uint64_t s )
@@ -161,7 +161,7 @@ struct replay_window_ref_t
         }
     }
 
-    // Connect (tla/ReplayWindow.tla); the server's response path.
+    // Connect (proofs/tla/ReplayWindow.tla); the server's response path.
     void connect_()
     {
         connected = 1;
@@ -314,7 +314,7 @@ static void test_replay_window_model_trace()
 // ---------------------------------------------------------------------------
 
 // F1 (rnfix-replay-long-skip-clears-window-r2, rocketnet#189): the
-// ClearedWords = Words rule (the CONSTANTS of tla/ReplayWindow.tla) -- an
+// ClearedWords = Words rule (the CONSTANTS of proofs/tla/ReplayWindow.tla) -- an
 // advance of at
 // least the window width forgets everything, so a genuine in-range packet is
 // never refused as already received. TRANSPORT.md t14 Replay protection. The
@@ -354,7 +354,7 @@ static void test_replay_long_skip_clears_the_whole_window()
 }
 
 // OV-34 (rnfix-replay-advanced-after-connect-check-r2): the GateBeforeAdvance
-// rule (the CONSTANTS and Receive of tla/ReplayWindow.tla) -- a mapping without a slot never
+// rule (the CONSTANTS and Receive of proofs/tla/ReplayWindow.tla) -- a mapping without a slot never
 // moves its session window, so the server checks the slot before the mark.
 // TRANSPORT.md t10 step 12. The server now gates before the advance,
 // GateBeforeAdvance = TRUE.

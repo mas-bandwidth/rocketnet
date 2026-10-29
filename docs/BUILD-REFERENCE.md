@@ -1,10 +1,10 @@
 # Build reference and contributor checks
 
-For a first build, install, or embedded SDK, use [Building](../BUILDING.md).
+For a first build, install, or embedded SDK, use [Building](BUILDING.md).
 This page retains toolchain details, contributor test policy, sanitizer setup,
 and build-system design. Commands run from the repository root. Historical
 toolchain observations describe the recorded run, not qualification of a newer
-checkout; current evidence is indexed in [Testing](../TESTING.md).
+checkout; current evidence is indexed in [Testing](TESTING.md).
 
 ## Build-system boundaries and test policy
 
@@ -14,7 +14,7 @@ implementation symbols; `tools/exports.txt` lists the supported C exports. CI
 compares the built shared library with that list and checks that the static
 archive contains no test suite. Review intentional ABI changes in the list as
 part of the same change. The major version names SDK calling/layout
-compatibility, separately from the wire version; see [ABI compatibility](../BUILDING.md#abi-compatibility).
+compatibility, separately from the wire version; see [ABI compatibility](BUILDING.md#abi-compatibility).
 
 Deploying a server on Linux: [docs/LINUX.md](LINUX.md) covers the build, the production `xdp -> gso -> io_uring -> portable` transport ladder and pinning, what `gso`, `io_uring` and `xdp` need from the host, socket errors and ICMP, the fd and memlock limits for 1000 clients, containers, and how to verify a host. Both builds offer portable as the final Linux fallback.
 
@@ -390,7 +390,7 @@ either takes another address as its argument
 (`bin\Release\server.exe 192.0.2.10:40000`). The client logs its change
 to the `connected` state once the handshake completes, then counts the echoed
 payloads. Ctrl+C stops either. For a first loopback try from your own project,
-see [Installing and embedding the SDK](../BUILDING.md#installing-and-embedding-the-sdk).
+see [Installing and embedding the SDK](BUILDING.md#installing-and-embedding-the-sdk).
 
 Every rocketnet server binds the wildcard address (`0.0.0.0:40000` for the
 example server), so on an interactive desktop the first run of `server.exe`,
@@ -398,7 +398,7 @@ example server), so on an interactive desktop the first run of `server.exe`,
 Loopback traffic works whatever is chosen there; allow access only on the
 networks remote clients connect from.
 
-The build compiles `server_xdp/server_xdp.c` to `server_xdp.o` with a clang that
+The build compiles `sdk/xdp/server_xdp.c` to `server_xdp.o` with a clang that
 has the BPF target. It embeds the bytes in the library. The server host needs no
 compiler. AF_XDP comes from libxdp on newer systems or from libbpf 0.5
 (`bpf/xsk.h`) on Ubuntu 22.04. Without such a clang or an AF_XDP provider, or with

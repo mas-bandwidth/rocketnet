@@ -14,7 +14,7 @@
 // message stream on a fuzz-chosen hostile wire.
 //
 // THE INVARIANTS ARE THE DST'S (dst_checks.h, each mirroring a TLA+ module in
-// tla/): channel c carries reliability type c, and every delivery is checked
+// proofs/tla/): channel c carries reliability type c, and every delivery is checked
 // against what was sent -- ordered types in order and exactly once, reliable
 // types exactly once, sequenced types never backwards, unreliable at most
 // once, every message whole. After the script a quiet window runs with a

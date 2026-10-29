@@ -701,11 +701,11 @@ static void test_equal_sequencing_at_a_held_block_is_superseded()
 
 REGISTER_UNIT_TEST( test_equal_sequencing_at_a_held_block_is_superseded );
 
-// RNChannelTypes!InTurnOneRule (tla/MCRNChannelTypesBlocks.cfg): an in-turn
+// RNChannelTypes!InTurnOneRule (proofs/tla/MCRNChannelTypesBlocks.cfg): an in-turn
 // code-4 block follows the record rule. It is checked against the watermark
 // and the in-turn block only, never against the held future state, and it is
 // delivered as soon as its last fragment arrives. The earlier code collected
-// it in the future-state slot (tla/MCRNChannelBrokenBlockInTurnHeld.cfg), so
+// it in the future-state slot (proofs/tla/MCRNChannelBrokenBlockInTurnHeld.cfg), so
 // a held future state discarded it (first receiver) and a future state that
 // arrived while it collected released it (second receiver).
 

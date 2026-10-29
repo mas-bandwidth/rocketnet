@@ -1929,7 +1929,7 @@ static void rn_soak_check_accounting( const rn_region_t * region )
     uint32_t descriptors_used = 0;
 
     // a descriptor at or past the lazy pool's watermark was never taken
-    // (tla/RNLazyPool.tla): not in use, and its bytes are not state
+    // (proofs/tla/RNLazyPool.tla): not in use, and its bytes are not state
 
     for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
     {
@@ -3690,7 +3690,7 @@ static void test_channels_window_rtt_sample_is_unambiguous_across_resends()
 static void test_channels_window_eviction_keeps_numbers_resendable()
 {
     // The map holds at least W entries (packets_in_flight >= reliable_messages_in_flight,
-    // tla/RNSentMap.tla), so W numbers sent one to a packet never evict one
+    // proofs/tla/RNSentMap.tla), so W numbers sent one to a packet never evict one
     // another. What the map does evict is a packet whose numbers have since been
     // resent: here 20 numbers are written four times, a resend delay apart,
     // and the fourth pass evicts the first pass's oldest 16 entries.
@@ -3776,7 +3776,7 @@ static void test_channels_window_eviction_keeps_numbers_resendable()
 
 static void test_channels_window_resend_delay_never_backs_off()
 {
-    // tla/RNResendTiming.tla: every resend waits the adaptive resend delay, which does
+    // proofs/tla/RNResendTiming.tla: every resend waits the adaptive resend delay, which does
     // not back off; an ack updates the samples and therefore the resend delay
 
     rocketnet_message_config_t config;
@@ -4730,7 +4730,7 @@ static void test_channels_window_lossy_soak()
 }
 
 // -----------------------------------------
-// Reversed-witness replays (CHANNELS 15, tla/README-RNWindow.md, tla/README-RNRing.md).
+// Reversed-witness replays (CHANNELS 15, proofs/tla/README-RNWindow.md, proofs/tla/README-RNRing.md).
 // Each test drives the concrete Layer 3 modules through the exact TLC witness
 // trace with the guarding rule in place, and fails on the named invariant
 // when that one-line rule is removed on the bench.

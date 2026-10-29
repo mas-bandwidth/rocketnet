@@ -5,7 +5,7 @@
 
 // A fitting unreliable message is written in place in the packet buffer, with
 // no copy between the message layer and the transport (docs/OUTGOING-BUILD.md,
-// tla/RNOutgoingBuild.tla, STANDARD.md _Payload forms_). The pointer start
+// proofs/tla/RNOutgoingBuild.tla, STANDARD.md _Payload forms_). The pointer start
 // returns lies inside the transport frame start_packet handed out, and the
 // bytes the game wrote there are the bytes finish_packet is given, at the same
 // address: buffer identity, not equal contents.

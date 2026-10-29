@@ -22,11 +22,11 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
 // section 6.4; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
-// tla/RNWindow.tla). Resend links name {message number, descriptor generation,
-// schedule epoch} (tla/RNChannelQueues.tla). A compact of acked holes is not
+// proofs/tla/RNWindow.tla). Resend links name {message number, descriptor generation,
+// schedule epoch} (proofs/tla/RNChannelQueues.tla). A compact of acked holes is not
 // done on the walk: capacity stays W and walk_visits still counts them.
 
-// tla/RNWindow.tla WritePacket
+// proofs/tla/RNWindow.tla WritePacket
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
     if ( region && region->counters )
@@ -38,7 +38,7 @@ static void rn_window_ack_count( const rn_region_t * region, int counter )
 // ----------------------------------------------------------------
 
 // The two sequences share the W entries: a number is in at most one of them,
-// the one its class picks when it is sequenced (tla/RNResendTiming.tla, one
+// the one its class picks when it is sequenced (proofs/tla/RNResendTiming.tla, one
 // sequence per class). Each entry links to its neighbours by slot index
 // inside the fixed window: no allocation, no pointers, O(1) to push at
 // either end, insert after a given slot or unlink from anywhere. Bit 31 of
@@ -144,7 +144,7 @@ static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
     ack->resend_count--;
 }
 
-// tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation.
+// proofs/tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation.
 // Generation 0 is never a live name.
 static void rn_resend_fifo_stamp( rn_window_ack_t * ack, uint32_t slot )
 {
@@ -277,7 +277,7 @@ static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, 
     return false;
 }
 
-// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
 static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint32_t entry_index )
 {
@@ -302,7 +302,7 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
     rocketnet_assert( false && "sent_index 2P table exhausted" );
 }
 
-// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
 // moves back each entry whose home is not cyclically in (hole, scan], and the
 // final hole clears last; the scan ends only on a cell already empty, so the
 // index is sized at twice its capacity
@@ -340,7 +340,7 @@ static void rn_sent_index_remove( rn_region_t * region, uint64_t packet_id )
 //      Sent-packet ring reclamation & oldest-unacked tracking
 // ----------------------------------------------------------------
 
-// tla/RNReceipts.tla RetireLostPacket: reclaims the retired head of the
+// proofs/tla/RNReceipts.tla RetireLostPacket: reclaims the retired head of the
 // sent-packet ring, dropping a lost packet's references from the map.
 static void rn_window_ack_reclaim_head( rn_window_ack_t * ack )
 {
@@ -416,7 +416,7 @@ static void rn_window_ack_record_first_send( rn_window_ack_t * ack, rn_send_numb
 // ----------------------------------------------------------------
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator
-// (docs/CHANNELS.md 6.4; tla/RNWindow.tla Init).
+// (docs/CHANNELS.md 6.4; proofs/tla/RNWindow.tla Init).
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config )
 {
     rocketnet_assert( ack );
@@ -452,7 +452,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
 
     ack->srtt = 0.0;
     ack->rttvar = 0.0;
-    ack->resend_delay = ack->resend_delay_initial;                // tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
+    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
     ack->has_rtt = 0;
     ack->has_oldest = 0;
     ack->error = ROCKETNET_DISCONNECT_REASON_NONE;
@@ -534,10 +534,10 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 // Commits a sent packet and its referenced reliable message numbers into the
 // P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
 // and W-entry resend FIFO (docs/CHANNELS.md 6.4 "On send" and "Eviction";
-// tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
+// proofs/tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
-// tla/RNReceipts.tla EmitAck
+// proofs/tla/RNReceipts.tla EmitAck
 static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, int32_t status )
 {
     if ( serial == 0 )
@@ -579,8 +579,8 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
     }
 }
 
-// tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
-// tla/RNSentMap.tla WriteAny: records the packet in the ring in send order, reclaiming the head past holes; the oldest entry is evicted only when the ring spans packets_in_flight
+// proofs/tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
+// proofs/tla/RNSentMap.tla WriteAny: records the packet in the ring in send order, reclaiming the head past holes; the oldest entry is evicted only when the ring spans packets_in_flight
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -631,7 +631,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     //    is incremented once per evicted packet entry). The config keeps
     //    P >= W (rocketnet_message_validate_config_ex), so with the resend
     //    delay above the round trip the evicted entry is never one whose ack
-    //    is still on its way (tla/RNSentMap.tla NoLiveEviction).
+    //    is still on its way (proofs/tla/RNSentMap.tla NoLiveEviction).
 
     rn_window_ack_reclaim_head( ack );
 
@@ -681,7 +681,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     rn_sent_index_insert( region, packet_id, entry_index );
 }
 
-// tla/RNReceipts.tla WritePacket
+// proofs/tla/RNReceipts.tla WritePacket
 void rn_window_ack_commit_packet( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count, double now )
 {
     rn_window_ack_commit( ack, packet_id, numbers, count, NULL, 0, now );
@@ -693,11 +693,11 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 }
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; tla/RNWindow.tla ReceiveAck,
-// tla/RNResendTiming.tla Sample).
-// tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
-// tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
-// tla/RNSentMap.tla Ack: an id the ring still holds marks its numbers acked and leaves a hole; an id it no longer holds is ignored.
+// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; proofs/tla/RNWindow.tla ReceiveAck,
+// proofs/tla/RNResendTiming.tla Sample).
+// proofs/tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
+// proofs/tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
+// proofs/tla/RNSentMap.tla Ack: an id the ring still holds marks its numbers acked and leaves a hole; an id it no longer holds is ignored.
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
@@ -760,7 +760,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
             const rn_resend_link_t * link = &region->resend_fifo[slot_index];
 
             // A named generation unlinks only that generation. Generation 0 means
-            // the link was stamped with no in-use descriptor (tla/RNChannelQueues.tla
+            // the link was stamped with no in-use descriptor (proofs/tla/RNChannelQueues.tla
             // Ack). That link still leaves on this ack while no descriptor has been
             // attached since the stamp.
 
@@ -833,7 +833,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
     return 1;
 }
 
-// tla/RNReceipts.tla TakeReceipt
+// proofs/tla/RNReceipts.tla TakeReceipt
 void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -848,7 +848,7 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
     ack->receipt_visible_tail = ack->receipt_head;
 }
 
-// tla/RNReceipts.tla TakeReceipt
+// proofs/tla/RNReceipts.tla TakeReceipt
 void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -860,7 +860,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
 
-    // tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: a type-5 receipt is
+    // proofs/tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: a type-5 receipt is
     // LOSS only once its packet's receipt deadline has passed. The deadline is
     // the fixed maximum resend delay (message_resend_delay_max_ms), never the
     // adaptive resend delay, so an ACK that arrives after the RTO estimate but
@@ -883,7 +883,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
     }
 }
 
-// tla/RNReceipts.tla TakeReceipt
+// proofs/tla/RNReceipts.tla TakeReceipt
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
 {
     if ( !ack || capacity < 0 || ( !out && capacity > 0 ) )
@@ -954,7 +954,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
 }
 
 // Checks the per-connection reliable timeout (docs/CHANNELS.md 6.4 "Giving up").
-// tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
+// proofs/tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );

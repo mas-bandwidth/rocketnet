@@ -348,7 +348,7 @@ static void portable_tx_worker( void * arg )
 }
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 
-// the RX handoff (tla/RNPortableRx.tla). The worker owns one producer bank
+// the RX handoff (proofs/tla/RNPortableRx.tla). The worker owns one producer bank
 // and reads the socket into it only when it is empty; it publishes a filled
 // producer onto the ready FIFO in exchange for a free bank. Main owns at most
 // one consumer bank and a cursor, and returns the consumer only when it is
@@ -358,7 +358,7 @@ static void portable_tx_worker( void * arg )
 
 static bool portable_rx_publish( portable_server_t * server )
 {
-    // tla/RNPortableRx.tla WPublishEmpty, WLock, WSwap and WReset: true when
+    // proofs/tla/RNPortableRx.tla WPublishEmpty, WLock, WSwap and WReset: true when
     // the producer is empty or was queued for a free bank. Without a free bank
     // the worker keeps its full producer (HoldOnFull) and stops reading the
     // socket.
@@ -388,7 +388,7 @@ static bool portable_rx_publish( portable_server_t * server )
 
 static bool portable_rx_acquire( portable_server_t * server )
 {
-    // tla/RNPortableRx.tla MTry, MTryFail, MSwap and MWake: true while main
+    // proofs/tla/RNPortableRx.tla MTry, MTryFail, MSwap and MWake: true while main
     // owns a consumer with datagrams left to copy. A completely copied consumer
     // is returned and the oldest ready bank taken under one try; a failed try
     // keeps the consumer and its cursor and ends the call. Main wakes the worker only when it returns a bank to an empty
@@ -440,7 +440,7 @@ enum portable_rx_step_t
 
 static portable_rx_step_t portable_rx_step( portable_server_t * server )
 {
-    // one pass of the RX worker loop, without its waits (tla/RNPortableRx.tla WTop,
+    // one pass of the RX worker loop, without its waits (proofs/tla/RNPortableRx.tla WTop,
     // publish and WRead). Quit is read at the top of every pass, so a stop that
     // sets quit before its wake (QuitBeforeWake) always ends the worker.
 
@@ -467,7 +467,7 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
 static void portable_rx_worker( void * arg )
 {
-    // tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
+    // proofs/tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
     // alone when every bank is full, and on the wake or socket readability
     // after an empty read.
 
@@ -554,7 +554,7 @@ static void portable_server_cleanup( portable_server_t * server )
     void * context = server->context;
 
     // the receive banks hold datagrams, never a secret: freed as they are,
-    // so destroy touches no bank page the run did not (tla/RNDestroyWipe.tla)
+    // so destroy touches no bank page the run did not (proofs/tla/RNDestroyWipe.tla)
 
     if ( server->rx_storage )
         rocketnet_free( context, server->rx_storage );
@@ -718,7 +718,7 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
 
 static int portable_receive( void * transport, rocketnet_address_t * from, uint8_t * data, int stride, int * bytes, int count )
 {
-    // tla/RNPortableRx.tla MCall, MCopy and MEnd: a call copies datagrams from
+    // proofs/tla/RNPortableRx.tla MCall, MCopy and MEnd: a call copies datagrams from
     // the consumer at its cursor within the caller's count and returns when the
     // count is spent or no consumer is left; a stopping server returns nothing.
 
@@ -763,7 +763,7 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
 
 static void portable_stop( void * transport )
 {
-    // tla/RNPortableRx.tla MStop, MStop1 and MStop2: stopping, then quit, then
+    // proofs/tla/RNPortableRx.tla MStop, MStop1 and MStop2: stopping, then quit, then
     // the RX wake (QuitBeforeWake).
 
     portable_server_t * server = (portable_server_t *) transport;
@@ -791,7 +791,7 @@ static void portable_stop( void * transport )
 
 static bool portable_stopped( void * transport )
 {
-    // tla/RNPortableRx.tla MPollStopped: main polls between frames, and nothing
+    // proofs/tla/RNPortableRx.tla MPollStopped: main polls between frames, and nothing
     // changes until the workers have exited.
 
     portable_server_t * server = (portable_server_t *) transport;
@@ -1405,7 +1405,7 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
 static void portable_io_client_close( void * transport )
 {
     // the family race's losing family, on the reading thread
-    // (tla/RNClientRace.tla ReaderStep): the wake's handles, then the
+    // (proofs/tla/RNClientRace.tla ReaderStep): the wake's handles, then the
     // socket's; the memory stays for destroy on the caller's thread
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) transport;
@@ -1541,7 +1541,7 @@ static bool portable_client_connect( void * transport, const rocketnet_address_t
 static void portable_client_close( void * transport )
 {
     // the family race's losing family, on the reading thread
-    // (tla/RNClientRace.tla ReaderStep): the socket's handle; the memory
+    // (proofs/tla/RNClientRace.tla ReaderStep): the socket's handle; the memory
     // stays for destroy on the caller's thread
 
     rocketnet_platform_socket_close( (rocketnet_platform_socket_t *) transport );

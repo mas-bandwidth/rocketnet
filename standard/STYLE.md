@@ -200,8 +200,8 @@ A vector sits in the section that defines what it encodes. Each document's
 Appendix A is an index of its vector ids by section; it is printed on demand by
 `--print-index` and is not committed.
 
-Every vector has a twin in a test file `test_unit_standard_<topic>.cpp` at the
-repository root:
+Every vector has a twin in a test file `test_unit_standard_<topic>.cpp` under
+`tests/`:
 
     RN_STANDARD_VECTOR( "t3.token-identifier", "f520da9d95fd072256b47d755f810f61" )
 

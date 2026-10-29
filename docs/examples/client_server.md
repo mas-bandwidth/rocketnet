@@ -13,7 +13,7 @@ The server process:
    `rocketnet_server_config_t.backend_public_key`.
 2. Calls `rocketnet_server_create`. This example uses the default generated
    X25519 sealing keypair. Other integrations can supply `server_secret_key`
-   at create when they need a stable key; see [Keys](../../KEYS.md).
+   at create when they need a stable key; see [Keys](../KEYS.md).
 3. Calls `rocketnet_server_start`, then reads the generated public key with
    `rocketnet_server_public_key` and the bound address with
    `rocketnet_server_ipv4_address` or `rocketnet_server_ipv6_address`.
@@ -37,7 +37,7 @@ release server (`ROCKETNET_DEV=0`) refuses the development key, development
 tokens, and the default test `packet_filter`. In production, the game's backend
 owns the signing secret key, mints tokens for the title's `protocol_id` and
 server public key, and returns the same kind of opaque token string
-([docs/SESSION.md](../SESSION.md), [KEYS.md](../../KEYS.md)); RocketNet does
+([docs/SESSION.md](../SESSION.md), [KEYS.md](../KEYS.md)); RocketNet does
 not expose production key-generation or token-minting calls.
 
 ## Running the two programs

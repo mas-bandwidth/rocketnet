@@ -324,7 +324,7 @@ static int budgets_send_forged( struct budgets_server_t * test, const struct roc
 }
 
 // The failed-signature budget is no global lockout (standard/TRANSPORT.md
-// t17 item 11, tla/RNSecurityTables.tla HonestConnectsUnderFlood): 64 forging
+// t17 item 11, proofs/tla/RNSecurityTables.tla HonestConnectsUnderFlood): 64 forging
 // sources, each with a valid cookie for its own address, fill the source
 // table and spend the window's budget. An honest client from a 65th address,
 // with a valid token, is still verified and completes its handshake to
@@ -442,7 +442,7 @@ REGISTER_UNIT_TEST( test_handshake_failure_budget_no_global_lockout );
 // client resends at its send rate. Each update processes at most the
 // configured budget of them, the rest are dropped and counted, and the burst
 // is spread across ceil( 40 / budget ) updates with every client challenged
-// exactly once (tla/RNSecurityTables.tla HonestRequest). A client already
+// exactly once (proofs/tla/RNSecurityTables.tla HonestRequest). A client already
 // challenged is answered from its mapping, before the budget, and spends
 // none of it.
 

@@ -3,17 +3,17 @@
     Licensed under the GNU Affero General Public License v3.0
 
     The DST invariant checks of docs/DST.md section 4: each check mirrors an
-    invariant or property a TLA+ model in tla/ already states, named below by
+    invariant or property a TLA+ model in proofs/tla/ already states, named below by
     module and invariant. The checks observe deliveries, receipts, link acks,
     transport states and counters; none changes SDK behaviour. Time is an
     argument starting at 1000.0; nothing here reads a clock, opens a socket or
     starts a thread. A failing check records its line and the core prints:
     `FAIL seed=<n> step=<k> check=<name> what=<detail>`.
 
-    Modules mirrored here: tla/RNChannel.tla, tla/RNChannelTypes.tla,
-    tla/RNEndpoint.tla, tla/RNWindow.tla, tla/RNReceipts.tla,
-    tla/ReplayWindow.tla, tla/FragmentsAndAcks.tla, tla/ServerSession.tla,
-    tla/ClientSession.tla, tla/RNSlots.tla and tla/RNSimFaults.tla.
+    Modules mirrored here: proofs/tla/RNChannel.tla, proofs/tla/RNChannelTypes.tla,
+    proofs/tla/RNEndpoint.tla, proofs/tla/RNWindow.tla, proofs/tla/RNReceipts.tla,
+    proofs/tla/ReplayWindow.tla, proofs/tla/FragmentsAndAcks.tla, proofs/tla/ServerSession.tla,
+    proofs/tla/ClientSession.tla, proofs/tla/RNSlots.tla and proofs/tla/RNSimFaults.tla.
 */
 
 #pragma once
@@ -128,7 +128,7 @@ struct rocketnet_dst_check_stream_t
 // The cross-type view of the sequenced messages on one (session, channel).
 // The SDK keeps one sequenced_write counter and one sequenced_watermark per
 // channel for types 1 and 4 together (rn_channels_send_sequenced in
-// sdk/rocketnet_channel.cpp), and tla/RNChannelTypes.tla states
+// sdk/rocketnet_channel.cpp), and proofs/tla/RNChannelTypes.tla states
 // SequencedNewestWins over one SequencedTrace per channel holding both codes.
 // So a newer delivery of either type supersedes an older send of the other,
 // and the receiver drops what it superseded. send_count mirrors
@@ -1149,7 +1149,7 @@ static inline void rocketnet_dst_check_end( struct rocketnet_dst_check_state_t *
                     // newer message superseded, and types 1 and 4 share one
                     // sequenced_write and one sequenced_watermark per channel
                     // (rn_channels_send_sequenced in sdk/rocketnet_channel.cpp;
-                    // SequencedNewestWins in tla/RNChannelTypes.tla). So the
+                    // SequencedNewestWins in proofs/tla/RNChannelTypes.tla). So the
                     // quiet window is served when a delivery of type 1 or 4
                     // at or above the newest type 4 quiet-window send was
                     // seen on the channel, in that send's ordered epoch.

@@ -9677,7 +9677,7 @@ struct CompressedFloatShape
 };
 
 static const CompressedFloatShape compressed_float_shapes[] = {
-    // the schema compiler's corpus: examples, bench/corpus/RealWorld.schema and its test data
+    // the schema compiler's corpus: examples, benchmarks/corpus/RealWorld.schema and its test data
     { 0.0f, 2000.0f, 0.1f, 20000, 15 },
     { -2.0f, 2.0f, 0.25f, 16, 5 },
     { -90.0f, 90.0f, 0.5f, 360, 9 },

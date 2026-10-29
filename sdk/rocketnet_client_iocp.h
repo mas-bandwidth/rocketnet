@@ -10,8 +10,8 @@
 // (sdk/rocketnet_server_iocp_windows.cpp keeps its own, drained by its one
 // completion worker). A fixed set of ROCKETNET_CLIENT_IOCP_RECEIVES overlapped
 // WSARecvFrom receives is posted at create, into buffers allocated at create.
-// The client I/O thread of docs/CLIENT-IO.md (tla/RNClientIo.tla,
-// tla/RNBufferHandoff.tla) owns the socket and the port:
+// The client I/O thread of docs/CLIENT-IO.md (proofs/tla/RNClientIo.tla,
+// proofs/tla/RNBufferHandoff.tla) owns the socket and the port:
 //
 //   receive_batch  dequeues the completions on the port without waiting,
 //                  copies each completed receive into the caller's slots and
@@ -26,7 +26,7 @@
 //                  then frees the buffers
 //
 // The posted-receive ownership (the kernel owns a buffer from its post until
-// its completion is dequeued) is the state tla/RNClientIocp.tla adds to
+// its completion is dequeued) is the state proofs/tla/RNClientIocp.tla adds to
 // RNClientIo: a buffer is never copied while posted, and destroy frees only
 // when every posted receive is drained (FreedOnlyWhenDrained).
 //
@@ -129,7 +129,7 @@ struct rocketnet_client_iocp_t
     rocketnet_client_iocp_completion_t completions[ROCKETNET_CLIENT_IOCP_RECEIVES + 1];
 };
 
-// Posts every receive (tla/RNClientIocp.tla Post). Returns the receives
+// Posts every receive (proofs/tla/RNClientIocp.tla Post). Returns the receives
 // posted; a refused one stays idle and is posted again by receive_batch.
 int rocketnet_client_iocp_init( rocketnet_client_iocp_t * iocp, const rocketnet_client_iocp_port_t * port, void * port_context,
                                 uint8_t * buffers, int buffer_bytes, int num_receives );

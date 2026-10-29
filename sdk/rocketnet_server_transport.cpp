@@ -308,7 +308,7 @@ struct rocketnet_server_transport_t
     int link_busy_sends_for_test;   // the next link sends that take the lock-miss path
 #endif // #if ROCKETNET_DEV
 
-    // The disconnect bursts waiting to leave (tla/ServerSession.tla
+    // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
     // DrainDisconnectBurst). A disconnect ends the slot at once; when this
     // update's allowance cannot seal its whole burst, the burst's plaintext
     // (the ack block of the receive state at the disconnect), its first
@@ -585,7 +585,7 @@ int rocketnet_server_transport_send_capacity( const rocketnet_server_transport_t
 
 // How many payload frames may still start this update. The staged transports
 // keep their own staging, so the transport-side cap does not apply to them.
-// tla/RNServerSendFair.tla Tick models this bounded cyclic send-pass cap.
+// proofs/tla/RNServerSendFair.tla Tick models this bounded cyclic send-pass cap.
 int rocketnet_server_transport_send_capacity_available( const rocketnet_server_transport_t * server_transport )
 {
     if ( !server_transport )
@@ -627,7 +627,7 @@ static void rocketnet_server_transport_io_send_packets( rocketnet_server_transpo
 // The link simulator's live setting (sdk/rocketnet_network_simulator.cpp):
 // the caller hands a new setting over as a config record under the
 // simulator's own tiny mutex, and the thread that owns the simulator takes it
-// before its next send.  tla/MCLinkReconfigure.tla models the change: the
+// before its next send.  proofs/tla/MCLinkReconfigure.tla models the change: the
 // setting in force at the send holds the packet, and the change itself
 // removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
 // stubs below stand in for the development build's functions there.
@@ -666,7 +666,7 @@ static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, i
 // setting in force at the send is the setting the caller last asked for: the
 // change takes effect at once, on and off, in either direction.
 //
-// tla/Link.tla models the change: the setting in force at the send holds the
+// proofs/tla/Link.tla models the change: the setting in force at the send holds the
 // packet, and the change itself removes nothing that was already in flight
 // (LinkReconfigureHolds).
 static bool rocketnet_server_link_active( rocketnet_server_transport_t * transport )
@@ -817,7 +817,7 @@ static void rocketnet_server_link_drain( rocketnet_server_transport_t * transpor
             break;
         if ( rocketnet_server_transport_staged( transport ) )
         {
-            // tla/RNXdpReplay.tla Drain: the receive view a held reply
+            // proofs/tla/RNXdpReplay.tla Drain: the receive view a held reply
             // answered is gone by now, so the xdp transport addresses it by
             // the MAC its direct response took (the answered entry,
             // rocketnet_xdp_frame.h), and a duplicate the same way; an
@@ -898,7 +898,7 @@ struct rocketnet_server_frame_t
     int client_index;               // slot this frame belongs to, or -1 before assignment
 };
 
-// tla/RNDriverSendStaging.tla Reserve and FailedSend: reserves a frame in the
+// proofs/tla/RNDriverSendStaging.tla Reserve and FailedSend: reserves a frame in the
 // transport's staging, or returns NULL and drops the frame when the staging is full
 static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                       const rocketnet_address_t * to,
@@ -932,7 +932,7 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
     return frame->data;
 }
 
-// tla/RNDriverSendStaging.tla Commit
+// proofs/tla/RNDriverSendStaging.tla Commit
 static void rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                 struct rocketnet_server_frame_t * frame,
                                                 int packet_bytes )
@@ -2075,7 +2075,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     // connections x slots) bounds the completions, and at that capacity
     // BATCH_FULL stays zero under any load the drain delivers
     // (rocketnet_server_reassembly_delivered_capacity; finding D2 of
-    // tla/README-FragmentsAndAcks.md). its bytes are what one update can
+    // proofs/tla/README-FragmentsAndAcks.md). its bytes are what one update can
     // complete -- the drained fragments plus the payloads half-held in
     // slots -- not capacity x max payload
     // (rocketnet_server_reassembly_delivered_bytes).
@@ -2193,7 +2193,7 @@ void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * serv
         return;
     server_transport->state = ROCKETNET_SERVER_TRANSPORT_STOPPING;
 
-    // tla/RNDriverSendStaging.tla ResetLeases: stop bumps the lease epoch.
+    // proofs/tla/RNDriverSendStaging.tla ResetLeases: stop bumps the lease epoch.
     // A finish of a packet started before this reset is caller misuse.
 
     server_transport->packet_leases.reset();
@@ -2355,7 +2355,7 @@ void rocketnet_server_transport_begin_message_update( struct rocketnet_server_tr
     server_transport->disconnect_update_prepared = 1;
 }
 
-// tla/RNDriverSendStaging.tla Update
+// proofs/tla/RNDriverSendStaging.tla Update
 // One received datagram, once counted: its shape and mapping, the protocol,
 // the response sealed straight into a send frame, and the payload (or the
 // payload a fragment completed) into this update's batch in arrival order.
@@ -2478,7 +2478,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     bool time_clamped = false;
     time = rocketnet_update_clock_advance( server_transport->time, &server_transport->raw_time, &server_transport->time_offset, time, &time_clamped );
 
-    // tla/RNDriverSendStaging.tla ResetLeases: update bumps the lease epoch
+    // proofs/tla/RNDriverSendStaging.tla ResetLeases: update bumps the lease epoch
     // before it reads. A fill still open here was not joined.
 
     server_transport->packet_leases.reset();
@@ -2596,7 +2596,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         } while ( num_received == batch_capacity && packets_processed < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE );
     }
 
-    // tla/RNChannel.tla FixBatch and tla/RNWindow.tla FixBatch: the received
+    // proofs/tla/RNChannel.tla FixBatch and proofs/tla/RNWindow.tla FixBatch: the received
     // batch is fixed here, before this update builds any reply or ack, so no
     // packet opened later can join it.
 
@@ -2604,7 +2604,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     // debt has reached the threshold with no other block going out -- the
     // standalone ack, into send frames. The per-slot ACK statistics need no
     // pass here: the running aggregates keep them current as each send,
-    // receive and ack lands (sdk/rocketnet_ack.cpp, tla/RNServerStats.tla).
+    // receive and ack lands (sdk/rocketnet_ack.cpp, proofs/tla/RNServerStats.tla).
 
     rocketnet_server_protocol_update( &server_transport->protocol, current_time );
 
@@ -2651,7 +2651,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->maintenance_next_client = ( i + 1 ) % max_clients;
     }
 
-    // tla/ServerSession.tla DrainDisconnectBurst: the public message-server
+    // proofs/tla/ServerSession.tla DrainDisconnectBurst: the public message-server
     // update opens the allowance before its pre-link kicks. A direct
     // transport update opens it here instead. Either way those disconnects
     // and this drain share exactly one allowance.
@@ -2670,7 +2670,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     // The kernel replay walk and commit: after the maintenance sweep, the
     // transport tells the granted transport which client addresses to forget and
-    // mark, then commits them. tla/RNXdpReplay.tla Walk and Commit.
+    // mark, then commits them. proofs/tla/RNXdpReplay.tla Walk and Commit.
 
     if ( server_transport->io.operations->replay_mark )
     {
@@ -2847,7 +2847,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
         context->sequence = 0;
         context->client_index = client_index;
 
-        // tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
+        // proofs/tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
         // until finish, abort, or a reset.
 
         if ( !server_transport->packet_leases.insert( *context ) )
@@ -2907,7 +2907,7 @@ uint8_t * rocketnet_server_transport_start_packet( struct rocketnet_server_trans
     context->sequence = 0;
     context->client_index = client_index;
 
-    // tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
+    // proofs/tla/RNDriverSendStaging.tla StartPacket: the caller holds this lease
     // until finish, abort, or a reset.
 
     if ( !server_transport->packet_leases.insert( *context ) )
@@ -3099,8 +3099,8 @@ static void rocketnet_server_abort_fill_frame( struct rocketnet_server_transport
     frame->data = NULL;
 }
 
-// tla/FragmentsAndAcks.tla BurnOne: a small payload whose seal fails after its sequence was taken leaves that sequence unsent.
-// tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate withdraws the frames and sends nothing.
+// proofs/tla/FragmentsAndAcks.tla BurnOne: a small payload whose seal fails after its sequence was taken leaves that sequence unsent.
+// proofs/tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate withdraws the frames and sends nothing.
 // The arena finish: the request was over the wire's capacity, so the
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
@@ -3264,7 +3264,7 @@ static int rocketnet_server_transport_finish_arena_packet( struct rocketnet_serv
     return total_wire_bytes;
 }
 
-// tla/FragmentsAndAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
+// proofs/tla/FragmentsAndAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
 static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
@@ -3357,7 +3357,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     uint64_t backend_id;
     if ( !server_transport->packet_leases.take( *context, trusted, backend_id ) )
     {
-        // tla/RNDriverSendStaging.tla FinishPacket: a lease reset by update,
+        // proofs/tla/RNDriverSendStaging.tla FinishPacket: a lease reset by update,
         // send_packets or stop is caller misuse. Refuse in every build.
         // Return 0, count api_misuses, and log. Do not assert: a debug-only
         // trap compiled out of release is not a refusal the caller can see.
@@ -3383,7 +3383,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
-// tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
+// proofs/tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -3391,7 +3391,7 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
     rocketnet_assert( server_transport );
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_RUNNING )
         return;
-    // tla/RNDriverSendStaging.tla ResetLeases: send_packets bumps the lease
+    // proofs/tla/RNDriverSendStaging.tla ResetLeases: send_packets bumps the lease
     // epoch before it flushes. Same bump as update and stop.
 
     server_transport->packet_leases.reset();
@@ -3417,7 +3417,7 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         // send boundary retries that work rather than the next update. Each
         // native flush is non-blocking: a try-publish or a bounded reap.
 
-        // tla/RNDriverSendStaging.tla SendPackets
+        // proofs/tla/RNDriverSendStaging.tla SendPackets
 
         if ( rocketnet_server_transport_io_has( server_transport->io, ROCKETNET_TRANSPORT_REFLUSHES ) ||
              server_transport->send_staged != server_transport->send_flushed )
@@ -3524,7 +3524,7 @@ void rocketnet_server_transport_send_packet( struct rocketnet_server_transport_t
     rocketnet_server_transport_finish_packet( server_transport, &context, payload_bytes );
 }
 
-// tla/ServerSession.tla DisconnectAll: the slot ends in this step. What the
+// proofs/tla/ServerSession.tla DisconnectAll: the slot ends in this step. What the
 // burst needs from the mapping is copied into the ring first -- the ack block
 // built once from the receive state, as every packet of the immediate burst
 // opens with the same block -- then the slot is released exactly as
@@ -3563,7 +3563,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     rocketnet_server_transport_close_client_locally( server_transport, client_index, false );
 }
 
-// tla/ServerSession.tla DrainDisconnectBurst, each seal one SealStep: at most max_seals waiting
+// proofs/tla/ServerSession.tla DrainDisconnectBurst, each seal one SealStep: at most max_seals waiting
 // disconnect packets are sealed into send frames, one per waiting burst per
 // pass in ring order, so a burst's packets leave at consecutive sequences as
 // the immediate burst's do. A burst whose last packet is sealed leaves the
@@ -3654,7 +3654,7 @@ int rocketnet_server_transport_disconnect_burst_key_for_test( struct rocketnet_s
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNDriverSendStaging.tla DisconnectClient
+// proofs/tla/RNDriverSendStaging.tla DisconnectClient
 static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_server_transport_t * server_transport, int client_index, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -3680,7 +3680,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
 
     rocketnet_address_t client_address = *rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
 
-    // tla/ServerSession.tla DisconnectAll and DrainDisconnectBurst: the slot
+    // proofs/tla/ServerSession.tla DisconnectAll and DrainDisconnectBurst: the slot
     // ends now; its burst is sealed now only while this update's allowance
     // holds the whole burst and no earlier burst waits, else it waits in the
     // ring for the following updates. The stop path seals at once.
@@ -3765,7 +3765,7 @@ uint64_t rocketnet_server_transport_client_id( struct rocketnet_server_transport
 }
 
 // the slot holds its copy of the token's user data from assign until release,
-// which wipes it (rocketnet_client_slots_release_exact; tla/RNDestroyWipe.tla
+// which wipes it (rocketnet_client_slots_release_exact; proofs/tla/RNDestroyWipe.tla
 // Remove). This read changes no state; a free slot reads zeros here and never
 // reaches the slot accessor, which asserts connected
 

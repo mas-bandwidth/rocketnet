@@ -10,7 +10,7 @@ publications at `c1a63ac9` and `2f88961a` under the release owner's explicit
 recut authorization. The final commit and native Linux, macOS and Windows
 unit/functional results are recorded in the [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0-preview-2).
 See [the qualification index](QUALIFICATION-v1.0.0-preview-2.md) and
-[TESTING.md](../TESTING.md) for the recorded evidence and its original scope.
+[TESTING.md](TESTING.md) for the recorded evidence and its original scope.
 
 RocketNet provides encrypted client/server UDP connections and eight message
 delivery modes through a C API. Your application supplies message bytes and
@@ -44,7 +44,7 @@ the contract was broken.
 Wait for server completion before restarting. A client retry from a terminal
 failure can return `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` while the old
 attempt shuts down; poll completion and retry with the token. See
-[USAGE.md](../USAGE.md) and the [public header](../sdk/rocketnet.h).
+[USAGE.md](USAGE.md) and the [public header](../sdk/rocketnet.h).
 
 ### Bound receipt iteration by the output capacity
 
@@ -83,7 +83,7 @@ examples are under [examples/backend](../examples/backend).
 The portable server transport is development-only; production servers require
 an available native transport. Portable clients remain available. Explicit
 transport pins refuse unavailable configurations rather than silently falling
-back. Follow [Before production](../AGENTS.md#before-production).
+back. Follow [Before production](AGENTS.md#before-production).
 
 ## Wire compatibility
 
@@ -140,8 +140,8 @@ receive and handshake acceptance in preview-2:
   acknowledges connection establishment before starting its shared traffic
   window and uses one deadline for the start exchange.
 
-See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
-[USAGE.md](../USAGE.md) for the supported configuration and API contracts.
+See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
+[USAGE.md](USAGE.md) for the supported configuration and API contracts.
 
 ## Known limits and release qualification
 
@@ -200,7 +200,7 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   manual Debug/toolchain/examples/soak/frame-budget coverage, and the remaining macOS and Windows LAN rows are deferred. io_uring suite-concurrency and runner memlock provisioning work is also deferred. Earlier passes and
   failures retain their original commit and scope.
 
-The [testing tables](../TESTING.md), [qualification index](QUALIFICATION-v1.0.0-preview-2.md), and [roadmap](../ROADMAP.md) record the tested heads and preview-3 work.
+The [testing tables](TESTING.md), [qualification index](QUALIFICATION-v1.0.0-preview-2.md), and [roadmap](ROADMAP.md) record the tested heads and preview-3 work.
 
 ## Deferred to preview-3
 

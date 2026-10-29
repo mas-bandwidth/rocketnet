@@ -4,7 +4,7 @@
 */
 
 // The per-connection send budget (sdk/rocketnet_send_budget.h) against its
-// model, tla/RNSendBudget.tla. Time is always an argument: every test walks a
+// model, proofs/tla/RNSendBudget.tla. Time is always an argument: every test walks a
 // simulated clock, nothing sleeps, nothing opens a socket.
 
 #include "test_unit_registry.h"

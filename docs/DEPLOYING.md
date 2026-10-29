@@ -1,10 +1,10 @@
 # Server transport deployment
 
-Choose a transport with [TRANSPORTS.md](../TRANSPORTS.md), then use the
+Choose a transport with [TRANSPORTS.md](TRANSPORTS.md), then use the
 [Linux](LINUX.md), [macOS](MACOS.md), or [Windows](WINDOWS.md) host guide.
 This reference retains the native-server build and XDP provisioning procedure.
 Commands run from the repository root. Provisioning and successful startup do
-not establish throughput or latency qualification; see [Testing](../TESTING.md).
+not establish throughput or latency qualification; see [Testing](TESTING.md).
 
 ## Server transports
 

@@ -44,7 +44,7 @@ static void test_signature_budget_window_restarts_on_backwards_clock()
     // a host clock stepped back (an NTP step, a VM resume) starts a fresh
     // window: a recorded failure refuses its source for at most the window
     // length of clock movement in either direction
-    // (tla/RNSecurityTables.tla FloodWindowBounded).
+    // (proofs/tla/RNSecurityTables.tla FloodWindowBounded).
 
     struct rocketnet_signature_verify_budget_t budget;
     memset( &budget, 0, sizeof( budget ) );

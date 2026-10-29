@@ -9,10 +9,10 @@
 
 #include "rocketnet_platform.h"
 
-// Layer 4's dispatch (docs/CHANNELS.md 7). The spec is tla/RNChannel.tla; each
+// Layer 4's dispatch (docs/CHANNELS.md 7). The spec is proofs/tla/RNChannel.tla; each
 // function names the action it implements. Nothing here allocates, locks or
 // reads a clock (owner rules R2 and R7). Channel and ready queues name a
-// descriptor generation and the region's schedule epoch (tla/RNChannelQueues.tla).
+// descriptor generation and the region's schedule epoch (proofs/tla/RNChannelQueues.tla).
 
 static void rn_channels_count( rocketnet_counters_t * counters, int counter )
 {
@@ -130,7 +130,7 @@ static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
     return RN_DESCRIPTOR_NONE;
 }
 
-// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
 static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_slot, uint32_t used )
 {
@@ -154,7 +154,7 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_
     return false;
 }
 
-// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
 // moves back each entry whose home is not cyclically in (hole, scan], and the
 // final hole clears last; the scan ends only on a cell already empty, so the
 // index is sized at twice its capacity
@@ -323,7 +323,7 @@ int rn_channels_send_check( struct rn_channels_t * channels, int type, uint32_t 
     return result;
 }
 
-// tla/RNChannel.tla Enqueue
+// proofs/tla/RNChannel.tla Enqueue
 
 uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t channel )
 {
@@ -343,7 +343,7 @@ uint32_t rn_channels_send_ordered( struct rn_channels_t * channels, uint32_t cha
     return ordering;
 }
 
-// tla/RNChannel.tla Enqueue, GhostSequencedWrite: a sequenced send moves sequenced_write past zero on its channel
+// proofs/tla/RNChannel.tla Enqueue, GhostSequencedWrite: a sequenced send moves sequenced_write past zero on its channel
 
 uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t * out_ordering )
 {
@@ -363,7 +363,7 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
     return sequencing;
 }
 
-// tla/RNChannel.tla DeliverMessage
+// proofs/tla/RNChannel.tla DeliverMessage
 
 void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering )
 {
@@ -377,7 +377,7 @@ void rn_channels_deliver_ordered( struct rn_channels_t * channels, uint32_t chan
     receive->sequenced_watermark = 0;
 }
 
-// tla/RNChannel.tla DeliverMessage, GhostSequencedRead: a sequenced delivery moves sequenced_watermark past zero on its channel
+// proofs/tla/RNChannel.tla DeliverMessage, GhostSequencedRead: a sequenced delivery moves sequenced_watermark past zero on its channel
 
 bool rn_channels_deliver_sequenced( struct rn_channels_t * channels, uint32_t channel, uint32_t ordering, uint32_t sequencing )
 {
@@ -469,8 +469,8 @@ void rn_channels_count_violation( struct rn_channels_t * channels, int counter )
     }
 }
 
-// tla/RNChannel.tla OpenPacket, OpenHead: dispatches each record of the packet the transport opened.
-// tla/RNReceipts.tla OpenPacket: the far end dispatches that packet, marking it opened.
+// proofs/tla/RNChannel.tla OpenPacket, OpenHead: dispatches each record of the packet the transport opened.
+// proofs/tla/RNReceipts.tla OpenPacket: the far end dispatches that packet, marking it opened.
 
 int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
@@ -554,7 +554,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 //                  RELIABLE_ORDERED, the receive side
 // ---------------------------------------------------------------
 
-// tla/RNChannel.tla DeliverMessage
+// proofs/tla/RNChannel.tla DeliverMessage
 
 void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
 {
@@ -599,7 +599,7 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
     }
 }
 
-// tla/RNChannel.tla DeliverMessage
+// proofs/tla/RNChannel.tla DeliverMessage
 
 int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
 {
@@ -721,7 +721,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 // never a rescan of its descriptors. The chunk is copied to its own offset,
 // ring + index * F (THE COPIES (b): a chunk must outlive the batch).
 // RNBlocks!Receive; by arrival is MCRNBlocksBrokenPlaceByArrival.cfg.
-// tla/RNChannelTypes.tla ArriveFragment: one block fragment arrives at its
+// proofs/tla/RNChannelTypes.tla ArriveFragment: one block fragment arrives at its
 // index and is placed, and the block is complete only when all have arrived.
 
 rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, const struct rocketnet_message_record_t * record,
@@ -803,11 +803,11 @@ void rn_channels_block_settle( rn_channels_t * channels, uint32_t held, rn_recei
 }
 
 // A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
-// whole message dispatched as one only when every chunk is in. tla/RNBlocks.tla:
+// whole message dispatched as one only when every chunk is in. proofs/tla/RNBlocks.tla:
 // RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
 // and RNBlocks!Deliver (complete at its turn: one view, one ordering slot).
 
-// tla/RNChannel.tla DeliverMessage
+// proofs/tla/RNChannel.tla DeliverMessage
 
 static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct rocketnet_message_record_t * record, rn_delivery_t * out, uint32_t delta )
 {
@@ -915,7 +915,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
-// tla/RNChannel.tla ReceiveAck, ReceiveAckAny: feeds the acked packet ids the transport delivered into the window
+// proofs/tla/RNChannel.tla ReceiveAck, ReceiveAckAny: feeds the acked packet ids the transport delivered into the window
 
 uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now )
 {
@@ -958,7 +958,7 @@ static void rn_channels_release( rn_channels_t * channels, uint32_t slot )
     }
 }
 
-// tla/RNChannel.tla EndUpdate
+// proofs/tla/RNChannel.tla EndUpdate
 
 void rn_channels_end_update( struct rn_channels_t * channels )
 {
@@ -985,7 +985,7 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 //                 the send API (RNChannel!Enqueue)
 // ---------------------------------------------------------------
 
-// tla/RNChannelQueues.tla Enqueue, Front, Cancel, StaleCancel, Compact,
+// proofs/tla/RNChannelQueues.tla Enqueue, Front, Cancel, StaleCancel, Compact,
 // ReadyJoin, Rotate and Reset. Ready membership is one ticket per channel. A push
 // of a channel that already holds a ticket is a no-op, so a channel cannot
 // sit on the list twice. Removing a ticket that is not the current one leaves
@@ -1079,7 +1079,7 @@ static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool fron
     }
 }
 
-// tla/RNChannel.tla Enqueue
+// proofs/tla/RNChannel.tla Enqueue
 
 static void rn_ready_push( rn_channels_t * channels, uint32_t channel )
 {
@@ -1111,14 +1111,14 @@ static bool rn_ready_remove_named( rn_channels_t * channels, uint32_t channel, u
     return true;
 }
 
-// tla/RNEndpoint.tla Reset: CONFIG's channel takes the first turn (10.3)
+// proofs/tla/RNEndpoint.tla Reset: CONFIG's channel takes the first turn (10.3)
 
 static void rn_ready_push_front( rn_channels_t * channels, uint32_t channel )
 {
     rn_ready_link( channels, channel, true );
 }
 
-// tla/RNChannel.tla RefuseSend
+// proofs/tla/RNChannel.tla RefuseSend
 
 uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, int type, uint32_t bytes )
 {
@@ -1162,7 +1162,7 @@ uint8_t * rn_channels_start( struct rn_channels_t * channels, uint32_t channel, 
     return rn_region_send_write_pointer( region, d );
 }
 
-// tla/RNChannel.tla Enqueue
+// proofs/tla/RNChannel.tla Enqueue
 
 bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 {
@@ -1184,7 +1184,7 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 
     channels->pending = RN_DESCRIPTOR_NONE;
 
-    // tla/RNChannelTypes.tla Enqueue: assigns the ordering and sequencing counters as the message joins the channel queue.
+    // proofs/tla/RNChannelTypes.tla Enqueue: assigns the ordering and sequencing counters as the message joins the channel queue.
     // Code 2 has no ordering index. Code 3 keeps its
     // coupled per-channel counter transition. A record fitting one packet
     // takes one number; a larger block takes one number per chunk
@@ -1249,7 +1249,7 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
 //        CONFIG, the one announcement (CHANNELS.md 10.3, 13.4)
 // ---------------------------------------------------------------
 
-// tla/RNEndpoint.tla Reset: relQ = <<CONFIG>>, so CONFIG is the first record
+// proofs/tla/RNEndpoint.tla Reset: relQ = <<CONFIG>>, so CONFIG is the first record
 // numbered (ConfigReliable: it takes the first reliable number and is resent
 // until acked), and WriteOk: the first packet carries it, from the head of
 // IMMEDIATE.
@@ -1321,7 +1321,7 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     return true;
 }
 
-// tla/RNEndpoint.tla OnPayload, the CONFIG half, with ConfigCompare: every
+// proofs/tla/RNEndpoint.tla OnPayload, the CONFIG half, with ConfigCompare: every
 // field of 13.4 compared; the first that differs ends the connection.
 
 int rn_ordered_take_config( struct rn_ordered_t * ordered, const struct rocketnet_message_record_t * record )
@@ -1424,9 +1424,9 @@ bool rn_ordered_init( struct rn_ordered_t * ordered, struct rn_region_t * region
 // record (THE COPIES (a): the frame is written from there), with the fields its
 // record carries. The ring offset is the receive ring offset the window gave it.
 
-// tla/RNChannel.tla WritePacket, WriteAny: turns one unacked number into the builder's item for a packet write.
-// tla/RNChannelTypes.tla WriteAny: the same packet write, any message and either attempt.
-// tla/RNBlocks.tla SendRecord: a fragment's item carries its index, k - 1 and its own ring offset
+// proofs/tla/RNChannel.tla WritePacket, WriteAny: turns one unacked number into the builder's item for a packet write.
+// proofs/tla/RNChannelTypes.tla WriteAny: the same packet write, any message and either attempt.
+// proofs/tla/RNBlocks.tla SendRecord: a fragment's item carries its index, k - 1 and its own ring offset
 
 static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_t * slot, int send_class, rn_packet_item_t * item )
 {
@@ -1485,7 +1485,7 @@ struct rn_ordered_plan_t
 // (RNWindow!WriteOldest): a number never sent is due now (a new message's, a
 // chunk's, a packet the transport refused); a sent one is due when its class's
 // delay has passed since its last send, the same delay every time
-// (tla/RNResendTiming.tla Walk, no back-off). The walk stops at the first number not
+// (proofs/tla/RNResendTiming.tla Walk, no back-off). The walk stops at the first number not
 // yet due. Returns false when more is due than this update can write. On
 // return *last_unsent is the last never-sent number at the FIFO's head (where
 // new numbers of this class join), or RN_RESEND_NONE.
@@ -1536,8 +1536,8 @@ static bool rn_ordered_walk( rn_ordered_t * ordered, bool chunk, double now, rn_
     return true;
 }
 
-// tla/RNChannel.tla NumberRecord: numbers the channel's head message late, only while n < U' + W
-// tla/RNBlocks.tla NumberMessage: gives a block k consecutive numbers and one contiguous span through rn_window_send_first_write_block
+// proofs/tla/RNChannel.tla NumberRecord: numbers the channel's head message late, only while n < U' + W
+// proofs/tla/RNBlocks.tla NumberMessage: gives a block k consecutive numbers and one contiguous span through rn_window_send_first_write_block
 
 int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payloads, int num_payloads )
 {
@@ -1625,7 +1625,7 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
             break;                                              // stalled: the window counted it
 
         // Rotate off the ready list before the dequeue, while the membership
-        // still names the generation captured at join (tla/RNChannelQueues.tla Rotate).
+        // still names the generation captured at join (proofs/tla/RNChannelQueues.tla Rotate).
 
         const uint32_t ready_ticket = send->ready_ticket;
         const uint32_t ready_generation = send->ready_generation;
@@ -1821,7 +1821,7 @@ int rn_ordered_decide( const struct rn_ordered_t * ordered )
     if ( !ordered || !ordered->channels.region )
         return ROCKETNET_DISCONNECT_REASON_NONE;
 
-    // tla/RNConnectionMemory.tla, Kick: exhaustion first; then the other side of the connection broke
+    // proofs/tla/RNConnectionMemory.tla, Kick: exhaustion first; then the other side of the connection broke
     // the wire (17.3 item 11); then a reliable message went unacked too long
 
     const int memory = rn_connection_memory_decide( ordered->channels.region );

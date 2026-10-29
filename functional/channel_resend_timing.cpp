@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 
     test_resend_timing_table_over_lossy_links: the measured latency and cost of the
-    reliable resend rule (docs/CHANNELS.md 6.4; tla/RNResendTiming.tla) over
+    reliable resend rule (docs/CHANNELS.md 6.4; proofs/tla/RNResendTiming.tla) over
     the channel harness. For each RTT (20, 50, 100 and 200 ms; harness
     latency RTT/2 each way, jitter a tenth of that) and loss (10% and 20%,
     both directions), the client sends 400 reliable 64-byte messages, one per
@@ -389,7 +389,7 @@ void resend_timing_table_over_lossy_links()
 /*
     test_block_resend_cost_over_long_path: the bandwidth a resend policy spends per
     useful byte for a large block (docs/CHANNELS.md 6.4 "Resend" and "The
-    cost"; tla/RNResendTiming.tla Delay("c")). The client sends one 256 KiB
+    cost"; proofs/tla/RNResendTiming.tla Delay("c")). The client sends one 256 KiB
     reliable-ordered block over a 200 ms path (harness latency 100 ms each
     way, jitter a tenth of that) at 10% loss both ways, while the server
     sends one 32-byte unreliable message per update so acks ride packets

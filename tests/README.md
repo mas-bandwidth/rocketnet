@@ -77,7 +77,7 @@ nightly tier (`ROCKETNET_TEST_NIGHTLY=1`).
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See
-[BUILDING.md](../BUILDING.md) for the 60-second target and 120-second cap.
+[BUILDING.md](../docs/BUILDING.md) for the 60-second target and 120-second cap.
 
 Unit cases do not read or change the process environment. SDK environment
 parsing and validation use the in-memory table in `test_env_source.h`, which

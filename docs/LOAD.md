@@ -232,7 +232,7 @@ On Windows, the periodic resource sample keeps the cheap process handle count
 but does not repeat the global Toolhelp thread census inside the timed loop.
 The resource-baseline verdict is a census at pre-init, post-init, pre-term
 and post-term after one warm cycle (init, a one-client loopback server, one
-client, term; `load_census.h`): no thread or handle may survive post-init to
+client, term; `tests/load/load_census.h`): no thread or handle may survive post-init to
 pre-term or pre-init to post-term, by identity. Windows process thread pool
 workers (start routine in ntdll) and their handles belong to the operating
 system and are reported as `os_pool_threads`, never counted. The raw counts

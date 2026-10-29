@@ -492,7 +492,7 @@ static void test_sequence_wrap_session_both_directions( void )
 // has opened nothing and answers with the empty ack block (largest 0, first
 // range length 0, no ranges; standard/TRANSPORT.md t15). The reader
 // recognises that block on its wire fields (sdk/rocketnet_ack.cpp
-// rocketnet_ack_block_read, tla/AckBlockWrap.tla ReadBlock), the same reader
+// rocketnet_ack_block_read, proofs/tla/AckBlockWrap.tla ReadBlock), the same reader
 // on client and server: the client connects, at least
 // SEQUENCE_WRAP_EDGE_PAST packets each way go past 0x100000000 and are acked,
 // and no bad ack block is counted on either transport. With the empty test

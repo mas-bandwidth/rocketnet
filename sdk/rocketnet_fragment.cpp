@@ -138,7 +138,7 @@ bool rocketnet_reassembly_memory_allowed_delivered( int num_connections, int num
 int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slots )
 {
     // the completion bound (rocketnet_fragment.h; the delivered bound of
-    // tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2): of the N
+    // proofs/tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2): of the N
     // packets one update drains, a payload begun earlier completes on one and
     // a payload begun in the update on two, and at most connections x slots
     // payloads are begun earlier
@@ -155,7 +155,7 @@ int rocketnet_server_reassembly_delivered_capacity( int max_clients, int num_slo
 int rocketnet_client_reassembly_delivered_capacity( int num_slots )
 {
     // the completion bound (rocketnet_fragment.h; the delivered bound of
-    // tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2), at the
+    // proofs/tla/FragmentsAndAcks.tla, BatchFullNeverFires, finding D2), at the
     // client's one connection and drain: of the N packets one update drains, a
     // payload begun earlier completes on one and a payload begun in the update
     // on two, and at most num_slots payloads are begun earlier
@@ -172,7 +172,7 @@ int rocketnet_client_reassembly_delivered_capacity( int num_slots )
 uint64_t rocketnet_server_reassembly_delivered_bytes( int max_clients, int num_slots, int max_payload_bytes )
 {
     // the byte bound beside the count bound (rocketnet_fragment.h; finding D2
-    // of tla/README-FragmentsAndAcks.md): a payload completed in an update is
+    // of proofs/tla/README-FragmentsAndAcks.md): a payload completed in an update is
     // made of fragments drained in that update -- one fragment per packet, at
     // most ROCKETNET_MAX_RECEIVE_FRAGMENT_BYTES each -- plus the bytes its slot
     // already held from earlier updates, at most one payload per slot and no
@@ -289,7 +289,7 @@ void rocketnet_reassembly_set_reset_connection( struct rocketnet_reassembly_set_
 
 void rocketnet_reassembly_set_begin_update( struct rocketnet_reassembly_set_t * set )
 {
-    // tla/FragmentsAndAcks.tla Tick: starts the receiver's update, the delivered count and arena back at zero
+    // proofs/tla/FragmentsAndAcks.tla Tick: starts the receiver's update, the delivered count and arena back at zero
 
     rocketnet_assert( set );
 
@@ -324,11 +324,11 @@ int rocketnet_reassembly_process_fragment( struct rocketnet_reassembly_set_t * s
                                            uint64_t * counters,
                                            const struct rocketnet_reassembly_counters_t * table )
 {
-    // tla/FragmentsAndAcks.tla, RecvData: the checks in the standard's order, then
+    // proofs/tla/FragmentsAndAcks.tla, RecvData: the checks in the standard's order, then
     // placement and delivery inside this call (DeliveredExact, DeliveredOnce,
     // CompleteDelivers, ArenaBounded, CountPinned). The stale test is the rule
     // StaleOnlyIfOlder asks for: an honest fragment newer than its slot's
-    // occupant is never refused (finding D1 in tla/README-FragmentsAndAcks.md)
+    // occupant is never refused (finding D1 in proofs/tla/README-FragmentsAndAcks.md)
 
     rocketnet_assert( set );
     rocketnet_assert( connection_index >= 0 && connection_index < set->num_connections );

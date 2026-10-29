@@ -9,7 +9,7 @@ By default the client transport owns a background I/O thread that does every
 socket send and receive. Datagrams cross between that thread and the caller
 thread in preallocated buffers: three send rings and three receive buffers,
 each owned by one side at a time (`sdk/rocketnet_buffer_handoff.h`,
-`tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
+`proofs/tla/RNBufferHandoff.tla`). Only buffer indices move, under a mutex held for
 that exchange alone. `update` and `send_packets` only try that mutex: when the
 I/O thread holds it, the exchange waits for the next call, so they never wait
 on the I/O thread. Sends then leave with the next hand-off
@@ -51,7 +51,7 @@ batches with plain `sendmmsg` and `recvmmsg`, and `gso`
 equal-sized datagrams as one `UDP_SEGMENT` message and falls back to plain
 messages without loss when the kernel refuses (TRANSPORTS.md, UDP
 coalescing). Its send batch is one synchronous call that returns with every
-datagram sent or counted dropped, so it adds no state to `tla/RNClientIo.tla`.
+datagram sent or counted dropped, so it adds no state to `proofs/tla/RNClientIo.tla`.
 On macOS, `msgx` uses `sendmsg_x` and `recvmsg_x`. On Windows, `iocp`
 (`sdk/rocketnet_client_iocp_windows.cpp`, the Windows `auto` choice) waits on a completion
 port of its own: wait is `GetQueuedCompletionStatusEx`, wake posts one wake
@@ -59,7 +59,7 @@ completion (at most one is outstanding, and a wake that receive_batch
 dequeues is owed to the next wait, so the wake stays level-triggered), and
 receive_batch copies completed overlapped receives and re-posts each after
 its copy. The kernel owns a posted receive's buffer until its completion is
-dequeued, a state RNClientIo does not have; `tla/RNClientIocp.tla` models it
+dequeued, a state RNClientIo does not have; `proofs/tla/RNClientIocp.tla` models it
 (Post, Complete, Dequeue, Drain, Wake, Close, Free): a buffer is never copied
 while posted, destroy frees only when every posted receive is drained, and
 after Close every posted receive completes and drains. Its sends are
@@ -96,8 +96,8 @@ valid through destroy, and make it safe for its calling threads. The game
 clock supplied to time-taking API calls must be finite, nondecreasing, and
 consistent across calls.
 
-The executable invariants live in `tla/RNBufferHandoff.tla`,
-`tla/RNClientIo.tla`, `tla/RNClientIoDecrypt.tla`, the unit suite, and the
+The executable invariants live in `proofs/tla/RNBufferHandoff.tla`,
+`proofs/tla/RNClientIo.tla`, `proofs/tla/RNClientIoDecrypt.tla`, the unit suite, and the
 functional transport matrix.
 
 A development-only step-driven test advances shutdown explicitly with update (or its I/O-step

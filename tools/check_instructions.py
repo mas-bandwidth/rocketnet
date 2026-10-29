@@ -2,10 +2,10 @@
 """
 Deterministic instruction-count gate for RocketNet client_frame and server_tick.
 
-Runs bench/instruction_count under valgrind --tool=cachegrind for each region
+Runs benchmarks/instruction_count under valgrind --tool=cachegrind for each region
 (client_frame, server_tick), parses the collected Ir count from the cachegrind
 output file with the Python standard library, and compares against
-bench/instruction_baseline.json.
+benchmarks/instruction_baseline.json.
 
 Exit codes:
   0: PASS (all regions <= +2.0% over baseline; prints NOTE if < -2.0% under)
@@ -27,7 +27,7 @@ REGIONS: Tuple[str, ...] = ("client_frame", "server_tick")
 DEFAULT_THRESHOLD_PCT: float = 2.0
 DEFAULT_BASELINE_PATH: str = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "bench",
+    "benchmarks",
     "instruction_baseline.json",
 )
 
@@ -65,7 +65,7 @@ def parse_cachegrind_ir(content: str) -> int:
 
 def parse_scenario_stdout(stdout: str) -> Dict[str, Any]:
     """
-    Parse the metadata line printed by bench/instruction_count:
+    Parse the metadata line printed by benchmarks/instruction_count:
       instruction_count region=<r> units=<n> [mode=<m>] compiler_id=<c> build_type=<b>
     """
     if not stdout:
@@ -237,7 +237,7 @@ def write_repin_baseline(
     threshold_pct: float = DEFAULT_THRESHOLD_PCT,
 ) -> Dict[str, Any]:
     """
-    Write bench/instruction_baseline.json with measured counts and provenance.
+    Write benchmarks/instruction_baseline.json with measured counts and provenance.
     Raises ValueError if reason is empty.
     """
     clean_reason = (reason or "").strip()
@@ -350,7 +350,7 @@ def resolve_binary_path(path: str) -> str:
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Run cachegrind instruction gate on bench/instruction_count."
+        description="Run cachegrind instruction gate on benchmarks/instruction_count."
     )
     parser.add_argument(
         "--bin",
@@ -360,12 +360,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--baseline",
         default=DEFAULT_BASELINE_PATH,
-        help="Path to instruction_baseline.json (default: bench/instruction_baseline.json).",
+        help="Path to instruction_baseline.json (default: benchmarks/instruction_baseline.json).",
     )
     parser.add_argument(
         "--repin",
         action="store_true",
-        help="Overwrite bench/instruction_baseline.json with the newly measured counts.",
+        help="Overwrite benchmarks/instruction_baseline.json with the newly measured counts.",
     )
     parser.add_argument(
         "--reason",

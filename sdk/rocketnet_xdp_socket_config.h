@@ -21,7 +21,7 @@
 // on it at start (sdk/rocketnet_server_socket_linux.cpp): the kernel publishes
 // the fill ring's consumer index only when its cached batch is used up, so the
 // worker needs a free slot beyond that batch for every frame it hands back
-// (rocketnet_constants.h, tla/RNXdpReceiveRing.tla). The completion ring asks
+// (rocketnet_constants.h, proofs/tla/RNXdpReceiveRing.tla). The completion ring asks
 // for XSK_RING_CONS__DEFAULT_NUM_DESCS (2048) entries, from xdp/xsk.h.
 
 #pragma once

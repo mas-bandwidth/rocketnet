@@ -57,7 +57,7 @@ it is complete and newer than the channel's sequenced watermark; a newer
 in-turn message supersedes an in-turn block still collecting fragments, and
 one no newer is discarded; a held future state never touches it. Only a
 message ahead of its turn is held, at most one per channel, newest wins
-(`tla/RNChannelTypes.tla`, `InTurnOneRule`).
+(`proofs/tla/RNChannelTypes.tla`, `InTurnOneRule`).
 
 The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
 estimator, and remains within `message_resend_delay_min_ms` and
@@ -123,14 +123,14 @@ its config and build inputs.
 
 The executable message invariants are split by concern:
 
-- `tla/RNChannel.tla` and `tla/RNChannelTypes.tla`: ordering, sequencing and
+- `proofs/tla/RNChannel.tla` and `proofs/tla/RNChannelTypes.tla`: ordering, sequencing and
   exactly-once delivery;
-- `tla/RNBlocks.tla` and `tla/FragmentsAndAcks.tla`: bounded fragmentation,
+- `proofs/tla/RNBlocks.tla` and `proofs/tla/FragmentsAndAcks.tla`: bounded fragmentation,
   reassembly and acknowledgement coupling;
-- `tla/RNReceipts.tla` and `tla/RNSentHistory.tla`: receipt and sent-history
+- `proofs/tla/RNReceipts.tla` and `proofs/tla/RNSentHistory.tla`: receipt and sent-history
   behavior;
 - unit and functional suites: public calls, all reliability values, reset,
   capacity and cross-endpoint behavior.
 
-The model configurations and `tla/RUNS.tsv` are the maintained execution
+The model configurations and `proofs/tla/RUNS.tsv` are the maintained execution
 inventory.

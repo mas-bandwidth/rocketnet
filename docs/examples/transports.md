@@ -23,7 +23,7 @@ inside that branch), and disconnects.
 Each frame runs the calls in the order a game does: update, drain the one
 receive queue until `NULL`, simulate, queue, then send last. Sending last is what makes this
 frame's messages leave this frame instead of waiting a frame. See
-[TRANSPORTS.md](../../TRANSPORTS.md) for the complete transport table and host
+[TRANSPORTS.md](../TRANSPORTS.md) for the complete transport table and host
 requirements.
 
 ## Run it

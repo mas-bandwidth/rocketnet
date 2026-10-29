@@ -63,7 +63,7 @@ jobs:
           git -c credential.helper= clone --filter=blob:none --no-checkout https://github.com/mas-bandwidth/nova-tools.git "$job/runner"
           git -C "$job/runner" checkout --detach 0c97d5958bf2b3cb1ad24e6e1b58f5b04e70347a
           (cd "$job/runner" && go build -o "$job/tlacheck" ./tools/tlacheck)
-          "$job/tlacheck" groups --root . --stale > "$job/stale.json"
+          "$job/tlacheck" groups --root proofs --stale > "$job/stale.json"
           cat "$job/stale.json"
           test "$(cat "$job/stale.json")" = '[]'
       - name: Check required outcomes and explicit timeout debt
@@ -72,8 +72,8 @@ jobs:
           python3 - <<'PY'
           import csv
           from pathlib import Path
-          plan = {r['config']: r for r in csv.DictReader(Path('tla/CASES.tsv').open(), delimiter='\t')}
-          runs = list(csv.DictReader(Path('tla/RUNS.tsv').open(), delimiter='\t'))
+          plan = {r['config']: r for r in csv.DictReader(Path('proofs/tla/CASES.tsv').open(), delimiter='\t')}
+          runs = list(csv.DictReader(Path('proofs/tla/RUNS.tsv').open(), delimiter='\t'))
           for row in runs:
               case = plan[row['config']]
               assert row['mode'] == 'bounded', row['config'] + ': not a bounded measurement'

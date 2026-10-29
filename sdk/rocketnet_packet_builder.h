@@ -23,7 +23,7 @@
 // packing several small records per packet, taking items in the budget's class
 // order, and committing each packet's carried reliable numbers to layer 3's
 // sent map under the packet id the transport assigned. The spec is
-// tla/RNChannel.tla (WritePacket) with tla/RNSendBudget.tla (Send, Drop, Wait);
+// proofs/tla/RNChannel.tla (WritePacket) with proofs/tla/RNSendBudget.tla (Send, Drop, Wait);
 // each function names the action it implements.
 //
 // The builder owns no memory: its state is a fixed struct the owner embeds in
@@ -64,7 +64,7 @@ struct rn_packet_item_t
     uint8_t taken;                  // the builder sets this on an item it wrote
     uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
     uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
-    uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
+    uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: proofs/tla/RNChannel.tla, a chunk travels alone)
     uint8_t resend;                 // nonzero: a resend; the count is taken when the packet carrying it is sent (rn_packet_builder_commit)
     uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
 };
@@ -162,7 +162,7 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 // Writes at most packets_per_update packets into the caller's payload
 // areas (each payload_capacity bytes; the caller owns the frames and passes
 // frame + payload_index). Items are taken in three nested orders
-// (tla/RNScheduler.tla, docs/CHANNELS.md 9.2):
+// (proofs/tla/RNScheduler.tla, docs/CHANNELS.md 9.2):
 //
 // 1. the budget's class order, the outer rule -- retransmits, ordered
 //    progress, new reliable, unreliable -- whatever the priorities;

@@ -392,7 +392,7 @@ REGISTER_UNIT_TEST( test_claim_released_after_small_order_refusal );
 
 // A claim is bound by its mapping, not by the handshake deadline alone: when
 // the half-open idle timeout removes a slotless mapping, the claim leaves with
-// it, so another address may present the token at once (tla/MCReceiveOrder.tla,
+// it, so another address may present the token at once (proofs/tla/MCReceiveOrder.tla,
 // IdleRemove; STANDARD.md t12, the claim window).
 static void test_claim_released_with_half_open_idle_mapping()
 {
@@ -434,7 +434,7 @@ static void test_claim_released_with_half_open_idle_mapping()
 
 // The integrity limit removes a slotless mapping too, and its claim goes with
 // it: one more sealed packet that does not open tears the mapping down, after
-// which the token is free for another address (tla/MCReceiveOrder.tla,
+// which the token is free for another address (proofs/tla/MCReceiveOrder.tla,
 // IdleRemove; STANDARD.md t12, the claim window).
 static void test_claim_released_with_integrity_limit_mapping()
 {
@@ -585,7 +585,7 @@ REGISTER_UNIT_TEST( test_response_nonzero_padding_is_not_an_integrity_failure );
 
 // A full request-claim table is its own reason, not a mapping failure: the
 // mapping table has room, so only CLAIM_TABLE_FULL moves (standard/TRANSPORT.md
-// t12 rule 9; tla/ReceiveOrder.tla, ClaimCheck).
+// t12 rule 9; proofs/tla/ReceiveOrder.tla, ClaimCheck).
 static void test_claim_table_full_counts_its_own_counter()
 {
     struct handshake_server_t test;
@@ -631,7 +631,7 @@ REGISTER_UNIT_TEST( test_claim_table_full_counts_its_own_counter );
 // The failed-signature budget rung runs before the token-claim rung: a source
 // that has spent its budget and presents a token claimed by another address is
 // refused for the budget alone (standard/TRANSPORT.md t12 rule 9, steps 2 and
-// 3; tla/ReceiveOrder.tla, the rung order).
+// 3; proofs/tla/ReceiveOrder.tla, the rung order).
 static void test_request_rungs_budget_before_claim()
 {
     struct handshake_server_t test;
@@ -670,7 +670,7 @@ static void test_request_rungs_budget_before_claim()
 
 REGISTER_UNIT_TEST( test_request_rungs_budget_before_claim );
 // A response replaces its request claim with a token binding (t12 rule 9;
-// tla/MCReceiveOrder.tla ResponseBind).
+// proofs/tla/MCReceiveOrder.tla ResponseBind).
 static void test_claim_released_when_response_binds_token()
 {
     struct handshake_server_t test;
@@ -781,7 +781,7 @@ REGISTER_UNIT_TEST( test_claim_released_when_response_crosses_token_expiry );
 #endif // #if ROCKETNET_DEV
 
 // Copied-request claim lifecycle (standard/TRANSPORT.md t12 rules 9 and 14;
-// tla/ReceiveOrder.tla ClaimCheck/ClaimWrite and tla/MCReceiveOrder.tla
+// proofs/tla/ReceiveOrder.tla ClaimCheck/ClaimWrite and proofs/tla/MCReceiveOrder.tla
 // IdleRemove). Only the signed request bytes are copied and only the
 // address-bound cookie is recomputed for the second address; no ephemeral
 // private key is copied, derived, inspected or used.

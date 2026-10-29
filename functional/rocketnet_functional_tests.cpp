@@ -234,7 +234,7 @@ void rocketnet_test_transport_reconnect_churn()
     // player churn over real loopback: with one slot, five clients in turn
     // each connect with a fresh token and leave cleanly. every one connects;
     // a closed connection frees its slot at once, and nothing about the
-    // tokens that came before denies the next one (tla/RNSecurityTables.tla,
+    // tokens that came before denies the next one (proofs/tla/RNSecurityTables.tla,
     // ChurnNeverDenied; docs/SESSION.md, Token reuse). before the fix the
     // third was denied with the slot free.
 
@@ -5155,7 +5155,7 @@ void rocketnet_test_server_transport_io_pin_rio()
     rocketnet_test_transport_io_pin_exchange( "rio", "rio" );
 }
 
-// the rio transport (sdk/rocketnet_server_rio_windows.cpp, tla/RNRioDriver.tla)
+// the rio transport (sdk/rocketnet_server_rio_windows.cpp, proofs/tla/RNRioDriver.tla)
 // against a plain UDP client on loopback
 
 #include "rocketnet_server_rio.h"
@@ -8943,7 +8943,7 @@ void rocketnet_test_platform_wake_event_only()
 // The level-triggered wake beside a real socket on Linux: the eventfd is set
 // and consumed, a socket's readiness is seen only when readable is true, and
 // with readable false a full receive buffer waits on the wake alone
-// (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and IoWake). A
+// (docs/CLIENT-IO.md "The wake"; proofs/tla/RNClientIo.tla's IoWait and IoWake). A
 // real socket and a real eventfd, so this case lives in the functional tier.
 
 void rocketnet_test_platform_wake_linux_wakes_and_reads()
@@ -9153,7 +9153,7 @@ void rocketnet_test_client_io_linux_mmsg_batch_round_trip()
 // trigger is set and consumed, the socket's EVFILT_READ is seen only when
 // readable is true (the filter is disabled and enabled in the wait's own
 // kevent call), and with readable false an unread datagram waits on the
-// trigger alone (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and
+// trigger alone (docs/CLIENT-IO.md "The wake"; proofs/tla/RNClientIo.tla's IoWait and
 // IoWake). A real socket and a real kqueue, so this case lives in the
 // functional tier.
 
@@ -9247,7 +9247,7 @@ void rocketnet_test_platform_wake_apple_wakes_and_reads()
 // wake event is set and consumed, the socket's FD_READ event is seen only when
 // readable is true, and with readable false an unread datagram waits on the
 // wake alone (docs/CLIENT-IO.md "The wake" and rocketnet-client-io-windows;
-// tla/RNClientIo.tla's IoWait and IoWake). A real socket and real events, so
+// proofs/tla/RNClientIo.tla's IoWait and IoWake). A real socket and real events, so
 // this case lives in the functional tier.
 
 void rocketnet_test_platform_wake_windows_wakes_and_reads()
@@ -11255,7 +11255,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
 }
 #endif // #if ROCKETNET_DEV
 
-// The family race frees nothing off the caller's thread (tla/RNClientRace.tla
+// The family race frees nothing off the caller's thread (proofs/tla/RNClientRace.tla
 // FreedOnlyByCaller). A development token naming both families, 127.0.0.1
 // and [::1] at the port of a portable server serving both, makes each
 // socket client transport dial both; the first cookie commits one family and
@@ -11997,7 +11997,7 @@ void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( 
 
 // ---------------------------------------------------
 // The Windows iocp client (sdk/rocketnet_client_iocp_windows.cpp,
-// tla/RNClientIocp.tla): the iocp client pinned, against the portable
+// proofs/tla/RNClientIocp.tla): the iocp client pinned, against the portable
 // server, carries payloads both ways per family, the granted client
 // transport is iocp, and the client runs the I/O thread design of
 // docs/CLIENT-IO.md on the completion port's wait and wake.

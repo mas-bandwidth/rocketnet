@@ -198,7 +198,7 @@ static void client_trusts_next_request_mac( struct rocketnet_client_protocol_t *
 // kept for the attempt; a later one alternates with it, so the kept cookie
 // goes out on at least every second request however many forgeries arrive
 // between requests, and the handshake is never rewound by a packet that
-// does not open under the attempt's keys (tla/ClientConnection.tla
+// does not open under the attempt's keys (proofs/tla/ClientConnection.tla
 // HandshakeNeverRewinds). A genuine fresh cookie arriving later still goes
 // out on its turn.
 static void test_client_forged_cookie_never_displaces_kept_cookie()

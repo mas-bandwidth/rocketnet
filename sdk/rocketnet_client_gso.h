@@ -27,7 +27,7 @@
 // to hold its int is one fault (gro_cmsg_faults) and the message is one
 // datagram, as the gso server reads it (sdk/rocketnet_server_gso_linux.cpp).
 //
-// The I/O thread of docs/CLIENT-IO.md (tla/RNClientIo.tla) owns the socket and
+// The I/O thread of docs/CLIENT-IO.md (proofs/tla/RNClientIo.tla) owns the socket and
 // calls the send path; the sender adds no state to that model: a send batch
 // is one synchronous call that returns with every datagram sent or counted
 // dropped, and the tier flag is the I/O thread's alone.

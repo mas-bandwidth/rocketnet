@@ -44,7 +44,7 @@ const char * rocketnet_client_transport_state_name( int state )
     }
 }
 
-// tla/RNClientIoDecrypt.tla RetireKeys: a terminal state runs the connection
+// proofs/tla/RNClientIoDecrypt.tla RetireKeys: a terminal state runs the connection
 // reset, whose retire_keys hook retires the I/O thread's open copy.
 
 static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * client, int state )
@@ -62,7 +62,7 @@ static void rocketnet_client_set_state( struct rocketnet_client_protocol_t * cli
     // ephemeral secret when no handshake that needs it remains, and MUST
     // erase the four keys and the token keys when the attempt that owns them
     // ends; t13.4 says the same for a client reset.
-    // tla/ClientConnection.tla's KeysErasedWhenDown pins cKeys = NoKeys at
+    // proofs/tla/ClientConnection.tla's KeysErasedWhenDown pins cKeys = NoKeys at
     // state <= 0. Every automatic terminal transition passes through here,
     // after the state is stored, so the reason, the state-change report and
     // any packets already written keep their order.
@@ -149,7 +149,7 @@ static void rocketnet_client_rtt_sample( struct rocketnet_client_protocol_t * cl
 // address when the token flags one and the host can open an IPv6 socket, else
 // the IPv4 address when the token flags one, else the IPv6 address (which the
 // transport refuses on a host with no IPv6). A pure function of its
-// arguments (tla/ServerConnection.tla PickFamily).
+// arguments (proofs/tla/ServerConnection.tla PickFamily).
 
 void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signed_connect_data_t * signed_fields,
                                                     bool ipv6_available,
@@ -186,9 +186,9 @@ void rocketnet_client_protocol_pick_server_address( const struct rocketnet_signe
     }
 }
 
-// tla/ClientConnection.tla AppConnect; FreshAttemptFromFailure: a connect
+// proofs/tla/ClientConnection.tla AppConnect; FreshAttemptFromFailure: a connect
 // from any failure state carries nothing of the earlier attempt
-// tla/ClientConnection.tla ClientCommitEarly: the reversed witness's commit to
+// proofs/tla/ClientConnection.tla ClientCommitEarly: the reversed witness's commit to
 // a family of its own choosing before any answer; the fixed client commits only
 // on the first accepted answer.
 
@@ -201,7 +201,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
     rocketnet_assert( connect_token );
     rocketnet_assert( client->counters );
 
-    // tla/ClientConnection.tla AppConnect permits only disconnected or failure states
+    // proofs/tla/ClientConnection.tla AppConnect permits only disconnected or failure states
 
     if ( client->state > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return 0;
@@ -277,7 +277,7 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 // after the token's timeout with nothing received, and the whole handshake
 // dies to connect token expired once the token's lifetime has elapsed
 
-// tla/ClientConnection.tla Tick
+// proofs/tla/ClientConnection.tla Tick
 
 static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t * client, double current_time )
 {
@@ -354,7 +354,7 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     return bytes;
 }
 
-// tla/ClientConnection.tla ClientSend
+// proofs/tla/ClientConnection.tla ClientSend
 
 void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * client,
                                        double current_time,
@@ -372,7 +372,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
     if ( client->state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
         return;
 
-    // tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
+    // proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks.
     // An owed ack goes out on this update, outside the scheduled send rate.
     // Type 8 does not add debt, so the ack cannot ping-pong.
 
@@ -407,7 +407,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
             // the kept cookie goes out on at least every second request: a
             // later cookie alternates with it and never displaces it, so a
             // forged cookie cannot take the kept one off the wire
-            // (tla/ClientConnection.tla ClientPacket, HandshakeNeverRewinds)
+            // (proofs/tla/ClientConnection.tla ClientPacket, HandshakeNeverRewinds)
 
             const uint8_t * return_cookie = client->has_cookie ? client->return_cookie : NULL;
 
@@ -465,7 +465,7 @@ void rocketnet_client_protocol_update( struct rocketnet_client_protocol_t * clie
 // the client-side per-type processing: state gate first, then the mechanics,
 // each in its own early-return function
 
-// tla/ClientConnection.tla ClientRecvCookie
+// proofs/tla/ClientConnection.tla ClientRecvCookie
 
 static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t * client,
                                             const uint8_t * packet_data,
@@ -516,7 +516,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     // only the latest cookie, which alternates with the kept one on the wire.
     // a forged cookie can cost a request, never the kept cookie: the handshake
     // moves backwards on no packet that does not open under the attempt's
-    // keys (tla/ClientConnection.tla HandshakeNeverRewinds). a genuine fresh
+    // keys (proofs/tla/ClientConnection.tla HandshakeNeverRewinds). a genuine fresh
     // cookie, after the kept one expired, still goes out on every second
     // request. nothing is sent because this arrived.
 
@@ -550,7 +550,7 @@ static int rocketnet_client_process_cookie( struct rocketnet_client_protocol_t *
     return 1;
 }
 
-// tla/ClientConnection.tla ClientRecvChallenge
+// proofs/tla/ClientConnection.tla ClientRecvChallenge
 
 static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_t * client,
                                                const uint8_t * packet_data,
@@ -649,7 +649,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
 
     sodium_memzero( client->client_ephemeral_secret_key, sizeof( client->client_ephemeral_secret_key ) );
 
-    // tla/RNClientIoDecrypt.tla PublishKeys: an I/O thread's open copy is published here, before the connection response below is handed off
+    // proofs/tla/RNClientIoDecrypt.tla PublishKeys: an I/O thread's open copy is published here, before the connection response below is handed off
 
     if ( client->publish_keys )
         client->publish_keys( client->keys_context, client );
@@ -683,7 +683,7 @@ static int rocketnet_client_process_challenge( struct rocketnet_client_protocol_
     return 1;
 }
 
-// tla/ClientConnection.tla ClientRecvDenied
+// proofs/tla/ClientConnection.tla ClientRecvDenied
 
 static int rocketnet_client_process_denied( struct rocketnet_client_protocol_t * client,
                                             const uint8_t * packet_data,
@@ -813,7 +813,7 @@ typedef int ( *rocketnet_client_type_data_validator_t )( struct rocketnet_client
 // server's first payloads, and a payload delivered before connected let the
 // application reply on a connection that could not yet send. The server's
 // resend carries a reliable message again after the keep-alive
-// (tla/ClientConnection.tla PayloadBeforeKeepAlive).
+// (proofs/tla/ClientConnection.tla PayloadBeforeKeepAlive).
 
 static bool rocketnet_client_session_state_accepts( const struct rocketnet_client_protocol_t * client, uint8_t packet_type )
 {
@@ -825,7 +825,7 @@ static bool rocketnet_client_session_state_accepts( const struct rocketnet_clien
     return packet_type != ROCKETNET_CONNECTION_PAYLOAD_PACKET && packet_type != ROCKETNET_CONNECTION_FRAGMENT_PACKET;
 }
 
-// tla/ClientConnection.tla ClientRecvSession and tla/RNClientIoDecrypt.tla
+// proofs/tla/ClientConnection.tla ClientRecvSession and proofs/tla/RNClientIoDecrypt.tla
 // UpdateConsume: one session packet through the reading order -- wire
 // floor, state, sequence, replay, open, replay advance, ack block, the type's
 // size and own check, then the commit. The packet is either raw (opened
@@ -967,7 +967,7 @@ static int rocketnet_client_open_session( struct rocketnet_client_protocol_t * c
     rocketnet_replay_advance( &client->replay_session, sequence );
 
     // the ack block at the front of the opened data, read against this end's
-    // own highest sent session sequence (tla/AckBlockWrap.tla ReadBlock): a
+    // own highest sent session sequence (proofs/tla/AckBlockWrap.tla ReadBlock): a
     // malformed block refuses the whole packet
 
     struct rocketnet_ack_block_t block;
@@ -1163,7 +1163,7 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
     return 1;
 }
 
-// tla/ClientConnection.tla ClientFragmentReceive: a fragment is accepted only
+// proofs/tla/ClientConnection.tla ClientFragmentReceive: a fragment is accepted only
 // in connected, the one step that creates client reassembly state.
 
 static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t * client,
@@ -1181,7 +1181,7 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
 
     // a fragment is accepted only on a connected slot, per TRANSPORT.md t16.2
     // and FragmentOnlyWhenConnected in
-    // tla/ClientConnection.tla: in any other state it is refused here,
+    // proofs/tla/ClientConnection.tla: in any other state it is refused here,
     // before the open and before any reassembly call. Payload types other
     // than 9 keep their states in the shared open below.
 
@@ -1241,7 +1241,7 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
     // reassembly's. so the fragment's sequence is marked in accepted_session,
     // and adds to the ack debt, only when reassembly accepts it: a refused
     // fragment is never named in a block, so the server's aggregate never
-    // completes on it (tla/FragmentsAndAcks.tla RecvData,
+    // completes on it (proofs/tla/FragmentsAndAcks.tla RecvData,
     // NamedOnlyIfAccepted). an accepted fragment that completes a payload
     // later dropped as batch full still acknowledges: reassembly accepted it.
 
@@ -1384,19 +1384,19 @@ int rocketnet_client_protocol_process_packet( struct rocketnet_client_protocol_t
 // start and seal from any game thread strictly between updates, the only
 // shared words a sequence add and a timestamp store.
 
-// tla/RNClientIoDecrypt.tla UpdateConsume
-// tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys: the I/O
+// proofs/tla/RNClientIoDecrypt.tla UpdateConsume
+// proofs/tla/RNClientIoDecrypt.tla IoTakeKeys, IoDropKeys and IoKeepKeys: the I/O
 // thread reads the epoch at the top of a drain and takes, zeroes or keeps its
 // open key copy.
-// tla/RNClientIoDecrypt.tla IoReceive, IoCheck and IoOpen: the I/O thread
+// proofs/tla/RNClientIoDecrypt.tla IoReceive, IoCheck and IoOpen: the I/O thread
 // drains datagrams into its buffer, runs the cheap replay check and the AEAD,
 // tagging each record opened, replay, forged or raw.
-// tla/RNClientIoDecrypt.tla IoPublish, IoOwe, IoWait, IoWake and IoClearWake:
+// proofs/tla/RNClientIoDecrypt.tla IoPublish, IoOwe, IoWait, IoWake and IoClearWake:
 // the I/O thread publishes its filled buffer or records the owed publish, waits
 // on the wake, and burns a wake it does not need.
-// tla/RNClientIoDecrypt.tla Expose, Return and Done: update exposes the ready
+// proofs/tla/RNClientIoDecrypt.tla Expose, Return and Done: update exposes the ready
 // buffer at its start, returns it at its end, and the behaviour ends drained.
-// tla/RNClientIoDecrypt.tla Tag: each step records its thread as the writer,
+// proofs/tla/RNClientIoDecrypt.tla Tag: each step records its thread as the writer,
 // which the SingleWriter invariant reads.
 
 int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t * client,
@@ -1440,7 +1440,7 @@ int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t 
     return 1;
 }
 
-// tla/RNClientIoDecrypt.tla FillAckBuild: a fill thread builds the ack block
+// proofs/tla/RNClientIoDecrypt.tla FillAckBuild: a fill thread builds the ack block
 // from a receive window only update writes, and writes nothing shared.
 
 int rocketnet_client_protocol_seal_payload_frame( struct rocketnet_client_protocol_t * client,
@@ -1665,8 +1665,8 @@ int rocketnet_client_protocol_write_fragments( struct rocketnet_client_protocol_
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/ClientConnection.tla AppDisconnect
-// tla/ClientConnection.tla ClientDiscCopy: seals each copy of the disconnect
+// proofs/tla/ClientConnection.tla AppDisconnect
+// proofs/tla/ClientConnection.tla ClientDiscCopy: seals each copy of the disconnect
 // burst once; the burst is never retransmitted.
 
 void rocketnet_client_protocol_disconnect( struct rocketnet_client_protocol_t * client,

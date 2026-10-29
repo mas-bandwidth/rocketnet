@@ -24,7 +24,7 @@ def make_cachegrind_out(ir: int, events: str = "Ir") -> str:
         "desc: I1 cache: 32768 B, 64 B, 8-way associative\n"
         f"cmd: ./bin/instruction_count\n"
         f"events: {events}\n"
-        "fl=bench/instruction_count.cpp\n"
+        "fl=benchmarks/instruction_count.cpp\n"
         "fn=main\n"
         f"1 {ir}\n"
         f"summary: {ir}\n"

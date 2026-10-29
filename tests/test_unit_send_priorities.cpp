@@ -4,7 +4,7 @@
 */
 
 // Layer 6's scheduler, unit tier: the four send priorities inside the
-// budget's class order (docs/CHANNELS.md 9.2, tla/RNScheduler.tla). No
+// budget's class order (docs/CHANNELS.md 9.2, proofs/tla/RNScheduler.tla). No
 // sockets, no threads, no wall clock.
 //
 // Every case writes packets that hold one record each, so the order of the
@@ -290,7 +290,7 @@ static void test_budget_class_order_still_rules()
     rn_arena_destroy( arena );
 }
 
-// the two reversed witnesses of tla/RNScheduler.tla, replayed against the
+// the two reversed witnesses of proofs/tla/RNScheduler.tla, replayed against the
 // code on MCRNScheduler's instance: channel 0 queues LOW then IMMEDIATE,
 // channel 1 queues HIGH, IMMEDIATE unreliable items arrive one per update, and
 // the budget is one record per update.

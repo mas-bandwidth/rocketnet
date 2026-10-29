@@ -1,4 +1,4 @@
-# Compiles server_xdp/server_xdp.c to the BPF object server_xdp.o at build
+# Compiles sdk/xdp/server_xdp.c to the BPF object server_xdp.o at build
 # time and embeds its bytes in OUTPUT_DIR/rocketnet_server_xdp.h as
 # rocketnet_server_xdp_o and rocketnet_server_xdp_o_len. The library loads the
 # object from those bytes (bpf_object__open_mem); the server host needs no
@@ -46,7 +46,7 @@ endif()
 execute_process(COMMAND "${CLANG}" ${xdp_defines} -ffreestanding -O2 -g
         "-I/usr/include/${MULTIARCH}" -Isdk
         -fdebug-compilation-dir=. "-ffile-prefix-map=${SOURCE_DIR}=." "-ffile-prefix-map=${OUTPUT_DIR}=."
-        -target bpf -c server_xdp/server_xdp.c -o "${xdp_object}"
+        -target bpf -c sdk/xdp/server_xdp.c -o "${xdp_object}"
     WORKING_DIRECTORY "${SOURCE_DIR}" RESULT_VARIABLE clang_result)
 if(NOT clang_result EQUAL 0)
     message(FATAL_ERROR "server_xdp.o: the BPF compile failed (${clang_result})")

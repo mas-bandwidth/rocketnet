@@ -18,7 +18,7 @@ pair, so its step must run the xdp family cases inside a virtme-ng guest
 Also renders the auto order per platform and endpoint from
 sdk/rocketnet_drivers.inc (server development, server production and client;
 lower nonzero rank first, pin-only excluded) and fails if sdk/rocketnet.h,
-USAGE.md or TRANSPORTS.md state a different order.
+docs/USAGE.md or docs/TRANSPORTS.md state a different order.
 Standard library only.
 """
 
@@ -124,39 +124,39 @@ def check_doc_orders(orders, problems):
     for label, got in zip(("Linux", "macOS", "Windows"), groups):
         compare("sdk/rocketnet.h", label, "client", norm_order(got) if got else None)
 
-    # USAGE.md: server prod sentence with dev in parentheses (dev differs only on Windows), then client sentence.
-    usage = norm_doc(read("USAGE.md"))
+    # docs/USAGE.md: server prod sentence with dev in parentheses (dev differs only on Windows), then client sentence.
+    usage = norm_doc(read("docs/USAGE.md"))
     m = re.search(r"The server's auto order is (.+?) on Linux; (.+?) on macOS; and (.+?) on Windows in production builds \((.+?) in development builds\)", usage)
     if not m:
         for label in ("Linux", "macOS", "Windows"):
-            compare("USAGE.md", label, "server-production", None)
-            compare("USAGE.md", label, "server-development", None)
+            compare("docs/USAGE.md", label, "server-production", None)
+            compare("docs/USAGE.md", label, "server-development", None)
     else:
         prod_linux, prod_macos, prod_windows, dev_windows = (norm_order(g) for g in m.groups())
-        compare("USAGE.md", "Linux", "server-production", prod_linux)
-        compare("USAGE.md", "macOS", "server-production", prod_macos)
-        compare("USAGE.md", "Windows", "server-production", prod_windows)
-        compare("USAGE.md", "Linux", "server-development", prod_linux)
-        compare("USAGE.md", "macOS", "server-development", prod_macos)
-        compare("USAGE.md", "Windows", "server-development", dev_windows)
+        compare("docs/USAGE.md", "Linux", "server-production", prod_linux)
+        compare("docs/USAGE.md", "macOS", "server-production", prod_macos)
+        compare("docs/USAGE.md", "Windows", "server-production", prod_windows)
+        compare("docs/USAGE.md", "Linux", "server-development", prod_linux)
+        compare("docs/USAGE.md", "macOS", "server-development", prod_macos)
+        compare("docs/USAGE.md", "Windows", "server-development", dev_windows)
     m = re.search(r"The client's auto order is [^.]*?: (.+?) on Linux; (.+?) on macOS; (.+?) on Windows\.", usage)
     groups = m.groups() if m else (None, None, None)
     for label, got in zip(("Linux", "macOS", "Windows"), groups):
-        compare("USAGE.md", label, "client", norm_order(got) if got else None)
+        compare("docs/USAGE.md", label, "client", norm_order(got) if got else None)
 
-    # TRANSPORTS.md: the `auto` resolves table, one row per platform.
+    # docs/TRANSPORTS.md: the `auto` resolves table, one row per platform.
     found = {}
-    for label, dev, prod, client in re.findall(r"^\| (Linux|macOS|Windows) \| (.+?) \| (.+?) \| (.+?) \|", read("TRANSPORTS.md"), re.M):
+    for label, dev, prod, client in re.findall(r"^\| (Linux|macOS|Windows) \| (.+?) \| (.+?) \| (.+?) \|", read("docs/TRANSPORTS.md"), re.M):
         found[label] = (norm_order(dev), norm_order(prod), norm_order(client))
     for label in ("Linux", "macOS", "Windows"):
         if label not in found:
             for endpoint in ENDPOINTS:
-                compare("TRANSPORTS.md", label, endpoint, None)
+                compare("docs/TRANSPORTS.md", label, endpoint, None)
         else:
             dev, prod, client = found[label]
-            compare("TRANSPORTS.md", label, "server-development", dev)
-            compare("TRANSPORTS.md", label, "server-production", prod)
-            compare("TRANSPORTS.md", label, "client", client)
+            compare("docs/TRANSPORTS.md", label, "server-development", dev)
+            compare("docs/TRANSPORTS.md", label, "server-production", prod)
+            compare("docs/TRANSPORTS.md", label, "client", client)
 
 
 def read(path):

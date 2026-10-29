@@ -59,7 +59,7 @@ static void rocketnet_server_connection_id_assigned( struct rocketnet_server_pro
         return;
     server->connection_ids[client_index] = ++server->next_connection_id;
 
-    // tla/RNSlots.tla Connect: the new connection has not ended
+    // proofs/tla/RNSlots.tla Connect: the new connection has not ended
 
     if ( server->end_reasons )
         server->end_reasons[client_index] = ROCKETNET_DISCONNECT_REASON_NONE;
@@ -71,7 +71,7 @@ static void rocketnet_server_connection_id_assigned( struct rocketnet_server_pro
 // for the rest of the window and no longer. a clock that steps back before
 // the window's start (an NTP step, a VM resume) starts a fresh window too, so
 // a recorded failure refuses its source for at most the window length of
-// clock movement in either direction (tla/RNSecurityTables.tla
+// clock movement in either direction (proofs/tla/RNSecurityTables.tla
 // FloodWindowBounded).
 
 static void rocketnet_signature_verify_budget_decay( struct rocketnet_signature_verify_budget_t * budget,
@@ -104,7 +104,7 @@ int rocketnet_signature_verify_budget_allow( struct rocketnet_signature_verify_b
     // window. a source with no recorded failure is verified, whether or not
     // the table has a free slot to remember it: refusing it would refuse
     // every honest first-time client once forging sources fill the table
-    // (tla/RNSecurityTables.tla HonestConnectsUnderFlood). the verifies such
+    // (proofs/tla/RNSecurityTables.tla HonestConnectsUnderFlood). the verifies such
     // sources cost are bounded by the per-update handshake work budget, which
     // runs before this gate, and each needs a valid cookie for its own address.
 
@@ -222,7 +222,7 @@ static int rocketnet_server_address_is_advertised( const struct rocketnet_server
     return 0;
 }
 
-// The arrival family's token address (tla/ServerConnection.tla
+// The arrival family's token address (proofs/tla/ServerConnection.tla
 // TokenAddressAdvertised). A v4-mapped source is canonicalised to IPv4
 // first. The token's other-family address is not consulted. A token with
 // no IPv4 flag whose IPv6 address is v4-mapped is that IPv4 address.
@@ -303,12 +303,12 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
 
-// tla/ReceiveOrder.tla Next
-// tla/ReceiveOrder.tla RefuseStep: a rung the request fails returns its
+// proofs/tla/ReceiveOrder.tla Next
+// proofs/tla/ReceiveOrder.tla RefuseStep: a rung the request fails returns its
 // refusal there, releasing a claim it wrote; AdvanceStep: a rung it passes
 // moves it to the next, the cheap rungs before the crypto ones.
-// tla/ServerConnection.tla ServerRecvRequest
-// tla/RNSecurityTables.tla Request
+// proofs/tla/ServerConnection.tla ServerRecvRequest
+// proofs/tla/RNSecurityTables.tla Request
 int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
                                                           const struct rocketnet_address_t * from,
                                                           const uint8_t * packet_data,
@@ -571,7 +571,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // any asymmetric work runs and counted, so a flood of staged attempts
     // cannot spend the whole update on signature verification; a dropped
     // client's next request is processed in a later update
-    // (tla/RNSecurityTables.tla HonestRequest).
+    // (proofs/tla/RNSecurityTables.tla HonestRequest).
 
     if ( server->counters->handshakes_processed_this_update >= (uint64_t) server->handshakes_per_update )
     {
@@ -608,13 +608,13 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     // the token-to-address claim, the map capacity and the claim capacity are
     // the remaining cheap rungs, all above the signature and all read-only.
-    // the claim rung runs before the capacity rung, as tla/ReceiveOrder.tla's
+    // the claim rung runs before the capacity rung, as proofs/tla/ReceiveOrder.tla's
     // Pos orders them: used, verifybudget, claim, capacity, claimfull
     // (standard/TRANSPORT.md t12 rule 9).
     // the first address to present a request whose signature verifies owns
     // the token until the handshake deadline or until its response binds the
     // token; a request from a second address is refused here, so one token
-    // buys one half-open mapping and no asymmetric work (tla/ReceiveOrder.tla,
+    // buys one half-open mapping and no asymmetric work (proofs/tla/ReceiveOrder.tla,
     // ClaimCheck, Capacity and ClaimWrite).
 
     if ( !rocketnet_used_token_history_claim_check( server->used_token_history, token_identifier, from, current_time ) )
@@ -634,10 +634,10 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     // the claim-capacity rung refuses here, read-only: the claim is written
     // only once the signature verifies, so a request that proves nothing
-    // writes nothing (tla/ReceiveOrder.tla, ClaimCheck and ClaimWrite). a
+    // writes nothing (proofs/tla/ReceiveOrder.tla, ClaimCheck and ClaimWrite). a
     // full claim table is its own reason; the mapping table had room, so it
     // is not a mapping failure (standard/TRANSPORT.md t12 rule 9, step 5;
-    // tla/ReceiveOrder.tla, the claimfull rung).
+    // proofs/tla/ReceiveOrder.tla, the claimfull rung).
 
     if ( !rocketnet_used_token_history_claim_can_record( server->used_token_history, token_identifier, current_time ) )
     {
@@ -668,7 +668,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     struct rocketnet_connect_token_private_t private_data;
     // a sealed block that does not open is a refusal past the verify: the
-    // claim just recorded is released (tla/RNSecurityTables.tla RequestRefused)
+    // claim just recorded is released (proofs/tla/RNSecurityTables.tla RequestRefused)
 
     if ( !rocketnet_open_connect_token_private( &private_data, signed_connect_data, server->server_public_key, server->server_secret_key ) )
     {
@@ -691,7 +691,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
 
     // Only a live mapping retains the request claim. Every refusal, including
     // a sealed denial, releases it immediately instead of waiting for expiry
-    // (tla/RNSecurityTables.tla RequestRefused: the claim recorded past the
+    // (proofs/tla/RNSecurityTables.tla RequestRefused: the claim recorded past the
     // verify is released in the same step and no mapping is made).
 
     if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
@@ -700,8 +700,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     return result;
 }
 
-// tla/RNSecurityTables.tla Request
-// tla/ReceiveOrder.tla AcceptStep: past the last rung the request's address
+// proofs/tla/RNSecurityTables.tla Request
+// proofs/tla/ReceiveOrder.tla AcceptStep: past the last rung the request's address
 // gets its mapping (rocketnet_encryption_map_add).
 static int rocketnet_server_process_opened_request( struct rocketnet_server_protocol_t * server,
                                                     const struct rocketnet_address_t * from,
@@ -738,7 +738,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
     // nothing about who holds the token's keys, so the binding that outlives
     // the deadline waits for a response that opens under the handshake key
     // (TRANSPORT.md t12 rule 13;
-    // tla/RNSecurityTables.tla, BoundOnlyToOpener)
+    // proofs/tla/RNSecurityTables.tla, BoundOnlyToOpener)
 
     {
         // the server's contribution to the key schedule: a fresh session
@@ -875,8 +875,8 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
 // mapping's handshake client-to-server key, which is all it has to prove.
 // the checks and the slot assignment follow the standard's order.
 
-// tla/ServerConnection.tla ServerRecvResponse
-// tla/RNSecurityTables.tla Response
+// proofs/tla/ServerConnection.tla ServerRecvResponse
+// proofs/tla/RNSecurityTables.tla Response
 static int rocketnet_server_process_connection_response( struct rocketnet_server_protocol_t * server,
                                                          int mapping_index,
                                                          uint64_t current_timestamp,
@@ -893,8 +893,8 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
     // request never proves, so a replayed request from another address binds
     // nothing. it replaces the request claim with an entry that lives until
     // the token expires; a no-op when the token is already bound, and an
-    // expired token is not recorded (tla/RNSecurityTables.tla,
-    // BoundOnlyToOpener; tla/MCReceiveOrder.tla, ResponseBind)
+    // expired token is not recorded (proofs/tla/RNSecurityTables.tla,
+    // BoundOnlyToOpener; proofs/tla/MCReceiveOrder.tla, ResponseBind)
 
     if ( mapping->token_expire_timestamp > current_timestamp )
     {
@@ -913,7 +913,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    // one token, one live connection (tla/RNSecurityTables.tla,
+    // one token, one live connection (proofs/tla/RNSecurityTables.tla,
     // OneTokenOneLiveConnection; TRANSPORT.md t12 rule 13). a token carries one
     // client id, so with the binding at the response, when two addresses each
     // hold a mapping for one token, the first to be admitted connects and the
@@ -955,9 +955,9 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
         return ROCKETNET_SERVER_PROCESS_SEND_DENIED;
     }
 
-    // tla/RNXdpReplay.tla Connect: a new session takes a slot and its opened high water stays at zero.
-    // tla/ReplayWindow.tla Connect: the mapping takes a slot and its replay window is left unchanged.
-    // tla/RNSlots.tla Connect: the slot's connection owner becomes the new connection id.
+    // proofs/tla/RNXdpReplay.tla Connect: a new session takes a slot and its opened high water stays at zero.
+    // proofs/tla/ReplayWindow.tla Connect: the mapping takes a slot and its replay window is left unchanged.
+    // proofs/tla/RNSlots.tla Connect: the slot's connection owner becomes the new connection id.
 
     const uint64_t mapping_generation =
         rocketnet_encryption_map_owner_generation( server->encryption_map, mapping_index );
@@ -996,7 +996,7 @@ static int rocketnet_server_process_connection_response( struct rocketnet_server
 // counter groups are per type, so the bookkeeping is table driven and the
 // flow is one straight ladder.
 
-// tla/MCReceiveOrder.tla IdleRemove: a half-open mapping can leave before its
+// proofs/tla/MCReceiveOrder.tla IdleRemove: a half-open mapping can leave before its
 // handshake deadline -- by the idle timeout or the integrity limit -- and its
 // request claim leaves with it. The claim is released before the mapping is
 // removed, so a claim never outlives the mapping that holds it and the claim
@@ -1048,7 +1048,7 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     }
     else
     {
-        // tla/MCReceiveOrder.tla IdleRemove: the slotless mapping leaves
+        // proofs/tla/MCReceiveOrder.tla IdleRemove: the slotless mapping leaves
         // alone, as the idle timeout does, and releases its token's claim
         rocketnet_server_release_mapping_claim( server, mapping_index );
         rocketnet_encryption_map_remove_current( server->encryption_map, mapping_index );
@@ -1083,10 +1083,10 @@ struct rocketnet_sealed_type_counters_t
 // opened (ROCKETNET_RECEIVE_CEILING bytes, the caller's): an accepted
 // payload is delivered where it opened, *out_payload pointing at its type
 // data inside opened, so its plaintext is written once.
-// tla/ServerConnection.tla ServerRecvSession: a sealed session packet opens
+// proofs/tla/ServerConnection.tla ServerRecvSession: a sealed session packet opens
 // only under its mapping's keys and only for a mapping with a slot; a
 // keep-alive confirms the slot, a disconnect releases it with the mapping.
-// tla/RNSecurityTables.tla Disconnect: that release frees the client's slot
+// proofs/tla/RNSecurityTables.tla Disconnect: that release frees the client's slot
 // (rocketnet_server_connection_reset).
 static int rocketnet_server_process_sealed_packet( struct rocketnet_server_protocol_t * server,
                                                    const struct rocketnet_address_t * from,
@@ -1199,7 +1199,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // NOT_CONNECTED, which says only that the mapping holds no slot: the
     // packet was never opened, so it is counted neither forged nor authentic,
     // it touches neither DID_NOT_OPEN nor the integrity-failure count, and
-    // the session window never moves (tla/ReplayWindow.tla
+    // the session window never moves (proofs/tla/ReplayWindow.tla
     // NoAdvanceBeforeConnect and NoOpenBeforeConnect). The response is the
     // one sealed type a slotless mapping exists to receive, so it passes.
 
@@ -1270,9 +1270,9 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
                                                              fail_response_denied_writer, response_packet, response_bytes );
     }
 
-    // tla/RNXdpReplay.tla UserOpen: a genuine session packet opens and raises the opened high water.
+    // proofs/tla/RNXdpReplay.tla UserOpen: a genuine session packet opens and raises the opened high water.
     // session types: the mapping holds a slot (the gate above), so the
-    // sequence is marked now, after the open (tla/ReplayWindow.tla
+    // sequence is marked now, after the open (proofs/tla/ReplayWindow.tla
     // NoAdvanceBeforeConnect).
 
     rocketnet_replay_advance( replay, sequence );
@@ -1282,7 +1282,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // the ack block at the front of the opened data: the empty block on its
     // wire fields, every other block on the reconstructed 64-bit largest
     // against this end's own highest sent session sequence
-    // (tla/AckBlockWrap.tla ReadBlock): a malformed block refuses the whole
+    // (proofs/tla/AckBlockWrap.tla ReadBlock): a malformed block refuses the whole
     // packet, and the type data behind it is never examined
 
     struct rocketnet_ack_block_t block;
@@ -1436,7 +1436,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
         // accepts it: a refused fragment (stale, count or size mismatch,
         // payload too large, duplicate index) is never named in a block, so
         // the sender's aggregate never completes on it
-        // (tla/FragmentsAndAcks.tla RecvData, NamedOnlyIfAccepted). an
+        // (proofs/tla/FragmentsAndAcks.tla RecvData, NamedOnlyIfAccepted). an
         // accepted fragment that completes a payload later dropped as batch
         // full still acknowledges: reassembly accepted it.
 
@@ -1608,7 +1608,7 @@ int rocketnet_server_protocol_process_packet( struct rocketnet_server_protocol_t
 }
 
 // Cookie key rotation: modelled by Tick, LiveGens, PreviousBoundedToOnePeriod
-// and InFlightCookieSurvivesRotation in tla/RNSecurityTables.tla.
+// and InFlightCookieSurvivesRotation in proofs/tla/RNSecurityTables.tla.
 
 void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server_protocol_t * server,
                                                          double current_time )
@@ -1641,8 +1641,8 @@ void rocketnet_server_protocol_rotate_cookie_key_if_due( struct rocketnet_server
     rocketnet_debug( "server rotated connection cookie secret" );
 }
 
-// tla/ServerConnection.tla Tick
-// tla/RNSecurityTables.tla Tick
+// proofs/tla/ServerConnection.tla Tick
+// proofs/tla/RNSecurityTables.tla Tick
 void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * server,
                                        double current_time )
 {
@@ -1675,7 +1675,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             }
             else if ( current_time >= control->last_receive_time + ROCKETNET_HALF_OPEN_IDLE_TIMEOUT_SECONDS )
             {
-                // tla/MCReceiveOrder.tla IdleRemove: the mapping leaves alone
+                // proofs/tla/MCReceiveOrder.tla IdleRemove: the mapping leaves alone
                 // and releases its token's claim before it is removed
                 rocketnet_debug( "server removed encryption mapping. half-open idle timeout" );
                 rocketnet_server_release_mapping_claim( server, iterator );
@@ -1736,7 +1736,7 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
 // a block, and sending a block resets the ack debt. The sent packet is
 // recorded in the delivery bookkeeping -- these sequences carry no packet
 // id and surface nothing when acknowledged.
-// tla/RNChannel.tla SendAck and tla/RNWindow.tla SendAck: the block carries
+// proofs/tla/RNChannel.tla SendAck and proofs/tla/RNWindow.tla SendAck: the block carries
 // the packet ids opened in the fixed batch and the debt clears once it leaves.
 
 static int rocketnet_server_write_session_packet( struct rocketnet_server_protocol_t * server,
@@ -1849,7 +1849,7 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
     return bytes;
 }
 
-// tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks, and only when that debt is nonzero.
+// proofs/tla/RNEndpoint.tla WriteAck: sends a packet that carries only the owed acks, and only when that debt is nonzero.
 int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol_t * server,
                                                 int client_index,
                                                 double current_time,
@@ -1889,7 +1889,7 @@ static int rocketnet_server_keep_alive_due( const struct rocketnet_server_protoc
     return !( current_time - last < 1.0 / send_rate );
 }
 
-// tla/ServerConnection.tla ServerKeepAlive
+// proofs/tla/ServerConnection.tla ServerKeepAlive
 int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_protocol_t * server,
                                                        int client_index,
                                                        double current_time,
@@ -2277,10 +2277,10 @@ int rocketnet_server_protocol_write_fragments( struct rocketnet_server_protocol_
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/ServerConnection.tla ServerAppDisconnect
-// tla/ServerConnection.tla ServerDiscCopy: each of the burst's
+// proofs/tla/ServerConnection.tla ServerAppDisconnect
+// proofs/tla/ServerConnection.tla ServerDiscCopy: each of the burst's
 // ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS copies is written here.
-// tla/RNSecurityTables.tla Disconnect: the slot is released with its mapping
+// proofs/tla/RNSecurityTables.tla Disconnect: the slot is released with its mapping
 // (rocketnet_server_connection_reset).
 void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protocol_t * server,
                                                   int client_index,

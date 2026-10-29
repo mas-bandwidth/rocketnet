@@ -2235,7 +2235,7 @@ jobs:
   # build-type story, so the Debug row and the Release row were running the
   # same assertions twice per OS:
   #
-  #   bench/selftest.sh drives `make -C bench`, which has its OWN Makefile and
+  #   benchmarks/selftest.sh drives `make -C bench`, which has its OWN Makefile and
   #   its own flags and never reads CMAKE_BUILD_TYPE -- so the Debug row and
   #   the Release row compiled and drove BIT-IDENTICAL harness binaries. That
   #   half was a literal duplicate.
@@ -2259,7 +2259,7 @@ jobs:
   # It keeps both OSes, because the two legs cover different harnesses: the
   # linux leg covers bench_gso (whose pps=0-on-a-GSO-less-host case is what
   # #98 item 5 filed) and bench_uring_system; the macOS leg covers the darwin
-  # trio. bench/selftest.sh reports a harness this host cannot build as
+  # trio. benchmarks/selftest.sh reports a harness this host cannot build as
   # SKIPPED with the reason and fails if a BUILT harness got neither a leg nor
   # a skip, so dropping an OS here would silently drop its harnesses.
 
@@ -2344,7 +2344,7 @@ jobs:
         run: bash scripts/soak-args-selftest
 
       # the bench harnesses' failure states (#98). Building them here is the
-      # only place bench/ is compiled by CI at all, which alone catches the
+      # only place benchmarks/ is compiled by CI at all, which alone catches the
       # platform-only files rotting; the selftest then FORCES each abort path
       # -- a receive refused for a reason that is not an empty queue, a
       # persistently refused send, a full io_uring submission queue -- and
@@ -2353,19 +2353,19 @@ jobs:
 
       - name: Build the bench harnesses (Linux)
         if: runner.os == 'Linux'
-        run: make -C bench bench_portable bench_gso bench_uring_system
+        run: make -C benchmarks bench_portable bench_gso bench_uring_system
 
       - name: Build the bench harnesses (macOS)
         if: runner.os == 'macOS'
-        run: make -C bench darwin
+        run: make -C benchmarks darwin
 
       - name: Bench harness failure-state selftest
-        run: bash bench/selftest.sh
+        run: bash benchmarks/selftest.sh
 
       - name: Benchmark campaign result gate
-        run: python3 bench/test_campaign.py
+        run: python3 benchmarks/test_campaign.py
 
-  # bench/instruction_baseline.json is pinned to GNU-15.2.0 / valgrind-3.26.0;
+  # benchmarks/instruction_baseline.json is pinned to GNU-15.2.0 / valgrind-3.26.0;
   # the fleet label also matches gcc-13 hosts, so route this job to the quiet
   # runner label that carries the pinned toolchain.
   instruction-gate:

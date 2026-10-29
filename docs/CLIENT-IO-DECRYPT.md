@@ -16,6 +16,6 @@ still owns. The caller sees admitted messages only through the endpoint-wide
 `rocketnet_message_batch_t` queue, whose pointers remain valid until the next
 receive call or update on that endpoint.
 
-`tla/RNClientIoDecrypt.tla` states the ownership, replay and retirement
+`proofs/tla/RNClientIoDecrypt.tla` states the ownership, replay and retirement
 invariants. Unit and functional tests exercise the executable boundary.
 Throughput profiling and off-thread tuning are planned hardening work.

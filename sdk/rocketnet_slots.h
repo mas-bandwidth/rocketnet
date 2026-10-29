@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_SDK_ROCKETNET_SLOTS_H
 #define ROCKETNET_SDK_ROCKETNET_SLOTS_H
 
-// The slots machine (CHANNELS.md 10.2, tla/RNSlots.tla Observe and Admit).
+// The slots machine (CHANNELS.md 10.2, proofs/tla/RNSlots.tla Observe and Admit).
 // It holds the connection each slot is bound to and the per-update changed
 // bit; observe reports the slot's CONNECTED (RESET) and DISCONNECTED (DROP)
 // events, and admit says whether a batch entry belongs to the slot's current

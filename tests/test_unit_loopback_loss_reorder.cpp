@@ -8,7 +8,7 @@
 // datagram is lost) and simulated_reverse_window (each window of W outgoing
 // datagrams is delivered in reverse, the window flushed whole at the end of
 // each send_packets). Both count from the endpoint's first send and use no
-// random draw (tla/Link.tla "everynth" and ReverseWindow). The cases run on
+// random draw (proofs/tla/Link.tla "everynth" and ReverseWindow). The cases run on
 // the loopback transport, with time passed as an argument from 1000.0, no socket.
 //
 // test_loopback_transport_patterns_off_same_trace compares a fixed run, with both fields zero

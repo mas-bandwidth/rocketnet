@@ -4,7 +4,7 @@
 */
 
 // CONFIG, the one announcement (docs/CHANNELS.md 10.3 and 13.4;
-// tla/RNEndpoint.tla Reset, WriteOk, OnPayload with ConfigCompare, Tick):
+// proofs/tla/RNEndpoint.tla Reset, WriteOk, OnPayload with ConfigCompare, Tick):
 // each end queues one CONFIG control record at connection reset, at the head
 // of IMMEDIATE, taking the connection's first reliable number; the receiver
 // compares it field by field with its own, and a difference ends the
@@ -1007,7 +1007,7 @@ static void test_config_vector_is_library_default()
 }
 
 // The sent-packet map against the window (docs/CHANNELS.md 6.4,
-// standard/MESSAGES.md m9.1; tla/RNSentMap.tla NoLiveEviction): under the
+// standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla NoLiveEviction): under the
 // library's default window and map (the receive ring and the store raised
 // to hold the burst), a client with no send budget writes 1000 reliable
 // messages of 800 bytes, one to a packet, while the transport holds every
