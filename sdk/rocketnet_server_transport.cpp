@@ -2273,6 +2273,107 @@ void rocketnet_server_transport_begin_message_update( struct rocketnet_server_tr
 }
 
 // tla/RNDriverSendStaging.tla Update
+// One received datagram, once counted: its shape and mapping, the protocol,
+// the response sealed straight into a send frame, and the payload (or the
+// payload a fragment completed) into this update's batch in arrival order.
+// view_index names the packet in a staged transport's receive view, -1 on
+// the batch path.
+static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * server_transport, const rocketnet_address_t * from,
+                                          uint8_t * packet_data, int packet_bytes, int view_index,
+                                          uint64_t current_timestamp, double current_time )
+{
+    const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, packet_data, packet_bytes );
+    const int mapping_index = rocketnet_server_receive_mapping_index( server_transport, shape_valid, from );
+    const int wire_client_before = rocketnet_server_mapping_client_index( server_transport, mapping_index );
+    rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, from, packet_bytes );
+
+    // the packet opens into the next free payload slot; with the batch
+    // full it opens on the stack and its payload is not delivered
+
+    const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
+    uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
+    uint8_t * opened = payload_slot_free ? server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
+    const uint8_t * payload = NULL;
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+
+    struct rocketnet_server_frame_t frame;
+    frame.data = NULL;
+
+    uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, from, &frame ) : NULL;
+    uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
+    int response_bytes = 0;
+
+    if ( response )
+        response += ROCKETNET_FRAME_WIRE_OFFSET;
+
+    const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, from, mapping_index,
+                                                                    packet_data, packet_bytes,
+                                                                    current_timestamp, current_time,
+                                                                    response ? response : response_overflow, &response_bytes,
+                                                                    opened, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
+                                                                    &payload, &payload_bytes, &payload_client_index );
+
+    // a packet that opened under a connection's keys teaches a staged
+    // transport its link-layer source (the xdp reply-MAC rule, TRANSPORTS.md);
+    // a dropped or unauthenticated packet (a cookie or a challenge answer)
+    // teaches nothing
+    if ( view_index >= 0 && ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) &&
+         server_transport->io.operations->client_accepted )
+        server_transport->io.operations->client_accepted( server_transport->io.instance, view_index );
+
+    rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
+
+    frame.client_index = rocketnet_server_wire_client_after( server_transport, wire_client_before, mapping_index, outcome );
+
+    if ( response )
+    {
+        if ( response_bytes > 0 )
+            rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
+        else
+            rocketnet_server_abort_send_frame( server_transport, &frame );
+    }
+
+    if ( payload_slot_free && payload && payload_bytes > 0 )
+    {
+        // the payload's bytes inside the slot it opened into, which the
+        // transport owns: delivered in place, never copied (opened is the
+        // writable view of the same bytes)
+        const int index = server_transport->payloads.num_payloads;
+        server_transport->payloads.client_index[index] = payload_client_index;
+        server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
+        server_transport->payloads.payload_data[index] = opened + ( payload - opened );
+        server_transport->payloads.payload_bytes[index] = payload_bytes;
+        server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
+        server_transport->payloads.num_payloads++;
+    }
+
+    // a fragment that completed its payload delivers here, in arrival
+    // position: the reassembled bytes live in the reassembly's delivered
+    // arena, valid until the next update, and join the same batch
+    // attributed to their client slot
+
+    struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
+    if ( reassembly->completed_bytes > 0 )
+    {
+        if ( server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
+        {
+            const int index = server_transport->payloads.num_payloads;
+            server_transport->payloads.client_index[index] = payload_client_index;
+            server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
+            server_transport->payloads.payload_data[index] = reassembly->completed_payload;
+            server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
+            server_transport->payloads.sequence[index] = 0;
+            server_transport->payloads.num_payloads++;
+        }
+        else
+        {
+            rocketnet_spam( "server dropped reassembled payload. receive batch full" );
+            server_transport->counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL]++;
+        }
+    }
+}
+
 void rocketnet_server_transport_update( struct rocketnet_server_transport_t * server_transport, double time )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )
@@ -2336,93 +2437,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
             server_transport->stats_frames[stats_index].packets_received++;
             server_transport->stats_frames[stats_index].bytes_received += (uint64_t) ( received->packet_bytes[i] + rocketnet_wire_header_bytes( received->from[i].type ) );
 
-            const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, received->packet_data[i], received->packet_bytes[i] );
-            const int mapping_index = rocketnet_server_receive_mapping_index( server_transport, shape_valid, &received->from[i] );
-            const int wire_client_before = rocketnet_server_mapping_client_index( server_transport, mapping_index );
-            rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &received->from[i], received->packet_bytes[i] );
-
-        // the packet opens into the next free payload slot; with the batch
-        // full it opens on the stack and its payload is not delivered
-            const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
-            uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
-            uint8_t * opened = payload_slot_free ? server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
-            const uint8_t * payload = NULL;
-            int payload_bytes = 0;
-            int payload_client_index = -1;
-
-            struct rocketnet_server_frame_t frame;
-            frame.data = NULL;
-
-            uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, &received->from[i], &frame ) : NULL;
-            uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
-            int response_bytes = 0;
-
-            if ( response )
-                response += ROCKETNET_FRAME_WIRE_OFFSET;
-
-            const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, &received->from[i], mapping_index,
-                                                                            received->packet_data[i], received->packet_bytes[i],
-                                                                            current_timestamp, current_time,
-                                                                            response ? response : response_overflow, &response_bytes,
-                                                                            opened, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
-                                                                            &payload, &payload_bytes, &payload_client_index );
-
-        // a packet that opened under a connection's keys teaches the transport
-        // its link-layer source (the xdp reply-MAC rule, TRANSPORTS.md); a
-        // dropped or unauthenticated packet (a cookie or a challenge answer)
-        // teaches nothing
-            if ( ( outcome == ROCKETNET_SERVER_PROCESS_ACCEPTED || outcome == ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE ) && server_transport->io.operations->client_accepted )
-                server_transport->io.operations->client_accepted( server_transport->io.instance, i );
-
-            rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
-
-            frame.client_index = rocketnet_server_wire_client_after( server_transport, wire_client_before, mapping_index, outcome );
-
-            if ( response )
-            {
-                if ( response_bytes > 0 )
-                    rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
-                else
-                    rocketnet_server_abort_send_frame( server_transport, &frame );
-            }
-
-            if ( payload_slot_free && payload && payload_bytes > 0 )
-            {
-            // the payload's bytes inside the slot it opened into, which the
-            // transport owns: delivered in place, never copied
-                const int index = server_transport->payloads.num_payloads;
-                server_transport->payloads.client_index[index] = payload_client_index;
-                server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-                server_transport->payloads.payload_data[index] = opened + ( payload - opened );
-                server_transport->payloads.payload_bytes[index] = payload_bytes;
-                server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
-                server_transport->payloads.num_payloads++;
-            }
-
-        // a fragment that completed its payload delivers here, in arrival
-        // position: the reassembled bytes live in the reassembly's
-        // delivered arena, valid until the next update, and join the same
-        // batch attributed to their client slot
-
-            struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
-            if ( reassembly->completed_bytes > 0 )
-            {
-                if ( server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
-                {
-                    const int index = server_transport->payloads.num_payloads;
-                    server_transport->payloads.client_index[index] = payload_client_index;
-                    server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-                    server_transport->payloads.payload_data[index] = reassembly->completed_payload;
-                    server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
-                    server_transport->payloads.sequence[index] = 0;
-                    server_transport->payloads.num_payloads++;
-                }
-                else
-                {
-                    rocketnet_spam( "server dropped reassembled payload. receive batch full" );
-                    server_transport->counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL]++;
-                }
-            }
+            rocketnet_server_receive_one( server_transport, &received->from[i], received->packet_data[i], received->packet_bytes[i], i, current_timestamp, current_time );
         }
     }
     else
@@ -2491,86 +2506,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
                     continue;
                 }
 
-                const bool shape_valid = rocketnet_server_packet_shape_valid( &server_transport->protocol, receive_frame, packet_bytes );
-                const int mapping_index = rocketnet_server_receive_mapping_index( server_transport, shape_valid, &from );
-                const int wire_client_before = rocketnet_server_mapping_client_index( server_transport, mapping_index );
-                rocketnet_server_wire_totals_add_received( server_transport, wire_client_before, &from, packet_bytes );
-
-            // the packet opens into the next free payload slot; with the batch
-            // full it opens on the stack and its payload is not delivered
-                const bool payload_slot_free = server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE;
-                uint8_t payload_overflow[ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES];
-                uint8_t * opened = payload_slot_free ? server_transport->payload_storage + server_transport->payloads.num_payloads * ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES : payload_overflow;
-                const uint8_t * payload = NULL;
-                int payload_bytes = 0;
-                int payload_client_index = -1;
-
-                struct rocketnet_server_frame_t frame;
-                frame.data = NULL;
-
-                uint8_t * response = shape_valid ? rocketnet_server_reserve_send_frame( server_transport, &from, &frame ) : NULL;
-                uint8_t response_overflow[ROCKETNET_RECEIVE_CEILING];
-                int response_bytes = 0;
-
-                if ( response )
-                    response += ROCKETNET_FRAME_WIRE_OFFSET;
-
-                const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, &from, mapping_index,
-                                                                                receive_frame, packet_bytes,
-                                                                                current_timestamp, current_time,
-                                                                                response ? response : response_overflow, &response_bytes,
-                                                                                opened, ROCKETNET_RECEIVE_PAYLOAD_BYTES,
-                                                                                &payload, &payload_bytes, &payload_client_index );
-
-                rocketnet_assert( shape_valid || ( response_bytes == 0 && payload_bytes == 0 ) );
-
-                frame.client_index = rocketnet_server_wire_client_after( server_transport, wire_client_before, mapping_index, outcome );
-
-                if ( response )
-                {
-                    if ( response_bytes > 0 )
-                        rocketnet_server_commit_send_frame( server_transport, &frame, response_bytes );
-                    else
-                        rocketnet_server_abort_send_frame( server_transport, &frame );
-                }
-
-                if ( payload_slot_free && payload && payload_bytes > 0 )
-                {
-                // the payload's bytes inside the slot it opened into, which
-                // the transport owns: delivered in place, never copied
-                    const int index = server_transport->payloads.num_payloads;
-                    server_transport->payloads.client_index[index] = payload_client_index;
-                    server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-                    server_transport->payloads.payload_data[index] = opened + ( payload - opened );
-                    server_transport->payloads.payload_bytes[index] = payload_bytes;
-                    server_transport->payloads.sequence[index] = server_transport->protocol.payload_sequence;
-                    server_transport->payloads.num_payloads++;
-                }
-
-            // a fragment that completed its payload delivers here, in arrival
-            // position: the reassembled bytes live in the reassembly's
-            // delivered arena, valid until the next update, and join the same
-            // batch attributed to their client slot
-
-                struct rocketnet_reassembly_set_t * reassembly = server_transport->protocol.reassembly;
-                if ( reassembly->completed_bytes > 0 )
-                {
-                    if ( server_transport->payloads.num_payloads < ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
-                    {
-                        const int index = server_transport->payloads.num_payloads;
-                        server_transport->payloads.client_index[index] = payload_client_index;
-                        server_transport->payloads.connection_id[index] = server_transport->protocol.payload_connection_id;
-                        server_transport->payloads.payload_data[index] = reassembly->completed_payload;
-                        server_transport->payloads.payload_bytes[index] = reassembly->completed_bytes;
-                        server_transport->payloads.sequence[index] = 0;
-                        server_transport->payloads.num_payloads++;
-                    }
-                    else
-                    {
-                        rocketnet_spam( "server dropped reassembled payload. receive batch full" );
-                        server_transport->counters.values[ROCKETNET_COUNTER_FRAGMENT_PAYLOAD_BATCH_FULL]++;
-                    }
-                }
+                rocketnet_server_receive_one( server_transport, &from, receive_frame, packet_bytes, -1, current_timestamp, current_time );
             }
 
             packets_processed += num_received;
