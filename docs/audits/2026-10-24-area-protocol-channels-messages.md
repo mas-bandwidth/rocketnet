@@ -10,7 +10,7 @@ Cold reading audit of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc14
 `standard/MESSAGES.md` (m1 to m13), `standard/TRANSPORT.md` and `sdk/rocketnet.h`, with the
 unit and functional cases that pin them (`tests/test_unit_channel_*.cpp`,
 `tests/test_unit_message_*.cpp`, the three `tests/test_unit_standard_*` files named for this
-area, `functional/channel_*.cpp`). Acks, sequence numbers, windows, trackers and fragments are
+area, `tests/functional/channel_*.cpp`). Acks, sequence numbers, windows, trackers and fragments are
 audited separately and are left out. Method: each candidate was traced to the input or call
 sequence that reaches it; one was confirmed with a throwaway unit test (no real time, sockets
 or threads) that is not committed. No code was changed. Findings are ordered most severe

@@ -4,7 +4,7 @@ A sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfb
 class: a `size_t`, `ptrdiff_t`, `uint64_t` or `int64_t` value narrowed to `int`, `uint32_t`, `uint16_t` or
 `uint8_t` (a return, an explicit cast, an assignment to a struct field or a parameter) with no range check on
 the path, so a large value truncates or turns negative and a caller reads the wrong answer. Scope read: every
-`.cpp` and `.h` under `sdk/` (the public header read was `sdk/rocketnet.h`); all of `functional/`; and the
+`.cpp` and `.h` under `sdk/` (the public header read was `sdk/rocketnet.h`); all of `tests/functional/`; and the
 `tests/*.h` helpers the functional and deterministic-simulation tiers share (`counters_expect.h`,
 `dst_checks.h`, `dst_harness.h`, `live_verify.h`, `native_shutdown.h`, `pcapng.h`, `portable_crt.h`,
 `resource_file.h`, `suite_runner.h`, `time_scale.h`). Out of scope: `sdk/rocketnet_tests.cpp`, which builds
@@ -16,7 +16,7 @@ Method: the build compiles every target with `-Wconversion -Wsign-conversion -We
 compiles; every narrowing in the tree is an explicit cast, and the cast patterns below are therefore the
 complete candidate set. Patterns and in-scope hit counts:
 pattern 1, the cast form `\(\s*(int|uint32_t|uint16_t|uint8_t|int32_t)\s*\)|\b(int|uint32_t|uint16_t|uint8_t)\s*\(`,
-1228 hits (717 in `sdk/`, 368 in `functional/`, 143 in `tests/`);
+1228 hits (717 in `sdk/`, 368 in `tests/functional/`, 143 in `tests/`);
 pattern 2, widened after reading showed narrowings to other narrow spellings,
 `\(\s*(unsigned( int)?|int16_t|int8_t)\s*\)|\b(int32_t|int16_t|int8_t|unsigned)\s*\(`, 22 hits (15, 5, 2);
 pattern 3, functions returning a computed size as `int`, `return int\(|return \(int\)`, 39 hits (34, 1, 4),
@@ -52,7 +52,7 @@ or cost, and the smallest fix. Every other hit is listed under Judged not a defe
 ### 4. risk — `tests/dst_checks.h:525`
 
 - Defect: The whole-message check compares the recorded sent size, clamped to 65535 at line 296, with the delivered `int bytes` narrowed by `(uint16_t) bytes`, which wraps modulo 65536 instead of clamping, so the two sides disagree for any message above 65535 bytes.
-- Failure or cost: A harness sending a legal 70000-byte message (`max_message_bytes` reaches 1 << 20) records 65535 and then compares 4464 for the correct delivery, a false `whole_message` failure, while a delivery 65536 bytes off the sent size passes; today both callers cap messages at 16384 bytes (`tests/dst_harness.h:772`, `fuzz/rocketnet_fuzz_pair.h:275`), so nothing reaches it yet.
+- Failure or cost: A harness sending a legal 70000-byte message (`max_message_bytes` reaches 1 << 20) records 65535 and then compares 4464 for the correct delivery, a false `whole_message` failure, while a delivery 65536 bytes off the sent size passes; today both callers cap messages at 16384 bytes (`tests/dst_harness.h:772`, `tests/fuzz/rocketnet_fuzz_pair.h:275`), so nothing reaches it yet.
 - Smallest fix: Compare with the same clamp, `(uint16_t) ( bytes > 65535 ? 65535 : bytes )`, or widen `sent_size` to `uint32_t`.
 
 ## Counts
@@ -70,379 +70,379 @@ and 224 of `sdk/rocketnet_frame_sync.cpp` belong to finding 1; lines 925, 1115, 
 
 | file:line | why it is safe |
 | --- | --- |
-| `functional/channel_config.cpp:52` | source is int index and loop int i widened to uint32_t for a hash, not narrowing |
-| `functional/channel_config.cpp:56` | intentional top byte of a uint32_t hash, x >> 24 is at most 0xFF |
-| `functional/channel_config.cpp:103` | double timeout times 60, not integer narrowing |
-| `functional/channel_config.cpp:130` | double timeout times 60, not integer narrowing |
-| `functional/channel_config.cpp:177` | double timeout times 60, not integer narrowing |
-| `functional/channel_config.cpp:196` | double timeout times 60, not integer narrowing |
-| `functional/channel_config.cpp:213` | double timeout times 60, not integer narrowing |
-| `functional/channel_control_packets.cpp:105` | source is int i under 3000, intentional byte pattern wrap, not wide narrowing |
-| `functional/channel_harness.h:194` | uint8_t ipv4 bytes widened to uint32_t, not narrowing |
-| `functional/channel_harness.h:195` | uint8_t ipv4 bytes widened to uint32_t, not narrowing |
-| `functional/channel_harness.h:207` | vector size_t is datagram bytes plus fixed IPv4/UDP header, bytes bounded by ROCKETNET_RECEIVE_CEILING in the harness |
-| `functional/channel_harness.h:216` | source is int kind, a ROCKETNET_PCAPNG_KIND constant of 1 to 3 |
-| `functional/channel_harness.h:219` | record size_t is 1 plus opened bytes, bounded by ROCKETNET_RECEIVE_CEILING per functional/channel_harness.h:237 |
-| `functional/channel_harness.h:247` | source is int packet_type read from one uint8_t byte packet[0] |
-| `functional/channel_harness.h:313` | declaration of a pointer to fixed-size array, not a cast |
-| `functional/channel_harness.h:366` | declaration of a pointer to fixed-size array, not a cast |
-| `functional/channel_harness.h:858` | pointer cast of malloc result, not integer narrowing |
-| `functional/channel_harness.h:860` | pointer cast of malloc result, not integer narrowing |
-| `functional/channel_harness.h:862` | pointer cast of malloc result, not integer narrowing |
-| `functional/channel_ordered.cpp:59` | source is int message and offset, same width sign cast into a uint32_t hash |
-| `functional/channel_ordered.cpp:63` | intentional top byte of a uint32_t hash, x >> 24 is always below 256 |
-| `functional/channel_receipts.cpp:64` | source is int step, below messages=48, intentional byte value |
-| `functional/channel_receipts.cpp:65` | source is int step, below messages=48, intentional byte value |
-| `functional/channel_receipts.cpp:98` | source is enum rocketnet_receipt_status_t, checked ACKED or LOSS on the line above |
-| `functional/channel_receipts.cpp:108` | source is enum rocketnet_receipt_status_t, checked ACKED or LOSS on the line above |
-| `functional/channel_receipts.cpp:148` | source is int arithmetic, intentional byte pattern wrap |
-| `functional/channel_receipts.cpp:149` | source is int arithmetic, intentional byte pattern wrap |
-| `functional/channel_receipts_reliable.cpp:58` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/channel_receipts_reliable.cpp:59` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/channel_reliable.cpp:30` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
-| `functional/channel_reliable.cpp:31` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
-| `functional/channel_reliable.cpp:100` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
-| `functional/channel_reliable.cpp:211` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
-| `functional/channel_reliable.cpp:377` | sizeof of a 1 MiB static array (ROCKETNET_MAX_MESSAGE_BYTES = 1<<20), a compile-time constant that fits int |
-| `functional/channel_reliable.cpp:380` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
-| `functional/channel_reliable_sequenced.cpp:24` | intentional byte extraction of a uint32_t state, little-endian encode |
-| `functional/channel_reliable_sequenced.cpp:31` | widening uint8_t to uint32_t, not narrowing |
-| `functional/channel_reliable_sequenced.cpp:84` | uint64_t counter on a fresh per-test server, bounded by about 1575 states sent in the test at line 97 |
-| `functional/channel_resend_timing.cpp:109` | Source is double from ceil, not integer narrowing; index is clamped to 0 .. count-1 at lines 110-113 |
-| `functional/channel_resend_timing.cpp:190` | Source is int (sent * 13 + i); intentional byte pattern truncation of a test payload |
-| `functional/channel_resend_timing.cpp:196` | sizeof of a 32-byte local array, compile-time constant 32 |
-| `functional/channel_resend_timing.cpp:437` | Source is int (i * 31 + 7); intentional byte pattern truncation of a test block |
-| `functional/channel_resend_timing.cpp:467` | Source is int (small_sent * 13 + i); intentional byte pattern truncation of a test payload |
-| `functional/channel_resend_timing.cpp:472` | sizeof of a 32-byte local array, compile-time constant 32 |
-| `functional/channel_smoke.cpp:132` | source is int client_sent below 600 sends, deliberate low and high byte split of the message index |
-| `functional/channel_smoke.cpp:138` | source is int server_sent below 600 sends, deliberate low and high byte split of the message index |
-| `functional/channel_smoke.cpp:295` | compile-time sizeof of a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 array |
-| `functional/channel_smoke.cpp:296` | source is int loop index, deliberate low-byte fill pattern |
-| `functional/channel_smoke.cpp:307` | compile-time sizeof of a 3-byte array |
-| `functional/channel_smoke.cpp:310` | compile-time sizeof of a 3-byte array |
-| `functional/channel_smoke.cpp:313` | compile-time sizeof of a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 array |
-| `functional/channel_unreliable_budget.cpp:21` | source is int id, intentional low byte of a test pattern, id below 12 |
-| `functional/channel_unreliable_budget.cpp:22` | source is int id, intentional low byte of a test pattern |
-| `functional/channel_unreliable_budget.cpp:23` | source is int id, intentional low byte of a test pattern |
-| `functional/channel_unreliable_budget.cpp:24` | source is int id, intentional low byte of a test pattern |
-| `functional/channel_unreliable_budget.cpp:31` | constant sizeof of a 4 byte array |
-| `functional/channel_unreliable_budget.cpp:32` | constant sizeof of a 4 byte array |
-| `functional/channel_unreliable_duplicates.cpp:48` | intentional low byte of a uint32_t pattern hash |
-| `functional/channel_unreliable_duplicates.cpp:53` | source is int kind, checked below DUP_KINDS 3 |
-| `functional/channel_unreliable_duplicates.cpp:54` | intentional byte extraction of uint32_t id, id below DUP_MESSAGES 400 |
-| `functional/channel_unreliable_duplicates.cpp:55` | intentional byte extraction of uint32_t id |
-| `functional/channel_unreliable_duplicates.cpp:56` | intentional byte extraction of uint32_t id |
-| `functional/channel_unreliable_duplicates.cpp:72` | widening uint8_t bytes to uint32_t, not narrowing |
-| `functional/channel_unreliable_duplicates.cpp:139` | constant DUP_MESSAGES 400 cast to uint32_t |
-| `functional/channel_unreliable_duplicates.cpp:143` | constant DUP_SEND_TICKS 100 cast to uint32_t |
-| `functional/channel_unreliable_send_drops.cpp:52` | source is int arithmetic of uint8_t tag and int, intentional byte pattern wrap |
-| `functional/channel_unreliable_send_drops.cpp:60` | source is int arithmetic of uint8_t tag and int, intentional byte pattern wrap |
-| `functional/channel_unreliable_send_drops.cpp:98` | source is int, 0x10 plus i below 4 |
-| `functional/channel_unreliable_send_drops.cpp:130` | source is int constant 0xA0 or 0xB0 |
-| `functional/channel_unreliable_send_drops.cpp:164` | source is int, 0x20 plus i below sent=12 |
-| `functional/channel_unreliable_send_drops.cpp:177` | source is int, 0x20 plus arrived checked below sent=12 in the same condition |
-| `functional/channel_unreliable_sequenced.cpp:24` | intentional byte extraction of uint32_t state by shift, not wide narrowing |
-| `functional/channel_unreliable_sequenced.cpp:31` | uint8_t widened to uint32_t, not narrowing |
-| `functional/channel_unreliable_sequenced.cpp:94` | source is int i under 2000, intentional test byte pattern wrap |
-| `functional/channel_unreliable_sequenced.cpp:104` | source is int max_message_bytes, same width cast |
-| `functional/channel_unreliable_sequenced.cpp:117` | source is int i under 2000, intentional test byte pattern wrap |
-| `functional/cpp_transports.cpp:121` | sizeof of a ROCKETNET_RECEIVE_CEILING stack array, a compile-time constant |
-| `functional/harness.inc:260` | source is uint16_t port, widening to int for printf |
-| `functional/harness.inc:282` | source is uint16_t returned by rocketnet_test_free_port, widening to int |
-| `functional/live_matrix.cpp:264` | same width sign cast of uint32_t length bounded by max_message_bytes, at most ROCKETNET_MAX_MESSAGE_BYTES (sdk/rocketnet_internal.h:580) |
-| `functional/live_matrix.cpp:265` | same width sign cast of uint32_t length bounded by max_message_bytes, at most ROCKETNET_MAX_MESSAGE_BYTES (sdk/rocketnet_internal.h:580) |
-| `functional/live_matrix.cpp:315` | same width sign cast of uint32_t entry length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:329` | same width sign cast of uint32_t entry length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:333` | same width sign cast of uint32_t entry length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:373` | source is int bytes, rocketnet_live_check passed so bytes is at least 1 |
-| `functional/live_matrix.cpp:412` | int64_t difference below 256: q < LIVE_MATRIX_MAX_SEQUENCES checked at functional/live_matrix.cpp:390 and q > last checked at :405 |
-| `functional/live_matrix.cpp:448` | same width sign cast of uint32_t length from rocketnet_live_length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:449` | same width sign cast of uint32_t length from rocketnet_live_length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:452` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:453` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:506` | int64_t q is a uint32_t next or closing, negative return checked at functional/live_matrix.cpp:500 |
-| `functional/live_matrix.cpp:523` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:542` | source is int mode in 0 to 7 |
-| `functional/live_matrix.cpp:594` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:600` | source is int length in 1 to LIVE_MATRIX_TINY, widening |
-| `functional/live_matrix.cpp:614` | same width sign cast of uint32_t receipt count difference, bounded by LIVE_MATRIX_RECEIPT_TABLE sends |
-| `functional/live_matrix.cpp:690` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
-| `functional/live_matrix.cpp:691` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
-| `functional/live_matrix.cpp:696` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
-| `functional/live_matrix.cpp:709` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
-| `functional/live_matrix.cpp:710` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
-| `functional/live_matrix.cpp:717` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
-| `functional/live_matrix.cpp:743` | source is int channel in 0 to 31, widening sign cast |
-| `functional/live_matrix.cpp:756` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
-| `functional/live_matrix.cpp:765` | source is int mode in 0 to 7 |
-| `functional/live_matrix.cpp:840` | same width sign cast of uint32_t probe length, clipped to the mode maximum |
-| `functional/live_matrix.cpp:866` | same width sign cast of uint32_t receipt count difference, bounded by probes sent |
-| `functional/live_matrix.cpp:919` | array size from a sizeof quotient, compile-time constant, no cast |
-| `functional/live_matrix.cpp:920` | size_t loop bound from a sizeof quotient, compile-time constant, no narrowing |
-| `functional/live_matrix.cpp:1032` | size_t loop bound from a sizeof quotient, compile-time constant, no narrowing |
-| `functional/live_matrix.cpp:1131` | same width sign cast of int max_message_bytes, range checked at sdk/rocketnet_internal.h:580 by message config validation |
-| `functional/platform_primitives.cpp:228` | uint64 difference is always 16: the loop above records exactly 16 sends between first and sequence |
-| `functional/posix_hard_killed_client.cpp:381` | compile-time sizeof of a 32-byte array |
-| `functional/posix_hard_killed_client.cpp:398` | compile-time sizeof of a 32-byte array |
-| `functional/posix_hard_killed_client.cpp:421` | source is int slot, loop below ROCKETNET_MAX_CLIENTS, intentional low byte as a payload tag |
-| `functional/posix_hard_killed_client.cpp:422` | compile-time sizeof of a 32-byte array |
-| `functional/posix_hard_killed_client.cpp:444` | size_t index bounded by live vector of 3 created at posix_hard_killed_client.cpp:671 and :892 |
-| `functional/posix_hard_killed_client.cpp:445` | compile-time sizeof of a 32-byte array |
-| `functional/posix_hard_killed_client.cpp:606` | compile-time sizeof of a 32-byte array |
-| `functional/posix_hard_killed_client.cpp:728` | size_t index below 3 by the loop bound, printf argument |
-| `functional/posix_hard_killed_client.cpp:786` | 20000 + arc4random_uniform(20000) is below 40000, fits uint16_t |
-| `functional/posix_hard_killed_client.cpp:790` | 20000 + draw % 12000 is below 32000, fits uint16_t |
-| `functional/posix_hard_killed_client.cpp:912` | source is int returned from a uint16_t address.port at posix_hard_killed_client.cpp:805 |
-| `functional/posix_hard_killed_client.cpp:923` | compile-time sizeof of a 64-byte array |
-| `functional/posix_hard_killed_client.cpp:946` | size_t index below 3 by the loop bound, printf argument |
-| `functional/posix_hard_killed_client.cpp:1083` | compile-time sizeof of a POSIX_SEAM_BYTES (64) array |
-| `functional/posix_hard_killed_client.cpp:1145` | source is int i below total, which equals POSIX_SEAM_PACKETS 10, intentional byte tag |
-| `functional/posix_hard_killed_client.cpp:1188` | compile-time sizeof of a POSIX_SEAM_BYTES (64) array |
-| `functional/posix_hard_killed_client.cpp:1230` | compile-time element count of a small static array |
-| `functional/posix_hard_killed_client.cpp:1244` | compile-time element count of a 3-entry static array |
-| `functional/posix_hard_killed_client.cpp:1245` | compile-time element count of a 1-entry static array |
-| `functional/posix_hard_killed_client.cpp:1371` | declaration with an unnamed int parameter, not a cast |
-| `functional/posix_hard_killed_client.cpp:1376` | declaration with an unnamed int parameter, not a cast |
-| `functional/posix_lifecycle_stress.cpp:135` | compile-time sizeof of a 4096-entry proc_fdinfo array, well below INT_MAX |
-| `functional/posix_lifecycle_stress.cpp:139` | compile-time sizeof of struct proc_fdinfo |
-| `functional/posix_lifecycle_stress.cpp:161` | compile-time sizeof of struct proc_taskinfo |
-| `functional/posix_lifecycle_stress.cpp:162` | compile-time sizeof of struct proc_taskinfo |
-| `functional/posix_lifecycle_stress.cpp:164` | source is int32_t pti_threadnum, same width |
-| `functional/posix_lifecycle_stress.cpp:319` | source is int from POSIX socket(), same type |
-| `functional/posix_lifecycle_stress.cpp:346` | compile-time element count of the static cell table |
-| `functional/posix_lifecycle_stress.cpp:659` | source is uint16_t from rocketnet_server_transport_port, widening |
-| `functional/posix_lifecycle_stress.cpp:954` | same width sign cast of a positive compile-time int count |
-| `functional/posix_lifecycle_stress.cpp:959` | same width sign cast of a non-negative int loop index |
-| `functional/posix_lifecycle_stress.cpp:965` | same width sign cast of a positive pid_t |
-| `functional/posix_lifecycle_stress.cpp:970` | source is int from POSIX socket(), same type |
-| `functional/posix_lifecycle_stress.cpp:978` | port is at most last_port 29999 checked at posix_lifecycle_stress.cpp:966, fits uint16_t |
-| `functional/posix_lifecycle_stress.cpp:1010` | source is uint16_t from rocketnet_server_transport_port, widening |
-| `functional/posix_lifecycle_stress.cpp:1099` | compile-time sizeof of a 64-byte array |
-| `functional/posix_socket_errors.cpp:380` | enum client transport state to int for printf, not integer narrowing |
-| `functional/posix_socket_errors.cpp:432` | ssize_t from sendto is at most the int bytes requested or -1, fits int |
-| `functional/posix_socket_errors.cpp:475` | source is int index, intentional low byte of a test payload tag |
-| `functional/posix_socket_errors.cpp:476` | source is int index, intentional low byte of a test payload tag |
-| `functional/posix_socket_errors.cpp:478` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/posix_socket_errors.cpp:518` | source already uint16_t, rocketnet_server_transport_port returns uint16_t at sdk/rocketnet_server_transport.cpp:1942 |
-| `functional/posix_socket_errors.cpp:565` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/posix_socket_errors.cpp:585` | uint64_t random modulo 1500 is below 1500, fits int |
-| `functional/posix_socket_errors.cpp:587` | intentional low byte of a uint64_t random value used as a fill byte |
-| `functional/posix_socket_errors.cpp:815` | sizeof a 100-byte array, constant |
-| `functional/posix_socket_errors.cpp:919` | sizeof a string literal minus one, constant |
-| `functional/posix_socket_errors.cpp:949` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/posix_socket_errors.cpp:1098` | source is int tag plus i, intentional low byte tag, compared the same way at 1115 |
-| `functional/posix_socket_errors.cpp:1115` | source is int tag plus arrived, intentional low byte matching the sender at 1098 |
-| `functional/posix_socket_errors.cpp:1280` | sizeof of two uint32_t, constant 8 |
-| `functional/posix_socket_errors.cpp:1281` | uint32_t sum truncated to a fill byte on purpose, same pattern on both ends |
-| `functional/posix_socket_errors.cpp:1348` | source is int tag plus i, intentional low byte tag |
-| `functional/posix_socket_errors.cpp:1366` | source is int tag plus arrived, intentional low byte matching the sender |
-| `functional/posix_socket_errors.cpp:1387` | source is int tag plus i, intentional low byte tag |
-| `functional/posix_socket_errors.cpp:1403` | source is int tag plus arrived, intentional low byte matching the sender |
-| `functional/posix_socket_errors.cpp:2182` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/posix_socket_errors.cpp:2195` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/posix_socket_errors.cpp:2217` | uint64_t random modulo int max_whole (functional/posix_socket_errors.cpp:2140, under MTU) fits int |
-| `functional/posix_socket_errors.cpp:2219` | intentional low byte of a uint64_t random value used as a fill byte |
-| `functional/posix_socket_errors.cpp:2249` | ssize_t from recv is at most sizeof other_received, 4001 bytes at functional/posix_socket_errors.cpp:2160 |
-| `functional/rocketnet_functional_tests.cpp:117` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:118` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:120` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:143` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:144` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:146` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:462` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:471` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:472` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
-| `functional/rocketnet_functional_tests.cpp:474` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:493` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:501` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:528` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:536` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:631` | source is int count bounded by loop guard count < 20000 at line 625; mod-256 marker byte, not wider-integer narrowing |
-| `functional/rocketnet_functional_tests.cpp:770` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:771` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:951` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:1162` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:1394` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:1528` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:1651` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:1677` | uint64_t sum of per-frame send deltas over at most 120 frames of one payload each way; bounded to hundreds, fits int |
-| `functional/rocketnet_functional_tests.cpp:1811` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:2172` | size_t sizeof(send_data) is the constant 8192 from the local array declaration; fits int |
-| `functional/rocketnet_functional_tests.cpp:2173` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2174` | size_t sizeof(send_data) is the constant 8192 from the local array declaration; fits int |
-| `functional/rocketnet_functional_tests.cpp:2313` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2315` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2358` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2450` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2452` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2500` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2503` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2539` | size_t sizeof of a fixed local test array; compile-time constant far below INT_MAX |
-| `functional/rocketnet_functional_tests.cpp:2582` | size_t sizeof(send_data[i]) is the constant 64 from static uint8_t send_data[8][64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:2605` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:2924` | size_t sizeof(pattern) is ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES 16384 (sdk/rocketnet_layers.h:40); fits int |
-| `functional/rocketnet_functional_tests.cpp:2925` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:3074` | size_t sizeof(cursor_buffer) is ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES 16384 (sdk/rocketnet_layers.h:40); fits int |
-| `functional/rocketnet_functional_tests.cpp:3099` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:3256` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:3355` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:3487` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:3493` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:3655` | size_t sizeof(payload) is the constant 16 from const uint8_t payload[16]; fits int |
-| `functional/rocketnet_functional_tests.cpp:3658` | size_t sizeof(payload) is the constant 16 from const uint8_t payload[16]; fits int |
-| `functional/rocketnet_functional_tests.cpp:3659` | int client index widened to uint64_t and size_t constant 16 to int; no wider-to-narrower loss, index valid inside CONNECTED branch |
-| `functional/rocketnet_functional_tests.cpp:3662` | size_t sizeof(payload) is the constant 16 from const uint8_t payload[16]; fits int |
-| `functional/rocketnet_functional_tests.cpp:3752` | source is int (rocketnet_client_index returns int, sdk/rocketnet.h:1607); same-type cast, not narrowing |
-| `functional/rocketnet_functional_tests.cpp:3892` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:4006` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:4282` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4283` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
-| `functional/rocketnet_functional_tests.cpp:4285` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4304` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4334` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4335` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
-| `functional/rocketnet_functional_tests.cpp:4337` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4348` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:4360` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4414` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4443` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4458` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4608` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4610` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4630` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4647` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4649` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:4659` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:4670` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5299` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:5312` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:5313` | source is const int probe_segment_bytes = 100; constant fits uint16_t |
-| `functional/rocketnet_functional_tests.cpp:5325` | size_t sizeof(super) is the constant 800 (8 segments of 100 bytes); fits int |
-| `functional/rocketnet_functional_tests.cpp:5329` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:5342` | ssize_t recvmsg result, positive here and bounded by the 800-byte iov buffer at line 5328; fits int |
-| `functional/rocketnet_functional_tests.cpp:5348` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:5349` | ssize_t recvmsg result bounded by the 800-byte iov buffer at line 5328, positive at this point; fits int |
-| `functional/rocketnet_functional_tests.cpp:5463` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5465` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5486` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5515` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5517` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5530` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:5543` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5569` | size_t sizeof(runt) is ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1, a small compile-time constant; fits int |
-| `functional/rocketnet_functional_tests.cpp:5572` | size_t sizeof(oversize) is ROCKETNET_RECEIVE_CEILING + 74, under 1600; fits int |
-| `functional/rocketnet_functional_tests.cpp:5607` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5609` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5616` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:5629` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:5630` | source is const int gro_segment_bytes = 100; constant fits uint16_t |
-| `functional/rocketnet_functional_tests.cpp:5654` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5799` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5800` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
-| `functional/rocketnet_functional_tests.cpp:5802` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5814` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5815` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
-| `functional/rocketnet_functional_tests.cpp:5817` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5837` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5845` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:5851` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:5932` | source is int loop index below ROCKETNET_GSO_SEND_QUEUE_SIZE 4096; memset fill byte, intended mod-256 wrap |
-| `functional/rocketnet_functional_tests.cpp:5959` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:5968` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:5974` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6041` | size_t sizeof(first) of a fixed local test array, small compile-time constant; fits int |
-| `functional/rocketnet_functional_tests.cpp:6062` | size_t sizeof(second) of a fixed local test array, small compile-time constant; fits int |
-| `functional/rocketnet_functional_tests.cpp:6210` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6212` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6233` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6259` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6261` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6295` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:6308` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6331` | size_t sizeof(runt) is ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1, a small compile-time constant; fits int |
-| `functional/rocketnet_functional_tests.cpp:6334` | size_t sizeof(oversize) is ROCKETNET_RECEIVE_CEILING + 74, under 1600; fits int |
-| `functional/rocketnet_functional_tests.cpp:6449` | source is int tag = num_expected, at most 65 segments over the three bursts; fits uint8_t |
-| `functional/rocketnet_functional_tests.cpp:6451` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6455` | size_t sizeof(super) is the constant 65000 from static uint8_t super[65000]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6458` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:6471` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
-| `functional/rocketnet_functional_tests.cpp:6472` | source is int burst stride from a constant table (100, 300, 1200) at line 6438; fits uint16_t |
-| `functional/rocketnet_functional_tests.cpp:6492` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6571` | source is int loop index below ROCKETNET_URING_SEND_QUEUE_SIZE 2048; memset fill byte, intended mod-256 wrap |
-| `functional/rocketnet_functional_tests.cpp:6597` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6606` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:6612` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6652` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6653` | size_t sizeof(packet) is the constant 64 from uint8_t packet[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6654` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:6655` | size_t sizeof(packet) is the constant 64 from uint8_t packet[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6686` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6696` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:6815` | size_t sizeof(int) is the constant 4; fits int |
-| `functional/rocketnet_functional_tests.cpp:6829` | size_t sizeof(int) is the constant 4; fits int |
-| `functional/rocketnet_functional_tests.cpp:6971` | size_t sizeof(int) is the constant 4; fits int |
-| `functional/rocketnet_functional_tests.cpp:7014` | size_t sizeof(int) is the constant 4; fits int |
-| `functional/rocketnet_functional_tests.cpp:7127` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7136` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7172` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7188` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7369` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7393` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7426` | size_t sizeof(truncated_data) is the constant 16; fits int |
-| `functional/rocketnet_functional_tests.cpp:7427` | size_t sizeof(compact_receive_data[0]) is the constant 8; fits int |
-| `functional/rocketnet_functional_tests.cpp:7527` | size_t sizeof(packet) is the constant 8 from uint8_t packet[8] at line 7502; fits int |
-| `functional/rocketnet_functional_tests.cpp:7590` | size_t sizeof(packet) is the constant 8 from uint8_t packet[8] at line 7579; fits int |
-| `functional/rocketnet_functional_tests.cpp:7607` | size_t sizeof(packet) is the constant 8 from uint8_t packet[8] at line 7579; fits int |
-| `functional/rocketnet_functional_tests.cpp:7702` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7703` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:7739` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:8101` | source is unsigned int octet, not wider; range checked octet <= 0xff at line 8100 |
-| `functional/rocketnet_functional_tests.cpp:8156` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:8157` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:8213` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:8325` | size_t built from int atoi of a tcpdump length field, cast back to int for a log line; round-trips the original int |
-| `functional/rocketnet_functional_tests.cpp:8381` | size_t sizeof(first[0]) is the constant 16 from first[2][16] at line 8369; fits int |
-| `functional/rocketnet_functional_tests.cpp:8382` | size_t sizeof(first[1]) is the constant 16 from first[2][16] at line 8369; fits int |
-| `functional/rocketnet_functional_tests.cpp:8389` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:8391` | size_t sizeof(first[0]) is the constant 16 from first[2][16] at line 8369; fits int |
-| `functional/rocketnet_functional_tests.cpp:8601` | size_t sizeof(payload) is the constant 32 from uint8_t payload[32]; fits int |
-| `functional/rocketnet_functional_tests.cpp:8602` | size_t sizeof(payload) is the constant 32 from uint8_t payload[32]; fits int |
-| `functional/rocketnet_functional_tests.cpp:8616` | size_t sizeof(received) is the constant 64 from uint8_t received[64]; fits int |
-| `functional/rocketnet_functional_tests.cpp:9229` | source is uint16_t port (sdk/rocketnet.h:1803); widening to int, not narrowing |
-| `functional/rocketnet_functional_tests.cpp:9230` | source is uint16_t port (sdk/rocketnet.h:1803); widening to int, not narrowing |
-| `functional/rocketnet_functional_tests.cpp:9265` | source is an enum client state, not a wider integer; printf argument |
-| `functional/rocketnet_functional_tests.cpp:9393` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:9395` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:9402` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
-| `functional/rocketnet_functional_tests.cpp:9442` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:9470` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
-| `functional/rocketnet_functional_tests.cpp:9949` | size_t element count of the static test table, a compile-time constant of a few hundred entries; fits int |
-| `functional/server_receive_backlog.cpp:88` | clients.size() size_t bounded by max_clients 48 at functional/server_receive_backlog.cpp:99 |
-| `functional/server_receive_backlog.cpp:155` | source is uint16_t port, widened to int |
-| `functional/server_receive_backlog.cpp:230` | size_t i bounded by clients.size() at most 48 per functional/server_receive_backlog.cpp:99 |
-| `functional/server_receive_backlog.cpp:231` | source is int frame under 300, byte extraction by shift and mask |
-| `functional/server_receive_backlog.cpp:258` | uint8_t widened to uint32_t, not narrowing |
-| `functional/server_receive_backlog.cpp:259` | uint8_t widened to uint32_t, not narrowing |
-| `functional/server_receive_backlog.cpp:261` | source is int constant 48 and int frame, sign cast only |
-| `functional/windows_connreset.cpp:161` | sizeof of a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES array, a compile-time constant |
-| `functional/windows_connreset.cpp:174` | uint64 *sent < WINDOWS_CONNRESET_MEASURED_PACKETS (100) is required at functional/windows_connreset.cpp:173 before the cast |
-| `functional/windows_connreset.cpp:446` | uint64 server_sent counts test sends, bounded by fixed loop counts far below 2^32; sequence <= 100 required at :447 when used |
-| `functional/windows_connreset.cpp:450` | sizeof of a WINDOWS_CONNRESET_PAYLOAD_BYTES (32) array, a compile-time constant |
-| `functional/windows_connreset.cpp:456` | sizeof of a WINDOWS_CONNRESET_PAYLOAD_BYTES (32) array, a compile-time constant |
-| `functional/windows_connreset.cpp:769` | sizeof of a WINDOWS_CONNRESET_PAYLOAD_BYTES (32) array, a compile-time constant |
-| `functional/windows_socket_errors.cpp:105` | source is int arithmetic, intentional low byte of a test fill pattern |
-| `functional/windows_socket_errors.cpp:116` | intentional low byte of a uint64_t generator value used as a fill byte |
-| `functional/windows_socket_errors.cpp:123` | intentional low byte of a uint64_t generator value used as a fill byte |
-| `functional/windows_socket_errors.cpp:151` | sizeof sockaddr_in6, constant |
-| `functional/windows_socket_errors.cpp:159` | sizeof sockaddr_in, constant |
-| `functional/windows_socket_errors.cpp:167` | size_t vector size at most 65507, largest size built at functional/windows_socket_errors.cpp:99 |
-| `functional/windows_socket_errors.cpp:168` | size_t vector size at most 65507, largest size built at functional/windows_socket_errors.cpp:99 |
-| `functional/windows_socket_errors.cpp:205` | sizeof a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES array, constant |
-| `functional/windows_socket_errors.cpp:442` | size_t vector size at most 65507, sizes bounded at functional/windows_socket_errors.cpp:99 and 118 |
-| `functional/windows_socket_errors.cpp:496` | uint16_t port widened to int for printf, not narrowing |
-| `functional/windows_socket_errors.cpp:515` | size_t vector size at most 65507, sizes bounded at functional/windows_socket_errors.cpp:99 and 118 |
-| `functional/windows_socket_errors.cpp:611` | sizeof a ROCKETNET_RECEIVE_PACKET_BYTES array, constant |
-| `functional/windows_socket_errors.cpp:613` | sizeof a ROCKETNET_RECEIVE_PACKET_BYTES array, constant |
+| `tests/functional/channel_config.cpp:52` | source is int index and loop int i widened to uint32_t for a hash, not narrowing |
+| `tests/functional/channel_config.cpp:56` | intentional top byte of a uint32_t hash, x >> 24 is at most 0xFF |
+| `tests/functional/channel_config.cpp:103` | double timeout times 60, not integer narrowing |
+| `tests/functional/channel_config.cpp:130` | double timeout times 60, not integer narrowing |
+| `tests/functional/channel_config.cpp:177` | double timeout times 60, not integer narrowing |
+| `tests/functional/channel_config.cpp:196` | double timeout times 60, not integer narrowing |
+| `tests/functional/channel_config.cpp:213` | double timeout times 60, not integer narrowing |
+| `tests/functional/channel_control_packets.cpp:105` | source is int i under 3000, intentional byte pattern wrap, not wide narrowing |
+| `tests/functional/channel_harness.h:194` | uint8_t ipv4 bytes widened to uint32_t, not narrowing |
+| `tests/functional/channel_harness.h:195` | uint8_t ipv4 bytes widened to uint32_t, not narrowing |
+| `tests/functional/channel_harness.h:207` | vector size_t is datagram bytes plus fixed IPv4/UDP header, bytes bounded by ROCKETNET_RECEIVE_CEILING in the harness |
+| `tests/functional/channel_harness.h:216` | source is int kind, a ROCKETNET_PCAPNG_KIND constant of 1 to 3 |
+| `tests/functional/channel_harness.h:219` | record size_t is 1 plus opened bytes, bounded by ROCKETNET_RECEIVE_CEILING per tests/functional/channel_harness.h:237 |
+| `tests/functional/channel_harness.h:247` | source is int packet_type read from one uint8_t byte packet[0] |
+| `tests/functional/channel_harness.h:313` | declaration of a pointer to fixed-size array, not a cast |
+| `tests/functional/channel_harness.h:366` | declaration of a pointer to fixed-size array, not a cast |
+| `tests/functional/channel_harness.h:858` | pointer cast of malloc result, not integer narrowing |
+| `tests/functional/channel_harness.h:860` | pointer cast of malloc result, not integer narrowing |
+| `tests/functional/channel_harness.h:862` | pointer cast of malloc result, not integer narrowing |
+| `tests/functional/channel_ordered.cpp:59` | source is int message and offset, same width sign cast into a uint32_t hash |
+| `tests/functional/channel_ordered.cpp:63` | intentional top byte of a uint32_t hash, x >> 24 is always below 256 |
+| `tests/functional/channel_receipts.cpp:64` | source is int step, below messages=48, intentional byte value |
+| `tests/functional/channel_receipts.cpp:65` | source is int step, below messages=48, intentional byte value |
+| `tests/functional/channel_receipts.cpp:98` | source is enum rocketnet_receipt_status_t, checked ACKED or LOSS on the line above |
+| `tests/functional/channel_receipts.cpp:108` | source is enum rocketnet_receipt_status_t, checked ACKED or LOSS on the line above |
+| `tests/functional/channel_receipts.cpp:148` | source is int arithmetic, intentional byte pattern wrap |
+| `tests/functional/channel_receipts.cpp:149` | source is int arithmetic, intentional byte pattern wrap |
+| `tests/functional/channel_receipts_reliable.cpp:58` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/channel_receipts_reliable.cpp:59` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/channel_reliable.cpp:30` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
+| `tests/functional/channel_reliable.cpp:31` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
+| `tests/functional/channel_reliable.cpp:100` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
+| `tests/functional/channel_reliable.cpp:211` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
+| `tests/functional/channel_reliable.cpp:377` | sizeof of a 1 MiB static array (ROCKETNET_MAX_MESSAGE_BYTES = 1<<20), a compile-time constant that fits int |
+| `tests/functional/channel_reliable.cpp:380` | source is an int test-pattern expression deliberately reduced to a byte, not wide-integer narrowing |
+| `tests/functional/channel_reliable_sequenced.cpp:24` | intentional byte extraction of a uint32_t state, little-endian encode |
+| `tests/functional/channel_reliable_sequenced.cpp:31` | widening uint8_t to uint32_t, not narrowing |
+| `tests/functional/channel_reliable_sequenced.cpp:84` | uint64_t counter on a fresh per-test server, bounded by about 1575 states sent in the test at line 97 |
+| `tests/functional/channel_resend_timing.cpp:109` | Source is double from ceil, not integer narrowing; index is clamped to 0 .. count-1 at lines 110-113 |
+| `tests/functional/channel_resend_timing.cpp:190` | Source is int (sent * 13 + i); intentional byte pattern truncation of a test payload |
+| `tests/functional/channel_resend_timing.cpp:196` | sizeof of a 32-byte local array, compile-time constant 32 |
+| `tests/functional/channel_resend_timing.cpp:437` | Source is int (i * 31 + 7); intentional byte pattern truncation of a test block |
+| `tests/functional/channel_resend_timing.cpp:467` | Source is int (small_sent * 13 + i); intentional byte pattern truncation of a test payload |
+| `tests/functional/channel_resend_timing.cpp:472` | sizeof of a 32-byte local array, compile-time constant 32 |
+| `tests/functional/channel_smoke.cpp:132` | source is int client_sent below 600 sends, deliberate low and high byte split of the message index |
+| `tests/functional/channel_smoke.cpp:138` | source is int server_sent below 600 sends, deliberate low and high byte split of the message index |
+| `tests/functional/channel_smoke.cpp:295` | compile-time sizeof of a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 array |
+| `tests/functional/channel_smoke.cpp:296` | source is int loop index, deliberate low-byte fill pattern |
+| `tests/functional/channel_smoke.cpp:307` | compile-time sizeof of a 3-byte array |
+| `tests/functional/channel_smoke.cpp:310` | compile-time sizeof of a 3-byte array |
+| `tests/functional/channel_smoke.cpp:313` | compile-time sizeof of a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1 array |
+| `tests/functional/channel_unreliable_budget.cpp:21` | source is int id, intentional low byte of a test pattern, id below 12 |
+| `tests/functional/channel_unreliable_budget.cpp:22` | source is int id, intentional low byte of a test pattern |
+| `tests/functional/channel_unreliable_budget.cpp:23` | source is int id, intentional low byte of a test pattern |
+| `tests/functional/channel_unreliable_budget.cpp:24` | source is int id, intentional low byte of a test pattern |
+| `tests/functional/channel_unreliable_budget.cpp:31` | constant sizeof of a 4 byte array |
+| `tests/functional/channel_unreliable_budget.cpp:32` | constant sizeof of a 4 byte array |
+| `tests/functional/channel_unreliable_duplicates.cpp:48` | intentional low byte of a uint32_t pattern hash |
+| `tests/functional/channel_unreliable_duplicates.cpp:53` | source is int kind, checked below DUP_KINDS 3 |
+| `tests/functional/channel_unreliable_duplicates.cpp:54` | intentional byte extraction of uint32_t id, id below DUP_MESSAGES 400 |
+| `tests/functional/channel_unreliable_duplicates.cpp:55` | intentional byte extraction of uint32_t id |
+| `tests/functional/channel_unreliable_duplicates.cpp:56` | intentional byte extraction of uint32_t id |
+| `tests/functional/channel_unreliable_duplicates.cpp:72` | widening uint8_t bytes to uint32_t, not narrowing |
+| `tests/functional/channel_unreliable_duplicates.cpp:139` | constant DUP_MESSAGES 400 cast to uint32_t |
+| `tests/functional/channel_unreliable_duplicates.cpp:143` | constant DUP_SEND_TICKS 100 cast to uint32_t |
+| `tests/functional/channel_unreliable_send_drops.cpp:52` | source is int arithmetic of uint8_t tag and int, intentional byte pattern wrap |
+| `tests/functional/channel_unreliable_send_drops.cpp:60` | source is int arithmetic of uint8_t tag and int, intentional byte pattern wrap |
+| `tests/functional/channel_unreliable_send_drops.cpp:98` | source is int, 0x10 plus i below 4 |
+| `tests/functional/channel_unreliable_send_drops.cpp:130` | source is int constant 0xA0 or 0xB0 |
+| `tests/functional/channel_unreliable_send_drops.cpp:164` | source is int, 0x20 plus i below sent=12 |
+| `tests/functional/channel_unreliable_send_drops.cpp:177` | source is int, 0x20 plus arrived checked below sent=12 in the same condition |
+| `tests/functional/channel_unreliable_sequenced.cpp:24` | intentional byte extraction of uint32_t state by shift, not wide narrowing |
+| `tests/functional/channel_unreliable_sequenced.cpp:31` | uint8_t widened to uint32_t, not narrowing |
+| `tests/functional/channel_unreliable_sequenced.cpp:94` | source is int i under 2000, intentional test byte pattern wrap |
+| `tests/functional/channel_unreliable_sequenced.cpp:104` | source is int max_message_bytes, same width cast |
+| `tests/functional/channel_unreliable_sequenced.cpp:117` | source is int i under 2000, intentional test byte pattern wrap |
+| `tests/functional/cpp_transports.cpp:121` | sizeof of a ROCKETNET_RECEIVE_CEILING stack array, a compile-time constant |
+| `tests/functional/harness.inc:260` | source is uint16_t port, widening to int for printf |
+| `tests/functional/harness.inc:282` | source is uint16_t returned by rocketnet_test_free_port, widening to int |
+| `tests/functional/live_matrix.cpp:264` | same width sign cast of uint32_t length bounded by max_message_bytes, at most ROCKETNET_MAX_MESSAGE_BYTES (sdk/rocketnet_internal.h:580) |
+| `tests/functional/live_matrix.cpp:265` | same width sign cast of uint32_t length bounded by max_message_bytes, at most ROCKETNET_MAX_MESSAGE_BYTES (sdk/rocketnet_internal.h:580) |
+| `tests/functional/live_matrix.cpp:315` | same width sign cast of uint32_t entry length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:329` | same width sign cast of uint32_t entry length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:333` | same width sign cast of uint32_t entry length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:373` | source is int bytes, rocketnet_live_check passed so bytes is at least 1 |
+| `tests/functional/live_matrix.cpp:412` | int64_t difference below 256: q < LIVE_MATRIX_MAX_SEQUENCES checked at tests/functional/live_matrix.cpp:390 and q > last checked at :405 |
+| `tests/functional/live_matrix.cpp:448` | same width sign cast of uint32_t length from rocketnet_live_length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:449` | same width sign cast of uint32_t length from rocketnet_live_length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:452` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:453` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:506` | int64_t q is a uint32_t next or closing, negative return checked at tests/functional/live_matrix.cpp:500 |
+| `tests/functional/live_matrix.cpp:523` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:542` | source is int mode in 0 to 7 |
+| `tests/functional/live_matrix.cpp:594` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:600` | source is int length in 1 to LIVE_MATRIX_TINY, widening |
+| `tests/functional/live_matrix.cpp:614` | same width sign cast of uint32_t receipt count difference, bounded by LIVE_MATRIX_RECEIPT_TABLE sends |
+| `tests/functional/live_matrix.cpp:690` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
+| `tests/functional/live_matrix.cpp:691` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
+| `tests/functional/live_matrix.cpp:696` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
+| `tests/functional/live_matrix.cpp:709` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
+| `tests/functional/live_matrix.cpp:710` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
+| `tests/functional/live_matrix.cpp:717` | same width sign cast of uint32_t over, at most max_message_bytes plus 1 |
+| `tests/functional/live_matrix.cpp:743` | source is int channel in 0 to 31, widening sign cast |
+| `tests/functional/live_matrix.cpp:756` | same width sign cast of uint32_t length, at most max_message_bytes (1 MiB) |
+| `tests/functional/live_matrix.cpp:765` | source is int mode in 0 to 7 |
+| `tests/functional/live_matrix.cpp:840` | same width sign cast of uint32_t probe length, clipped to the mode maximum |
+| `tests/functional/live_matrix.cpp:866` | same width sign cast of uint32_t receipt count difference, bounded by probes sent |
+| `tests/functional/live_matrix.cpp:919` | array size from a sizeof quotient, compile-time constant, no cast |
+| `tests/functional/live_matrix.cpp:920` | size_t loop bound from a sizeof quotient, compile-time constant, no narrowing |
+| `tests/functional/live_matrix.cpp:1032` | size_t loop bound from a sizeof quotient, compile-time constant, no narrowing |
+| `tests/functional/live_matrix.cpp:1131` | same width sign cast of int max_message_bytes, range checked at sdk/rocketnet_internal.h:580 by message config validation |
+| `tests/functional/platform_primitives.cpp:228` | uint64 difference is always 16: the loop above records exactly 16 sends between first and sequence |
+| `tests/functional/posix_hard_killed_client.cpp:381` | compile-time sizeof of a 32-byte array |
+| `tests/functional/posix_hard_killed_client.cpp:398` | compile-time sizeof of a 32-byte array |
+| `tests/functional/posix_hard_killed_client.cpp:421` | source is int slot, loop below ROCKETNET_MAX_CLIENTS, intentional low byte as a payload tag |
+| `tests/functional/posix_hard_killed_client.cpp:422` | compile-time sizeof of a 32-byte array |
+| `tests/functional/posix_hard_killed_client.cpp:444` | size_t index bounded by live vector of 3 created at posix_hard_killed_client.cpp:671 and :892 |
+| `tests/functional/posix_hard_killed_client.cpp:445` | compile-time sizeof of a 32-byte array |
+| `tests/functional/posix_hard_killed_client.cpp:606` | compile-time sizeof of a 32-byte array |
+| `tests/functional/posix_hard_killed_client.cpp:728` | size_t index below 3 by the loop bound, printf argument |
+| `tests/functional/posix_hard_killed_client.cpp:786` | 20000 + arc4random_uniform(20000) is below 40000, fits uint16_t |
+| `tests/functional/posix_hard_killed_client.cpp:790` | 20000 + draw % 12000 is below 32000, fits uint16_t |
+| `tests/functional/posix_hard_killed_client.cpp:912` | source is int returned from a uint16_t address.port at posix_hard_killed_client.cpp:805 |
+| `tests/functional/posix_hard_killed_client.cpp:923` | compile-time sizeof of a 64-byte array |
+| `tests/functional/posix_hard_killed_client.cpp:946` | size_t index below 3 by the loop bound, printf argument |
+| `tests/functional/posix_hard_killed_client.cpp:1083` | compile-time sizeof of a POSIX_SEAM_BYTES (64) array |
+| `tests/functional/posix_hard_killed_client.cpp:1145` | source is int i below total, which equals POSIX_SEAM_PACKETS 10, intentional byte tag |
+| `tests/functional/posix_hard_killed_client.cpp:1188` | compile-time sizeof of a POSIX_SEAM_BYTES (64) array |
+| `tests/functional/posix_hard_killed_client.cpp:1230` | compile-time element count of a small static array |
+| `tests/functional/posix_hard_killed_client.cpp:1244` | compile-time element count of a 3-entry static array |
+| `tests/functional/posix_hard_killed_client.cpp:1245` | compile-time element count of a 1-entry static array |
+| `tests/functional/posix_hard_killed_client.cpp:1371` | declaration with an unnamed int parameter, not a cast |
+| `tests/functional/posix_hard_killed_client.cpp:1376` | declaration with an unnamed int parameter, not a cast |
+| `tests/functional/posix_lifecycle_stress.cpp:135` | compile-time sizeof of a 4096-entry proc_fdinfo array, well below INT_MAX |
+| `tests/functional/posix_lifecycle_stress.cpp:139` | compile-time sizeof of struct proc_fdinfo |
+| `tests/functional/posix_lifecycle_stress.cpp:161` | compile-time sizeof of struct proc_taskinfo |
+| `tests/functional/posix_lifecycle_stress.cpp:162` | compile-time sizeof of struct proc_taskinfo |
+| `tests/functional/posix_lifecycle_stress.cpp:164` | source is int32_t pti_threadnum, same width |
+| `tests/functional/posix_lifecycle_stress.cpp:319` | source is int from POSIX socket(), same type |
+| `tests/functional/posix_lifecycle_stress.cpp:346` | compile-time element count of the static cell table |
+| `tests/functional/posix_lifecycle_stress.cpp:659` | source is uint16_t from rocketnet_server_transport_port, widening |
+| `tests/functional/posix_lifecycle_stress.cpp:954` | same width sign cast of a positive compile-time int count |
+| `tests/functional/posix_lifecycle_stress.cpp:959` | same width sign cast of a non-negative int loop index |
+| `tests/functional/posix_lifecycle_stress.cpp:965` | same width sign cast of a positive pid_t |
+| `tests/functional/posix_lifecycle_stress.cpp:970` | source is int from POSIX socket(), same type |
+| `tests/functional/posix_lifecycle_stress.cpp:978` | port is at most last_port 29999 checked at posix_lifecycle_stress.cpp:966, fits uint16_t |
+| `tests/functional/posix_lifecycle_stress.cpp:1010` | source is uint16_t from rocketnet_server_transport_port, widening |
+| `tests/functional/posix_lifecycle_stress.cpp:1099` | compile-time sizeof of a 64-byte array |
+| `tests/functional/posix_socket_errors.cpp:380` | enum client transport state to int for printf, not integer narrowing |
+| `tests/functional/posix_socket_errors.cpp:432` | ssize_t from sendto is at most the int bytes requested or -1, fits int |
+| `tests/functional/posix_socket_errors.cpp:475` | source is int index, intentional low byte of a test payload tag |
+| `tests/functional/posix_socket_errors.cpp:476` | source is int index, intentional low byte of a test payload tag |
+| `tests/functional/posix_socket_errors.cpp:478` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/posix_socket_errors.cpp:518` | source already uint16_t, rocketnet_server_transport_port returns uint16_t at sdk/rocketnet_server_transport.cpp:1942 |
+| `tests/functional/posix_socket_errors.cpp:565` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/posix_socket_errors.cpp:585` | uint64_t random modulo 1500 is below 1500, fits int |
+| `tests/functional/posix_socket_errors.cpp:587` | intentional low byte of a uint64_t random value used as a fill byte |
+| `tests/functional/posix_socket_errors.cpp:815` | sizeof a 100-byte array, constant |
+| `tests/functional/posix_socket_errors.cpp:919` | sizeof a string literal minus one, constant |
+| `tests/functional/posix_socket_errors.cpp:949` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/posix_socket_errors.cpp:1098` | source is int tag plus i, intentional low byte tag, compared the same way at 1115 |
+| `tests/functional/posix_socket_errors.cpp:1115` | source is int tag plus arrived, intentional low byte matching the sender at 1098 |
+| `tests/functional/posix_socket_errors.cpp:1280` | sizeof of two uint32_t, constant 8 |
+| `tests/functional/posix_socket_errors.cpp:1281` | uint32_t sum truncated to a fill byte on purpose, same pattern on both ends |
+| `tests/functional/posix_socket_errors.cpp:1348` | source is int tag plus i, intentional low byte tag |
+| `tests/functional/posix_socket_errors.cpp:1366` | source is int tag plus arrived, intentional low byte matching the sender |
+| `tests/functional/posix_socket_errors.cpp:1387` | source is int tag plus i, intentional low byte tag |
+| `tests/functional/posix_socket_errors.cpp:1403` | source is int tag plus arrived, intentional low byte matching the sender |
+| `tests/functional/posix_socket_errors.cpp:2182` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/posix_socket_errors.cpp:2195` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/posix_socket_errors.cpp:2217` | uint64_t random modulo int max_whole (tests/functional/posix_socket_errors.cpp:2140, under MTU) fits int |
+| `tests/functional/posix_socket_errors.cpp:2219` | intentional low byte of a uint64_t random value used as a fill byte |
+| `tests/functional/posix_socket_errors.cpp:2249` | ssize_t from recv is at most sizeof other_received, 4001 bytes at tests/functional/posix_socket_errors.cpp:2160 |
+| `tests/functional/rocketnet_functional_tests.cpp:117` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:118` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:120` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:143` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:144` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:146` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:462` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:471` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:472` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:474` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:493` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:501` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:528` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:536` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:631` | source is int count bounded by loop guard count < 20000 at line 625; mod-256 marker byte, not wider-integer narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:770` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:771` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:951` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:1162` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:1394` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:1528` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:1651` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:1677` | uint64_t sum of per-frame send deltas over at most 120 frames of one payload each way; bounded to hundreds, fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:1811` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:2172` | size_t sizeof(send_data) is the constant 8192 from the local array declaration; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:2173` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2174` | size_t sizeof(send_data) is the constant 8192 from the local array declaration; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:2313` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2315` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2358` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2450` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2452` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2500` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2503` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2539` | size_t sizeof of a fixed local test array; compile-time constant far below INT_MAX |
+| `tests/functional/rocketnet_functional_tests.cpp:2582` | size_t sizeof(send_data[i]) is the constant 64 from static uint8_t send_data[8][64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:2605` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:2924` | size_t sizeof(pattern) is ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES 16384 (sdk/rocketnet_layers.h:40); fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:2925` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:3074` | size_t sizeof(cursor_buffer) is ROCKETNET_TRANSPORT_MAX_PAYLOAD_BYTES 16384 (sdk/rocketnet_layers.h:40); fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:3099` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:3256` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:3355` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:3487` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:3493` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:3655` | size_t sizeof(payload) is the constant 16 from const uint8_t payload[16]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:3658` | size_t sizeof(payload) is the constant 16 from const uint8_t payload[16]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:3659` | int client index widened to uint64_t and size_t constant 16 to int; no wider-to-narrower loss, index valid inside CONNECTED branch |
+| `tests/functional/rocketnet_functional_tests.cpp:3662` | size_t sizeof(payload) is the constant 16 from const uint8_t payload[16]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:3752` | source is int (rocketnet_client_index returns int, sdk/rocketnet.h:1607); same-type cast, not narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:3892` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:4006` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:4282` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4283` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:4285` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4304` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4334` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4335` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:4337` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4348` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:4360` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4414` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4443` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4458` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4608` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4610` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4630` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4647` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4649` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:4659` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:4670` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5299` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:5312` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:5313` | source is const int probe_segment_bytes = 100; constant fits uint16_t |
+| `tests/functional/rocketnet_functional_tests.cpp:5325` | size_t sizeof(super) is the constant 800 (8 segments of 100 bytes); fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:5329` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:5342` | ssize_t recvmsg result, positive here and bounded by the 800-byte iov buffer at line 5328; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:5348` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:5349` | ssize_t recvmsg result bounded by the 800-byte iov buffer at line 5328, positive at this point; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:5463` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5465` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5486` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5515` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5517` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5530` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:5543` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5569` | size_t sizeof(runt) is ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1, a small compile-time constant; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:5572` | size_t sizeof(oversize) is ROCKETNET_RECEIVE_CEILING + 74, under 1600; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:5607` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5609` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5616` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:5629` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:5630` | source is const int gro_segment_bytes = 100; constant fits uint16_t |
+| `tests/functional/rocketnet_functional_tests.cpp:5654` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5799` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5800` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:5802` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5814` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5815` | source is int tag below 65536 (test packet counts are at most a few thousand); high byte of a two-byte tag, not wider-integer narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:5817` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5837` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5845` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:5851` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:5932` | source is int loop index below ROCKETNET_GSO_SEND_QUEUE_SIZE 4096; memset fill byte, intended mod-256 wrap |
+| `tests/functional/rocketnet_functional_tests.cpp:5959` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:5968` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:5974` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6041` | size_t sizeof(first) of a fixed local test array, small compile-time constant; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6062` | size_t sizeof(second) of a fixed local test array, small compile-time constant; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6210` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6212` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6233` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6259` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6261` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6295` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:6308` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6331` | size_t sizeof(runt) is ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES - 1, a small compile-time constant; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6334` | size_t sizeof(oversize) is ROCKETNET_RECEIVE_CEILING + 74, under 1600; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6449` | source is int tag = num_expected, at most 65 segments over the three bursts; fits uint8_t |
+| `tests/functional/rocketnet_functional_tests.cpp:6451` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6455` | size_t sizeof(super) is the constant 65000 from static uint8_t super[65000]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6458` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:6471` | not a narrowing cast: sizeof inside a CMSG macro or array declaration, compile-time constant |
+| `tests/functional/rocketnet_functional_tests.cpp:6472` | source is int burst stride from a constant table (100, 300, 1200) at line 6438; fits uint16_t |
+| `tests/functional/rocketnet_functional_tests.cpp:6492` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6571` | source is int loop index below ROCKETNET_URING_SEND_QUEUE_SIZE 2048; memset fill byte, intended mod-256 wrap |
+| `tests/functional/rocketnet_functional_tests.cpp:6597` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6606` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:6612` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6652` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6653` | size_t sizeof(packet) is the constant 64 from uint8_t packet[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6654` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:6655` | size_t sizeof(packet) is the constant 64 from uint8_t packet[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6686` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6696` | size_t sizeof(tag) is the constant 64 from uint8_t tag[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6815` | size_t sizeof(int) is the constant 4; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6829` | size_t sizeof(int) is the constant 4; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:6971` | size_t sizeof(int) is the constant 4; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7014` | size_t sizeof(int) is the constant 4; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7127` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7136` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7172` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7188` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7369` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7393` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7426` | size_t sizeof(truncated_data) is the constant 16; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7427` | size_t sizeof(compact_receive_data[0]) is the constant 8; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7527` | size_t sizeof(packet) is the constant 8 from uint8_t packet[8] at line 7502; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7590` | size_t sizeof(packet) is the constant 8 from uint8_t packet[8] at line 7579; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7607` | size_t sizeof(packet) is the constant 8 from uint8_t packet[8] at line 7579; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:7702` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7703` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:7739` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:8101` | source is unsigned int octet, not wider; range checked octet <= 0xff at line 8100 |
+| `tests/functional/rocketnet_functional_tests.cpp:8156` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:8157` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:8213` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:8325` | size_t built from int atoi of a tcpdump length field, cast back to int for a log line; round-trips the original int |
+| `tests/functional/rocketnet_functional_tests.cpp:8381` | size_t sizeof(first[0]) is the constant 16 from first[2][16] at line 8369; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:8382` | size_t sizeof(first[1]) is the constant 16 from first[2][16] at line 8369; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:8389` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:8391` | size_t sizeof(first[0]) is the constant 16 from first[2][16] at line 8369; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:8601` | size_t sizeof(payload) is the constant 32 from uint8_t payload[32]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:8602` | size_t sizeof(payload) is the constant 32 from uint8_t payload[32]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:8616` | size_t sizeof(received) is the constant 64 from uint8_t received[64]; fits int |
+| `tests/functional/rocketnet_functional_tests.cpp:9229` | source is uint16_t port (sdk/rocketnet.h:1803); widening to int, not narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:9230` | source is uint16_t port (sdk/rocketnet.h:1803); widening to int, not narrowing |
+| `tests/functional/rocketnet_functional_tests.cpp:9265` | source is an enum client state, not a wider integer; printf argument |
+| `tests/functional/rocketnet_functional_tests.cpp:9393` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:9395` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:9402` | source is int (index, count, tag or thread id); deliberate mod-256 test pattern byte, sender and checker wrap identically |
+| `tests/functional/rocketnet_functional_tests.cpp:9442` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:9470` | size_t sizeof of a receive buffer sized ROCKETNET_RECEIVE_CEILING or ROCKETNET_RECEIVE_PAYLOAD_BYTES (under 1500), compile-time bound |
+| `tests/functional/rocketnet_functional_tests.cpp:9949` | size_t element count of the static test table, a compile-time constant of a few hundred entries; fits int |
+| `tests/functional/server_receive_backlog.cpp:88` | clients.size() size_t bounded by max_clients 48 at tests/functional/server_receive_backlog.cpp:99 |
+| `tests/functional/server_receive_backlog.cpp:155` | source is uint16_t port, widened to int |
+| `tests/functional/server_receive_backlog.cpp:230` | size_t i bounded by clients.size() at most 48 per tests/functional/server_receive_backlog.cpp:99 |
+| `tests/functional/server_receive_backlog.cpp:231` | source is int frame under 300, byte extraction by shift and mask |
+| `tests/functional/server_receive_backlog.cpp:258` | uint8_t widened to uint32_t, not narrowing |
+| `tests/functional/server_receive_backlog.cpp:259` | uint8_t widened to uint32_t, not narrowing |
+| `tests/functional/server_receive_backlog.cpp:261` | source is int constant 48 and int frame, sign cast only |
+| `tests/functional/windows_connreset.cpp:161` | sizeof of a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES array, a compile-time constant |
+| `tests/functional/windows_connreset.cpp:174` | uint64 *sent < WINDOWS_CONNRESET_MEASURED_PACKETS (100) is required at tests/functional/windows_connreset.cpp:173 before the cast |
+| `tests/functional/windows_connreset.cpp:446` | uint64 server_sent counts test sends, bounded by fixed loop counts far below 2^32; sequence <= 100 required at :447 when used |
+| `tests/functional/windows_connreset.cpp:450` | sizeof of a WINDOWS_CONNRESET_PAYLOAD_BYTES (32) array, a compile-time constant |
+| `tests/functional/windows_connreset.cpp:456` | sizeof of a WINDOWS_CONNRESET_PAYLOAD_BYTES (32) array, a compile-time constant |
+| `tests/functional/windows_connreset.cpp:769` | sizeof of a WINDOWS_CONNRESET_PAYLOAD_BYTES (32) array, a compile-time constant |
+| `tests/functional/windows_socket_errors.cpp:105` | source is int arithmetic, intentional low byte of a test fill pattern |
+| `tests/functional/windows_socket_errors.cpp:116` | intentional low byte of a uint64_t generator value used as a fill byte |
+| `tests/functional/windows_socket_errors.cpp:123` | intentional low byte of a uint64_t generator value used as a fill byte |
+| `tests/functional/windows_socket_errors.cpp:151` | sizeof sockaddr_in6, constant |
+| `tests/functional/windows_socket_errors.cpp:159` | sizeof sockaddr_in, constant |
+| `tests/functional/windows_socket_errors.cpp:167` | size_t vector size at most 65507, largest size built at tests/functional/windows_socket_errors.cpp:99 |
+| `tests/functional/windows_socket_errors.cpp:168` | size_t vector size at most 65507, largest size built at tests/functional/windows_socket_errors.cpp:99 |
+| `tests/functional/windows_socket_errors.cpp:205` | sizeof a ROCKETNET_MAX_PACKET_PAYLOAD_BYTES array, constant |
+| `tests/functional/windows_socket_errors.cpp:442` | size_t vector size at most 65507, sizes bounded at tests/functional/windows_socket_errors.cpp:99 and 118 |
+| `tests/functional/windows_socket_errors.cpp:496` | uint16_t port widened to int for printf, not narrowing |
+| `tests/functional/windows_socket_errors.cpp:515` | size_t vector size at most 65507, sizes bounded at tests/functional/windows_socket_errors.cpp:99 and 118 |
+| `tests/functional/windows_socket_errors.cpp:611` | sizeof a ROCKETNET_RECEIVE_PACKET_BYTES array, constant |
+| `tests/functional/windows_socket_errors.cpp:613` | sizeof a ROCKETNET_RECEIVE_PACKET_BYTES array, constant |
 | `sdk/rocketnet.cpp:125` | long long parsed checked INT32_MIN .. INT32_MAX at sdk/rocketnet.cpp:123 before the cast |
 | `sdk/rocketnet.cpp:195` | Source is an enum with int size, not wider-integer narrowing |
 | `sdk/rocketnet.cpp:257` | size_t length clamped to at most 1023 at sdk/rocketnet.cpp:296-297, the only caller of this static sink |
@@ -1247,7 +1247,7 @@ and 224 of `sdk/rocketnet_frame_sync.cpp` belong to finding 1; lines 925, 1115, 
 | `tests/pcapng.h:120` | uint32_t masked with 0xFF, deliberate byte split |
 | `tests/pcapng.h:121` | uint32_t shifted and masked with 0xFF, deliberate byte split |
 | `tests/pcapng.h:127` | uint32_t shifted and masked with 0xFF, deliberate byte split |
-| `tests/pcapng.h:139` | block size from an int datagram length plus short harness comments, capture capped at functional/channel_harness.h:182 |
+| `tests/pcapng.h:139` | block size from an int datagram length plus short harness comments, capture capped at tests/functional/channel_harness.h:182 |
 | `tests/pcapng.h:141` | uint32_t masked with 0xFF, deliberate byte split |
 | `tests/pcapng.h:142` | uint32_t shifted and masked with 0xFF, deliberate byte split |
 | `tests/pcapng.h:143` | uint32_t shifted and masked with 0xFF, deliberate byte split |

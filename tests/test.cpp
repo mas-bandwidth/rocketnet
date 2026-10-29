@@ -350,7 +350,7 @@ int main( int argc, char ** argv )
     // transport pin in the environment must not reach it: both pins are
     // cleared for the whole run and restored on exit, the way
     // posix_pair_create lifts them around its creates
-    // (functional/posix_socket_errors.cpp). Worker processes inherit the
+    // (tests/functional/posix_socket_errors.cpp). Worker processes inherit the
     // cleared environment; a case that tests pin handling itself sets and
     // reads its own pins.
 

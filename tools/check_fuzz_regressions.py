@@ -4,7 +4,7 @@
 #   Licensed under the GNU Affero General Public License v3.0
 #
 # Every minimized fuzz regression has both halves: a seed under
-# fuzz/corpus/regress_<name> or fuzz/corpus_message/regress_<name>, and one
+# tests/fuzz/corpus/regress_<name> or tests/fuzz/corpus_message/regress_<name>, and one
 # tests/pcapng/regress/<name>.pcapng whose packet carries exactly the seed's
 # bytes after its selector byte. A seed without a capture, a capture without
 # a seed, and a capture whose bytes differ are each one line; any of them
@@ -21,8 +21,8 @@ import pcapng
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REGESS = os.path.join("tests", "pcapng", "regress")
-SEED_CORPORA = (("fuzz/corpus", pcapng.INTERFACE_WIRE),
-                ("fuzz/corpus_message", pcapng.INTERFACE_OPENED))
+SEED_CORPORA = (("tests/fuzz/corpus", pcapng.INTERFACE_WIRE),
+                ("tests/fuzz/corpus_message", pcapng.INTERFACE_OPENED))
 
 
 def seeds(root):
@@ -87,7 +87,7 @@ def check(root):
     for filename in captures:
         name = filename[:-len(".pcapng")]
         if name not in expected:
-            problems.append("orphan capture %s/%s: no fuzz/corpus/regress_%s or fuzz/corpus_message/regress_%s" %
+            problems.append("orphan capture %s/%s: no tests/fuzz/corpus/regress_%s or tests/fuzz/corpus_message/regress_%s" %
                             (REGESS, filename, name, name))
     return problems, paired
 
@@ -107,7 +107,7 @@ def selftest():
 
     with tempfile.TemporaryDirectory() as directory:
         root = directory
-        for part in ("fuzz/corpus", "fuzz/corpus_message", "tests/pcapng/regress"):
+        for part in ("tests/fuzz/corpus", "tests/fuzz/corpus_message", "tests/pcapng/regress"):
             os.makedirs(os.path.join(root, *part.split("/")), exist_ok=True)
 
         prefilter = os.path.join(root, "prefilter.finding")
@@ -136,7 +136,7 @@ def selftest():
         problems, paired = check(root)
         assert not problems and paired == 2, "the restored capture did not pair"
 
-        seed = os.path.join(root, *"fuzz/corpus".split("/"), "regress_prefilter_case")
+        seed = os.path.join(root, *"tests/fuzz/corpus".split("/"), "regress_prefilter_case")
         os.unlink(seed)
         problems, paired = check(root)
         assert len(problems) == 1 and "orphan capture" in problems[0], "a missing seed was not one orphan"

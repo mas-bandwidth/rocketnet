@@ -9,7 +9,7 @@
 # The repository root comes from this file's own path; only tests/pcapng/
 # is read and only the two corpus directories are written.
 #
-#   --write       regenerate the seeds under fuzz/corpus and fuzz/corpus_message
+#   --write       regenerate the seeds under tests/fuzz/corpus and tests/fuzz/corpus_message
 #   --check       compare the committed seeds with what the corpus implies
 #   --selftest   self-test in a temporary directory, touching nothing outside
 
@@ -82,8 +82,8 @@ def write_seeds(root):
     pre_items, pre_cut = _truncate(prefilter)
     msg_items, msg_cut = _truncate(message)
 
-    pre_dir = root / "fuzz" / "corpus"
-    msg_dir = root / "fuzz" / "corpus_message"
+    pre_dir = root / "tests" / "fuzz" / "corpus"
+    msg_dir = root / "tests" / "fuzz" / "corpus_message"
     pre_dir.mkdir(parents=True, exist_ok=True)
     msg_dir.mkdir(parents=True, exist_ok=True)
 
@@ -104,8 +104,8 @@ def check_seeds(root):
         expected[name] = data
 
     actual = {}
-    for directory, prefix in ((root / "fuzz" / "corpus", PREFIX_PREFILTER),
-                              (root / "fuzz" / "corpus_message", PREFIX_MESSAGE)):
+    for directory, prefix in ((root / "tests" / "fuzz" / "corpus", PREFIX_PREFILTER),
+                              (root / "tests" / "fuzz" / "corpus_message", PREFIX_MESSAGE)):
         if directory.is_dir():
             for path in sorted(directory.glob(prefix + "*")):
                 actual[path.name] = path.read_bytes()
@@ -159,8 +159,8 @@ def selftest():
 
         write_seeds(root)
 
-        pre_dir = root / "fuzz" / "corpus"
-        msg_dir = root / "fuzz" / "corpus_message"
+        pre_dir = root / "tests" / "fuzz" / "corpus"
+        msg_dir = root / "tests" / "fuzz" / "corpus_message"
         pre_files = sorted(pre_dir.glob(PREFIX_PREFILTER + "*"))
         msg_files = sorted(msg_dir.glob(PREFIX_MESSAGE + "*"))
 

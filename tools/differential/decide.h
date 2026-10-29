@@ -5,7 +5,7 @@
     The shared differential decision core: the rocketnet and netcode 1.02
     admission decisions for one abstract case, plus the verdict between them.
     Both tools/differential/netcode_decisions.cpp (the fixed gate) and
-    fuzz/rocketnet_fuzz_differential.cpp (the libFuzzer target) include this
+    tests/fuzz/rocketnet_fuzz_differential.cpp (the libFuzzer target) include this
     header so they run the same deciders on the same case model. The two
     wire formats differ, so the case is never packet bytes: it is a struct of
     the fields both admission paths read (create/expire relative to now,

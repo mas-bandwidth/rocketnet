@@ -1,4 +1,4 @@
-# The netcode 1.02 decision for each fuzz/corpus_connect_token file the
+# The netcode 1.02 decision for each tests/fuzz/corpus_connect_token file the
 # differential maps to netcode (tools/differential/README.md, the fuzz
 # corpus mode), recorded from the live run against tag v1.2.1. Columns:
 #

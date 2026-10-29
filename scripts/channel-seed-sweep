@@ -6,7 +6,7 @@
 #   scripts/channel-seed-sweep --all --seeds 1-2000
 #
 # Each run is one process: ROCKETNET_CHANNEL_SEED=<seed> <bin> --run test_<case>
-# (functional/channel_harness.h reads the variable once at create). Lanes run
+# (tests/functional/channel_harness.h reads the variable once at create). Lanes run
 # in parallel, never more than the machine's cores. One line per failure:
 #
 #   FAIL seed=<n> case=<name> reason=<what>
@@ -14,7 +14,7 @@
 # and a last line `sweep: <runs> runs, <failures> failures`. Exit 0 only with
 # zero failures. A failing seed replays with
 #   ROCKETNET_CHANNEL_SEED=<n> ./bin/functional --run test_<case>
-# --all takes every case defined in functional/channel_*.cpp.
+# --all takes every case defined in tests/functional/channel_*.cpp.
 
 set -u
 
@@ -51,8 +51,8 @@ if [ "$all" = 1 ]; then
     # test_<function>; config_mismatch_over_loopback is
     # test_loopback_transport_config_mismatch). An unregistered function keeps
     # test_<function>, which the binary refuses, so it fails visibly.
-    cases=$( for function in $( grep -h -o -E '^void [A-Za-z0-9_]+\(\)' "$root"/functional/channel_*.cpp | sed -e 's/^void //' -e 's/()$//' ); do
-                 name=$( grep -h -o -E "\{ \"test_[A-Za-z0-9_]+\", $function," "$root"/functional/rocketnet_functional_tests.cpp | head -n 1 | sed -E 's/^\{ "([^"]+)".*/\1/' )
+    cases=$( for function in $( grep -h -o -E '^void [A-Za-z0-9_]+\(\)' "$root"/tests/functional/channel_*.cpp | sed -e 's/^void //' -e 's/()$//' ); do
+                 name=$( grep -h -o -E "\{ \"test_[A-Za-z0-9_]+\", $function," "$root"/tests/functional/rocketnet_functional_tests.cpp | head -n 1 | sed -E 's/^\{ "([^"]+)".*/\1/' )
                  echo "${name:-test_$function}"
              done | paste -sd, - )
 fi

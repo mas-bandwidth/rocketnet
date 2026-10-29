@@ -96,7 +96,7 @@ static void test_functional_cases_have_no_generated_empty_bodies()
     rocketnet_unit_check( functional_integrity_empty_cases( "void windows_delivery() {/*" + long_comment + "*/ check(delivered); }", row ).empty() );
 
     const std::string cmake = functional_integrity_read( "CMakeLists.txt" );
-    const std::string registry = functional_integrity_read( "functional/rocketnet_functional_tests.cpp" );
+    const std::string registry = functional_integrity_read( "tests/functional/rocketnet_functional_tests.cpp" );
     // A missing or renamed input must not silently turn this into an empty scan.
     rocketnet_unit_check( cmake.find( "ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER" ) != std::string::npos );
     rocketnet_unit_check( registry.find( "rocketnet_functional_tests[]" ) != std::string::npos );

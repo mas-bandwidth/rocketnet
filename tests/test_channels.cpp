@@ -2587,7 +2587,7 @@ static void test_channels_allocator_no_live_allocation()
 //     that is one message with the form byte last as one code-0 record.
 //     The send, receive-budget and drop behaviour of the unreliable path
 //     is tested on the shipped path (test_unit_message_objects.cpp,
-//     test_unit_channel_dispatch.cpp, functional/channel_unreliable_*.cpp).
+//     test_unit_channel_dispatch.cpp, tests/functional/channel_unreliable_*.cpp).
 // ----------------------------------------------------------------
 
 static void channels_single_fill_pattern( uint8_t * data, int bytes, int salt )

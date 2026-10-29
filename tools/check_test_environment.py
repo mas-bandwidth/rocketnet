@@ -9,7 +9,7 @@ REGISTER_UNIT_TEST lines), and every printed name must be registered, so a
 test is never silently lost; a name registered under a condition (a platform
 #if, or a functional entry with a runs_here predicate) may or may not print.
 With the functional binary (bin/functional) it runs the suite the way its CI
-job does and checks the same against functional/'s registry and the names the
+job does and checks the same against tests/functional/'s registry and the names the
 sibling executables print.
 """
 import os
@@ -22,7 +22,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # Registry rows name every functional test, including harness and client_io
-# cases; a third field is a runs_here predicate (functional/rocketnet_functional_tests.cpp).
+# cases; a third field is a runs_here predicate (tests/functional/rocketnet_functional_tests.cpp).
 TABLE_ENTRY_RE = re.compile(r'^\s*\{\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*,\s*(?:"[^"]*"\s*,\s*\w+|\w+(\s*,\s*\w+)?)\s*\}')
 REGISTER_RE = re.compile(r"REGISTER_UNIT_TEST(?:_EXPECTED_FAIL)?\s*\(\s*([A-Za-z_][A-Za-z0-9_]*)")
 EXEC_TEST_NAME_RE = re.compile(r'"(test_[a-z0-9_%]+)(?:\\n)?"')
@@ -247,7 +247,7 @@ def registered_unit_names(production=False):
 
 
 def registered_functional_names():
-    return _table_names(REPO / "functional" / "rocketnet_functional_tests.cpp")
+    return _table_names(REPO / "tests" / "functional" / "rocketnet_functional_tests.cpp")
 
 
 def exec_functional_names():
@@ -273,7 +273,7 @@ def exec_functional_names():
         for m in EXEC_TEST_NAME_RE.finditer(text):
             patterns.append(re.escape(m.group(1)).replace("%d", "[0-9]+").replace("%s", "[a-z0-9_]+"))
     # the hard-killed client cases name themselves from their cell
-    # (rocketnet_posix_hard_killed_client_test_name, functional/posix_hard_killed_client.cpp)
+    # (rocketnet_posix_hard_killed_client_test_name, tests/functional/posix_hard_killed_client.cpp)
     patterns.append("test_posix_(?:hard_killed_client|send_to_closed_port|client_server_gone|receive_seam)_[a-z0-9_]+")
     return re.compile("(?:" + "|".join(patterns) + ")")
 

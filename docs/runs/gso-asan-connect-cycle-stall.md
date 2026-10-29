@@ -3,7 +3,7 @@
 The record of rerunning the one AddressSanitizer failure in
 docs/runs/linux-transport-cells-50x.md: under the gso/gso suite,
 `test_posix_connect_disconnect_1000` printed "connect stalled at cycle 621",
-failed its check at `functional/posix_lifecycle_stress.cpp:1106`, and the log
+failed its check at `tests/functional/posix_lifecycle_stress.cpp:1106`, and the log
 ended with a LeakSanitizer report (2609752 bytes in 68 allocations, all from
 `plan_rss_malloc`). That run was taken at load 44 to 85 on a 16-processor
 bench; its log directory is gone, so the stall's diagnostic lines (client
@@ -19,11 +19,11 @@ state, packets and counters, printed by `posix_print_stall`) were never kept.
 The failing line names the cell `[server portable, client portable]`, not
 gso. The suite pins `ROCKETNET_SERVER_TRANSPORT=gso ROCKETNET_CLIENT_TRANSPORT=gso`,
 but every POSIX lifecycle case clears both pins before its cell
-(`posix_cell_begin`, `functional/posix_lifecycle_stress.cpp:550-554`) and sets
+(`posix_cell_begin`, `tests/functional/posix_lifecycle_stress.cpp:550-554`) and sets
 the cell's transport in the config instead. On Linux the case is registered
 once per server cell; the stalled one is
 `test_portable_transport_posix_connect_disconnect_1000`
-(`functional/rocketnet_functional_tests.cpp:9903`): a portable server with
+(`tests/functional/rocketnet_functional_tests.cpp:9903`): a portable server with
 128 slots and a portable client, cycled 1000 times. The gso transport is not
 in that case. Every suite case runs in its own process
 (`tests/suite_runner.h`), so `./bin/functional --run <case>` is the same
@@ -56,13 +56,13 @@ Stall count: 0 in 40 runs (0 in 30 of the case that stalled).
 ## The leak is the harness's
 
 `posix_check` ends the process with `exit( 1 )`
-(`functional/posix_lifecycle_stress.cpp:122`) where it fails, so a failed
+(`tests/functional/posix_lifecycle_stress.cpp:122`) where it fails, so a failed
 check inside the loop at :1106 leaves the case's server and that cycle's
 client alive: neither `rocketnet_client_transport_disconnect`,
 `rn_native_client_transport_stop_and_destroy` nor `posix_server_destroy` runs.
 LeakSanitizer then reports their memory at exit. Every library allocation in
 the functional binary goes through the counting allocator the suite installs
-(`rocketnet_init( NULL, plan_rss_malloc, plan_rss_free )`, `functional/main.cpp:58`),
+(`rocketnet_init( NULL, plan_rss_malloc, plan_rss_free )`, `tests/functional/main.cpp:58`),
 which is why every block's stack ends in `plan_rss_malloc`.
 
 The evidence: a local build (not committed) with one added check that fails
@@ -70,7 +70,7 @@ at a chosen cycle, placed just before the check at :1106, and run with the
 cycle set to 621 on the Release ASan build:
 
 ```
-posix lifecycle stress check failed: .../functional/posix_lifecycle_stress.cpp:1106: getenv( "RN_EXP_FAIL_AT" ) == NULL || i != atoi( getenv( "RN_EXP_FAIL_AT" ) )
+posix lifecycle stress check failed: .../tests/functional/posix_lifecycle_stress.cpp:1106: getenv( "RN_EXP_FAIL_AT" ) == NULL || i != atoi( getenv( "RN_EXP_FAIL_AT" ) )
 ==2675968==ERROR: LeakSanitizer: detected memory leaks
 Direct leak of 7547 byte(s) in 13 object(s) allocated from:
     #0 ... in malloc ../../../../src/libsanitizer/asan/asan_malloc_linux.cpp:67

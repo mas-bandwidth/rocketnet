@@ -1,0 +1,51 @@
+# Dictionary for tests/fuzz/rocketnet_fuzz_round_trip.cpp. Entries are the
+# selector bytes, the wire's own constants as little-endian bytes (each
+# cited from sdk/), and the address grammar's punctuation.
+
+# selectors (input[0] % 8): request, cookie, sealed, ack read, ack build,
+# fragment header, token layouts, address
+sel_request="\x00"
+sel_cookie="\x01"
+sel_sealed="\x02"
+sel_ack_read="\x03"
+sel_ack_build="\x04"
+sel_fragment="\x05"
+sel_token="\x06"
+sel_address="\x07"
+
+# the sealed packet types, ROCKETNET_CONNECTION_*_PACKET (sdk/rocketnet_wire.h)
+type_denied="\x01"
+type_challenge="\x02"
+type_response="\x03"
+type_keep_alive="\x04"
+type_payload="\x05"
+type_disconnect="\x06"
+type_ack="\x08"
+type_fragment="\x09"
+
+# sequence one and the 32-bit wrap, as u64 (rocketnet_reconstruct_sequence)
+sequence_one="\x01\x00\x00\x00\x00\x00\x00\x00"
+sequence_wrap="\x00\x00\x00\x00\x01\x00\x00\x00"
+sequence_wrap_minus_one="\xff\xff\xff\xff\x00\x00\x00\x00"
+
+# ROCKETNET_DEV_PROTOCOL_ID (sdk/rocketnet_connect_token.h)
+dev_protocol_id="\x88\x77\x66\x55\x44\x33\x22\x11"
+
+# ROCKETNET_WIRE_VERSION (sdk/rocketnet_connect_token.h)
+version="\x93\x1a\x7c\x4e"
+
+# ROCKETNET_ACK_BLOCK_MAX_RANGES 255 as the block's range count (sdk/rocketnet_wire.h)
+ack_max_ranges="\xff"
+
+# ROCKETNET_MAX_FRAGMENTS 256 as the header's count - 1 (sdk/rocketnet_fragment.h)
+fragment_max_count="\xff"
+
+# the address grammar (rocketnet_address_parse, sdk/rocketnet_address.h)
+addr_open="["
+addr_close_port="]:"
+addr_v6_gap="::"
+addr_v4_mapped="::ffff:"
+addr_loopback4="127.0.0.1"
+addr_loopback6="::1"
+addr_port_max=":65535"
+addr_port_over=":65536"

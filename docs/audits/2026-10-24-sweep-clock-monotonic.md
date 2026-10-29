@@ -5,7 +5,7 @@ bug class: code that assumes time never goes backwards. That covers a comparison
 time values that comes out wrong, negative, or huge after an unsigned subtraction, or that wipes state,
 when the clock steps back; a bucket or window advance; and a timeout or deadline. Scope read: every
 `.cpp` and `.h` in `sdk/` (`sdk/rocketnet_tests.cpp` excluded, because it defines only test cases and no
-production code calls into it), every `.cpp`, `.h` and `.inc` in `functional/`, and every `tests/*.h`
+production code calls into it), every `.cpp`, `.h` and `.inc` in `tests/functional/`, and every `tests/*.h`
 helper. The public contract matters here. `sdk/rocketnet.h:972` lists a time that goes backwards as API
 misuse. `USAGE.md` asks for a non-decreasing clock. Both public update calls pass the caller's time
 through one clamp, `rocketnet_clamp_update_time` (`sdk/rocketnet_client_transport.cpp:55`), and so does
@@ -21,7 +21,7 @@ catches up (with its length); or a wrong answer. Search patterns and hit counts 
 (P1) `(time|now|deadline|timeout|_ts|timestamp|last_[a-z_]*)\b` over `sdk/*.cpp sdk/*.h`, narrowed to
 lines holding a comparison (`<`, `>`, `<=`, `>=`, with `->`, `<<` and `>>` excluded) or a subtraction
 (` - `): 128 hits.
-(P1b) the same pattern and narrowing over `functional/*.cpp functional/*.h functional/*.inc tests/*.h`:
+(P1b) the same pattern and narrowing over `tests/functional/*.cpp tests/functional/*.h tests/functional/*.inc tests/*.h`:
 289 hits.
 (P2) a widening, added after reading `sdk/rocketnet_frame_sync.cpp` showed nanosecond deadlines that P1
 missed: `\b[a-z_]*(_ns|elapsed|_age|period|expire|_since|_until|_at)\b` over `sdk/`, with the same
@@ -209,276 +209,276 @@ are not repeated here.
 | `sdk/rocketnet_frame_sync.cpp:487` | ordered at line 482 before subtracting |
 | `sdk/rocketnet_frame_sync.cpp:489` | both sides read the platform monotonic clock (CLOCK_MONOTONIC(_RAW), mach_absolute_time or QueryPerformanceCounter) |
 | `sdk/rocketnet_platform.cpp:3269` | a sentinel test against a negative or zero marker, not two time values; platform monotonic clock |
-| `functional/channel_config.cpp:103` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:130` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:138` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:146` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:177` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:196` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:213` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_config.cpp:256` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_ordered.cpp:192` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_ordered.cpp:229` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_ordered.cpp:237` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_ordered.cpp:245` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_receipts.cpp:123` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_receipts.cpp:216` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_receipts_reliable.cpp:147` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_reliable.cpp:71` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_reliable_sequenced.cpp:132` | not a time value: a sequence, count, index or size matched the name pattern (delivery positions) |
-| `functional/channel_reliable_sequenced.cpp:151` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_smoke.cpp:174` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_smoke.cpp:230` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:52` | comment text, no code |
-| `functional/channel_resend_timing.cpp:220` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:236` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:242` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:401` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:464` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:488` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_resend_timing.cpp:495` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/cpp_transports.cpp:65` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/cpp_transports.cpp:85` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/cpp_transports.cpp:139` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/cpp_transports.cpp:163` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/platform_primitives.cpp:67` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:210` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:653` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:773` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:852` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:986` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:1049` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:1154` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:1167` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/live_matrix.cpp:1176` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:384` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:385` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:405` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:406` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:461` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:462` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:463` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:464` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:471` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:491` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:502` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:598` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:662` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:680` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:750` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:1002` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:1017` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:1098` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_hard_killed_client.cpp:1191` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_lifecycle_stress.cpp:276` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_lifecycle_stress.cpp:314` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_lifecycle_stress.cpp:426` | a shell command string, no code comparison |
-| `functional/posix_lifecycle_stress.cpp:735` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_lifecycle_stress.cpp:767` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_lifecycle_stress.cpp:942` | not a time value: a sequence, count, index or size matched the name pattern |
-| `functional/posix_lifecycle_stress.cpp:943` | not a time value: a sequence, count, index or size matched the name pattern |
-| `functional/posix_lifecycle_stress.cpp:945` | not a time value: a sequence, count, index or size matched the name pattern |
-| `functional/posix_lifecycle_stress.cpp:957` | not a time value: a sequence, count, index or size matched the name pattern |
-| `functional/posix_lifecycle_stress.cpp:966` | not a time value: a sequence, count, index or size matched the name pattern |
-| `functional/posix_lifecycle_stress.cpp:1145` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:367` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:381` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:637` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:823` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:886` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:911` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:980` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1029` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1106` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1297` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1355` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1394` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1438` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1473` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1624` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1658` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:1725` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:2018` | a shell command string, no code comparison |
-| `functional/posix_socket_errors.cpp:2097` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:2244` | not a time value: a sequence, count, index or size matched the name pattern (a counter read held in a variable named now) |
-| `functional/posix_socket_errors.cpp:2251` | not a time value: a sequence, count, index or size matched the name pattern (a counter read held in a variable named now) |
-| `functional/posix_socket_errors.cpp:2253` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:2258` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/posix_socket_errors.cpp:2327` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/server_receive_backlog.cpp:183` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/server_receive_backlog.cpp:184` | a test clock that starts at 1000.0 and only increases, against a platform-clock duration |
-| `functional/server_receive_backlog.cpp:194` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/server_receive_backlog.cpp:269` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/server_receive_backlog.cpp:273` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:180` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:194` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:238` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:255` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:323` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:402` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:438` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:512` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:570` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:624` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:663` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:722` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:798` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:837` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:894` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:934` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:990` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1077` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1156` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1181` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1225` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1248` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1255` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1338` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1358` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1412` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1433` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1480` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1497` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1599` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1667` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:1783` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1887` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1922` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1928` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:1970` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:1972` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:2188` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2237` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2332` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2372` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2483` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2531` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2591` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2669` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2722` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2758` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2821` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2838` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2911` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2941` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:2986` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3034` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3068` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3092` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3125` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3208` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3225` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3307` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3324` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3407` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3422` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3438` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3534` | a fixed test time; each protocol object sees its own nondecreasing sequence |
-| `functional/rocketnet_functional_tests.cpp:3542` | a fixed test time; each protocol object sees its own nondecreasing sequence |
-| `functional/rocketnet_functional_tests.cpp:3546` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3570` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3647` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3649` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3681` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3851` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3867` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3965` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:3981` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4033` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4088` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4174` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4289` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4344` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4378` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4395` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4420` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4449` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4618` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4656` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:4684` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5325` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5414` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5429` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5474` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5527` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5576` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5643` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5759` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5787` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:5965` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6005` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6034` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6054` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6147` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6159` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6221` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6292` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6338` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6482` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6603` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6661` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6690` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6741` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6773` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:6938` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7091` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7094` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:7107` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:7120` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7155` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:7208` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7211` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:7229` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7232` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
-| `functional/rocketnet_functional_tests.cpp:7378` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7483` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7686` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7709` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:7960` | a shell command string, no code comparison |
-| `functional/rocketnet_functional_tests.cpp:8016` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:8035` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:8139` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:8179` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:8235` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:8373` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9167` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9169` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9187` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9189` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9251` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9253` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9367` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9425` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/rocketnet_functional_tests.cpp:9463` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:261` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:431` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:464` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:465` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:494` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:507` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:566` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:570` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:597` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:601` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:622` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:745` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:773` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_connreset.cpp:779` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:194` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:195` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:271` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:278` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:345` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:390` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:489` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:522` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:540` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
-| `functional/windows_socket_errors.cpp:552` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/channel_config.cpp:103` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:130` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:138` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:146` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:177` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:196` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:213` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_config.cpp:256` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_ordered.cpp:192` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_ordered.cpp:229` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_ordered.cpp:237` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_ordered.cpp:245` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_receipts.cpp:123` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_receipts.cpp:216` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_receipts_reliable.cpp:147` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_reliable.cpp:71` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_reliable_sequenced.cpp:132` | not a time value: a sequence, count, index or size matched the name pattern (delivery positions) |
+| `tests/functional/channel_reliable_sequenced.cpp:151` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_smoke.cpp:174` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_smoke.cpp:230` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:52` | comment text, no code |
+| `tests/functional/channel_resend_timing.cpp:220` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:236` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:242` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:401` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:464` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:488` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_resend_timing.cpp:495` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/cpp_transports.cpp:65` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/cpp_transports.cpp:85` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/cpp_transports.cpp:139` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/cpp_transports.cpp:163` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/platform_primitives.cpp:67` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:210` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:653` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:773` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:852` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:986` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:1049` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:1154` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:1167` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/live_matrix.cpp:1176` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:384` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:385` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:405` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:406` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:461` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:462` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:463` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:464` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:471` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:491` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:502` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:598` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:662` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:680` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:750` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:1002` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:1017` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:1098` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_hard_killed_client.cpp:1191` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_lifecycle_stress.cpp:276` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_lifecycle_stress.cpp:314` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_lifecycle_stress.cpp:426` | a shell command string, no code comparison |
+| `tests/functional/posix_lifecycle_stress.cpp:735` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_lifecycle_stress.cpp:767` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_lifecycle_stress.cpp:942` | not a time value: a sequence, count, index or size matched the name pattern |
+| `tests/functional/posix_lifecycle_stress.cpp:943` | not a time value: a sequence, count, index or size matched the name pattern |
+| `tests/functional/posix_lifecycle_stress.cpp:945` | not a time value: a sequence, count, index or size matched the name pattern |
+| `tests/functional/posix_lifecycle_stress.cpp:957` | not a time value: a sequence, count, index or size matched the name pattern |
+| `tests/functional/posix_lifecycle_stress.cpp:966` | not a time value: a sequence, count, index or size matched the name pattern |
+| `tests/functional/posix_lifecycle_stress.cpp:1145` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:367` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:381` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:637` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:823` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:886` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:911` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:980` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1029` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1106` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1297` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1355` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1394` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1438` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1473` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1624` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1658` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:1725` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:2018` | a shell command string, no code comparison |
+| `tests/functional/posix_socket_errors.cpp:2097` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:2244` | not a time value: a sequence, count, index or size matched the name pattern (a counter read held in a variable named now) |
+| `tests/functional/posix_socket_errors.cpp:2251` | not a time value: a sequence, count, index or size matched the name pattern (a counter read held in a variable named now) |
+| `tests/functional/posix_socket_errors.cpp:2253` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:2258` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/posix_socket_errors.cpp:2327` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/server_receive_backlog.cpp:183` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/server_receive_backlog.cpp:184` | a test clock that starts at 1000.0 and only increases, against a platform-clock duration |
+| `tests/functional/server_receive_backlog.cpp:194` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/server_receive_backlog.cpp:269` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/server_receive_backlog.cpp:273` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:180` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:194` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:238` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:255` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:323` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:402` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:438` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:512` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:570` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:624` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:663` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:722` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:798` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:837` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:894` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:934` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:990` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1077` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1156` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1181` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1225` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1248` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1255` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1338` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1358` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1412` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1433` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1480` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1497` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1599` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1667` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:1783` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1887` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1922` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1928` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:1970` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:1972` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:2188` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2237` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2332` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2372` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2483` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2531` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2591` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2669` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2722` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2758` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2821` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2838` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2911` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2941` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:2986` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3034` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3068` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3092` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3125` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3208` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3225` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3307` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3324` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3407` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3422` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3438` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3534` | a fixed test time; each protocol object sees its own nondecreasing sequence |
+| `tests/functional/rocketnet_functional_tests.cpp:3542` | a fixed test time; each protocol object sees its own nondecreasing sequence |
+| `tests/functional/rocketnet_functional_tests.cpp:3546` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3570` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3647` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3649` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3681` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3851` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3867` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3965` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:3981` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4033` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4088` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4174` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4289` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4344` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4378` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4395` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4420` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4449` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4618` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4656` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:4684` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5325` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5414` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5429` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5474` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5527` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5576` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5643` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5759` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5787` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:5965` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6005` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6034` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6054` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6147` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6159` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6221` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6292` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6338` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6482` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6603` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6661` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6690` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6741` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6773` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:6938` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7091` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7094` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:7107` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:7120` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7155` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:7208` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7211` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:7229` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7232` | test game clock built as a start plus a monotonic platform delta, or a counter that only increases |
+| `tests/functional/rocketnet_functional_tests.cpp:7378` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7483` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7686` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7709` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:7960` | a shell command string, no code comparison |
+| `tests/functional/rocketnet_functional_tests.cpp:8016` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:8035` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:8139` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:8179` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:8235` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:8373` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9167` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9169` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9187` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9189` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9251` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9253` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9367` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9425` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/rocketnet_functional_tests.cpp:9463` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:261` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:431` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:464` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:465` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:494` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:507` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:566` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:570` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:597` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:601` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:622` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:745` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:773` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_connreset.cpp:779` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:194` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:195` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:271` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:278` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:345` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:390` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:489` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:522` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:540` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
+| `tests/functional/windows_socket_errors.cpp:552` | monotonic platform clock (rocketnet_platform_time, rocketnet_time or steady_clock) bounding a test wait or measuring a duration |
 | `tests/counters_expect.h:105` | not a time value: a sequence, count, index or size matched the name pattern (counter values; a decrease is handled explicitly) |
 | `tests/counters_expect.h:106` | not a time value: a sequence, count, index or size matched the name pattern (counter values; a decrease is handled explicitly) |
-| `functional/channel_harness.h:259` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_harness.h:524` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
-| `functional/channel_harness.h:567` | channel harness clock, which only advances (`h->now += dt`, `functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_harness.h:259` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_harness.h:524` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
+| `tests/functional/channel_harness.h:567` | channel harness clock, which only advances (`h->now += dt`, `tests/functional/channel_harness.h:1014`, positive dt at every call) |
 | `tests/dst_harness.h:331` | DST world clock, `1000.0 + k * 0.01` for increasing step k (`tests/dst_harness.h:1096`) |
 | `tests/dst_harness.h:369` | DST world clock, `1000.0 + k * 0.01` for increasing step k (`tests/dst_harness.h:1096`) |
 | `tests/dst_harness.h:1097` | DST world clock, `1000.0 + k * 0.01` for increasing step k (`tests/dst_harness.h:1096`) |

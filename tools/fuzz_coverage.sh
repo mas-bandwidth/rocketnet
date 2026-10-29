@@ -10,7 +10,7 @@
 #
 # Usage: tools/fuzz_coverage.sh [target ...]
 #   targets are fuzz harness names (rocketnet_fuzz, rocketnet_fuzz_session,
-#   ...); the default is every fuzz/rocketnet_fuzz*.cpp with a fuzz_replay_
+#   ...); the default is every tests/fuzz/rocketnet_fuzz*.cpp with a fuzz_replay_
 #   target in CMakeLists.txt.
 #
 # Environment:
@@ -77,11 +77,11 @@ AREAS=(
 seeds_for()
 {
     case "$1" in
-        rocketnet_fuzz)                    echo fuzz/corpus ;;
-        rocketnet_fuzz_message)            echo fuzz/corpus_message ;;
-        rocketnet_fuzz_connect_token)      echo fuzz/corpus_connect_token ;;
-        rocketnet_fuzz_receive_structured) echo fuzz/corpus_receive_structured ;;
-        *)                                 echo "fuzz/corpus_${1#rocketnet_fuzz_}" ;;
+        rocketnet_fuzz)                    echo tests/fuzz/corpus ;;
+        rocketnet_fuzz_message)            echo tests/fuzz/corpus_message ;;
+        rocketnet_fuzz_connect_token)      echo tests/fuzz/corpus_connect_token ;;
+        rocketnet_fuzz_receive_structured) echo tests/fuzz/corpus_receive_structured ;;
+        *)                                 echo "tests/fuzz/corpus_${1#rocketnet_fuzz_}" ;;
     esac
 }
 
@@ -89,7 +89,7 @@ if [ "$#" -gt 0 ]; then
     TARGETS=("$@")
 else
     TARGETS=()
-    for src in fuzz/rocketnet_fuzz*.cpp; do
+    for src in tests/fuzz/rocketnet_fuzz*.cpp; do
         t="$(basename "$src" .cpp)"
         grep -q "$t" CMakeLists.txt && TARGETS+=("$t")
     done

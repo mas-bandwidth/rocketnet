@@ -256,7 +256,7 @@ the ladder treats like any other. The server's own later sockets set
 `SO_REUSEPORT` before they bind and join its group on the same port. The
 functional cases `test_gso_server_refuses_explicit_port_in_use` and
 `test_uring_server_refuses_explicit_port_in_use`
-(`functional/posix_socket_errors.cpp`) hold this.
+(`tests/functional/posix_socket_errors.cpp`) hold this.
 
 A factory reports why it failed through `config->status`
 (`rocketnet_server_transport_io_config_t.status` and
@@ -315,7 +315,7 @@ receive errno pauses the msgx pump with one warning per pause
 (`rocketnet_msgx_pause`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
 contract: one client's death never stalls or degrades another client's traffic.
-The functional cases in functional/posix_hard_killed_client.cpp hold this per
+The functional cases in tests/functional/posix_hard_killed_client.cpp hold this per
 transport cell, and an injected-errno seam covers each receive arm. The macOS
 cells are the portable and msgx servers with the portable and msgx clients;
 the seam cases are macOS only. The Linux cells are the portable, gso and
@@ -435,7 +435,7 @@ reposted, and a `rio` slice whose re-post fails waits on a retry list for the
 next `receive_packets`. `rocketnet_platform_receive_resets` counts the reset
 statuses the portable receive skips and the `iocp` and `rio` completions and
 refused posts carry. The functional
-cases in `functional/windows_connreset.cpp` prove it for each server transport
+cases in `tests/functional/windows_connreset.cpp` prove it for each server transport
 and family: `windows_connreset_hard_killed_client_*` ends one of four clients
 with `TerminateProcess` while the server keeps sending to it, and the other
 three see no receive gap past one update interval plus 50 ms, the dead client

@@ -14,7 +14,7 @@
 // The bundled-RNG descriptor lifecycle case reads the live process's open
 // descriptors through proc_pidinfo, which is OS state, so it is a functional
 // case: test_bundled_rng_closes_and_reopens_on_mac in
-// functional/platform_primitives.cpp. The system-sodium case below replaces
+// tests/functional/platform_primitives.cpp. The system-sodium case below replaces
 // the RNG with a fake and reads nothing from the OS, so it stays a unit case.
 
 #if defined( ROCKETNET_USE_SYSTEM_SODIUM )

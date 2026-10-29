@@ -28,8 +28,8 @@ The layers have different jobs:
 | Formal models | Properties within the modeled state space and assumptions | Automatic correctness of the implementation |
 | Soak and load tests | Behavior for the recorded duration, workload and deployment | Other hardware, workloads or configurations |
 
-See [tests](../tests/README.md), [fuzzing](../fuzz/README.md),
-[OSS-Fuzz integration](../oss-fuzz/README.md), and [TLA+ models](../proofs/tla/README.md)
+See [tests](../tests/README.md), [fuzzing](../tests/fuzz/README.md),
+[OSS-Fuzz integration](../tests/oss-fuzz/README.md), and [TLA+ models](../proofs/tla/README.md)
 for the existing tools. A model result needs a correspondence review against
 its implementation; a configured fuzz job needs execution evidence.
 
@@ -60,7 +60,7 @@ separately under `docs/audits/`:
 - **Executed verification and static-analysis records** document the exact
   tested commit, tool invocation, observed outcome, and remaining limits:
   - [Release-build (`-DNDEBUG`) fuzz campaign](audits/2026-10-24-fuzz-ndebug.md)
-    at `6ac80bfb59eb3b9e3e6f748c1973c6b6c8f0b228`: ran all 11 `fuzz/` harnesses
+    at `6ac80bfb59eb3b9e3e6f748c1973c6b6c8f0b228`: ran all 11 `tests/fuzz/` harnesses
     on Linux with `-DNDEBUG`, AddressSanitizer, and UndefinedBehaviorSanitizer
     for 600 seconds each so bounds enforced only by debug assertions are tested
     under release compilation.

@@ -206,7 +206,7 @@ sudo sysctl -w net.core.rmem_max=25000000
 A grant below one update's inbound traffic drops packets in the kernel
 before the server sees them; at 1000 clients sending 256 kbps each, one 10 Hz
 update carries 3.2 MB of payload, a 20 Hz update 1.6 MB and a 30 Hz update
-1.07 MB (measured on the loopback, functional/server_receive_low_tick.cpp:
+1.07 MB (measured on the loopback, tests/functional/server_receive_low_tick.cpp:
 3.46 MB, 1.83 MB and 1.30 MB of wire bytes per update, with 0 kernel
 receive drops). The portable server is a portable implementation with no
 performance guarantee: that case reports the kernel's receive drop count and

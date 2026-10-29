@@ -1,7 +1,7 @@
 # Release-build fuzz campaign, 2026-10-24
 
 Release-build fuzz campaign of `mas-bandwidth/rocketnet` at `6ac80bfb59eb3b9e3e6f748c1973c6b6c8f0b228`
-(`main`). Scope: the library under `sdk/` and the eleven `fuzz/` harnesses, all built with `-DNDEBUG`,
+(`main`). Scope: the library under `sdk/` and the eleven `tests/fuzz/` harnesses, all built with `-DNDEBUG`,
 so `rocketnet_assert` compiles to nothing (`sdk/rocketnet_internal.h`) and every bound that only an
 assert holds is fuzzed the way a release build runs it. Method: `tools/fuzz_ndebug.sh --seconds 600 --jobs 6` (the nightly's sanitizer flags, AddressSanitizer and UndefinedBehaviorSanitizer, on Linux),
 each target for 600 seconds from its seed corpus; any crash, leak, timeout or sanitizer report would

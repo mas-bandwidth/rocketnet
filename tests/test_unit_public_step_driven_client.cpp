@@ -8,7 +8,7 @@
 // update time from 1000.0, and no test sleeps or opens a socket.
 //
 // The connect-without-a-thread case moved to the functional suite
-// (functional/process_thread_counts.cpp): reading the process's thread count
+// (tests/functional/process_thread_counts.cpp): reading the process's thread count
 // from /proc/self/task is OS state. The pair setup is shared from
 // tests/public_step_pair.h.
 

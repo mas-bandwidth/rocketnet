@@ -174,7 +174,7 @@ static std::string sequence_audit_symbol( const std::string & cell )
 
 static std::string sequence_audit_path( const std::string & cell )
 {
-    static const char * const roots[] = { "sdk/", "tests/", "functional/", "examples/", "tools/" };
+    static const char * const roots[] = { "sdk/", "tests/", "tests/functional/", "examples/", "tools/" };
     for ( size_t r = 0; r < sizeof( roots ) / sizeof( roots[0] ); r++ )
     {
         const size_t at = cell.find( roots[r] );

@@ -25,7 +25,7 @@
     closed: a list that cannot be opened, a first entry that cannot be read,
     or a walk that ends on any error but ERROR_NO_MORE_FILES reads both as -1.
 
-    The Linux and macOS counters are the ones functional/posix_lifecycle_stress.cpp
+    The Linux and macOS counters are the ones tests/functional/posix_lifecycle_stress.cpp
     reads for its cells; the Windows counters are the ones load.c reads.
     A count that cannot be read is -1, and process_resources_read returns 0.
 

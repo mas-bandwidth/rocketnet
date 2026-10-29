@@ -74,7 +74,7 @@ run_guide_identifiers() {
         missing=0
         for id in $IDS; do
             count=$((count + 1))
-            if ! grep -q -w "$id" "$ROOT"/sdk/*.h "$ROOT"/sdk/*.cpp "$ROOT"/functional/*.cpp "$ENVIRONMENT_MD" "$ROOT/examples/backend/README.md" "$ROOT/examples/shutdown.h" "$ROOT/CMakeLists.txt"; then
+            if ! grep -q -w "$id" "$ROOT"/sdk/*.h "$ROOT"/sdk/*.cpp "$ROOT"/tests/functional/*.cpp "$ENVIRONMENT_MD" "$ROOT/examples/backend/README.md" "$ROOT/examples/shutdown.h" "$ROOT/CMakeLists.txt"; then
                 echo "missing in SDK, environment and example authorities: $id (in $DOC)"
                 missing=$((missing + 1))
             fi

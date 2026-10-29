@@ -34,7 +34,7 @@
 #include <string.h>
 #include <time.h>
 
-// Windows has no setenv or unsetenv: the same shim as functional/harness.inc
+// Windows has no setenv or unsetenv: the same shim as tests/functional/harness.inc
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static int setenv( const char * name, const char * value, int overwrite )
 {

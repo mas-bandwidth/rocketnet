@@ -122,9 +122,9 @@ the refusal classes).
 
 ## The fuzz corpus mode
 
-`run.sh` also runs every file of `fuzz/corpus_connect_token/` through both
+`run.sh` also runs every file of `tests/fuzz/corpus_connect_token/` through both
 libraries, after the case table. Each file is read the way
-`fuzz/rocketnet_fuzz_connect_token.cpp` reads it: byte 0 bit 0 picks the raw
+`tests/fuzz/rocketnet_fuzz_connect_token.cpp` reads it: byte 0 bit 0 picks the raw
 half (the rest of the input is the token, zero-padded to 768 bytes) or the
 structured half (`(u16 offset, xor)` records over a valid baseline token,
 the harness's own field values, minted to the differential server's test
@@ -187,7 +187,7 @@ stops at its version string, rocketnet at the protocol id).
 
 ## The differential fuzz target
 
-`fuzz/rocketnet_fuzz_differential.cpp` is the libFuzzer target that turns
+`tests/fuzz/rocketnet_fuzz_differential.cpp` is the libFuzzer target that turns
 this decision gate into a fuzzer (nightly, Linux leg). The fixed gate and the
 target share the whole decision core in `decide.h`, so they run the same
 deciders on the same case model. The fuzzer never mutates packet bytes: the
@@ -221,8 +221,8 @@ expressed relative to the moment netcode reads the clock: `expire_offset` is
 mapped to netcode's `expire_seconds` (negative clamps to 0, already expired;
 any other maps to the same count of seconds), and `create_offset` is not
 carried by netcode at all. Seeds are one per case in `cases.tsv`, encoded in
-this structured form under `fuzz/corpus_differential/`, with the field tags
-dictionary at `fuzz/dict/rocketnet_fuzz_differential.dict`.
+this structured form under `tests/fuzz/corpus_differential/`, with the field tags
+dictionary at `tests/fuzz/dict/rocketnet_fuzz_differential.dict`.
 
 ## Files
 
@@ -235,5 +235,5 @@ dictionary at `fuzz/dict/rocketnet_fuzz_differential.dict`.
 * `netcode_decisions.cpp` — the fixed gate: drives rocketnet live and compares.
 * `run.sh` — builds both libraries (netcode only when `NETCODE_DIR` is given)
   and runs the harness.
-* `fuzz/rocketnet_fuzz_differential.cpp` — the differential fuzz target.
+* `tests/fuzz/rocketnet_fuzz_differential.cpp` — the differential fuzz target.
 * `README.md` — this file.

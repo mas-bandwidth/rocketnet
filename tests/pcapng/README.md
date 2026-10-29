@@ -1,6 +1,6 @@
 # tests/pcapng: the pcapng corpus
 
-Real rocketnet traffic, captured in the functional tier and replayed into the packet readers by the functional suite's corpus-consistency cases (`functional/corpus_consistency.cpp`). The replay reads this directory at run time and the directory grows as regressions land, so it is a functional case, never a unit one: `./bin/test` reads no file. The captures come from the functional channel harness only, over the in-repo network simulator: never a real network, never a deployed server. Nothing of console sockets or web support is captured.
+Real rocketnet traffic, captured in the functional tier and replayed into the packet readers by the functional suite's corpus-consistency cases (`tests/functional/corpus_consistency.cpp`). The replay reads this directory at run time and the directory grows as regressions land, so it is a functional case, never a unit one: `./bin/test` reads no file. The captures come from the functional channel harness only, over the in-repo network simulator: never a real network, never a deployed server. Nothing of console sockets or web support is captured.
 
 ## Files
 
@@ -10,8 +10,8 @@ Real rocketnet traffic, captured in the functional tier and replayed into the pa
 | `tests/pcapng/regress/<name>.pcapng` | minimized fuzz regressions (none yet) |
 | `tests/pcapng.h` | the header-only C++ reader and writer |
 | `tools/pcapng.py` | the python reader and writer (`read_packets`, `write_packets`, `udp_payload`, `--selftest`) |
-| `functional/channel_harness.h` | the capture tee |
-| `functional/corpus_consistency.cpp` | the replay (`test_pcapng_corpus_replay`), its witness (`test_pcapng_corpus_witness_unread_packet_goes_red`) and the control-type coverage (`test_pcapng_corpus_covers_control_packet_types`), rows of `rocketnet_functional_tests[]` run by `./bin/functional` |
+| `tests/functional/channel_harness.h` | the capture tee |
+| `tests/functional/corpus_consistency.cpp` | the replay (`test_pcapng_corpus_replay`), its witness (`test_pcapng_corpus_witness_unread_packet_goes_red`) and the control-type coverage (`test_pcapng_corpus_covers_control_packet_types`), rows of `rocketnet_functional_tests[]` run by `./bin/functional` |
 
 ## The format
 
@@ -47,7 +47,7 @@ The functional test's simulated clock in microseconds, starting at 1000.0 s (100
 
 ## The capture: tap points and why
 
-The tee in `functional/channel_harness.h` is active only when `ROCKETNET_PCAPNG_CAPTURE_DIR` is set when a harness is created. Unset, every tee returns at its first line and the harness runs as it does without them, so the functional suite is unchanged.
+The tee in `tests/functional/channel_harness.h` is active only when `ROCKETNET_PCAPNG_CAPTURE_DIR` is set when a harness is created. Unset, every tee returns at its first line and the harness runs as it does without them, so the functional suite is unchanged.
 
 - **Interface 0, at every hand-off to the simulator**: `rocketnet_channel_endpoint_send_control` (control packets, after the wire's drop mode), `rocketnet_channel_endpoint_send_packets` (payload frames), `rocketnet_channel_endpoint_disconnect`, and `rocketnet_channel_harness_deliver_held` (held packets released in a scripted order). These are the only places a datagram leaves an end, so the corpus is exactly the traffic, before the simulator's loss, duplication and reordering.
 - **Interface 1, at the two receive hand-offs**, just before `rocketnet_server_protocol_process_packet` and `rocketnet_client_protocol_process_packet`: a session packet (types 4, 5, 6, 8, 9) from a connected mapping (server) or a client holding session keys is opened a second time on a copy, with the sequence reconstructed from the same replay state the protocol is about to use. A packet that does not open is not recorded: no reader is handed anything for it. Kind 3 is recorded where an accepted payload is handed to the message layer.
@@ -77,8 +77,8 @@ for name in \
 do
     ROCKETNET_PCAPNG_CAPTURE_DIR=tests/pcapng ./bin/functional --run $name > /dev/null || exit 1
 done
-python3 tools/pcapng.py hostile fuzz/corpus tests/pcapng/hostile_prefilter.pcapng
-python3 tools/pcapng.py fragments fuzz/corpus tests/pcapng/fragment_seeds.pcapng
+python3 tools/pcapng.py hostile tests/fuzz/corpus tests/pcapng/hostile_prefilter.pcapng
+python3 tools/pcapng.py fragments tests/fuzz/corpus tests/pcapng/fragment_seeds.pcapng
 python3 tools/pcapng.py summary tests/pcapng/*.pcapng
 ./bin/functional --run test_pcapng_corpus_replay
 ```
@@ -100,8 +100,8 @@ python3 tools/pcapng.py summary tests/pcapng/*.pcapng
 | `test_control_standalone_ack_each_end` | a standalone ack (type 8) the server sends once its ack debt reaches the threshold |
 | `test_control_fragment_packets_each_end` | a fragmented payload (type 9) each way, reassembled |
 | `test_control_denied_when_server_full` | a denied (type 1) when the server's client slots are all full |
-| `hostile_prefilter` | every `fuzz/corpus/prefilter_*` seed less its selector byte, client to server: empty, too short, wrong epoch, wrong filter value, reserved type, an all-zero request, and three well-sized session packets |
-| `fragment_seeds` | every `fuzz/corpus/fragment_*` seed's records as kind-2 records, alternating connections as the fuzz harness does |
+| `hostile_prefilter` | every `tests/fuzz/corpus/prefilter_*` seed less its selector byte, client to server: empty, too short, wrong epoch, wrong filter value, reserved type, an all-zero request, and three well-sized session packets |
+| `fragment_seeds` | every `tests/fuzz/corpus/fragment_*` seed's records as kind-2 records, alternating connections as the fuzz harness does |
 
 The harness now sends a type 9 fragment (via `rocketnet_client_protocol_write_fragments` and the server mirror), a standalone type 8 ack (once the ack debt reaches the threshold; the eliciting payloads are valid message payloads and are read, never refused), a denied (when the server has no free slot) and the full redundant disconnect burst (type 6, every copy) from either end, so those four types reach the readers from the functional harness as well as through `fragment_seeds` and the regressions. No captured case is left undone.
 
@@ -111,7 +111,7 @@ Each file at most 128 KiB, `tests/pcapng/` (with `regress/`) at most 512 KiB in 
 
 ## What is stable
 
-Captures are not byte-reproducible: the connection keys and salts are random per run, so every sealed byte differs. What a re-capture by the recipe reproduces is the count of packets per type and per end, and the count per refusal name, because the simulator's seed is pinned (`ROCKETNET_CHANNEL_SEED` unset) and no size or schedule depends on a key. `test_pcapng_corpus_replay` pins exactly that: for each captured file, every name a packet ended under and its count. A re-capture that changes a count is a behaviour change, and the pin in `functional/corpus_consistency.cpp` is updated with the reason.
+Captures are not byte-reproducible: the connection keys and salts are random per run, so every sealed byte differs. What a re-capture by the recipe reproduces is the count of packets per type and per end, and the count per refusal name, because the simulator's seed is pinned (`ROCKETNET_CHANNEL_SEED` unset) and no size or schedule depends on a key. `test_pcapng_corpus_replay` pins exactly that: for each captured file, every name a packet ended under and its count. A re-capture that changes a count is a behaviour change, and the pin in `tests/functional/corpus_consistency.cpp` is updated with the reason.
 
 ## The replay
 

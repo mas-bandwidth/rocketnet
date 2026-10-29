@@ -95,7 +95,7 @@ The two failures, each recorded once and not retried:
 
   ```
   test_posix_connect_disconnect_1000 [server portable, client portable]: connect stalled at cycle 621
-  posix lifecycle stress check failed: .../functional/posix_lifecycle_stress.cpp:1106: rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED
+  posix lifecycle stress check failed: .../tests/functional/posix_lifecycle_stress.cpp:1106: rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED
   ```
 
   The same log ends with a LeakSanitizer report (`SUMMARY: AddressSanitizer: 2609752 byte(s) leaked in 68 allocation(s)`, all from `plan_rss_malloc`), emitted because the failed check aborted the suite before teardown.

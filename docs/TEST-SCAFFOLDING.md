@@ -1,6 +1,6 @@
 # Test Scaffolding and the `ROCKETNET_DEV` Boundary
 
-This document records the complete inventory of development and test-only scaffolding across the RocketNet SDK (`sdk/*`), build graph (`CMakeLists.txt`), and test suites (`tests/*`, `functional/*`), and defines the invariant that every test seam, hook macro, deterministic fixture helper, fault injector, and inspection witness is compiled and declared only when `ROCKETNET_DEV=1`.
+This document records the complete inventory of development and test-only scaffolding across the RocketNet SDK (`sdk/*`), build graph (`CMakeLists.txt`), and test suites (`tests/*`, `tests/functional/*`), and defines the invariant that every test seam, hook macro, deterministic fixture helper, fault injector, and inspection witness is compiled and declared only when `ROCKETNET_DEV=1`.
 
 ## Core Invariant
 
@@ -116,7 +116,7 @@ py -3 tools\check_test_scaffolding_boundary.py --build build-dev0 --shared bin\R
 ```
 
 What `tools/check_test_scaffolding_boundary.py` verifies:
-1. **Header and Source Audit**: `sdk/rocketnet.h` exposes no test-scaffolding token; none of the retired per-feature switches appears under `sdk/`, `tests/`, `functional/`, `CMakeLists.txt` or the workflows; `sdk/rocketnet_connect_token.h` and `sdk/rocketnet_connection_reset.h` guard all deterministic token and reset-inventory scaffolding under `#if ROCKETNET_DEV`.
+1. **Header and Source Audit**: `sdk/rocketnet.h` exposes no test-scaffolding token; none of the retired per-feature switches appears under `sdk/`, `tests/`, `tests/functional/`, `CMakeLists.txt` or the workflows; `sdk/rocketnet_connect_token.h` and `sdk/rocketnet_connection_reset.h` guard all deterministic token and reset-inventory scaffolding under `#if ROCKETNET_DEV`.
 2. **Build-Tree Audit**: `build-dev0` is configured with `ROCKETNET_DEV=OFF`, and compiles `rocketnet`, `rocketnet_shared`, `rocketnet_test_support`, and `test` with `ROCKETNET_DEV=0` and no retired switch.
 3. **Artifact Symbol and Byte Audit (`tools/check_exports.py`)**: `rocketnet` static archive, `rocketnet_shared` shared library, and Windows `rocketnet_import.lib` match `tools/exports.txt`, keep the static crypto namespace private, and contain zero development/test symbols, zero `_for_test` witnesses, zero deterministic token or reset-inventory symbols, and zero development secret key bytes.
 4. **Negative Controls (`--red-controls`)**:

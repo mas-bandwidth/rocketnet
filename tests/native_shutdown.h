@@ -11,7 +11,7 @@
 #include "../sdk/rocketnet_driver.h"
 #endif // #ifdef __cplusplus
 
-// Native functional/benchmark cleanup. Explicitly bounded waiting belongs to
+// Native tests/functional/benchmark cleanup. Explicitly bounded waiting belongs to
 // the harness, never to stop/stopped. Preserve the suite's outer watchdog.
 // Every wait below is the one shared bounded wait in examples/shutdown.h
 // (rn_cli_bounded_wait, 10 second bound); this header supplies each native

@@ -74,6 +74,6 @@ else
     "$CXX" $CXXFLAGS $INCLUDES tools/differential/netcode_decisions.cpp -o "$BIN" $LIBS
 fi
 
-"$BIN" tools/differential/cases.tsv --corpus tools/differential/corpus_cases.tsv fuzz/corpus_connect_token/*
+"$BIN" tools/differential/cases.tsv --corpus tools/differential/corpus_cases.tsv tests/fuzz/corpus_connect_token/*
 
 rm -f "$BIN" ${NETCODE_OBJ:-}

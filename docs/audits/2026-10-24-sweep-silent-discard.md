@@ -13,7 +13,7 @@ Scope read:
 - `sdk/rocketnet_tests.cpp` only where it defines helpers that production code
   calls (none exist: its exported functions are called only from
   `tests/test.cpp`);
-- every file under `functional/`;
+- every file under `tests/functional/`;
 - the `tests/*.h` helpers that the functional and DST tiers share.
 
 Method: each file was read whole. Then every hit of the patterns below was
@@ -40,7 +40,7 @@ Patterns and hit counts:
   `evict`, `overwrite`, `= 0xFFFFFFFF`) over the data-path set: 364 hits.
 - **P5** P1 together with a call to `min(` or `max(` (the regex
   `return 0;|return;|continue;|break;|(^|[^A-Za-z0-9_])(min|max)\(`) over
-  `functional/` and `tests/*.h`: 483 hits.
+  `tests/functional/` and `tests/*.h`: 483 hits.
 - **P6** casts to `int`, `uint8_t` or `uint16_t` of a value named len, size,
   bytes or count, across `sdk/`: 78 hits.
 
@@ -188,37 +188,37 @@ code was changed.
 - Failure or cost: A caller bug feeds another stream's sequences into stream 0's state, corrupting its checks with nothing reporting the bad index.
 - Smallest fix: Call `rocketnet_dst_check_fail( st, "dst_stream_index", … )` before returning.
 
-### 19. risk — `functional/channel_harness.h:1028`
+### 19. risk — `tests/functional/channel_harness.h:1028`
 
 - Defect: The harness pump pushes a server delivery onto `to_server` only when `slot == h->client_slot`, and releases any other slot's message without bumping `overflow_count`, which every channel case asserts on.
 - Failure or cost: A server that reported a message on the wrong slot would pass every channel case, because the message vanishes before any assertion sees it.
 - Smallest fix: Bump `overflow_count` (or fail) in an `else` branch.
 
-### 20. risk — `functional/channel_ordered.cpp:220`
+### 20. risk — `tests/functional/channel_ordered.cpp:220`
 
 - Defect: The collect loop `break`s when a delivery arrives after all 64 ordered messages are counted. The delivery has already been popped, and nothing drains or checks the ring after the loop.
 - Failure or cost: A duplicate or extra ordered delivery at the end of the run is discarded unchecked, and the case passes.
 - Smallest fix: Fail the case on a delivery past `rocketnet_ordered_message_count`.
 
-### 21. risk — `functional/channel_resend_timing.cpp:488`
+### 21. risk — `tests/functional/channel_resend_timing.cpp:488`
 
 - Defect: `block_cost_run` counts every small delivery into `small_delivered` with no seen-set, unlike `resend_timing_run`.
 - Failure or cost: One duplicate delivery and one lost message together satisfy `small_delivered == small_sent` (line 547), so the case passes with a message lost.
 - Smallest fix: Keep a `seen[]` array and fail on a repeat.
 
-### 22. risk — `functional/posix_hard_killed_client.cpp:382`
+### 22. risk — `tests/functional/posix_hard_killed_client.cpp:382`
 
 - Defect: The live-client receive loop skips any payload with the wrong size or tag (`continue`), and does not count it (the same at lines 399, 513 and 525).
 - Failure or cost: A corrupted payload delivered to or from a live client is ignored, and the case asserts only progress (lines 738–739), so corruption passes.
 - Smallest fix: Fail when a malformed payload arrives on a live client's slot.
 
-### 23. risk — `functional/harness.inc:178`
+### 23. risk — `tests/functional/harness.inc:178`
 
 - Defect: `rocketnet_test_capture_log` appends each log line into the 16 KiB `rocketnet_test_captured_log` with `snprintf`, which silently truncates once the buffer is full.
-- Failure or cost: An absence check such as `strstr( …, "port-zero public address" ) == NULL` (`functional/rocketnet_functional_tests.cpp:4868`) passes when the line it looks for was cut off.
+- Failure or cost: An absence check such as `strstr( …, "port-zero public address" ) == NULL` (`tests/functional/rocketnet_functional_tests.cpp:4868`) passes when the line it looks for was cut off.
 - Smallest fix: Set an overflow flag on truncation, and have every absence check assert that it is clear.
 
-### 24. risk — `functional/rocketnet_functional_tests.cpp:6815`
+### 24. risk — `tests/functional/rocketnet_functional_tests.cpp:6815`
 
 - Defect: The acked-unfragmented case drops several things with no count or failure:
   - payloads of the wrong size;
@@ -263,13 +263,13 @@ code was changed.
 - Failure or cost: A reader cannot tell whether the discard guards a backwards clock or hides a stamping bug.
 - Smallest fix: Add a one-line comment naming the backwards-clock case it guards.
 
-### 30. quality — `functional/harness.inc:96`
+### 30. quality — `tests/functional/harness.inc:96`
 
 - Defect: `rocketnet_test_log_capture` drops a whole log line of `ROCKETNET_FUNCTIONAL_LOG_RING_LINE_BYTES` or more, with no count or comment.
 - Failure or cost: A failing case's log ring silently lacks its longest lines, which are often the error lines being looked for.
 - Smallest fix: Store the truncated line with a marker, or count dropped lines and print the count with the ring.
 
-### 31. quality — `functional/channel_harness.h:155`
+### 31. quality — `tests/functional/channel_harness.h:155`
 
 - Defect: `rocketnet_channel_capture_flush` returns silently when the capture file cannot be opened. `past_budget` (line 184) is counted but never reported.
 - Failure or cost: A requested wire capture can be missing or partial with nothing in the output saying so.
@@ -287,11 +287,11 @@ code was changed.
 - Failure or cost: A user asking for more jobs silently gets 8, and a maintainer raising the cap cannot see what depends on it.
 - Smallest fix: Name the cap as a constant shared with `handles[]` and print a line when the request is clamped.
 
-### 34. quality — `functional/channel_resend_timing.cpp:251`
+### 34. quality — `tests/functional/channel_resend_timing.cpp:251`
 
 - Defect: The case drains every client channel into an empty loop body that discards the deliveries, with no comment saying why they are not checked. The same pattern appears at lines 499–502.
 - Failure or cost: A reader cannot tell whether ignoring server-to-client deliveries is intended or a missing check.
-- Smallest fix: Add a comment such as the one at `functional/rocketnet_functional_tests.cpp:3665`, or check the drained count.
+- Smallest fix: Add a comment such as the one at `tests/functional/rocketnet_functional_tests.cpp:3665`, or check the drained count.
 
 ## Counts
 
@@ -432,22 +432,22 @@ reason, so that every hit of every pattern above is accounted for.
 | `sdk/rocketnet_server_gso_linux.cpp` | 222, 1485 | `counter_gro_cmsg_faults` is never read, but the resulting oversize drop is still counted `dropped_size` |
 | `sdk/rocketnet_platform.cpp` | 1109, 1444, 3040, 3353, 4871 | refused destinations are logged with `rocketnet_error`; they do not bump `send_failures`, although the SEND_FAILED description in `sdk/rocketnet_counters.h` lists them |
 
-### `functional/` and `tests/*.h` (P5, 483 hits)
+### `tests/functional/` and `tests/*.h` (P5, 483 hits)
 
 | File | Lines | Why it is safe |
 |---|---|---|
-| `functional/channel_config.cpp`, `functional/channel_control_packets.cpp`, `functional/channel_receipts.cpp`, `functional/channel_receipts_reliable.cpp`, `functional/channel_reliable.cpp`, `functional/channel_reliable_sequenced.cpp`, `functional/channel_smoke.cpp`, `functional/channel_unreliable_*.cpp` | all hits | failure path after `check(0)`; refused send retried with exact counts checked; check helpers; loop ends with outcomes checked after |
-| `functional/channel_ordered.cpp` | 164, 172, 201, 206, 242 | failure path; send gate retried; loop ends when complete (220 is finding 20) |
-| `functional/channel_harness.h` | 152, 165–250, 397–988 | capture off or active (commented); over budget counted `past_budget`; failures returned to callers; `overflow_count` and `held_overflow` counted; scripted WIRE_DROP; held, not dropped |
-| `functional/channel_resend_timing.cpp` | 31, 122, 202, 211, 215, 400, 403 | comment; oracle min/max; no send this update; predicate |
-| `functional/cpp_transports.cpp`, `functional/lifecycle_driver.cpp`, `functional/main.cpp`, `functional/platform_primitives.cpp` | all hits | wait or success loop exits followed by asserts; group return; thread sets `ok = false`, checked |
-| `functional/harness.inc` | 56, 102, 108, 187–189, 271 | setenv without overwrite; NONE level printed; prefix width commented (78–81); env guard; free port found |
-| `functional/live_matrix.cpp` | all hits | `live_matrix_fail`, asserted counters, or comments (386, 513, 601) |
-| `functional/posix_hard_killed_client.cpp` | all hits but 382, 399, 513, 525 | the dead child's slot by design; scans and run ends; port retry |
-| `functional/posix_lifecycle_stress.cpp` | all hits | directory entries; cell not selected, including the per-commit tier of destroy-under-traffic (comment 1136–1139); UMEM bytes 0 on a build without the xdp transport (comment 571–572); reservation failures checked at 1041 |
-| `functional/posix_socket_errors.cpp` | all hits | check helper; drained; empty datagram commented (437); duplicates printed by the summary line (1320) |
-| `functional/server_receive_backlog.cpp`, `functional/windows_connreset.cpp`, `functional/windows_socket_errors.cpp` | all hits | check helpers; warm-up commented; killed child's slot; empty datagram commented (`functional/windows_socket_errors.cpp:468`) |
-| `functional/rocketnet_functional_tests.cpp` | 90 hits but 6815–6859 | wait-loop exits followed by checks; switch breaks; SEND_RING_FULL counted (627, 629); retry polls; commented skips; callers assert the counter (5415, 5430); the receive loops at 2054–2132 test the source address, not arrival |
+| `tests/functional/channel_config.cpp`, `tests/functional/channel_control_packets.cpp`, `tests/functional/channel_receipts.cpp`, `tests/functional/channel_receipts_reliable.cpp`, `tests/functional/channel_reliable.cpp`, `tests/functional/channel_reliable_sequenced.cpp`, `tests/functional/channel_smoke.cpp`, `tests/functional/channel_unreliable_*.cpp` | all hits | failure path after `check(0)`; refused send retried with exact counts checked; check helpers; loop ends with outcomes checked after |
+| `tests/functional/channel_ordered.cpp` | 164, 172, 201, 206, 242 | failure path; send gate retried; loop ends when complete (220 is finding 20) |
+| `tests/functional/channel_harness.h` | 152, 165–250, 397–988 | capture off or active (commented); over budget counted `past_budget`; failures returned to callers; `overflow_count` and `held_overflow` counted; scripted WIRE_DROP; held, not dropped |
+| `tests/functional/channel_resend_timing.cpp` | 31, 122, 202, 211, 215, 400, 403 | comment; oracle min/max; no send this update; predicate |
+| `tests/functional/cpp_transports.cpp`, `tests/functional/lifecycle_driver.cpp`, `tests/functional/main.cpp`, `tests/functional/platform_primitives.cpp` | all hits | wait or success loop exits followed by asserts; group return; thread sets `ok = false`, checked |
+| `tests/functional/harness.inc` | 56, 102, 108, 187–189, 271 | setenv without overwrite; NONE level printed; prefix width commented (78–81); env guard; free port found |
+| `tests/functional/live_matrix.cpp` | all hits | `live_matrix_fail`, asserted counters, or comments (386, 513, 601) |
+| `tests/functional/posix_hard_killed_client.cpp` | all hits but 382, 399, 513, 525 | the dead child's slot by design; scans and run ends; port retry |
+| `tests/functional/posix_lifecycle_stress.cpp` | all hits | directory entries; cell not selected, including the per-commit tier of destroy-under-traffic (comment 1136–1139); UMEM bytes 0 on a build without the xdp transport (comment 571–572); reservation failures checked at 1041 |
+| `tests/functional/posix_socket_errors.cpp` | all hits | check helper; drained; empty datagram commented (437); duplicates printed by the summary line (1320) |
+| `tests/functional/server_receive_backlog.cpp`, `tests/functional/windows_connreset.cpp`, `tests/functional/windows_socket_errors.cpp` | all hits | check helpers; warm-up commented; killed child's slot; empty datagram commented (`tests/functional/windows_socket_errors.cpp:468`) |
+| `tests/functional/rocketnet_functional_tests.cpp` | 90 hits but 6815–6859 | wait-loop exits followed by checks; switch breaks; SEND_RING_FULL counted (627, 629); retry polls; commented skips; callers assert the counter (5415, 5430); the receive loops at 2054–2132 test the source address, not arrival |
 | `tests/counters_expect.h`, `tests/live_verify.h`, `tests/native_shutdown.h`, `tests/unit_shutdown.h`, `tests/portable_crt.h`, `tests/rocketnet_value_tracker.h`, `tests/test_unit_standard.h`, `tests/wycheproof.h` | all hits | bad index reported; switch or comment; caller fails "refused"; NULL guards; documented (20–22); no samples; nibble parsing; all-or-nothing loader |
 | `tests/dst_checks.h` | all hits but 192, 194, 196 | first failure kept; laps reported loudly; below base commented; predicates; self or unconnected; explained refusal list (985) |
 | `tests/dst_harness.h` | all hits but 501, 554 | `dst_fail`; first failure kept; not connected; verify failures call `dst_fail`; create failure zeroes the result so `passed = 0` |

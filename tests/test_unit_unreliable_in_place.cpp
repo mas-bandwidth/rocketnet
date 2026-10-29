@@ -1007,7 +1007,7 @@ static void test_in_place_unreliable_keeps_acks_and_order()
 
 static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );
 #define rocketnet_write_test_connect_token ip_write_connect_token
-#include "../functional/channel_harness.h"
+#include "../tests/functional/channel_harness.h"
 #undef rocketnet_write_test_connect_token
 
 static enum rocketnet_status_t ip_write_connect_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes )
