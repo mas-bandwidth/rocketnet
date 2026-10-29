@@ -286,7 +286,7 @@ static bool portable_tx_publish( portable_server_t * server )
     return true;
 }
 
-#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void portable_tx_worker( void * arg )
 {
     portable_server_t * server = (portable_server_t *) arg;
@@ -347,7 +347,7 @@ static void portable_tx_worker( void * arg )
 
     server->exited.store( true, std::memory_order_release );
 }
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 // the RX handoff (tla/RNPortableRx.tla). The worker owns one producer bank
 // and reads the socket into it only when it is empty; it publishes a filled
@@ -465,7 +465,7 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
     return bank->count > 0 ? PORTABLE_RX_AGAIN : PORTABLE_RX_WAIT_IDLE;
 }
 
-#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void portable_rx_worker( void * arg )
 {
     // tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
@@ -489,19 +489,13 @@ static void portable_rx_worker( void * arg )
         }
         else if ( step == PORTABLE_RX_WAIT_IDLE )
         {
-#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
             rocketnet_platform_wake_wait( server->rx_wake, true, 0.1 );
-#else
-            // BSD has event-only wakes; preserve its supported portable transport
-
-            rocketnet_platform_wake_wait( server->rx_wake, false, 0.001 );
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
         }
     }
 
     server->rx_exited.store( true, std::memory_order_release );
 }
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 static void portable_server_cleanup( portable_server_t * server )
 {
@@ -569,11 +563,11 @@ static void portable_server_cleanup( portable_server_t * server )
 
 static void * portable_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     (void) context;
     (void) config;
     (void) bind;
-    rocketnet_warn( "server I/O workers require an event-only wake on this platform" );
+    rocketnet_warn( "server I/O workers require a platform wake" );
     return NULL;
 #else
 #if defined( __OpenBSD__ )
@@ -630,11 +624,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     }
 
     server->wake = rocketnet_platform_wake_create( context, NULL );
-#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
     server->rx_wake = rocketnet_platform_wake_create( context, server->socket );
-#else
-    server->rx_wake = rocketnet_platform_wake_create( context, NULL );
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
     if ( !server->wake || !server->rx_wake )
     {
@@ -663,7 +653,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     }
 
     return server;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }
 
 static void portable_destroy( void * transport ) { portable_server_cleanup( (portable_server_t *) transport ); }
@@ -846,7 +836,7 @@ bool rocketnet_portable_tx_test_handoff()
 {
     // no socket or worker: each path is forced at an exact ownership transition
 
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     return true;
 #else
     // exercise the same cleanup entry with each partially constructed owner.
@@ -981,7 +971,7 @@ bool rocketnet_portable_tx_test_handoff()
     portable_server_cleanup( race );
 
     return valid;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }
 
 static portable_server_t * portable_tx_test_owner( int capacity )
@@ -1046,7 +1036,7 @@ bool rocketnet_portable_tx_test_sizing()
     // a busy worker drops at the former fixed 1000-packet banks and drops nothing
     // at the banks sized for 1000 clients.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     return true;
 #else
     rocketnet_server_transport_config_t config = {};
@@ -1087,7 +1077,7 @@ bool rocketnet_portable_tx_test_sizing()
     portable_server_cleanup( server );
 
     return valid;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }
 
 bool rocketnet_portable_tx_test_drop_paths()
@@ -1096,7 +1086,7 @@ bool rocketnet_portable_tx_test_drop_paths()
     // and SEND_FAILED's handoff part is their sum. No worker and no socket: the
     // test takes a ready bank by hand to keep it in flight.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     return true;
 #else
     portable_server_t * server = portable_tx_test_owner( ROCKETNET_SERVER_MAX_SEND_PACKETS );
@@ -1155,7 +1145,7 @@ bool rocketnet_portable_tx_test_drop_paths()
     portable_server_cleanup( server );
 
     return valid;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }
 
 static portable_server_t * portable_rx_test_owner()
@@ -1189,7 +1179,7 @@ bool rocketnet_portable_rx_test_handoff()
     // exercise the actual ownership/copy functions without sockets or scheduling.
     // The separate worker case below proves full-queue stop and partial creation.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     return true;
 #else
     portable_server_t * server = portable_rx_test_owner();
@@ -1269,7 +1259,7 @@ bool rocketnet_portable_rx_test_handoff()
     portable_server_cleanup( server );
 
     return valid;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }
 
 bool rocketnet_portable_rx_test_worker_steps()
@@ -1280,7 +1270,7 @@ bool rocketnet_portable_rx_test_worker_steps()
     // the wake; the next pass publishes the held producer; stop sets quit before
     // its wake, so the pass after a stop exits however the wait ended.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     return true;
 #else
     portable_server_t * server = portable_rx_test_owner();
@@ -1347,7 +1337,7 @@ bool rocketnet_portable_rx_test_worker_steps()
     portable_server_cleanup( server );
 
     return valid;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }
 #endif // #if ROCKETNET_DEV
 
@@ -1916,7 +1906,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     )
     {
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
         return false;
 #else
         uint64_t bytes = rocketnet_memory_allocations( { sizeof( portable_server_t ),
@@ -1930,7 +1920,7 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
         plan.transport_io_bytes = bytes;
         plan.worker_threads = 2;
         plan.sockets = 1;
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
     }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     else if ( strcmp( transport, "gso" ) == 0 )

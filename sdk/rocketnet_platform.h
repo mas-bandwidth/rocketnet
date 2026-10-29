@@ -391,21 +391,15 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // (only when readable is true) or timeout_seconds pass, consumes a set wake,
 // and returns true when woken or readable; with readable false the socket's
 // readiness is ignored, so a full receive buffer waits on the wake alone. set may run on any thread; a set made while no wait
-// runs makes the next wait return at once. Platforms that define
-// ROCKETNET_PLATFORM_HAS_WAKE implement socket-backed waits. BSD supports
-// event-only pipe wakes without changing its socket-backed client path.
-// Linux builds the eventfd wake; macOS and iOS build the kqueue wake
-// (docs/CLIENT-IO.md "The wake"), so the msgx
-// client runs on the I/O thread there. Windows builds the event wake,
-// WSAEventSelect FD_READ beside a manual-reset event (docs/CLIENT-IO.md
-// "The wake"), so the portable client runs on the I/O
-// thread there.
-#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+// runs makes the next wait return at once. Every supported platform defines
+// ROCKETNET_PLATFORM_HAS_WAKE (docs/CLIENT-IO.md "The wake"): Linux builds
+// an eventfd, the BSDs a nonblocking pipe, each polled beside the socket;
+// macOS and iOS build the kqueue wake; Windows builds WSAEventSelect FD_READ
+// beside a manual-reset event. So the portable client and server run their
+// I/O threads on the wake everywhere.
+#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 #define ROCKETNET_PLATFORM_HAS_WAKE 1
 #endif
-#if defined( ROCKETNET_PLATFORM_HAS_WAKE ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
-#define ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE 1
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 // level-triggered; a socket given to wake_create must outlive the wake
 struct rocketnet_platform_wake_t;
 // socket may be NULL for an event-only wake; NULL back when the platform has no wakes

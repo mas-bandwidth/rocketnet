@@ -2339,8 +2339,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 // socket (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla IoWake, IoWait and
 // Wake). Linux uses an eventfd, the BSDs a nonblocking pipe (OpenBSD has no
 // EVFILT_USER). Level-triggered: a set made while no wait runs makes the next
-// wait return at once, and the wait drains it. The BSD wake is event-only for
-// now: it takes no socket, so BSD clients keep their receive-thread path.
+// wait return at once, and the wait drains it.
 
 struct rocketnet_platform_wake_t
 {
@@ -2361,11 +2360,6 @@ static bool rocketnet_platform_wake_fd_flags( int fd )
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
-#if !defined( __linux__ )
-    if ( socket )
-        return NULL;
-#endif // #if !defined( __linux__ )
-
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
         return NULL;
@@ -4430,14 +4424,12 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
 // ----------------------------------------------------------------
 
-// the client I/O wake's portable fallback: a platform that does not define
-// ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE and has no platform wake of its own
-// (BSD has the event-only pipe above; macOS and iOS build the socket-capable
-// kqueue wake above; Windows builds the event wake above) has no wake.
+// the client I/O wake's portable fallback: a POSIX system outside the
+// supported platforms defines no ROCKETNET_PLATFORM_HAS_WAKE and has no wake.
 // create returns NULL, destroy asserts its argument is NULL, wait returns
 // false and set does nothing.
 
-#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
 {
@@ -4470,7 +4462,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
     (void) wake;
 }
 
-#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 // ----------------------------------------------------------------
 
@@ -4547,9 +4539,9 @@ uint64_t rocketnet_platform_thread_allocation_bytes()
 
 uint64_t rocketnet_platform_wake_allocation_bytes()
 {
-#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
     return rocketnet_memory_allocations( { sizeof( rocketnet_platform_wake_t ) } );
 #else
     return 0;
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 }

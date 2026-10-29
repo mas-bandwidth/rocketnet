@@ -8870,7 +8870,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
 // after consumption wakes again, and invalid socket-read waits neither block
 // nor consume the pending signal.
 
-#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void rocketnet_test_platform_wake_event_only_set_thread( void * arg )
 {
     rocketnet_platform_sleep( 0.01 );
@@ -8903,15 +8903,18 @@ void rocketnet_test_platform_wake_event_only()
     rocketnet_check( !rocketnet_platform_wake_wait( wake, false, 0.0 ) );
     rocketnet_platform_wake_destroy( wake );
 }
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
-// The level-triggered wake beside a real socket on Linux: the eventfd is set
-// and consumed, a socket's readiness is seen only when readable is true, and
-// with readable false a full receive buffer waits on the wake alone
-// (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait and IoWake). A
-// real socket and a real eventfd, so this case lives in the functional tier.
+// The level-triggered wake beside a real socket, on every platform's wake
+// (the Linux eventfd, the BSD pipe, the macOS and iOS kqueue, the Windows
+// event): a set is consumed once, a socket's readiness is seen only when
+// readable is true, and with readable false a full receive buffer waits on
+// the wake alone (docs/CLIENT-IO.md "The wake"; tla/RNClientIo.tla's IoWait
+// and IoWake). A real socket and a real wake, so this case lives in the
+// functional tier.
 
-void rocketnet_test_platform_wake_linux_wakes_and_reads()
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
+void rocketnet_test_platform_wake_socket_wakes_and_reads()
 {
     // a non-blocking socket on 127.0.0.1 port 0
 
@@ -8972,6 +8975,7 @@ void rocketnet_test_platform_wake_linux_wakes_and_reads()
     rocketnet_platform_socket_destroy( socket );
     rocketnet_platform_socket_destroy( sender );
 }
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 // The Linux client's mmsg batch send/receive (#client-io-linux-mmsg): two
 // loopback sockets, 100 datagrams of distinct sizes 20..119 in one
@@ -12358,12 +12362,10 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_receive_drops_oversize_datagram", rocketnet_test_receive_drops_oversize_datagram, NULL },
     { "test_platform_batch_pump", rocketnet_test_platform_batch_pump, NULL },
     { "test_platform_batch_pump_degraded", rocketnet_test_platform_batch_pump_degraded, NULL },
-#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+#if defined( ROCKETNET_PLATFORM_HAS_WAKE )
     { "test_platform_wake_event_only", rocketnet_test_platform_wake_event_only, NULL },
-#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-    { "test_platform_wake_linux_wakes_and_reads", rocketnet_test_platform_wake_linux_wakes_and_reads, NULL },
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    { "test_platform_wake_socket_wakes_and_reads", rocketnet_test_platform_wake_socket_wakes_and_reads, NULL },
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_client_io_linux_mmsg_batch_round_trip", rocketnet_test_client_io_linux_mmsg_batch_round_trip, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX

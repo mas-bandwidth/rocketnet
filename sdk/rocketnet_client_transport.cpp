@@ -1047,12 +1047,15 @@ struct rocketnet_portable_io_client_layout_t
     void * socket;
     void * wake;
 };
-#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) )
+#if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
+// sdk/rocketnet_platform.cpp's linux and BSD wake: the eventfd is both read_fd
+// and write_fd on linux, the BSD pipe's two ends are distinct
 struct rocketnet_platform_wake_layout_t
 {
     void * context;
     int socket_fd;
-    int event_fd;
+    int read_fd;
+    int write_fd;
 };
 #elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 struct rocketnet_platform_wake_layout_t
@@ -1075,7 +1078,7 @@ struct rocketnet_platform_wake_layout_t
 {
     void * context;
 };
-#endif // #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) )
+#endif // #if ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && defined( __linux__ ) ) || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_BSD
 
 // Mirrors of the native client I/O records, member for member, so the plan
 // counts the bytes their creates allocate: the gso client's one record
