@@ -93,8 +93,14 @@ static rn_delivery_t * rn_channels_reliable_delivery( rn_channels_t * channels )
 // ring, ready for its turn); a block still collecting fragments is `used` 2.
 // A code-2 block collecting its fragments is keyed by (RN_HELD_RELIABLE_BLOCK,
 // first number), a channel no channel index reaches.
-// At most W entries are live (each holds a live number), so the table is never
-// full. Backward-shift deletion keeps probes short without tombstones.
+// An entry binds its descriptor's number (low 32 bits), so it names one
+// descriptor, not a slot: the slot is number % W, and a drain or a later chunk
+// checks the descriptor is live under that number before it reads it. Each
+// entry holds a live number, so at most W are live; insertion refuses the
+// W + 1st and the erase scans at most the table, so neither depends on that
+// invariant holding (proofs/tla/RNHeldOwnership.tla HeldBound, EraseEnds). A refusal
+// is the connection's protocol violation. Backward-shift deletion keeps probes
+// short without tombstones.
 
 #define RN_HELD_COMPLETE        1
 #define RN_HELD_COLLECTING      2
@@ -130,10 +136,27 @@ static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
     return RN_DESCRIPTOR_NONE;
 }
 
-// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
-// empty one, wrapping at the end of the index
-static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_slot, uint32_t used )
+// The descriptor a held entry names, or NULL when its slot is no longer live
+// under the entry's number (proofs/tla/RNHeldOwnership.tla HeldNamesLive).
+
+static rn_receive_descriptor_t * rn_held_descriptor( rn_region_t * region, uint32_t held )
 {
+    const rn_held_entry_t * entry = &region->held_index[held];
+    rn_receive_descriptor_t * descriptor = &region->receive_descriptors[entry->number & ( region->window - 1 )];
+    if ( !descriptor->live || (uint32_t) descriptor->number != entry->number )
+        return NULL;
+
+    return descriptor;
+}
+
+// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index. proofs/tla/RNHeldOwnership.tla Hold:
+// refused at W entries, the bound the 2W cells are sized for.
+static bool rn_held_insert( rn_region_t * region, uint64_t key, uint64_t number, uint32_t used )
+{
+    if ( region->held_count >= region->window )
+        return false;
+
     const uint32_t entries = region->held_entries;
     uint32_t i = rn_held_home( key, entries );
 
@@ -143,8 +166,9 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_
         if ( !entry->used )
         {
             entry->key = key;
-            entry->number_slot = number_slot;
+            entry->number = (uint32_t) number;
             entry->used = used;
+            region->held_count++;
             return true;
         }
 
@@ -156,20 +180,27 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_
 
 // proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
 // moves back each entry whose home is not cyclically in (hole, scan], and the
-// final hole clears last; the scan ends only on a cell already empty, so the
-// index is sized at twice its capacity
-static void rn_held_erase( rn_region_t * region, uint32_t index )
+// final hole clears last; the scan ends on a cell already empty, which the W
+// bound leaves in a 2W index. proofs/tla/RNHeldOwnership.tla EraseStep and
+// EraseBound: the scan examines at most every cell, so a table filled against
+// that bound still ends; false then, an invariant failure the caller ends the
+// connection for.
+static bool rn_held_erase( rn_region_t * region, uint32_t index )
 {
     const uint32_t entries = region->held_entries;
     const uint32_t mask = entries - 1;
     uint32_t i = index;
     uint32_t j = index;
+    bool ended = false;
 
-    for ( ;; )
+    for ( uint32_t step = 1; step < entries; step++ )
     {
         j = ( j + 1 ) & mask;
         if ( !region->held_index[j].used )
+        {
+            ended = true;
             break;
+        }
 
         const uint32_t home = rn_held_home( region->held_index[j].key, entries );
 
@@ -184,8 +215,13 @@ static void rn_held_erase( rn_region_t * region, uint32_t index )
     }
 
     region->held_index[i].key = 0;
-    region->held_index[i].number_slot = 0;
+    region->held_index[i].number = 0;
     region->held_index[i].used = 0;
+
+    if ( region->held_count > 0 )
+        region->held_count--;
+
+    return ended;
 }
 
 // The receiver's descriptor of a record's number. The window accepted the
@@ -578,12 +614,33 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
         if ( held == RN_DESCRIPTOR_NONE || region->held_index[held].used != RN_HELD_COMPLETE )
             break;                                              // not here yet, or a block still short of fragments
 
-        rn_delivery_t * delivery = rn_channels_reliable_delivery( channels );
-        if ( !delivery )
-            break;
+        // proofs/tla/RNHeldOwnership.tla Deliver: the entry's descriptor is live
+        // under its number and is this channel's code-3 message at this
+        // ordering, or the entry is refused and the connection ends: a reused
+        // slot's ring span is never delivered (HeldNamesLive, NoStaleDelivery)
 
-        const uint32_t slot = region->held_index[held].number_slot;
-        const rn_receive_descriptor_t * descriptor = &region->receive_descriptors[slot];
+        const rn_receive_descriptor_t * descriptor = rn_held_descriptor( region, held );
+        if ( !descriptor || descriptor->code != ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED || descriptor->channel != channel ||
+             rn_u24( descriptor->ordering ) != rn_u24( rx->ordered_read ) )
+        {
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+            break;
+        }
+
+        if ( channels->deliveries >= channels->delivery_capacity )
+        {
+            rn_region_exhaust( region );                        // rn_channels_reliable_delivery's refusal, before the entry leaves
+            break;
+        }
+
+        const uint32_t slot = region->held_index[held].number & ( region->window - 1 );
+        if ( !rn_held_erase( region, held ) )
+        {
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+            break;
+        }
+
+        rn_delivery_t * delivery = rn_channels_append_delivery( channels );
 
         // the held message is delivered where it lies in the ring: a view, no copy
 
@@ -592,8 +649,6 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
         delivery->channel = (uint16_t) channel;
         delivery->code = ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED;
         delivery->descriptor = slot;
-
-        rn_held_erase( region, held );
 
         rn_channels_deliver_ordered( channels, channel, rx->ordered_read );
     }
@@ -699,9 +754,12 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    if ( !rn_held_insert( region, key, slot, RN_HELD_COMPLETE ) )
+    // proofs/tla/RNHeldOwnership.tla Hold: the entry binds this descriptor's number;
+    // a W + 1st entry breaks the one-live-number-per-entry bound and ends the connection
+
+    if ( !rn_held_insert( region, key, descriptor->number, RN_HELD_COMPLETE ) )
     {
-        rn_region_exhaust( region );
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -738,9 +796,9 @@ rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, c
     uint32_t held = rn_held_find( region, key );
     if ( held == RN_DESCRIPTOR_NONE )
     {
-        if ( !rn_held_insert( region, key, slot, RN_HELD_COLLECTING ) )
+        if ( !rn_held_insert( region, key, descriptor->number, RN_HELD_COLLECTING ) )
         {
-            rn_region_exhaust( region );
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );     // proofs/tla/RNHeldOwnership.tla Hold
             return NULL;
         }
 
@@ -751,7 +809,14 @@ rn_receive_descriptor_t * rn_channels_block_collect( rn_channels_t * channels, c
     }
     else
     {
-        anchor = &region->receive_descriptors[region->held_index[held].number_slot];
+        // the anchor the entry names, live under its number (proofs/tla/RNHeldOwnership.tla HeldNamesLive)
+
+        anchor = rn_held_descriptor( region, held );
+        if ( !anchor )
+        {
+            rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+            return NULL;
+        }
 
         // the block's count, first number and base must agree with the first chunk seen, or this chunk belongs to something else
 
@@ -793,12 +858,12 @@ void rn_channels_block_settle( rn_channels_t * channels, uint32_t held, rn_recei
 
     if ( keep )
     {
-        region->held_index[held].number_slot = first_slot;
+        region->held_index[held].number = (uint32_t) first->number;
         region->held_index[held].used = RN_HELD_COMPLETE;
     }
-    else
+    else if ( !rn_held_erase( region, held ) )
     {
-        rn_held_erase( region, held );
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );     // proofs/tla/RNHeldOwnership.tla EraseBound
     }
 }
 
@@ -900,10 +965,19 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     // RNBlocks!Deliver (DeliveredEqualsSent, NoPartialDelivery,
     // OneOrderingSlotPerBlock).
 
-    rn_delivery_t * delivery = rn_channels_reliable_delivery( channels );
-    if ( !delivery )
+    if ( channels->deliveries >= channels->delivery_capacity )
+    {
+        rn_region_exhaust( region );                            // rn_channels_reliable_delivery's refusal, before the entry leaves
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
 
+    if ( !rn_held_erase( region, held ) )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );     // proofs/tla/RNHeldOwnership.tla EraseBound
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
+    rn_delivery_t * delivery = rn_channels_append_delivery( channels );
     rn_channel_receive_t * rx = region->channel_receive + record->channel;
 
     delivery->data = region->receive_ring + (uint64_t) first->ring * 16;
@@ -912,8 +986,6 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     delivery->code = ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED;
     delivery->descriptor = first_slot;
     *out = *delivery;
-
-    rn_held_erase( region, held );
 
     rn_channels_deliver_ordered( channels, record->channel, rx->ordered_read );
 

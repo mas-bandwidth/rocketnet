@@ -720,6 +720,7 @@ void rn_region_carve( rn_region_t * region )
     memset( region->receive_descriptors, 0, sizeof( rn_receive_descriptor_t ) * region->window );
     memset( region->received_bits, 0, region->window / 8 );
     memset( region->held_index, 0, sizeof( rn_held_entry_t ) * region->held_entries );
+    region->held_count = 0;
 
     // the send descriptor pool: a LIFO free stack in the descriptors'
     // free_slot array, lazy (proofs/tla/RNLazyPool.tla Reset):
