@@ -889,7 +889,16 @@ static bool posix_wait_server_empty( rocketnet_server_transport_t * server, rock
         rocketnet_platform_sleep( 0.0002 );
     }
 
-    return rocketnet_server_transport_num_connected_clients( server ) == 0;
+    if ( rocketnet_server_transport_num_connected_clients( server ) == 0 )
+        return true;
+
+    printf( "disconnect stalled: client state %s, server connected clients %d\n",
+            rocketnet_client_transport_state_name( rocketnet_client_transport_state( client ) ),
+            rocketnet_server_transport_num_connected_clients( server ) );
+    posix_print_counters( "client", rocketnet_client_transport_counters( client ) );
+    posix_print_counters( "server", rocketnet_server_transport_counters( server ) );
+    fflush( stdout );
+    return false;
 }
 
 static void posix_case_result( const char * name, const posix_cell_t * cell, const posix_resource_counts_t * before,
@@ -1235,7 +1244,10 @@ void rocketnet_test_posix_connect_disconnect_1000()
 
             posix_check( rocketnet_client_transport_state( client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
             rocketnet_client_transport_disconnect( client );
-            posix_check( posix_wait_server_empty( server, client, &clock, 5.0 ) );
+            // The disconnect burst is best effort. These fixture tokens allow
+            // a 10-second session timeout, so allow that cleanup path plus
+            // scheduling margin instead of failing before the slot can expire.
+            posix_check( posix_wait_server_empty( server, client, &clock, 15.0 ) );
             rn_native_client_transport_stop_and_destroy( client );
         }
 
