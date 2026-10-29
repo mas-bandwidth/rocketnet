@@ -642,10 +642,14 @@ stays behind it.
 ## t12. Handshake: server
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
-**Every lookup a server performs per packet or per connection must be constant time in
-the number of client slots.** A linear scan is tolerable at a few dozen clients and is
-whole cores at the reference target of a thousand, because the per-packet rows multiply
-by the aggregate packet rate:
+**Address and client-id lookups use keyed hash tables rather than scanning the
+client-slot array.** With a well-distributed hash and a load factor bounded away
+from one, lookup has expected constant cost. This is not a worst-case constant
+time guarantee: collisions, and an absent lookup in a full table, can require
+linear probing through the table. The implementation must bound that probe by
+the table capacity. Keying makes deliberate collision selection harder; it does
+not remove the full-table case. This complexity claim is separate from the
+constant-time comparison of cryptographic values discussed below.
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 **A free slot is found from a free list, not a search** — a stack of unused indices,
@@ -655,7 +659,9 @@ popped on connect and pushed on disconnect.
 **The address and client-id lookups are hash tables, and the hash must be keyed with a
 secret generated at server start.** The obvious objection to hashing an
 attacker-influenced key is that an attacker can choose collisions and restore the linear
-behavior deliberately. Two things answer it, and the second is the stronger:
+behavior deliberately. A secret hash key prevents choosing known collisions
+without first learning that key; bounded capacity still supplies the worst-case
+probe limit. The tradeoff is recorded below:
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 *The header spends two bytes on the epoch and the wider filter value, and this document
@@ -776,7 +782,9 @@ not the signature bytes. Signature malleability means an implementation that doe
 enforce canonical Ed25519 verification would see a mangled copy of the same token as a
 new one, and an attacker could mint unbounded distinct identifiers from one captured
 request. Hashing the signed data has no such freedom, and is smaller per entry.)*
-Comparisons must be constant time. * **A server should apply a failed-signature budget
+Token-identifier equality comparisons must be constant time. This requirement
+applies to each fixed-size comparison, not to hash-table traversal or the whole
+request path. * **A server should apply a failed-signature budget
 before the verify: at most 90 failed signature verifications per 10-second window by
 default.** Once the budget is spent, a request from a source that has already failed
 this window is refused before the verify. A refused request sees no answer, and the

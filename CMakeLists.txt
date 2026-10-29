@@ -851,8 +851,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     endif()
     if(ROCKETNET_USE_SYSTEM_SODIUM)
         target_compile_definitions(test PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
-        rocketnet_use_sodium(test)
     endif()
+    # The key-wipe witness compiles the SDK key schedule, including <sodium.h>.
+    # Give it the same selected sodium headers as the library on every OS.
+    rocketnet_use_sodium(test)
     # The fixtures the unit cases check against, the connect token vectors and
     # the vendored Wycheproof files, are compiled into ./bin/test at build time
     # (cmake/EmbedTestFixtures.cmake), so no unit case reads a file at run time.

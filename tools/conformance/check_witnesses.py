@@ -24,6 +24,12 @@ column states the modelled property, so the rule-text check does not apply
 to it; its invariant, model-check configuration and code anchors must all
 resolve.
 
+`review` names an explicit source-review disposition in docs/audits, not an
+executed test or a timing proof. `deferred` names a boundary test for a mode
+the SDK does not implement; it does not claim that mode's rule is satisfied.
+Both categories are printed separately, so zero unclassified gaps cannot be
+read as complete executable coverage.
+
 Run from anywhere:  python3 tools/conformance/check_witnesses.py
 """
 
@@ -41,7 +47,7 @@ TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
 TLA_DIR = os.path.join(ROOT, "proofs", "tla")
 
 COLUMNS = ["section", "rule", "tla_invariant", "code_function", "test", "tier"]
-TIERS = ("unit", "none", "model")
+TIERS = ("unit", "none", "model", "review", "deferred")
 
 
 def read_tsv(path):
@@ -155,6 +161,7 @@ def run(root=None):
 
     failures = []
     gaps = []
+    dispositions = {"review": [], "deferred": []}
     checked = 0
 
     for index, cells in enumerate(rows, start=2):
@@ -195,6 +202,12 @@ def run(root=None):
                 failures.append("%s: a tier %s row names no test" % (where, tier))
             elif anchor_name_exists(root, test) is None:
                 failures.append("%s: test anchor %r does not resolve" % (where, test))
+            if tier == "review":
+                path, separator, anchor = test.partition(":")
+                if not path.startswith("docs/audits/") or not path.endswith(".md") or not separator or not anchor:
+                    failures.append("%s: a review needs a named docs/audits Markdown disposition" % where)
+            if tier in dispositions:
+                dispositions[tier].append((section_id, rule, test))
 
     lines = []
     if failures:
@@ -211,6 +224,11 @@ def run(root=None):
     lines.append("GAPS (tier none): %d" % len(gaps))
     for section_id, rule in gaps:
         lines.append("  - %s %s" % (section_id, rule))
+    for tier, label in (("review", "SOURCE REVIEWS (not executable proof)"),
+                        ("deferred", "DEFERRED MODES (not implemented)")):
+        lines.append("%s: %d" % (label, len(dispositions[tier])))
+        for section_id, rule, evidence in dispositions[tier]:
+            lines.append("  - %s %s [%s]" % (section_id, rule, evidence))
     return 0, "\n".join(lines)
 
 

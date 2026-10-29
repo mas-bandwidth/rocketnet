@@ -8,30 +8,56 @@
 // implementation. A vector's bytes are the window depth, the final high-water
 // mark, then one verdict byte per probe.
 //
-// The first three vectors run the implementation at its build depth. The
-// fourth runs the same replay source configured at the published maximum
-// depth, included here with its two entry points renamed so both depths live
-// in one binary.
+// Vectors specify a depth, independently of the library's configured history.
+// Compile the real replay source at each vector depth in private namespaces.
+// Both copies use the maximum-sized test storage; the minimum copy indexes only
+// its first 4096 bits. No differently sized replay object crosses the SDK ABI.
+// The build-configured implementation has its own retained-depth boundary test.
 
 #include "test_unit_standard.h"
-
+#include "rocketnet_history.h"
+#include "rocketnet_address.h"
+#include "rocketnet_keys.h"
+#include "rocketnet_protocol.h"
+#include "rocketnet_connect_token.h"
+#include "rocketnet_counters.h"
+#include "rocketnet_test_seams.h"
 #include <string.h>
 
 #undef ROCKETNET_HISTORY_PACKETS
 #define ROCKETNET_HISTORY_PACKETS 32768
+namespace standard_replay_maximum
+{
 #define rocketnet_replay_already_received rocketnet_replay_max_already_received
 #define rocketnet_replay_advance rocketnet_replay_max_advance
 #include "rocketnet_replay.cpp"
 #undef rocketnet_replay_advance
 #undef rocketnet_replay_already_received
+}
+
+#undef ROCKETNET_HISTORY_PACKETS
+#define ROCKETNET_HISTORY_PACKETS 4096
+namespace standard_replay_minimum
+{
+    using standard_replay_maximum::rocketnet_replay_protection_t;
+#define rocketnet_replay_bit rn_min_replay_bit
+#define rocketnet_replay_set_bit rn_min_replay_set_bit
+#define rocketnet_replay_clear_range rn_min_replay_clear_range
+#include "rocketnet_replay.cpp"
+#undef rocketnet_replay_clear_range
+#undef rocketnet_replay_set_bit
+#undef rocketnet_replay_bit
+}
 #undef ROCKETNET_HISTORY_PACKETS
 
-// the build-depth entry points of the linked implementation
-int rocketnet_replay_already_received( const struct rocketnet_replay_protection_t * replay, uint64_t sequence );
-void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence );
+typedef standard_replay_maximum::rocketnet_replay_protection_t rn_vector_replay_t;
+using standard_replay_maximum::rocketnet_replay_max_advance;
+using standard_replay_maximum::rocketnet_replay_max_already_received;
+using standard_replay_minimum::rocketnet_replay_advance;
+using standard_replay_minimum::rocketnet_replay_already_received;
 
-typedef int ( *rn_replay_check_t )( const struct rocketnet_replay_protection_t *, uint64_t );
-typedef void ( *rn_replay_advance_t )( struct rocketnet_replay_protection_t *, uint64_t );
+typedef int ( *rn_replay_check_t )( const rn_vector_replay_t *, uint64_t );
+typedef void ( *rn_replay_advance_t )( rn_vector_replay_t *, uint64_t );
 
 static void standard_replay_write_u32( uint8_t * out, uint32_t value )
 {
@@ -58,7 +84,7 @@ static int standard_replay_observe( rn_replay_check_t check, rn_replay_advance_t
     if ( capacity < bytes )
         return -1;
 
-    struct rocketnet_replay_protection_t replay;
+    rn_vector_replay_t replay;
     memset( &replay, 0, sizeof( replay ) );
 
     for ( int i = 0; i < mark_count; i++ )
@@ -134,10 +160,10 @@ static void test_standard_replay_vectors()
     rocketnet_unit_check( rn_standard_vectors_walk( standard_replay_table, count, standard_replay_generate ) == 4 );
 
     // the maximum-depth copy really is configured at 32768: its ring keeps a
-    // sequence one depth behind the high-water mark, while the build depth
+    // sequence one depth behind the high-water mark, while the minimum-depth copy
     // does not
 
-    struct rocketnet_replay_protection_t replay;
+    rn_vector_replay_t replay;
     memset( &replay, 0, sizeof( replay ) );
     rocketnet_replay_max_advance( &replay, ROCKETNET_HISTORY_PACKETS_MAX + 1 );
     rocketnet_unit_check( rocketnet_replay_max_already_received( &replay, 2 ) == 0 );
