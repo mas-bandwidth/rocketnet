@@ -264,8 +264,11 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     if ( before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
          after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
         return false;
-    return after->threads <= before->threads &&
-           after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
+    // the process thread count includes the operating system's thread pool
+    // workers, which come and go on their own; the library's threads are
+    // checked exactly by the SDK identity ledger, so threads are reported here
+    // and not compared
+    return after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
            after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
 }
 
