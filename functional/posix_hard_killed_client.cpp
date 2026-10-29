@@ -561,13 +561,29 @@ static void posix_hk_connect_all( struct rocketnet_server_transport_t * server, 
 }
 
 // drain in-flight traffic without sending, so sent and received counts can
-// be compared exactly
+// be compared exactly. The drain is at least 50 passes as well as 0.25 s: a
+// runner descheduled inside a window of wall time alone ends it before the
+// last tick's datagrams are read, each flow one short (79/80 each way, macOS
+// Release CI), or leaves them to be counted after the reset. With balance it
+// runs on until every live flow has received what it sent, up to 2 s.
 
-static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live )
+static bool posix_hk_balanced( const std::vector<posix_hk_live_t> & live )
+{
+    for ( size_t i = 0; i < live.size(); i++ )
+        if ( live[i].received_up != live[i].sent_up || live[i].received_down != live[i].sent_down )
+            return false;
+    return true;
+}
+
+static void posix_hk_quiesce( struct rocketnet_server_transport_t * server, std::vector<posix_hk_live_t> & live, bool balance )
 {
     const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 0.25 )
+    for ( int pass = 0;; pass++ )
     {
+        const double elapsed = rocketnet_platform_time() - start;
+        if ( pass >= 50 && ( elapsed >= 2.0 || ( elapsed >= 0.25 && ( !balance || posix_hk_balanced( live ) ) ) ) )
+            break;
+
         const double now = rocketnet_platform_time();
 
         for ( size_t i = 0; i < live.size(); i++ )
@@ -1073,7 +1089,7 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
 
     // let the handshake's own traffic settle, then count from zero
 
-    posix_hk_quiesce( server, live );
+    posix_hk_quiesce( server, live, false );
 
     for ( size_t i = 0; i < 3; i++ )
     {
@@ -1116,7 +1132,7 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
         posix_hk_sleep_rest_of_tick( tick_start );
     }
 
-    posix_hk_quiesce( server, live );
+    posix_hk_quiesce( server, live, true );
 
     double worst_gap = 0.0;
 

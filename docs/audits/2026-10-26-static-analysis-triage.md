@@ -170,15 +170,6 @@ and reports the `#error`. Configure checks the macro and leaves
 `ROCKETNET_IO_URING` unset in that case (cmake/RocketNetDependencies.cmake),
 so no CMake build reaches the directive.
 
-`rocketnet_api.cpp` `memsetClassFloat` `88161467b9f38cc0` and
-`ed02da1721a23e63` (2026-10-29) are the two memsets of `rocketnet_client_t`,
-in client create and client reset, reported once the client gained the update
-clock doubles (`update_time`, `update_raw_time`, `update_time_offset`).
-Zeroing is correct for an IEEE 754 double, where all bits zero is 0.0, and a
-`static_assert` on `std::numeric_limits<double>::is_iec559` beside the struct
-refuses any build where it is not. The reset memset stops before the receive
-batch, so value-initialization cannot replace it.
-
 ## Baseline shrinkage
 
 The clang-tidy baseline shrank from 390 to 333 findings. The removed entries
