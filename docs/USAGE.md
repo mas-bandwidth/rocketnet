@@ -247,6 +247,11 @@ The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one packet up to `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes);
 above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIABLE`),
 which fragments across packets transparently up to `max_message_bytes`.
+`rocketnet_max_unfragmented_message_bytes( reliability, channel )` returns the
+one-packet limit of every mode (the one-record limits of
+[standard/MESSAGES.md, m2.1](../standard/MESSAGES.md#m2.1)); it is a pure function,
+so size a per-packet game message against it, or against
+`ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` at compile time for UNRELIABLE.
 
 The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or

@@ -1905,6 +1905,36 @@ static inline enum rocketnet_status_t rocketnet_connect_token_default_config( st
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_connect_token( const struct rocketnet_connect_token_config_t * config, char * connect_token );
 
+/// Message sizing
+
+/// Returns the largest message, in bytes, that the reliability sends as one
+/// record in a single datagram: an unreliable message at or below it is written in
+/// place and never promoted to its reliable twin; a reliable message at or
+/// below it is never split into fragments. A larger message is still legal up
+/// to the configured max_message_bytes; it is promoted or fragmented.
+///
+/// The values are the one-record limits of the message standard:
+/// 1411 for UNRELIABLE and UNRELIABLE_WITH_ACK_RECEIPT
+/// (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES); for UNRELIABLE_SEQUENCED 1405,
+/// or 1404 on a channel of 256 or more; 1408 for RELIABLE and
+/// RELIABLE_WITH_ACK_RECEIPT; 1401 for RELIABLE_ORDERED and
+/// RELIABLE_ORDERED_WITH_ACK_RECEIPT; for RELIABLE_SEQUENCED 1399, or 1398 on
+/// a channel of 256 or more. Every one is at most
+/// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Size a per-packet game message against
+/// the value for the mode and channel it is sent on.
+///
+/// A pure function: it reads and changes no state, counts nothing and works
+/// before init. Thread: any thread.
+///
+/// @param reliability The reliability mode the message is sent with.
+/// @param channel The channel it is sent on, 0 to ROCKETNET_MAX_CHANNELS - 1.
+/// The channel matters only to the sequenced modes; it is checked for every
+/// mode.
+/// @return The limit in bytes, or 0 for an unknown reliability or a channel
+/// out of range.
+
+ROCKETNET_EXPORT int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t reliability, int channel );
+
 /// Client
 
 /// Each connection starts fresh.
