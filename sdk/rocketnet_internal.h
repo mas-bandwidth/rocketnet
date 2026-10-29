@@ -18,7 +18,6 @@
 #endif // #ifndef __STDC_FORMAT_MACROS
 
 #include "rocketnet.h"
-#include "rocketnet_testing.h"
 #include "rocketnet_layers.h"
 
 #ifndef ROCKETNET_XDP
