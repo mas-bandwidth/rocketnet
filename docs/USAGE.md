@@ -532,6 +532,12 @@ client's connect token, `rocketnet_server_num_connected_clients` counts them, an
 `rocketnet_server_disconnect_client` ends one deliberately. The user data is
 readable from connect until the slot is released; release wipes it, and a slot
 without a connected client reads zeros and returns false.
+`rocketnet_server_client_connection_id` names the connection in a slot: a
+nonzero id, unique for the server's lifetime across slots, stops and starts,
+and 0 when the slot is free. One update can end a slot's connection and admit
+another into it, so `rocketnet_server_client_connected` reads true before and
+after; compare each slot's connection id after every update to see that change
+and reset per-connection state.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
 `rocketnet_disconnect_reason_name`: `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`

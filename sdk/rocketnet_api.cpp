@@ -1969,6 +1969,7 @@ struct rocketnet_server_t
     struct rocketnet_message_server_t * retiring;           // retained until stop completion
     struct rocketnet_message_server_t * running;            // NULL while stopped
     uint64_t lifetime[RN_SERVER_COUNT];                     // the counts of every earlier run
+    uint64_t connection_id_base;                            // the connection ids every earlier run handed out
     struct rocketnet_message_batch_t batch;                 // the one receive batch across every client (in the create-time block)
 };
 
@@ -2665,6 +2666,11 @@ static void rn_server_finish_stop( struct rocketnet_server_t * server )
     for ( int i = 0; i < RN_SERVER_COUNT; i++ )
         server->lifetime[i] += counts[i];
 
+    // proofs/tla/ServerSession.tla Start: the next run's transport numbers its
+    // connections from 1 again, so the public id adds every earlier run's count
+    // (ConnIdNeverRepeats)
+    server->connection_id_base += rocketnet_server_transport_connections_assigned( rocketnet_message_server_transport( server->running ) );
+
     // no per-slot reset: the object goes, and the next start creates every slot fresh in the same block
 
     rocketnet_message_server_destroy( server->running );
@@ -2882,6 +2888,28 @@ uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, i
         return 0;
 
     return rocketnet_server_transport_client_id( rn_server_transport( server ), slot );
+}
+
+// proofs/tla/ServerSession.tla Establish: the transport's id for the slot's
+// connection (0 once the slot is reset), offset by the ids of the server's
+// earlier runs, so it never repeats for the server's lifetime
+
+uint64_t rocketnet_server_client_connection_id( const struct rocketnet_server_t * server, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server ) )
+        return 0;
+
+    int slot;
+    if ( !rn_server_slot( server, client_index, &slot ) )
+        return 0;
+
+    const uint64_t id = rocketnet_server_transport_client_connection_id( rn_server_transport( server ), slot );
+    if ( id == 0 )
+        return 0;
+
+    rocketnet_assert( id <= UINT64_MAX - server->connection_id_base );
+
+    return server->connection_id_base + id;
 }
 
 static_assert( ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES == ROCKETNET_USER_DATA_BYTES, "connect token user data bytes" );

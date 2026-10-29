@@ -2893,6 +2893,29 @@ ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_
 
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
 
+/// Returns the id of the connection that holds the slot: nonzero while a
+/// client is connected in it, and 0 when the slot is free or the server is
+/// stopped.
+///
+/// Every connection gets a new id, unique for the server's lifetime: a client
+/// that disconnects and reconnects into the same slot, even within one
+/// update, reads a different id, and no id repeats across slots, stops and
+/// starts. The ids are a 64-bit count from 1 and never wrap in practice.
+///
+/// Compare the id per slot after each update to detect a disconnect plus a
+/// reconnect within one update, which polling rocketnet_server_client_connected
+/// misses, and to reset your per-connection state when it changes.
+///
+/// Callable running or stopped, any time between updates. Thread: not
+/// thread-safe; the caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse and returns 0.
+/// @return The connection id, or 0.
+
+ROCKETNET_EXPORT uint64_t rocketnet_server_client_connection_id( const struct rocketnet_server_t * server, int client_index );
+
 /// Copies the user data from the slot's connect token into user_data.
 ///
 /// The bytes are the ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES the backend put

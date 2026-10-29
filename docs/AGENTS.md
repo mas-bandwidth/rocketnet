@@ -149,6 +149,9 @@ Preserve wraparound, sparse occupancy, stale-generation, and lifetime checks.
 - Finishing a refused start: finish only a live reservation.
 - Sending before queueing: make send the last frame step.
 - Treating DISCONNECTED as worker completion: poll the completion query.
+- Polling `rocketnet_server_client_connected` alone: a disconnect and reconnect
+  inside one update keeps it true; compare `rocketnet_server_client_connection_id`
+  per slot after each update, and reset per-connection state when it changes.
 - Assuming a design goal or an older green run qualifies a new deployment.
 
 ## Zero-copy messages

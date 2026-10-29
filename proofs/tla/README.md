@@ -141,7 +141,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
 | `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |
 | `rnsimfaults` | 3 | The DST fault injector for crash, restart and clock skew (docs/DST.md section 7): control with one liveness and one action property, and two invariant witnesses |
-| `serversession` | 12 | Server lifecycle: the passing control (invariants and HandshakeResolves) and eleven witnesses, including NoReceiveUnlessRunning and NoAdmitUnlessRunning and the two stopping witnesses |
+| `serversession` | 14 | Server lifecycle: the passing control (invariants and HandshakeResolves) and thirteen witnesses, including NoReceiveUnlessRunning and NoAdmitUnlessRunning, the two stopping witnesses, and the public connection id numbered per run (`ConnIdNeverRepeats`) |
 | `rnclientreceivequit` | 5 | The client receive thread's quit-and-wake handshake with destroy: controls for linux, macOS and Windows (two invariants, one action property, one liveness property) and two witnesses: the wake sent before quit (`WokenSeesQuit`) and a wait with no timeout and no wake (`DestroyCompletes`) |
 | `rnserversendfair` | 4 | The server send pass under a payload-frame cap: controls at N=3/K=1 and N=5/K=2 (bounded service within ceil(N/K) updates) and two reversed witnesses: the pass starts at index 0 every update (`MCRNServerSendFairBrokenFromZero.cfg`) and the first client consumes the cap (`MCRNServerSendFairBrokenInPlace.cfg`), both violating `FairService` |
 | `sendhandoff` | 3 | Send handoff generations: the control and reversed witnesses for reopening the front and accepting a stale pointer below the published base |
@@ -154,8 +154,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `loopbackhub` | 3 | The loopback hub's registration lifecycle (LoopbackHub.tla): the control and two reversed witnesses, destroy without the registered check (`NoEndpointOutlivesHub`) and no header check at use (`NoForeignUse`) |
 | `loopbackhublayout` | 3 | The loopback hub's queue layout and ring arithmetic at capacity 3 (LoopbackHubLayout.tla): the control and two reversed witnesses, the full test off by one and a counter wrap that is not a multiple of the capacity (both `RingIsQueue`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 452 cases
-in 65 groups, 436 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 459 cases
+in 66 groups, 443 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
