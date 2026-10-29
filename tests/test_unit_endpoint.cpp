@@ -515,7 +515,7 @@ static void test_endpoint_back_to_back_over_lossy_array()
 static void test_endpoint_send_order_is_pinned()
 {
     static const uint64_t seeds[3] = { 20261017, 1, 20261029 };
-    static const uint64_t pinned[3] = { 0, 0, 0 };
+    static const uint64_t pinned[3] = { 0x125bedb561b269edULL, 0xd140b94acfb88cafULL, 0x9e435b1e75b19311ULL };
 
     rocketnet_message_config_t config;
     ep_config( &config );
