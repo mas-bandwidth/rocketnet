@@ -84,6 +84,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] = {
     "sequenced holds",
     "receipt ring",
     "resend FIFO",
+    "unreliable ring",
     "send spans",
 };
 
@@ -105,6 +106,7 @@ static const char * const rn_part_formulas[RN_NUM_PARTS] = {
     "1440Ru",
     "16Rq",
     "16W",
+    "8*2Q",
     "SR",
 };
 
@@ -196,6 +198,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
     layout->bytes[RN_PART_SEQUENCED_HOLDS] = ( sizeof( rn_sequenced_hold_t ) + sizeof( rn_sequenced_payload_t ) + 2 * sizeof( uint32_t ) ) * Ru;
     layout->bytes[RN_PART_RECEIPTS] = sizeof( rn_receipt_t ) * Rq;
     layout->bytes[RN_PART_RESEND_FIFO] = sizeof( rn_resend_link_t ) * W;
+    layout->bytes[RN_PART_UNRELIABLE_RING] = sizeof( rn_unreliable_entry_t ) * 2 * Q;
     layout->bytes[RN_PART_SEND_SPANS] = SR;                                         // local send reserve; receive-ring wire size stays B
 
     uint64_t offset = 0;
@@ -665,6 +668,8 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     region->sequenced_holds_delivered = region->sequenced_hold_free_stack + region->holds;
     region->receipts = (rn_receipt_t *) ( base + layout->offset[RN_PART_RECEIPTS] );
     region->resend_fifo = (rn_resend_link_t *) ( base + layout->offset[RN_PART_RESEND_FIFO] );
+    region->unreliable_ring = (rn_unreliable_entry_t *) ( base + layout->offset[RN_PART_UNRELIABLE_RING] );
+    region->unreliable_ring_entries = (uint32_t) ( 2 * layout->bytes[RN_PART_SEND_DESCRIPTORS] / sizeof( rn_send_descriptor_t ) );
     region->send_spans = base + layout->offset[RN_PART_SEND_SPANS];
     region->span_bytes = (uint32_t) layout->bytes[RN_PART_SEND_SPANS];
 

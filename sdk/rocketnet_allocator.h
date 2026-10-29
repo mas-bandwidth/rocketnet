@@ -210,6 +210,12 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
+struct rn_unreliable_entry_t            // 8 bytes: one unreliable queue entry (tla/RNIndexRing.tla)
+{
+    uint32_t descriptor;                // the queued send descriptor
+    uint32_t ticket;                    // its enqueue ticket when pushed; a tombstone once the descriptor's ticket differs
+};
+
 struct rn_resend_link_t                 // 16 bytes: resend sequence entry, indexed number % W (6.4)
 {
     uint32_t prev;                      // previous slot in its sequence in bits 0..30 (0x7FFFFFFF: the head), linked flag in bit 31; 0 when not in a sequence
@@ -251,6 +257,7 @@ enum
     RN_PART_SEQUENCED_HOLDS,            // 1440 Ru (16 hot + 1416 payload + 4 free-stack + 4 delivered list per hold)
     RN_PART_RECEIPTS,                   // 16 Rq
     RN_PART_RESEND_FIFO,                // 16 W
+    RN_PART_UNRELIABLE_RING,            // 8 * 2Q
     RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS
 };
@@ -423,6 +430,8 @@ struct rn_region_t
     uint32_t sequenced_holds_delivered_count;   // delivered holds the end-of-update pass returns, none when zero
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
+    rn_unreliable_entry_t * unreliable_ring;    // 2 x queue entries: the unreliable FIFO in push order
+    uint32_t unreliable_ring_entries;
 
     uint32_t descriptors_free_top;      // the descriptor free stack's depth: taken-then-freed handles on the stack, in the descriptors' free_slot array
     uint32_t descriptors_free;          // queue less the descriptors in use

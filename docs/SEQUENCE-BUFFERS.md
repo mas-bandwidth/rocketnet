@@ -104,6 +104,20 @@ a walk as `CONSTANT` (today the counter-family parent rows,
 tests/test_unit_counter_classes.cpp:442) and does not fail on it; a mutable
 table with the same walk fails.
 
+## Approved index links
+
+A queue that needs insert-after, insert-at-head or interior removal in O(1)
+may link its entries by index inside one fixed, bounded array it owns: no
+pointers, no allocation, every link an index into that array. Glenn chose this
+on 2026-10-28 for the message layer's queues. Each linking site is listed by
+file, function and field; the audit fails on any link site not listed here,
+and on a row that matches no site.
+
+| File | Function | Field | Decision |
+|---|---|---|---|
+| sdk/rocketnet_channel.cpp | rn_ready_link | ready_next | Glenn 2026-10-28: index links in the window |
+| sdk/rocketnet_channel.cpp | rn_ready_link | ready_prev | Glenn 2026-10-28: index links in the window |
+
 ## External ABI traversal sites
 
 Operating-system enumerations arrive as linked nodes the OS allocates and
