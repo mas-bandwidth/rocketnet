@@ -149,12 +149,13 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnmsgxpause` | 2 | Shared macOS msgx pause expiry (README-RNMsgxPause.md): two workers, bounded time, fresh-pause safety and expiry progress; unconditional-clear reversed witness |
 | `rnportablerx` | 6 | The portable/msgx server receive worker (README-RNPortableRx.md): controls at three and two banks (invariants and two liveness properties, no wait timeout) and four reversed witnesses: a full producer overwritten (`ExactDelivery`), a consumer returned before it is read (`ExactDelivery`), the stop wake before quit (`StopCompletes`) and no wake on a returned bank (`EveryDatagramDelivered`) |
 | `rnrioworker` | 9 | The RIO transport's I/O worker (README-RNRioWorker.md): a safety control for both directions, receive and send liveness controls, a two-bank backpressure control, and five reversed witnesses: a phase reopened before it is idle (`FillPhaseOwnedByMain`), an unbounded dequeue (`ExactDelivery`), exit before the drain (`FreedOnlyWhenDrained`), no wake on a returned bank (`EveryDatagramConsumed`) and a stop that discards a handed phase (`StopSendsHanded`) |
+| `sessionsendsequence` | 3 | The session send counter shared by fills and control sends (README-SessionSendSequence.md): the control, every sequence taken in one fetch-add and the ack baseline at the highest sealed sequence, and two reversed witnesses, a control send that reads, seals, then increments (`SequencesUnique`) and the baseline read as the next sequence less one (`BaselineIsHighestSealed`) |
 | `ackblockwrap` | 2 | The ack block reader across the wire sequence wrap (README-AckBlockWrap.md): the control, the empty block recognised on its wire fields at any highest sent (every invariant), and the reversed witness that makes the empty test on the reconstructed largest (`EmptyRecognised`) |
 | `loopbackhub` | 3 | The loopback hub's registration lifecycle (LoopbackHub.tla): the control and two reversed witnesses, destroy without the registered check (`NoEndpointOutlivesHub`) and no header check at use (`NoForeignUse`) |
 | `loopbackhublayout` | 3 | The loopback hub's queue layout and ring arithmetic at capacity 3 (LoopbackHubLayout.tla): the control and two reversed witnesses, the full test off by one and a counter wrap that is not a multiple of the capacity (both `RingIsQueue`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 445 cases
-in 64 groups, 429 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 452 cases
+in 65 groups, 436 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

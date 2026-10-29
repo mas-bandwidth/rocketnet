@@ -1755,8 +1755,8 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
 // apply a block to and falls back to the highest sequence taken.
 
 uint64_t rocketnet_server_protocol_highest_sent_session( struct rocketnet_server_protocol_t * server,
-                                                          int client_index,
-                                                          struct rocketnet_encryption_mapping_t * mapping )
+                                                         int client_index,
+                                                         struct rocketnet_encryption_mapping_t * mapping )
 {
     rocketnet_assert( server );
     rocketnet_assert( mapping );

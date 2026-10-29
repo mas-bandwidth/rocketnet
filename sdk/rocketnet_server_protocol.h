@@ -232,8 +232,8 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
 // sequences a fill has taken but not yet sealed.
 
 uint64_t rocketnet_server_protocol_highest_sent_session( struct rocketnet_server_protocol_t * server,
-                                                          int client_index,
-                                                          struct rocketnet_encryption_mapping_t * mapping );
+                                                         int client_index,
+                                                         struct rocketnet_encryption_mapping_t * mapping );
 
 // The standalone ack, type 8: built when the client's ack debt -- eliciting
 // packets received since the last block this end sent -- has reached the
