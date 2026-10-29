@@ -89,11 +89,12 @@ should stop as soon as their correctness checks finish; they do not wait out
 that budget. The live message matrix reports elapsed time against both bounds,
 while preserving delivery, ordering, receipt and cleanup checks. This budget
 is separate from the library's main-call latency/performance qualification.
-`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases. Every functional
-case, including sibling binaries, runs alone on every platform. Setting
-`ROCKETNET_TEST_JOBS` cannot increase functional concurrency; deterministic
-unit cases may still run in parallel. Run separate functional invocations and
-other network workloads separately on the same test host as well.
+`ROCKETNET_TEST_REPORT=1` reports the suite's slowest cases, and
+`ROCKETNET_TEST_REPORT=all` every case. Every functional case, including
+sibling binaries, runs in parallel, one job per core (`ROCKETNET_TEST_JOBS`
+to change it), so the per-commit run fits its two minutes. A case that cannot
+share the host is fixed, or moved to the nightly tier
+(`ROCKETNET_TEST_NIGHTLY=1`, functional/main.cpp), never run alone per commit.
 
 The functional suite enforces peak-resident-set bounds. Its
 `test_unit_case_memory` sibling row runs the complete unit binary in enforcement

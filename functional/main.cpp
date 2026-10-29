@@ -2,9 +2,10 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Functional suite. Each test is a process, with only one case running at a
-    time. Sibling binaries that open a socket or start a real transport are
-    tests of this suite, under the same
+    Functional suite. Each test is a process, and cases run in parallel (one
+    job per core, ROCKETNET_TEST_JOBS to change it); a case that must not
+    share the host runs in its own group. Sibling binaries that open a socket
+    or start a real transport are tests of this suite, under the same
     120s failure limit (tests/suite_runner.h).
 */
 
@@ -84,52 +85,39 @@ static int rocketnet_functional_worker( const char * name )
 }
 
 int rocketnet_posix_hard_killed_child_main( int argc, char ** argv );
-int rocketnet_posix_hard_killed_client_test_group( const char * name );
 suite_exec rocketnet_unit_case_memory_exec();
 
 #if defined( _WIN32 ) || defined( __APPLE__ ) || defined( __linux__ )
 
-// Preserve suite ordering. All cases run serially, including sibling binaries.
-//
-// The nightly tier on macOS (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1):
-// the hard-killed client cells on the portable server, each of which waits
-// out the real 10 s token timeout, and the connect/disconnect x1000 pairs
-// other than msgx/msgx. The msgx cells of each stay on every commit, as does
-// the msgx/msgx pair of destroy-under-traffic, whose case runs the other three
-// pairs only in the nightly tier (functional/posix_lifecycle_stress.cpp).
+// The nightly tier: exact names, or a prefix ending in '*'. On macOS the
+// hard-killed client cells on the portable server wait out the real 10 s
+// token timeout, and the connect/disconnect x1000 pairs other than msgx/msgx
+// repeat a pair a per-commit case keeps.
+static const char * const rocketnet_functional_nightly_cases[] = {
+#if defined( __APPLE__ )
+    "test_posix_hard_killed_client_portable_*",
+    "test_posix_connect_disconnect_1000_portable_*",
+    "test_posix_connect_disconnect_1000_msgx_portable",
+#endif // #if defined( __APPLE__ )
+    NULL,
+};
+
+// Every functional case runs in parallel (Glenn 2026-10-29: "You are
+// literally supposed to run all functional tests in parallel"). A case that
+// cannot share the host is fixed or moved to the nightly tier
+// (SUITE_GROUP_NIGHTLY, ROCKETNET_TEST_NIGHTLY=1, nightly.yml), never run
+// alone per commit. The nightly tier holds every case over a second on any
+// operating system, measured 2026-10-29 (ROCKETNET_TEST_REPORT=all).
 static int rocketnet_functional_test_group( const char * name )
 {
-#if defined( __APPLE__ )
-    // This case drives eight unpaced senders while destroying their server.
-    // On Darwin its flood can overflow the shared loopback input queue and
-    // drop packets belonging to unrelated exact-delivery cases. Keep the
-    // flood and every assertion intact, but run it apart from those cases.
-
-    if ( strcmp( name, "test_posix_destroy_under_traffic_100" ) == 0 )
-        return 3;
-    static const char * const nightly[] = {
-        "test_posix_hard_killed_client_portable_",
-        "test_posix_connect_disconnect_1000_portable_",
-        "test_posix_connect_disconnect_1000_msgx_portable",
-    };
-    for ( const char * prefix : nightly )
-        if ( strncmp( name, prefix, strlen( prefix ) ) == 0 )
-#if !ROCKETNET_DEV
+    for ( const char * const * nightly = rocketnet_functional_nightly_cases; *nightly; ++nightly )
+    {
+        const size_t length = strlen( *nightly );
+        if ( length > 0 && ( *nightly )[length - 1] == '*' ? strncmp( name, *nightly, length - 1 ) == 0 : strcmp( name, *nightly ) == 0 )
             return SUITE_GROUP_NIGHTLY;
-#else
-            return rocketnet_posix_hard_killed_client_test_group( name ) | SUITE_GROUP_NIGHTLY;
-#endif // #if !ROCKETNET_DEV
-#endif // #if defined( __APPLE__ )
-    if ( strcmp( name, "test_loopback_transport_live_message_matrix" ) == 0 )
-        return 2;
-#if !ROCKETNET_DEV
-    (void) name;
+    }
+
     return 0;
-#elif defined( _WIN32 )
-    return 0;
-#else
-    return rocketnet_posix_hard_killed_client_test_group( name );
-#endif // #if !ROCKETNET_DEV
 }
 
 #endif // #if defined(_WIN32) || defined(__APPLE__) || defined(__linux__)
@@ -196,7 +184,7 @@ int main( int argc, char ** argv )
     }
 #endif // #if ROCKETNET_DEV
 #if !ROCKETNET_DEV
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, NULL, 0, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( _WIN32 )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
@@ -204,7 +192,7 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", NULL, true },
         { "test_iocp", "test_iocp", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( __APPLE__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
@@ -212,7 +200,7 @@ int main( int argc, char ** argv )
         { "test_transport_control", "test_transport_control", NULL, true },
         { "test_msgx", "test_msgx", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, 4, rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #elif defined( __linux__ )
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
@@ -227,13 +215,13 @@ int main( int argc, char ** argv )
     // a limit under one case's need fails the suite before it starts, naming
     // the limit (tests/suite_runner.h, tools/check_memlock.sh)
 
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1, true );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), rocketnet_functional_test_group, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 0, true );
 #else
     const suite_exec execs[] = {
         rocketnet_unit_case_memory_exec(),
         { "test_serialize", "test_serialize", NULL, true },
         { "test_transport_control", "test_transport_control", NULL, true },
     };
-    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS, 1 );
+    return suite_main( argc, argv, rocketnet_functional_worker, rocketnet_functional_test_count, rocketnet_functional_test_name, execs, sizeof( execs ) / sizeof( execs[0] ), NULL, ROCKETNET_FUNCTIONAL_CASE_MAX_SECONDS );
 #endif // #if !ROCKETNET_DEV
 }

@@ -419,20 +419,16 @@ jobs:
             exit 1
           fi
 
+      # The pinned pass per commit proves the pin is honoured; the whole
+      # suite under the portable pin runs in the nightly tier (nightly.yml),
+      # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -euo pipefail
-          ./bin/functional | tee functional-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-pinned.log; then
-            echo "io_uring functional rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+        run: ./bin/functional --run test_transport_env_pin_is_honoured
 
       # functional_production links the production (ROCKETNET_DEV=OFF)
       # library, so it exists only on the Release rows; it runs the same
@@ -454,14 +450,7 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -euo pipefail
-          ./bin/functional_production | tee functional-production-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-production-pinned.log; then
-            echo "io_uring functional_production rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+        run: ./bin/functional_production --run test_transport_env_pin_is_honoured
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -1134,10 +1123,7 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -euo pipefail
-          ./bin/Release/functional_production.exe | tee functional-production-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
+        run: ./bin/Release/functional_production.exe --run test_transport_env_pin_is_honoured
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard

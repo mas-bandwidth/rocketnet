@@ -1559,23 +1559,6 @@ const char * rocketnet_posix_hard_killed_client_test_name( int index )
 // test_transport_dual_stack_ipv4_client and test_server_serves_both_families
 // failed to connect. On macOS they run as group 2, alone, after group 1.
 
-int rocketnet_posix_hard_killed_client_test_group( const char * name )
-{
-    for ( size_t i = 0; i < 3; i++ )
-    {
-        if ( strncmp( name, posix_hk_kinds[i], strlen( posix_hk_kinds[i] ) ) == 0 )
-        {
-            if ( strstr( name, "_xdp_" ) != NULL )
-                return 2;
-            return 1;
-        }
-    }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    if ( strncmp( name, "test_posix_connect_disconnect_1000", strlen( "test_posix_connect_disconnect_1000" ) ) == 0 )
-        return 2;
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
-    return 0;
-}
 
 void rocketnet_posix_hard_killed_client_test_run( int index )
 {
@@ -1631,11 +1614,6 @@ const char * rocketnet_posix_hard_killed_client_test_name( int )
 
 void rocketnet_posix_hard_killed_client_test_run( int )
 {
-}
-
-int rocketnet_posix_hard_killed_client_test_group( const char * )
-{
-    return 0;
 }
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
