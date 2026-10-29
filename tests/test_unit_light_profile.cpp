@@ -38,9 +38,12 @@
 // was 22183075, now 22182883. A production build refuses the published test
 // filter and required_memory then returns 0, so the DEV OFF peaks were read
 // with a non-test filter on the light config. The filter is not sized.
+// Re-measured 2026-10-29 on captain at 0e32e225 (unreliable ring 16Q, resend
+// link 12W, descriptor 72 bytes): DEV ON client was 22967743, now 22971807;
+// DEV ON server was 1603276694, now 1607276560.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603276694 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22967743 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607276560 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971807 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
@@ -57,9 +60,12 @@
 // span_next plus schedule ticket/epoch): server was 1591206436, now
 // 1603277086 (grew by 12070650). Generation, owner epoch, enqueue ticket
 // and hole bound 64 stayed.
+// Re-measured 2026-10-28 on mini-m5 at fd3cc227 (unreliable ring 16Q, resend
+// link 12W): client was 22746605, now 22754581. At 0e32e225 (descriptor
+// 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603277086 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22746605 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607276904 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22754581 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
@@ -69,12 +75,15 @@
 // ROCKETNET_DEV=ON, head d00cf56e517dad7477ce41059d48e276c95aa970.
 // Server was 3238578316 (now 3243578316, grew by 5000000).
 // Client was 22890053 (now 22895109, grew by 5056).
+// Re-measured 2026-10-28 on hetzner2 at fd3cc227 (unreliable ring 16Q,
+// resend link 12W): client was 22895109, now 22904141. At 0e32e225
+// (descriptor 72 bytes, span links) server was 3243578316, now 3247578126.
 // Generation, owner epoch, enqueue ticket and hole bound 64 stayed.
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3243578316ULL )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22895109 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247578126ULL )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904141 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )

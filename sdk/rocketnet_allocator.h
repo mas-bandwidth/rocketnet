@@ -50,13 +50,13 @@
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
-struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation
+struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
-    uint32_t queue_head, queue_tail;    // cached first/last live descriptor of this channel's flat FIFO, ordered by enqueue_ticket over the send_descriptors array; RN_DESCRIPTOR_NONE when empty
+    uint32_t queue_head, queue_tail;    // the first and last descriptor of this channel's reliable FIFO, linked by queue_next; RN_DESCRIPTOR_NONE when empty
     uint16_t queued[4];                 // live queued count per priority (holes are not counted)
-    uint32_t ready_prev, ready_next;    // retired ready-list links: always RN_DESCRIPTOR_NONE; ready order is the flat ready_ticket sequence over the channel_send array
+    uint32_t ready_prev, ready_next;    // the neighbouring ready channels, RN_DESCRIPTOR_NONE at the ends and when not ready
     uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
     uint32_t ready_generation;          // generation of the live queue head when this channel joined the ready list
 };
@@ -116,12 +116,12 @@ struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W 
     uint32_t used;
 };
 
-struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight send (Q of them)
+struct rn_send_descriptor_t             // 72 bytes: one queued or in-flight send (Q of them)
 {
     uint32_t chunk;                     // the first store chunk of a block's contiguous run
     uint32_t bytes;
     uint32_t serial;                    // the receipt serial (7.4)
-    uint32_t next;                      // retired queue link: always RN_DESCRIPTOR_NONE while queued; flat channel/unreliable FIFOs order live descriptors by enqueue_ticket over this array
+    uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
     uint32_t ordering;
     uint32_t sequencing;
     uint64_t first_number;              // the first message number, once numbered (6.2)
@@ -135,12 +135,10 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
     uint16_t schedule_flags;            // RN_SCHEDULE_QUEUED while this descriptor is a live queue entry
     uint8_t reserved[2];                // unused spare bytes
     uint32_t enqueue_ticket;            // 0 not queued; else the enqueue ticket (from 1)
-    uint32_t queue_epoch;               // region->schedule_epoch at enqueue; a carve makes a stale entry miss
-    uint32_t order_slot;                // the flat live-span order array's slot at this descriptor's index: the descriptor at that order position, RN_DESCRIPTOR_NONE outside the live segment
-    uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
+    uint32_t queue_next;                // the next descriptor in its channel's reliable FIFO, RN_DESCRIPTOR_NONE at the tail
+    uint32_t span_prev;                 // RN_SEND_FLAG_SPAN: the next older live span, RN_DESCRIPTOR_NONE at span_first
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
-    uint32_t span_ticket;               // RN_SEND_FLAG_SPAN: the span's allocation ticket (order among live spans)
-    uint32_t span_pos;                  // RN_SEND_FLAG_SPAN: this span's position in the order array, RN_DESCRIPTOR_NONE when not a live span
+    uint32_t span_next;                 // RN_SEND_FLAG_SPAN: the next newer live span, RN_DESCRIPTOR_NONE at span_last
     uint32_t free_slot;                 // the flat descriptor free stack's slot at this descriptor's index: the descriptor at that stack depth
 };
 
@@ -210,12 +208,17 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
-struct rn_resend_link_t                 // 16 bytes: resend sequence entry, indexed number % W (6.4)
+struct rn_unreliable_entry_t            // 8 bytes: one unreliable queue entry (tla/RNIndexRing.tla)
+{
+    uint32_t descriptor;                // the queued send descriptor
+    uint32_t ticket;                    // its enqueue ticket when pushed; a tombstone once the descriptor's ticket differs
+};
+
+struct rn_resend_link_t                 // 12 bytes: resend sequence entry, indexed number % W (6.4)
 {
     uint32_t prev;                      // previous slot in its sequence in bits 0..30 (0x7FFFFFFF: the head), linked flag in bit 31; 0 when not in a sequence
     uint32_t next;                      // next slot in its sequence in bits 0..30 (0x7FFFFFFF: the tail), chunk-class flag in bit 31
     uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
-    uint32_t owner_epoch;               // region->schedule_epoch when the slot was sequenced
 };
 
 // Queue scheduling (tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
@@ -251,6 +254,7 @@ enum
     RN_PART_SEQUENCED_HOLDS,            // 1440 Ru (16 hot + 1416 payload + 4 free-stack + 4 delivered list per hold)
     RN_PART_RECEIPTS,                   // 16 Rq
     RN_PART_RESEND_FIFO,                // 16 W
+    RN_PART_UNRELIABLE_RING,            // 8 * 2Q
     RN_PART_SEND_SPANS,                 // B
     RN_NUM_PARTS
 };
@@ -339,11 +343,15 @@ uint32_t rn_send_store_chunks_needed( int bytes );
 
 void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
 
-// 1 when rn_send_store_alloc of `bytes` would take its chunks now: the one
-// test the allocation itself makes (tla/RNSendStore.tla Alloc's guard); pure
-bool rn_send_store_fits( const rn_send_store_t * store, int bytes );
+// true when `bytes` can be taken now, with the first chunk of the run the
+// take would use: the one test the allocation makes (tla/RNSendStore.tla
+// Alloc's guard); pure
+bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_first );
 
-uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // the first chunk's handle, or RN_CHUNK_NONE
+// takes the run rn_send_store_find returned, unchanged since: the first chunk's handle
+uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first );
+
+uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // find then take: the first chunk's handle, or RN_CHUNK_NONE
 
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle );     // false: not an allocated block's head, nothing changed
 
@@ -408,8 +416,6 @@ struct rn_region_t
     uint32_t span_head;                 // the byte offset of the oldest live span's start (the reclaim floor)
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
-    uint32_t span_ticket_next;          // the next span allocation ticket; the flat span order array orders live spans, tickets mirror that order
-    uint32_t schedule_epoch;            // 1 after every carve; names this connection's queue entries
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;
@@ -423,6 +429,8 @@ struct rn_region_t
     uint32_t sequenced_holds_delivered_count;   // delivered holds the end-of-update pass returns, none when zero
     rn_receipt_t * receipts;
     rn_resend_link_t * resend_fifo;
+    rn_unreliable_entry_t * unreliable_ring;    // 2 x queue entries: the unreliable FIFO in push order
+    uint32_t unreliable_ring_entries;
 
     uint32_t descriptors_free_top;      // the descriptor free stack's depth: taken-then-freed handles on the stack, in the descriptors' free_slot array
     uint32_t descriptors_free;          // queue less the descriptors in use
@@ -454,7 +462,7 @@ static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 static inline void rn_descriptor_enqueue_stamp( rn_region_t * region, rn_send_descriptor_t * descriptor )
 {
     descriptor->enqueue_ticket = rn_region_schedule_ticket( region );
-    descriptor->queue_epoch = region->schedule_epoch;
+    descriptor->queue_next = RN_DESCRIPTOR_NONE;
     descriptor->schedule_flags = (uint16_t) RN_SCHEDULE_QUEUED;
 }
 
@@ -606,7 +614,7 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 #define RN_SEND_FIT_QUEUE_FULL      3   // no free send descriptor: the allocation exhausts the region
 #define RN_SEND_FIT_STORE_FULL      4   // no chunks, or no span placement: the allocation exhausts the region
 
-int rn_region_send_fit_store( const rn_region_t * region, int bytes );
+int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first );
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );
 
 // A start message's room: a store chunk up to one block stride, a span above

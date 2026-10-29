@@ -1158,7 +1158,7 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 
 static void test_channels_allocator_layout()
 {
-    // section 14's formula, part by part, at the defaults: 6,705,792 bytes, no padding
+    // section 14's formula, part by part, at the defaults: 6,709,888 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1170,10 +1170,10 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6705792 );
-    check( layout.region_bytes == 6705792 );
-    check( rocketnet_message_connection_bytes( &config ) == 6705792 );
-    check( rocketnet_message_connection_bytes( NULL ) > 6705792 );
+    check( layout.formula_bytes == 6709888 );
+    check( layout.region_bytes == 6709888 );
+    check( rocketnet_message_connection_bytes( &config ) == 6709888 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6709888 );
 
     const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
     check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 64 * C );
@@ -1182,13 +1182,14 @@ static void test_channels_allocator_layout()
     check( layout.bytes[RN_PART_RECEIVED_BITS] == W / 8 );
     check( layout.bytes[RN_PART_HELD_INDEX] == 16 * 2 * W );
     check( layout.bytes[RN_PART_RECEIVE_RING] == B );
-    check( layout.bytes[RN_PART_SEND_DESCRIPTORS] == 80 * Q );
+    check( layout.bytes[RN_PART_SEND_DESCRIPTORS] == 72 * Q );
     check( layout.bytes[RN_PART_SEND_STORE] == S );
     check( layout.bytes[RN_PART_SENT_PACKETS] + layout.bytes[RN_PART_SENT_INDEX] + layout.bytes[RN_PART_SENT_REFS] == 128 * P );
     check( layout.bytes[RN_PART_DELIVERIES] == 24 * ( W + Du ) );
     check( layout.bytes[RN_PART_SEQUENCED_HOLDS] == ( 16 + ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 2 * sizeof( uint32_t ) ) * Ru );
     check( layout.bytes[RN_PART_RECEIPTS] == 16 * Rq );
-    check( layout.bytes[RN_PART_RESEND_FIFO] == 16 * W );
+    check( layout.bytes[RN_PART_RESEND_FIFO] == 12 * W );
+    check( layout.bytes[RN_PART_UNRELIABLE_RING] == 16 * Q );
     check( layout.bytes[RN_PART_SEND_SPANS] == B );
 
     // every part 64-aligned, in order, disjoint, inside the region
@@ -1798,10 +1799,10 @@ static void test_channels_allocator_sizing()
     rn_trap_armed = 0;
     check( length > 0 && length < (int) sizeof( text ) );
     check( (int) strlen( text ) == length );
-    check( strstr( text, "64C + 120.125W + B + 80Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 6705792" ) != NULL );
-    check( strstr( text, "formula bytes 6705792" ) != NULL );
-    check( strstr( text, "1000 connections 6705792000" ) != NULL );
+    check( strstr( text, "64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
+    check( strstr( text, "region bytes 6709888" ) != NULL );
+    check( strstr( text, "formula bytes 6709888" ) != NULL );
+    check( strstr( text, "1000 connections 6709888000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -1982,37 +1983,28 @@ static void rn_soak_reset( rn_soak_side_t * side )
     side->receipt_count = 0;
 }
 
-// The soak's own copy of layer 6's flat FIFO: live descriptors of one channel
-// ordered by enqueue_ticket over the flat descriptor array. A descriptor at
-// or past the lazy pool's watermark was never taken, so its bytes are not
-// state (tla/RNLazyPool.tla): the scan stops there, as layer 6's does.
+// The soak's own copy of layer 6's reliable FIFO: descriptors of one channel
+// linked through queue_next, appended at the tail and popped at the head.
 
-static void rn_soak_queue_sync( rn_region_t * region, uint32_t channel_index )
+static void rn_soak_queue_append( rn_region_t * region, uint32_t channel_index, uint32_t d )
 {
     rn_channel_send_t * channel = &region->channel_send[channel_index];
-    channel->queue_head = RN_DESCRIPTOR_NONE;
-    channel->queue_tail = RN_DESCRIPTOR_NONE;
+    region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
+    if ( channel->queue_tail != RN_DESCRIPTOR_NONE )
+        region->send_descriptors[channel->queue_tail].queue_next = d;
+    else
+        channel->queue_head = d;
+    channel->queue_tail = d;
+}
 
-    uint32_t head_ticket = 0, tail_ticket = 0;
-
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
-    {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->channel != channel_index )
-            continue;
-
-        if ( channel->queue_head == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < head_ticket )
-        {
-            channel->queue_head = d;
-            head_ticket = descriptor->enqueue_ticket;
-        }
-
-        if ( channel->queue_tail == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket > tail_ticket )
-        {
-            channel->queue_tail = d;
-            tail_ticket = descriptor->enqueue_ticket;
-        }
-    }
+static void rn_soak_queue_pop( rn_region_t * region, uint32_t channel_index )
+{
+    rn_channel_send_t * channel = &region->channel_send[channel_index];
+    const uint32_t d = channel->queue_head;
+    channel->queue_head = region->send_descriptors[d].queue_next;
+    region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
+    if ( channel->queue_head == RN_DESCRIPTOR_NONE )
+        channel->queue_tail = RN_DESCRIPTOR_NONE;
 }
 
 static void rn_soak_send( rn_soak_side_t * side )
@@ -2087,11 +2079,11 @@ static void rn_soak_send( rn_soak_side_t * side )
 
         check( offset == (uint32_t) bytes );
 
-        // queue it on its channel's flat FIFO (layer 6's ticket sequence)
+        // queue it on its channel's reliable FIFO (layer 6's links)
 
         rn_channel_send_t * channel = &region->channel_send[descriptor->channel];
         rn_descriptor_enqueue_stamp( region, descriptor );
-        rn_soak_queue_sync( region, descriptor->channel );
+        rn_soak_queue_append( region, descriptor->channel, (uint32_t) ( descriptor - region->send_descriptors ) );
         channel->queued[descriptor->priority]++;
         descriptor->ordering = channel->ordered_write++;
         channel->sequenced_write = 0;
@@ -2129,7 +2121,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
 
             descriptor->enqueue_ticket = 0;
             descriptor->schedule_flags = 0;
-            rn_soak_queue_sync( region, c );
+            rn_soak_queue_pop( region, c );
             channel->queued[descriptor->priority]--;
             descriptor->first_number = side->next_number;
             descriptor->fragments = (uint16_t) fragments;

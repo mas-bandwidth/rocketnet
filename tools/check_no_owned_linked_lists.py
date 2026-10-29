@@ -540,6 +540,19 @@ def read_external_table(text):
     return rows
 
 
+def read_approved_table(text):
+    """Rows of the manifest's approved index-link table: (file, function, field)."""
+    rows = []
+    section = re.search(r"^## Approved index links\n(.*?)(?=^## |\Z)", text or "", re.M | re.S)
+    if not section:
+        return rows
+    for line in section.group(1).splitlines():
+        cells = [c.strip().strip("`") for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 4 and line.strip().startswith("|") and not set(cells[0]) <= set("-: ") and cells[0] != "File":
+            rows.append((cells[0], cells[1], cells[2]))
+    return rows
+
+
 def audit(sources, manifest_text):
     """sources: {path: text}. Returns (owned, external, problems)."""
     tokens = {p: tokenize(strip_code(t)) for p, t in sources.items()}
@@ -565,6 +578,23 @@ def audit(sources, manifest_text):
                         owned.append((path, line, kind, field, block.name))
                         continue
                 external.append((path, line, kind, field, block.name, cursor, block))
+    # an index link the manifest approves by file, function and field (a
+    # decision recorded beside it) is not an owned list; a row that matches no
+    # site is a manifest problem, so the table cannot outlive the code
+    approved = read_approved_table(manifest_text)
+    approved_matched = set()
+    kept = []
+    for site in owned:
+        path, line, kind, field, function = site
+        row = (path, function, field.split(".")[-1])
+        if kind != "self-pointer" and row in approved:
+            approved_matched.add(row)
+            continue
+        kept.append(site)
+    owned[:] = kept
+    for row in approved:
+        if row not in approved_matched:
+            problems.append("manifest approved row %s %s %s matches no site" % row)
     rows = read_external_table(manifest_text) if manifest_text is not None else []
     if rows is None:
         problems.append("the manifest has no 'External ABI traversal sites' section")

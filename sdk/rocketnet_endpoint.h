@@ -77,9 +77,10 @@ struct rn_endpoint_config_t
     X( pending_header, int pending_header ) /* its header bytes in front of the data (0: the SINGLE form) */                                          \
     X( in_place_serial, uint32_t in_place_serial ) /* the finished in-place packet: its serial */                                                     \
     X( in_place_receipt, int in_place_receipt ) /* 1 when it carries a receipt (UNRELIABLE_WITH_ACK_RECEIPT) */                                       \
-    X( in_place_admitted, int in_place_admitted ) /* the wire bytes admitted to the budget (0: uncapped) */ /* the queued UNRELIABLE sends: the flat send-descriptor array ordered by enqueue_ticket */                                                                   \
+    X( in_place_admitted, int in_place_admitted ) /* the wire bytes admitted to the budget (0: uncapped) */ /* the queued UNRELIABLE sends: a ring of descriptor entries in push order (region->unreliable_ring) */                                                                   \
     X( unreliable_head, uint32_t unreliable_head )                                                                                                    \
-    X( unreliable_tail, uint32_t unreliable_tail )                                                                                                    \
+    X( unreliable_ring_head, uint32_t unreliable_ring_head ) /* the ring position of the oldest entry */                                              \
+    X( unreliable_ring_used, uint32_t unreliable_ring_used ) /* entries from there, tombstones included */                                            \
     X( unreliable_count, uint32_t unreliable_count ) /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */ /* writes it, packet_sent or packet_failed ends it */                                                                                             \
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
     X( written, int written ) /* packets this update, in place and queued, against packets_per_update */                                          \
