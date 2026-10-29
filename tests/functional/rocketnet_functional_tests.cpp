@@ -2735,18 +2735,12 @@ void rocketnet_test_platform_batch_pump_degraded()
 // also proves the msgx compaction memmove, since kept packets after a
 // mid-chunk skip must move down a slot.
 
-// Completion observation, per injected datagram. On Linux,
-// SK_MEMINFO_RMEM_ALLOC is socket-buffer allocation accounting (each
-// queued datagram adds its skb truesize, overhead included), never a
-// payload byte count: it is used only as a strict-growth signal, waited
-// on after each individual send before the next send, so a growth is
-// attributable to that one datagram. On macOS, FIONREAD is waited on
-// until it reaches the cumulative payload of the real datagrams sent
-// so far; zero-length chaff adds no payload there, and its arrival is
-// carried by the single injector's FIFO order once the following real
-// datagram is observed. Neither value is compared across platforms,
-// and elapsed time is never a pass criterion: one shared 30 s watchdog
-// only ends a hung harness and says so.
+// Completion observation, per injected datagram. Linux SO_MEMINFO and macOS
+// FIONREAD both include queue overhead, so neither is a payload byte count.
+// Each datagram, including zero-length chaff, increases that accounting.
+// Wait for strict growth after each send before sending the next datagram;
+// with no concurrent receiver, the growth belongs to that one send. The
+// shared 30 s watchdog only ends a hung harness, never proves arrival.
 static int rocketnet_test_queue_accounting( rocketnet_platform_socket_t * socket )
 {
 #if defined( __APPLE__ )
@@ -2769,14 +2763,12 @@ static int rocketnet_test_queue_accounting( rocketnet_platform_socket_t * socket
 struct rocketnet_test_queue_wait_t
 {
     int accounting;
-    int payload_bytes;
     double deadline;
 };
 
 static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
 {
     wait->accounting = rocketnet_test_queue_accounting( socket );
-    wait->payload_bytes = 0;
     wait->deadline = rocketnet_platform_time() + 30.0;
     if ( wait->accounting < 0 )
     {
@@ -2785,23 +2777,9 @@ static void rocketnet_test_queue_wait_init( rocketnet_platform_socket_t * socket
     }
 }
 
-static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, int datagram_bytes, const char * phase )
+static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * socket, rocketnet_test_queue_wait_t * wait, const char * phase )
 {
-    wait->payload_bytes += datagram_bytes;
-
-    const int target_payload = wait->payload_bytes;
-#if defined( __linux__ )
     const int target_accounting = wait->accounting;
-
-    (void) target_payload;
-#elif defined( __APPLE__ )
-    if ( datagram_bytes == 0 )
-        return;
-#else
-    fprintf( stderr, "harness error: %s has no queue completion observation on this platform\n", phase );
-    rocketnet_check( 0 );
-    return;
-#endif // #if defined( __linux__ )
     for ( ;; )
     {
         const int queued = rocketnet_test_queue_accounting( socket );
@@ -2811,19 +2789,11 @@ static void rocketnet_test_queue_wait_datagram( rocketnet_platform_socket_t * so
             rocketnet_check( 0 );
             return;
         }
-#if defined( __linux__ )
         if ( queued > target_accounting )
         {
             wait->accounting = queued;
             return;
         }
-#else
-        if ( queued >= target_payload )
-        {
-            wait->accounting = queued;
-            return;
-        }
-#endif // #if defined( __linux__ )
         fd_set readable;
         FD_ZERO( &readable );
         FD_SET( socket->handle, &readable );
@@ -2880,7 +2850,7 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     rocketnet_test_queue_wait_t batch_wait;
     rocketnet_test_queue_wait_init( socket, &batch_wait, "batch chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
+    rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
 
     for ( int i = 0; i < num_real; i++ )
     {
@@ -2893,18 +2863,18 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
         }
 
         rocketnet_check( sendto( injector, real_packet, (size_t) bytes, 0, (struct sockaddr *) &to, sizeof( to ) ) == bytes );
-        rocketnet_test_queue_wait_datagram( socket, &batch_wait, bytes, "batch chaff exchange" );
+        rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
         sent_real++;
 
         if ( ( i % 2 ) == 1 )
         {
             rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-            rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
+            rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
         }
     }
 
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &batch_wait, 0, "batch chaff exchange" );
+    rocketnet_test_queue_wait_datagram( socket, &batch_wait, "batch chaff exchange" );
 
     // drain through the batch pump: every real packet, in order, intact --
     // and in ONE receive_packets call, because a retry loop here greens
@@ -2912,9 +2882,8 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     // unfixed path consumes chaff between calls, so retries make
     // progress). loopback arrival is asynchronous (also measured: a
     // recvfrom immediately after sendto answers EAGAIN), so each send
-    // above is waited on individually before the next: on Linux by
-    // queue-accounting growth for that datagram, on macOS by cumulative
-    // real payload (chaff carried by the injector's FIFO). No settle sleep.
+    // above is waited on individually before the next by observing
+    // queue-accounting growth for that datagram. No settle sleep.
 
     static rocketnet_address_t from[ROCKETNET_TEST_PUMP_PACKETS];
     static int packet_bytes[ROCKETNET_TEST_PUMP_PACKETS];
@@ -2954,12 +2923,12 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     rocketnet_test_queue_wait_t single_wait;
     rocketnet_test_queue_wait_init( socket, &single_wait, "single-packet chaff exchange" );
     rocketnet_check( sendto( injector, real_packet, 0, 0, (struct sockaddr *) &to, sizeof( to ) ) == 0 );
-    rocketnet_test_queue_wait_datagram( socket, &single_wait, 0, "single-packet chaff exchange" );
+    rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" );
 
     uint8_t single[64];
     memset( single, 0x5a, sizeof( single ) );
     rocketnet_check( sendto( injector, single, sizeof( single ), 0, (struct sockaddr *) &to, sizeof( to ) ) == (ssize_t) sizeof( single ) );
-    rocketnet_test_queue_wait_datagram( socket, &single_wait, (int) sizeof( single ), "single-packet chaff exchange" );
+    rocketnet_test_queue_wait_datagram( socket, &single_wait, "single-packet chaff exchange" );
 
     // completion-driven arrival for the per-packet call: each datagram
     // above was observed queued before the next was sent, so the chaff
