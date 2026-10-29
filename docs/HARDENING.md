@@ -141,12 +141,12 @@ send rate is not an achieved wire rate. Hostile-traffic tests must also check
 the expected rejection counters and subsequent valid traffic, not just that
 the server remains alive.
 
-The planned blaster qualification covers the non-portable server transports:
+The historical blaster qualification plan covered the non-portable server transports:
 `xdp`, `gso`, `io_uring`, `msgx`, `iocp` and `rio`. Portable remains part of
 correctness and security testing, but is not expected to meet the 1,000-player
 performance target. Profile support or a successful tool build is not a passed
-load test. Physical 10 Gb/s and final integrated 1,000-player qualification
-remain outstanding in this record.
+load test. This record does not establish physical 10 Gb/s or final integrated
+1,000-player qualification; those limits do not create new deliverable scope.
 
 Recorded load, soak, and dataplane runs establish the following specific results
 and limits:

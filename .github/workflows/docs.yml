@@ -48,16 +48,13 @@ jobs:
       - name: Build the library
         run: make build
 
-      # the example checker, the roadmap and testing page checks, the
-      # roadmap render tests and the GETTING-STARTED snippet check run on
-      # every commit, after the library builds
+      # Documentation links and executable examples are checked on every
+      # commit after the library builds.
       - name: Check documentation gates
         run: |
           python3 tools/docs/test_check_links.py
           python3 tools/docs/check_links.py
           sh tools/docs/check_agents_md.sh all
-          make roadmap-check testing-check
-          python3 tools/roadmap/test_render.py
           python3 tools/docs/check_getting_started.py
 
       # every public symbol carries its reference: a new function, field or

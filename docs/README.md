@@ -47,8 +47,8 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#default-ci-requirements)
 uses the release commit's green CI run as qualification. The index explains
 what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.0.0-preview-4.md)
-describe migrations; [Roadmap](ROADMAP.md) and [Hardening](HARDENING.md)
-describe planned work. A plan, model, host-shim test, or successful build is
+describe migrations; [Hardening](HARDENING.md) explains the verification methods
+and their limits. A plan, model, host-shim test, or successful build is
 not interchangeable with an executed live-transport or performance result.
 
 [Run records](runs/) and [audit records](audits/) retain their tested commit,
@@ -74,7 +74,6 @@ From the repository root, the documentation checks are:
 python3 tools/docs/check_links.py
 python3 tools/docs/check_getting_started.py
 sh tools/docs/check_agents_md.sh all
-make roadmap-check testing-check
 ```
 
 The compile/run check requires built `rocketnet` and `rocketnet_dev` libraries

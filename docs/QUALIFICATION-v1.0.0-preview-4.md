@@ -53,7 +53,7 @@ At the release branch head, run by hand:
   [release-check.yml](../.github/workflows/release-check.yml): shipping
   `ROCKETNET_VERSION_FULL=v1.0.0-preview-4  MAJOR.MINOR.PATCH=1.0.0`,
   prerelease `preview-4`; development `dev` with `255.255.255`.
-- `make roadmap-check`
+- `make roadmap-check` (historical check; the roadmap and renderer were retired on 2026-10-29)
 
 Results are recorded in the release pull request.
 

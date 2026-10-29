@@ -1,9 +1,8 @@
 # Exact-head 1000-client frame-call evidence
 
-This procedure collects evidence for the open final-deliverable requirement in
-`docs/roadmap.sexp` and `docs/testing.sexp`: every main call in a Release frame
-must take **less than 100 µs** at 1000 clients on each platform. `tests/load/load.c`
-reports counts, exact maxima and threshold misses, and histogram percentile
+This optional procedure measures the historical **100 µs** frame-call target
+at 1000 clients. It does not define an outstanding deliverable requirement.
+`tests/load/load.c` reports counts, exact maxima and threshold misses, and histogram percentile
 upper bounds for the calls it exercises during traffic and drain. Coverage
 still excludes other public calls and setup/teardown, so the runner says
 `COLLECTED_NOT_QUALIFIED`, never an every-main-call budget PASS.

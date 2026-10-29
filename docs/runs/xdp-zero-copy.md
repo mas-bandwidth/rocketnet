@@ -102,5 +102,5 @@ Which machine qualifies zero copy:
    newer kernel or a fixed out-of-tree release), plus a dedicated cabled port
    on the XDP bench, since enp9s0f0 has no carrier and enp9s0f1 is the uplink.
 
-The roadmap rows stay open: docs/roadmap.sexp line 382 (zero-copy half) and
-row 157's note ("zero-copy remains unqualified") are unchanged by this run.
+This run leaves zero-copy behavior unqualified; it does not establish a
+zero-copy performance result.
