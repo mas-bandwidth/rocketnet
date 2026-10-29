@@ -214,7 +214,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnflows (2 required) | planned for the final deliverable |
 | TLA+ model check: rnclientiodecrypt (5 required) | planned for the final deliverable |
 | TLA+ model check: rnlivefleetrun (3 required) | planned for the final deliverable |
-| TLA+ model check: clientsession (10 required) | planned for the final deliverable |
+| TLA+ model check: clientsession (11 required) | planned for the final deliverable |
 | TLA+ model check: serversession (13 required) | planned for the final deliverable |
 | TLA+ model check: rnoutgoingbuild (6 required) | planned for the final deliverable |
 | TLA+ model check: rnsimfaults (3 required) | planned for the final deliverable |

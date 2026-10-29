@@ -910,7 +910,7 @@ static void run_matrix( opts_t * o )
 
         if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
         {
-            rn_cli_client_stop_and_destroy( client );
+            rn_cli_client_stop_and_destroy( client, rocketnet_time() );
             client = NULL;
         }
 
@@ -989,7 +989,7 @@ static void run_matrix( opts_t * o )
             }
 
             st.fails++;
-            rn_cli_client_stop_and_destroy( client );
+            rn_cli_client_stop_and_destroy( client, rocketnet_time() );
             break;
         }
 
@@ -1163,10 +1163,10 @@ static void run_matrix( opts_t * o )
         }
 
         rocketnet_client_disconnect( client );
-        rn_cli_client_wait_disconnected( client );
+        rn_cli_client_wait_disconnected( client, rocketnet_time() );
         r_cycle( res, o->label, window, "clean" );
         st.clean_count++;
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, rocketnet_time() );
 
         if ( !is_final )
         {

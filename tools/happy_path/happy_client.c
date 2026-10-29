@@ -106,7 +106,7 @@ int main( int argc, char ** argv )
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &create_status );
     if ( client && rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         client = NULL;
     }
 
@@ -257,12 +257,12 @@ int main( int argc, char ** argv )
     if ( exit_code == 0 && connected )
     {
         rocketnet_client_disconnect( client );
-        rn_cli_client_wait_disconnected( client );
+        rn_cli_client_wait_disconnected( client, 1000.0 + ( rocketnet_time() - wall_start ) );
         printf( "disconnected\n" );
         fflush( stdout );
     }
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     rocketnet_term();
 
     return exit_code;

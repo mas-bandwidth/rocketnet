@@ -627,9 +627,9 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
     // delivery of the last update is handed to the application before this
     // one. The transport acked each one already, so a delivery still waiting
     // here would be lost with the sender told it arrived. It is the
-    // application's error, handled like a send with no room: counted, an
-    // assert in a debug build, and that connection ends with
-    // MESSAGE_NOT_RECEIVED. Nothing is dropped silently.
+    // application's error, handled like a send with no room: counted, API
+    // misuse (once per connection), an assert in a debug build, and that
+    // connection ends with MESSAGE_NOT_RECEIVED. Nothing is dropped silently.
 
     for ( int i = 0; i < object->num_connections; i++ )
     {
@@ -645,6 +645,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             continue;
 
         rn_message_count( object, ROCKETNET_COUNTER_MESSAGE_NOT_RECEIVED, waiting );
+        rocketnet_api_misuse_record();
         rocketnet_error( "message update with %u delivered message(s) not received on connection %d: loop receive_messages until NULL before update", waiting, i );
         rocketnet_assert( waiting == 0 && "every delivered message is received before the next update" );
         rn_message_object_kick( object, i, ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED );

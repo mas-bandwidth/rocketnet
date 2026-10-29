@@ -70,6 +70,8 @@ disconnect packet (`sdk/rocketnet_client_protocol.cpp:1202`, read by
 state: `SERVER_DISCONNECTED` reads `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` from
 `rocketnet_client_state`, a `Timer` end reads the timed-out state, and `ClientDisconnect`'s
 `CLIENT_DISCONNECTED` returns the client to `ROCKETNET_CLIENT_STATE_DISCONNECTED`.
+In the model `ServerDisconnect` ends in `st = "SERVER_DISCONNECTED"`, the state the poll reads.
+| `StateReported` | conjoined to every step of `Next` (and to each fair action): the state change callback reports `st` once when it changed, from the value it last reported; `Create` and `Destroy` report nothing (`rn_client_report_state` in `sdk/rocketnet_api.cpp`) |
 | `DisconnectFromError` | disconnect from an error state: back to DISCONNECTED, the reason kept |
 | `Send` | message start/finish, only while CONNECTED (the `queuebeforeconnected` defect also enables it in a handshake state) |
 | `DropSend` | message start outside CONNECTED (`rocketnet_client_start_message` returns NULL and counts the `messages_dropped_not_connected` stat; the message layer's `MESSAGE_SEND_NOT_CONNECTED`, `rn_message_object_start` in `sdk/rocketnet_message_server.cpp`): no per-connection field changes, nothing is held; the ghost `droppedIn` is `{st}` after a drop and `{}` after any other step (RN-2 m1.5) |
@@ -100,12 +102,14 @@ the new session's first sequences (`replay_window`).
 | `RecordIsCurrent` | invariant | the record holds only Init and the current session's writes |
 | `ReconnectObservesNothing` | invariant | no packet of session s opens in session s' # s, and no step reads a field another session wrote |
 | `ReasonKeptUntilNextConnection` | invariant | the reason equals the one the ended connection set until the next connection reaches CONNECTED, where it is NONE (the ghost `lastEnd` is written in the same step as the reason on every end path, so this catches a reason cleared or overwritten by a reset, a connect or a handshake step; no witness breaks it) |
+| `CallbackReportsPublicState` | invariant | the value the callback last reported is the state a poll reads, and every report is a change ending in that state |
 | `ConnectReachesConnectedOrError` | liveness | under weak fairness of the handshake replies and the timers, a handshake stage reaches CONNECTED or an error (or the application disconnects or destroys first) |
 
 ## Historical reversed witnesses (old input)
 
 | cfg | Defect | Expected | Counterexample, last state |
 |---|---|---|---|
+| `MCClientSessionTransportState.cfg` | `Defect = "transportstate"`: the callback reports the transport's state, which reads DISCONNECTED where the public state reads SERVER_DISCONNECTED | `CallbackReportsPublicState`, exit 12 | 450 states generated, 237 distinct (2026-10-29): the server's disconnect ends the connection, `st = "SERVER_DISCONNECTED"` while `reported = "DISCONNECTED"`. The old public client installed the transport's callback, which did exactly this on a server kick |
 | `MCClientSessionUnreset.cfg` | `Defect = "unreset"`, `UnresetField = "replay_window"`: Reset skips the replay window | `ReconnectObservesNothing`, exit 12 | 13 states: create, connect, two handshake steps, a packet of session 1 opens (`replay_window = 1`), the client disconnects (the reset leaves `replay_window = 1`), connect again, two handshake steps, a packet of session 2 opens: `cur = 2`, `st = "SENDING_CONNECTION_RESPONSE"`, `observed = {"replay_window"}`. The new session's first packet is checked against session 1's window: the replay-window false reject. |
 | `MCClientSessionConnectAnywhere.cfg` | `Defect = "connectanywhere"`: connect succeeds in every state | `ConnectOnlyFromDisconnected`, exit 12 | 4 states: create, connect, connect again from the handshake: `cur = 2`, `st = "REQUESTING_COOKIE"`, `connectFrom = {"REQUESTING_COOKIE", "DISCONNECTED"}` |
 | `MCClientSessionQueueBeforeConnected.cfg` | `Defect = "queuebeforeconnected"`: `Send` also runs in a handshake state, a send queued before CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, connect, a send in the first handshake stage: `st = "REQUESTING_COOKIE"`, `queuedIn = {"REQUESTING_COOKIE"}`, the send-side fields written with session 1's tag. In the code that is `rocketnet_client_start_message` after `rocketnet_client_connect` and before CONNECTED, which the message layer now drops (`DropSend`) instead of queueing |
@@ -167,8 +171,9 @@ worker never completes. The main control checks all original reset/isolation
 properties plus the new ownership invariants.
 
 The `tla/RUNS.tsv` rows for `clientsession` are stale for this changed input.
-All ten ClientSession cases in `tla/CASES.tsv` require new exact-input Linux TLC
-shards. Do not use the recovered 2026-10-21 six-case ledger as a substitute:
+All eleven ClientSession cases in `tla/CASES.tsv` require new exact-input Linux TLC
+shards (the eleven were run for the state callback revision on 2026-10-29 and are
+recorded in `tla/RUNS.tsv`). Do not use the recovered 2026-10-21 six-case ledger as a substitute:
 that candidate assumed atomic terminal cleanup and immediate retry. After the
 allocated Linux campaign, merge those shards over the proof validator's current
 full baseline and run the runner's stale/dependency checks on the combined head.

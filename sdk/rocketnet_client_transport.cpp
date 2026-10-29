@@ -47,9 +47,9 @@ std::atomic<unsigned long long> g_client_ack_stats_count{ 0 };
 
 // The one clamp both transports share. A NaN or infinite time makes every
 // timeout comparison false and freezes a transport; a backwards step rewinds
-// its deadlines. Both become the last good time instead, counted and loud in a
-// debug build. Called once per update and once at client create, never per
-// packet.
+// its deadlines. Both become the last good time instead, counted, logged in
+// every build and an assert in a debug build. Called once per update and once
+// at client create, never per packet.
 
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped )
 {
@@ -64,6 +64,8 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
             *clamped = true;
 
         rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it is not finite or goes back from %f; the last good time is kept", time, last_good );
 
         rocketnet_assert( usable );
         return last_good;
@@ -99,6 +101,8 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
 
         rocketnet_api_misuse_record();
 
+        rocketnet_error( "update refused its time %f: it is not finite; the last good time %f is kept", time, last_good );
+
         rocketnet_assert( isfinite( time ) );
         return last_good;
     }
@@ -116,6 +120,8 @@ double rocketnet_update_clock_advance( double last_good, double * raw_time, doub
             *clamped = true;
 
         rocketnet_api_misuse_record();
+
+        rocketnet_error( "update refused its time %f: it goes back from %f; the last good time %f is kept", time, raw, last_good );
 
         rocketnet_assert( time >= raw );
         return last_good;

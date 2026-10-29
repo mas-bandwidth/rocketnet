@@ -336,6 +336,7 @@
     (:feature "API reference comments: platform" :cells (y - -) :evidence "Linux: a document; landed as 2c2fac0")
     (:feature "API reference comments: reliability" :cells (y - -) :evidence "Linux: a document; landed as 90683f2")
     (:feature "USAGE.md: the client and server API, with worked usage" :cells (y - -) :evidence "Linux: a document; b7f92c4, d0a5339")
+    (:feature "The public contract, the TLA+ models and the code agree: the divergences of the 2026-10-29 contract audit fixed" :cells (n y n) :evidence ((macOS "branch rowan/contract-audit: the contract_ cases in tests/test_unit_contract_audit.cpp, each failing at b850e494 but the default-channels case, and the whole Debug ./bin/test and ./bin/functional pass on macOS arm64; the state callback is modelled in tla/ClientSession.tla (StateReported, CallbackReportsPublicState), the control passes and tla/MCClientSessionTransportState.cfg exits 12, recorded in tla/RUNS.tsv")) :note "Linux and Windows wait for the branch's CI run")
     (:feature "The docs job fails on any undocumented public symbol (later)" :cells (n - -) :note "planned after v1.0.0-preview-1")))
   (:id "examples"
    :title "Examples"

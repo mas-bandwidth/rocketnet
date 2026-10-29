@@ -24,7 +24,7 @@
 
 static void default_assert_function( const char * condition, const char * function, const char * file, int line )
 {
-    rocketnet_error( "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
+    rocketnet_error( "assert failed: ( %s ), function %s, file %s, line %d", condition, function, file, line );
 
     fflush( stdout );
 #if defined( _MSC_VER )
@@ -433,6 +433,17 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
     return ROCKETNET_STATUS_OK;
 }
 
+// call with the lifecycle lock held: whether these functions (NULL for both
+// is the system allocator) are the allocator already installed
+
+static bool rn_allocator_installed_locked( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
+{
+    if ( !malloc_function && !free_function )
+        return rocketnet_malloc_function == rocketnet_default_malloc_function && rocketnet_free_function == rocketnet_default_free_function;
+
+    return malloc_function == rocketnet_malloc_function && free_function == rocketnet_free_function;
+}
+
 int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_INVALID_ARGUMENT;
@@ -639,6 +650,7 @@ enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_functio
 bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status )
 {
     int refused = ROCKETNET_STATUS_OK;
+    bool other_allocator = false;
 
     {
         std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
@@ -646,6 +658,8 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         refused = rn_allocator_install_locked( malloc_function, free_function );
         if ( refused == ROCKETNET_STATUS_OK )
             rocketnet_transitioning = true;
+        else if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
+            other_allocator = !rn_allocator_installed_locked( malloc_function, free_function );
     }
 
     if ( refused != ROCKETNET_STATUS_OK )
@@ -653,7 +667,15 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         if ( status )
             *status = refused;
 
-        if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
+        if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED && other_allocator )
+        {
+            // init refuses its allocator: the library runs on another one
+
+            rocketnet_error( "rocketnet_init: rocketnet is already initialized with another allocator" );
+
+            rocketnet_api_misuse_record();
+        }
+        else if ( refused == ROCKETNET_STATUS_ALREADY_INITIALIZED )
             rocketnet_error( "rocketnet_init: rocketnet is already initialized" );
         else if ( refused == ROCKETNET_STATUS_INVALID_ARGUMENT )
         {

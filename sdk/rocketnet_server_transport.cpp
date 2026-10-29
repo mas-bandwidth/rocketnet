@@ -1394,7 +1394,7 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     {
         if ( status )
             *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
-        rocketnet_error( "server config refused: the reassembly cross-field allocation exceeds the operator memory budget" );
+        rocketnet_error( "server config refused: the reassembly memory for max_clients %d and max_fragmented_messages %d exceeds the fixed reassembly limit of %d MiB", requested_clients, requested_slots, ROCKETNET_REASSEMBLY_MEMORY_MIB );
         return false;
     }
 

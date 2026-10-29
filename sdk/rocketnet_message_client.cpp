@@ -75,6 +75,13 @@ static int rn_client_link_end_reason( void * transport, int client_index )
     const struct rocketnet_counters_t * counters = rocketnet_client_transport_counters( (rocketnet_client_transport_t *) transport );
     if ( counters && counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECT_ACCEPTED] )
         return ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED;
+
+    // the AEAD integrity limit (rocketnet_client_integrity_failure) ends the
+    // attempt in plain DISCONNECTED: too much received data that failed authentication
+    // is a protocol violation, so the public state reads PROTOCOL_VIOLATION
+
+    if ( counters && counters->values[ROCKETNET_COUNTER_INTEGRITY_LIMIT_REACHED] )
+        return ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION;
     return ROCKETNET_DISCONNECT_REASON_NONE;
 }
 

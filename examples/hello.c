@@ -171,7 +171,7 @@ int main( void )
         if ( connect_status != ROCKETNET_STATUS_OK )
         {
             printf( "FAIL: client connect: %s\n", rocketnet_status_name( connect_status ) );
-            rn_cli_client_stop_and_destroy( client );
+            rn_cli_client_stop_and_destroy( client, now );
             rn_cli_server_stop_and_destroy( server );
 
             rn_cli_loopback_hub_destroy( hub );
@@ -235,7 +235,7 @@ int main( void )
         if ( frame == 5000 )
         {
             printf( "FAIL: client %d did not finish within 5000 frames\n", (int) client_id );
-            rn_cli_client_stop_and_destroy( client );
+            rn_cli_client_stop_and_destroy( client, now );
             rn_cli_server_stop_and_destroy( server );
 
             rn_cli_loopback_hub_destroy( hub );
@@ -248,7 +248,7 @@ int main( void )
             return 1;
         }
 
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, now );
     }
 
     rn_cli_server_stop_and_destroy( server );

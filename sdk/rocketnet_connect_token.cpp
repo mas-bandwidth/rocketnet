@@ -538,6 +538,9 @@ enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_
     if ( !server_address_ipv4 && !server_address_ipv6 )
     {
         rocketnet_error( "dev connect token refused: both server addresses are NULL" );
+
+        rocketnet_api_misuse_record();                  // at least one address is a required argument
+
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
     }
 

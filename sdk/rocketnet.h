@@ -315,8 +315,9 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_MUTEX_CREATE_FAILED = -20,
 
-    /// Connect or start refused: the platform refused a thread. Retry after
-    /// freeing system resources.
+    /// Connect refused: the platform refused a thread. Retry after freeing
+    /// system resources. Server start reports a transport that cannot start
+    /// its thread as ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED.
 
     ROCKETNET_STATUS_THREAD_CREATE_FAILED = -21,
 
@@ -535,7 +536,10 @@ enum rocketnet_disconnect_reason_t
 
     ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED = -4,
 
-    /// The server disconnected the client, stopped, or was destroyed.
+    /// The server disconnected the client. A server that stops or is
+    /// destroyed ends its clients the same way, but its own slots then read
+    /// NONE (see rocketnet_server_disconnect_reason); the client state reads
+    /// SERVER_DISCONNECTED.
 
     ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED = -5,
 
@@ -573,7 +577,8 @@ enum rocketnet_client_state_t
 
     ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH = -11,
 
-    /// The server sent what the protocol forbids.
+    /// The server sent what the protocol forbids, or the connection reached
+    /// its integrity limit of received data that failed authentication.
 
     ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION = -10,
 
@@ -766,11 +771,13 @@ struct rocketnet_server_stats_t
 
     uint64_t connections_accepted;
 
-    /// Connect attempts refused because every client slot was taken.
+    /// Connection requests refused because every client slot was taken. A
+    /// client that retries counts once per request.
 
     uint64_t connections_denied_full;
 
-    /// Connect attempts dropped by the per-update handshake budget.
+    /// Connection requests dropped by the per-update handshake budget. A
+    /// client that retries counts once per request.
 
     uint64_t handshakes_dropped_over_budget;
 
@@ -1071,21 +1078,30 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 
 /// The stats structs' api_misuses field counts these errors.
 ///
-/// - A required argument is NULL.
+/// - A required argument is NULL. Both server addresses of
+///   rocketnet_create_dev_connect_token count as one required argument.
 /// - A client index or destination id is outside 0 .. max_clients - 1. This
 ///   includes a destination id with ROCKETNET_FLOW_ID_BIT set.
-/// - Create runs before rocketnet_init, or init refuses its allocator.
-/// - Update receives a non-finite time or a time that goes backwards. The last
-///   good time is kept.
-/// - An unreliable start message of at most
-///   ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES stays open at update or
-///   send_packets.
+/// - Create runs before rocketnet_init, or init refuses its allocator: one
+///   function NULL, live allocations, or a library already initialized with
+///   another allocator.
+/// - Update receives a non-finite time or a time that goes backwards, with or
+///   without a connection. The last good time is kept, and the call logs.
+/// - An in-place start message stays open at update or send_packets: an
+///   unreliable message of at most ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES that
+///   start wrote in place for sending. It is aborted there. A start that
+///   took the queue instead stays pending; which path start took is not
+///   visible, so finish or abort every start before update or send_packets.
+/// - A message is still in the receive queue at update. That connection ends
+///   with MESSAGE_NOT_RECEIVED.
 /// - Connect runs from a state other than DISCONNECTED or a connection-ended
 ///   state.
 /// - Server start runs while the server is already running.
 ///
-/// A NULL object, NULL required argument or out-of-range client index makes
-/// the call do nothing and return zero, false, NULL,
+/// A NULL object or NULL required argument asserts first in a debug build,
+/// where the default assert handler logs and traps. In a release build, or
+/// past an assert handler that returns, it and an out-of-range client index
+/// make the call do nothing and return zero, false, NULL,
 /// ROCKETNET_DISCONNECT_REASON_NONE or
 /// ROCKETNET_STATUS_INVALID_ARGUMENT.
 ///
@@ -1213,7 +1229,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 ///
 /// Other config calls check config_bytes first. A zero or too-small size is
 /// refused and logged. A larger size is read only as far as this library
-/// knows. A smaller size uses defaults for fields beyond the caller's struct.
+/// knows. A smaller size uses defaults for fields beyond the caller's struct;
+/// it must end where one of its fields ends, as an older struct does, and a
+/// size that ends inside a field is refused.
 /// The library never accesses bytes past config_bytes. NULL means defaults
 /// where accepted.
 
@@ -1229,9 +1247,12 @@ struct rocketnet_client_config_t
 
     const char * transport;
 
-    /// Called when the handshake state changes. NULL disables the callback. It
-    /// runs on the caller thread during update, disconnect and destroy. Do not
-    /// call client functions from it. Default is NULL.
+    /// Called when rocketnet_client_state changes, once for each change, with
+    /// the value it last reported and the value a poll reads now: every
+    /// public state, the negative ones included. NULL disables the callback.
+    /// It runs on the caller thread at the end of connect, update,
+    /// disconnect, destroy, and a start message whose memory exhaustion ends
+    /// the connection. Do not call client functions from it. Default is NULL.
 
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
 
@@ -1257,13 +1278,14 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_NUM_CHANNELS sets the number of channels. Both ends
     /// must use the same value. Range is 1 .. ROCKETNET_MAX_CHANNELS. Default
-    /// is 32.
+    /// is 32, or ROCKETNET_MAX_CHANNELS when that is smaller.
 
     int num_channels;
 
     /// ROCKETNET_CLIENT_RELIABLE_MESSAGES_IN_FLIGHT sets the reliable-message
     /// window. Both ends must match. It must be a power of two from 64 ..
-    /// 1048576. Default is 1024.
+    /// 1048576, and at least the fragments of one max_message_bytes message,
+    /// one per 1152 bytes (911 at the default). Default is 1024.
 
     int reliable_messages_in_flight;
 
@@ -1284,7 +1306,9 @@ struct rocketnet_client_config_t
     int max_message_bytes;
 
     /// ROCKETNET_CLIENT_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes.
-    /// Range is 12288 .. 268435456. Default is 4194304.
+    /// Range is 12288 .. 268435456, and it must hold one max_message_bytes
+    /// message whole: a third of it holds 1152-byte fragments, so a little
+    /// over three times max_message_bytes. Default is 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1325,24 +1349,28 @@ struct rocketnet_client_config_t
 
     /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS sets the resend delay
     /// before the first RTT sample. Units are milliseconds. Range is 10 ..
-    /// 60000. Default is 2000.
+    /// 60000, and from message_resend_delay_min_ms to
+    /// message_resend_delay_max_ms. Default is 2000.
 
     int message_resend_delay_initial_ms;
 
     /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS sets the minimum resend
     /// delay. Units are milliseconds. Zero means no minimum. Range is 0 ..
-    /// 60000. Default is 0.
+    /// 60000, and no more than message_resend_delay_max_ms. Default is 0.
 
     int message_resend_delay_min_ms;
 
     /// ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS sets the maximum resend
-    /// delay. Units are milliseconds. Range is 10 .. 60000. Default is 2000.
+    /// delay. Units are milliseconds. Range is 10 .. 60000, and at least
+    /// message_resend_delay_initial_ms. Default is 2000.
 
     int message_resend_delay_max_ms;
 
     /// ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS disconnects if a reliable
     /// message remains unacknowledged this long. Units are milliseconds.
-    /// Range is 1000 .. 600000. Default is 10000.
+    /// Range is 1000 .. 600000, and at least four times
+    /// message_resend_delay_initial_ms (8000 at the default). Default is
+    /// 10000.
 
     int reliable_message_timeout_ms;
 
@@ -1447,13 +1475,14 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_NUM_CHANNELS sets the number of channels. Both ends
     /// must use the same value. Range is 1 .. ROCKETNET_MAX_CHANNELS. Default
-    /// is 32.
+    /// is 32, or ROCKETNET_MAX_CHANNELS when that is smaller.
 
     int num_channels;
 
     /// ROCKETNET_SERVER_RELIABLE_MESSAGES_IN_FLIGHT sets the reliable-message
     /// window. Both ends must match. It must be a power of two from 64 ..
-    /// 1048576. Default is 1024.
+    /// 1048576, and at least the fragments of one max_message_bytes message,
+    /// one per 1152 bytes (911 at the default). Default is 1024.
 
     int reliable_messages_in_flight;
 
@@ -1474,7 +1503,10 @@ struct rocketnet_server_config_t
     int max_message_bytes;
 
     /// ROCKETNET_SERVER_SEND_MESSAGE_BUFFER_BYTES sets queued message bytes
-    /// per client. Range is 12288 .. 268435456. Default is 4194304.
+    /// per client. Range is 12288 .. 268435456, and it must hold one
+    /// max_message_bytes message whole: a third of it holds 1152-byte
+    /// fragments, so a little over three times max_message_bytes. Default is
+    /// 4194304.
 
     int send_message_buffer_bytes;
 
@@ -1516,24 +1548,28 @@ struct rocketnet_server_config_t
 
     /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS sets the resend delay
     /// before the first RTT sample. Units are milliseconds. Range is 10 ..
-    /// 60000. Default is 2000.
+    /// 60000, and from message_resend_delay_min_ms to
+    /// message_resend_delay_max_ms. Default is 2000.
 
     int message_resend_delay_initial_ms;
 
     /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS sets the minimum resend
     /// delay. Units are milliseconds. Zero means no minimum. Range is 0 ..
-    /// 60000. Default is 0.
+    /// 60000, and no more than message_resend_delay_max_ms. Default is 0.
 
     int message_resend_delay_min_ms;
 
     /// ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS sets the maximum resend
-    /// delay. Units are milliseconds. Range is 10 .. 60000. Default is 2000.
+    /// delay. Units are milliseconds. Range is 10 .. 60000, and at least
+    /// message_resend_delay_initial_ms. Default is 2000.
 
     int message_resend_delay_max_ms;
 
     /// ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS disconnects if a reliable
     /// message remains unacknowledged this long. Units are milliseconds.
-    /// Range is 1000 .. 600000. Default is 10000.
+    /// Range is 1000 .. 600000, and at least four times
+    /// message_resend_delay_initial_ms (8000 at the default). Default is
+    /// 10000.
 
     int reliable_message_timeout_ms;
 
@@ -1543,7 +1579,9 @@ struct rocketnet_server_config_t
     /// closes its local slot immediately; a value below the 10-copy burst
     /// spreads that burst across updates. If every deferred-burst slot is
     /// occupied, the server keeps the older work and drops the new redundant
-    /// notification copies rather than exceeding this allowance.
+    /// notification copies rather than exceeding this allowance. Stop is not
+    /// an update: rocketnet_server_stop seals every client's burst at once,
+    /// whatever this allowance.
 
     int disconnect_packets_per_update;
 
@@ -1648,7 +1686,7 @@ struct rocketnet_receipt_t
 /// @param config The config to fill. Its config_bytes must already be set.
 /// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
 /// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
-/// smaller than the config_bytes field itself.
+/// smaller than the config_bytes field itself or ends inside a field.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketnet_client_config_t * config );
 
@@ -1677,14 +1715,15 @@ static inline enum rocketnet_status_t rocketnet_client_default_config( struct ro
 /// @param config The config to fill. Its config_bytes must already be set.
 /// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
 /// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
-/// smaller than the config_bytes field itself.
+/// smaller than the config_bytes field itself or ends inside a field.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_client_light_config_internal( struct rocketnet_client_config_t * config );
 
 /// Initializes every config field to its default, then sets the light-client
-/// geometry: messages fit in one packet, one per 100 ms, 10 Hz, with a 256-kbps
-/// send budget. Use it in place of rocketnet_client_default_config. It changes
-/// no default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+/// geometry: messages of at most 1415 bytes, each sent in at most two parts, one
+/// per 100 ms, 10 Hz, with a 256-kbps send budget. Use it in place of
+/// rocketnet_client_default_config. It changes no default and adds no field.
+/// Returns ROCKETNET_STATUS_OK on success.
 ///
 /// Needs no client and no library state. Thread: any thread, one config at a
 /// time.
@@ -1932,8 +1971,8 @@ ROCKETNET_EXPORT void rocketnet_client_destroy( struct rocketnet_client_t * clie
 /// misuse: it asserts in a debug build, counts MESSAGE_NOT_RECEIVED, and the
 /// connection ends in ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED.
 ///
-/// Callable in every client state. Before the first connect it does
-/// nothing; after disconnect it steps the old attempt's shutdown. Thread: not
+/// Callable in every client state. Before the first connect it only checks
+/// the time; after disconnect it steps the old attempt's shutdown. Thread: not
 /// thread-safe; the caller owns the client one thread at a time.
 ///
 /// @param client The client. NULL counts as API misuse and does nothing.
@@ -2014,15 +2053,17 @@ ROCKETNET_EXPORT const char * rocketnet_client_state_name( enum rocketnet_client
 
 ROCKETNET_EXPORT int rocketnet_client_index( const struct rocketnet_client_t * client );
 
-/// Returns the selected transport name or NULL while DISCONNECTED.
+/// Returns the selected transport name, or NULL when no transport is
+/// selected: while DISCONNECTED, and in a negative state that holds no
+/// connection, such as a token refused at connect.
 /// The string remains valid for the process lifetime.
 ///
 /// Callable in every client state. Thread: not thread-safe; the caller owns
 /// the client one thread at a time.
 ///
 /// @param client The client.
-/// @return The transport name, or NULL while DISCONNECTED and for a NULL
-/// client, which counts as API misuse.
+/// @return The transport name, or NULL when no transport is selected and for
+/// a NULL client, which counts as API misuse.
 
 ROCKETNET_EXPORT const char * rocketnet_client_transport_name( const struct rocketnet_client_t * client );
 
@@ -2209,7 +2250,7 @@ ROCKETNET_EXPORT void rocketnet_client_stats( const struct rocketnet_client_t * 
 /// @param config The config to fill. Its config_bytes must already be set.
 /// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
 /// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
-/// smaller than the config_bytes field itself.
+/// smaller than the config_bytes field itself or ends inside a field.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_default_config_internal( struct rocketnet_server_config_t * config );
 
@@ -2238,15 +2279,16 @@ static inline enum rocketnet_status_t rocketnet_server_default_config( struct ro
 /// @param config The config to fill. Its config_bytes must already be set.
 /// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
 /// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
-/// smaller than the config_bytes field itself.
+/// smaller than the config_bytes field itself or ends inside a field.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_light_config_internal( struct rocketnet_server_config_t * config );
 
 /// Initializes every config field to its default, then sets the light-client
-/// geometry: messages fit in one packet, one per 100 ms to each client, 10 Hz, with a 256-kbps
-/// send budget per client. Use it in place of rocketnet_server_default_config.
-/// The caller still sets its protocol id and backend key. It changes no
-/// default and adds no field. Returns ROCKETNET_STATUS_OK on success.
+/// geometry: messages of at most 1415 bytes, each sent in at most two parts, one
+/// per 100 ms to each client, 10 Hz, with a 256-kbps send budget per client.
+/// Use it in place of rocketnet_server_default_config. The caller still sets
+/// its protocol id and backend key. It changes no default and adds no field.
+/// Returns ROCKETNET_STATUS_OK on success.
 ///
 /// Needs no server and no library state. Thread: any thread, one config at a
 /// time.
@@ -2586,7 +2628,9 @@ ROCKETNET_EXPORT void rocketnet_server_disconnect_client( struct rocketnet_serve
 ROCKETNET_EXPORT void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server );
 
 /// Returns why the slot's last connection ended.
-/// The reason remains until the slot's next connection.
+/// The reason remains until the slot's next connection or the server stops;
+/// a server stopped, or started again, reads ROCKETNET_DISCONNECT_REASON_NONE
+/// for every slot.
 ///
 /// Callable running or stopped; ROCKETNET_DISCONNECT_REASON_NONE while
 /// stopped. Thread: not thread-safe; the caller owns the
