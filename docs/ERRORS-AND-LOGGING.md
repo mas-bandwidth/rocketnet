@@ -590,7 +590,12 @@ disconnects under load:
      `rocketnet_server_disconnect_client(server, client_index)`,
      `rocketnet_server_client_connected(server, client_index)` immediately
      reads `false` and `rocketnet_server_disconnect_reason(server, client_index)`
-     reports the terminal `rocketnet_disconnect_reason_t`. At the start of the
+     reports the terminal `rocketnet_disconnect_reason_t`
+     (`ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED` for a kick,
+     `ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED` (`-8`) for the client's
+     own disconnect, `ROCKETNET_DISCONNECT_REASON_TIMED_OUT` (`-7`) for a
+     client that went silent past its connection timeout, or a message-layer
+     reason). At the start of the
      next `rocketnet_server_update`, before that slot index can be assigned to
      any incoming connection (`tla/RNSlots.tla` `ResetFree`,
      `tla/RNConnectionMemory.tla` `Reuse`), the server lazily resets the

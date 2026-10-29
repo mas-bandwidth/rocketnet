@@ -1070,7 +1070,8 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     for ( uint64_t bytes : { rocketnet_encryption_map_allocation_bytes( clients * ROCKETNET_ENCRYPTION_MAP_RATIO ),
                              rocketnet_token_table_allocation_bytes( clients * ROCKETNET_USED_TOKEN_HISTORY_RATIO ),
                              rocketnet_client_slots_allocation_bytes( clients ), rocketnet_server_acks_allocation_bytes( clients ),
-                             rocketnet_memory_allocations( { (uint64_t) clients * sizeof( uint64_t ), (uint64_t) clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) } ),
+                             rocketnet_memory_allocations( { (uint64_t) clients * sizeof( uint64_t ), (uint64_t) clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ),
+                                                             (uint64_t) clients * sizeof( int ) } ),
         // The plan counts what the transport allocates, once: the per-client wire totals are a separate allocation.
                              rocketnet_memory_allocations( { (uint64_t) clients * sizeof( rocketnet_server_wire_totals_t ) } ) } )
     {
@@ -2048,14 +2049,18 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
 
     // the connection ids (docs/CHANNELS.md P9a, P9b): one per slot, 0 while
-    // free, and one per acked batch entry, sized as the acked batch is
+    // free, and one per acked batch entry, sized as the acked batch is; and
+    // one end reason per slot, NONE until a connection in it ends
 
     protocol->connection_ids = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( uint64_t ) );
     protocol->acked_connection_ids = (uint64_t *) rocketnet_malloc( context, (size_t) max_clients * ROCKETNET_SENT_PACKET_BUFFER_SIZE * sizeof( uint64_t ) );
+    protocol->end_reasons = (int *) rocketnet_malloc( context, (size_t) max_clients * sizeof( int ) );
     server_transport->client_wire_totals = (struct rocketnet_server_wire_totals_t *) rocketnet_malloc( context, (size_t) max_clients * sizeof( struct rocketnet_server_wire_totals_t ) );
     server_transport->client_wire_totals_capacity = max_clients;
     if ( protocol->connection_ids )
         memset( protocol->connection_ids, 0, (size_t) max_clients * sizeof( uint64_t ) );
+    if ( protocol->end_reasons )
+        memset( protocol->end_reasons, 0, (size_t) max_clients * sizeof( int ) );     // ROCKETNET_DISCONNECT_REASON_NONE
     if ( server_transport->client_wire_totals )
         memset( server_transport->client_wire_totals, 0, (size_t) max_clients * sizeof( struct rocketnet_server_wire_totals_t ) );
     // one reassembly set per connection slot, created here at create and
@@ -2088,7 +2093,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     if ( server_transport->io.operations->replay_mark )
         server_transport->replay_marks = rocketnet_server_replay_marks_create( context, max_clients );
 
-    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !server_transport->client_wire_totals || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
+    if ( !protocol->encryption_map || !protocol->used_token_history || !protocol->client_slots || !protocol->acks || !protocol->connection_ids || !protocol->acked_connection_ids || !protocol->end_reasons || !server_transport->client_wire_totals || !protocol->reassembly || !server_transport->send_arena || ( server_transport->io.operations->replay_mark && !server_transport->replay_marks ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
@@ -2155,6 +2160,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
         rocketnet_free( server_transport->context, server_transport->protocol.connection_ids );
     if ( server_transport->protocol.acked_connection_ids )
         rocketnet_free( server_transport->context, server_transport->protocol.acked_connection_ids );
+    if ( server_transport->protocol.end_reasons )
+        rocketnet_free( server_transport->context, server_transport->protocol.end_reasons );
     if ( server_transport->client_wire_totals )
         rocketnet_free( server_transport->context, server_transport->client_wire_totals );
     if ( server_transport->protocol.reassembly )
@@ -3531,7 +3538,7 @@ static void rocketnet_server_transport_close_client_locally( struct rocketnet_se
     rocketnet_debug( "server disconnected client %d", client_index );
     protocol->counters->values[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
     protocol->counters->values[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
-    rocketnet_server_connection_reset( protocol, client_index );
+    rocketnet_server_connection_reset( protocol, client_index, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 }
 
 static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_server_transport_t * server_transport, int client_index,
@@ -3788,6 +3795,14 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
         return 0;
     rocketnet_assert( server_transport );
     return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
+}
+
+int rocketnet_server_transport_client_end_reason( struct rocketnet_server_transport_t * server_transport, int client_index )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return ROCKETNET_DISCONNECT_REASON_NONE;
+    rocketnet_assert( server_transport );
+    return rocketnet_server_protocol_end_reason( &server_transport->protocol, client_index );
 }
 
 #if ROCKETNET_DEV

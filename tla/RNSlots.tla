@@ -3,6 +3,17 @@
 \* CHANNELS.md 10.2 and 15.1 supply Observe/Admit; the exhaustion and explicit
 \* release rules extend that draft. Views require explicit Release before
 \* the next object update; an early update is rejected.
+\*
+\* The disconnect reason (rocketnet_server_disconnect_reason): the transport
+\* records why each slot's connection ended (ended, the protocol's
+\* end_reasons: TIMED_OUT, CLIENT_DISCONNECTED, SERVER_DISCONNECTED, or NONE
+\* for the integrity limit) and clears it when the slot is next assigned. A
+\* message-layer end (Kick, PublicDisconnect) records its own reason in the
+\* slot. Observe reads the transport's reason for a slot it held that it
+\* finds free, NONE for a slot it binds to a new connection, and keeps every
+\* other slot's reason. Broken "dropreadsnone" drops the slot with NONE (the
+\* code before the transport carried its reason); "observeclearsreason"
+\* clears every reason at each Observe, the rule this model held before.
 EXTENDS Naturals, FiniteSets, Sequences
 
 CONSTANTS SlotCount, MaxConn, MaxMessages, TicketCount, RegionCapacity,
@@ -16,6 +27,9 @@ Entry == [kind : {"payload", "ack"}, packet : Packets]
 Audit == [slot : Slots, from : 1..MaxConn, to : 0..MaxConn,
           kind : {"payload", "ack"}, msg : 1..MaxMessages]
 Record(p) == [conn |-> p.conn, msg |-> p.msg]
+TransportEnds == {"TIMED_OUT", "CLIENT_DISCONNECTED", "NONE"}
+Reasons == {"NONE", "MESSAGE_MEMORY_EXHAUSTED", "SERVER_DISCONNECTED",
+            "TIMED_OUT", "CLIENT_DISCONNECTED"}
 AuditOf(e, to) == [slot |-> e.packet.slot, from |-> e.packet.conn,
                    to |-> to, kind |-> e.kind, msg |-> e.packet.msg]
 
@@ -32,6 +46,7 @@ Init ==
              bound |-> [s \in Slots |-> 0],
              state |-> [s \in Slots |-> "Free"],
              reason |-> [s \in Slots |-> "NONE"],
+             ended |-> [s \in Slots |-> "NONE"],
              region |-> [s \in Slots |-> {}], held |-> [s \in Slots |-> {}],
              received |-> [s \in Slots |-> {}],
              phase |-> "application", batch |-> {}, deferred |-> {}, todo |-> {},
@@ -42,17 +57,21 @@ Init ==
              pending |-> 0, pendingConn |-> 0]
 
 \* Transport connection ids never repeat in the bounded lifetime. Several
-\* connect/disconnect steps may precede a single Observe.
+\* connect/disconnect steps may precede a single Observe. A new connection
+\* has not ended: its slot's transport reason is NONE.
 Connect(s) ==
     /\ ~Stable /\ st.phase = "transport" /\ st.owner[s] = 0
     /\ st.state[s] \notin {"Exhausted", "Disconnected"}
     /\ st.nextConn <= MaxConn
-    /\ st' = [st EXCEPT !.owner[s] = st.nextConn, !.nextConn = @ + 1]
+    /\ st' = [st EXCEPT !.owner[s] = st.nextConn, !.nextConn = @ + 1,
+                        !.ended[s] = "NONE"]
     /\ UNCHANGED <<wire, sent, pulse>>
 
-Disconnect(s) ==
+\* The transport ends the slot's connection on its own (the timeout sweep,
+\* the client's disconnect packet, the integrity limit) and records why.
+Disconnect(s, why) ==
     /\ ~Stable /\ st.phase = "transport" /\ st.owner[s] # 0
-    /\ st' = [st EXCEPT !.owner[s] = 0]
+    /\ st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = why]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 \* The live workload submits the next record only after earlier views are
@@ -115,6 +134,15 @@ CancelsPending(owner) ==
     /\ st.pending # 0 /\ owner[st.pending] # st.bound[st.pending]
     /\ "pendingacrossreset" \notin Broken
 
+\* The reason Observe leaves in a slot: the transport's for a slot it held
+\* and finds free, NONE for a slot bound to a new connection, else kept.
+ObservedReason(s) ==
+    IF SeenChange(s)
+    THEN IF st.owner[s] = 0
+         THEN IF "dropreadsnone" \in Broken THEN "NONE" ELSE st.ended[s]
+         ELSE "NONE"
+    ELSE IF "observeclearsreason" \in Broken THEN "NONE" ELSE st.reason[s]
+
 \* Observe the final owner, reset on identity change, then admit each entry
 \* against this binding. The transport cannot churn during the apply phase.
 \* The reset is lazy (RN_SLOTS_DROP releases the slot in O(1)): a slot going
@@ -129,7 +157,7 @@ Observe ==
     /\ \E ready \in (IF Stable THEN {st.deferred} ELSE SUBSET st.deferred) :
        st' = [st EXCEPT !.bound = st.owner,
           !.state = [s \in Slots |-> IF st.owner[s] = 0 THEN "Free" ELSE "Connected"],
-          !.reason = [s \in Slots |-> "NONE"],
+          !.reason = [s \in Slots |-> ObservedReason(s)],
           !.badLifetime = @ \/ (\E s \in Slots : st.held[s] # {}),
           !.received = [s \in Slots |-> IF Carves(s) THEN {} ELSE st.received[s]],
           !.region = [s \in Slots |-> IF Carves(s) THEN {} ELSE st.region[s]],
@@ -171,11 +199,13 @@ Admit(e) ==
 
 \* An exhaustion cannot return to the caller as an ignorable error. Next
 \* gives Kick exclusive priority, including over the other slot's work.
-\* Kick cancels a start pending on its slot (rn_message_object_kick).
+\* Kick cancels a start pending on its slot (rn_message_object_kick); the
+\* transport's disconnect through the link records SERVER_DISCONNECTED there.
 Kick(s) ==
     /\ st.state[s] = "Exhausted"
     /\ st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
           !.bound[s] = 0, !.reason[s] = "MESSAGE_MEMORY_EXHAUSTED",
+          !.ended[s] = "SERVER_DISCONNECTED",
           !.pending = IF @ = s THEN 0 ELSE @,
           !.pendingConn = IF st.pending = s THEN 0 ELSE @]
     /\ UNCHANGED <<wire, sent, pulse>>
@@ -184,20 +214,23 @@ Kick(s) ==
 \* and rocketnet_server_disconnect_all_clients, sdk/rocketnet_api.cpp). A slot
 \* the message layer holds Connected goes through Kick's path
 \* (rn_message_object_kick, sdk/rocketnet_message_server.cpp): the message
-\* layer cancels a start pending on the slot, marks it ended with reason NONE
-\* and the transport's disconnect runs through the link; ResetFree resets it at
-\* the next update. A slot only the transport holds is disconnected at the
-\* transport. Broken "disconnectbypasseskick" ends the slot at the transport
-\* only, leaving the message layer Connected until the next Observe.
+\* layer cancels a start pending on the slot, marks it ended with reason
+\* SERVER_DISCONNECTED and the transport's disconnect runs through the link
+\* (which records SERVER_DISCONNECTED as the transport's reason); ResetFree
+\* resets it at the next update. A slot only the transport holds is
+\* disconnected at the transport, which records the same reason. Broken
+\* "disconnectbypasseskick" ends the slot at the transport only, leaving the
+\* message layer Connected until the next Observe.
 PublicDisconnect(s) ==
     /\ ~Stable /\ st.phase = "application"
     /\ st.owner[s] # 0 \/ st.state[s] = "Connected"
     /\ IF st.state[s] = "Connected" /\ "disconnectbypasseskick" \notin Broken
           THEN st' = [st EXCEPT !.state[s] = "Disconnected", !.owner[s] = 0,
-                      !.bound[s] = 0, !.reason[s] = "NONE",
+                      !.bound[s] = 0, !.reason[s] = "SERVER_DISCONNECTED",
+                      !.ended[s] = "SERVER_DISCONNECTED",
                       !.pending = IF @ = s THEN 0 ELSE @,
                       !.pendingConn = IF st.pending = s THEN 0 ELSE @]
-          ELSE st' = [st EXCEPT !.owner[s] = 0]
+          ELSE st' = [st EXCEPT !.owner[s] = 0, !.ended[s] = "SERVER_DISCONNECTED"]
     /\ UNCHANGED <<wire, sent, pulse>>
 
 CarryOn(s) ==
@@ -271,7 +304,7 @@ Exhausted == {s \in Slots : st.state[s] = "Exhausted"}
 Next == IF st.error # "NONE" THEN FALSE
         ELSE IF Exhausted # {}
         THEN \E s \in Exhausted : Kick(s) \/ CarryOn(s)
-        ELSE \/ \E s \in Slots : Connect(s) \/ Disconnect(s) \/ ResetFree(s)
+        ELSE \/ \E s \in Slots : Connect(s) \/ (\E why \in TransportEnds : Disconnect(s, why)) \/ ResetFree(s)
                     \/ PublicDisconnect(s) \/ StartPending(s) \/ FinishPending(s)
              \/ \E s \in Slots, m \in 1..MaxMessages : Request(s, m)
              \/ \E p \in Packets : Send(p) \/ TransportOpen(p)
@@ -300,7 +333,8 @@ TypeOK ==
     /\ st.owner \in [Slots -> 0..MaxConn] /\ st.bound \in [Slots -> 0..MaxConn]
     /\ st.nextConn \in 1..MaxConn+1
     /\ st.state \in [Slots -> {"Free", "Connected", "Exhausted", "Disconnected"}]
-    /\ st.reason \in [Slots -> {"NONE", "MESSAGE_MEMORY_EXHAUSTED"}]
+    /\ st.reason \in [Slots -> Reasons]
+    /\ st.ended \in [Slots -> Reasons]
     /\ st.region \in [Slots -> SUBSET Records] /\ st.held \in [Slots -> SUBSET Records]
     /\ st.received \in [Slots -> SUBSET Records]
     /\ st.phase \in {"application", "transport", "apply"}
@@ -345,4 +379,20 @@ UpdateRequiresReleasedViews == ~st.badLifetime
 NoPendingAcrossReset ==
     st.pending # 0 => st.pendingConn # 0 /\ st.bound[st.pending] = st.pendingConn
 EveryReliableDelivered == \A r \in Records : (r \in st.requested) ~> (r \in st.delivered)
+\* A connection the message layer holds has not ended: its reason is NONE.
+ConnectedReadsNone == \A s \in Slots : st.state[s] = "Connected" => st.reason[s] = "NONE"
+\* A slot Observe finds dropped reads the reason the transport's ending path
+\* recorded (rocketnet_server_disconnect_reason after a timeout, the client's
+\* disconnect, or a disconnect at the transport alone).
+\* MCRNSlotsBrokenDropReadsNone expects TLC to violate it.
+DropReadsTransportEnd ==
+    [][st.phase = "transport" /\ st'.phase = "apply" =>
+         \A s \in Slots : st.bound[s] # 0 /\ st.owner[s] = 0 => st'.reason[s] = st.ended[s]]_vars
+\* A slot's reason changes only when its connection ends (Kick,
+\* PublicDisconnect) or when Observe changes its binding: it is kept until
+\* the slot's next connection. MCRNSlotsBrokenObserveClearsReason expects TLC
+\* to violate it.
+ReasonKeptUntilNextConnection ==
+    [][\A s \in Slots : st'.reason[s] # st.reason[s] =>
+         st'.bound[s] # st.bound[s] \/ st'.state[s] = "Disconnected"]_vars
 =============================================================================

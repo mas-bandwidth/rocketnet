@@ -175,7 +175,7 @@ enum in `sdk/rocketnet.h` is the size of `int`. A static assert in
 A zero-filled receipt reads NONE. The library writes ACKED or LOSS.
 
 `rocketnet_disconnect_reason_t` keeps its values. NONE is 0 and each reason
-is negative, -1 to -6. `rocketnet_disconnect_reason_name` returns a name for
+is negative, -1 to -8. `rocketnet_disconnect_reason_name` returns a name for
 every value in the enum. It returns `"UNKNOWN"` for any other value. The same rule
 holds for `rocketnet_status_name`, `rocketnet_log_level_name` and
 `rocketnet_client_state_name`.

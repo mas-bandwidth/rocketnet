@@ -121,10 +121,12 @@ struct rn_message_link_t
     // ROCKETNET_SERVER_TRANSPORT_*
     int ( *state )( void * transport );
 
-    // the reason the client's transport ended its connection with, a
-    // ROCKETNET_DISCONNECT_REASON_*, read once the transport is terminal.
-    // NULL (the server's link, the unit suite's): the transport names none.
-    int ( *end_reason )( void * transport );
+    // the reason the transport ended a slot's connection with, a
+    // ROCKETNET_DISCONNECT_REASON_*: the client's link reads it once its
+    // transport is terminal (client_index 0), the server's when Observe finds
+    // a slot it held free (RN_SLOTS_DROP). NULL (the unit suite's fakes): the
+    // transport names none.
+    int ( *end_reason )( void * transport, int client_index );
 
     // NULL: the object does not own the transport
     void ( *stop )( void * transport );

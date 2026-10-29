@@ -191,6 +191,8 @@ int main( void )
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED ), "MESSAGE_MEMORY_EXHAUSTED" ) == 0 );
     CHECK( strcmp( rocketnet_client_state_name( ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
     CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED ), "MESSAGE_NOT_RECEIVED" ) == 0 );
+    CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
+    CHECK( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
 
     CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_NONE ) != NULL );
     CHECK( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED ) != NULL );

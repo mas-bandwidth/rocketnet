@@ -353,6 +353,7 @@ static void test_disconnect_then_destroy_connected_client_sends_disconnect()
     rn_test_client_wait_disconnected( client_explicit );
     rocketnet_server_update( server_explicit, time_explicit );
     check( !rocketnet_server_client_connected( server_explicit, slot_explicit ) );
+    check( rocketnet_server_disconnect_reason( server_explicit, slot_explicit ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
 
     const uint64_t explicit_rx_delta = rn_server_stats_of( server_explicit ).packets_received - explicit_rx_before;
     const uint64_t explicit_disc_rx_delta = sc_explicit[ROCKETNET_COUNTER_DISCONNECT_RECEIVED] - explicit_disc_rx_before;
@@ -388,7 +389,7 @@ static void test_disconnect_then_destroy_connected_client_sends_disconnect()
     rocketnet_server_update( server, time );
     check( !rocketnet_server_client_connected( server, slot ) );
     check( rocketnet_server_num_connected_clients( server ) == 0 );
-    check( rocketnet_server_disconnect_reason( server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_server_disconnect_reason( server, slot ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
     check( sc[ROCKETNET_COUNTER_CLIENT_TIMED_OUT] == timeout_before );
     check( sc[ROCKETNET_COUNTER_DISCONNECT_DID_NOT_OPEN] == disc_open_fail_before );
 

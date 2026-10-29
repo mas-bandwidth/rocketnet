@@ -1346,7 +1346,7 @@ static void test_connection_reset_server_slot_reuse_is_clean()
     memcpy( fresh_slots, f.server.reassembly->slots + a * f.server.reassembly->num_slots, sizeof( fresh_slots ) );
     memset( f.server.reassembly->slots + a * f.server.reassembly->num_slots, 0xA5, sizeof( fresh_slots ) );
     f.server.reassembly->newest_completed[a] = 77;
-    rocketnet_server_connection_reset( &f.server, a );
+    rocketnet_server_connection_reset( &f.server, a, ROCKETNET_DISCONNECT_REASON_NONE );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( f.connection_ids[a] == 0 );
     check( rocketnet_ack_endpoint_state_equal( &f.server.acks->endpoints[a], &fresh_ack ) );
@@ -1414,7 +1414,7 @@ static void test_connection_reset_stale_mapping_owner_preserves_reuse()
     memcpy( replacement->session_nonce, expected_nonce, sizeof( expected_nonce ) );
     memcpy( replacement->user_data, expected_user_data, sizeof( expected_user_data ) );
 
-    rocketnet_server_connection_reset( &f.server, slot );
+    rocketnet_server_connection_reset( &f.server, slot, ROCKETNET_DISCONNECT_REASON_NONE );
 
     check( !rocketnet_client_slots_connected( f.server.client_slots, slot ) );
     check( rocketnet_encryption_map_num_mappings( f.server.encryption_map ) == 1 );
@@ -1496,7 +1496,7 @@ static void test_connection_reset_server_reset_touches_only_its_slot()
     f.server.reassembly->newest_completed[b] = 44;
 
     const uint64_t b_id = f.connection_ids[b];
-    rocketnet_server_connection_reset( &f.server, a );
+    rocketnet_server_connection_reset( &f.server, a, ROCKETNET_DISCONNECT_REASON_NONE );
     check( !rocketnet_client_slots_connected( f.server.client_slots, a ) );
     check( rocketnet_client_slots_connected( f.server.client_slots, b ) );
     check( f.server.acks->endpoints[b].highest_sequence == 22 );
@@ -1894,13 +1894,14 @@ static void reset_loopback_explicit_server_disconnect_reason_scenario()
     check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
     check( rocketnet_message_server_disconnect_reason( f.server, 1 - slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
-    // The public explicit-disconnect mechanism has no error argument; NONE is
-    // its known reason. It still takes the real protocol reset path.
+    // A disconnect at the transport alone takes the real protocol reset path
+    // with SERVER_DISCONNECTED, which the next update's Observe reads for the
+    // slot it finds dropped (tla/RNSlots.tla Observe).
 
     rocketnet_server_transport_disconnect_client( rocketnet_message_server_transport( f.server ), slot );
     f.now += 0.01;
     check( rocketnet_message_server_update( f.server, f.now ) == ROCKETNET_UPDATE_OK );
-    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
+    check( rocketnet_message_server_disconnect_reason( f.server, slot ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
     check( rocketnet_message_server_disconnect_reason( f.server, 1 - slot ) == ROCKETNET_DISCONNECT_REASON_NONE );
 
     rn_test_message_client_stop_and_destroy( f.clients[0] );

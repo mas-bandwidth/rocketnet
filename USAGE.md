@@ -982,7 +982,11 @@ readable from connect until the slot is released; release wipes it, and a slot
 without a connected client reads zeros and returns false.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
-`rocketnet_disconnect_reason_name`.
+`rocketnet_disconnect_reason_name`: `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`
+when the server ended it, `ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED` when
+the client's disconnect packet arrived, `ROCKETNET_DISCONNECT_REASON_TIMED_OUT`
+when no packet arrived within the connection timeout, and the message-layer
+reasons for the ends a client shares with its own state.
 A client whose server disconnected it, stopped, or was destroyed reads
 `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` once its update accepts the
 server's disconnect packet; a reliable timeout, a protocol violation, a config

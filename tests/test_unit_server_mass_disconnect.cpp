@@ -528,7 +528,7 @@ static void test_server_disconnect_all_1000_real_time()
     for ( int i = 0; i < MASS_DISCONNECT_CLIENTS; i++ )
     {
         check( !rocketnet_server_client_connected( server, i ) );
-        check( rocketnet_server_disconnect_reason( server, i ) == ROCKETNET_DISCONNECT_REASON_NONE );
+        check( rocketnet_server_disconnect_reason( server, i ) == ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
     }
 
     // the bursts leave over the following updates, a bounded number of seals in each

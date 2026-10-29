@@ -718,7 +718,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         // the server's disconnect) is recorded before the reset, which keeps it
 
         if ( object->link.end_reason )
-            object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport );
+            object->connections[0].disconnect_reason = object->link.end_reason( object->link.transport, 0 );
 
         rn_message_connection_cancel_at_reset( object, 0 );         // RNSlots ResetCancel
         rocketnet_client_connection_reset( object );
@@ -740,10 +740,16 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
             rn_message_connection_cancel_at_reset( object, i );     // RNSlots ResetCancel
 
             // RNSlots Observe: a slot going free is released in O(1); the
-            // region is carved when the slot is bound again (the lazy reset)
+            // region is carved when the slot is bound again (the lazy reset).
+            // The transport ended its connection: the reason is the one the
+            // transport's ending path named (TIMED_OUT, CLIENT_DISCONNECTED,
+            // SERVER_DISCONNECTED), kept until the slot's next connection.
+            // A kick never reaches here: its slot was observed free at reset.
 
             if ( action == RN_SLOTS_DROP )
             {
+                if ( object->link.end_reason )
+                    connection->disconnect_reason = object->link.end_reason( object->link.transport, i );
                 rn_message_connection_release( object, i );
                 continue;
             }
@@ -1601,6 +1607,7 @@ void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_s
     link->connection = RN_LINK_FORWARD( rocketnet_server_transport_client_connection_id )::call;
     link->disconnect = RN_LINK_FORWARD( rocketnet_server_transport_disconnect_client )::call;
     link->state = RN_LINK_FORWARD( rocketnet_server_transport_state )::call;
+    link->end_reason = RN_LINK_FORWARD( rocketnet_server_transport_client_end_reason )::call;
     link->stop = RN_LINK_FORWARD( rocketnet_server_transport_stop )::call;
     link->stopped = RN_LINK_FORWARD( rocketnet_server_transport_stopped )::call_const;
     link->destroy = RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call;

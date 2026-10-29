@@ -69,7 +69,7 @@ objects/API cards.
 
 | Model action | Implementation responsibility |
 |---|---|
-| `Connect`, `Disconnect` | Transport connection changes during `rocketnet_server_transport_update` |
+| `Connect`, `Disconnect` | Transport connection changes during `rocketnet_server_transport_update`; `Connect` clears the slot's transport end reason (`rocketnet_server_protocol_t.end_reasons`) and `Disconnect(s, why)` records it in `rocketnet_server_connection_reset` (TIMED_OUT from the idle sweep, CLIENT_DISCONNECTED from the client's disconnect packet, NONE from the integrity limit) |
 | `Request` | Message submission to `rn_endpoint_send` |
 | `Send` | `rn_endpoint_write_packet` and transport packet submission; retain packet-to-record mapping |
 | `TransportOpen` | Transport payload batch tagged with the connection at receive time |
@@ -77,11 +77,41 @@ objects/API cards.
 | `BeginUpdate` | Entry check in `rocketnet_server_update`, before the transport mutates prior views |
 | `Observe` | `rn_slots_observe`, followed by `rn_endpoint_reset` when the slot is bound to a new connection (`RN_SLOTS_RESET`); a slot going free (`RN_SLOTS_DROP`) is released in O(1) by `rn_message_connection_release`, its region left unreachable until that reset (the lazy reset) |
 | `Admit` | `rn_slots_admit` at apply time, then `rn_endpoint_on_acked` or `rn_endpoint_on_payload` |
-| `Kick` | Object error handling calls `rocketnet_server_transport_disconnect_client` with the exhaustion reason |
+| `Kick` | Object error handling calls `rocketnet_server_transport_disconnect_client` with the exhaustion reason; the transport records SERVER_DISCONNECTED, which no later `Observe` reads (the kicked slot is observed free at reset) |
 | `ResetFree` | `rn_message_connection_release`: the kicked slot freed in O(1), its views released; its region is carved by the `Observe` that binds the slot again |
 | `Release` | Object message-release operation returns the view's region charge |
 | `RejectUnreleasedUpdate` | Entry check in `rocketnet_server_update` before touching the transport or old views |
 | `EndUpdate` | Return deliveries to the application after processing the current batch |
+
+## Disconnect reason
+
+`rocketnet_server_disconnect_reason` reads the slot's `reason`. A message-layer
+end writes it directly: `Kick` the exhaustion reason, `PublicDisconnect`
+SERVER_DISCONNECTED (`rocketnet_server_disconnect_client`,
+`rocketnet_server_disconnect_all_clients`). A transport end is carried through
+the link: the transport records why in `ended` (`end_reasons`), and the
+`Observe` that finds a slot it held free copies it into `reason`
+(`RN_SLOTS_DROP` in `rn_message_object_update`, reading
+`rn_message_link_t.end_reason`). `Observe` writes NONE for a slot it binds to
+a new connection and keeps every other slot's reason, so a reason lasts until
+the slot's next connection. `ConnectedReadsNone` holds in every control;
+`DropReadsTransportEnd` and `ReasonKeptUntilNextConnection` are action
+properties of `MCRNSlots.cfg`, `MCRNSlotsTwoSlots.cfg` and
+`MCRNSlotsExhaustion.cfg`. The two larger controls take one transport ending
+(`TransportEnds <- MCOneTransportEnd`): with all three their state space ran
+past the 110-second budget, and `MCRNSlots.cfg` explores all three.
+
+- **Drop reads NONE** (`MCRNSlotsBrokenDropReadsNone.cfg`): connect 1,
+  `Observe` binds it, then in the next update the transport times it out
+  (`ended` TIMED_OUT). The mutant's `Observe` drops the slot with NONE, the
+  code before the link carried the transport's reason, and
+  `DropReadsTransportEnd` fails at state 8.
+- **Observe clears the reason** (`MCRNSlotsBrokenObserveClearsReason.cfg`):
+  connect 1 and bind it, the application disconnects it (SERVER_DISCONNECTED)
+  and `ResetFree` frees it; the next update's `Observe`, with the slot still
+  free, clears the reason to NONE. This was this model's rule before; the code
+  keeps the reason (`docs/CONNECTION-RESET.md`, `disconnect_reason` KEEP).
+  `ReasonKeptUntilNextConnection` fails at state 9.
 
 ## Measured cases and witnesses
 

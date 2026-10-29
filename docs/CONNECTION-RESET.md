@@ -73,6 +73,7 @@ other session state.
 | `rocketnet_reassembly_set_t` | slot slice and newest watermark for this index | partial fragments | RESET | partial payloads never cross clients |
 | | other slices and geometry | other clients / fixed storage | KEEP | reset touches only its slot |
 | `rocketnet_server_protocol_t` | `connection_ids[client_index]` | slot incarnation tag | RESET | free slots have id zero |
+| | `end_reasons[client_index]` | why the slot's connection ended (`TIMED_OUT`, `CLIENT_DISCONNECTED`, `SERVER_DISCONNECTED`, `NONE` for the integrity limit) | WRITTEN by the reset | the ending path's reason, which the message object reads when it observes the slot dropped; cleared to `NONE` when the slot is next assigned |
 | | `next_connection_id` | lifetime id source | KEEP | ids never repeat in one server life |
 | | component pointers | allocation owners | KEEP | their named per-slot records reset |
 | | update output tags | receipt attribution | KEEP | produced rows retain attribution for the update |

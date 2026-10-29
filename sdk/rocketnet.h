@@ -524,7 +524,15 @@ enum rocketnet_disconnect_reason_t
     /// A message from this client was still in the receive queue at update.
     /// See rocketnet_server_update.
 
-    ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED = -6
+    ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED = -6,
+
+    /// Nothing arrived from the client within its connection timeout.
+
+    ROCKETNET_DISCONNECT_REASON_TIMED_OUT = -7,
+
+    /// The client disconnected. See rocketnet_client_disconnect.
+
+    ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED = -8
 };
 
 /// rocketnet_client_state returns one of these values.

@@ -8850,6 +8850,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
     }
 
     rocketnet_check( !rocketnet_message_server_client_connected( server, 0 ) );
+    rocketnet_check( rocketnet_message_server_disconnect_reason( server, 0 ) == ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
 
     rn_native_message_client_stop_and_destroy( client );
 

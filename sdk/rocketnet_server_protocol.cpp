@@ -46,11 +46,23 @@ uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_
     return server->connection_ids[client_index];
 }
 
+int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol_t * server, int client_index )
+{
+    if ( !server->end_reasons || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
+        return ROCKETNET_DISCONNECT_REASON_NONE;
+    return server->end_reasons[client_index];
+}
+
 static void rocketnet_server_connection_id_assigned( struct rocketnet_server_protocol_t * server, int client_index )
 {
     if ( !server->connection_ids || client_index < 0 || client_index >= rocketnet_client_slots_max_clients( server->client_slots ) )
         return;
     server->connection_ids[client_index] = ++server->next_connection_id;
+
+    // tla/RNSlots.tla Connect: the new connection has not ended
+
+    if ( server->end_reasons )
+        server->end_reasons[client_index] = ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
 // the failed-signature-verify budget: see rocketnet_server.h. the window
@@ -1026,9 +1038,12 @@ static void rocketnet_server_integrity_failure( struct rocketnet_server_protocol
     int client_index = mapping->control->client_index;
     rocketnet_debug( "server removed encryption mapping. integrity limit reached (client %d)", client_index );
 
+    // the reason is NONE: the integrity limit is neither the client's
+    // goodbye nor a timeout
+
     if ( client_index != -1 )
     {
-        rocketnet_server_connection_reset( server, client_index );
+        rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_NONE );
         counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
     }
     else
@@ -1449,7 +1464,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     rocketnet_debug( "client %d disconnected", client_index );
     counters[ROCKETNET_COUNTER_DISCONNECT_DISCONNECTED]++;
     counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
-    rocketnet_server_connection_reset( server, client_index );
+    rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED );
 
     return ROCKETNET_SERVER_PROCESS_ACCEPTED;
 }
@@ -1678,7 +1693,7 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
 
             if ( client_index != -1 )
             {
-                rocketnet_server_connection_reset( server, client_index );
+                rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_TIMED_OUT );
             }
             else
                 rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
@@ -2317,7 +2332,7 @@ void rocketnet_server_protocol_disconnect_client( struct rocketnet_server_protoc
     counters[ROCKETNET_COUNTER_SERVER_DISCONNECTED_CLIENT]++;
     counters[ROCKETNET_COUNTER_CLIENT_DISCONNECTED]++;
 
-    rocketnet_server_connection_reset( server, client_index );
+    rocketnet_server_connection_reset( server, client_index, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 }
 
 void rocketnet_server_protocol_accept_payload( struct rocketnet_server_protocol_t * server, int client_index, uint64_t connection_id, uint64_t sequence )

@@ -1309,6 +1309,20 @@ bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transp
  */
 uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// why the slot's last connection ended at the transport, a
+// ROCKETNET_DISCONNECT_REASON_*: TIMED_OUT, CLIENT_DISCONNECTED,
+// SERVER_DISCONNECTED, or NONE (no connection ended since the slot was last
+// assigned, an index out of range, or the integrity limit). The message
+// server reads it when a slot it held is found free.
+
+// a NULL server_transport is a counted no-op that returns NONE
+/** @brief Read why the connection that last held a slot ended at the transport.
+ * @param server_transport [in] Created server transport; NULL is a counted no-op.
+ * @param client_index [in] Slot index from 0 through max_clients - 1.
+ * @return A ROCKETNET_DISCONNECT_REASON_* value; NONE while the slot's connection is up or for an invalid slot. Read on the main thread outside update work.
+ */
+int rocketnet_server_transport_client_end_reason( struct rocketnet_server_transport_t * server_transport, int client_index );
+
 // a NULL server_transport is a counted no-op that returns NULL
 const struct rocketnet_counters_t * rocketnet_server_transport_counters( struct rocketnet_server_transport_t * server_transport );
 
