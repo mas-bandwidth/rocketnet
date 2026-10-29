@@ -11278,6 +11278,10 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
     int num_available = 0;
     const int * available = rocketnet_client_transport_io_availability( &num_available );
     int raced = 0;
+
+    // one clock for the whole case: the server lives across every transport's
+    // client, and its time never steps back (a debug build asserts it)
+    const double case_start = rocketnet_time();
     for ( int i = 0; i < num_available; i++ )
     {
         const char * transport = rocketnet_transport_name( available[i] );
@@ -11303,7 +11307,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
         const double wall_start = rocketnet_time();
         while ( rocketnet_time() - wall_start < 10.0 )
         {
-            const double now = 1000.0 + ( rocketnet_time() - wall_start );
+            const double now = 1000.0 + ( rocketnet_time() - case_start );
             rocketnet_server_update( server, now );
             rocketnet_client_update( client, now );
             rocketnet_client_send_packets( client );
@@ -11319,7 +11323,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
         // closes the losing family
         for ( int frame = 0; frame < 20; frame++ )
         {
-            const double now = 1000.0 + ( rocketnet_time() - wall_start );
+            const double now = 1000.0 + ( rocketnet_time() - case_start );
             rocketnet_server_update( server, now );
             rocketnet_client_update( client, now );
             rocketnet_client_send_packets( client );
