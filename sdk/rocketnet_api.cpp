@@ -540,7 +540,10 @@ enum rn_server_count_t
     RN_SERVER_COUNT
 };
 
-struct rocketnet_client_t
+// the client's state, everything but the receive batch: create and adopt
+// value-initialize it, so the update clock's doubles start at 0.0
+
+struct rn_client_head_t
 {
     void * context;
     struct rocketnet_client_transport_config_t transport;   // resolved once at create; connect reads no environment
@@ -561,6 +564,10 @@ struct rocketnet_client_t
     double update_time_offset;                          // and how far the caller's clock stepped back
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     uint64_t lifetime[RN_CLIENT_COUNT];                 // not-connected drops that outlived their connection
+};
+
+struct rocketnet_client_t : rn_client_head_t
+{
     struct rocketnet_message_batch_t batch;             // the one receive batch, refilled by each receive (in the create-time block)
 };
 
@@ -585,7 +592,8 @@ struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocke
     if ( !client )
         return NULL;
 
-    memset( client, 0, sizeof( *client ) );
+    static_cast<rn_client_head_t &>( *client ) = rn_client_head_t();
+    client->batch.num_messages = 0;
     client->context = context;
     rocketnet_client_transport_default_config( &client->transport );
 
@@ -1000,7 +1008,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
 
     // the receive batch is last and is written only as far as each receive fills it, so its pages are touched only by use
 
-    memset( client, 0, offsetof( struct rocketnet_client_t, batch ) );
+    static_cast<rn_client_head_t &>( *client ) = rn_client_head_t();
     client->batch.num_messages = 0;
     client->context = context;
     client->transport = transport;

@@ -227,6 +227,20 @@ do                                                                              
 #define rocketnet_assert( ignore ) ((void)0)
 #endif // #if ROCKETNET_ASSERTS
 
+// an invariant the code relies on: asserted where asserts are on, and stated
+// to clang in every build, so the static analyzer of a release build sees it.
+// The condition has no side effects.
+#if defined( __clang__ )
+#define rocketnet_assume( condition )                                                            \
+do                                                                                          \
+{                                                                                           \
+    rocketnet_assert( condition );                                                          \
+    __builtin_assume( condition );                                                          \
+} while(0)
+#else
+#define rocketnet_assume( condition ) rocketnet_assert( condition )
+#endif // #if defined( __clang__ )
+
 bool rocketnet_library_initialized( void );
 
 void rocketnet_api_misuse_record( void );
@@ -522,7 +536,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // the default num_channels: 32, or the build's ROCKETNET_MAX_CHANNELS when that
 // is smaller, so every build's default config is one its create accepts
 
-#define ROCKETNET_DEFAULT_NUM_CHANNELS         ( ROCKETNET_MAX_CHANNELS < 32 ? ROCKETNET_MAX_CHANNELS : 32 )
+#if ROCKETNET_MAX_CHANNELS < 32
+#define ROCKETNET_DEFAULT_NUM_CHANNELS         ROCKETNET_MAX_CHANNELS
+#else
+#define ROCKETNET_DEFAULT_NUM_CHANNELS         32
+#endif // #if ROCKETNET_MAX_CHANNELS < 32
 
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
     INT_FIELD( num_channels, ROCKETNET_DEFAULT_NUM_CHANNELS, 1, ROCKETNET_MAX_CHANNELS, 0 ) /* WIRE */                            \

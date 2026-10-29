@@ -49,6 +49,15 @@ static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
 // the ticket it was pushed with is a tombstone. The head skips tombstones,
 // and a push that finds the ring full drops them all in one pass, at most
 // once per queue-many pushes.
+//
+// proofs/tla/RNChannelQueues.tla carries the same queue with an epoch per entry: an
+// entry's ticket is its epoch. EnqueueUnreliable is rn_unreliable_push, the
+// tail entry stamped with the descriptor's newest ticket. StaleEpoch is the
+// descriptor taking another ticket or leaving the queue, so the entry's ticket
+// is no longer current (rn_unreliable_entry_live). Expire is the entries of a
+// stale ticket dropped with the rest kept in order: the head skipping them in
+// rn_unreliable_sync, the full-ring pass in rn_unreliable_push, and every walk
+// passing them by.
 
 static bool rn_unreliable_entry_live( const rn_region_t * region, const rn_unreliable_entry_t * entry )
 {
@@ -111,6 +120,12 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 {
     rn_region_t * region = endpoint->region;
     const uint32_t entries = region->unreliable_ring_entries;
+
+    // the ring has two entries per send descriptor (rn_region_carve) and d is
+    // one of them, so it is never empty
+
+    rocketnet_assume( entries >= 2 );
+    rocketnet_assume( d < entries / 2 );
 
     if ( endpoint->unreliable_ring_used == entries )
     {
