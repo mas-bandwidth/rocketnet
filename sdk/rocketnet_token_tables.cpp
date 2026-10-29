@@ -387,7 +387,10 @@ static void rn_token_order_push( struct rocketnet_token_table_t * table, int slo
 {
     if ( table->order_count == table->order_capacity )
     {
-        // at most capacity entries are live, so the pass frees at least half
+        // at most capacity entries are live, so the pass frees at least half.
+        // Survivors close up from the head, each written at its own logical
+        // position: that is never ahead of the entry being read, so a wrapped
+        // ring's unread entries are never overwritten.
         int kept = 0;
         for ( int i = 0; i < table->order_count; ++i )
         {
@@ -395,11 +398,11 @@ static void rn_token_order_push( struct rocketnet_token_table_t * table, int slo
             const int position = ( table->order_head + i ) % table->order_capacity;
             if ( rn_token_order_stale( table, position ) )
                 continue;
-            table->order_slot[kept] = table->order_slot[position];
-            table->order_ticket[kept] = table->order_ticket[position];
+            const int to = ( table->order_head + kept ) % table->order_capacity;
+            table->order_slot[to] = table->order_slot[position];
+            table->order_ticket[to] = table->order_ticket[position];
             ++kept;
         }
-        table->order_head = 0;
         table->order_count = kept;
     }
 
