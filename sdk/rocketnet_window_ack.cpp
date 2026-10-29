@@ -237,6 +237,7 @@ void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_in
     rocketnet_assert( ack );
     rocketnet_assert( after == RN_RESEND_NONE || rn_window_ack_slot_is_chunk( ack, after ) == rn_window_ack_slot_is_chunk( ack, slot_index ) );
     rocketnet_assert( after != slot_index );
+    rocketnet_assert( after == RN_RESEND_NONE || rn_resend_fifo_is_linked( ack, after ) );
 
     rn_resend_fifo_insert_after( ack, after, slot_index );
 }
