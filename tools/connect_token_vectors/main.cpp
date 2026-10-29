@@ -4,10 +4,10 @@
 */
 
 // tools/connect_token_vectors/main.cpp -- mints the byte-stable 768-byte
-// connect token vectors of tests/connect_token_vectors.json from their fixed
+// connect token vectors of standard/vectors/connect_token_v1.json from their fixed
 // inputs, and writes them to the one path it is given:
 //
-//     ./bin/connect_token_vectors tests/connect_token_vectors.json
+//     ./bin/connect_token_vectors standard/vectors/connect_token_v1.json
 //
 // The write goes to <path>.tmp and is renamed over <path>, so a reader never
 // sees half a file. Nothing else writes the file: the unit suite compiles the
@@ -314,7 +314,7 @@ int main( int argc, char ** argv )
     if ( argc != 2 || argv[1][0] == '\0' )
     {
         fprintf( stderr, "usage: connect_token_vectors <output path>\n"
-                         "writes the connect token known-answer vectors (tests/connect_token_vectors.json) to <output path>\n" );
+                         "writes the connect token known-answer vectors (standard/vectors/connect_token_v1.json) to <output path>\n" );
         return 2;
     }
 

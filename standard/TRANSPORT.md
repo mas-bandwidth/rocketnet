@@ -1040,6 +1040,17 @@ b1 b2 b3 b4 b5 b6 b7 b8 b9 ba bb bc bd be bf c0
 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 ```
 
+<a id="t6.5"></a>
+### t6.5. Token string and published vectors
+
+A backend in any language MAY write connect tokens. This section and [t6.1 Private connect token data](#t6.1) to [t6.4 Verification and refusal order](#t6.4) are the whole contract; an implementation that follows them interoperates with every RocketNet server without the SDK.
+
+1. The token is carried to the client, and handed to the client's connect call, as text: the 768 bytes of [t6.3 Connect token format](#t6.3) encoded in standard base64 (RFC 4648 section 4, alphabet `A-Z a-z 0-9 + /`), which is exactly 1024 characters with no padding and no line breaks. A client MUST refuse a string of any other length or one that does not decode to exactly the `connect token` size of [t3 Constants and registries](#t3).
+2. Every integer in the token is little-endian. Every reserved and pad byte MUST be zero and is covered by the signature where it lies inside the signed connect data.
+3. The signature is Ed25519 (RFC 8032, pure, no context) by the backend's 64-byte secret key over the 576 bytes of the signed connect data. The private block is sealed as [t6.1 Private connect token data](#t6.1) states: X25519 ephemeral key pair, nonce the 24-byte BLAKE2b hash of the ephemeral public key then the server public key, XSalsa20-Poly1305 (crypto_box_easy). A writer MUST draw a fresh ephemeral key for every token and fresh session keys for every token; the nonce is a function of the ephemeral key, so it never repeats while the ephemeral key does not.
+4. The format is versioned by the `version` constant alone. A change to any byte of the layout, the encoding or the crypto takes a new, unrelated version constant ([t3 Constants and registries](#t3)) and a new vector file; no field is ever reinterpreted under an existing version.
+5. The published known answers for this version are the version 1 connect token vector file published with this standard. Its `version` field equals the `version` constant; each vector gives every minting input, including the ephemeral secret that replaces the random draw, and the 768-byte token. A writer MUST reproduce every `token` byte for byte from its inputs. The file is generated only by the SDK's `connect_token_vectors` tool from the library's own writer and is checked against the library on every unit run, so the file and the library cannot disagree. Its keys are published test keys; a deployment MUST NOT use them.
+
 <a id="t7"></a>
 ## t7. Key schedule
 

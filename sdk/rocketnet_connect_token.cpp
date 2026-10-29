@@ -200,7 +200,7 @@ int rocketnet_write_connect_token_deterministic( const struct rocketnet_signed_c
                                                  const uint8_t * ephemeral_secret_key,
                                                  uint8_t * token )
 {
-    // TEST-ONLY: exists for tests/connect_token_vectors.json; see the header
+    // TEST-ONLY: exists for standard/vectors/connect_token_v1.json; see the header
 
     if ( ephemeral_secret_key == NULL )
         return 0;

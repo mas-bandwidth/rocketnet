@@ -173,7 +173,7 @@ int rocketnet_write_connect_token( const struct rocketnet_signed_connect_data_t 
 #if ROCKETNET_DEV
 
 // TEST-ONLY. Exists for the known-answer vectors in
-// tests/connect_token_vectors.json, which another implementation of the
+// standard/vectors/connect_token_v1.json, which another implementation of the
 // backend's minting is checked against byte for byte; nothing ships calling
 // it. The same token as rocketnet_write_connect_token, except the private
 // block is sealed with the caller's 32-byte ephemeral X25519 secret instead

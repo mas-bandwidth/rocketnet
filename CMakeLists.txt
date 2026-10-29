@@ -860,7 +860,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # (cmake/EmbedTestFixtures.cmake), so no unit case reads a file at run time.
     # A change to a fixture or to the script regenerates the source.
     set(ROCKETNET_TEST_FIXTURES
-        tests/connect_token_vectors.json
+        standard/vectors/connect_token_v1.json
         tests/wycheproof/chacha20_poly1305_test.json
         tests/wycheproof/ed25519_test.json
         tests/wycheproof/x25519_test.json)
@@ -875,7 +875,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         COMMENT "Embedding the unit test fixtures"
         VERBATIM)
     target_sources(test PRIVATE "${ROCKETNET_TEST_FIXTURES_SOURCE}")
-    # The one writer of tests/connect_token_vectors.json: ./bin/connect_token_vectors
+    # The one writer of standard/vectors/connect_token_v1.json: ./bin/connect_token_vectors
     # <path> mints the vectors from the generator the unit case checks
     # (tools/connect_token_vectors/main.cpp) and writes only the path given.
     add_executable(connect_token_vectors tools/connect_token_vectors/main.cpp)

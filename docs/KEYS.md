@@ -185,8 +185,8 @@ same token byte for byte: Go ([go/main.go](../examples/backend/go/main.go),
 `generateConnectToken`) and C#
 ([csharp/Backend/ConnectToken.cs](../examples/backend/csharp/Backend/ConnectToken.cs),
 `ConnectToken.Generate`). Both are checked against the known answers in
-[tests/connect_token_vectors.json](../tests/connect_token_vectors.json). That file
-is written only by `./bin/connect_token_vectors tests/connect_token_vectors.json`
+[standard/vectors/connect_token_v1.json](../standard/vectors/connect_token_v1.json). That file
+is written only by `./bin/connect_token_vectors standard/vectors/connect_token_v1.json`
 ([tools/connect_token_vectors/main.cpp](../tools/connect_token_vectors/main.cpp)),
 from the fixed test keys and inputs; the unit suite compiles the committed copy
 into `./bin/test` and checks it byte for byte against the same generator
