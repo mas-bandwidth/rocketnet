@@ -29,6 +29,7 @@
 #include <sodium.h>
 
 #include <limits.h>
+#include <limits>
 #include <math.h>
 #include <string.h>
 
@@ -563,6 +564,10 @@ struct rocketnet_client_t
     uint64_t lifetime[RN_CLIENT_COUNT];                 // not-connected drops that outlived their connection
     struct rocketnet_message_batch_t batch;             // the one receive batch, refilled by each receive (in the create-time block)
 };
+
+// create and reset zero the client with memset, update_time and its offsets
+// included: all bits zero is 0.0 only for an IEEE 754 double
+static_assert( std::numeric_limits<double>::is_iec559, "memset zero of a double is 0.0" );
 
 static inline uint64_t rn_round_up_alignment( uint64_t bytes )
 {
