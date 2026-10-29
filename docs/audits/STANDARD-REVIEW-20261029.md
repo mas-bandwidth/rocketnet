@@ -18,6 +18,7 @@ that cleanup.
 
 | Area | Problem found | Correction |
 | --- | --- | --- |
+| RN-1 payload layout | The authentication-tag offset included six extra bytes, disagreeing with the preceding fields and the existing packet vector. | Correct the offset to 10 + ACK size + payload size. Add a symbolic field-adjacency check that rejects the original error, plus focused checker regressions. |
 | RN-1 key verification | Strict Ed25519 verification was said to forbid two distinct valid signatures for one message. Canonical verification does not provide that property. | Retain strict verification, remove the uniqueness claim, and explicitly identify tokens by signed content. Add a vector with two valid signatures, two refusal cases and unchanged token identity. |
 | RN-1 ephemeral keys | The key schedule allowed a rotated server ephemeral key, while the server handshake required a fresh keypair for each mapping. | Align both sections with fresh per-mapping keypairs, as the SDK already does. |
 | RN-1 configuration | The text said the server key could not be supplied and omitted existing environment exemptions. | Describe generated or supplied `server_secret_key`, its ownership and erasure, and the exempt size marker and secret field. Clarify redacted diagnostics. |
@@ -27,6 +28,9 @@ that cleanup.
 | RN-2 timing | Formulas combined second-valued estimates with millisecond configuration fields, and called resend delays timeouts. | Show explicit real-valued conversion and distinguish resend scheduling from connection lifetime. |
 | RN-1 replay | A vector description rejected every probe below the high-water mark, although an unseen in-window packet is valid. Some table rows omitted authentication guards. | Describe the retained window accurately and make successful opening explicit before marking. |
 | Security and conformance claims | The rationale treated finite random values as collision-free and described forward secrecy and vector agreement too broadly. | State the randomness and erasure assumptions, distinguish session from handshake protection, and limit evidence claims to the cases checked. |
+| Section navigation | Sixteen subsection headings lacked the explicit anchors required by the style guide; the checker still indexed those headings as valid targets. | Add the real anchors and regressions rejecting missing, wrong and duplicate subsection anchors. |
+| Layer boundaries | RN-1 repeated RN-2's adaptive resend algorithm, used a rate-budget term for a packet-size limit, and the rationale confused packet and message sequence widths. | Refer to RN-2 for resend rules; use maximum packet size and distinguish 32-bit wire packet sequences from 24-bit message numbers. |
+| Admission policy | Handshake-budget enforcement was optional in one section and mandatory in another; another rule omitted the spent-budget condition for refusing a previously failing source. The rationale contradicted always-on cookie validation. | Align the repeated rules with the ordered request path and its existing implementation; keep cookie validation mandatory for every new connection. |
 | Normative independence | Implementation paths survived inside inline code even though the style checker purported to prohibit them. | Remove those citations, move tooling commands to the guide, and add checker regressions that reject inline file, test and model citations. |
 
 The signature correction follows the distinction between signing and
@@ -69,11 +73,23 @@ detect every contradiction in prose.
   Together with promotion, resend-timing and in-place-send cases, 70 tests pass.
 - The new signature vector passes in the macOS production build as part of
   the standard key-schedule test.
-- Seven standard-checker regressions and eight witness-checker tests pass.
+- Fifteen standard-checker regressions and eight witness-checker tests pass.
+- Ten additional handshake-budget, source-budget and deadline tests pass on
+  Linux, checking the behavior behind the clarified admission rules.
 - All 60 witness rows resolve to their named anchors. The 28 existing `none`
   rows remain explicitly recorded as gaps.
 - Maintained documentation links, owned-header guards, the source audit,
   changed-test clang-format 18 checks, and `git diff --check` pass.
+
+## Coordination and independent review
+
+Emma independently confirmed the initial substantive findings against source and
+identified the subsection-anchor, layer-boundary and cookie wording issues.
+Stella owns the implementation and reconciliation; Emma owns independent review.
+Her separate witness-coverage work has not been imported into this change.
+Behavioral checks alone do not establish constant-time execution, and checking
+that a secret is absent from returned state does not establish erasure of its
+local working buffer. Those coverage claims need their own disposition.
 
 ## Remaining confidence limits
 

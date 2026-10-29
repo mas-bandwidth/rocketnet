@@ -739,11 +739,10 @@ already says. The used-token history cannot help: it bounds replays of captured 
 not fabrications. **The cookie is the only one of these that changes the attacker's
 cost**, and it changes it completely — to obtain a cookie you must receive at the
 address you claim, so the flood must come from addresses you really hold, where
-per-source rate limiting finally bites. This is the SYN cookie pattern, and it is what
-DTLS 1.3 and QUIC both do: cheap keyed symmetric work first, expensive asymmetric work
-only for an address that has answered. Making it load-triggered rather than always-on
-follows DTLS 1.3, which performs the cookie exchange by default but permits a deployment
-to skip it where amplification is not a threat.
+per-source rate limiting finally bites. The goal is cheap keyed symmetric work before expensive asymmetric work,
+with return reachability checked first. RocketNet requires this exchange on
+every new connection; it does not switch cookie validation on and off with load. This avoids an unchecked transition
+between admission modes.
 
 [RN-1 t12 Handshake: server](TRANSPORT.md#t12)
 *This is placed after every check above it and before every check below it, and the
@@ -1757,11 +1756,11 @@ handed to another party transfers the seat rather than multiplying it.
 
 [RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
 Netcode's sizes derive from a 1280-byte MTU; this standard derives every packet limit
-from a 1500-byte MTU and defaults the budget to 1452 bytes, which is not backward
-compatible and is why both ends update together. The 24-bit sequence and the
-32768-sequence replay window replace netcode's shorter sequence history, and the receive
-window is sized explicitly in sequence numbers rather than by a packet count. Keep-alive
-prefixing for unconfirmed clients was removed in favour of the confirmed flag and the
+from a 1500-byte MTU and sets the maximum packet size to 1452 bytes, which is not backward
+compatible and is why both ends update together. The 32-bit wire sequence is
+reconstructed to a 64-bit packet sequence. The replay window retains between 4096
+and 32768 sequences; RN-2's 24-bit reliable message numbers belong to a different
+layer. Keep-alive prefixing for unconfirmed clients was removed in favour of the confirmed flag and the
 ack-carried elicitation described in the session section, because the prefixing could
 strand a client that had nothing else to send.
 

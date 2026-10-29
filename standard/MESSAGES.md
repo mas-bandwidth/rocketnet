@@ -2090,6 +2090,7 @@ make the reconstruction unambiguous.
    holdable span inside `B`. A receiver MUST police both claims as the checks
    of [m4 Receiver checks](#m4) describe.
 
+<a id="m5.2"></a>
 ### m5.2. Receiver reconstruction and window check
 
 For each reliable record, in wire order, the receiver reconstructs the 64-bit
@@ -2122,6 +2123,7 @@ n     = R + delta
    delivery. The receiver MUST NOT report the message to the application a
    second time.
 
+<a id="m5.3"></a>
 ### m5.3. Precondition on the connection layer
 
 10. The reconstruction is unambiguous only while both of these hold. The
@@ -2133,6 +2135,7 @@ n     = R + delta
     `half range`. A receiver MUST refuse a stale copy as a duplicate under
     rule 8.1 rather than read it as a fresh number.
 
+<a id="m5.4"></a>
 ### m5.4. Constants and configuration
 
 | Name | Value | Unit | Meaning |
@@ -2154,6 +2157,7 @@ n     = R + delta
 | block fragments maximum | `911` | records | the largest block that the largest message makes |
 | stale copy bound | `7668421` | numbers | the most a stale copy can lie behind `R` |
 
+<a id="m5.5"></a>
 ### m5.5. Vectors
 
 The bytes of a reconstruction vector are one outcome byte followed, for an
@@ -2300,6 +2304,7 @@ This section starts after the receive window of
 number. A duplicate number is dropped by the window and counted as a
 duplicate; it is never delivered and is not a violation.
 
+<a id="m7.1"></a>
 ### m7.1. Code 2, RELIABLE
 
 1. A receiver MUST deliver a code 2 record exactly once, when its number is
@@ -2309,6 +2314,7 @@ duplicate; it is never delivered and is not a violation.
 3. A code 2 record whose number is outside the window, or whose slot is held
    by another live number, is a violation.
 
+<a id="m7.2"></a>
 ### m7.2. Code 3, RELIABLE_ORDERED
 
 1. A receiver MUST deliver a code 3 record on a channel only when the
@@ -2334,6 +2340,7 @@ duplicate; it is never delivered and is not a violation.
 7. A held record MUST be delivered exactly once, in ascending ordering order
    on its channel, and only by the drain or by being in turn.
 
+<a id="m7.3"></a>
 ### m7.3. Code 4, RELIABLE_SEQUENCED
 
 1. A code 4 record carries an ordering index and a sequencing index. The
@@ -2360,6 +2367,7 @@ duplicate; it is never delivered and is not a violation.
    watermark, then continue with the held ordered records. An ordered
    delivery sets the sequencing watermark to zero.
 
+<a id="m7.4"></a>
 ### m7.4. Outcomes
 
 Every change this section makes to a record is visible to the application or
@@ -2402,6 +2410,7 @@ delivery entries. The trace is the steps of the input records in order.
 | `held` | `2` | the record is held for a later ordering index or epoch |
 | `stale` | `3` | the record is dropped as stale or superseded |
 
+<a id="m7.5"></a>
 ### m7.5. Vectors
 
 The traces below fix the receiver's configuration at one channel, window
@@ -2715,6 +2724,7 @@ f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
 
+<a id="m9.1"></a>
 ### m9.1. Acknowledgement mapping
 
 The connection layer reports which of a sender's packets the receiver
@@ -2745,6 +2755,7 @@ round-trip sample equal to the time between the send and the acknowledgement.
 A number that was already acknowledged MUST NOT be acknowledged or sampled a
 second time.
 
+<a id="m9.2"></a>
 ### m9.2. Round-trip estimate and resend delay
 
 The sender MUST estimate the round-trip time as follows. On the first
@@ -2777,6 +2788,7 @@ until the reliable timeout ends the connection.
 | reliable_message_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
 | min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
 
+<a id="m9.3"></a>
 ### m9.3. Resend classes and the reliable timeout
 
 A sender MUST keep two resend queues. A single-packet reliable record is in the
@@ -2797,6 +2809,7 @@ when the oldest unacknowledged reliable number has stood unacknowledged for
 send. This lifetime limit is distinct from the delay between resends. A connection that
 ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT MUST stop resending.
 
+<a id="m9.4"></a>
 ### m9.4. Send budget
 
 Every connection MUST send at most its send budget, a rate in kilobits per
@@ -2852,6 +2865,7 @@ depth. The budget change is visible when the setter returns success.
 | Waiting | the update ends | | | Open |
 | Any | an item is offered after a lower-priority class | | count the order refusal; a reliable item waits | Waiting |
 
+<a id="m9.5"></a>
 ### m9.5. Vectors
 
 ```vector m9.resend-trace

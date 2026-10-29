@@ -57,7 +57,8 @@ renumbered once published.
 The outline below is the one source of the section list. The checker reads
 it from this file and fails when a document's headings differ from it in
 text, id or order. Adding, removing or renaming a section is an edit here
-first.
+first. The checker also rejects a subsection with a missing or mismatched
+explicit anchor, or a repeated subsection id.
 
 <!-- outline:begin -->
 | Id | Heading | Document |
@@ -174,6 +175,12 @@ only when the section has one:
    `i32` (little-endian two's complement), `bytes[n]` and `zero[n]` (bytes
    that a sender sets to zero and a receiver checks). Offsets and sizes are
    decimal bytes.
+
+   RN-1 packet tables use additive offsets: a byte count, optionally followed
+   by `plus the ack block size`, `and the payload size`, or `and the fragment
+   size`. The checker verifies that each field begins at the end of the
+   previous field, including those variable lengths. It does not establish
+   that every field's semantic range is correct.
 3. **State table**, where the section has states:
 
    | State | Event | Guard | Action | Next state |

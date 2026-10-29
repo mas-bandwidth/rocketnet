@@ -46,5 +46,69 @@ class LanguageTests(unittest.TestCase):
         self.assertTrue(self.faults('A sender MUST set the field.', tag="RN-R"))
 
 
+class SubsectionAnchorTests(unittest.TestCase):
+    def faults(self, subsection):
+        with tempfile.TemporaryDirectory() as directory:
+            docs = {}
+            for tag, filename in standard.DOCUMENTS.items():
+                path = Path(directory) / filename
+                text = '# Fixture\n'
+                if tag != "RN-1":
+                    text += '<a id="m1"></a>\n## m1. Fixture\n\n'
+                if tag == "RN-2":
+                    text += subsection
+                if tag == "RN-R":
+                    text += '<a id="rh"></a>\n## rh. Revision history\n'
+                path.write_text(text, encoding="utf-8")
+                docs[tag] = standard.Document(tag, path)
+            faults = []
+            standard.check_outline(docs, [("m1", "Fixture", "RN-2")], faults, None)
+            return faults
+
+    def test_explicit_subsection_anchor_is_required(self):
+        self.assertTrue(self.faults('### m1.1. Detail\n'))
+
+    def test_matching_subsection_anchor_passes(self):
+        self.assertEqual(self.faults('<a id="m1.1"></a>\n### m1.1. Detail\n'), [])
+
+    def test_wrong_subsection_anchor_fails(self):
+        self.assertTrue(self.faults('<a id="m1.2"></a>\n### m1.1. Detail\n'))
+
+    def test_duplicate_subsection_id_fails(self):
+        section = '<a id="m1.1"></a>\n### m1.1. Detail\n\n'
+        self.assertTrue(self.faults(section + section))
+
+
+class PacketLayoutTests(unittest.TestCase):
+    def faults(self, rows):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "TRANSPORT.md"
+            path.write_text('<a id="t8"></a>\n## t8. Packets\n\n'
+                            '<a id="t8.6"></a>\n### t8.6. Payload\n\n'
+                            '| Name | Offset | Size | Type | Meaning | Valid values |\n'
+                            '|---|---|---|---|---|---|\n' + rows, encoding="utf-8")
+            faults = []
+            standard.check_packet_layouts({"RN-1": standard.Document("RN-1", path)}, faults, None)
+            return faults
+
+    def payload(self, tag_offset):
+        return ('| header | 0 | 10 | bytes[10] | header | any |\n'
+                '| ack block | 10 | 7 to 1027 | bytes[n] | ACK | any |\n'
+                '| payload data | 10 plus the ack block size | variable | bytes[n] | data | any |\n'
+                f'| AEAD tag | {tag_offset} | 16 | bytes[16] | tag | any |\n')
+
+    def test_contiguous_symbolic_fields_pass(self):
+        self.assertEqual(self.faults(self.payload('10 plus the ack block size and the payload size')), [])
+
+    def test_payload_tag_six_byte_gap_fails(self):
+        self.assertTrue(self.faults(self.payload('16 plus the ack block size and the payload size')))
+
+    def test_missing_payload_term_fails(self):
+        self.assertTrue(self.faults(self.payload('10 plus the ack block size')))
+
+    def test_unknown_offset_notation_is_not_silently_skipped(self):
+        self.assertTrue(self.faults(self.payload('after all preceding data')))
+
+
 if __name__ == "__main__":
     unittest.main()

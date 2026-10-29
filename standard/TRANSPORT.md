@@ -779,6 +779,7 @@ Everything the server checks is gathered into one fixed buffer of the `signed co
 | address flag IPv6 | `0x02` | bit | bit 1: an IPv6 address is present |
 | address flags both | `0x03` | bit | both address families are present |
 
+<a id="t6.3"></a>
 ### t6.3. Connect token format
 
 The full token is handed to the client over the secure channel. The client splits it into its parts without parsing any length:
@@ -807,6 +808,7 @@ The full token is handed to the client over the secure channel. The client split
 | server to client key | 672 | 32 | bytes[32] | the clear session key, for the client | any |
 | zero pad | 704 | 64 | zero[64] | zero | zero |
 
+<a id="t6.4"></a>
 ### t6.4. Verification and refusal order
 
 A server MUST check a token in this order and MUST stop at the first failure and refuse the request:
@@ -1272,7 +1274,7 @@ signature 2: c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912dba
 
 Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t5): the packet type at offset 0, the filter epoch at offset 1, and the filter value at offsets 2 to 5. A sender MUST set the packet type byte to one of the ten types below. A receiver MUST drop a packet whose type is 10 or above.
 
-A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the send budget. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
+A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the maximum packet size. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
 
 Types 0 (connection request) and 7 (connection cookie) are not sealed. Types 1 to 6, 8 and 9 are sealed: after the prefilter header and the 4-byte sequence, their bytes are the sealed data of [t9 Packet protection](#t9). Types 1 and 2 place the 8-byte session nonce in the clear between the sequence and the sealed data. The session types 4, 5, 6, 8 and 9 open their sealed plaintext with the ack block of [t15 Acknowledgement](#t15), and the type data follows it.
 
@@ -1475,8 +1477,8 @@ The payload packet is a session packet. Its sealed plaintext is the ack block fo
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
 | sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
-| payload data | 10 plus the ack block size | 1 to the smaller of the payload capacity and the send budget less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
-| AEAD tag | 16 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
+| payload data | 10 plus the ack block size | 1 to the smaller of the payload capacity and the maximum packet size less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
+| AEAD tag | 10 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
 
 <a id="t8.7"></a>
 ### t8.7. Connection disconnect packet (type 6)
@@ -1605,7 +1607,7 @@ The fragment packet is a session packet. Its sealed plaintext is the ack block, 
 | payload id | 10 plus the ack block size | 4 | u32 | the fragmented payload's identifier | nonzero |
 | fragment index | 14 plus the ack block size | 1 | u8 | this fragment's index | below the fragment count |
 | fragment count minus one | 15 plus the ack block size | 1 | u8 | the fragment count less one | 1 to 255 |
-| fragment data | 16 plus the ack block size | 1 to the send budget less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
+| fragment data | 16 plus the ack block size | 1 to the maximum packet size less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
 | AEAD tag | 16 plus the ack block size and the fragment size | 16 | bytes[16] | the tag over the ack block, the header and the fragment data | any |
 
 <a id="t8.11"></a>
@@ -1626,7 +1628,7 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 | connection ack packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
 | connection fragment packet minimum wire size | `40` | bytes | 6 + 4 + 7 + 6 + 1 + 16 |
 
-A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than its send budget. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
+A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
 
 <a id="t8.12"></a>
 ### t8.12. Vectors
@@ -2204,7 +2206,7 @@ types, and the response padding are:
 | maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
 
 A session packet's total wire size is its minimum or larger, up to the
-receive ceiling, which equals the send budget. After the ack block, a
+receive ceiling, which equals the maximum packet size. After the ack block, a
 connection payload packet MUST hold at least one byte and MUST NOT exceed
 the received payload maximum of [t3 Constants and registries](#t3). A
 receiver MUST refuse a payload outside that range as the type's
@@ -2761,8 +2763,8 @@ list is ignored in that state.
 | mapping | handshake deadline reached | never refreshed | remove mapping, count | no mapping |
 | mapping | idle deadline reached | no matching request inside the deadline | remove mapping, count | no mapping |
 | connected | request | any | ignore, count | connected |
-| connected | session packet | any | refresh idle | connected |
-| connected | disconnect | any | reset slot, remove mapping | no mapping |
+| connected | session packet | accepted under the receive checks | refresh idle | connected |
+| connected | disconnect | accepted under the receive checks | reset slot, remove mapping | no mapping |
 | connected | idle timeout | any | reset slot, remove mapping | no mapping |
 
 ```vector t12.cookie
@@ -3604,9 +3606,10 @@ an input ([t1.4 Conventions](#t1.4)).
    elapsed since the mapping was created. The deadline is fixed at creation and
    is not refreshed.
 4. A server MUST discard a half-open mapping when the half-open idle deadline
-   has elapsed since the last matching connection request from its address,
-   unless the handshake deadline elapses first. A connection request whose
-   connection salt matches the mapping refreshes the idle deadline.
+   has elapsed since the last matching connection request or authenticated
+   connection response for that mapping, unless the handshake deadline elapses
+   first. A request whose connection salt matches the mapping, or a response
+   that opens under its handshake key, refreshes the idle deadline.
 5. A client MUST NOT begin an attempt with a token whose expire timestamp is
    not later than its current time, and MUST send no packet for it. In
    requesting cookie (1), sending connection request (2) and sending connection
@@ -3615,7 +3618,7 @@ an input ([t1.4 Conventions](#t1.4)).
    timestamp, has elapsed on the client's clock since the attempt began. The
    check does not apply in connected (4).
 6. An endpoint MUST end an established connection when the connection timeout
-   has elapsed with no packet received from the remote endpoint. The connection timeout is
+   has elapsed with no accepted authenticated packet from the remote endpoint. The connection timeout is
    the timeout seconds field of the connect token
    ([t6 Connect token](#t6)); a token whose timeout is zero or negative is
    refused at both ends, so every connection times out
@@ -3629,26 +3632,20 @@ an input ([t1.4 Conventions](#t1.4)).
 9. An endpoint MUST send an acknowledgement block on its next update when
    ack debt is nonzero, using a standalone ack if no other session packet
    carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
-10. A reliable-message sender MUST retransmit an unacknowledged message only
-    when its adaptive resend delay expires. Before any RTT
-    sample, the resend delay is 2 seconds by default. For the first RTT sample, the
-    sender MUST set both its smoothed RTT and deviation to that sample. For
-    each later sample, deviation MUST move 5 percent toward the absolute
-    difference between the prior smoothed RTT and the sample, then smoothed
-    RTT MUST move 5 percent toward the sample.
-    The resend delay is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
-    configured maximum (2 seconds by default) and raised to the configured
-    minimum (0 by default). A nonzero minimum is an implementation option.
-    The sender MUST NOT back off the resend delay after retransmission.
-11. A server SHOULD enforce the handshake work budget after the cookie of a
-    connection request validates and before any asymmetric operation. When it
-    does, a request past the budget MUST be refused with no reply and counted
-    as a refusal, and the budget MUST be reset at the start of each update.
+10. Message retransmission belongs to RN-2. An endpoint implementing RN-2
+    MUST apply [RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9).
+    RN-1 alone does not retransmit application payloads.
+11. A server MUST enforce the handshake work budget after the cookie of a
+    connection request validates and before any asymmetric operation. A request
+    past the budget MUST be refused with no reply and counted as a refusal.
+    The budget MUST be reset at the start of each update.
 12. A server MUST apply the failed-signature budget before the signature
     verification. This budget MUST identify a source by its host address,
-    excluding its port. A request from a source that has already
-    failed in the current failed-signature window MUST be refused before the
-    verification runs and counted as a refusal. The budget MUST NOT refuse a
+    excluding its port. Once the failed-signature budget is spent, a request
+    from a source that has already failed in the current failed-signature window
+    MUST be refused before verification and counted as a refusal. While that
+    budget remains, the source's earlier failure MUST NOT by itself refuse
+    another verification attempt. The budget MUST NOT refuse a
     request from a source with no recorded failure in the window, even when
     the budget is spent and the server can record no further sources; the
     verifications such requests cost are bounded by the handshake work budget
