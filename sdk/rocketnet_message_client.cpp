@@ -61,8 +61,10 @@ static void rn_client_link_disconnect( void * transport, int client_index )
     rocketnet_client_transport_disconnect( (rocketnet_client_transport_t *) transport );
 }
 
-static int rn_client_link_end_reason( void * transport )
+static int rn_client_link_end_reason( void * transport, int client_index )
 {
+    (void) client_index;
+
     // a client transport runs one connection attempt (its create connects,
     // rocketnet_client_transport.cpp:765), so its CLIENT_DISCONNECT_ACCEPTED
     // counter is nonzero exactly when that attempt ended on the server's

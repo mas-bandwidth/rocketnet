@@ -287,21 +287,15 @@ StopCompletes ==
     /\ UNCHANGED <<slot, kept, env, lastEnd, established, ghosts>>
 
 \* disconnect_all_clients: one call, every CONNECTED slot is sent its
-\* disconnect burst and reset in the same step, and the model gives the ended
-\* slot the reason SERVER_DISCONNECTED; a slot still in HANDSHAKE is left as it
-\* is (rocketnet_server_disconnect_all_clients, sdk/rocketnet_api.cpp).
-\* HOLD: the current code does not record that reason. The loop kicks every
-\* slot with ROCKETNET_DISCONNECT_REASON_NONE (sdk/rocketnet_api.cpp) and
-\* rn_message_object_kick stores that reason in the slot
-\* (sdk/rocketnet_message_server.cpp), so
-\* rocketnet_server_disconnect_reason reads NONE for the ended slot
-\* (sdk/rocketnet_api.cpp;
-\* sdk/rocketnet_message_server.cpp). The action keeps
-\* SERVER_DISCONNECTED because this change may touch comments and citations
-\* only: the value is a known divergence from the code, not a verified
-\* correspondence. The transport half of the call is
-\* rocketnet_server_transport_disconnect_client
-\* (sdk/rocketnet_server_transport.cpp).
+\* disconnect burst and reset in the same step, and the ended slot reads the
+\* reason SERVER_DISCONNECTED; a slot still in HANDSHAKE is left as it is
+\* (rocketnet_server_disconnect_all_clients, sdk/rocketnet_api.cpp). The loop
+\* kicks every slot with ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED
+\* (sdk/rocketnet_api.cpp), rn_message_object_kick stores that reason in the
+\* slot (sdk/rocketnet_message_server.cpp), and the transport half of the
+\* call, rocketnet_server_transport_disconnect_client
+\* (sdk/rocketnet_server_transport.cpp), records the same reason for a slot
+\* the message layer had not yet observed (tla/RNSlots.tla Observe).
 EndsInDisconnectAll(i) ==
     slot[i].st = "CONNECTED"
     /\ ~(Defect = "disconnectallleavesclient" /\ i = 1)
@@ -394,6 +388,13 @@ Deny(i) ==
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
 
+\* The idle sweep ends the slot: the transport's reset records TIMED_OUT
+\* (rocketnet_server_protocol_update, sdk/rocketnet_server_protocol.cpp),
+\* which the message layer reads for the slot it finds dropped
+\* (tla/RNSlots.tla Observe). A HANDSHAKE timeout holds no slot in the code
+\* (the slot is assigned when the session is established), so the code's
+\* reason for it is unchanged; the model's TIMED_OUT there is an
+\* abstraction, as DENIED is.
 SlotTimeout(i) ==
     /\ droppedIn' = {}
     /\ allBefore' = {}
@@ -404,22 +405,22 @@ SlotTimeout(i) ==
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
 
-\* The client's own disconnect packet arrives.
+\* The client's own disconnect packet arrives: the transport's reset records
+\* CLIENT_DISCONNECTED (sdk/rocketnet_server_protocol.cpp), which the
+\* message layer reads for the slot it finds dropped (tla/RNSlots.tla
+\* Observe).
 ClientLeaves(i) ==
     /\ slot[i].st = "CONNECTED"
     /\ EndSlot(slot, i, "CLIENT_DISCONNECTED", FALSE)
     /\ UNCHANGED <<state, env, established, estTokens, doubleTok,
                    observed, crossDelivered, startFrom, queuedIn, priorTokens, readmitted>>
 
-\* disconnect_client(i): the disconnect burst, then Reset(i), and the model
-\* gives the ended slot the reason SERVER_DISCONNECTED.
-\* HOLD: the current code does not record that reason.
-\* rocketnet_server_disconnect_client kicks the slot with
-\* ROCKETNET_DISCONNECT_REASON_NONE (sdk/rocketnet_api.cpp) and ends
-\* it at the transport (sdk/rocketnet_server_transport.cpp), so
-\* rocketnet_server_disconnect_reason reads NONE for the slot
-\* (sdk/rocketnet_api.cpp). The action keeps SERVER_DISCONNECTED
-\* because this change may touch comments and citations only.
+\* disconnect_client(i): the disconnect burst, then Reset(i), and the ended
+\* slot reads the reason SERVER_DISCONNECTED: rocketnet_server_disconnect_client
+\* kicks the slot with ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED
+\* (sdk/rocketnet_api.cpp) and ends it at the transport, whose reset records
+\* the same reason (sdk/rocketnet_server_protocol.cpp,
+\* rocketnet_server_protocol_disconnect_client).
 DisconnectClient(i) ==
     /\ state = "RUNNING" /\ slot[i].st = "CONNECTED"
     /\ EndSlot([slot EXCEPT ![i].rec = Write(@, DisconnectFields, slot[i].sess)], i,
@@ -637,9 +638,7 @@ StopDisconnectsAll ==
     /\ ~silentEnd
 
 \* disconnect_all_clients is one step: after it no slot is CONNECTED, every
-\* slot it found CONNECTED is FREE with reason SERVER_DISCONNECTED (the
-\* model's value; the current code records NONE for it, HOLD as the
-\* DisconnectAll comment says), and every
+\* slot it found CONNECTED is FREE with reason SERVER_DISCONNECTED, and every
 \* slot it found in HANDSHAKE still holds that HANDSHAKE and session.
 \* MCServerSessionDisconnectAllLeavesClient expects TLC to violate it.
 DisconnectAllIsAtomic ==

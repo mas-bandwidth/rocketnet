@@ -1323,6 +1323,8 @@ const char * rocketnet_disconnect_reason_name( enum rocketnet_disconnect_reason_
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED: return "MESSAGE_MEMORY_EXHAUSTED";
         case ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED:      return "SERVER_DISCONNECTED";
         case ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED:     return "MESSAGE_NOT_RECEIVED";
+        case ROCKETNET_DISCONNECT_REASON_TIMED_OUT:                return "TIMED_OUT";
+        case ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED:      return "CLIENT_DISCONNECTED";
         default:                                                   return "UNKNOWN";
     }
 }
@@ -2204,8 +2206,8 @@ static void rn_server_running_counts( const struct rocketnet_server_t * server, 
 // Every slot as rocketnet_server_disconnect_client ends one: a slot the
 // message layer holds CONNECTED is kicked (rn_message_object_kick), which
 // cancels its open in-place start,
-// marks it KICKED with reason NONE and disconnects it at the transport through
-// the link; a slot the transport holds connected that the message layer has
+// marks it KICKED with reason SERVER_DISCONNECTED and disconnects it at the
+// transport through the link; a slot the transport holds connected that the message layer has
 // not yet observed is disconnected at the transport (tla/RNSlots.tla
 // PublicDisconnect). The whole loop is one step: every connected slot ends in
 // this same call, and a slot still in the handshake is left as it is
@@ -2222,7 +2224,7 @@ void rocketnet_server_disconnect_all_clients( struct rocketnet_server_t * server
 
     for ( int i = 0; i < server->max_clients; i++ )
     {
-        rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_NONE );
+        rn_message_object_kick( &server->running->object, i, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
         if ( rocketnet_server_transport_is_client_connected( transport, i ) )
             rocketnet_server_transport_disconnect_client( transport, i );
@@ -2538,7 +2540,8 @@ bool rocketnet_server_client_user_data( const struct rocketnet_server_t * server
 // The slot ends at once, before the next update, in every query and send: a
 // slot the message layer holds CONNECTED is kicked (rn_message_object_kick),
 // which cancels its open in-place start,
-// marks it KICKED with reason NONE, so rocketnet_server_client_connected reads
+// marks it KICKED with reason SERVER_DISCONNECTED, so
+// rocketnet_server_client_connected reads
 // false and a start drops as not connected, and disconnects it at the
 // transport through the link; a slot the transport holds connected that the
 // message layer has not yet observed is disconnected at the transport, which
@@ -2557,7 +2560,7 @@ void rocketnet_server_disconnect_client( struct rocketnet_server_t * server, int
     if ( !rn_server_slot( server, client_index, &slot ) )
         return;
 
-    rn_message_object_kick( &server->running->object, slot, ROCKETNET_DISCONNECT_REASON_NONE );
+    rn_message_object_kick( &server->running->object, slot, ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED );
 
     rocketnet_server_transport_disconnect_client( rn_server_transport( server ), slot );
 }

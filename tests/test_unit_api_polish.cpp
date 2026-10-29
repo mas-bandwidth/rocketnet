@@ -305,8 +305,11 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
         ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT,
         ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED,
         ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED,
+        ROCKETNET_DISCONNECT_REASON_MESSAGE_NOT_RECEIVED,
+        ROCKETNET_DISCONNECT_REASON_TIMED_OUT,
+        ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED,
     };
-    const int reason_values[] = { 0, -1, -2, -3, -4, -5 };
+    const int reason_values[] = { 0, -1, -2, -3, -4, -5, -6, -7, -8 };
 
     for ( int i = 0; i < (int) ( sizeof( reasons ) / sizeof( reasons[0] ) ); i++ )
     {
@@ -318,6 +321,9 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) -9 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
 
     for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO; status-- )
     {

@@ -93,6 +93,12 @@ struct rocketnet_server_protocol_t
     uint64_t next_connection_id;
     uint64_t * connection_ids;
     uint64_t * acked_connection_ids;
+    // why each slot's last connection ended, a ROCKETNET_DISCONNECT_REASON_*:
+    // written by rocketnet_server_connection_reset with the ending path's
+    // reason (TIMED_OUT, CLIENT_DISCONNECTED, SERVER_DISCONNECTED, NONE for
+    // the integrity limit) and cleared to NONE when the slot is next
+    // assigned. NULL, as connection_ids, in a protocol built without it.
+    int * end_reasons;
     uint64_t payload_connection_id;
     uint64_t payload_sequence;
     int defer_payload_acks;
@@ -119,6 +125,7 @@ void rocketnet_server_transport_test_receive_work( const struct rocketnet_server
 // index out of range, or a protocol without the connection id arrays.
 
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index );
+int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol_t * server, int client_index );
 
 // Processes one connection request packet, full wire bytes including the
 // prefilter header, from this source address. current_timestamp is unix

@@ -130,7 +130,9 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 // the session nonce. Every terminal state and the transport's destroy run it.
 void rocketnet_client_protocol_wipe_secrets( struct rocketnet_client_protocol_t * client );
 void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * client );
-void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index );
+// reason: the ROCKETNET_DISCONNECT_REASON_* the ending path names, kept in
+// the protocol's end_reasons until the slot is next assigned
+void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index, int reason );
 
 void rocketnet_client_connection_reset( struct rn_message_object_t * client );
 void rocketnet_server_connection_reset( struct rn_message_object_t * server, int client_index );
