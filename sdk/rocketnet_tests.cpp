@@ -13685,11 +13685,20 @@ void rocketnet_test_public_config_env_round_trip()
 // the fill itself refuses it and writes nothing. No socket: a refused create
 // allocates nothing and a server binds only at start.
 
+// true when every byte of the object is zero, padding included: a refused
+// fill writes nothing, so the bytes are checked, not the members
+
+static bool rn_test_bytes_zero( const void * object, size_t bytes )
+{
+    const uint8_t * p = (const uint8_t *) object;
+    for ( size_t i = 0; i < bytes; i++ )
+        if ( p[i] != 0 )
+            return false;
+    return true;
+}
+
 void rocketnet_test_public_config_zeroed_refused()
 {
-    uint8_t zero[sizeof( struct rocketnet_server_config_t ) > sizeof( struct rocketnet_client_config_t ) ? sizeof( struct rocketnet_server_config_t ) : sizeof( struct rocketnet_client_config_t )];
-    memset( zero, 0, sizeof( zero ) );
-
     struct rocketnet_client_config_t client_config;
     memset( &client_config, 0, sizeof( client_config ) );
 
@@ -13700,7 +13709,7 @@ void rocketnet_test_public_config_zeroed_refused()
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
 
     rocketnet_check( rocketnet_client_default_config_internal( &client_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
-    rocketnet_check( memcmp( &client_config, zero, sizeof( client_config ) ) == 0 );
+    rocketnet_check( rn_test_bytes_zero( &client_config, sizeof( client_config ) ) );
 
     struct rocketnet_server_config_t server_config;
     memset( &server_config, 0, sizeof( server_config ) );
@@ -13712,7 +13721,7 @@ void rocketnet_test_public_config_zeroed_refused()
     rocketnet_check( status == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
 
     rocketnet_check( rocketnet_server_default_config_internal( &server_config ) == ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED );
-    rocketnet_check( memcmp( &server_config, zero, sizeof( server_config ) ) == 0 );
+    rocketnet_check( rn_test_bytes_zero( &server_config, sizeof( server_config ) ) );
 
     rocketnet_check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED ), "CONFIG_NOT_INITIALIZED" ) == 0 );
 }
