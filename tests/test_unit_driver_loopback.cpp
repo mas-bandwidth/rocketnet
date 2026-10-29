@@ -138,6 +138,23 @@ static void test_loopback_transport_io_exchanges_both_ways()
 
     rocketnet_unit_check( client.operations->receive( client.instance, &from, buf, 64 ) == 0 );
 
+    // Oversize replies must not make receive report an empty queue while a
+    // fitting reply is still queued behind them.
+    rocketnet_address_t client_to = client_address;
+    set_ipv4_loopback( client_to );
+    const uint8_t small[] = { 91, 92 };
+    const rocketnet_platform_send_t queued[] = {
+        { &client_to, data, (int) sizeof( data ) },
+        { &client_to, data, (int) sizeof( data ) },
+        { &client_to, small, (int) sizeof( small ) },
+    };
+    const uint64_t dropped = rocketnet_loopback_endpoint_dropped( client.instance );
+    server.operations->send_batch( server.instance, queued, 3 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, buf, sizeof( small ) ) == (int) sizeof( small ) );
+    rocketnet_unit_check( memcmp( buf, small, sizeof( small ) ) == 0 );
+    rocketnet_unit_check( rocketnet_loopback_endpoint_dropped( client.instance ) == dropped + 2 );
+    rocketnet_unit_check( client.operations->receive( client.instance, &from, buf, sizeof( small ) ) == 0 );
+
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
     printf( "test_loopback_transport_io_exchanges_both_ways\n" );

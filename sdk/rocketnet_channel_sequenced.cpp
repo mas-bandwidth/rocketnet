@@ -149,7 +149,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     const uint32_t index = record->fragment;
 
     int64_t base = 0;
-    if ( !rn_block_shape_valid( channels, record, &base ) )
+    if ( !rn_block_shape_valid( channels, record, &base ) || region->receive_descriptors[slot].number < index )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;

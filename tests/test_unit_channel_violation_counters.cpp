@@ -672,3 +672,22 @@ static void test_block_shape_refusals_match_across_reliable_codes()
 }
 
 REGISTER_UNIT_TEST( test_block_shape_refusals_match_across_reliable_codes );
+
+// A valid ring span does not make a negative extended first number valid.
+// At connection start, number zero cannot be fragment one of a prior block.
+static void test_block_first_number_underflow_ordered()
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const rocketnet_message_record_t record = block_shape_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 1, F / 16, (int) F, 0 );
+    block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+}
+
+static void test_block_first_number_underflow_sequenced()
+{
+    const uint32_t F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
+    const rocketnet_message_record_t record = block_shape_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 1, 1, F / 16, (int) F, 1 );
+    block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+}
+
+REGISTER_UNIT_TEST( test_block_first_number_underflow_ordered );
+REGISTER_UNIT_TEST( test_block_first_number_underflow_sequenced );

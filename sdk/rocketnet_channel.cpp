@@ -847,12 +847,19 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
+    const bool window_accepted = region->receive_descriptors[record->number & ( window - 1 )].live != 0;
     uint32_t slot = 0;
     rn_receive_descriptor_t * descriptor = rn_channels_descriptor( channels, record, &slot );
     if ( !descriptor )
     {
         // the slot is live for another number (check 10, SLOT_COLLISION)
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_SLOT_COLLISION );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
+    if ( window_accepted && descriptor->number < index )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
