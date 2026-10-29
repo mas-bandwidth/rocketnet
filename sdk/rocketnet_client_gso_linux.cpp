@@ -326,6 +326,7 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
 
     int total = 0;
     int weather = 0;
+    int skipped = 0;
 
     while ( total < max_packets )
     {
@@ -365,15 +366,25 @@ int rocketnet_client_gso_receive_batch( rocketnet_client_gso_t * gso, rocketnet_
         if ( result == 0 )
             return total;
 
-        // a zero-length datagram or a source the socket does not speak is not delivered, as the platform's batch receive has it
+        // a zero-length datagram or a source the socket does not speak is not
+        // delivered, as the platform's batch receive has it; a stream of them
+        // holds the drain no longer than a batch of packets would
 
         const int message_bytes = (int) gso->receive_message.msg_len;
         if ( message_bytes <= 0 )
+        {
+            if ( ++skipped >= max_packets )
+                return total;
             continue;
+        }
 
         rocketnet_address_t source;
         if ( !gso->syscalls->read_address( gso->syscall_context, &gso->receive_name, &source ) )
+        {
+            if ( ++skipped >= max_packets )
+                return total;
             continue;
+        }
 
         int segment_bytes = rocketnet_client_gso_gro_segment_bytes( header, message_bytes, &gso->gro_cmsg_faults );
         int num_segments = rocketnet_coalesce_split( message_bytes, segment_bytes, gso->segment_offsets, gso->segment_lengths,
