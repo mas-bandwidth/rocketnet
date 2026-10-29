@@ -4059,7 +4059,7 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     {
         int flushes = 0;
         rocketnet_server_transport_io_operations_t operations = {};
-        operations.flags = ROCKETNET_TRANSPORT_STAGED;
+        operations.flags = ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_REFLUSHES;   // XDP's declared flush capability
         operations.flush = rocketnet_server_transport_test_count_flush;
         transport->io.operations = &operations;
         transport->io.instance = &flushes;
