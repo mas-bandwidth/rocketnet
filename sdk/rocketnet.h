@@ -2668,6 +2668,16 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 /// Does not wait for workers. Poll rocketnet_server_stopped before restart or
 /// destroy. Repeated requests do nothing.
 ///
+/// Stop is the whole shutdown flush; there is no separate disconnect or send
+/// step to call first. In this one call every connected client's slot is
+/// ended, its redundant disconnect packets (a fixed number per client) are
+/// sealed and handed to the transport, and only then is the transport told
+/// to stop, so they go out before the workers exit. Messages queued
+/// and not yet sent are dropped. A client that receives one of them
+/// moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses every
+/// copy times out under its token's timeout. The work is bounded by
+/// max_clients and never waits on the network.
+///
 /// Needs a running server; stopped or stopping it does nothing. Running is
 /// false as soon as it returns. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.

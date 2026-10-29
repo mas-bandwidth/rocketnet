@@ -472,7 +472,11 @@ out-parameter. Either address may be NULL, but not both. It returns a stopped se
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
-client and requests transport shutdown. `rocketnet_server_stopped` reports
+client and requests transport shutdown. Stop is the whole shutdown flush: it
+seals each connected client's disconnect packets and hands them to the
+transport before telling the transport to stop, so a client reads
+`ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` rather than timing out; there is
+no separate disconnect-all or send call to make first. `rocketnet_server_stopped` reports
 completion without waiting. Until it is true, start is refused; afterward start
 can finalize the old run and activate a new transport. Clients are identified by an `int` index,
 `0 .. max_clients - 1`, the slot each connection takes.

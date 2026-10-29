@@ -1225,8 +1225,12 @@ static void test_server_start_stop_start_again()
             break;
     }
 
-    check( rocketnet_client_state( world.clients[0] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
-    check( rocketnet_client_state( world.clients[1] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    // stop flushed the disconnect packets before the transport stopped: both
+    // clients read the server's disconnect within a second of caller time,
+    // far inside the token timeout, never a timeout
+
+    check( rocketnet_client_state( world.clients[0] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
 
     // a stopped server's update and send are plain no-ops, not misuse
 
