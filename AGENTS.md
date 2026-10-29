@@ -165,18 +165,21 @@ int main( void )
     int result = 1;
     struct rocketnet_server_t * server = NULL;
     struct rocketnet_client_t * client = NULL;
+    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 8, NULL );
     static const uint8_t dev_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     const uint64_t protocol_id = 0x1122334455667788ULL;
     struct rocketnet_server_config_t server_config;
     struct rocketnet_client_config_t client_config;
-    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK ||
+    if ( !hub || rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK ||
          rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
         goto cleanup;
     server_config.protocol_id = protocol_id;
     server_config.max_clients = 8;
     server_config.transport = "loopback";
+    server_config.loopback_hub = hub;
     memcpy( server_config.backend_public_key, dev_key, sizeof( dev_key ) );
     client_config.transport = "loopback";
+    client_config.loopback_hub = hub;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     server = rocketnet_server_create( NULL, "127.0.0.1:40000", NULL, &server_config, &status );
@@ -284,6 +287,9 @@ cleanup:
     }
     if ( client ) rocketnet_client_destroy( client );
     if ( server ) rocketnet_server_destroy( server );
+    /* The hub goes after every endpoint on it, before term. */
+    if ( rocketnet_loopback_hub_destroy( hub ) != ROCKETNET_STATUS_OK )
+        result = 1;
     if ( rocketnet_term() != ROCKETNET_STATUS_OK )
         return 1;
     return result;
@@ -423,7 +429,7 @@ failure. See [standard/TRANSPORT.md](standard/TRANSPORT.md) for the wire format.
 RocketNet refuses invalid configuration rather than clamping it. Check returned status codes, pointers and serials. Only the misuse cases listed in `sdk/rocketnet.h` increment `api_misuses`; a refusal is not automatically misuse.
 
 - **Status codes (`enum rocketnet_status_t` and `rocketnet_status_name`):**
-  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-31`, so `status < 0` means the call failed.
+  - `ROCKETNET_STATUS_OK` (`0`): operation succeeded. Every failure is negative, from `-1` to `-34`, so `status < 0` means the call failed.
   - `ROCKETNET_STATUS_ALREADY_INITIALIZED`, `ROCKETNET_STATUS_NOT_INITIALIZED`, `ROCKETNET_STATUS_LIVE_ALLOCATIONS`, `ROCKETNET_STATUS_PLATFORM_INIT_FAILED`, `ROCKETNET_STATUS_CRYPTO_INIT_FAILED`: lifecycle and allocator state codes for `rocketnet_init` and `rocketnet_term`.
   - `ROCKETNET_STATUS_INVALID_ARGUMENT`, `ROCKETNET_STATUS_CONFIG_ENV_INVALID`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`, `ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED`, `ROCKETNET_STATUS_MISSING_KEYS`, `ROCKETNET_STATUS_INVALID_PROTOCOL_ID`, `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`, `ROCKETNET_STATUS_INVALID_ADDRESS`, `ROCKETNET_STATUS_INVALID_TRANSPORT_LIST`: argument and configuration refusals, written to the status out-parameter of `rocketnet_client_create` and `rocketnet_server_create` (create is the one check of a config) or returned by the call that refuses.
   - `ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED` (`-27`): a config whose `config_bytes` is `0` or too small, one that skipped `rocketnet_client_default_config` or `rocketnet_server_default_config`.
@@ -432,6 +438,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
   - `ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED`, `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, `ROCKETNET_STATUS_OUT_OF_MEMORY`, `ROCKETNET_STATUS_MUTEX_CREATE_FAILED`, `ROCKETNET_STATUS_THREAD_CREATE_FAILED`, `ROCKETNET_STATUS_TIMER_CREATE_FAILED`: transport candidate ladder and OS resource failures.
   - `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED`, `ROCKETNET_STATUS_SERVER_NOT_STOPPED`, `ROCKETNET_STATUS_FLOW_ID_RESERVED`, `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED`: lifecycle and destination refusals from `rocketnet_client_connect`, `rocketnet_server_start`, and server sends.
   - `ROCKETNET_STATUS_TRANSPORT_NOT_BUILT` (`-28`): `rocketnet_server_start` with a transport list whose every opened candidate is compiled out of this build, the `xdp` transport in a Linux build configured with `ROCKETNET_XDP=OFF` or without a BPF-capable clang, libbpf or an AF_XDP provider.
+  - `ROCKETNET_STATUS_LOOPBACK_HUB_MISSING` (`-32`), `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` (`-33`), `ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` (`-34`): client and server create refuse a transport list naming `"loopback"` with a `NULL` `loopback_hub`, and a hub from another build of the library; `rocketnet_loopback_hub_destroy` refuses, keeping the hub, while a server or client is still registered with it.
   - `ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION` (`-29`), `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` (`-30`): a production build (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and server create, and a connect token sealed to the published development server key at client connect.
 - **`NULL` and `0` returns as refused calls:** Functions returning pointers (`rocketnet_client_create`, `rocketnet_server_create`, `rocketnet_client_start_message`, `rocketnet_server_start_message`) return `NULL` when refused. Functions returning counts, booleans, or receipt serials (`rocketnet_client_finish_message`, `rocketnet_server_finish_message`, `rocketnet_client_receipts`, `rocketnet_server_receipts`) return `0` when refused. `rocketnet_client_receive_messages` and `rocketnet_server_receive_messages` return `NULL` when no batch is left. `rocketnet_client_set_send_kbps` and `rocketnet_server_set_send_kbps` return `enum rocketnet_status_t` like the lifecycle calls: `0` is `ROCKETNET_STATUS_OK` (the new rate took), and a refusal is a negative status (`ROCKETNET_STATUS_INVALID_ARGUMENT` for a negative rate, a NULL handle or a server index outside `0 .. max_clients - 1`); a rate of `0` sets the default rate. On a connection that is not CONNECTED the call returns `ROCKETNET_STATUS_OK` and changes nothing. API misuse that the library records increments a process-wide count, read from the `api_misuses` field of `struct rocketnet_client_stats_t` or `struct rocketnet_server_stats_t`; the API misuse comment under Lifecycle and logging in sdk/rocketnet.h is the full list. It includes a `NULL` handle passed to a call, a server start message to an index at or past `max_clients`, a destination id with `ROCKETNET_FLOW_ID_BIT` set, an in-place start left open across `update` or `send_packets`, and lifecycle or allocator misuse (a create before `rocketnet_init`, a repeated server start, an init with only one allocator function, an unusable update time). A send on a connection that is not CONNECTED (a client in any state but `ROCKETNET_CLIENT_STATE_CONNECTED`, a server index below `max_clients` with no CONNECTED client, a stopped server) is a normal drop, not misuse: it is counted in the `messages_dropped_not_connected` field of the client or server stats. A second `start`, an out-of-range channel or an oversized message is counted in the library's internal send-refusal counters instead, not in `api_misuses`; a bad `bytes_written` is refused with `0` and aborts the pending start, so a later start is never blocked.
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
@@ -465,7 +472,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 
 ## Testing an integration
 
-- **Use the `"loopback"` transport:** Set `server_config.transport = "loopback"` and `client_config.transport = "loopback"`. The `"loopback"` transport routes datagrams in memory across up to 1001 endpoints per process (one server and `ROCKETNET_MAX_CLIENTS` clients) without opening any OS socket or touching the network stack. The loopback client's I/O still runs on a real thread: the built-in loopback uses the same worker I/O core as the other built-in client transports, with bounded worker-side idle polling. Only in a development build (`ROCKETNET_DEV=1`) does `ROCKETNET_CLIENT_STEP_DRIVEN=1` instead run the client's transport receive and send work inside `rocketnet_client_update` and `rocketnet_client_send_packets` on the caller's thread, with no client I/O thread; a production build does not recognize that variable. While the development link simulator is running, its frame work and backend sends are the simulator path and remain caller-owned; that exception is development only.
+- **Use the `"loopback"` transport:** Create a hub with `rocketnet_loopback_hub_create( context, max_clients, &status )` after `rocketnet_init`, set `server_config.transport = "loopback"` and `client_config.transport = "loopback"`, and set `loopback_hub` on both configs; create refuses a loopback list with a `NULL` hub (`ROCKETNET_STATUS_LOOPBACK_HUB_MISSING`). The hub holds one server and `max_clients` clients (at most `ROCKETNET_MAX_CLIENTS`), allocates all of its memory at create, and is the only state the endpoints share, so a server and its clients built into separate shared objects, each with its own copy of the library from one build, connect through one hub. Destroy it with `rocketnet_loopback_hub_destroy` after the server and clients, before `rocketnet_term`. The `"loopback"` transport routes datagrams in memory without opening any OS socket or touching the network stack. The loopback client's I/O still runs on a real thread: the built-in loopback uses the same worker I/O core as the other built-in client transports, with bounded worker-side idle polling. Only in a development build (`ROCKETNET_DEV=1`) does `ROCKETNET_CLIENT_STEP_DRIVEN=1` instead run the client's transport receive and send work inside `rocketnet_client_update` and `rocketnet_client_send_packets` on the caller's thread, with no client I/O thread; a production build does not recognize that variable. While the development link simulator is running, its frame work and backend sends are the simulator path and remain caller-owned; that exception is development only.
 - **Pass synthetic monotonic `time`:** Both `rocketnet_client_update(client, time)` and `rocketnet_server_update(server, time)` take `double time` in seconds as an explicit parameter. Start test clocks at a fixed value such as `1000.0` and advance by `1.0 / 60.0` per tick—never sleep or read wall-clock time in unit tests.
 - **Simulate packet loss, latency, jitter, and duplicates:** In builds linked against the development library, call `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`, or set the environment variables `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` / `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` (`0 .. 100`), `ROCKETNET_DEV_CLIENT_LATENCY_MS` / `ROCKETNET_DEV_SERVER_LATENCY_MS`, `ROCKETNET_DEV_CLIENT_JITTER_MS` / `ROCKETNET_DEV_SERVER_JITTER_MS` and `ROCKETNET_DEV_CLIENT_DUPLICATE_PERCENT` / `ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT` (`0 .. 100`), to exercise retransmission, ordering, and `ROCKETNET_RECEIPT_STATUS_LOSS` handling deterministically over `"loopback"`.
 

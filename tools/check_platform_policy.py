@@ -32,7 +32,7 @@ WILDCARD_ALLOWED = {
      'rocketnet_address_parse( &refused_address, "0.0.0.0" );        // port 0: the kernel refuses it at send'):
         "a send destination, not a bind: the refused entry of the batch",
     ("functional/rocketnet_functional_tests.cpp",
-     'struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config );'):
+     'struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "[::]", &server_config, sizeof( server_config ) );'):
         "dual-stack transport case: an ipv4 client of the ipv6 wildcard",
     ("functional/rocketnet_functional_tests.cpp",
      'rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );'):

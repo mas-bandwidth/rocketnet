@@ -846,7 +846,9 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
                                                                                      const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 
 // Unit tests only: as create_step_driven, with the Unix timestamp supplied by
-// the test so token expiry is deterministic and no wall clock is read.
+// the test so token expiry is deterministic and no wall clock is read. It
+// reads the whole current config (rocketnet_client_transport_default_config_current),
+// so a loopback client carries its loopback_hub.
 struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp( void * context, const uint8_t * connect_token,
                                                                                                   const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
                                                                                                   const rocketnet_client_transport_io_operations_t * operations, void * transport_context );

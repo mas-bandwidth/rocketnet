@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #define DESTROY_BEFORE_COMPLETION_PROTOCOL 0x44424710C0DE0001ULL
@@ -137,6 +138,7 @@ static void db_world_create( db_world_t * world, void * context )
     server_config.max_clients = DESTROY_BEFORE_COMPLETION_MAX_CLIENTS;
     memcpy( server_config.backend_public_key, world->identity.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     world->server = rocketnet_server_create( context, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world->server != NULL );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
@@ -144,6 +146,7 @@ static void db_world_create( db_world_t * world, void * context )
     rocketnet_client_test_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
     client_config.time_callback = db_clock;
     world->client = rocketnet_client_create( context, &client_config, NULL );
@@ -212,6 +215,7 @@ static void test_destroy_before_completion_frees_everything()
 
     db_allocator_t state = { 0 };
     int status = -1;
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( rocketnet_init_ex( &state, db_allocator_malloc, db_allocator_free, &status ) );
     check( status == ROCKETNET_STATUS_OK );
@@ -229,6 +233,7 @@ static void test_destroy_before_completion_frees_everything()
 
     check( state.live == before );
 
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );

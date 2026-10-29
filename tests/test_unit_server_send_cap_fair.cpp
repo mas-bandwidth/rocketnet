@@ -26,6 +26,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -109,6 +111,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
     server_config.max_clients = max_clients;
     memcpy( server_config.backend_public_key, world->identity.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     fair_message_config( &server_config, NULL );
 
     if ( max_clients >= 256 )
@@ -137,6 +140,7 @@ static void fair_world_create( fair_world_t * world, int num_clients, int capaci
         check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
         client_config.transport = "loopback";
+        client_config.loopback_hub = rocketnet_test_loopback_hub();
         client_config.step_driven = true;
         client_config.time_callback = fair_clock;
         fair_message_config( NULL, &client_config );
@@ -578,7 +582,7 @@ REGISTER_UNIT_TEST( test_server_send_cap_one_three_clients );
 // and its bound read it, so they cannot drift apart.
 static void send_capacity_default_config( rocketnet_server_transport_config_t * config )
 {
-    rocketnet_server_transport_default_config( config );
+    rocketnet_server_transport_default_config_current( config );
     config->protocol_id = FAIR_PROTOCOL;
     config->max_clients = ROCKETNET_MAX_CLIENTS;
 }
@@ -589,8 +593,8 @@ static void send_capacity_default_config( rocketnet_server_transport_config_t * 
 // it returns, so the whole plan is resident there. The bound is
 // rocketnet_server_transport_memory_plan's total for the case's
 // configuration, planned with the portable transport because the plan has no
-// row for the loopback transport, plus one loopback endpoint's create-time queue
-// (rocketnet_loopback_queue_bytes at ROCKETNET_LOOPBACK_QUEUE_PACKETS),
+// row for the loopback transport, plus the case's loopback hub
+// (rocketnet_loopback_hub_bytes at ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS),
 // plus a stated 32 MiB margin for the process itself. A regression above the
 // plan fails the case.
 static long send_capacity_default_rss_bound_mb()
@@ -602,8 +606,8 @@ static long send_capacity_default_rss_bound_mb()
     if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
         return 0;
 
-    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
-    return suite_rss_bound_mb( plan.total_bytes + endpoint, 32 );
+    const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( plan.total_bytes + hub, 32 );
 }
 
 SUITE_CASE_RSS_BOUND( test_server_send_capacity_default_covers_clients, send_capacity_default_rss_bound_mb );
@@ -621,7 +625,8 @@ static void test_server_send_capacity_default_covers_clients()
     check( rocketnet_generate_server_keypair( config.server_public_key, config.server_secret_key ) == ROCKETNET_STATUS_OK );
 
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
-    struct rocketnet_server_transport_t * transport = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current( NULL, "127.0.0.1:0", &config );
     check( transport != NULL );
     check( rocketnet_server_transport_send_capacity( transport ) >= config.max_clients );
 

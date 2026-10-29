@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -134,6 +135,8 @@ static rocketnet_server_t * mass_disconnect_server_create( const mass_disconnect
     memcpy( config.server_public_key, keys->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof( config.server_secret_key ) );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    rocketnet_test_loopback_hub_clients( MASS_DISCONNECT_CLIENTS );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
     rocketnet_server_transport_t * transport = rocketnet_server_transport_create_resolved( NULL, "127.0.0.1:0", &config, 0, &status );
@@ -168,6 +171,7 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
     config.time_callback = mass_disconnect_fixed_clock;
     config.game_clock_epoch = 1000;
@@ -275,10 +279,10 @@ static void mass_disconnect_destroy_all( mass_disconnect_population_t * populati
 
 // The population's planned memory: the server transport's plan (planned with
 // the portable transport, as the loopback transport has no row of its own),
-// the message server's block for its slots, the loopback server queue sized
-// from the plan, and for each client its transport's plan, its message
-// client block and its loopback queue, plus a stated 32 MiB margin for the
-// process. A regression above the plan fails the case.
+// the message server's block for its slots, the loopback hub sized for every
+// client (its server queue and one queue per client), and for each client its
+// transport's plan and its message client block, plus a stated 32 MiB margin
+// for the process. A regression above the plan fails the case.
 static long mass_disconnect_rss_bound_mb()
 {
     rocketnet_server_transport_config_t server_config;
@@ -296,12 +300,11 @@ static long mass_disconnect_rss_bound_mb()
         return 0;                       // a refused plan keeps the suite-wide bound
 
     const uint64_t overhead = (uint64_t) rocketnet_allocation_overhead();
-    const uint64_t server_queue = rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( MASS_DISCONNECT_CLIENTS ) ) + overhead;
-    const uint64_t client_queue = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead;
+    const uint64_t hub = rocketnet_loopback_hub_bytes( MASS_DISCONNECT_CLIENTS ) + overhead;
     uint64_t planned = 0;
     if ( !rocketnet_memory_add( planned, 1, server_bytes ) || !rocketnet_memory_add( planned, 1, server_object ) ||
-         !rocketnet_memory_add( planned, 1, server_queue ) ||
-         !rocketnet_memory_add( planned, (uint64_t) MASS_DISCONNECT_CLIENTS, client_bytes + client_object + client_queue ) )
+         !rocketnet_memory_add( planned, 1, hub ) ||
+         !rocketnet_memory_add( planned, (uint64_t) MASS_DISCONNECT_CLIENTS, client_bytes + client_object ) )
         return 0;
     return suite_rss_bound_mb( planned, 32 );
 }

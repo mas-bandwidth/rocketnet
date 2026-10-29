@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -116,16 +117,17 @@ static void destroy_disconnect_make_keys( destroy_disconnect_keys_t * keys )
 static rocketnet_server_t * destroy_disconnect_server_create( const destroy_disconnect_keys_t * keys, double now )
 {
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.protocol_id = DESTROY_DISCONNECT_PROTOCOL_ID;
     config.max_clients = DESTROY_DISCONNECT_MAX_CLIENTS;
     memcpy( config.backend_public_key, keys->backend_public, sizeof( config.backend_public_key ) );
     memcpy( config.server_public_key, keys->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof( config.server_secret_key ) );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
     check( transport != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( transport, 1000 );
 
@@ -168,6 +170,7 @@ static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disc
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = io_core ? 1 : 0;
     config.time_callback = destroy_disconnect_fixed_clock;
     config.game_clock_epoch = 1000;
@@ -266,8 +269,9 @@ static rocketnet_client_t * destroy_disconnect_observed_client_create( const des
     destroy_disconnect_mint_token( keys, port, client_id, token );
 
     rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
 
     destroy_disconnect_observed_endpoint = NULL;
@@ -565,7 +569,7 @@ static void test_shutdown_without_live_connection_sends_nothing()
         memset( &fake, 0, sizeof( fake ) );
 
         rocketnet_client_transport_config_t config;
-        rocketnet_client_transport_default_config( &config );
+        rocketnet_client_transport_default_config_current( &config );
 
         rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(
             &fake, token, &config, 1000.0, 1000, &rocketnet_fake_client_operations_base, &fake );
@@ -585,7 +589,7 @@ static void test_shutdown_without_live_connection_sends_nothing()
         memset( &fake, 0, sizeof( fake ) );
 
         rocketnet_client_transport_config_t config;
-        rocketnet_client_transport_default_config( &config );
+        rocketnet_client_transport_default_config_current( &config );
         config.step_driven = 1;
 
         rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_at_timestamp(

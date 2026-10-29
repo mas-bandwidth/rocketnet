@@ -21,6 +21,9 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
+#include "unit_shutdown.h"
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && !ROCKETNET_XDP
 
@@ -62,7 +65,7 @@ static void xdp_compiled_out_pin_put_back( const xdp_compiled_out_env_pin * save
 // production-like keys: non-zero and not the published development keys
 static void xdp_compiled_out_config( struct rocketnet_server_transport_config_t * config, const char * transport )
 {
-    rocketnet_server_transport_default_config( config );
+    rocketnet_server_transport_default_config_current( config );
     memset( config->backend_public_key, 0x42, 32 );
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
@@ -82,7 +85,7 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
     xdp_compiled_out_config( &config, "xdp" );
 
     int status = -1;
-    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
     check( strcmp( rocketnet_status_name( (enum rocketnet_status_t) status ), "TRANSPORT_NOT_BUILT" ) == 0 );
 
@@ -90,7 +93,7 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
 
     xdp_compiled_out_config( &config, "xdp,xdp" );
     status = -1;
-    check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
+    check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
 
 #if ROCKETNET_DEV
@@ -109,9 +112,10 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
 
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp,loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status );
     check( server != NULL );
     check( status == ROCKETNET_STATUS_OK );
 
@@ -119,7 +123,7 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
     {
         check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
-        rocketnet_server_transport_destroy( server );
+        rn_test_server_transport_stop_and_destroy( server );
     }
 
 #if ROCKETNET_DEV

@@ -4,23 +4,32 @@
 #include "../sdk/rocketnet_driver_loopback.h"
 #include "../sdk/rocketnet_platform.h"
 #include "../sdk/rocketnet_config.h"
+#include "loopback_hub.h"
 #include <string.h>
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 #if ROCKETNET_DEV
+// The sender is the hub's server and the receiver one of its clients: a hub
+// holds one server.
 static void test_loopback_shutdown_send_drops_contended_without_waiting()
 {
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     const rocketnet_server_transport_io_config_t setup = { "loopback", &config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t a, b;
     rocketnet_unit_check( rocketnet_address_parse( &a, "127.0.0.1:0" ) );
     rocketnet_unit_check( rocketnet_address_parse( &b, "127.0.0.1:0" ) );
 
-    rocketnet_server_transport_io_t sender = {}, receiver = {};
+    rocketnet_server_transport_io_t sender = {};
+    rocketnet_client_transport_io_t receiver = {};
     rocketnet_unit_check( rocketnet_server_transport_io_open( rocketnet_loopback_transport.server, NULL, &setup, &a, &sender ) );
-    rocketnet_unit_check( rocketnet_server_transport_io_open( rocketnet_loopback_transport.server, NULL, &setup, &b, &receiver ) );
+    rocketnet_unit_check( rocketnet_client_transport_io_open( rocketnet_loopback_transport.client, NULL, &client_setup, &b, &receiver ) );
 
     uint8_t data[32] = { 1, 2, 3 };
     rocketnet_platform_send_t packets[3] = {};
@@ -41,10 +50,9 @@ static void test_loopback_shutdown_send_drops_contended_without_waiting()
 
     rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 3 );
 
-    rocketnet_address_t from[3];
-    uint8_t received[3][32];
-    int bytes[3];
-    rocketnet_unit_check( receiver.operations->receive_batch( receiver.instance, from, &received[0][0], 32, bytes, 3 ) == 0 );
+    rocketnet_address_t from;
+    uint8_t received[32];
+    rocketnet_unit_check( receiver.operations->receive( receiver.instance, &from, received, 32 ) == 0 );
 
     // The simulated failed try-acquire applies to shutdown only. An ordinary
     // batch still reaches the receiver under the same test contention flag.
@@ -53,25 +61,22 @@ static void test_loopback_shutdown_send_drops_contended_without_waiting()
     sender.operations->send_batch( sender.instance, packets, 1 );
     rocketnet_loopback_test_send_contention( false );
 
-    rocketnet_unit_check( receiver.operations->receive_batch( receiver.instance, from, &received[0][0], 32, bytes, 3 ) == 1 );
-    rocketnet_unit_check( bytes[0] == 32 && memcmp( received[0], data, 32 ) == 0 );
+    rocketnet_unit_check( receiver.operations->receive( receiver.instance, &from, received, 32 ) == 32 && memcmp( received, data, 32 ) == 0 );
+    rocketnet_unit_check( receiver.operations->receive( receiver.instance, &from, received, 32 ) == 0 );
     rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 3 );
 
     // pressure has gone: the same storage remains usable and sends exactly once
 
     sender.operations->send_batch( sender.instance, packets, 1 );
-    rocketnet_unit_check( receiver.operations->receive_batch( receiver.instance, from, &received[0][0], 32, bytes, 3 ) == 1 );
-    rocketnet_unit_check( bytes[0] == 32 && memcmp( received[0], data, 32 ) == 0 );
+    rocketnet_unit_check( receiver.operations->receive( receiver.instance, &from, received, 32 ) == 32 && memcmp( received, data, 32 ) == 0 );
+    rocketnet_unit_check( receiver.operations->receive( receiver.instance, &from, received, 32 ) == 0 );
     rocketnet_unit_check( sender.operations->send_failures( sender.instance ) == 3 );
 
     rocketnet_server_transport_io_stop( &sender );
-    rocketnet_server_transport_io_stop( &receiver );
-
     rocketnet_unit_check( rocketnet_server_transport_io_stopped( &sender ) );
-    rocketnet_unit_check( rocketnet_server_transport_io_stopped( &receiver ) );
 
     rocketnet_server_transport_io_close( &sender );
-    rocketnet_server_transport_io_close( &receiver );
+    rocketnet_client_transport_io_close( &receiver );
 }
 
 REGISTER_UNIT_TEST( test_loopback_shutdown_send_drops_contended_without_waiting );

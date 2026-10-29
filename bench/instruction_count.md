@@ -41,7 +41,7 @@ run outside the instrumented window.
 
 ### Region `server_tick`
 
-One server (`max_clients = 16`, inside `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`) and
+One server (`max_clients = 16`, on a loopback hub of 16 clients) and
 `16` step-driven clients connect over the `loopback` transport. Each tick, every
 connected client writes `4` payloads of `200` bytes (`64` datagrams total) and
 flushes them into the server's loopback endpoint queue outside the instrumented

@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #define MEMORY_PLAN_PROTOCOL 0x7A11C1C1E5EED0A1ULL
@@ -91,6 +92,7 @@ static uint64_t memory_plan_peak_above( uint64_t base )
 
 static void test_memory_plan_covers_lifecycle()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, memory_plan_malloc, memory_plan_free ) == ROCKETNET_STATUS_OK );
     rocketnet_quiet( true );
@@ -114,6 +116,7 @@ static void test_memory_plan_covers_lifecycle()
     server_config.max_clients = 4;
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const uint64_t server_required = rocketnet_server_required_memory( &server_config );
     check( server_required > 0 );
@@ -161,6 +164,7 @@ static void test_memory_plan_covers_lifecycle()
     rocketnet_client_test_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = memory_plan_clock;
 
@@ -202,6 +206,7 @@ static void test_memory_plan_covers_lifecycle()
     check( memory_plan_live == server_base );
 #endif // #if ROCKETNET_DEV
 
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -571,7 +576,14 @@ static void bounded_exchange( rocketnet_server_t * server, rocketnet_client_t * 
 
 static void test_light_required_memory_sufficient_bounded()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
+
+    // init first: the configs name the loopback hub, which the system side
+    // of the bounded allocator holds before system_base is read
+
+    check( rocketnet_init( NULL, bounded_malloc, bounded_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_quiet( true );
     memory_plan_now = 1000.0;
 
     uint8_t seed[32];
@@ -590,6 +602,7 @@ static void test_light_required_memory_sufficient_bounded()
     server_config.max_clients = 4;
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const size_t server_required = rocketnet_server_required_memory( &server_config );
     check( server_required > 0 );
@@ -598,6 +611,7 @@ static void test_light_required_memory_sufficient_bounded()
     memset( &client_config, 0, sizeof( client_config ) );
     check( rocketnet_client_light_config( (rocketnet_client_config_t *) &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = memory_plan_clock;
 
@@ -608,9 +622,6 @@ static void test_light_required_memory_sufficient_bounded()
     bounded_arena_setup( &bounded_client_arena, client_required );
     check( ( (uintptr_t) bounded_server_arena.base % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );
     check( ( (uintptr_t) bounded_client_arena.base % ROCKETNET_ALLOCATION_ALIGNMENT ) == 0 );
-
-    check( rocketnet_init( NULL, bounded_malloc, bounded_free ) == ROCKETNET_STATUS_OK );
-    rocketnet_quiet( true );
 
     const uint64_t system_base = bounded_system_live;
     bounded_system_peak = system_base;
@@ -667,11 +678,12 @@ static void test_light_required_memory_sufficient_bounded()
     // The max supported light server population (1000 clients) is covered
     // at its exact required size by the native transport_memory checker on
     // the planned transports (tools/check_memory.py light rows). Loopback
-    // is an unplanned custom transport whose own queue memory the public
-    // contract does not count, so no 1000-client loopback row is asserted
-    // here; test_unit_light_profile.cpp keeps the 1000-client required
+    // keeps its queues in the caller's hub (rocketnet_loopback_hub_create),
+    // outside the server and client plans, so no 1000-client loopback row is
+    // asserted here; test_unit_light_profile.cpp keeps the 1000-client required
     // bytes themselves under their recorded upper bound.
 
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }

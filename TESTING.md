@@ -223,6 +223,8 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: sendhandoff (3 required) | planned for the final deliverable |
 | TLA+ model check: ackblockwrap (2 required) | planned for the final deliverable |
 | TLA+ model check: loopbackqueue (2 required) | planned for the final deliverable |
+| TLA+ model check: loopbackhub (3 required) | planned for the final deliverable |
+| TLA+ model check: loopbackhublayout (3 required) | planned for the final deliverable |
 | TLA+ model check: rnbufferhandoff (9 required) | planned for the final deliverable |
 | TLA+ model check: rnbufferhandoffbase (4 required) | planned for the final deliverable |
 | TLA+ model check: rnclientiocp (2 required) | planned for the final deliverable |

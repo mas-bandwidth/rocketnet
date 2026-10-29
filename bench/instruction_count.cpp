@@ -13,8 +13,8 @@
         200 bytes per frame; counts rocketnet_client_transport_send_packets and
         rocketnet_client_transport_update over 64 measured frames after 32
         warm-up frames (matching the window timed by client_main_thread_cost).
-      - server_tick: 16 connected loopback clients (inside
-        ROCKETNET_LOOPBACK_MAX_ENDPOINTS), each sending 4 payloads of 200 bytes
+      - server_tick: 16 connected loopback clients (a loopback hub of 16
+        clients), each sending 4 payloads of 200 bytes
         per tick; counts rocketnet_server_transport_update, payload reply
         framing, and rocketnet_server_transport_send_packets over 64 measured
         ticks after 16 warm-up ticks.
@@ -26,8 +26,8 @@
 #define ROCKETNET_DEV 1
 #include "../tests/native_shutdown.h"
 #include "rocketnet.h"
-#include "rocketnet_driver_loopback.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_connect_token.h"
 #include "sodium.h"
 
@@ -177,13 +177,17 @@ namespace
     {
         init_deterministic_runtime();
 
+        rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, NULL );
+        CHECK( hub != NULL );
+
         rocketnet_server_transport_config_t server_config;
         rocketnet_server_transport_dev_config( &server_config );
         server_config.max_clients = 2;
         server_config.game_clock_epoch = 1000;
         memcpy( server_config.transport, "loopback", sizeof( "loopback" ) );
+        server_config.loopback_hub = hub;
         rocketnet_server_transport_t * server =
-            rocketnet_server_transport_create( NULL, "127.0.0.1:42000", &server_config );
+            rocketnet_server_transport_create_current( NULL, "127.0.0.1:42000", &server_config );
         CHECK( server != NULL );
         CHECK( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
@@ -191,14 +195,15 @@ namespace
         CHECK( rocketnet_write_test_connect_token( "127.0.0.1:42000", 1001ULL, 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         rocketnet_client_transport_config_t client_config;
-        rocketnet_client_transport_default_config( &client_config );
+        rocketnet_client_transport_default_config_current( &client_config );
         memcpy( client_config.transport, "loopback", sizeof( "loopback" ) );
+        client_config.loopback_hub = hub;
         client_config.step_driven = true;
         client_config.game_clock_epoch = 1000;
         client_config.time_callback = sim_time_callback;
 
         rocketnet_client_transport_t * client =
-            rocketnet_client_transport_create( NULL, token, &client_config, g_sim_time );
+            rocketnet_client_transport_create_current( NULL, token, &client_config, g_sim_time );
         CHECK( client != NULL );
 
         int client_index = -1;
@@ -293,6 +298,7 @@ namespace
 
         rn_native_client_transport_stop_and_destroy( client );
         rn_native_server_transport_stop_and_destroy( server );
+        CHECK( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
         rocketnet_term();
 
         printf( "instruction_count region=client_frame units=%d mode=%s compiler_id=%s build_type=%s\n",
@@ -304,18 +310,19 @@ namespace
 
     void run_server_tick( bool setup_only )
     {
-        static_assert( SERVER_TICK_CLIENTS + 1 <= ROCKETNET_LOOPBACK_MAX_ENDPOINTS,
-                       "server_tick client count must fit inside ROCKETNET_LOOPBACK_MAX_ENDPOINTS" );
-
         init_deterministic_runtime();
+
+        rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, SERVER_TICK_CLIENTS, NULL );
+        CHECK( hub != NULL );
 
         rocketnet_server_transport_config_t server_config;
         rocketnet_server_transport_dev_config( &server_config );
         server_config.max_clients = SERVER_TICK_CLIENTS;
         server_config.game_clock_epoch = 1000;
         memcpy( server_config.transport, "loopback", sizeof( "loopback" ) );
+        server_config.loopback_hub = hub;
         rocketnet_server_transport_t * server =
-            rocketnet_server_transport_create( NULL, "127.0.0.1:42001", &server_config );
+            rocketnet_server_transport_create_current( NULL, "127.0.0.1:42001", &server_config );
         CHECK( server != NULL );
         CHECK( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
@@ -329,13 +336,14 @@ namespace
                        "127.0.0.1:42001", (uint64_t) ( 2000 + c ), 2000ULL, token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
             rocketnet_client_transport_config_t client_config;
-            rocketnet_client_transport_default_config( &client_config );
+            rocketnet_client_transport_default_config_current( &client_config );
             memcpy( client_config.transport, "loopback", sizeof( "loopback" ) );
+            client_config.loopback_hub = hub;
             client_config.step_driven = true;
             client_config.game_clock_epoch = 1000;
             client_config.time_callback = sim_time_callback;
 
-            clients[c] = rocketnet_client_transport_create( NULL, token, &client_config, g_sim_time );
+            clients[c] = rocketnet_client_transport_create_current( NULL, token, &client_config, g_sim_time );
             CHECK( clients[c] != NULL );
         }
 
@@ -454,6 +462,7 @@ namespace
         }
 
         rn_native_server_transport_stop_and_destroy( server );
+        CHECK( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
         rocketnet_term();
 
         printf( "instruction_count region=server_tick units=%d mode=%s compiler_id=%s build_type=%s\n",

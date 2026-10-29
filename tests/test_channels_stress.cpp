@@ -49,6 +49,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -142,6 +143,7 @@ static void stress_client_config( rocketnet_client_test_config_t * config, int c
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->step_driven = true;
     config->time_callback = clock;
     config->send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
@@ -157,6 +159,7 @@ static void stress_server_config( rocketnet_server_config_t * config, const uint
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, backend_public_key, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
                            &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
@@ -810,6 +813,7 @@ int main( int argc, char ** argv )
     check( rocketnet_init( NULL, stress_malloc, stress_free ) == ROCKETNET_STATUS_OK );
     test_channels_stress_memory_is_planned();
     test_channels_stress_every_channel_delivers();
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
     return 0;

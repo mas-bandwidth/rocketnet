@@ -27,6 +27,7 @@
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "counters_expect.h"
+#include "loopback_hub.h"
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -38,13 +39,23 @@ static void set_ipv4_loopback( rocketnet_address_t & address )
     address.data.ipv4[3] = 1;
 }
 
+// One hub: the server discovers a port; a second server is refused, as is a
+// client on the server's family and port; a client of either family
+// discovers a port of its own.
+
 static void test_loopback_transport_io_binds_and_discovers_a_port()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
+
+    rocketnet_client_transport_config_t client_config;
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t setup = { "loopback", &server_config, NULL, NULL };
+    const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
 
     rocketnet_address_t a;
     rocketnet_unit_check( rocketnet_address_parse( &a, "127.0.0.1:0" ) );
@@ -53,20 +64,26 @@ static void test_loopback_transport_io_binds_and_discovers_a_port()
     rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &setup, &a, &sa ) );
     rocketnet_unit_check( a.port != 0 );
 
-    rocketnet_address_t b = a;
+    rocketnet_address_t b;
+    rocketnet_unit_check( rocketnet_address_parse( &b, "[::]:0" ) );
     rocketnet_server_transport_io_t sb = {};
     rocketnet_unit_check( !rocketnet_server_transport_io_open( backend->server, NULL, &setup, &b, &sb ) );
+
+    rocketnet_address_t same = a;
+    rocketnet_client_transport_io_t refused = {};
+    rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &same, &refused ) );
 
     rocketnet_address_t c;
     rocketnet_unit_check( rocketnet_address_parse( &c, "[::]:0" ) );
 
-    rocketnet_server_transport_io_t sc = {};
-    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &setup, &c, &sc ) );
+    rocketnet_client_transport_io_t cc = {};
+    rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &c, &cc ) );
     rocketnet_unit_check( c.port != 0 );
     rocketnet_unit_check( c.port != a.port );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( rocketnet_test_loopback_hub() ) == 2 );
 
     rn_test_server_io_stop_and_close( &sa );
-    rn_test_server_io_stop_and_close( &sc );
+    rocketnet_client_transport_io_close( &cc );
     printf( "test_loopback_transport_io_binds_and_discovers_a_port\n" );
 }
 
@@ -75,9 +92,11 @@ static void test_loopback_transport_io_exchanges_both_ways()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
@@ -134,9 +153,11 @@ static void test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
@@ -201,6 +222,7 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
@@ -210,7 +232,8 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
     rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t client_address;
@@ -219,9 +242,9 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
-    // the server endpoint's queue is sized from the plan (rocketnet_loopback_server_queue_packets)
+    // the server endpoint's queue is sized from the hub's clients (rocketnet_loopback_server_queue_packets)
 
-    const int server_queue = rocketnet_loopback_server_queue_packets( server_config.max_clients );
+    const int server_queue = rocketnet_loopback_server_queue_packets( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS );
     const int total = server_queue + 5;
     uint8_t data[4];
     rocketnet_address_t to = server_address;
@@ -313,9 +336,20 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     const size_t live_before = g_loopback_live_bytes;
 
+    // the hub is the one allocation: every endpoint's record and queue, the
+    // server's sized from the hub's clients (rocketnet_loopback_server_queue_packets)
+
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, NULL );
+    rocketnet_unit_check( hub != NULL );
+
+    const size_t created_bytes = (size_t) rocketnet_loopback_hub_bytes( 1 ) + overhead;
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
+    rocketnet_unit_check( rocketnet_loopback_hub_bytes( 1 ) >= rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( 1 ) ) + rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) );
+
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
@@ -324,14 +358,9 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_server_transport_io_t server = {};
     rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
 
-    const size_t server_create_bytes = g_loopback_live_bytes - live_before;
-
-    // the server endpoint's queue is sized from the plan (rocketnet_loopback_server_queue_packets)
-
-    rocketnet_unit_check( server_create_bytes == rocketnet_loopback_queue_bytes( rocketnet_loopback_server_queue_packets( server_config.max_clients ) ) + overhead );
-
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
 
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t client_address;
@@ -340,7 +369,8 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     rocketnet_client_transport_io_t client = {};
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
-    const size_t created_bytes = server_create_bytes + rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + overhead;
+    // registering the endpoints allocates nothing
+
     rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
 
     const size_t allocation_calls_after_create = g_loopback_allocation_calls;
@@ -352,10 +382,10 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
     set_ipv4_loopback( to_server );
     set_ipv4_loopback( to_client );
 
-    // each queue filled past its capacity: the server's sized from the plan,
-    // the client's ROCKETNET_LOOPBACK_QUEUE_PACKETS; five more each drop
+    // each queue filled past its capacity: the server's sized from the hub's
+    // clients, the client's ROCKETNET_LOOPBACK_QUEUE_PACKETS; five more each drop
 
-    const int server_queue = rocketnet_loopback_server_queue_packets( server_config.max_clients );
+    const int server_queue = rocketnet_loopback_server_queue_packets( 1 );
     const int client_queue = ROCKETNET_LOOPBACK_QUEUE_PACKETS;
 
     for ( int round = 0; round < 2; ++round )
@@ -419,6 +449,8 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
+    rocketnet_unit_check( g_loopback_live_bytes - live_before == created_bytes );
+    rocketnet_unit_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( g_loopback_live_bytes == live_before );
 
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
@@ -429,10 +461,12 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
 static void test_loopback_transport_io_destroy_frees_the_port()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
-    const int live_before = rocketnet_loopback_endpoints_live();
+    rocketnet_loopback_hub_t * hub = rocketnet_test_loopback_hub();
+    const int live_before = rocketnet_loopback_endpoints_live( hub );
 
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
@@ -444,7 +478,8 @@ static void test_loopback_transport_io_destroy_frees_the_port()
     const uint16_t port = server_address.port;
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_address_t client_address;
@@ -454,7 +489,7 @@ static void test_loopback_transport_io_destroy_frees_the_port()
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_address, &client ) );
 
     rn_test_server_io_stop_and_close( &server );
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + 1 );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == live_before + 1 );
 
     uint8_t data[4] = { 1, 2, 3, 4 };
     rocketnet_address_t to = server_address;
@@ -472,7 +507,7 @@ static void test_loopback_transport_io_destroy_frees_the_port()
 
     rn_test_server_io_stop_and_close( &server2 );
     rocketnet_client_transport_io_close( &client );
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == live_before );
     printf( "test_loopback_transport_io_destroy_frees_the_port\n" );
 }
 
@@ -543,10 +578,11 @@ static void test_wire_totals_staged_finish_counts_exactly()
     fx.capacity = 1024;
 
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.max_clients = 4;
     config.protocol_id = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     // production create refuses dev keys and zero keys; any non-zero, non-dev
     // bytes satisfy the key check for this fake-transport fixture, which never
@@ -558,7 +594,7 @@ static void test_wire_totals_staged_finish_counts_exactly()
 
     rocketnet_server_transport_io_operations_t operations;
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
         printf( "create_ex status=%d\n", create_status );
@@ -686,16 +722,17 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     fx.reported[fx.count++] = 0;
 
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.max_clients = 4;
     config.protocol_id = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.backend_public_key, 0xAB, 32 );
     memset( config.server_public_key, 0xCD, 32 );
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     rocketnet_unit_check( server );
     rn_test_server_io_stop_and_close( &server->io );
 
@@ -726,29 +763,27 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     printf( "test_server_counts_zero_length_datagram_as_too_short\n" );
 }
 
-// Both endpoint-count cases intentionally fill the process-wide table. Use
-// the same full-queue byte calculation as loopback_create, including each
-// SDK allocation header, plus 32 MiB for the executable, CRT bookkeeping,
-// static endpoint table and the cases' small transport/address/batch arrays.
-// The workload and endpoint counts stay unchanged. Native Debug fills every
-// allocation; an additional unplanned 64 MiB must exceed this bound.
+// A hub at the most clients holds them all and its server. The process is
+// held to the hub's one block, every endpoint's queue in it. Native Debug
+// fills every allocation; an additional unplanned 64 MiB must exceed this
+// bound.
 
-static long loopback_full_table_rss_bound_mb()
+static long loopback_full_hub_rss_bound_mb()
 {
-    const uint64_t endpoint_bytes = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
-    return suite_rss_bound_mb( (uint64_t) ROCKETNET_LOOPBACK_MAX_ENDPOINTS * endpoint_bytes, 32 );
+    return suite_rss_bound_mb( rocketnet_loopback_hub_bytes( ROCKETNET_MAX_CLIENTS ) + rocketnet_allocation_overhead(), 32 );
 }
 
-SUITE_CASE_RSS_BOUND( test_loopback_transport_io_holds_max_clients_plus_server, loopback_full_table_rss_bound_mb );
-SUITE_CASE_RSS_BOUND( test_loopback_transport_io_refuses_past_max_endpoints, loopback_full_table_rss_bound_mb );
+SUITE_CASE_RSS_BOUND( test_loopback_transport_io_holds_max_clients_plus_server, loopback_full_hub_rss_bound_mb );
 
 static void test_loopback_transport_io_holds_max_clients_plus_server()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
-    const int live_before = rocketnet_loopback_endpoints_live();
+    rocketnet_test_loopback_hub_clients( ROCKETNET_MAX_CLIENTS );
+    rocketnet_loopback_hub_t * hub = rocketnet_test_loopback_hub();
 
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     rocketnet_address_t server_address;
@@ -759,7 +794,8 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
     rocketnet_unit_check( server_address.port != 0 );
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
 
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
     rocketnet_client_transport_io_t * clients = (rocketnet_client_transport_io_t *) calloc( ROCKETNET_MAX_CLIENTS, sizeof( rocketnet_client_transport_io_t ) );
@@ -773,11 +809,7 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
         rocketnet_unit_check( client_addresses[i].port != 0 );
     }
 
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
-    if ( live_before == 0 )
-    {
-        rocketnet_unit_check( rocketnet_loopback_endpoints_live() == ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
-    }
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == ROCKETNET_MAX_CLIENTS + 1 );
 
     const uint8_t data[] = { 1, 2, 3, 4 };
     rocketnet_address_t to = server_address;
@@ -843,7 +875,7 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
         rocketnet_client_transport_io_close( &clients[i] );
     }
     rn_test_server_io_stop_and_close( &server );
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 0 );
 
     free( batch );
     free( froms );
@@ -866,29 +898,46 @@ static void loopback_refusal_log_capture( void *, enum rocketnet_log_level_t, co
     g_loopback_refusal_log[copy] = '\0';
 }
 
-static void test_loopback_transport_io_refuses_past_max_endpoints()
+// tla/LoopbackHub.tla capacity: a hub of N clients takes N client endpoints
+// and one server; the next of either is refused with one warning naming the
+// capacity, and a freed record takes the next endpoint.
+
+static void test_loopback_transport_io_refuses_past_hub_capacity()
 {
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
-    const int live_before = rocketnet_loopback_endpoints_live();
+    const int hub_clients = 3;
     const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_WARN );
     rocketnet_log_function( loopback_refusal_log_capture, NULL );
 
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, hub_clients, NULL );
+    rocketnet_unit_check( hub != NULL );
+
+    rocketnet_server_transport_config_t server_config;
+    rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = hub;
+
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = hub;
 
+    const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
-    rocketnet_client_transport_io_t * clients = (rocketnet_client_transport_io_t *) calloc( ROCKETNET_LOOPBACK_MAX_ENDPOINTS, sizeof( rocketnet_client_transport_io_t ) );
-    rocketnet_unit_check( clients );
+    rocketnet_client_transport_io_t clients[3] = {};
 
-    for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+    rocketnet_address_t server_address;
+    rocketnet_unit_check( rocketnet_address_parse( &server_address, "127.0.0.1:0" ) );
+    rocketnet_server_transport_io_t server = {};
+    rocketnet_unit_check( rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &server_address, &server ) );
+
+    for ( int i = 0; i < hub_clients; ++i )
     {
         rocketnet_address_t address;
         rocketnet_unit_check( rocketnet_address_parse( &address, "127.0.0.1:0" ) );
         rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &address, &clients[i] ) );
     }
 
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == hub_clients + 1 );
 
     g_loopback_refusal_log_count = 0;
     g_loopback_refusal_log[0] = '\0';
@@ -898,31 +947,35 @@ static void test_loopback_transport_io_refuses_past_max_endpoints()
 
     rocketnet_client_transport_io_t refused = {};
     rocketnet_unit_check( !rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &extra, &refused ) );
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
-
-    char value[32];
-    snprintf( value, sizeof( value ), "%d", (int) ROCKETNET_LOOPBACK_MAX_ENDPOINTS );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == hub_clients + 1 );
     rocketnet_unit_check( g_loopback_refusal_log_count == 1 );
-    rocketnet_unit_check( strstr( g_loopback_refusal_log, "ROCKETNET_LOOPBACK_MAX_ENDPOINTS" ) != NULL );
-    rocketnet_unit_check( strstr( g_loopback_refusal_log, value ) != NULL );
+    rocketnet_unit_check( strstr( g_loopback_refusal_log, "holds 3 clients" ) != NULL );
+
+    rocketnet_address_t second;
+    rocketnet_unit_check( rocketnet_address_parse( &second, "[::]:0" ) );
+    rocketnet_server_transport_io_t second_server = {};
+    rocketnet_unit_check( !rocketnet_server_transport_io_open( backend->server, NULL, &server_setup, &second, &second_server ) );
+    rocketnet_unit_check( g_loopback_refusal_log_count == 2 );
+    rocketnet_unit_check( strstr( g_loopback_refusal_log, "already has one" ) != NULL );
 
     rocketnet_client_transport_io_close( &clients[0] );
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before + ROCKETNET_LOOPBACK_MAX_ENDPOINTS - 1 );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == hub_clients );
 
     rocketnet_address_t again;
     rocketnet_unit_check( rocketnet_address_parse( &again, "127.0.0.1:0" ) );
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &again, &clients[0] ) );
 
-    for ( int i = 0; i < ROCKETNET_LOOPBACK_MAX_ENDPOINTS; ++i )
+    for ( int i = 0; i < hub_clients; ++i )
     {
         rocketnet_client_transport_io_close( &clients[i] );
     }
-    rocketnet_unit_check( rocketnet_loopback_endpoints_live() == live_before );
+    rn_test_server_io_stop_and_close( &server );
+    rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == 0 );
+    rocketnet_unit_check( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
-    free( clients );
-    printf( "test_loopback_transport_io_refuses_past_max_endpoints\n" );
+    printf( "test_loopback_transport_io_refuses_past_hub_capacity\n" );
 }
 
 // Junk from many sources takes no per-source state: the portable path reads
@@ -975,17 +1028,18 @@ static void test_server_connects_after_junk_from_many_sources()
     rocketnet_unit_check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.max_clients = 4;
     config.protocol_id = protocol_id;
     config.handshake_deadline_seconds = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( config.backend_public_key, backend_public_key, sizeof( config.backend_public_key ) );
     memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, server_secret_key, sizeof( config.server_secret_key ) );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
         printf( "create_ex status=%d\n", create_status );
@@ -1011,8 +1065,9 @@ static void test_server_connects_after_junk_from_many_sources()
                                                                     addresses, 1, UINT64_C( 0x5057495245 ), 0, UINT64_C( 1 ) << 40, 60, NULL, token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = junk_sources_test_clock;
     junk_sources_test_time = 1001.02;
@@ -1169,16 +1224,17 @@ static void shape_junk_connect_slot0( rocketnet_server_transport_t * server, roc
 static rocketnet_server_transport_t * shape_junk_server_create()
 {
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.max_clients = 4;
     config.protocol_id = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.backend_public_key, 0xAB, 32 );
     memset( config.server_public_key, 0xCD, 32 );
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
         printf( "create_ex status=%d\n", create_status );
@@ -1347,9 +1403,11 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
@@ -1444,9 +1502,11 @@ static void test_loopback_queue_restarts_at_slot_zero_when_empty()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };
@@ -1566,7 +1626,7 @@ REGISTER_UNIT_TEST( test_loopback_transport_io_runtime_does_not_allocate );
 REGISTER_UNIT_TEST( test_loopback_transport_io_destroy_frees_the_port );
 REGISTER_UNIT_TEST( test_server_counts_zero_length_datagram_as_too_short );
 REGISTER_UNIT_TEST( test_loopback_transport_io_holds_max_clients_plus_server );
-REGISTER_UNIT_TEST( test_loopback_transport_io_refuses_past_max_endpoints );
+REGISTER_UNIT_TEST( test_loopback_transport_io_refuses_past_hub_capacity );
 REGISTER_UNIT_TEST( test_wire_totals_staged_finish_counts_exactly );
 REGISTER_UNIT_TEST( test_server_connects_after_junk_from_many_sources );
 REGISTER_UNIT_TEST( test_server_shape_check_first_on_the_staged_loop );

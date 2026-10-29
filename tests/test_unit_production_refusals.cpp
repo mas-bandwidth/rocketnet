@@ -29,6 +29,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -67,6 +68,7 @@ static int production_client_connect( const uint8_t * server_key )
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
 
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( config.packet_filter, production_filter, sizeof( config.packet_filter ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_TEST_STATUS_UNSET;
@@ -93,6 +95,7 @@ static void test_production_server_refuses_test_packet_filter()
         config.protocol_id = 1;
         memset( config.backend_public_key, 0x42, sizeof( config.backend_public_key ) );
         config.transport = "loopback";
+        config.loopback_hub = rocketnet_test_loopback_hub();
         config.max_clients = 2; // the refusal, not capacity: stay under the suite's RSS bound
 
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
@@ -113,20 +116,21 @@ static void test_production_server_refuses_test_packet_filter()
     // the transport create
     {
         struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_default_config( &config );
+        rocketnet_server_transport_default_config_current( &config );
         memset( config.backend_public_key, 0x42, 32 );
         memset( config.server_public_key, 0x43, 32 );
         memset( config.server_secret_key, 0x44, 32 );
         config.protocol_id = 1;
         snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        config.loopback_hub = rocketnet_test_loopback_hub();
         config.max_clients = 2;
 
         int status = -1;
-        check( rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
+        check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
 
         memcpy( config.packet_filter, production_filter, sizeof( config.packet_filter ) );
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( server != NULL );
         check( status == ROCKETNET_STATUS_OK );
 
@@ -151,6 +155,7 @@ static void test_production_client_refuses_test_packet_filter()
         check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
 
         config.transport = "loopback";
+        config.loopback_hub = rocketnet_test_loopback_hub();
 
         enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
         check( rocketnet_client_create( NULL, &config, &status ) == NULL );

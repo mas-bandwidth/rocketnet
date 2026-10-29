@@ -98,12 +98,26 @@ one row pin-only on both endpoints. The pin-only check reads the
 endpoint's own column, so a transport can rank in one endpoint's `auto` order
 and be pin-only on the other. The loopback transport is in-process, carries datagrams through memory with no
 socket and no system network call. It is a production transport selected only
-by name; `auto` never chooses it. Its process-wide table is `ROCKETNET_LOOPBACK_MAX_ENDPOINTS`
-records of 72 bytes each (72,072 bytes) under one mutex. Each live endpoint
-allocates its full `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue at create, so
-runtime sends never allocate or grow it. A process using loopback must budget
-for every live endpoint's complete queue capacity. The cost is paid only by a
-process that selects loopback by name. Lookups scan the table linearly under the mutex.
+by name; `auto` never chooses it. It keeps no library globals: its endpoints
+meet in a hub the application creates with `rocketnet_loopback_hub_create`
+and names in each config's `loopback_hub`, and create refuses a list naming
+loopback with a `NULL` hub (`ROCKETNET_STATUS_LOOPBACK_HUB_MISSING`). Because
+the hub is the only shared state, a server and its clients built into
+separate shared objects, each with its own copy of the library from one
+build, connect through one hub; every use checks the hub's magic, version
+and layout id and refuses a hub from another build
+(`ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH`). The hub holds one server and
+`max_clients` clients (1 .. `ROCKETNET_MAX_CLIENTS`), and create allocates it
+as one block through the caller's allocator: the endpoint records, each
+client's `ROCKETNET_LOOPBACK_QUEUE_PACKETS` queue and the server's queue
+sized for `max_clients`. Start and connect register an endpoint and allocate
+nothing, and runtime sends never allocate or grow a queue. Lookups scan the
+hub's records linearly under its mutex. `rocketnet_loopback_hub_destroy`
+refuses while any endpoint is registered (`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE`),
+keeping the hub; destroy it after the server and clients, before
+`rocketnet_term`. The registration lifecycle is modelled in
+`tla/LoopbackHub.tla` and the queue ring arithmetic in
+`tla/LoopbackHubLayout.tla`.
 
 The names `rocketnet_server_uring_available`, `rocketnet_server_uring_leaked_bytes`
 and `rocketnet_server_uring_leaked_transports` are internal transport helpers

@@ -272,7 +272,7 @@ static void test_client_connect_keeps_the_family_that_answers()
     bind_family_mint_both( token );
 
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.time_callback = bind_family_time;
     memcpy( config.packet_filter, rocketnet_test_filter_value, ROCKETNET_FILTER_VALUE_BYTES );
 

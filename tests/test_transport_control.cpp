@@ -14,6 +14,7 @@ static int controlled_seal( rocketnet_server_protocol_t * server, int client_ind
                             uint64_t packet_id, uint8_t * wire, int bytes, double time );
 #define rocketnet_server_protocol_seal_payload_frame controlled_seal
 #include "../sdk/rocketnet_server_transport.cpp"
+#include "loopback_hub.h"
 #undef rocketnet_server_protocol_seal_payload_frame
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "control check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
@@ -226,8 +227,9 @@ static rocketnet_server_transport_t * make_server( control_fixture_t * f, rocket
     // runs through the deterministic buffered or staged fixture operations
 
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
-    auto * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
+    auto * server = rocketnet_server_transport_create_current( NULL, "127.0.0.1:0", &config );
     CHECK( server );
     rn_native_server_io_stop_and_close( &server->io );
     *operations = {};
@@ -843,6 +845,7 @@ int main( int argc, char ** argv )
             test_disconnect_burst_next_send( true );
         else
             CHECK( false );
+        CHECK( rocketnet_test_loopback_hub_release() );
         rocketnet_term();
         return 0;
     }
@@ -859,5 +862,6 @@ int main( int argc, char ** argv )
     test_entries_carry_connection_id( false );
     test_entries_carry_connection_id( true );
     test_staged_link_address_hooks();
+    CHECK( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 }

@@ -17,7 +17,6 @@
 #include "rocketnet_protocol.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_memory.h"
-#include "rocketnet_driver_loopback.h"
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_client_gso.h"
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
@@ -1192,10 +1191,10 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
 
     if ( strcmp( transport, "loopback" ) == 0 )
     {
-        // one endpoint's queue; the endpoint record is in the process-wide
-        // table, and loopback opens no socket. A threaded client still starts
-        // its network thread.
-        plan.transport_io_bytes = rocketnet_memory_allocations( { rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) } );
+        // the endpoint's record and queue are in the caller's hub, allocated
+        // at hub create, and loopback opens no socket. A threaded client
+        // still starts its network thread.
+        plan.transport_io_bytes = 0;
         if ( threaded && !rocketnet_memory_add( plan.transport_io_bytes, 1, rocketnet_platform_thread_allocation_bytes() ) )
             return false;
 
@@ -1252,9 +1251,10 @@ static bool rocketnet_client_transport_memory_plan( const rocketnet_client_trans
     else
         return false;
 
-    // loopback opens no socket and runs no family race
+    // loopback opens no socket and runs no family race; its endpoint is in
+    // the caller's hub, so a step-driven loopback client plans no I/O bytes
 
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes )
+    if ( !plan.transport_bytes || !plan.send_arena_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
         return false;
     if ( plan.sockets != 0 && !plan.race_bytes )
         return false;
@@ -1358,7 +1358,7 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_
         return NULL;
 
     return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context,
-                                                       ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_PRE_SIMULATOR, current_timestamp );
+                                                       sizeof( struct rocketnet_client_transport_config_t ), current_timestamp );
 }
 
 rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_current( void * context, const uint8_t * connect_token,

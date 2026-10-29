@@ -37,6 +37,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #if ROCKETNET_DEV
@@ -76,6 +77,7 @@ static void resolve_once_server_config( rocketnet_server_config_t * config, cons
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
 // a token for client_id sealed to the running server's own key
@@ -103,6 +105,7 @@ static void resolve_once_client_config( rocketnet_client_test_config_t * config 
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->step_driven = true;
     config->time_callback = resolve_once_clock;
 }
@@ -252,6 +255,7 @@ static void test_config_client_env_transport_refused_at_create()
     rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &config, &status );

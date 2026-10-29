@@ -29,6 +29,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -141,8 +143,8 @@ static void dev_warning_server_config( rocketnet_server_transport_config_t * con
 
 // Development creates a full-capacity server before checking the warning.
 // The portable plan covers common protocol and ACK history storage, plus the
-// portable TX I/O banks. Add the loopback
-// queue; the portable I/O-storage term is a small conservative allowance
+// portable TX I/O banks. Add the case's loopback
+// hub; the portable I/O-storage term is a small conservative allowance
 // because loopback has no built-in plan row.
 // Allow 32 MiB for the process and native runtime, as the other full-capacity
 // loopback case does. Release refuses the dev key before creating a server.
@@ -158,8 +160,8 @@ static long dev_warning_rss_bound_mb()
         return 0;
 
     uint64_t planned = plan.total_bytes;
-    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
-    if ( !rocketnet_memory_add( planned, 1, endpoint ) )
+    const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
+    if ( !rocketnet_memory_add( planned, 1, hub ) )
         return 0;
     return suite_rss_bound_mb( planned, 32 );
 #else
@@ -181,11 +183,12 @@ static void test_dev_keys_warn_on_every_start()
     {
         struct rocketnet_server_transport_config_t config;
         dev_warning_server_config( &config );
+        config.loopback_hub = rocketnet_test_loopback_hub();
 
         int status = -1;
         start_capture();
 
-        void * srv = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
+        void * srv = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &status );
         check( g_dev_warn_lines == 1 );
         check( g_dev_warn_level == ROCKETNET_LOG_LEVEL_WARN );
         check( strstr( g_dev_warn_buf, DEV_KEY_WARN_PHRASE ) != NULL );

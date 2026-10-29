@@ -33,6 +33,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -234,6 +235,7 @@ static void test_client_connect_refuses_connect_token_port_zero()
     struct rocketnet_client_test_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = port_zero_clock;
 

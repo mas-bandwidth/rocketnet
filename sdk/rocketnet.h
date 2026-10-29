@@ -376,7 +376,25 @@ enum rocketnet_status_t
     /// where no server can be reached. Mint the token with the server's bound
     /// port.
 
-    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO = -31
+    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO = -31,
+
+    /// Create refused. The transport list names loopback and the config's
+    /// loopback_hub is NULL. Create a hub with rocketnet_loopback_hub_create
+    /// and set loopback_hub in the server and client configs.
+
+    ROCKETNET_STATUS_LOOPBACK_HUB_MISSING = -32,
+
+    /// The loopback hub was made by another build of the library: its magic,
+    /// version or layout differ from this library's. Create and use the hub
+    /// with copies of the library from one build.
+
+    ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH = -33,
+
+    /// rocketnet_loopback_hub_destroy refused, the hub kept: a server or client
+    /// endpoint is still registered with it. Destroy every server and client
+    /// that uses the hub, then destroy the hub.
+
+    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE = -34
 };
 
 /// The process-wide log levels, least to most verbose.
@@ -901,6 +919,10 @@ struct rocketnet_client_t;
 /// rocketnet_server_destroy frees it. Use each server from one thread at a
 /// time.
 struct rocketnet_server_t;
+/// An opaque loopback hub. rocketnet_loopback_hub_create makes one and
+/// rocketnet_loopback_hub_destroy frees it. Servers and clients on the
+/// loopback transport name it in their config and share it from any thread.
+struct rocketnet_loopback_hub_t;
 
 /// Lifecycle and logging
 
@@ -1094,11 +1116,59 @@ ROCKETNET_EXPORT double rocketnet_time( void );
 
 ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 
+/// Loopback hub
+
+/// The loopback transport carries datagrams between a server and its clients
+/// in one process through memory, with no socket. Its endpoints find each
+/// other through a hub the application creates and names in each config's
+/// loopback_hub. The hub holds everything the endpoints share, and nothing is
+/// kept in library globals, so a server and its clients built into separate
+/// shared objects, each with its own copy of the library, share one hub. The
+/// copies must come from one build: every use checks the hub's magic, version
+/// and layout, and refuses a hub from another build with
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH.
+///
+/// Create allocates the hub as one block through the configured allocator:
+/// one server endpoint and max_clients client endpoints, each with its full
+/// datagram queue. Server start and client connect register an endpoint and
+/// allocate nothing; stop, disconnect and destroy unregister it. Traffic never
+/// allocates. A server or client past the hub's capacity is refused at start
+/// or connect. Create it once rocketnet_init has run, and destroy it with the
+/// same library copy that created it, after every server and client that uses
+/// it is destroyed and before rocketnet_term.
+///
+/// Thread: create and destroy on any thread. The endpoints may use the hub
+/// from any thread at once; a mutex in the hub guards it.
+///
+/// @param context Passed to the allocator callbacks. May be NULL.
+/// @param max_clients The client endpoints the hub holds, 1 ..
+/// ROCKETNET_MAX_CLIENTS.
+/// @param status Receives the result, or NULL.
+/// @return The hub, or NULL on failure. The status is ROCKETNET_STATUS_OK,
+/// ROCKETNET_STATUS_NOT_INITIALIZED before rocketnet_init,
+/// ROCKETNET_STATUS_INVALID_ARGUMENT for max_clients outside 1 ..
+/// ROCKETNET_MAX_CLIENTS, ROCKETNET_STATUS_OUT_OF_MEMORY or
+/// ROCKETNET_STATUS_MUTEX_CREATE_FAILED.
+
+ROCKETNET_EXPORT struct rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int max_clients, enum rocketnet_status_t * status );
+
+/// Frees the hub. Refused while any server or client endpoint is registered
+/// with it: the hub is kept, one error is logged and the call counts as API
+/// misuse.
+///
+/// @param hub The hub, or NULL to do nothing.
+/// @return ROCKETNET_STATUS_OK, including for NULL;
+/// ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE while an endpoint is registered; or
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a hub from another build.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct rocketnet_loopback_hub_t * hub );
+
 /// Config
 
 /// Initialize each config with its default_config function, then set the
 /// fields the game needs. Environment values override config values. Every
-/// field except callbacks and config_bytes names its environment variable.
+/// field except callbacks, loopback_hub and config_bytes names its
+/// environment variable.
 /// Overrides are logged with the displaced value. Invalid values refuse
 /// create. Values are not clamped. Empty variables are ignored and logged.
 /// Create reads the environment once, before it validates the config and
@@ -1117,7 +1187,9 @@ ROCKETNET_EXPORT void rocketnet_sleep( double seconds );
 /// iocp,rio,portable on Windows, keeping native server transports first.
 /// io_uring requires build support. Linux clients try gso,portable; macOS
 /// clients try msgx,portable; and Windows clients try iocp,portable.
-/// Loopback is selected by name, never by auto. An
+/// Loopback is selected by name, never by auto, and needs the config's
+/// loopback_hub: a list naming loopback with a NULL hub refuses create with
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING. An
 /// explicit server pin of "portable" is available in either build.
 /// A known name that this build does not offer for this endpoint on this
 /// platform (xdp on a client, for example) is skipped with a log.
@@ -1273,6 +1345,12 @@ struct rocketnet_client_config_t
     /// Range is 1000 .. 600000. Default is 10000.
 
     int reliable_message_timeout_ms;
+
+    /// The loopback hub the loopback transport connects through. Required
+    /// when the transport list names loopback; otherwise unused. It has no
+    /// environment form. Default is NULL.
+
+    struct rocketnet_loopback_hub_t * loopback_hub;
 };
 
 /// The server config starts without a backend public key or protocol id.
@@ -1478,6 +1556,12 @@ struct rocketnet_server_config_t
     /// join or a flood of requests spreads across updates.
 
     int handshakes_per_update;
+
+    /// The loopback hub the loopback transport serves through. Required when
+    /// the transport list names loopback; otherwise unused. It has no
+    /// environment form. Default is NULL.
+
+    struct rocketnet_loopback_hub_t * loopback_hub;
 };
 
 /// Messages
@@ -1775,6 +1859,8 @@ ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_serve
 /// ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED, ROCKETNET_STATUS_CONFIG_ENV_INVALID,
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_INVALID_ARGUMENT for
 /// a negative send_kbps, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
 /// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED or ROCKETNET_STATUS_OUT_OF_MEMORY.
 
@@ -2231,6 +2317,8 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_INVALID_ARGUMENT for no address or a negative
 /// per_client_send_kbps, ROCKETNET_STATUS_INVALID_ADDRESS,
 /// ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, ROCKETNET_STATUS_INVALID_TRANSPORT_LIST,
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
+/// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
 /// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, ROCKETNET_STATUS_OUT_OF_MEMORY or
 /// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server key cannot be made.

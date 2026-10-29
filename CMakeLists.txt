@@ -1049,6 +1049,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         functional/posix_socket_errors.cpp
         functional/corpus_consistency.cpp
         functional/shared_library_tokens.cpp
+        functional/loopback_hub_shared_objects.cpp
         functional/process_thread_counts.cpp
         functional/session_reconnect_isolation.cpp
         functional/destroy_early_keep.cpp
@@ -1065,6 +1066,36 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_definitions(functional PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
     endif()
     set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
+    # test_loopback_hub_two_shared_objects (functional/loopback_hub_shared_objects.cpp):
+    # the library built into two separate shared objects, a server module and a
+    # client module, each linking its own static copy of rocketnet_dev and
+    # exporting only its loopback_hub_*_module_ entry points, loaded through the
+    # operating system loader and connected through one loopback hub. On
+    # Windows each module is a DLL that exports what its source marks
+    # __declspec(dllexport), loaded with LoadLibrary; on Linux the static
+    # library's symbols are kept local (--exclude-libs) and on macOS only the
+    # entry points are exported, each loaded with dlopen.
+    foreach(side IN ITEMS server client)
+        add_library(loopback_hub_${side}_module MODULE functional/loopback_hub_${side}_module.cpp)
+        target_link_libraries(loopback_hub_${side}_module PRIVATE rocketnet_dev Threads::Threads)
+        target_include_directories(loopback_hub_${side}_module PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/functional")
+        target_compile_features(loopback_hub_${side}_module PRIVATE cxx_std_11)
+        set_target_properties(loopback_hub_${side}_module PROPERTIES
+            C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
+        rocketnet_warning_floor(loopback_hub_${side}_module)
+        if(APPLE)
+            target_link_options(loopback_hub_${side}_module PRIVATE "LINKER:-exported_symbol,_loopback_hub_${side}_module_*")
+        elseif(NOT WIN32)
+            target_link_options(loopback_hub_${side}_module PRIVATE "LINKER:--exclude-libs,ALL")
+        endif()
+        add_dependencies(functional loopback_hub_${side}_module)
+    endforeach()
+    target_compile_definitions(functional PRIVATE
+        "ROCKETNET_LOOPBACK_HUB_SERVER_MODULE_PATH=\"$<TARGET_FILE:loopback_hub_server_module>\""
+        "ROCKETNET_LOOPBACK_HUB_CLIENT_MODULE_PATH=\"$<TARGET_FILE:loopback_hub_client_module>\"")
+    if(CMAKE_DL_LIBS)
+        target_link_libraries(functional PRIVATE ${CMAKE_DL_LIBS})
+    endif()
     target_compile_features(functional PRIVATE cxx_std_11)
     add_dependencies(functional test)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")

@@ -19,6 +19,7 @@
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 #include "../sdk/rocketnet.h"
+#include "loopback_hub.h"
 
 #define NO_WORKER_PROTOCOL     0x5747A75D0C1E4A11ULL
 #define NO_WORKER_CLIENTS      1000
@@ -92,6 +93,8 @@ static void no_worker_server_create( no_worker_world_t * world, int max_clients 
     config.protocol_id = NO_WORKER_PROTOCOL;
     config.max_clients = max_clients;
     config.transport = "loopback";
+    rocketnet_test_loopback_hub_clients( max_clients );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     no_worker_message_config( &config, NULL );
     memcpy( config.backend_public_key, world->backend_public, sizeof( config.backend_public_key ) );
 
@@ -111,6 +114,7 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
         rocketnet_client_test_config_t config;
         check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
         config.transport = "loopback";
+        config.loopback_hub = rocketnet_test_loopback_hub();
         config.step_driven = true;
         config.time_callback = no_worker_clock;
         no_worker_message_config( NULL, &config );

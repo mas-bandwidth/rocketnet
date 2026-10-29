@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 // the cases test struct transport lists, so the test sets the caller's env pin aside
 // for its duration and puts it back after: the env pin wins over the struct
@@ -99,6 +100,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // the worker starts the process initialized; return to the pre-init state
     // so the lifecycle refusals below are reachable
 
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
 
     // S1: a NULL public_address_string is a logged INVALID_ARGUMENT, even
@@ -228,6 +230,7 @@ static void test_server_transport_create_ex_reports_every_status()
         struct rocketnet_server_transport_config_t config;
         production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        config.loopback_hub = rocketnet_test_loopback_hub();
         config.max_clients = 1;
 
         int reached_success = 0;
@@ -265,6 +268,7 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // a clean term, then restore the default allocator for the worker's term
 
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );

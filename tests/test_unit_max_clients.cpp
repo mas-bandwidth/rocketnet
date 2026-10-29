@@ -32,6 +32,7 @@
 
 #include <stdint.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -49,7 +50,7 @@ static void test_max_clients_derived_limits()
     // the server-wide tables hold every client
 
     check( (int) ( sizeof( ( (rn_slots_t *) 0 )->connection_id ) / sizeof( uint64_t ) ) == clients );
-    check( ROCKETNET_LOOPBACK_MAX_ENDPOINTS == clients + 1 );
+    check( rocketnet_loopback_hub_bytes( clients ) > 0 && rocketnet_loopback_hub_bytes( clients + 1 ) == 0 );
     check( ROCKETNET_XDP_REPLAY_MAX_ENTRIES >= clients );
     check( (int) ( sizeof( ( (rocketnet_xdp_replay_marks_t *) 0 )->mark_keys ) / sizeof( rocketnet_server_xdp_replay_key_t ) ) == ROCKETNET_XDP_REPLAY_MAX_ENTRIES );
     check( ROCKETNET_XDP_REPLY_MAC_ENTRIES >= 4 * clients );
@@ -126,11 +127,18 @@ static void max_clients_server_config( rocketnet_server_config_t * config )
     config->message_resend_delay_initial_ms = 100;
 }
 
+// the suite reads the bound before any case runs, with no library and no
+// hub, so it plans the portable transport (a superset of loopback's plan,
+// which allocates nothing) and adds the case's test hub
 static long max_clients_server_rss_bound_mb()
 {
     rocketnet_server_config_t config;
     max_clients_server_config( &config );
-    return suite_rss_bound_mb( (uint64_t) rocketnet_server_required_memory( &config ), 32 );
+    config.transport = "portable";
+    const uint64_t server = (uint64_t) rocketnet_server_required_memory( &config );
+    if ( server == 0 )
+        return 0;
+    return suite_rss_bound_mb( server + rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead(), 32 );
 }
 
 SUITE_CASE_RSS_BOUND( test_server_create_at_max_clients, max_clients_server_rss_bound_mb );
@@ -143,6 +151,7 @@ static void test_server_create_at_max_clients()
 {
     rocketnet_server_config_t config;
     max_clients_server_config( &config );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     check( rocketnet_server_required_memory( &config ) > 0 );
 
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;

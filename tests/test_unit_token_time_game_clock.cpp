@@ -29,6 +29,8 @@
 #include <stdint.h>
 #include <string.h>
 #include <stdio.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -78,13 +80,14 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     token_time_game_mint( token_data, create, expire );
 
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.game_clock_epoch = epoch;
 
     int status = 0;
-    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_ex( NULL, token_data, &config, time, &status );
+    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, time, &status );
     if ( transport )
     {
         rn_native_client_transport_stop_and_destroy( transport );
@@ -164,7 +167,7 @@ static void test_token_time_game_clock_admits_a_fixed_token()
     const uint64_t expire = create + TOKEN_LIFETIME;
 
     check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL == offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ) );
-    check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1 == sizeof( struct rocketnet_client_transport_config_t ) );
+    check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_2 == sizeof( struct rocketnet_client_transport_config_t ) );
     {
         static const size_t known[] = { ROCKETNET_CLIENT_TRANSPORT_CONFIG_KNOWN_BYTES };
         struct rocketnet_client_transport_config_t defaults, old_caller, read;

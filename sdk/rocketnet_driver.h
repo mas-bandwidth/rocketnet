@@ -194,8 +194,8 @@ struct rocketnet_client_transport_io_operations_t
     // token selected, so the kernel drops datagrams from any other source
     // (the client trusts only the server, TRANSPORT.md t11); the transport
     // then sends only to that server. False refuses the transport. NULL for
-    // a transport with no socket of its own to connect (loopback: one
-    // in-process router shared by every endpoint).
+    // a transport with no socket of its own to connect (loopback: the
+    // caller's hub, shared by its endpoints).
     bool ( *connect )( void * transport, const rocketnet_address_t * server_address );
     // optional; the reading thread, once, after its last receive or wait on
     // the transport, with no other thread using it. Closes the transport's

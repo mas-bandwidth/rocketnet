@@ -24,6 +24,7 @@
 #if defined( __linux__ )
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include "loopback_hub.h"
 
 #ifndef UDP_GRO
 #define UDP_GRO 104
@@ -445,16 +446,17 @@ static int transport_results_server_receive_batch( void * transport, rocketnet_a
 static rocketnet_server_transport_t * transport_results_make_server( transport_results_server_lie_t * lie, rocketnet_server_transport_io_operations_t * operations )
 {
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.max_clients = 1;
     config.protocol_id = 1;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.backend_public_key, 0xAB, 32 );
     memset( config.server_public_key, 0xCD, 32 );
     memset( config.server_secret_key, 0xEF, 32 );
 
     int create_status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, 1000.0, &create_status );
     if ( !server )
     {
         printf( "create_ex status=%d\n", create_status );
@@ -664,9 +666,11 @@ static void test_loopback_transport_io_results_matches_destination_or_wildcard()
     const rocketnet_transport_backend_t * backend = &rocketnet_loopback_transport;
     rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const rocketnet_server_transport_io_config_t server_setup = { "loopback", &server_config, NULL, NULL };
     const rocketnet_client_transport_io_config_t client_setup = { "loopback", &client_config, NULL };

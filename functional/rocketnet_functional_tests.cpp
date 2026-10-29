@@ -50,6 +50,7 @@ extern std::atomic<unsigned long long> g_client_ack_stats_count;
 
 #define ROCKETNET_COUNTERS_CHECK rocketnet_check
 #include "../tests/counters_expect.h"
+#include "../tests/loopback_hub.h"
 
 // The clean-run rule rides along: every refusal reads 0 on a run that injects
 // no fault. A test that provokes a refusal on purpose ends with the _EXCEPT
@@ -1472,8 +1473,11 @@ void rocketnet_test_transport_udp_loopback()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1", &server_config );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1", &server_config, sizeof( server_config ) );
     rocketnet_check( server );
 
     char server_address[64];
@@ -1482,7 +1486,10 @@ void rocketnet_test_transport_udp_loopback()
     uint8_t loopback_connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), loopback_connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, loopback_connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_check( rocketnet_client_transport_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, loopback_connect_token, &client_config, sizeof( client_config ), rocketnet_platform_time() );
     rocketnet_check( client );
 
     // pump both until connected, bounded by the wall clock
@@ -3691,8 +3698,11 @@ void rocketnet_test_transport_ipv6_loopback()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::1]", &server_config );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "[::1]", &server_config, sizeof( server_config ) );
     rocketnet_check( server );
 
     char server_address[64];
@@ -3701,7 +3711,10 @@ void rocketnet_test_transport_ipv6_loopback()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_check( rocketnet_client_transport_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -3793,10 +3806,13 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 16;
+    // the hub is read only when a pin names loopback, as the CI transport
+    // matrix's loopback cell does
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     // wildcard bind kept: the case is the ipv6 wildcard listen serving an ipv4 client
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "[::]", &server_config );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "[::]", &server_config, sizeof( server_config ) );
     rocketnet_check( server );
 
     char server_address[64];
@@ -3805,7 +3821,10 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
     uint8_t connect_token[ROCKETNET_CONNECT_TOKEN_BYTES];
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, NULL, rocketnet_platform_time() );
+    struct rocketnet_client_transport_config_t client_config;
+    rocketnet_check( rocketnet_client_transport_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_platform_time() );
     rocketnet_check( client );
 
     double start = rocketnet_platform_time();
@@ -4899,8 +4918,9 @@ void rocketnet_test_server_transport_io_pin_loopback()
 
     server_config.max_clients = 2;
     snprintf( server_config.transport, sizeof( server_config.transport ), "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current( NULL, "127.0.0.1:0", &server_config );
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
     rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
@@ -4912,10 +4932,11 @@ void rocketnet_test_server_transport_io_pin_loopback()
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current( NULL, connect_token, &client_config, rocketnet_platform_time() );
     rocketnet_check( client );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
 
@@ -5021,7 +5042,8 @@ void rocketnet_test_transport_env_pins_loopback()
 {
     // the per-endpoint env names win over the struct: both configs keep
     // their default "auto" and the environment still selects loopback on
-    // both ends. the process-wide spelling stays cleared.
+    // both ends, through the hub each config names. the process-wide
+    // spelling stays cleared.
 
     struct rocketnet_test_env_guard_t server_guard, client_guard;
     rocketnet_test_env_save( &server_guard, "ROCKETNET_SERVER_TRANSPORT" );
@@ -5035,9 +5057,10 @@ void rocketnet_test_transport_env_pins_loopback()
     // this selection/configuration fixture needs one connection, not 1000 slots
 
     server_config.max_clients = 1;
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     rocketnet_check( strcmp( server_config.transport, "auto" ) == 0 );
 
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &server_config );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     rocketnet_check( server );
     rocketnet_check( strcmp( rocketnet_server_transport_io_name( server ), "loopback" ) == 0 );
 
@@ -5048,10 +5071,11 @@ void rocketnet_test_transport_env_pins_loopback()
     rocketnet_check( rocketnet_write_test_connect_token( server_address, rocketnet_random_uint64(), rocketnet_functional_token_timestamp( server_config.game_clock_epoch, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_check( rocketnet_client_transport_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     rocketnet_check( strcmp( client_config.transport, "auto" ) == 0 );
 
-    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_platform_time() );
     rocketnet_check( client );
     rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), "loopback" ) == 0 );
 
@@ -5090,6 +5114,9 @@ void transport_env_pin_is_honoured()
         struct rocketnet_server_transport_config_t server_config;
         rocketnet_server_transport_dev_config( &server_config );
         server_config.max_clients = 1;
+        // the hub is read only when a pin names loopback, as the CI transport
+        // matrix's loopback cell does
+        server_config.loopback_hub = rocketnet_test_loopback_hub();
         rocketnet_check( strcmp( server_config.transport, "auto" ) == 0 );
 
         struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
@@ -5106,10 +5133,11 @@ void transport_env_pin_is_honoured()
         rocketnet_check( rocketnet_write_test_connect_token( "127.0.0.1:41040", rocketnet_random_uint64(), rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() ), connect_token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         struct rocketnet_client_transport_config_t client_config;
-        rocketnet_client_transport_default_config( &client_config );
+        rocketnet_check( rocketnet_client_transport_default_config_sized( &client_config, sizeof( client_config ) ) == 1 );
+        client_config.loopback_hub = rocketnet_test_loopback_hub();
         rocketnet_check( strcmp( client_config.transport, "auto" ) == 0 );
 
-        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, connect_token, &client_config, rocketnet_platform_time() );
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_sized( NULL, connect_token, &client_config, sizeof( client_config ), rocketnet_platform_time() );
         rocketnet_check( client );
         rocketnet_check( strcmp( rocketnet_client_transport_io_name( client ), client_pin ) == 0 );
         ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
@@ -5857,8 +5885,9 @@ void rocketnet_test_server_port_zero_transport()
 
         config.max_clients = 1;
         snprintf( config.transport, sizeof( config.transport ), "%s", list );
+        config.loopback_hub = rocketnet_test_loopback_hub();
 
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create( NULL, "127.0.0.1:0", &config );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &config, sizeof( config ) );
         rocketnet_check( server );
         rocketnet_check( rocketnet_server_transport_port( server ) != 0 );
         rocketnet_server_transport_stop( server );
@@ -10397,9 +10426,10 @@ static struct rocketnet_server_transport_t * wire_totals_server_create( const ch
     config.max_clients = 1;
     config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, public_address, &config, time, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, public_address, &config, time, &status );
     rocketnet_check( status == ROCKETNET_STATUS_OK );
 
     return server;
@@ -10412,10 +10442,11 @@ static struct rocketnet_client_transport_t * wire_totals_client_create( const ch
         return NULL;
 
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     config.game_clock_epoch = WIRE_TOTALS_GAME_CLOCK_EPOCH;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
-    return rocketnet_client_transport_create( NULL, token, &config, time );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    return rocketnet_client_transport_create_current( NULL, token, &config, time );
 }
 
 static void wire_totals_send_payloads( struct rocketnet_client_transport_t * client, struct rocketnet_server_transport_t * server, double * time )
@@ -10984,8 +11015,9 @@ void rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait()
 void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
 {
     struct rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     const double game_time = 1000.0;
 
@@ -10999,7 +11031,7 @@ void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         rocketnet_check( rocketnet_write_test_connect_token( "127.0.0.1:40000", 1, rocketnet_functional_token_timestamp( client_config.game_clock_epoch, game_time ), token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
-        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, game_time );
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current( NULL, token, &client_config, game_time );
         rocketnet_check( client != NULL );
         rn_native_client_transport_stop_and_destroy( client );
     }
@@ -11268,6 +11300,7 @@ static void race_log( void * context, enum rocketnet_log_level_t level, const ch
 static void rocketnet_test_family_race_frees_on_caller_thread()
 {
     race_caller_thread = std::this_thread::get_id();
+    rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     rocketnet_check( rocketnet_init( NULL, race_malloc, race_free ) == ROCKETNET_STATUS_OK );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
@@ -11363,6 +11396,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
     rn_cli_server_stop_and_destroy( server );
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
+    rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -12193,6 +12227,9 @@ extern void rocketnet_test_ack_endpoints_independent_across_threads();
 extern void test_api_polish_dev_token_string();
 extern void test_dev_connect_token_timeout_is_the_named_constant();
 extern void test_dev_token_minting_absent_in_release();
+#if ROCKETNET_DEV
+extern void test_loopback_hub_two_shared_objects();
+#endif // #if ROCKETNET_DEV
 
 // the corpus-consistency cases (functional/corpus_consistency.cpp): each walks a
 // directory of committed inputs that grows, so none is a unit case
@@ -12284,6 +12321,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_dev_connect_token_timeout_is_the_named_constant", test_dev_connect_token_timeout_is_the_named_constant, NULL },
     { "test_dev_token_minting_absent_in_release", test_dev_token_minting_absent_in_release, NULL },
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip, NULL },
+#endif // #if ROCKETNET_DEV
+#if ROCKETNET_DEV
+    { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, NULL },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },

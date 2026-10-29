@@ -383,6 +383,8 @@ struct rocketnet_fuzz_pair_t
 
     uint64_t allocations_after_create;
     bool capture_s2c;                           // false: the server's sends go straight to the client
+
+    struct rocketnet_loopback_hub_t * hub;      // the pair's loopback hub: one more block the saves copy
 };
 
 static struct rocketnet_fuzz_pair_t * rocketnet_fuzz_live_pair = NULL;
@@ -620,6 +622,10 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     struct rocketnet_message_config_t message_config;
     rocketnet_fuzz_message_config( &message_config );
 
+    pair->hub = rocketnet_loopback_hub_create( NULL, 1, NULL );
+    if ( !pair->hub )
+        return false;
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
@@ -629,6 +635,7 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = pair->hub;
 
     pair->server = rocketnet_message_server_create( NULL, ROCKETNET_FUZZ_SERVER_ADDRESS, &server_config, &message_config, NULL, 0, 0 );
     if ( !pair->server )
@@ -660,6 +667,7 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = pair->hub;
     client_config.step_driven = 1;
     client_config.time_callback = rocketnet_fuzz_client_clock;
     client_config.game_clock_epoch = ROCKETNET_FUZZ_GAME_CLOCK_EPOCH;
@@ -758,6 +766,9 @@ static inline void rocketnet_fuzz_pair_destroy( struct rocketnet_fuzz_pair_t * p
     rocketnet_fuzz_live_pair = NULL;
     pair->client = NULL;
     pair->server = NULL;
+
+    rocketnet_fuzz_pair_require( rocketnet_loopback_hub_destroy( pair->hub ) == ROCKETNET_STATUS_OK, "the pair's hub destroys once its endpoints are gone" );
+    pair->hub = NULL;
 }
 
 // -----------------------------------------------------------------------
@@ -769,8 +780,8 @@ static inline void rocketnet_fuzz_pair_destroy( struct rocketnet_fuzz_pair_t * p
 // few inputs a second. Instead the pair is created once per process and its
 // state is saved twice: just after create (the handshake not yet
 // started) and just after connect. A saved state is every block the library
-// allocated, the harness's own pair state, the random stream and the
-// loopback endpoint table. Each input restores one of the two, so input N
+// allocated, the loopback hub among them, the harness's own pair state and
+// the random stream. Each input restores one of the two, so input N
 // starts from the same bytes whether it runs alone or after N-1, and nothing
 // allocates or frees on the way.
 // -----------------------------------------------------------------------
@@ -780,8 +791,6 @@ struct rocketnet_fuzz_saved_state_t
     struct rocketnet_fuzz_pair_t pair;
     uint64_t random_state;
     double client_clock_time;
-    rocketnet_loopback_endpoint_t endpoints[ROCKETNET_LOOPBACK_MAX_ENDPOINTS];
-    uint16_t next_port;
 };
 
 #define ROCKETNET_FUZZ_STATE_CREATED   0
@@ -808,9 +817,6 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
     saved->pair = *pair;
     saved->random_state = rocketnet_fuzz_random_state;
     saved->client_clock_time = rocketnet_fuzz_client_clock_time;
-    rocketnet_loopback_state_t & state = loopback_state();
-    memcpy( saved->endpoints, state.endpoints, sizeof( saved->endpoints ) );
-    saved->next_port = state.next_port;
 }
 
 // The page-tracked restore (Linux). A full restore copies every live block
@@ -1076,9 +1082,6 @@ static inline void rocketnet_fuzz_state_restore( struct rocketnet_fuzz_pair_t * 
     *pair = saved->pair;
     rocketnet_fuzz_random_state = saved->random_state;
     rocketnet_fuzz_client_clock_time = saved->client_clock_time;
-    rocketnet_loopback_state_t & state = loopback_state();
-    memcpy( state.endpoints, saved->endpoints, sizeof( saved->endpoints ) );
-    state.next_port = saved->next_port;
 
     // the transport points at the pair's own shim table
 

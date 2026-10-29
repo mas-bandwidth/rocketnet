@@ -36,6 +36,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #define REACHED_PROTOCOL 0x51E7D41A92B3C6D9ULL
@@ -69,6 +70,7 @@ static rocketnet_server_t * reached_server_create( void * context, const reached
     config.max_clients = 1;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     rocketnet_server_t * server = rocketnet_server_create( context, "127.0.0.1:0", NULL, &config, &create_status );
@@ -125,6 +127,7 @@ static int refuse_mutex( rocketnet_platform_mutex_t * mutex )
 // a refused platform start fails rocketnet_init with PLATFORM_INIT_FAILED
 static void test_platform_init_failed_reached()
 {
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
 
     const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
@@ -186,6 +189,7 @@ static void test_client_mutex_create_failed_reached()
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = true;
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -248,8 +252,10 @@ static void test_client_connect_thread_create_failed_reached()
 {
     reached_allocator_t state = { 0, 0, 0 };
 
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( &state, reached_allocate, reached_release ) == ROCKETNET_STATUS_OK );
+    rocketnet_test_loopback_hub_context( &state );
 
     rocketnet_quiet( 1 );
 
@@ -262,6 +268,7 @@ static void test_client_connect_thread_create_failed_reached()
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = false;
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -302,6 +309,7 @@ static void test_client_connect_thread_create_failed_reached()
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
 
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -327,6 +335,7 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = true;
     config.time_callback = reached_clock;
 

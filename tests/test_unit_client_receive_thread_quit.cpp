@@ -22,6 +22,7 @@
 
 #include "rocketnet_internal.h"
 #include "rocketnet_client_io.h"
+#include "rocketnet_config.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_connect_token.h"
 #include "rocketnet_test_vectors.h"
@@ -37,7 +38,7 @@
 static void test_client_step_driven_destroy_returns_and_closes_once_without_worker()
 {
     struct rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     client_config.step_driven = 1;
 
     // the token's create time is the supplied unix time; it expires 30 s later
