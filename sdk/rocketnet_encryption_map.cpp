@@ -248,6 +248,8 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
     return -1;
 }
 
+// tla/RNOpenAddress.tla EraseStart and EraseStep: the hole clears, then the
+// scan moves back each entry whose home is not cyclically in (hole, scan]
 static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_map_t * map, int hole )
 {
     // backward-shift deletion (as in rocketnet_client_slots.cpp): clearing the
@@ -298,6 +300,8 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->num_free == 0 || map->next_generation == 0;
 }
 
+// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )

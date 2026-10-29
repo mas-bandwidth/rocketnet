@@ -130,6 +130,8 @@ static uint32_t rn_held_find( const rn_region_t * region, uint64_t key )
     return RN_DESCRIPTOR_NONE;
 }
 
+// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index
 static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_slot, uint32_t used )
 {
     const uint32_t entries = region->held_entries;
@@ -152,6 +154,8 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_
     return false;
 }
 
+// tla/RNOpenAddress.tla EraseStart and EraseStep: the hole clears, then the
+// scan moves back each entry whose home is not cyclically in (hole, scan]
 static void rn_held_erase( rn_region_t * region, uint32_t index )
 {
     const uint32_t entries = region->held_entries;

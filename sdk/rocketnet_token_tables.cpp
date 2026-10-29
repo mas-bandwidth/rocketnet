@@ -210,6 +210,8 @@ static int rn_token_table_find( const struct rocketnet_token_table_t * table,
     return position >= 0 ? table->index[position] : -1;
 }
 
+// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index
 static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int slot )
 {
     const int start = rn_token_index_start( table, table->identifier[slot] );
@@ -235,6 +237,8 @@ static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int s
 // searchable and leaves no tombstone. The index holds at most capacity
 // entries in twice that many cells, so an empty cell always stops the scan.
 // The scan does not count as a lookup probe.
+// tla/RNOpenAddress.tla EraseStart and EraseStep: the hole clears, then the
+// scan moves back each entry whose home is not cyclically in (hole, scan]
 static void rn_token_index_remove( struct rocketnet_token_table_t * table, int slot )
 {
     const int position = rn_token_index_position( table, table->identifier[slot] );
