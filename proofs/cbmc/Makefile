@@ -67,6 +67,7 @@ MAX_FRAGMENTS := $(call deployed_literal,ROCKETNET_MAX_FRAGMENTS,rocketnet_fragm
 MAX_FRAGMENTED_PAYLOAD_BYTES := $(shell expr $(MAX_FRAGMENTS) \* $(MAX_FRAGMENT_BYTES))
 XDP_NUM_FRAMES := $(call deployed_literal,ROCKETNET_XDP_NUM_FRAMES,rocketnet_constants.h)
 XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_constants.h)
+MAX_CLIENTS := $(call deployed_literal,ROCKETNET_MAX_CLIENTS,rocketnet.h)
 
 # Bounded readers, the message reader, and the XDP free
 # list. Same flags as the arithmetic leaves. Each proof is a bounded
@@ -105,13 +106,29 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      pattern (decrement, take the slot, store invalid).
 #                      The list is exactly the frames pushed and not yet
 #                      popped.
+#   xdp-frame          proved: proof_xdp_frame.c, unwind 17. Includes
+#                      sdk/rocketnet_xdp_frame.h directly. UMEM descriptor,
+#                      fill-return, and send-copy guards over symbolic 64-bit
+#                      offsets/lengths; IPv4/IPv6 frame build/parse round-trip
+#                      and RFC 1071 / RFC 8200 checksums on 0..4 byte symbolic
+#                      payloads; arbitrary 0..68 byte raw frame receive safety
+#                      and drop-counter conservation.
+#   replay-marks       proved: proof_replay_marks.c, unwind 17, max_clients 2.
+#                      Includes sdk/rocketnet_server_replay_marks.cpp directly.
+#                      Proves tla/RNXdpReplay.tla Walk two-phase ordering
+#                      (every forget precedes every mark), same-address reuse
+#                      overwriting an older mark even at sequence 0, unmarked
+#                      seen-slot disconnect forgets, and retry persistence on
+#                      refused forget/mark callbacks.
 
 .PHONY: all replay-delta-1-3 replay-near-4096 replay-far reconstruct \
         read-write fragment-bounds message-read xdp-free-list \
+        xdp-frame replay-marks \
         ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
 
 all: replay-delta-1-3 replay-far reconstruct \
-     read-write message-read xdp-free-list
+     read-write message-read xdp-free-list \
+     xdp-frame replay-marks
 
 # The quick per-commit instance remains explicit about its reduced bound.
 replay-delta-1-3: proof_replay_advance.c
@@ -275,6 +292,14 @@ xdp-free-list: proof_xdp_free_list.c
 	@echo "xdp-free-list bound capacity 3 frames deployed ROCKETNET_XDP_NUM_FRAMES=$(XDP_NUM_FRAMES) frames of $(XDP_FRAME_SIZE) bytes"
 	$(CBMC) $(CBMC_FLAGS) --unwind 5 -I$(SDK) proof_xdp_free_list.c
 
+xdp-frame: proof_xdp_frame.c
+	@echo "xdp-frame bound payload 4 bytes, raw frame 68 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES) ROCKETNET_XDP_FRAME_SIZE=$(XDP_FRAME_SIZE)"
+	$(CBMC) $(CBMC_FLAGS) --unwind 17 -I$(SDK) proof_xdp_frame.c
+
+replay-marks: proof_replay_marks.c
+	@echo "replay-marks bound max_clients 2 deployed ROCKETNET_MAX_CLIENTS=$(MAX_CLIENTS)"
+	$(CBMC) $(CBMC_FLAGS) --unwind 17 -I$(SDK) proof_replay_marks.c
+
 # Paired reachability controls. Each per-commit target above has a
 # `<target>-reachability` partner that recompiles the same harness with a
 # guarded __CPROVER_assert(0) after the production call(s). The control
@@ -296,7 +321,8 @@ define run_reachability
 endef
 
 .PHONY: replay-delta-1-3-reachability replay-far-reachability reconstruct-reachability \
-        read-write-reachability message-read-reachability xdp-free-list-reachability
+        read-write-reachability message-read-reachability xdp-free-list-reachability \
+        xdp-frame-reachability replay-marks-reachability
 
 replay-delta-1-3-reachability: proof_replay_advance.c
 	$(call run_reachability,replay-delta-1-3,$(REPLAY_UNWIND),-I$(SDK) -DREPLAY_DELTA_BOUND=4 -DREPLAY_REACHABILITY_WITNESS=1 --function harness_replay_near proof_replay_advance.c,,replay path reachability negative control)
@@ -315,6 +341,12 @@ message-read-reachability: proof_message_read.c
 
 xdp-free-list-reachability: proof_xdp_free_list.c
 	$(call run_reachability,xdp-free-list,5,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_xdp_free_list.c,,xdp-free-list reachability control)
+
+xdp-frame-reachability: proof_xdp_frame.c
+	$(call run_reachability,xdp-frame,17,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_xdp_frame.c,,xdp-frame reachability control)
+
+replay-marks-reachability: proof_replay_marks.c
+	$(call run_reachability,replay-marks,17,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_replay_marks.c,,replay-marks reachability control)
 
 clean:
 	rm -f *.goto *.output
