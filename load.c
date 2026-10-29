@@ -1126,7 +1126,7 @@ int main( int argc, char ** argv )
             return 2;
         }
 
-        strcpy( plan_text, plan_env );
+        memcpy( plan_text, plan_env, strlen( plan_env ) + 1 );
     }
 #endif // #if defined( _MSC_VER )
     if ( plan_only && strcmp( plan_text, "1" ) != 0 )

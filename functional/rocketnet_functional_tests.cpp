@@ -3781,7 +3781,9 @@ void rocketnet_test_transport_dual_stack_ipv4_client()
 {
     // a server bound to the IPv6 wildcard is dual-stack: it serves IPv4 as
     // well, so a connect token naming its IPv4 loopback is accepted and the
-    // handshake completes over the v4-mapped path, on every transport
+    // handshake completes over the v4-mapped path, on every transport. Not
+    // on OpenBSD, which forbids dual-stack sockets by design
+    // (rocketnet_platform_client_dual_stack)
 
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
@@ -12404,7 +12406,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_transport_reply_opens_a_later_update", rocketnet_test_transport_reply_opens_a_later_update, NULL },
     { "test_transport_fragmentation", rocketnet_test_transport_fragmentation, NULL },
     { "test_loopback_transport_ipv6", rocketnet_test_transport_ipv6_loopback, NULL },
-    { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client, NULL },
+    { "test_transport_dual_stack_ipv4_client", rocketnet_test_transport_dual_stack_ipv4_client, rocketnet_platform_client_dual_stack },
     { "test_server_serves_both_families", rocketnet_test_server_serves_both_families, NULL },
     { "test_max_size_packet_crosses_a_1500_mtu_link_ipv4", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv4, NULL },
     { "test_max_size_packet_crosses_a_1500_mtu_link_ipv6", rocketnet_test_max_size_packet_crosses_a_1500_mtu_link_ipv6, NULL },
@@ -12697,6 +12699,8 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
     if ( predicate == rocketnet_test_xdp_veth_runs_here )
         return "rocketnet_test_xdp_veth_runs_here";
 #endif // #if defined( __linux__ ) && ROCKETNET_XDP
+    if ( predicate == rocketnet_platform_client_dual_stack )
+        return "rocketnet_platform_client_dual_stack";
     if ( predicate == rocketnet_test_server_pin_allows_portable )
         return "rocketnet_test_server_pin_allows_portable";
     if ( predicate == rocketnet_test_server_pin_allows_auto )
