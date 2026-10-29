@@ -1589,7 +1589,7 @@ int rocketnet_client_protocol_seal_fragment( struct rocketnet_client_protocol_t 
 
     uint8_t plaintext[ROCKETNET_ACK_BLOCK_MAX_BYTES + ROCKETNET_FRAGMENT_HEADER_BYTES + ROCKETNET_MAX_FRAGMENT_BYTES];
 
-    int block_bytes = rocketnet_session_ack_block_build( plaintext, ROCKETNET_FRAGMENT_HEADER_BYTES - fragment_bytes, &client->accepted_session );
+    int block_bytes = rocketnet_session_ack_block_build( plaintext, ROCKETNET_FRAGMENT_HEADER_BYTES + fragment_bytes, &client->accepted_session );
 
     rocketnet_write_fragment_header( plaintext + block_bytes, payload_id, fragment_index, fragment_count );
 
