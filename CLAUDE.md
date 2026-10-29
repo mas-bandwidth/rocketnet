@@ -14,7 +14,10 @@ state or run game simulation. Protocol packets are byte-aligned little-endian
 layouts with no schema or bit-packing dependency.
 
 The public client and server objects own connection, security, message and
-transport state. Public calls do bounded work and do not block. All regular
+transport state. Frame work has configured bounds and does not wait for network
+delivery; client update can briefly wait for a shared I/O lock. Create, connect,
+start, and synchronous destroy have lifecycle costs outside that frame-time
+claim. See [lifecycle](USAGE.md#connection-lifecycle). All regular
 memory uses the caller allocator, including documented runtime allocation;
 capacity, failure and lifetime remain explicit. Background transport threads communicate through
 bounded handoffs and are invisible to the public frame order.
@@ -79,4 +82,5 @@ handoff invariants; `tla/RUNS.tsv` is their execution inventory.
 
 Privileged XDP verification runs only through the documented Linux VM and bench
 procedure. Long soak, large load, multi-host throughput and profiler campaigns
-are planned hardening work and are not first-deliverable claims.
+have separate qualification. [TESTING.md](TESTING.md) indexes recorded runs and
+remaining gaps; earlier-head evidence is not a current-build pass.

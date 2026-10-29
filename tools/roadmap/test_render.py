@@ -336,6 +336,13 @@ class RenderTest( unittest.TestCase ):
         with open( os.path.join( ROOT, "TESTING.md" ), encoding="utf-8" ) as f:
             return f.read()
 
+    def test_tables_only_keeps_explicit_scope_intro( self ):
+        row = '(:feature "f" :cells (y y y) :evidence "Linux, macOS, Windows: example evidence")'
+        data = '(:title "T" :tables-only t :intro ("Historical evidence." "[Current record](current.md)") :areas (%s))' % area( "platforms", [ row ] )
+        text = render.render( render.parse( data ) )
+        self.assertIn( "Historical evidence.\n\n[Current record](current.md)", text )
+        self.assertLess( text.index( "Historical evidence." ), text.index( "## " ) )
+
     def test_the_testing_page_has_no_dash_cell( self ):
         page_text = self.committed_testing_page()
         self.assertTrue( [ l for l in page_text.split( "\n" ) if l.startswith( "| " ) ] )

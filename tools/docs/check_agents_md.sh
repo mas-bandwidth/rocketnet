@@ -2,22 +2,22 @@
 # check_agents_md.sh: verify AGENTS.md identifiers against sdk/rocketnet.h,
 # verify the user-facing guides' identifiers against the SDK and the
 # documented environment/example authorities, and compile + run the marked
-# AGENTS.md and README.md examples.
+# complete programs in docs/INTEGRATION-EXAMPLE.md.
 set -eu
 
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 AGENTS_MD="$ROOT/AGENTS.md"
-README_MD="$ROOT/README.md"
+EXAMPLES_MD="$ROOT/docs/INTEGRATION-EXAMPLE.md"
 HEADER="$ROOT/sdk/rocketnet.h"
 ENVIRONMENT_MD="$ROOT/docs/ENVIRONMENT.md"
-GUIDES="$ROOT/README.md $ROOT/USAGE.md $ROOT/KEYS.md $ROOT/docs/GETTING-STARTED.md $ROOT/docs/ERRORS-AND-LOGGING.md"
+GUIDES="$ROOT/README.md $ROOT/USAGE.md $ROOT/KEYS.md $ROOT/docs/GETTING-STARTED.md $ROOT/docs/PRODUCTION.md $ROOT/docs/MEMORY.md $ROOT/docs/INTEGRATION-EXAMPLE.md $ROOT/docs/ERRORS-AND-LOGGING.md"
 
 usage() {
     echo "usage: $0 [identifiers|example|all]" >&2
     exit 2
 }
 
-for DOC in "$AGENTS_MD" "$README_MD"; do
+for DOC in "$AGENTS_MD" "$EXAMPLES_MD"; do
     if [ ! -f "$DOC" ]; then
         echo "error: missing $DOC" >&2
         exit 1
@@ -30,7 +30,8 @@ if [ ! -f "$HEADER" ]; then
 fi
 
 run_identifiers() {
-    TEXT="$(awk -F'`' '{ for (i = 1; i <= NF; i++) { if (i % 2 == 1) printf "%s ", $i; else if ($i !~ /^[A-Za-z0-9_.\/-]+\.(cpp|h|md)(:[0-9]+)?$/) printf "%s ", $i } printf "\n" }' "$AGENTS_MD")"
+    # Compatibility HTML anchors are URLs, not API declarations.
+    TEXT="$(awk -F'`' '/^[[:space:]]*<a (id|name)=/ { next } { for (i = 1; i <= NF; i++) { if (i % 2 == 1) printf "%s ", $i; else if ($i !~ /^[A-Za-z0-9_.\/-]+\.(cpp|h|md)(:[0-9]+)?$/) printf "%s ", $i } printf "\n" }' "$AGENTS_MD")"
     IDS="$(printf '%s\n' "$TEXT" | grep -o -E '\b(rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+)\b' | sort -u)"
     if [ -z "$IDS" ]; then
         echo "error: no rocketnet identifiers found in $AGENTS_MD" >&2
@@ -63,7 +64,7 @@ run_guide_identifiers() {
             echo "error: missing $DOC" >&2
             exit 1
         fi
-        TEXT="$(awk -F'`' '{ for (i = 1; i <= NF; i++) { if (i % 2 == 1) printf "%s ", $i; else if ($i !~ /^[A-Za-z0-9_.\/-]+\.(cpp|h|md)(:[0-9]+)?$/) printf "%s ", $i } printf "\n" }' "$DOC")"
+        TEXT="$(awk -F'`' '/^[[:space:]]*<a (id|name)=/ { next } { for (i = 1; i <= NF; i++) { if (i % 2 == 1) printf "%s ", $i; else if ($i !~ /^[A-Za-z0-9_.\/-]+\.(cpp|h|md)(:[0-9]+)?$/) printf "%s ", $i } printf "\n" }' "$DOC")"
         IDS="$(printf '%s\n' "$TEXT" | grep -o -E '\b(rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+|rn_[a-z0-9_]+)\b' | sort -u)"
         if [ -z "$IDS" ]; then
             echo "error: no rocketnet identifiers found in $DOC" >&2
@@ -132,13 +133,13 @@ case "$MODE" in
         run_guide_identifiers
         ;;
     example)
-        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
+        run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
         ;;
     all)
         run_identifiers
         run_guide_identifiers
-        run_example "$AGENTS_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
-        run_example "$README_MD" check_readme readme
+        run_example "$EXAMPLES_MD" check_agents_md agents_md rocketnet_dev -DROCKETNET_DEV=1
+        run_example "$EXAMPLES_MD" check_readme readme
         ;;
     *)
         usage

@@ -7,8 +7,8 @@
 ; historical evidence only; it is never promoted to preview-2 green without a
 ; receipt that names the exact tested head, platform and test tier.
 ;
-; Six tables. "Preview-2 exact-head qualification" holds the current release
-; gates. "Tests per platform" holds the tests that apply to every
+; Six historical tables. "Preview-2 exact-head qualification" holds the older
+; release gates, including two later preview-3 candidate rows. "Tests per platform" holds the tests that apply to every
 ; platform, and "Platform-specific tests" each test that applies to only some,
 ; one row per platform it applies to. "Tests per transport" holds the tests
 ; that apply to every transport, and "Transport-specific tests" each test that
@@ -43,7 +43,11 @@
 ; (v1.0.0-preview-2). The runtime
 ; inputs are identical to ba09993b; green rows name either an exact receipt or
 ; the original tested commit plus a source-input comparison to this release.
-(:title "RocketNet v1.0.0-preview-2 testing"
+(:title "Testing and qualification"
+ :intro ("Start with the [release process](docs/RELEASING.md#default-ci-requirements) and [preview-4 release notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md). The release commit's green CI run is its qualification; the release notes cite that run. Per-release qualification documents are historical records, so their old placeholders and superseded gates are not current release requirements. A release run does not qualify later main commits or establish every deployment's performance. This documentation revision adds no platform or performance qualification."
+ "For historical evidence, use the [preview-4 record](docs/QUALIFICATION-v1.0.0-preview-4.md), [preview-3 record](docs/QUALIFICATION-v1.0.0-preview-3.md) and [preview-2 record](docs/QUALIFICATION-v1.0.0-preview-2.md). The [LAN proof index](docs/runs/lan-1000-proof.md) records workload, topology, duration, and tested heads; [memory and capacity](docs/MEMORY.md) explains deployment sizing."
+ "To check an integration, build and run [the examples](docs/GETTING-STARTED.md). For SDK changes, [the build reference](docs/BUILD-REFERENCE.md) explains deterministic unit tests, live functional tests, source audits, sanitizer runs, and their commands. A unit or host-shim pass does not establish live transport behavior. A functional delivery pass does not establish latency or throughput. Model checks establish invariants of the model and inputs named in their execution record."
+ "The tables below preserve historical results and pending work. The first combines preview-2 qualification with two explicitly labelled preview-3 candidate rows; the remaining tables retain their preview-1 scope. Their completion percentages are bookkeeping for those tables, not a current release readiness score. No result has been promoted to a newer head. Detailed evidence and pending reasons remain in [docs/testing.sexp](docs/testing.sexp).")
  :all-cells-apply t
  :tables-only t
  :rows-name-source t

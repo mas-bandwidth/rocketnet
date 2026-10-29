@@ -69,7 +69,7 @@ environment is read once, at create ([docs/ENVIRONMENT.md](docs/ENVIRONMENT.md))
 which tokens the server accepts, so it comes from the deployment, not from the
 client.
 
-**Each server object makes its own X25519 keypair.** `rocketnet_server_create`
+**Each server object owns an X25519 keypair.** `rocketnet_server_create`
 generates it when the config's `server_secret_key` is all zeros, the default.
 A backend that seals tokens to a fixed server public key, or separate processes
 that must agree on one, supply the secret key instead in `server_secret_key`
@@ -88,7 +88,8 @@ addresses. RocketNet does not provide the registration channel: it is the
 title's. The example backends take it as `PUT /servers/{serverID}`, with no
 authentication, and say so.
 
-**The client holds no key.** It holds a connect token, an opaque base64 string
+**The client holds no long-lived signing or server secret key.** It holds a
+connect token, an opaque base64 string
 of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
 `rocketnet_client_connect`. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not
@@ -167,9 +168,13 @@ What the code supports today:
   (`ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY`, in
   `sdk/rocketnet_counters.h`).
 - **Server keys.** A server object keeps its keypair across stop and start,
-  and loses it at destroy. Each new server object has a new key, which is
-  registered with the backend in place of the old one. A token sealed to the
-  old key cannot be opened by the new server, which ignores the request
+  and wipes its copy at destroy. With the default all-zero `server_secret_key`,
+  each new object generates a new key; register its public key with the backend
+  before issuing tokens. Supplying the same secret at create retains that key
+  across object replacements. To rotate a supplied key, create the replacement
+  with a new secret (or use the generated-key default), then update registration.
+  A token sealed to the old key cannot be opened by a server using the new key,
+  which ignores the request
   (`ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_OPEN_SEALED_BLOCK`).
   Short token lifetimes bound how long a token for a replaced key is out.
 

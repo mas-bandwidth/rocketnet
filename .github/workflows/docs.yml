@@ -53,6 +53,8 @@ jobs:
       # every commit, after the library builds
       - name: Check documentation gates
         run: |
+          python3 tools/docs/test_check_links.py
+          python3 tools/docs/check_links.py
           sh tools/docs/check_agents_md.sh all
           make roadmap-check testing-check
           python3 tools/roadmap/test_render.py

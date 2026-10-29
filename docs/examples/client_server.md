@@ -11,9 +11,9 @@ The server process:
 1. Calls `rocketnet_server_default_config`, sets its nonzero `protocol_id`, and
    copies `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` into
    `rocketnet_server_config_t.backend_public_key`.
-2. Calls `rocketnet_server_create`. Create generates a fresh X25519 sealing
-   keypair inside the server object; the application does not configure a
-   server public or secret key.
+2. Calls `rocketnet_server_create`. This example uses the default generated
+   X25519 sealing keypair. Other integrations can supply `server_secret_key`
+   at create when they need a stable key; see [Keys](../../KEYS.md).
 3. Calls `rocketnet_server_start`, then reads the generated public key with
    `rocketnet_server_public_key` and the bound address with
    `rocketnet_server_ipv4_address` or `rocketnet_server_ipv6_address`.
@@ -64,8 +64,9 @@ directory:
 ```
 
 The message exchange is: the client connects,
-sends one reliable-ordered message (guarded by checking the non-`NULL` pointer
-from `rocketnet_client_can_send_message`, `rocketnet_client_start_message` before calling
+sends one reliable-ordered message (preflight checks room with
+`rocketnet_client_can_send_message`, then checks the non-`NULL` pointer from
+`rocketnet_client_start_message` before calling
 `rocketnet_client_finish_message` inside that branch), drains
 `rocketnet_client_receive_messages` until `NULL` to receive the server's echo,
 disconnects, polls `rocketnet_client_disconnected` before destroy,

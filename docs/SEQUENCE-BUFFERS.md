@@ -64,18 +64,25 @@ storage; its nodes and links must never become RocketNet-owned linked state.
 
 ## Owned storage manifest
 
-Every family below once linked its elements to each other, by pointer or by
-array index. A row is `replaced` when its storage is now an array, ring,
-stack, flat index or sequence buffer whose elements name no other element;
-it is `residual` while any link remains. `tools/check_no_owned_linked_lists.py`
-proves the source agrees: it fails on any RocketNet-owned link, whatever the
-manifest says, so a `residual` row records debt and never waives it. The
-source-audit case `test_sequence_buffers_manifest_matches_source`
-(`tests/source_audit_sequence_buffers.cpp`) checks that every row names a
-replacement symbol present in its file and that no row is `residual`.
+This manifest tracks the migration of bounded storage and the later approved
+fixed-array index links. A `replaced` row means the earlier representation was
+replaced by the representation in that row; it does **not** mean the current
+representation contains no index links. Rows that use approved links say so.
+A `residual` row is unresolved migration debt.
 
-Citations are at main `ff95e91a`. Q is the region's descriptor count
-(`region->queue`), W its reliable window, C its channel count.
+`tools/check_no_owned_linked_lists.py` is a syntactic audit. It rejects detected
+owned links outside the approved sites and checks the listed sites, but it does
+not recognize every possible link operation. The [approved index links](#approved-index-links)
+section names both checked sites and manually recorded ones. A passing audit
+means no unapproved site was detected by those rules, not a proof of universal
+absence. The source-audit manifest check also requires each replacement symbol
+to exist and refuses `residual` rows.
+
+Older line-number citations were recorded at main `ff95e91a`; rows naming the
+2026-10-28 decision describe later replacements. Resolve symbols in the current
+source instead of treating those historical line numbers as current. Q is the
+region's descriptor count (`region->queue`), W its reliable window, and C its
+channel count.
 
 | Scope | Family | Removed links | Replacement | Capacity | Identity | Admission and eviction | Worst case | Status |
 |---|---|---|---|---|---|---|---|---|

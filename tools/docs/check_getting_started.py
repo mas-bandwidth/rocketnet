@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check docs/GETTING-STARTED.md code blocks against their cited example ranges.
+"""Check introductory and production guide code blocks against their cited example ranges.
 
 Every fenced C block that follows a citation of the form
 ``[examples/<file>](../examples/<file>), lines A to B [and C to D]``
@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-GUIDE = ROOT / "docs" / "GETTING-STARTED.md"
+GUIDES = (ROOT / "docs" / "GETTING-STARTED.md", ROOT / "docs" / "PRODUCTION.md")
 
 CITATION = re.compile(
     r"\[(?P<text>[^\]]*)\]\((?P<url>[^)]+)\)"
@@ -35,7 +35,8 @@ def cited_ranges(match):
     return ranges
 
 
-def main():
+def check_guide(GUIDE):
+    label = GUIDE.relative_to(ROOT).as_posix()
     if not GUIDE.is_file():
         print(f"FAIL: {GUIDE} is missing", file=sys.stderr)
         return 1
@@ -66,7 +67,7 @@ def main():
         guide_line = text.count("\n", 0, match.start()) + 1
         ranges = cited_ranges(match)
         if not source_path.is_file():
-            print(f"docs/GETTING-STARTED.md:{guide_line}: cited example {name} is missing", file=sys.stderr)
+            print(f"{label}:{guide_line}: cited example {name} is missing", file=sys.stderr)
             failed = True
             continue
         source = source_path.read_text(encoding="utf-8").splitlines()
@@ -86,14 +87,14 @@ def main():
         if not following:
             for a, b in ranges:
                 if a < 1 or b > len(source) or a > b:
-                    print(f"docs/GETTING-STARTED.md:{guide_line}: cited range "
+                    print(f"{label}:{guide_line}: cited range "
                           f"{name}:{a}-{b} lies outside the example ({len(source)} lines)",
                           file=sys.stderr)
                     failed = True
             continue
 
         if len(following) < len(ranges):
-            print(f"docs/GETTING-STARTED.md:{guide_line}: citation names "
+            print(f"{label}:{guide_line}: citation names "
                   f"{len(ranges)} range(s) but only {len(following)} block(s) follow",
                   file=sys.stderr)
             failed = True
@@ -103,16 +104,16 @@ def main():
             checked += 1
             expected = source[a - 1:b] if 1 <= a <= b <= len(source) else None
             if expected is None:
-                print(f"docs/GETTING-STARTED.md:{guide_line}: cited range "
+                print(f"{label}:{guide_line}: cited range "
                       f"{name}:{a}-{b} lies outside the example ({len(source)} lines)",
                       file=sys.stderr)
                 failed = True
                 continue
             if block == expected:
-                print(f"OK docs/GETTING-STARTED.md:{block_line} == examples/{name}:{a}-{b}")
+                print(f"OK {label}:{block_line} == examples/{name}:{a}-{b}")
             else:
                 failed = True
-                print(f"docs/GETTING-STARTED.md:{block_line}: block does not match "
+                print(f"{label}:{block_line}: block does not match "
                       f"examples/{name}:{a}-{b}", file=sys.stderr)
                 for i in range(max(len(block), len(expected))):
                     got = block[i] if i < len(block) else "<missing>"
@@ -126,7 +127,7 @@ def main():
         next_block = blocks.index(following[len(ranges) - 1]) + 1
 
     if checked == 0:
-        print("FAIL: no cited blocks found in docs/GETTING-STARTED.md", file=sys.stderr)
+        print(f"FAIL: no cited blocks found in {label}", file=sys.stderr)
         return 1
     if failed:
         print(f"FAIL: {checked} cited block(s) checked, at least one differs", file=sys.stderr)
@@ -140,4 +141,5 @@ def _offset_of_line(text, line_number):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    results = [check_guide(guide) for guide in GUIDES]
+    sys.exit(1 if any(results) else 0)

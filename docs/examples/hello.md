@@ -24,15 +24,16 @@ over the in-memory `loopback` transport, which needs no socket and no network.
    is an error and returns `0`).
 6. Receive and print it on the server, disconnect the
    client, poll `rocketnet_client_disconnected` (stepping `rocketnet_client_update`)
-   before destroying it, and stop/destroy the server once `rocketnet_server_stopped`
-   returns `true`.
+   before destroying that client.
 7. Connect a second client with a second development token, then disconnect
-   it, showing that a server keeps serving after one client leaves.
+   it, showing that a server keeps serving after one client leaves. Then stop
+   the server, wait for `rocketnet_server_stopped`, destroy the server and hub,
+   and terminate the library.
 
 Each frame runs the calls in the order a game does: update, drain the one
 receive queue until `NULL`, simulate, queue with guarded `start_message` /
 `finish_message`, then send last. Sending last is what makes this
-frame's messages leave this frame instead of waiting a frame. See
+frame's messages become available for sending without an avoidable frame of delay. See
 [docs/GETTING-STARTED.md](../GETTING-STARTED.md) and [USAGE.md](../../USAGE.md)
 for the full integration guide.
 
