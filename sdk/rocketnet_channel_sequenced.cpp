@@ -353,11 +353,11 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         return ROCKETNET_CHANNEL_DISPATCH_STALE;
     }
 
-    if ( delta >= region->window )
-    {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD );
-        return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
+    // an ordering any distance ahead is held, never refused: the sender
+    // stamps the channel's ordered write index, which runs as far ahead of
+    // the receiver's read index as the sender's ordered backlog, a bound the
+    // receiver does not know (standard m6.1 rules 7 and 9). The one hold slot
+    // keeps the newest, so a far-ahead record costs nothing more than a near one.
 
     if ( delta == 0 )
         return rn_sequenced_in_turn( channels, record, rx, number_slot, out );
