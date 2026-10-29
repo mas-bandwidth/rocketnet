@@ -60,7 +60,9 @@ struct rn_link_forward<R ( * )( T *, A... ), F>
     static R call_const( const void * transport, A... a ) { return F( static_cast<T *>( transport ), a... ); }
 };
 
-#define RN_LINK_FORWARD( F ) rn_link_forward<decltype( &F ), &F>
+// F is a function name: a non-type template argument must be &F as written,
+// so it cannot take the parentheses clang-tidy asks for
+#define RN_LINK_FORWARD( F ) rn_link_forward<decltype( &F ), &F> // NOLINT(bugprone-macro-parentheses)
 
 struct rn_message_link_t
 {
