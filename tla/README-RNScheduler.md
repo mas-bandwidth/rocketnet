@@ -18,22 +18,21 @@ Three orders nest, outermost first.
 1. **The budget's class order** (owner rule R6): retransmits and ordered
    progress, then new reliable items, then unreliable items. A lower class is
    taken only when no higher class has an item it may write now, whatever
-   the priorities. A LOW retransmit goes before an IMMEDIATE new reliable
-   item, and an IMMEDIATE unreliable item goes after both.
-2. **Four priorities inside a class.** Each level has a clock. The
-   level with the smallest clock goes next and its clock advances by its
-   stride: 1, 5, 14 and 35 for IMMEDIATE, HIGH, MEDIUM and LOW
-   (`(1 << p) * (p + 1) + p`). A clock behind
-   the last level taken counts as that level's clock (the pull-forward).
-   A tie goes to the more urgent level. When nothing is queued the clocks
-   reset to their seeds 0, 3, 10 and 27. Under a backlog adjacent levels
-   interleave at about 5:1, 2.8:1 and 2.5:1, and no level starves.
+   the levels. A normal retransmit goes before a boosted new reliable item,
+   and a boosted unreliable item goes after both.
+2. **Two levels inside a class.** Level 0 is a channel holding CONFIG (a
+   control record); level 1 is every other channel. Each level has a clock.
+   The level with the smallest clock goes next and its clock advances by
+   its stride, 1 and 14. A clock behind the last level taken counts as that
+   level's clock (the pull-forward). A tie goes to level 0. When nothing is
+   queued the clocks reset to their seeds 0 and 10. Under a backlog the
+   levels interleave at about 14:1, and neither starves.
 3. **Round robin across channels inside a level**, one item per turn,
    starting after the channel the last item came from.
 
 **Channel FIFO.** Within a class only a channel's head (its earliest queued
-item) is offered, at the best priority among the channel's queued items: a
-priority boosts the whole channel and never reorders it.
+item) is offered, at the best level among the channel's queued items:
+CONFIG boosts its whole channel and never reorders it.
 
 **The window stall.** A new reliable item takes a message number when it is
 first written, and at most W numbers are outstanding. A full window holds the
@@ -80,9 +79,9 @@ Losses are bounded by `MaxLoss` and not fair.
 
 ## The instance
 
-Two channels. Channel 0 queues a LOW item and then an IMMEDIATE item (the
-boost case); channel 1 queues one HIGH item. Unreliable items are IMMEDIATE,
-so the class order is checked against the most urgent priority. A window of
+Two channels. Channel 0 queues a normal item and then a control item (the
+boost case); channel 1 queues one normal item. Unreliable items are level 0,
+so the class order is checked against the boosted level. A window of
 2 numbers, a budget of 1 item per update, one unreliable item arriving with
 every update, and 1 transport loss.
 
@@ -90,7 +89,7 @@ every update, and 1 transport loss.
 
 | Case | Constant flipped | Expected failure | Counterexample, checked by hand |
 |---|---|---|---|
-| `MCRNSchedulerBrokenPerMessagePriority.cfg` | `ChannelFIFO = FALSE`: every queued item offered at its own level | invariant `FirstWriteInOrderPerChannel` | 4 states: channel 0 queues LOW (ordering 0) and IMMEDIATE (ordering 1); the first write takes ordering 1. The code offers only channel 0's head, at the boosted level, so it writes ordering 0 first (`test_rnscheduler_witness_replays`, `test_channel_fifo_kept_per_channel`). |
+| `MCRNSchedulerBrokenPerMessagePriority.cfg` | `ChannelFIFO = FALSE`: every queued item offered at its own level | invariant `FirstWriteInOrderPerChannel` | 4 states: channel 0 queues a normal item (ordering 0) and a control item (ordering 1); the first write takes ordering 1. The code offers only channel 0's head, at the boosted level, so it writes ordering 0 first (`test_rnscheduler_witness_replays`, `test_channel_fifo_kept_per_channel`). |
 | `MCRNSchedulerBrokenUnreliableStarvesOrdered.cfg` | `UnreliableLast = FALSE`: the unreliable class offered first | temporal `NoStarvation` | a lasso: all three reliable items queued, then every update writes its one arriving unreliable item and ticks, forever. The code takes classes in the budget's order, so the three reliable items go in the first three updates and the unreliable class gets the budget only after (`test_rnscheduler_witness_replays`, `test_budget_class_order_still_rules`). `ClassOrderBeforePriority` is the safety face of the same flaw and is left out of this case, so the failure checked is the liveness one. |
 
 ## Action-to-function map
@@ -98,7 +97,7 @@ every update, and 1 transport loss.
 | Action / operator | Function in `sdk/rocketnet_packet_builder.cpp` |
 |---|---|
 | `Init`, `Seeds` | `rn_packet_builder_init` -> `rn_builder_reset_clocks`; `round_robin = num_channels - 1`, so the first turn is channel 0's |
-| `IsHead`, `Boost` | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix priority minimum, so each range cursor is `IsHead` and its suffix minimum is `Boost`; `rn_builder_take_head` advances only that cursor |
+| `IsHead`, `Boost` | `rn_builder_plan`: once per call, stable radix passes group the full 16-bit channel and class into contiguous ranges while preserving caller order; a reverse pass stores every position's suffix level (0 while a control record remains), so each range cursor is `IsHead` and its suffix minimum is `Boost`; `rn_builder_take_head` advances only that cursor |
 | `PickLevel`, `PickIn` | `rn_builder_next_in_class`, one selection operation per current channel/class range head (with `rn_builder_effective_clock`, the pull-forward); every flat entry validates the current full-width call epoch and caller item index; `test_packet_builder_matches_reference_order` holds it to the quadratic scan it replaced, take for take |
 | `Write` (class order, clock step, `rr'`) | `rn_packet_builder_write`'s class loop, `rn_builder_take_level` |
 | `Tick`'s clock reset | the end of `rn_packet_builder_write`: every item taken -> `rn_builder_reset_clocks` |
@@ -116,14 +115,15 @@ The model's order, clocks and fairness remain unchanged.
 
 ## Design choices
 
-1. **The class order is outside priority.** Priority orders items only
+1. **The class order is outside the levels.** The levels order items only
    inside one budget class: retransmits and ordered progress, then new
-   reliable, then unreliable, whatever their priorities (R6). An IMMEDIATE
-   unreliable item waits behind a LOW reliable one.
-2. **Priority boosts the whole channel; channels stay FIFO.** A channel is
-   offered only at its head, at the best priority among its queued items, so
-   a later high-priority send on a channel is never pulled before an earlier
-   low-priority one (docs/CHANNELS.md 17.3 item 3).
+   reliable, then unreliable, whatever their levels (R6). A boosted
+   unreliable item waits behind a normal reliable one.
+2. **CONFIG boosts its whole channel; channels stay FIFO.** A channel is
+   offered only at its head, at the best level among its queued items, so a
+   later control record on a channel is never pulled before an earlier
+   normal one (docs/CHANNELS.md 17.3 item 3). CONFIG is the one control
+   record; the application has no per-send priority.
 3. **Round robin across channels within a level**, never one global FIFO of
    a level's messages (17.3 item 4).
 4. **The clock advances at take, not at push.** A level's clock advances by
@@ -135,12 +135,9 @@ The model's order, clocks and fairness remain unchanged.
 6. **The reset is at drain.** The clocks reset when a write call leaves no
    item untaken (the model: when nothing reliable is queued or awaiting
    resend at the end of an update).
-7. **Ties go to the more urgent level.**
-8. **IMMEDIATE is not immediate.** Every priority is written at the next
-   update, inside the budget; no priority wakes a thread.
-9. **Out of range is never taken.** An item whose priority is not 0 to 3 is
-   never written by the builder; the C API is to refuse it at send (17.3
-   item 10).
+7. **Ties go to level 0.**
+8. **Boosted is not immediate.** CONFIG is written at the next update,
+   inside the budget; no level wakes a thread.
 
 ## Abstractions in the model
 

@@ -8,11 +8,11 @@
 (*   1. The send budget's class order (owner rule R6): retransmits and     *)
 (*      ordered progress ("rtx"), then new reliable items ("rel"), then    *)
 (*      unreliable items ("unrel").  A lower class is taken only when no   *)
-(*      higher class has an item it may write now, whatever the            *)
-(*      priorities.                                                        *)
-(*   2. The four priority levels inside a class: the level with the       *)
-(*      smallest virtual clock goes next and its clock advances by its     *)
-(*      stride, 1, 5, 14, 35 for IMMEDIATE, HIGH, MEDIUM, LOW.  A level    *)
+(*      higher class has an item it may write now, whatever the levels.    *)
+(*   2. The two levels inside a class: level 0, a channel holding CONFIG   *)
+(*      (a control record), and level 1, every other channel.  The level   *)
+(*      with the smallest virtual clock goes next and its clock advances   *)
+(*      by its stride, 1 and 14.  A level                                  *)
 (*      whose clock fell behind the last level taken is pulled forward to  *)
 (*      it.  When nothing is queued at all the clocks reset to their      *)
 (*      seeds.                                                             *)
@@ -20,10 +20,10 @@
 (*                                                                         *)
 (* Channel FIFO: a channel's new reliable items are first written in the   *)
 (* order the application queued them.  Only a channel's head is offered,   *)
-(* at the best priority among the channel's queued items: per-send         *)
-(* priority boosts the whole channel (17.3 item 3).                        *)
+(* at the best level among the channel's queued items: CONFIG boosts its   *)
+(* whole channel (17.3 item 3).                                            *)
 (* The implementation refines IsHead/Boost into one stable flat sequence  *)
-(* per call: contiguous channel/class ranges, with the suffix priority     *)
+(* per call: contiguous channel/class ranges, with the suffix level        *)
 (* minimum at each range position. Full-width call-epoch and caller-index  *)
 (* tags are validity guards, not scheduler state, so they add no candidate *)
 (* to Cands and do not change this module's traces.                        *)
@@ -44,12 +44,12 @@
 (* bounded.                                                                *)
 (*                                                                         *)
 (* The reliable items are a constant scenario, Msgs, queued by the         *)
-(* application in that order; each names its channel and priority level.  *)
+(* application in that order; each names its channel and level.           *)
 (* An item's ordering on its channel is its position among the items of    *)
 (* that channel.                                                           *)
 (*                                                                         *)
 (* Two constants flip the guarding rules, one per reversed witness:        *)
-(*   ChannelFIFO = FALSE     per-message priority: every queued item is    *)
+(*   ChannelFIFO = FALSE     per-message level: every queued item is       *)
 (*                           offered at its own level, not only the        *)
 (*                           channel's head.  Fails                        *)
 (*                           FirstWriteInOrderPerChannel.                  *)
@@ -63,7 +63,7 @@ EXTENDS Naturals, Sequences, FiniteSets
 CONSTANTS
     NC,             \* channels, numbered 0..NC-1
     Msgs,           \* the reliable items, in queue order: [ch, lv]
-    ULevel,         \* the unreliable items' priority level
+    ULevel,         \* the unreliable items' level
     W,              \* the window: numbers outstanding, at most
     Cap,            \* items one update may write (the budget)
     UPerTick,       \* unreliable items arriving with every update
@@ -71,7 +71,7 @@ CONSTANTS
     ChannelFIFO,    \* TRUE: only a channel's head is offered (FALSE: BrokenPerMessagePriority)
     UnreliableLast  \* TRUE: the class order (FALSE: BrokenUnreliableStarvesOrdered)
 
-Levels == 0..3
+Levels == 0..1
 N == Len(Msgs)
 Ids == 1..N
 
@@ -82,12 +82,12 @@ ASSUME /\ NC \in Nat \ {0}
        /\ UPerTick \in Nat /\ MaxLoss \in Nat
        /\ ChannelFIFO \in BOOLEAN /\ UnreliableLast \in BOOLEAN
 
-\* The stride and seed per level
-Pow2(p) == CASE p = 0 -> 1 [] p = 1 -> 2 [] p = 2 -> 4 [] p = 3 -> 8
-Stride(p) == Pow2(p) * (p + 1) + p          \* 1, 5, 14, 35
-Seed(p) == Pow2(p) * p + p                  \* 0, 3, 10, 27
+\* The stride and seed per level: level 0 (CONFIG's channel) strides 1 from
+\* 0, level 1 strides 14 from 10 (rn_builder_stride and rn_builder_seed)
+Stride(p) == IF p = 0 THEN 1 ELSE 14
+Seed(p) == IF p = 0 THEN 0 ELSE 10
 Seeds == [p \in Levels |-> Seed(p)]
-MaxClock == 35
+MaxClock == 14
 
 Min(a, b) == IF a < b THEN a ELSE b
 Max(a, b) == IF a > b THEN a ELSE b
@@ -277,7 +277,7 @@ UnreliableNotBlockedByWindow ==
     (budget > 0 /\ unrelQ > 0 /\ ~WindowOpen) => CanWrite
 
 \* the class order is the outer rule: no write ever took a class while a
-\* higher class had an item it could write, whatever the priorities
+\* higher class had an item it could write, whatever the levels
 ClassOrderBeforePriority == ~classBad
 
 \* LIVE: every queued reliable item is eventually first-written

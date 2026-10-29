@@ -75,8 +75,7 @@ static int standard_channels_receipts_security_generate( const char * id, uint8_
         const int bytes = maximum + 1;
         uint8_t data[ROCKETNET_MESSAGE_SINGLE_BYTES];
         memset( data, 0x41, (size_t) bytes );
-        check( rn_endpoint_send( &endpoint, data, bytes, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT,
-                                 ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) == 1 );
+        check( rn_endpoint_send( &endpoint, data, bytes, ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT, 0, 0 ) == 1 );
 
         rn_endpoint_begin_update( &endpoint );
 

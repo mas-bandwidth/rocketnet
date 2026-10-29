@@ -187,7 +187,7 @@ static bool ep_send_next( ep_side_t * from, ep_side_t * to, uint64_t * random )
         data[i] = (uint8_t) ( index + (uint32_t) i );
     }
 
-    const uint32_t serial = rn_endpoint_send( &from->endpoint, data, bytes, reliability, ROCKETNET_PRIORITY_MEDIUM, channel, 0 );
+    const uint32_t serial = rn_endpoint_send( &from->endpoint, data, bytes, reliability, channel, 0 );
     if ( serial == 0 )
         return false;                                           // the window or the queue is full: try again later
     check( rn_endpoint_error( &from->endpoint ) == ROCKETNET_DISCONNECT_REASON_NONE );

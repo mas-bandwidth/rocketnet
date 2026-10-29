@@ -479,8 +479,15 @@ struct reference_scheduler_t
     uint64_t visits;                                            // the items the picker looked at, the quadratic cost
 };
 
-static const uint64_t reference_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
-static const uint64_t reference_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
+static const uint64_t reference_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 14 };
+static const uint64_t reference_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 10 };
+
+// an item's own level: 0 for a control record (CONFIG), 1 for every other
+
+static int reference_level( const struct rn_packet_item_t * item )
+{
+    return item->control ? 0 : 1;
+}
 
 static void reference_reset_clocks( struct reference_scheduler_t * scheduler )
 {
@@ -493,7 +500,7 @@ static void reference_reset_clocks( struct reference_scheduler_t * scheduler )
 
 static bool reference_writable( const struct rn_packet_item_t * item )
 {
-    return !item->taken && item->bytes >= 1 && item->data && item->priority < ROCKETNET_PACKET_BUILDER_LEVELS;
+    return !item->taken && item->bytes >= 1 && item->data;
 }
 
 static uint64_t reference_effective_clock( const struct reference_scheduler_t * scheduler, int level )
@@ -518,7 +525,7 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
             continue;
 
         bool head = true;
-        int level = items[i].priority;
+        int level = reference_level( &items[i] );
 
         for ( int j = 0; j < num_items; j++ )
         {
@@ -532,9 +539,9 @@ static int reference_next_in_class( struct reference_scheduler_t * scheduler, co
                 break;
             }
 
-            if ( items[j].priority < level )
+            if ( reference_level( &items[j] ) < level )
             {
-                level = items[j].priority;
+                level = reference_level( &items[j] );
             }
         }
 
@@ -697,9 +704,7 @@ static void plan_fill( int num_items, uint32_t channels )
 
         struct rn_packet_item_t * item = &plan_builder_items[i];
         builder_item( item, channel, ROCKETNET_MESSAGE_CODE_UNRELIABLE, send_class, data, bytes );
-        item->priority = (uint8_t) ( plan_random() % 4 );
-        if ( plan_random() % 50 == 0 )
-            item->priority = 4;                                 // never taken
+        item->control = (uint8_t) ( plan_random() % 4 == 0 );
         if ( plan_random() % 40 == 0 )
             item->taken = 1;                                    // already taken
         if ( plan_random() % 60 == 0 )
@@ -802,7 +807,7 @@ static void test_packet_builder_matches_reference_order()
                 if ( plan_builder_items[i].taken && plan_random() % 8 == 0 )
                 {
                     plan_builder_items[i].taken = 0;
-                    plan_builder_items[i].priority = (uint8_t) ( plan_random() % 4 );
+                    plan_builder_items[i].control = (uint8_t) ( plan_random() % 4 == 0 );
                     plan_reference_items[i] = plan_builder_items[i];
                 }
             }
@@ -922,7 +927,7 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
     for ( int i = 0; i < 8; i++ )
     {
         builder_item( &items[i], channels[i], ROCKETNET_MESSAGE_CODE_UNRELIABLE, i % 4, plan_data[i], 2 );
-        items[i].priority = (uint8_t) ( 3 - i % 4 );
+        items[i].control = (uint8_t) ( i % 4 == 3 );
         plan_data[i][0] = (uint8_t) i;
         plan_data[i][1] = (uint8_t) ( i + 1 );
     }
@@ -940,7 +945,7 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
         rocketnet_unit_check( group->begin < group->end );
         rocketnet_unit_check( group->end <= 8 );
 
-        uint8_t suffix = ROCKETNET_PACKET_BUILDER_LEVELS;
+        uint8_t suffix = 1;
 
         for ( uint32_t p = group->end; p > group->begin; p-- )
         {
@@ -952,7 +957,8 @@ static void test_packet_builder_flat_plan_tags_ranges_and_bounds()
             const struct rn_packet_item_t * item = &items[entry->item_index];
             rocketnet_unit_check( item->send_class == group->send_class );
             rocketnet_unit_check( item->channel == group->channel );
-            suffix = item->priority < suffix ? item->priority : suffix;
+            if ( item->control )
+                suffix = 0;
             rocketnet_unit_check( entry->suffix_level == suffix );
         }
     }

@@ -122,11 +122,6 @@ bool rocketnet_get_thread_priority( void );
 /** @brief Maximum number of explanatory exclusions in a host-memory estimate. */
 #define ROCKETNET_HOST_MEMORY_MAX_EXCLUSIONS                            8
 
-#define ROCKETNET_PRIORITY_IMMEDIATE                                    0
-#define ROCKETNET_PRIORITY_HIGH                                         1
-#define ROCKETNET_PRIORITY_MEDIUM                                       2
-#define ROCKETNET_PRIORITY_LOW                                          3
-
 // the block stride, a wire constant
 
 #define ROCKETNET_MESSAGE_FRAGMENT_BYTES                             1152

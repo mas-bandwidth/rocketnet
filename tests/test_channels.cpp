@@ -1158,7 +1158,7 @@ static uint8_t rn_pattern( uint32_t serial, uint32_t offset )
 
 static void test_channels_allocator_layout()
 {
-    // section 14's formula, part by part, at the defaults: 6,709,888 bytes, no padding
+    // section 14's formula, part by part, at the defaults: 6,709,760 bytes, no padding
 
     rocketnet_message_config_t config;
     rocketnet_message_default_config( &config );
@@ -1170,13 +1170,13 @@ static void test_channels_allocator_layout()
 
     rn_region_layout_t layout;
     check( rn_region_layout( &config, &layout ) );
-    check( layout.formula_bytes == 6709888 );
-    check( layout.region_bytes == 6709888 );
-    check( rocketnet_message_connection_bytes( &config ) == 6709888 );
-    check( rocketnet_message_connection_bytes( NULL ) > 6709888 );
+    check( layout.formula_bytes == 6709760 );
+    check( layout.region_bytes == 6709760 );
+    check( rocketnet_message_connection_bytes( &config ) == 6709760 );
+    check( rocketnet_message_connection_bytes( NULL ) > 6709760 );
 
     const uint64_t C = 32, W = 1024, B = 1048576, Q = 1024, S = 4194304, P = 1024, Du = 1024, Ru = 16, Rq = 256;
-    check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 64 * C );
+    check( layout.bytes[RN_PART_CHANNEL_SEND] + layout.bytes[RN_PART_CHANNEL_RECEIVE] == 60 * C );
     check( layout.bytes[RN_PART_SEND_NUMBERS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVE_DESCRIPTORS] == 32 * W );
     check( layout.bytes[RN_PART_RECEIVED_BITS] == W / 8 );
@@ -1799,10 +1799,10 @@ static void test_channels_allocator_sizing()
     rn_trap_armed = 0;
     check( length > 0 && length < (int) sizeof( text ) );
     check( (int) strlen( text ) == length );
-    check( strstr( text, "64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
-    check( strstr( text, "region bytes 6709888" ) != NULL );
-    check( strstr( text, "formula bytes 6709888" ) != NULL );
-    check( strstr( text, "1000 connections 6709888000" ) != NULL );
+    check( strstr( text, "60C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq" ) != NULL );
+    check( strstr( text, "region bytes 6709760" ) != NULL );
+    check( strstr( text, "formula bytes 6709760" ) != NULL );
+    check( strstr( text, "1000 connections 6709760000" ) != NULL );
 
     // too small a buffer truncates and still reports the full length, as snprintf does
 
@@ -2057,7 +2057,6 @@ static void rn_soak_send( rn_soak_side_t * side )
         check( descriptor->bytes == (uint32_t) bytes );
         descriptor->serial = ++side->serial;
         descriptor->reliability = ROCKETNET_RELIABILITY_RELIABLE_ORDERED;
-        descriptor->priority = (uint8_t) ( rn_random() % 4 );
         descriptor->channel = (uint16_t) ( rn_random() % region->num_channels );
 
         // copy the message into its chunks, as send_message will
@@ -2084,7 +2083,7 @@ static void rn_soak_send( rn_soak_side_t * side )
         rn_channel_send_t * channel = &region->channel_send[descriptor->channel];
         rn_descriptor_enqueue_stamp( region, descriptor );
         rn_soak_queue_append( region, descriptor->channel, (uint32_t) ( descriptor - region->send_descriptors ) );
-        channel->queued[descriptor->priority]++;
+        channel->queued++;
         descriptor->ordering = channel->ordered_write++;
         channel->sequenced_write = 0;
     }
@@ -2122,7 +2121,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
             descriptor->enqueue_ticket = 0;
             descriptor->schedule_flags = 0;
             rn_soak_queue_pop( region, c );
-            channel->queued[descriptor->priority]--;
+            channel->queued--;
             descriptor->first_number = side->next_number;
             descriptor->fragments = (uint16_t) fragments;
             descriptor->fragments_acked = 0;

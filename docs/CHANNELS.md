@@ -112,10 +112,10 @@ reliable numbers are assigned later. CONFIG is spliced at the front of channel
 0 and that one channel's tickets are rebased so CONFIG holds the smallest
 ticket. Ready membership is one ticket per channel.
 
-The sized terms are 12W for the resend sequence entry, 16Q for the unreliable ring, 40C for channel send state, and
-64C (40 bytes of channel send state plus 24 bytes of channel receive state).
+The sized terms are 12W for the resend sequence entry, 16Q for the unreliable ring, 36C for channel send state, and
+60C (36 bytes of channel send state plus 24 bytes of channel receive state).
 A send descriptor is 72 bytes (`rn_send_descriptor_t`). `docs/LOAD.md` prints
-`64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
+`60C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
 
 ## Verification
 

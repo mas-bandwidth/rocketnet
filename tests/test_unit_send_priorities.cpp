@@ -3,9 +3,10 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 6's scheduler, unit tier: the four send priorities inside the
-// budget's class order (docs/CHANNELS.md 9.2, tla/RNScheduler.tla). No
-// sockets, no threads, no wall clock.
+// Layer 6's scheduler, unit tier: the two levels inside the budget's class
+// order (docs/CHANNELS.md 9.2, tla/RNScheduler.tla). A channel holding CONFIG
+// (a control record) is level 0, every other channel level 1. No sockets, no
+// threads, no wall clock.
 //
 // Every case writes packets that hold one record each, so the order of the
 // packets is the order the scheduler took the items. Each record's first byte
@@ -33,7 +34,10 @@ static rocketnet_counters_t priorities_counters;
 static uint8_t priorities_data[PRIORITIES_MAX_ITEMS][PRIORITIES_RECORD_BYTES];
 static uint8_t priorities_payloads[ROCKETNET_PACKET_BUILDER_MAX_PACKETS][PRIORITIES_CAPACITY];
 
-static void priorities_item( struct rn_packet_item_t * item, int index, uint16_t channel, int send_class, int priority )
+#define PRIORITIES_NORMAL           0
+#define PRIORITIES_CONTROL          1           // the item is a control record: its channel is boosted
+
+static void priorities_item( struct rn_packet_item_t * item, int index, uint16_t channel, int send_class, int control )
 {
     memset( priorities_data[index], 0, PRIORITIES_RECORD_BYTES );
     priorities_data[index][0] = (uint8_t) index;
@@ -42,7 +46,7 @@ static void priorities_item( struct rn_packet_item_t * item, int index, uint16_t
     item->channel = channel;
     item->code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;              // carries no field but its length: the index rides in the bytes
     item->send_class = (uint8_t) send_class;
-    item->priority = (uint8_t) priority;
+    item->control = (uint8_t) control;            // the record's code carries no control bit: only the scheduler reads it
     item->data = priorities_data[index];
     item->bytes = PRIORITIES_RECORD_BYTES;
     item->number = ROCKETNET_PACKET_NUMBER_NONE;
@@ -109,10 +113,10 @@ static int priorities_position( const int * order, int count, int index )
     return -1;
 }
 
-// within one class the more urgent level goes first, whatever the channel
-// order: IMMEDIATE, then HIGH, then LOW.
+// within one class the boosted channel goes first, whatever the channel
+// order; the others then take their turns from the channel after it.
 
-static void test_higher_priority_first_within_class()
+static void test_control_channel_first_within_class()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -124,23 +128,23 @@ static void test_higher_priority_first_within_class()
     rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, PRIORITIES_CAPACITY ) );
 
     struct rn_packet_item_t items[3];
-    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_IMMEDIATE );
-    priorities_item( &items[1], 1, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_LOW );
-    priorities_item( &items[2], 2, 2, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_HIGH );
+    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
+    priorities_item( &items[1], 1, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
+    priorities_item( &items[2], 2, 2, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_CONTROL );
 
     int order[8];
     rocketnet_unit_check( priorities_drain( region, &builder, items, 3, order, 8 ) == 3 );
-    rocketnet_unit_check( order[0] == 0 );
-    rocketnet_unit_check( order[1] == 2 );
+    rocketnet_unit_check( order[0] == 2 );
+    rocketnet_unit_check( order[1] == 0 );
     rocketnet_unit_check( order[2] == 1 );
 
     rn_arena_destroy( arena );
 }
 
-// a channel's records are first-written in the order they were queued. An
-// IMMEDIATE send behind a LOW one boosts the whole channel: the LOW record goes
-// first, at IMMEDIATE, then the IMMEDIATE one, both ahead of another channel's
-// HIGH record (17.3 item 3; RNScheduler FirstWriteInOrderPerChannel).
+// a channel's records are first-written in the order they were queued. A
+// control record behind a normal one boosts the whole channel: the normal
+// record goes first, boosted, then the control record, both ahead of another
+// channel's record (17.3 item 3; RNScheduler FirstWriteInOrderPerChannel).
 
 static void test_channel_fifo_kept_per_channel()
 {
@@ -153,9 +157,9 @@ static void test_channel_fifo_kept_per_channel()
     rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, PRIORITIES_CAPACITY ) );
 
     struct rn_packet_item_t items[3];
-    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_LOW );
-    priorities_item( &items[1], 1, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_IMMEDIATE );
-    priorities_item( &items[2], 2, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_HIGH );
+    priorities_item( &items[0], 0, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
+    priorities_item( &items[1], 1, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_CONTROL );
+    priorities_item( &items[2], 2, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
 
     int order[8];
     rocketnet_unit_check( priorities_drain( region, &builder, items, 3, order, 8 ) == 3 );
@@ -181,12 +185,12 @@ static void test_round_robin_across_channels()
     rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, PRIORITIES_CAPACITY ) );
 
     // channel 0 queues 0 and 1, channel 1 queues 2 and 3, channel 2 queues 4
-    // and 5, all MEDIUM
+    // and 5, none boosted
 
     struct rn_packet_item_t items[6];
     for ( int i = 0; i < 6; i++ )
     {
-        priorities_item( &items[i], i, (uint16_t) ( i / 2 ), ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_MEDIUM );
+        priorities_item( &items[i], i, (uint16_t) ( i / 2 ), ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
     }
 
     int order[8];
@@ -202,11 +206,11 @@ static void test_round_robin_across_channels()
     rn_arena_destroy( arena );
 }
 
-// a LOW channel is not starved by an IMMEDIATE backlog: the level clocks give
-// it a turn once IMMEDIATE's clock passes LOW's seed of 27, and its next turn
-// one LOW stride (35) later. The backlog is still queued when LOW goes.
+// a normal channel is not starved by a boosted backlog: the level clocks give
+// it a turn once level 0's clock passes level 1's seed of 10, and its next
+// turn one level-1 stride (14) later. The backlog is still queued both times.
 
-static void test_no_starvation_of_low()
+static void test_no_starvation_of_normal()
 {
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &priorities_counters );
     rocketnet_unit_check( arena != NULL );
@@ -216,31 +220,31 @@ static void test_no_starvation_of_low()
     rn_packet_builder_t builder;
     rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, PRIORITIES_CAPACITY ) );
 
-    // 0 to 39 IMMEDIATE on channel 0, 40 and 41 LOW on channel 1
+    // 0 to 39 boosted on channel 0, 40 and 41 normal on channel 1
 
     struct rn_packet_item_t items[42];
     for ( int i = 0; i < 40; i++ )
     {
-        priorities_item( &items[i], i, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_IMMEDIATE );
+        priorities_item( &items[i], i, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_CONTROL );
     }
 
-    priorities_item( &items[40], 40, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_LOW );
-    priorities_item( &items[41], 41, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_LOW );
+    priorities_item( &items[40], 40, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
+    priorities_item( &items[41], 41, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
 
     int order[PRIORITIES_MAX_ITEMS];
     rocketnet_unit_check( priorities_drain( region, &builder, items, 42, order, PRIORITIES_MAX_ITEMS ) == 42 );
 
-    // IMMEDIATE's clock runs 0..27 before LOW's seed of 27 is the smallest
-    // (a tie goes to the more urgent level): 28 IMMEDIATE, then LOW
+    // level 0's clock runs 0..10 before level 1's seed of 10 is the smallest
+    // (a tie goes to level 0): 11 boosted, then a normal one
 
-    rocketnet_unit_check( priorities_position( order, 42, 40 ) == 28 );
+    rocketnet_unit_check( priorities_position( order, 42, 40 ) == 11 );
 
-    // with 12 IMMEDIATE still queued, LOW's next clock is 27 + 35 = 62, past
-    // the backlog: the second LOW goes last
+    // level 1's next clock is 10 + 14 = 24: level 0 takes 11..24, 14 more,
+    // then the second normal one
 
-    rocketnet_unit_check( priorities_position( order, 42, 41 ) == 41 );
+    rocketnet_unit_check( priorities_position( order, 42, 41 ) == 26 );
 
-    // channel FIFO inside the IMMEDIATE backlog
+    // channel FIFO inside the boosted backlog
 
     int last = -1;
     for ( int i = 0; i < 42; i++ )
@@ -254,15 +258,15 @@ static void test_no_starvation_of_low()
 
     // the queue drained: the clocks are back at their seeds
 
-    rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_IMMEDIATE] == 0 );
-    rocketnet_unit_check( builder.level_clock[ROCKETNET_PRIORITY_LOW] == 27 );
+    rocketnet_unit_check( builder.level_clock[0] == 0 );
+    rocketnet_unit_check( builder.level_clock[1] == 10 );
 
     rn_arena_destroy( arena );
 }
 
-// the budget's class order is the outer rule: a LOW retransmit goes before a
-// MEDIUM ordered-progress record, before a HIGH new reliable one, before an
-// IMMEDIATE unreliable one (R6; RNScheduler ClassOrderBeforePriority).
+// the budget's class order is the outer rule: a normal retransmit goes before
+// an ordered-progress record, before a new reliable one, before a boosted
+// unreliable one (R6; RNScheduler ClassOrderBeforePriority).
 
 static void test_budget_class_order_still_rules()
 {
@@ -275,10 +279,10 @@ static void test_budget_class_order_still_rules()
     rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, ROCKETNET_PACKET_BUILDER_MAX_PACKETS, PRIORITIES_CAPACITY ) );
 
     struct rn_packet_item_t items[4];
-    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_UNRELIABLE, ROCKETNET_PRIORITY_IMMEDIATE );
-    priorities_item( &items[1], 1, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_HIGH );
-    priorities_item( &items[2], 2, 2, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, ROCKETNET_PRIORITY_MEDIUM );
-    priorities_item( &items[3], 3, 0, ROCKETNET_SEND_CLASS_RETRANSMIT, ROCKETNET_PRIORITY_LOW );
+    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_UNRELIABLE, PRIORITIES_CONTROL );
+    priorities_item( &items[1], 1, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
+    priorities_item( &items[2], 2, 2, ROCKETNET_SEND_CLASS_ORDERED_PROGRESS, PRIORITIES_NORMAL );
+    priorities_item( &items[3], 3, 0, ROCKETNET_SEND_CLASS_RETRANSMIT, PRIORITIES_NORMAL );
 
     int order[8];
     rocketnet_unit_check( priorities_drain( region, &builder, items, 4, order, 8 ) == 4 );
@@ -291,13 +295,13 @@ static void test_budget_class_order_still_rules()
 }
 
 // the two reversed witnesses of tla/RNScheduler.tla, replayed against the
-// code on MCRNScheduler's instance: channel 0 queues LOW then IMMEDIATE,
-// channel 1 queues HIGH, IMMEDIATE unreliable items arrive one per update, and
-// the budget is one record per update.
+// code on MCRNScheduler's instance: channel 0 queues a normal record then a
+// control record, channel 1 queues a normal one, boosted unreliable items
+// arrive one per update, and the budget is one record per update.
 //
-// BrokenPerMessagePriority's trace first-writes channel 0's IMMEDIATE record
-// (ordering 1) ahead of its LOW one (ordering 0). The code writes ordering 0
-// first.
+// BrokenPerMessagePriority's trace first-writes channel 0's control record
+// (ordering 1) ahead of its normal one (ordering 0). The code writes ordering
+// 0 first.
 //
 // BrokenUnreliableStarvesOrdered's trace spends every update's one record on
 // the unreliable item that arrived with it, forever. The code writes the three
@@ -315,9 +319,9 @@ static void test_rnscheduler_witness_replays()
     rocketnet_unit_check( rn_packet_builder_init( &builder, region, NULL, NULL, 1, PRIORITIES_CAPACITY ) );
 
     struct rn_packet_item_t items[4];
-    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_LOW );
-    priorities_item( &items[1], 1, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_IMMEDIATE );
-    priorities_item( &items[2], 2, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, ROCKETNET_PRIORITY_HIGH );
+    priorities_item( &items[0], 0, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
+    priorities_item( &items[1], 1, 0, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_CONTROL );
+    priorities_item( &items[2], 2, 1, ROCKETNET_SEND_CLASS_NEW_RELIABLE, PRIORITIES_NORMAL );
 
     uint8_t * frames[1] = { priorities_payloads[0] };
     int order[8];
@@ -328,7 +332,7 @@ static void test_rnscheduler_witness_replays()
         // this update's unreliable item: last update's, if unwritten, is
         // dropped by the caller and a new one arrives
 
-        priorities_item( &items[3], 3, 0, ROCKETNET_SEND_CLASS_UNRELIABLE, ROCKETNET_PRIORITY_IMMEDIATE );
+        priorities_item( &items[3], 3, 0, ROCKETNET_SEND_CLASS_UNRELIABLE, PRIORITIES_CONTROL );
 
         const int packets = rn_packet_builder_write( &builder, items, 4, frames, 1 );
         rocketnet_unit_check( packets == 1 );
@@ -346,7 +350,7 @@ static void test_rnscheduler_witness_replays()
 }
 
 // R2's acceptance for the scheduler: a counting allocator is installed, the
-// connection is created, then many updates of prioritised writes, a budget
+// connection is created, then many updates of boosted and normal writes, a budget
 // refusal and the clocks' reset run, and the allocator is not called again.
 
 static size_t priorities_allocs = 0;
@@ -401,7 +405,7 @@ static void test_send_priorities_no_allocation_after_create()
     {
         for ( int i = 0; i < 8; i++ )
         {
-            priorities_item( &items[i], i, (uint16_t) ( i % 3 ), i < 2 ? ROCKETNET_SEND_CLASS_RETRANSMIT : ( i < 6 ? ROCKETNET_SEND_CLASS_NEW_RELIABLE : ROCKETNET_SEND_CLASS_UNRELIABLE ), i % 4 );
+            priorities_item( &items[i], i, (uint16_t) ( i % 3 ), i < 2 ? ROCKETNET_SEND_CLASS_RETRANSMIT : ( i < 6 ? ROCKETNET_SEND_CLASS_NEW_RELIABLE : ROCKETNET_SEND_CLASS_UNRELIABLE ), i % 4 == 0 ? PRIORITIES_CONTROL : PRIORITIES_NORMAL );
         }
 
         rocketnet_send_budget_begin_update( &budget, 10.0 + 0.1 * update );
@@ -423,10 +427,10 @@ static void test_send_priorities_no_allocation_after_create()
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
-REGISTER_UNIT_TEST( test_higher_priority_first_within_class );
+REGISTER_UNIT_TEST( test_control_channel_first_within_class );
 REGISTER_UNIT_TEST( test_channel_fifo_kept_per_channel );
 REGISTER_UNIT_TEST( test_round_robin_across_channels );
-REGISTER_UNIT_TEST( test_no_starvation_of_low );
+REGISTER_UNIT_TEST( test_no_starvation_of_normal );
 REGISTER_UNIT_TEST( test_budget_class_order_still_rules );
 REGISTER_UNIT_TEST( test_rnscheduler_witness_replays );
 REGISTER_UNIT_TEST( test_send_priorities_no_allocation_after_create );

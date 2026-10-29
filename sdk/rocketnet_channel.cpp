@@ -987,7 +987,7 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 
 static uint32_t rn_channel_live_count( const rn_channel_send_t * send )
 {
-    return (uint32_t) send->queued[0] + send->queued[1] + send->queued[2] + send->queued[3];
+    return send->queued;
 }
 
 // A channel's reliable FIFO links its queued descriptors by index through
@@ -1201,7 +1201,6 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
                                                                                                                                                               : rn_channels_small_limit( channels );
     descriptor->fragments = (uint16_t) ( bytes <= small_limit ? 1 : ( bytes + F - 1 ) / F );
     descriptor->channel = (uint16_t) channel;
-    descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
 
     if ( type == ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED )
         descriptor->ordering = rn_channels_send_ordered( channels, channel );
@@ -1217,7 +1216,7 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
 
     rn_channel_send_t * send = region->channel_send + channel;
     const bool was_empty = rn_channel_live_count( send ) == 0;
-    send->queued[descriptor->priority]++;
+    send->queued++;
 
     rn_channel_queue_append( region, channel, d );
 
@@ -1292,7 +1291,6 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     descriptor->bytes = ROCKETNET_MESSAGE_CONFIG_BYTES;
     descriptor->fragments = 1;
     descriptor->channel = 0;
-    descriptor->priority = ROCKETNET_PRIORITY_IMMEDIATE;
     descriptor->ordering = 0;
 
     // the head of channel 0's FIFO, and channel 0 at the head of the turns:
@@ -1301,7 +1299,7 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     rn_channel_send_t * send = region->channel_send;
 
     rn_descriptor_enqueue_stamp( region, descriptor );
-    send->queued[descriptor->priority]++;
+    send->queued++;
 
     rn_channel_queue_push_front( region, 0, d );
 
@@ -1448,7 +1446,6 @@ static bool rn_ordered_item( const rn_ordered_t * ordered, const rn_send_number_
     item->code = descriptor->reliability;        // RNChannelTypes!WritePacket keeps code 2 on every resend
     item->control = ( descriptor->flags & RN_SEND_FLAG_CONTROL ) ? 1 : 0;   // RNEndpoint WriteOk: CONFIG keeps CONTROL on every resend
     item->send_class = (uint8_t) send_class;
-    item->priority = descriptor->priority < ROCKETNET_PACKET_BUILDER_LEVELS ? descriptor->priority : ROCKETNET_PRIORITY_MEDIUM;
     item->ring = (uint32_t) ( ( slot->ring_start % region->ring_bytes ) / 16 );
 
     if ( descriptor->fragments > 1 )
@@ -1628,8 +1625,8 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
 
         // dequeue: the descriptor leaves its channel's FIFO
 
-        if ( region->send_descriptors[d].priority < 4 && send->queued[region->send_descriptors[d].priority] > 0 )
-            send->queued[region->send_descriptors[d].priority]--;
+        if ( send->queued > 0 )
+            send->queued--;
 
         rn_channel_queue_pop( region, channel );
         region->send_descriptors[d].enqueue_ticket = 0;

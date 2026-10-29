@@ -21,11 +21,12 @@ static void rn_builder_count( rocketnet_counters_t * counters, int counter )
         rocketnet_platform_atomic_add_u64( (volatile uint64_t *) &counters->values[counter], 1 );
 }
 
-// The per-level stride and seed: stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
-// tla/RNScheduler.tla's Stride and Seed.
+// The per-level stride and seed (tla/RNScheduler.tla's Stride and Seed):
+// level 0, a channel holding CONFIG, strides 1 from 0; level 1, every other
+// channel, strides 14 from 10.
 
-static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
-static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
+static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 14 };
+static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 10 };
 
 #if ROCKETNET_DEV
 static thread_local struct rn_packet_builder_plan_t rn_builder_last_plan;
@@ -145,9 +146,9 @@ static void rn_builder_record( const struct rn_packet_item_t * item, struct rock
 
 static bool rn_builder_writable( const struct rn_packet_item_t * item )
 {
-    // an item the builder may take at all: bytes to write, a priority in range
+    // an item the builder may take at all: bytes to write
 
-    return !item->taken && item->bytes >= 1 && item->data && item->priority < ROCKETNET_PACKET_BUILDER_LEVELS;
+    return !item->taken && item->bytes >= 1 && item->data;
 }
 
 static inline void rn_builder_plan_operation( struct rn_packet_builder_plan_t * plan )
@@ -216,8 +217,9 @@ static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_pac
 {
     // RNScheduler's IsHead and Boost, made once per call. Writable item indices
     // are stably radix-grouped into contiguous class/channel ranges. A reverse
-    // pass over each range stores its suffix priority minimum, so cursor is the
-    // channel head (IsHead) and sequence[cursor].suffix_level is Boost. No item
+    // pass over each range stores its suffix level (0 while a control record
+    // remains), so cursor is the channel head (IsHead) and
+    // sequence[cursor].suffix_level is Boost. No item
     // or group link is built and no grouping work repeats per packet.
     //
     // Returns true when a writable item has a class outside the budget's four,
@@ -282,12 +284,12 @@ static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_pac
 
         group->end = (uint8_t) position;
 
-        uint8_t suffix = ROCKETNET_PACKET_BUILDER_LEVELS;
+        uint8_t suffix = 1;
         for ( uint32_t p = group->end; p > group->begin; p-- )
         {
             struct rn_packet_builder_sequence_t * entry = &plan->sequence[p - 1];
-            const uint8_t priority = items[entry->item_index].priority;
-            suffix = priority < suffix ? priority : suffix;
+            if ( items[entry->item_index].control )
+                suffix = 0;
             entry->suffix_level = suffix;
             rn_builder_plan_operation( plan );
         }
@@ -323,9 +325,10 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
     //
     // 1. Channel FIFO: only a channel's head (its first writable item of this
     //    class, in the caller's order, which is the order the application
-    //    queued) is offered, at the best priority among the channel's writable
-    //    items of this class: per-send priority boosts the whole channel (17.3
-    //    item 3, RNScheduler!Boost and IsHead). rn_builder_plan made both.
+    //    queued) is offered, at level 0 while a control record remains among
+    //    the channel's writable items of this class: CONFIG boosts the whole
+    //    channel (17.3 item 3, RNScheduler!Boost and IsHead). rn_builder_plan
+    //    made both.
     // 2. The level: the smallest clock among the levels offered, a clock behind
     //    clock_base counting as clock_base (the pull-forward); a tie goes to
     //    the more urgent level (RNScheduler!PickLevel).
@@ -385,7 +388,7 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
 static uint32_t rn_builder_take_head( struct rn_packet_builder_plan_t * plan, uint32_t group_index )
 {
     // a head taken: advance its contiguous range. The next sequence entry already
-    // carries the suffix priority of what remains.
+    // carries the suffix level of what remains.
 
     struct rn_packet_builder_group_t * group = &plan->groups[group_index];
     const uint32_t position = group->cursor;
@@ -466,7 +469,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         // 9.3 and RNScheduler!Write: fill in the budget's class order, the
         // outer rule (RNScheduler ClassOrderBeforePriority). Within a class,
-        // the four priority levels by their clocks; within a level,
+        // the two levels by their clocks; within a level,
         // channels take turns one item each, so one chatty channel cannot
         // starve the others; within a channel, FIFO.
 

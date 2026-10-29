@@ -64,7 +64,7 @@ static void bench_fill( int num_items )
         item->channel = (uint16_t) ( bench_random() % BENCH_CHANNELS );
         item->code = ROCKETNET_MESSAGE_CODE_UNRELIABLE;
         item->send_class = (uint8_t) ( bench_random() % 4 );
-        item->priority = (uint8_t) ( bench_random() % 4 );
+        item->control = (uint8_t) ( bench_random() % 4 == 0 );
     }
 }
 

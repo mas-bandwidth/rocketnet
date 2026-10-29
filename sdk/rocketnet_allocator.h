@@ -50,12 +50,12 @@
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
-struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
+struct rn_channel_send_t                // 36 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
     uint32_t queue_head, queue_tail;    // the first and last descriptor of this channel's reliable FIFO, linked by queue_next; RN_DESCRIPTOR_NONE when empty
-    uint16_t queued[4];                 // live queued count per priority (holes are not counted)
+    uint32_t queued;                    // live queued count
     uint32_t ready_prev, ready_next;    // the neighbouring ready channels, RN_DESCRIPTOR_NONE at the ends and when not ready
     uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
     uint32_t ready_generation;          // generation of the live queue head when this channel joined the ready list
@@ -127,13 +127,12 @@ struct rn_send_descriptor_t             // 72 bytes: one queued or in-flight sen
     uint64_t first_number;              // the first message number, once numbered (6.2)
     uint16_t channel;
     uint8_t reliability;
-    uint8_t priority;
     uint8_t in_use;                     // the slot's live bit: 1 while the descriptor is held
-    uint8_t flags;                      // RN_SEND_FLAG_*
+    uint8_t flags;                      // RN_SEND_FLAG_* (CONTROL: CONFIG, which the scheduler boosts)
+    uint8_t reserved[3];                // unused spare bytes
     uint16_t fragments;
     uint16_t fragments_acked;
     uint16_t schedule_flags;            // RN_SCHEDULE_QUEUED while this descriptor is a live queue entry
-    uint8_t reserved[2];                // unused spare bytes
     uint32_t enqueue_ticket;            // 0 not queued; else the enqueue ticket (from 1)
     uint32_t queue_next;                // the next descriptor in its channel's reliable FIFO, RN_DESCRIPTOR_NONE at the tail
     uint32_t span_prev;                 // RN_SEND_FLAG_SPAN: the next older live span, RN_DESCRIPTOR_NONE at span_first

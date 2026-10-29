@@ -40,7 +40,7 @@
 #define ROCKETNET_PACKET_BUILDER_MAX_RECORDS            16      // the records one packet carries: a packet's records are tracked to commit or to give back
 #define ROCKETNET_PACKET_BUILDER_MAX_ITEMS              96      // the bounded ordered plan one call accepts (the producer has the same 96-item ceiling)
 
-#define ROCKETNET_PACKET_BUILDER_LEVELS                 4       // the four priorities, ROCKETNET_PRIORITY_IMMEDIATE (0) to ROCKETNET_PRIORITY_LOW (3)
+#define ROCKETNET_PACKET_BUILDER_LEVELS                 2       // level 0: a channel holding CONFIG (a control record), boosted; level 1: everything else
 
 #define ROCKETNET_PACKET_NUMBER_NONE                    0xFFFFFFFFFFFFFFFFull   // an item that takes no reliable number (I3)
 
@@ -62,11 +62,10 @@ struct rn_packet_item_t
     uint8_t code;                   // the wire code the record carries
     uint8_t send_class;             // ROCKETNET_SEND_CLASS_*: the budget's class order
     uint8_t taken;                  // the builder sets this on an item it wrote
-    uint8_t priority;               // ROCKETNET_PRIORITY_*: 0 IMMEDIATE to 3 LOW; boosts the item's whole channel (9.2)
     uint8_t block;                  // nonzero: one fragment of a block (CHANNELS.md 8)
     uint8_t alone;                  // nonzero: the record travels in a packet by itself (a chunk: tla/RNChannel.tla, a chunk travels alone)
     uint8_t resend;                 // nonzero: a resend; the count is taken when the packet carrying it is sent (rn_packet_builder_commit)
-    uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3)
+    uint8_t control;                // nonzero: a layer control record, code 2 with CONTROL set (CHANNELS.md 10.3); boosts its whole channel to level 0 (9.2)
 };
 
 // One call's flat sequence entry. The full-width call epoch and exact caller
@@ -129,7 +128,7 @@ struct rn_packet_builder_t
     uint32_t unreliable_dropped;                // unreliable items dropped over budget by the last call
     uint64_t call_epoch;                        // generation of sequence[]; zero before the first valid plan, never wraps
 
-    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per priority level (the level weights)
+    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];     // RNScheduler's clock per level (the level weights)
     uint64_t clock_base;                        // the clock of the level taken last: a clock behind it is pulled forward to it
 
     struct
@@ -166,19 +165,20 @@ bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_reg
 //
 // 1. the budget's class order, the outer rule -- retransmits, ordered
 //    progress, new reliable, unreliable -- whatever the priorities;
-// 2. within a class, the four priority levels: the level with the
-//    smallest clock goes next and its clock advances by its stride (1, 5, 14,
-//    35 for IMMEDIATE to LOW), so under a backlog no level starves;
+// 2. within a class, the two levels: a channel holding CONFIG (a control
+//    record) is level 0, every other channel level 1. The level with the
+//    smallest clock goes next and its clock advances by its stride (1 and
+//    14), so under a backlog neither starves;
 // 3. within a level, round robin across channels, one item each (17.3 item
 //    4).
 //
 // Within a channel the caller's order is kept: only a channel's first item of
-// a class is offered, at the best priority among that channel's items of the
-// class, so a priority boosts the whole channel and never reorders it (17.3
-// item 3). The caller lists each channel's items in the order the
-// application queued them. An item whose priority is not 0 to 3 is never
-// taken. Taking items is linear in the plan: one stable radix plan pass makes
-// contiguous channel/class ranges and their suffix priority minima, and each
+// a class is offered, at level 0 while a control record remains among that
+// channel's items of the class, so CONFIG boosts its whole channel and never
+// reorders it (17.3 item 3). The caller lists each channel's items in the
+// order the application queued them. Taking items is linear in the plan: one
+// stable radix plan pass makes contiguous channel/class ranges and their
+// suffix levels, and each
 // take looks at one current range head. Several small records pack per packet (9.3). A record that does not
 // fit ends the packet; it is never split. When every item is taken the clocks
 // reset to their seeds.

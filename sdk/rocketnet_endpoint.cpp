@@ -395,7 +395,6 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
         rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         descriptor->channel = (uint16_t) channel;
         descriptor->reliability = (uint8_t) reliability;
-        descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
         descriptor->fragments = 1;
         endpoint->pending_descriptor = d;
         pointer = rn_region_send_write_pointer( region, d );
@@ -510,7 +509,6 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
             endpoint->ordered.channels.pending = RN_DESCRIPTOR_NONE;
             descriptor->channel = (uint16_t) pending_channel;
             descriptor->reliability = (uint8_t) endpoint->pending_type;
-            descriptor->priority = ROCKETNET_PRIORITY_MEDIUM;
             descriptor->fragments = 1;
         }
 
@@ -796,14 +794,13 @@ void rn_endpoint_in_place_failed( struct rn_endpoint_t * endpoint )
 }
 
 uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data, int bytes,
-                           int reliability, int priority, int channel, uint32_t serial )
+                           int reliability, int channel, uint32_t serial )
 {
-    // tla/RNEndpoint.tla Send (10.1): start, the one copy, finish. Per-send
-    // priority (9.3): MEDIUM is the one level a send takes, and any other is
-    // refused. tla/RNOutgoingBuild.tla Write: the one copy writes the
-    // message's bytes once at the pointer start returned.
+    // tla/RNEndpoint.tla Send (10.1): start, the one copy, finish.
+    // tla/RNOutgoingBuild.tla Write: the one copy writes the message's bytes
+    // once at the pointer start returned.
 
-    if ( !data || priority != ROCKETNET_PRIORITY_MEDIUM )
+    if ( !data )
     {
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return 0;

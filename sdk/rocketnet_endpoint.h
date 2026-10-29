@@ -130,7 +130,7 @@ bool rn_endpoint_set_send_kbps( struct rn_endpoint_t * endpoint, int32_t kbps, d
 // takes the endpoint's next serial. 0 when refused; then rn_endpoint_error
 // says whether the refusal ended the connection.
 uint32_t rn_endpoint_send( struct rn_endpoint_t * endpoint, const uint8_t * data, int bytes,
-                           int reliability, int priority, int channel, uint32_t serial );
+                           int reliability, int channel, uint32_t serial );
 
 // The send in two halves, for a caller that writes the bytes in place (R3):
 // start reserves the record and returns where to write it, finish queues it
