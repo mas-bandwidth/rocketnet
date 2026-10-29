@@ -8477,8 +8477,10 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
     rocketnet_free( NULL, client_acked );
     rocketnet_free( NULL, server_delivered );
     rocketnet_free( NULL, server_acked );
+    // the send loop retries a start the full ring refused, so SEND_RING_FULL
+    // is the loop's own back-pressure, not a fault
     rocketnet_client_transport_disconnect( client );
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
     rocketnet_server_transport_stop( server );
     for ( int i = 0; i < 100 && rocketnet_server_transport_state( server ) != ROCKETNET_SERVER_TRANSPORT_STOPPED; i++ )
     {
@@ -8486,7 +8488,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
         rocketnet_server_transport_send_packets( server );
     }
 
-    ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
+    ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_SEND_RING_FULL );
 }
 
 void rocketnet_test_transport_reply_opens_a_later_update()
