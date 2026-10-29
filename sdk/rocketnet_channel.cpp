@@ -1060,74 +1060,14 @@ static void rn_channel_queue_sync( rn_region_t * region, uint32_t channel )
 static uint32_t rn_channel_head_generation( const rn_channels_t * channels, uint32_t channel )
 {
     const rn_region_t * region = channels->region;
-    const uint32_t d = rn_channel_queue_next_live( region, channel, 0 );
+    const uint32_t d = region->channel_send[channel].queue_head;
     return d == RN_DESCRIPTOR_NONE ? 0 : region->send_descriptors[d].generation;
 }
 
-// The ready list is the flat channel_send array ordered by ready_ticket:
-// the next ready channel is the smallest ready ticket after a given one.
-
-static uint32_t rn_ready_next_after( const rn_channels_t * channels, uint32_t after_ticket )
-{
-    const rn_channel_send_t * send = channels->region->channel_send;
-    uint32_t best = RN_DESCRIPTOR_NONE;
-    uint32_t best_ticket = 0;
-
-    for ( uint32_t channel = 0; channel < channels->num_channels; channel++ )
-    {
-        if ( send[channel].ready_ticket == 0 || send[channel].ready_ticket <= after_ticket )
-            continue;
-
-        if ( best == RN_DESCRIPTOR_NONE || send[channel].ready_ticket < best_ticket )
-        {
-            best = channel;
-            best_ticket = send[channel].ready_ticket;
-        }
-    }
-
-    return best;
-}
-
-static void rn_ready_sync( rn_channels_t * channels )
-{
-    rn_channel_send_t * send = channels->region->channel_send;
-
-    channels->ready_head = rn_ready_next_after( channels, 0 );
-
-    uint32_t tail = RN_DESCRIPTOR_NONE;
-    uint32_t tail_ticket = 0;
-
-    for ( uint32_t channel = 0; channel < channels->num_channels; channel++ )
-    {
-        if ( send[channel].ready_ticket != 0 && ( tail == RN_DESCRIPTOR_NONE || send[channel].ready_ticket > tail_ticket ) )
-        {
-            tail = channel;
-            tail_ticket = send[channel].ready_ticket;
-        }
-    }
-
-    channels->ready_tail = tail;
-}
-
-static void rn_ready_rebase_tickets( rn_channels_t * channels )
-{
-    rn_channel_send_t * send = channels->region->channel_send;
-    uint32_t ticket = 1;
-    uint32_t after = 0;
-    uint32_t channel;
-    while ( ( channel = rn_ready_next_after( channels, after ) ) != RN_DESCRIPTOR_NONE )
-    {
-        after = send[channel].ready_ticket;
-        send[channel].ready_ticket = ticket++;
-        channels->schedule_work++;
-
-        if ( ticket == 0 )
-            ticket = 1;
-    }
-
-    channels->ready_ticket_next = ticket == 0 ? 1 : ticket;
-    rn_ready_sync( channels );
-}
+// The ready list links the channel_send entries by channel index: O(1) to
+// join at either end and to leave from anywhere. A member's ready_ticket is
+// its name, unique among joins, so a stale removal (an old ticket or head
+// generation) changes nothing.
 
 static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool front )
 {
@@ -1135,41 +1075,33 @@ static void rn_ready_link( rn_channels_t * channels, uint32_t channel, bool fron
     if ( send[channel].ready_ticket != 0 )
         return;
 
+    const uint32_t ticket = channels->ready_ticket_next++;
+    if ( channels->ready_ticket_next == 0 )
+        channels->ready_ticket_next = 1;
+
+    send[channel].ready_ticket = ticket;
+    send[channel].ready_generation = rn_channel_head_generation( channels, channel );
+
     if ( front )
     {
-        // the front of the flat ready sequence takes ticket 1; every channel already ready keeps its order behind it at tickets 2..n+1
-        uint32_t order[ROCKETNET_MAX_CHANNELS];
-        uint32_t count = 0;
-        uint32_t after = 0;
-        uint32_t ready_channel;
-        while ( ( ready_channel = rn_ready_next_after( channels, after ) ) != RN_DESCRIPTOR_NONE && count < ROCKETNET_MAX_CHANNELS )
-        {
-            after = send[ready_channel].ready_ticket;
-            order[count++] = ready_channel;
-        }
-
-        for ( uint32_t i = 0; i < count; i++ )
-            send[order[i]].ready_ticket = i + 2;
-
-        channels->ready_ticket_next = count + 2;
-        send[channel].ready_ticket = 1;
+        send[channel].ready_prev = RN_DESCRIPTOR_NONE;
+        send[channel].ready_next = channels->ready_head;
+        if ( channels->ready_head != RN_DESCRIPTOR_NONE )
+            send[channels->ready_head].ready_prev = channel;
+        else
+            channels->ready_tail = channel;
+        channels->ready_head = channel;
     }
     else
     {
-        if ( channels->ready_ticket_next == 0 )
-            rn_ready_rebase_tickets( channels );
-
-        const uint32_t ticket = channels->ready_ticket_next++;
-
-        if ( channels->ready_ticket_next == 0 )
-            channels->ready_ticket_next = 1;
-
-        send[channel].ready_ticket = ticket;
+        send[channel].ready_next = RN_DESCRIPTOR_NONE;
+        send[channel].ready_prev = channels->ready_tail;
+        if ( channels->ready_tail != RN_DESCRIPTOR_NONE )
+            send[channels->ready_tail].ready_next = channel;
+        else
+            channels->ready_head = channel;
+        channels->ready_tail = channel;
     }
-
-    send[channel].ready_generation = rn_channel_head_generation( channels, channel );
-
-    rn_ready_sync( channels );
 }
 
 // tla/RNChannel.tla Enqueue
@@ -1185,10 +1117,21 @@ static bool rn_ready_remove_named( rn_channels_t * channels, uint32_t channel, u
     if ( ticket == 0 || send[channel].ready_ticket != ticket || send[channel].ready_generation != generation )
         return false;
 
+    const uint32_t prev = send[channel].ready_prev;
+    const uint32_t next = send[channel].ready_next;
+    if ( prev != RN_DESCRIPTOR_NONE )
+        send[prev].ready_next = next;
+    else
+        channels->ready_head = next;
+    if ( next != RN_DESCRIPTOR_NONE )
+        send[next].ready_prev = prev;
+    else
+        channels->ready_tail = prev;
+
+    send[channel].ready_prev = RN_DESCRIPTOR_NONE;
+    send[channel].ready_next = RN_DESCRIPTOR_NONE;
     send[channel].ready_ticket = 0;
     send[channel].ready_generation = 0;
-
-    rn_ready_sync( channels );
 
     return true;
 }
