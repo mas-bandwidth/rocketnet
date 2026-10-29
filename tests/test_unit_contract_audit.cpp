@@ -959,6 +959,9 @@ static void test_witness_shared_secret_not_retained_in_output_state()
     struct rocketnet_counters_t client_counters;
     memset( &client_counters, 0, sizeof( client_counters ) );
     struct rocketnet_client_protocol_t client;
+    // The byte scan below includes padding and inactive storage that protocol
+    // init need not write. Define those bytes before observing the whole object.
+    memset( &client, 0, sizeof( client ) );
     rocketnet_client_protocol_init( &client, &client_counters );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
