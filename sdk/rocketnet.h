@@ -159,6 +159,11 @@
 
 #define ROCKETNET_SERVER_PUBLIC_KEY_BYTES                   32
 
+/// Server secret-key bytes: the X25519 secret key in the server config's
+/// server_secret_key.
+
+#define ROCKETNET_SERVER_SECRET_KEY_BYTES                   32
+
 /// Maximum address-string bytes including the NUL.
 /// IPv4 uses "a.b.c.d:port". IPv6 uses "[v6]:port".
 /// Longer input is refused.
@@ -264,7 +269,8 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID = -11,
 
     /// Start refused. A production build (ROCKETNET_DEV=0) was given the
-    /// published development backend or server key. Supply production keys.
+    /// published development backend key, or the published development server
+    /// key in server_secret_key. Supply production keys.
 
     ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION = -12,
 
@@ -1183,8 +1189,8 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_loopback_hub_destroy( struct 
 
 /// Initialize each config with its default_config function, then set the
 /// fields the game needs. Environment values override config values. Every
-/// field except callbacks, loopback_hub and config_bytes names its
-/// environment variable.
+/// field except callbacks, loopback_hub, server_secret_key and config_bytes
+/// names its environment variable.
 /// Overrides are logged with the displaced value. Invalid values refuse
 /// create. Values are not clamped. Empty variables are ignored and logged.
 /// Create reads the environment once, before it validates the config and
@@ -1379,14 +1385,35 @@ struct rocketnet_client_config_t
     /// environment form. Default is NULL.
 
     struct rocketnet_loopback_hub_t * loopback_hub;
+
+    /// Development builds only: the clock that stamps each receive time, in
+    /// seconds. NULL, the default, is the platform clock. A threaded
+    /// client calls it on its network thread, a step-driven client on the
+    /// caller's thread. A production build (ROCKETNET_DEV=0) refuses a
+    /// non-NULL value at create with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE.
+
+    double ( *time_callback )( void * context );
+
+    /// Development builds only: ROCKETNET_CLIENT_STEP_DRIVEN. True runs the
+    /// client with no network thread: update and send_packets do its I/O on
+    /// the caller's thread, so over the loopback transport a message sent in
+    /// one update arrives in the next update on that thread. For
+    /// single-thread debugging and for unit tests with no threads, sockets or
+    /// real time. The granted transport must have a non-blocking I/O step
+    /// (loopback has one). Default is false. A production build refuses true
+    /// at create with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE and has no
+    /// environment form.
+
+    bool step_driven;
 };
 
 /// The server config starts without a backend public key or protocol id.
 /// Supply both in config or with ROCKETNET_SERVER_BACKEND_PUBLIC_KEY and
 /// ROCKETNET_SERVER_PROTOCOL_ID.
 ///
-/// Each server object generates its own X25519 keypair during create. Destroy
-/// wipes its secret key. Read the public key with rocketnet_server_public_key.
+/// Each server object generates its own X25519 keypair during create, unless
+/// the config supplies server_secret_key. Destroy wipes its secret key. Read
+/// the public key with rocketnet_server_public_key.
 /// After start, read the server addresses and register them with the backend
 /// over an authenticated channel. The backend issues tokens for that key and
 /// those addresses.
@@ -1600,6 +1627,17 @@ struct rocketnet_server_config_t
     /// environment form. Default is NULL.
 
     struct rocketnet_loopback_hub_t * loopback_hub;
+
+    /// The server's X25519 secret key, for a backend that seals tokens to a
+    /// fixed server public key. All zeros, the default, makes create generate
+    /// a fresh keypair. Otherwise create uses this key and derives its public
+    /// key, which rocketnet_server_public_key returns. Create copies it; the
+    /// caller may wipe its own copy once create returns, and destroy wipes the
+    /// server's. A production build (ROCKETNET_DEV=0) refuses the published
+    /// development server key at start with
+    /// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION. It has no environment form.
+
+    uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
 };
 
 /// Messages

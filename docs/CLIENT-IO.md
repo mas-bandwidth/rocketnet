@@ -14,10 +14,11 @@ that exchange alone. `update` and `send_packets` only try that mutex: when the
 I/O thread holds it, the exchange waits for the next call, so they never wait
 on the I/O thread. Sends then leave with the next hand-off
 (`CLIENT_SEND_DEFERRED`) and received datagrams with the next update. In a
-development library only, `ROCKETNET_CLIENT_STEP_DRIVEN=1` lets deterministic
+development library only, the client config's `step_driven` (or
+`ROCKETNET_CLIENT_STEP_DRIVEN=1`) lets deterministic
 tests perform transport receive and send work inside those calls without a
-client I/O thread. A production library does not recognize that variable and
-always uses the normal worker-owned route.
+client I/O thread. A production library refuses the field at create, does not
+recognize that variable, and always uses the normal worker-owned route.
 
 The BASE receive path uses the same ownership queues and reserves one buffer
 for the producer. Up to N-1 batches may be READY. Each update takes all oldest
@@ -86,8 +87,8 @@ must preserve these invariants:
 - internal client and server transports use the same stop, stopped, destroy
   order. Their stop requests and completion checks never wait for workers.
 
-The optional `time_callback` in the private `sdk/rocketnet_testing.h` test
-header supplies receive-stamp time;
+The optional `time_callback` in the client config (development builds only)
+supplies receive-stamp time;
 it is not the game clock passed to update. It may run on the I/O thread and on
 the caller's thread when an explicitly step-driven client is updated. Stop
 and completion queries do not read that clock. Keep its function and context

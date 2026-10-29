@@ -411,7 +411,7 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
     char token_string[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rocketnet_base64_encode_data( token, sizeof( token ), token_string, ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.loopback_hub = rocketnet_test_loopback_hub();

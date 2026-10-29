@@ -139,7 +139,7 @@ static void stress_message_config( int * num_channels, int * reliable_messages_i
     *max_message_receipts = STRESS_RECEIPTS_PER_UPDATE;
 }
 
-static void stress_client_config( rocketnet_client_test_config_t * config, int channels, double ( *clock )( void * ) )
+static void stress_client_config( rocketnet_client_config_t * config, int channels, double ( *clock )( void * ) )
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
     config->transport = "loopback";
@@ -497,7 +497,7 @@ static void stress_world_create( stress_world_t * world )
     rocketnet_server_network_simulator( world->server, STRESS_LATENCY_MS, STRESS_JITTER_MS, STRESS_LOSS_PERCENT, STRESS_DUPLICATE_PERCENT );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     stress_client_config( &client_config, STRESS_NUM_CHANNELS, stress_clock );
     status = ROCKETNET_TEST_STATUS_UNSET;
     world->client = rocketnet_client_create( &world->client_count, &client_config, &status );
@@ -682,7 +682,7 @@ static void test_channels_stress_every_channel_delivers()
 
 static size_t stress_client_plan( int channels )
 {
-    rocketnet_client_test_config_t config;
+    rocketnet_client_config_t config;
     stress_client_config( &config, channels, stress_clock );
     return rocketnet_client_required_memory( &config );
 }
@@ -713,7 +713,7 @@ static void test_channels_stress_memory_is_planned()
         stress_allocation_count_t count;
         stress_count_reset( &count );
 
-        rocketnet_client_test_config_t config;
+        rocketnet_client_config_t config;
         stress_client_config( &config, STRESS_NUM_CHANNELS, stress_clock );
 
         rocketnet_client_t * client = rocketnet_client_create( &count, &config, NULL );

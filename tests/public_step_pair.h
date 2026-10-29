@@ -91,7 +91,7 @@ static void public_step_token_string( const rocketnet_server_t * server, const p
 static double public_step_now = 1000.0;
 static double public_step_clock( void * ) { return public_step_now; }
 
-static void public_step_client_config( rocketnet_client_test_config_t * config )
+static void public_step_client_config( rocketnet_client_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
@@ -120,7 +120,7 @@ static void public_step_pair_create( public_step_pair_t * pair, const public_ste
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_step_token_string( pair->server, identity, token );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     public_step_client_config( &client_config );
     pair->threads_before_client = thread_count ? thread_count() : -1;
     pair->client = rocketnet_client_create( NULL, &client_config, NULL );

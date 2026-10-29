@@ -187,16 +187,16 @@ static_assert( rn_same<decltype( &rocketnet_server_start_message ), uint8_t * (*
 
 static_assert( rn_same<decltype( rocketnet_server_running( NULL ) ), bool>::value, "ruling 4: running" );
 static_assert( rn_same<decltype( rocketnet_server_client_connected( NULL, 0 ) ), bool>::value, "ruling 4: client connected" );
-static_assert( rn_same<decltype( ( (rocketnet_client_testing_t *) 0 )->step_driven ), bool>::value, "step_driven is a bool flag" );
+static_assert( rn_same<decltype( ( (rocketnet_client_config_t *) 0 )->step_driven ), bool>::value, "step_driven is a bool flag" );
 
 static void test_api_polish_bool_field_abi()
 {
     // the flag is a bool; send_kbps is an int
 
-    check( sizeof( ( (rocketnet_client_testing_t *) 0 )->step_driven ) == sizeof( bool ) );
+    check( sizeof( ( (rocketnet_client_config_t *) 0 )->step_driven ) == sizeof( bool ) );
     check( sizeof( ( (rocketnet_client_config_t *) 0 )->send_kbps ) == sizeof( int ) );
 
-    struct rocketnet_client_test_config_t config;
+    struct rocketnet_client_config_t config;
     check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
     check( config.step_driven == 0 );
 }
@@ -441,7 +441,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     check( rn_test_server_token_string( backend_secret, server, API_POLISH_INDEX_PROTOCOL, addresses, 1,
                                         0x1D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
 
-    struct rocketnet_client_test_config_t client_config;
+    struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.loopback_hub = rocketnet_test_loopback_hub();

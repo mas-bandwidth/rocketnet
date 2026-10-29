@@ -253,7 +253,7 @@ static rocketnet_server_t * contract_server_create( contract_identity_t * identi
 
 static rocketnet_client_t * contract_client_create()
 {
-    rocketnet_client_test_config_t config;
+    rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.loopback_hub = rocketnet_test_loopback_hub();

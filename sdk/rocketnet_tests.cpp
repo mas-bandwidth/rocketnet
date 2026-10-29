@@ -13322,6 +13322,8 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_message_timeout_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, loopback_hub ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
@@ -13355,6 +13357,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, disconnect_packets_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshakes_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, server_secret_key ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -13382,7 +13385,8 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
         offsets[i] = descriptors[i].offset;
         sizes[i] = descriptors[i].size;
 
-        if ( strcmp( name, "config_bytes" ) == 0 || strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 || strcmp( name, "loopback_hub" ) == 0 )
+        if ( strcmp( name, "config_bytes" ) == 0 || strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 || strcmp( name, "loopback_hub" ) == 0 ||
+             strcmp( name, "server_secret_key" ) == 0 )
             continue;
 
         const char * row = strcmp( name, "transport" ) == 0 ? "transport" : name;
@@ -16110,7 +16114,7 @@ int rocketnet_unit_run_named( const char * name )
 
 static struct rocketnet_client_t * rocketnet_test_public_loopback_client()
 {
-    struct rocketnet_client_test_config_t config;
+    struct rocketnet_client_config_t config;
     rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
 
     config.transport = "loopback";

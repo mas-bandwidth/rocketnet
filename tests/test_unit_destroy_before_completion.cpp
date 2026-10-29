@@ -143,7 +143,7 @@ static void db_world_create( db_world_t * world, void * context )
     check( world->server != NULL );
     check( rocketnet_server_start( world->server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.loopback_hub = rocketnet_test_loopback_hub();

@@ -145,7 +145,7 @@ static void test_send_room_query_public_api_client_and_server()
     rocketnet_client_t * clients[2];
     for ( int i = 0; i < 2; i++ )
     {
-        struct rocketnet_client_test_config_t client_config;
+        struct rocketnet_client_config_t client_config;
         check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
         client_config.transport = "loopback";
@@ -370,7 +370,7 @@ static void test_send_room_skip_defer_drain_retry_and_preflight_race()
     snprintf( address, sizeof( address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
     const char * addresses[] = { address };
 
-    struct rocketnet_client_test_config_t client_config;
+    struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
     client_config.transport = "loopback";

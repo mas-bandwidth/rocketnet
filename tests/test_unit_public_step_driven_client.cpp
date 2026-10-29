@@ -275,7 +275,7 @@ static void test_public_step_driven_client_loss_100_drops_everything()
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_step_token_string( server, &identity, token );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     memset( &client_config, 0, sizeof( client_config ) );
     public_step_client_config( &client_config );
 

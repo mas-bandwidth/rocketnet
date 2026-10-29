@@ -88,7 +88,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
 }
 
-static void lifecycle_client_config( rocketnet_client_test_config_t * config )
+static void lifecycle_client_config( rocketnet_client_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
@@ -139,7 +139,7 @@ static void lifecycle_world_create( lifecycle_world_t * world, int max_clients, 
 
     for ( int i = 0; i < num_clients; i++ )
     {
-        rocketnet_client_test_config_t client_config;
+        rocketnet_client_config_t client_config;
         lifecycle_client_config( &client_config );
         world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
         check( world->clients[i] != NULL );
@@ -579,7 +579,7 @@ static void test_client_destroy_then_create_and_connect()
     }
     check( rocketnet_server_client_connected( world.server, index ) == 0 );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
     check( world.clients[0] != NULL );
@@ -1824,7 +1824,7 @@ static void test_client_connection_ended_state_kept_until_retry()
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world.server && rocketnet_server_start( world.server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.num_channels = 4;
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
@@ -1935,7 +1935,7 @@ static void test_client_one_update_sends_more_than_sixteen_packets()
     lifecycle_world_t world;
     lifecycle_world_create( &world, 1, 0 );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;   // no budget: the packet limit alone bounds the update
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
@@ -2898,7 +2898,7 @@ static void test_client_set_send_kbps_limit_budget_and_reconnect_rules()
 
     rn_test_client_stop_and_destroy( world.clients[0] );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.send_kbps = 1;
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
@@ -3199,7 +3199,7 @@ static void test_server_set_send_kbps_limit_budget_slot_isolation_and_reset_rule
     server = world.server;
     check( server != NULL && rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     world.clients[0] = rocketnet_client_create( NULL, &client_config, NULL );
     world.num_clients = 1;
@@ -3370,7 +3370,7 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     check( server_a != NULL );
     check( rocketnet_server_start( server_a ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
 
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
@@ -3916,7 +3916,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     check( server != NULL && create_status == ROCKETNET_STATUS_OK );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     lifecycle_client_config( &client_config );
     client_config.message_resend_delay_initial_ms = 20;
     client_config.message_resend_delay_max_ms = 20;

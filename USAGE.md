@@ -145,7 +145,8 @@ protocol ends up sharing one identity. The program sets `protocol_id` and
 environment (`ROCKETNET_SERVER_PROTOCOL_ID`,
 `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`) is the recommended place for them, and
 setting them in code works too. Each server generates its own keypair at
-create. It is not a config field. A client
+create unless the config's `server_secret_key` supplies one, for a backend that
+seals tokens to a fixed server public key (KEYS.md). A client
 config holds no keys: the connect token carries them, whether the backend mints
 it in code, a tool generates it, or the program reads it from the environment.
 For local work a development build sets `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`
@@ -224,7 +225,8 @@ override the create arguments for every server created, with a log line.
 
 ### Environment overrides
 
-Every field except `state_change_callback` and `config_bytes` has an
+Every field except `state_change_callback`, `time_callback`, `loopback_hub`,
+`server_secret_key` and `config_bytes` has an
 environment variable named `ROCKETNET_CLIENT_<FIELD>` or
 `ROCKETNET_SERVER_<FIELD>`. The table lists one row per field of both public
 structs, except `config_bytes`.
@@ -251,6 +253,8 @@ structs, except `config_bytes`.
 | message_resend_delay_min_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` and no larger than `message_resend_delay_max_ms` |
 | message_resend_delay_max_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` and at least `message_resend_delay_initial_ms` |
 | reliable_message_timeout_ms | ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` and at least four times `message_resend_delay_initial_ms` (`8000` at the default) |
+| time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | development builds only: the receive stamp clock; a production build (`ROCKETNET_DEV=0`) refuses a non-NULL value at create with `CONFIG_OUT_OF_RANGE` |
+| step_driven | ROCKETNET_CLIENT_STEP_DRIVEN (development only) | bool | `false` | development builds only: no client network thread, see "Step-driven client"; a production build refuses `true` at create with `CONFIG_OUT_OF_RANGE` |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
 | max_clients | ROCKETNET_SERVER_MAX_CLIENTS | int | `1000` | refuses the create unless `1..1000` |
 | packet_filter | ROCKETNET_SERVER_PACKET_FILTER | uint8_t[4], base64 | `b7 59 01 00` (test filter) | not exactly 4 bytes, or invalid base64: refuses the create; the test filter in a production build (`ROCKETNET_DEV=0`): refuses the create with `TEST_PACKET_FILTER_IN_PRODUCTION` |
@@ -277,6 +281,22 @@ structs, except `config_bytes`.
 | message_resend_delay_min_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` and no larger than `message_resend_delay_max_ms` |
 | message_resend_delay_max_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` and at least `message_resend_delay_initial_ms` |
 | reliable_message_timeout_ms | ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` and at least four times `message_resend_delay_initial_ms` (`8000` at the default) |
+| server_secret_key | none | uint8_t[32] | all zero (generate a fresh keypair) | the published development server key in a production build: refuses the start with `DEV_KEYS_IN_PRODUCTION` |
+
+### Step-driven client
+
+In a development build (`ROCKETNET_DEV=1`), `client_config.step_driven = true`
+runs the client with no network thread: `rocketnet_client_update` and
+`rocketnet_client_send_packets` do its receive and send work on the caller's
+thread. Over the `"loopback"` transport the server needs no thread either, so a
+message the client sends with `rocketnet_client_send_packets` arrives in the
+server's next `rocketnet_server_update`, and a server message in the client's
+next update, all on one thread. Use it for single-thread debugging and for unit
+tests on the public API with no threads, sockets or real time; set
+`time_callback` to a clock the test owns so receive stamps are deterministic
+too. The granted transport must have a non-blocking I/O step (loopback has
+one). A production build (`ROCKETNET_DEV=0`) refuses `step_driven` or a
+`time_callback` at create with `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`.
 
 The fields the header marks "must match on both ends" must be identical on
 both ends. The connection verifies them. `max_message_bytes` must not exceed

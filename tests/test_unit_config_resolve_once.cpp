@@ -101,7 +101,7 @@ static void resolve_once_token( const rocketnet_server_t * server, const resolve
 static double resolve_once_now = 1000.0;
 static double resolve_once_clock( void * ) { return resolve_once_now; }
 
-static void resolve_once_client_config( rocketnet_client_test_config_t * config )
+static void resolve_once_client_config( rocketnet_client_config_t * config )
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
     config->transport = "loopback";
@@ -156,7 +156,7 @@ static void test_config_server_env_changed_after_create_has_no_effect()
         char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
         resolve_once_token( server, &identity, 0x1000 + (uint64_t) i, token );
 
-        rocketnet_client_test_config_t client_config;
+        rocketnet_client_config_t client_config;
         resolve_once_client_config( &client_config );
         clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
         check( clients[i] != NULL );
@@ -218,7 +218,7 @@ static void test_config_client_env_changed_after_create_has_no_effect()
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     resolve_once_client_config( &client_config );
 
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );

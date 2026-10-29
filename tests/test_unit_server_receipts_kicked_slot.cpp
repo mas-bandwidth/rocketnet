@@ -75,7 +75,7 @@ static rocketnet_server_t * receipts_kicked_server_create( receipts_kicked_ident
 
 static rocketnet_client_t * receipts_kicked_client_create()
 {
-    rocketnet_client_test_config_t config;
+    rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.loopback_hub = rocketnet_test_loopback_hub();

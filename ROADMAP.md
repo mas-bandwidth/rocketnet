@@ -382,6 +382,8 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Connection layer C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ | ✅ | ✅ |
 | Root header pure C: the client and server with their functions, the address type, nothing else | ✅ | ✅ | ✅ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ | ✅ | ✅ |
+| A fixed server key in the public server config: server_secret_key, all zeros generates a fresh pair, the development key refused in production | ❌ | ✅ | ❌ |
+| The step-driven client and its receive stamp clock on the public client config, development builds only, refused at create in production | ❌ | ✅ | ❌ |
 | Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
@@ -400,7 +402,7 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
 | The public contract, the TLA+ models and the code agree: the divergences of the 2026-10-29 contract audit fixed | ❌ | ✅ | ❌ |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 90% | 100% | 94% |
+| complete | 83% | 100% | 83% |
 
 [Source data](docs/roadmap.sexp)
 

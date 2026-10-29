@@ -161,7 +161,7 @@ static void test_memory_plan_covers_lifecycle()
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     check( rn_test_server_token_string( backend_secret, server, MEMORY_PLAN_PROTOCOL, addresses, 1, 0x4D454D, 1000, 1ULL << 40, 300, NULL, token ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
     client_config.loopback_hub = rocketnet_test_loopback_hub();
@@ -607,7 +607,7 @@ static void test_light_required_memory_sufficient_bounded()
     const size_t server_required = rocketnet_server_required_memory( &server_config );
     check( server_required > 0 );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     memset( &client_config, 0, sizeof( client_config ) );
     check( rocketnet_client_light_config( (rocketnet_client_config_t *) &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
