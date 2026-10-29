@@ -39,9 +39,10 @@
 // filter and required_memory then returns 0, so the DEV OFF peaks were read
 // with a non-test filter on the light config. The filter is not sized.
 // Re-measured 2026-10-29 on captain at 0e32e225 (unreliable ring 16Q, resend
-// link 12W, descriptor 72 bytes): DEV ON client was 22967743, now 22971807.
+// link 12W, descriptor 72 bytes): DEV ON client was 22967743, now 22971807;
+// DEV ON server was 1603276694, now 1607276560.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1603276694 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607276560 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971807 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
