@@ -251,7 +251,7 @@ static void uring_stage_sends( struct rocketnet_server_uring_t * uring, int coun
 }
 
 // sustained ingress on every queue: each receive_packets returns after its
-// budget, with exactly a budget's datagrams exposed and the rest deferred,
+// budget or the fill bank's room, with that many datagrams exposed and the rest deferred,
 // none dropped
 
 static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
@@ -262,6 +262,14 @@ static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
     struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 2, &source );
     rocketnet_unit_check( uring );
 
+    // the fill bank takes a reap only while it has room for a whole coalesced
+    // receive, so a call exposes the bank's size less one coalesced receive
+    // plus one (each datagram here is its own CQE): fewer than the budget,
+    // none dropped
+
+    const int taken = ROCKETNET_URING_BANK_SIZE - ROCKETNET_URING_MAX_SEGMENTS + 1;
+    check( taken <= ROCKETNET_URING_RECEIVE_BUDGET );
+
     for ( int call = 0; call < 4; call++ )
     {
         fake->consumed = 0;
@@ -269,10 +277,10 @@ static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
 
         check( !fake->guard_tripped );
         check( fake->consumed <= ROCKETNET_URING_RECEIVE_BUDGET );
-        check( fake->consumed == ROCKETNET_URING_RECEIVE_BUDGET );
+        check( fake->consumed == taken );
 
         struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
-        check( received->num_packets == ROCKETNET_URING_RECEIVE_BUDGET );
+        check( received->num_packets == taken );
         for ( int i = 0; i < received->num_packets; i++ )
         {
             check( received->packet_bytes[i] == ROCKETNET_URING_TEST_PAYLOAD_BYTES );
@@ -282,7 +290,7 @@ static void test_io_uring_transport_reap_receive_flood_returns_within_budget()
     }
 
     check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 4 );
-    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == 4 * (uint64_t) ROCKETNET_URING_RECEIVE_BUDGET );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == 4 * (uint64_t) taken );
     check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
 
     fake->consumed = 0;
@@ -542,7 +550,69 @@ static void test_io_uring_shutdown_flush_never_waits_for_saturated_sends()
 REGISTER_UNIT_TEST( test_io_uring_shutdown_flush_never_waits_for_saturated_sends );
 REGISTER_UNIT_TEST( test_io_uring_stop_waits_for_kernel_ownership_without_waiting );
 
+// a send reap and a receive reap both fill the one fill bank between two
+// swaps: with more datagrams in the completion queue than the bank holds,
+// the reap stops short of the bank's room (a coalesced receive carries up
+// to ROCKETNET_URING_MAX_SEGMENTS datagrams) and leaves the rest in the
+// queue, deferred, so the next receive_packets exposes them; none dropped
+
+static void test_io_uring_transport_reap_stops_at_bank_room()
+{
+    struct rocketnet_server_uring_test_source_t source;
+    struct uring_fake_t * fake = uring_fake_create( 4 * (int64_t) ROCKETNET_URING_RECEIVE_BUDGET, &source );
+    fake->flood_on_arm = false;
+
+    struct rocketnet_server_uring_t * uring = rocketnet_server_uring_test_create( NULL, 1, &source );
+    rocketnet_unit_check( uring );
+
+    const int datagrams = ROCKETNET_URING_BANK_SIZE + 10;
+    for ( int i = 0; i < datagrams; i++ )
+        uring_fake_push_receive( fake, 0 );
+
+    // the send's reap takes a send budget of receives into the fill bank
+
+    uring_stage_sends( uring, 1, NULL );
+    fake->consumed = 0;
+    rocketnet_server_uring_send_packets( uring );
+    check( !fake->guard_tripped );
+    check( fake->consumed <= ROCKETNET_URING_SEND_BUDGET );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 1 );
+
+    // the receive's reap stops at the bank's room and swaps what fits
+
+    fake->consumed = 0;
+    rocketnet_server_uring_receive_packets( uring );
+    check( !fake->guard_tripped );
+
+    struct rocketnet_server_socket_process_packets_t * received = rocketnet_server_uring_process_packets( uring );
+    check( received->num_packets <= ROCKETNET_URING_BANK_SIZE );
+    check( received->num_packets + ROCKETNET_URING_MAX_SEGMENTS > ROCKETNET_URING_BANK_SIZE );
+    const int first = received->num_packets;
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 2 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+
+    // the next receive exposes the rest and the send's CQE behind them
+
+    fake->consumed = 0;
+    rocketnet_server_uring_receive_packets( uring );
+    check( !fake->guard_tripped );
+
+    received = rocketnet_server_uring_process_packets( uring );
+    check( first + received->num_packets == datagrams );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_RECEIVED ) == (uint64_t) datagrams );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW ) == 0 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED ) == 2 );
+    check( uring_counter( uring, ROCKETNET_SERVER_URING_COUNTER_PACKETS_SENT ) == 1 );
+
+    fake->consumed = 0;
+    uring_fake_stop_and_destroy( uring, fake );
+    check( !fake->guard_tripped );
+
+    free( fake );
+}
+
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_receive_flood_returns_within_budget );
+REGISTER_UNIT_TEST( test_io_uring_transport_reap_stops_at_bank_room );
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_send_retires_under_receive_pressure );
 REGISTER_UNIT_TEST( test_io_uring_transport_reap_destroy_after_saturation );
 REGISTER_UNIT_TEST( test_io_uring_transport_receive_without_a_buffer_is_counted );
