@@ -279,6 +279,24 @@ static class Tests
         Check( !config.ServerConfigured && config.ServerAddresses.Length == 0, "service starts with an empty registry" );
     }
 
+    static void test_listen_address()
+    {
+        BackendConfig config = BackendConfig.Read( Environment( new Dictionary<string, string>() ), requireServer: false );
+        Check( config.ListenAddress == "127.0.0.1" && config.ListenAddressIsLoopback, "default listen address is loopback" );
+        config = BackendConfig.Read( Environment( new Dictionary<string, string> { ["ROCKETNET_BACKEND_LISTEN_ADDRESS"] = "0.0.0.0" } ), requireServer: false );
+        Check( config.ListenAddress == "0.0.0.0" && !config.ListenAddressIsLoopback, "explicit listen address is honoured" );
+        config = BackendConfig.Read( Environment( new Dictionary<string, string> { ["ROCKETNET_BACKEND_LISTEN_ADDRESS"] = "::1" } ), requireServer: false );
+        Check( config.ListenAddress == "::1" && config.ListenAddressIsLoopback, "::1 is loopback" );
+        try
+        {
+            BackendConfig.Read( Environment( new Dictionary<string, string> { ["ROCKETNET_BACKEND_LISTEN_ADDRESS"] = "not-an-address" } ), requireServer: false );
+            Check( false, "a bad listen address is refused" );
+        }
+        catch ( ArgumentException )
+        {
+        }
+    }
+
     static int Main()
     {
         (string, Action)[] tests =
@@ -290,6 +308,7 @@ static class Tests
             ( nameof( test_server_addresses_refused ), test_server_addresses_refused ),
             ( nameof( test_generated_token_opens ), test_generated_token_opens ),
             ( nameof( test_config_refused ), test_config_refused ),
+            ( nameof( test_listen_address ), test_listen_address ),
         };
         foreach ( ( string name, Action test ) in tests )
         {

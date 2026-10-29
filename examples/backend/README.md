@@ -255,8 +255,15 @@ export ROCKETNET_BACKEND_PRIVATE_KEY="$(grep '^ROCKETNET_BACKEND_PRIVATE_KEY=' b
 # (cd examples/backend/csharp && dotnet run --project Backend)
 ```
 
-Both backends listen on `http://localhost:8080` by default
-(`ROCKETNET_BACKEND_PORT`). Before any server is registered, confirm that
+Both backends listen on `http://127.0.0.1:8080` by default
+(`ROCKETNET_BACKEND_PORT`; `ROCKETNET_BACKEND_LISTEN_ADDRESS` takes an IP
+address such as `::1`). They bind loopback only: server registration and token
+issuance are unauthenticated, so anyone who can reach the port can obtain a
+token for any client id and replace the registered server. Setting
+`ROCKETNET_BACKEND_LISTEN_ADDRESS` to a non-loopback address (for example
+`0.0.0.0`) exposes that to the network and logs a warning. Authentication
+remains the integrator's job: production needs authenticated registration and
+player authorization. Before any server is registered, confirm that
 requesting a match token fails with HTTP `503 Service Unavailable`:
 
 ```sh

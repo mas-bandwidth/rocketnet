@@ -36,6 +36,7 @@ import (
 	"io"
 	"log"
 	"math/big"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -192,6 +193,7 @@ func writeServerAddresses(signed *signedConnectData, addresses []string) error {
 
 type config struct {
 	port              int
+	listenAddress     string // an IP address; loopback unless set explicitly
 	backendPrivateKey ed25519.PrivateKey
 	protocolID        uint64
 	serverAddresses   []string
@@ -283,11 +285,25 @@ func generateConnectToken(config *config, clientID uint64, createTimestamp uint6
 	return token, err
 }
 
+// the backend listens on loopback unless ROCKETNET_BACKEND_LISTEN_ADDRESS says
+// otherwise: registration and token issuance are unauthenticated
+const defaultListenAddress = "127.0.0.1"
+
+func listenAddressIsLoopback(address string) bool {
+	parsed, err := netip.ParseAddr(address)
+	return err == nil && parsed.IsLoopback()
+}
+
+func listenHostPort(config *config) string {
+	return net.JoinHostPort(config.listenAddress, strconv.Itoa(config.port))
+}
+
 // reads the config from the environment through getenv, so tests pass a map
 
 func readConfigMode(getenv func(string) string, requireServer bool) (*config, error) {
 	config := &config{
 		port:            8080,
+		listenAddress:   defaultListenAddress,
 		protocolID:      exampleProtocolID,
 		serverAddresses: []string{"127.0.0.1:40000"},
 		expireSeconds:   30,
@@ -300,6 +316,14 @@ func readConfigMode(getenv func(string) string, requireServer bool) (*config, er
 			return nil, fmt.Errorf("ROCKETNET_BACKEND_PORT is not 1 to 65535: %q", text)
 		}
 		config.port = port
+	}
+
+	if text := getenv("ROCKETNET_BACKEND_LISTEN_ADDRESS"); text != "" {
+		address, err := netip.ParseAddr(text)
+		if err != nil {
+			return nil, fmt.Errorf("ROCKETNET_BACKEND_LISTEN_ADDRESS is not an IP address: %q", text)
+		}
+		config.listenAddress = address.String()
 	}
 
 	if text := getenv("ROCKETNET_BACKEND_PRIVATE_KEY"); text != "" {
@@ -511,8 +535,11 @@ func main() {
 	router.HandleFunc("PUT /servers/{serverID}", registerHandler(registry))
 	router.HandleFunc("GET /match/{clientID}", matchHandler(config, registry))
 
-	stderrLogger.Printf("started backend on port %d", config.port)
-	err = http.ListenAndServe(":"+strconv.Itoa(config.port), router)
+	if !listenAddressIsLoopback(config.listenAddress) {
+		stderrLogger.Printf("warning: listening on %s, not loopback: server registration and token issuance are unauthenticated here; production needs authenticated registration and player authorization", config.listenAddress)
+	}
+	stderrLogger.Printf("started backend on %s", listenHostPort(config))
+	err = http.ListenAndServe(listenHostPort(config), router)
 	if err != nil {
 		stderrLogger.Fatalf("error: %v", err)
 	}
