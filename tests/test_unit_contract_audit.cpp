@@ -919,6 +919,12 @@ REGISTER_UNIT_TEST( test_witness_keys_erased_when_connection_ends );
 
 // 2. t7: Both endpoints MUST erase the shared secret as soon as the four keys
 // are derived.
+// Behavioral regression slice: verifies key derivation agrees across client and
+// server and that neither rocketnet_connection_keys_t, rocketnet_client_protocol_t,
+// nor rocketnet_encryption_mapping_t retains the raw X25519 shared secret.
+// Note: docs/WITNESSES.tsv keeps this row at tier 'none' because a black-box
+// post-return unit test cannot observe stack-frame zeroing
+// (sodium_memzero(shared_secret, ...)) inside rocketnet_derive_key_pair_from_exchange.
 static void test_witness_shared_secret_erased_on_derive()
 {
     uint8_t raw_shared[32];
@@ -1184,6 +1190,11 @@ REGISTER_UNIT_TEST( test_witness_denial_in_response_opens_under_held_handshake_k
 
 // 7. t5.1: It MUST compare the computed value with the packet's filter value in
 // constant time.
+// Behavioral regression slice: verifies rocketnet_prefilter_check compares every
+// bit of the 32-bit filter value and rejects any single-bit flip.
+// Note: docs/WITNESSES.tsv keeps this row at tier 'none' because a functional
+// unit test proves full-width comparison rather than instruction-level
+// constant-time execution.
 static void test_witness_prefilter_compares_all_filter_bits()
 {
     const uint8_t filter[ROCKETNET_FILTER_VALUE_BYTES] = { 0x52, 0x4B, 0x54, 0x4E };
@@ -1280,45 +1291,91 @@ REGISTER_UNIT_TEST( test_witness_replay_retained_depth_exact );
 
 // 11. t12: Every lookup a server performs per packet or per connection must be
 // constant time in the number of client slots.
+// Behavioral regression slice: populates 64 distinct addresses and client IDs
+// into small (64-slot) and large (512-slot) tables, verifying exact lookup
+// resolution and non-member rejection in both DEV=ON and DEV=OFF builds, plus
+// per-lookup hash and probe bounds via DEV seams under ROCKETNET_DEV.
+// Note: docs/WITNESSES.tsv keeps this row at tier 'none' because wall-clock /
+// asymptotic constant-time complexity across arbitrary load factors is not
+// proven by a finite functional unit test alone.
 static void test_witness_server_lookups_constant_time_in_slots()
 {
-    struct rocketnet_encryption_map_t * small_map = rocketnet_encryption_map_create( NULL, 8 );
+    enum
+    {
+        NUM_POPULATED = 64
+    };
+    struct rocketnet_encryption_map_t * small_map = rocketnet_encryption_map_create( NULL, 128 );
     struct rocketnet_encryption_map_t * large_map = rocketnet_encryption_map_create( NULL, 1024 );
-    struct rocketnet_client_slots_t * small_slots = rocketnet_client_slots_create( NULL, 4 );
+    struct rocketnet_client_slots_t * small_slots = rocketnet_client_slots_create( NULL, 64 );
     struct rocketnet_client_slots_t * large_slots = rocketnet_client_slots_create( NULL, 512 );
     check( small_map && large_map && small_slots && large_slots );
 
-    struct rocketnet_address_t addr;
-    check( rocketnet_address_parse( &addr, "198.51.100.42:40000" ) );
-
-    int s_map_idx = rocketnet_encryption_map_add( small_map, &addr, 100.0 );
-    int l_map_idx = rocketnet_encryption_map_add( large_map, &addr, 100.0 );
-    check( s_map_idx == 0 && l_map_idx == 0 );
+    struct rocketnet_address_t addrs[NUM_POPULATED];
+    uint64_t client_ids[NUM_POPULATED];
+    int s_map_idx[NUM_POPULATED];
+    int l_map_idx[NUM_POPULATED];
+    int s_slot[NUM_POPULATED];
+    int l_slot[NUM_POPULATED];
 
     uint8_t user_data[ROCKETNET_USER_DATA_BYTES];
     memset( user_data, 0, sizeof( user_data ) );
-    int s_slot = rocketnet_client_slots_assign( small_slots, 0xCAFEULL, s_map_idx, 1, user_data );
-    int l_slot = rocketnet_client_slots_assign( large_slots, 0xCAFEULL, l_map_idx, 1, user_data );
-    check( s_slot == 0 && l_slot == 0 );
 
-    check( rocketnet_encryption_map_find( small_map, &addr ) == s_map_idx );
-    check( rocketnet_encryption_map_find( large_map, &addr ) == l_map_idx );
-    check( rocketnet_client_slots_find( small_slots, 0xCAFEULL ) == s_slot );
-    check( rocketnet_client_slots_find( large_slots, 0xCAFEULL ) == l_slot );
+    for ( int i = 0; i < NUM_POPULATED; i++ )
+    {
+        char addr_text[64];
+        snprintf( addr_text, sizeof( addr_text ), "198.51.100.%d:%d", 1 + i, 40000 + i );
+        check( rocketnet_address_parse( &addrs[i], addr_text ) );
+
+        client_ids[i] = UINT64_C( 0xCAFE0000 ) + (uint64_t) i;
+        s_map_idx[i] = rocketnet_encryption_map_add( small_map, &addrs[i], 100.0 );
+        l_map_idx[i] = rocketnet_encryption_map_add( large_map, &addrs[i], 100.0 );
+        check( s_map_idx[i] >= 0 && l_map_idx[i] >= 0 );
+
+        s_slot[i] = rocketnet_client_slots_assign( small_slots, client_ids[i], s_map_idx[i], (uint64_t) ( i + 1 ), user_data );
+        l_slot[i] = rocketnet_client_slots_assign( large_slots, client_ids[i], l_map_idx[i], (uint64_t) ( i + 1 ), user_data );
+        check( s_slot[i] >= 0 && l_slot[i] >= 0 );
+    }
+
+    for ( int i = 0; i < NUM_POPULATED; i++ )
+    {
+        check( rocketnet_encryption_map_find( small_map, &addrs[i] ) == s_map_idx[i] );
+        check( rocketnet_encryption_map_find( large_map, &addrs[i] ) == l_map_idx[i] );
+        check( rocketnet_client_slots_find( small_slots, client_ids[i] ) == s_slot[i] );
+        check( rocketnet_client_slots_find( large_slots, client_ids[i] ) == l_slot[i] );
 
 #if ROCKETNET_DEV
-    const uint64_t s_probes_before = rocketnet_encryption_map_test_probes( small_map );
-    check( rocketnet_encryption_map_find( small_map, &addr ) == s_map_idx );
-    const uint64_t s_probes = rocketnet_encryption_map_test_probes( small_map ) - s_probes_before;
+        const uint64_t s_hashes_before = rocketnet_encryption_map_test_hashes( small_map );
+        const uint64_t s_probes_before = rocketnet_encryption_map_test_probes( small_map );
+        check( rocketnet_encryption_map_find( small_map, &addrs[i] ) == s_map_idx[i] );
+        const uint64_t s_hashes = rocketnet_encryption_map_test_hashes( small_map ) - s_hashes_before;
+        const uint64_t s_probes = rocketnet_encryption_map_test_probes( small_map ) - s_probes_before;
 
-    const uint64_t l_probes_before = rocketnet_encryption_map_test_probes( large_map );
-    check( rocketnet_encryption_map_find( large_map, &addr ) == l_map_idx );
-    const uint64_t l_probes = rocketnet_encryption_map_test_probes( large_map ) - l_probes_before;
+        const uint64_t l_hashes_before = rocketnet_encryption_map_test_hashes( large_map );
+        const uint64_t l_probes_before = rocketnet_encryption_map_test_probes( large_map );
+        check( rocketnet_encryption_map_find( large_map, &addrs[i] ) == l_map_idx[i] );
+        const uint64_t l_hashes = rocketnet_encryption_map_test_hashes( large_map ) - l_hashes_before;
+        const uint64_t l_probes = rocketnet_encryption_map_test_probes( large_map ) - l_probes_before;
 
-    check( s_probes == 1 && l_probes == 1 );
-    check( rocketnet_client_slots_test_last_probes( small_slots ) == 1 );
-    check( rocketnet_client_slots_test_last_probes( large_slots ) == 1 );
+        check( s_hashes == 1 && l_hashes == 1 );
+        check( s_probes >= 1 && s_probes <= rocketnet_encryption_map_test_probe_bound( small_map ) );
+        check( l_probes >= 1 && l_probes <= rocketnet_encryption_map_test_probe_bound( large_map ) );
+
+        check( rocketnet_client_slots_find( small_slots, client_ids[i] ) == s_slot[i] );
+        check( rocketnet_client_slots_test_last_probes( small_slots ) >= 1 );
+        check( rocketnet_client_slots_test_last_probes( small_slots ) <= (uint64_t) NUM_POPULATED );
+
+        check( rocketnet_client_slots_find( large_slots, client_ids[i] ) == l_slot[i] );
+        check( rocketnet_client_slots_test_last_probes( large_slots ) >= 1 );
+        check( rocketnet_client_slots_test_last_probes( large_slots ) <= (uint64_t) NUM_POPULATED );
 #endif
+    }
+
+    struct rocketnet_address_t missing_addr;
+    check( rocketnet_address_parse( &missing_addr, "198.51.100.250:49999" ) );
+    check( rocketnet_encryption_map_find( small_map, &missing_addr ) == -1 );
+    check( rocketnet_encryption_map_find( large_map, &missing_addr ) == -1 );
+    check( rocketnet_client_slots_find( small_slots, UINT64_C( 0xDEADBEEF ) ) == -1 );
+    check( rocketnet_client_slots_find( large_slots, UINT64_C( 0xDEADBEEF ) ) == -1 );
 
     rocketnet_encryption_map_destroy( small_map );
     rocketnet_encryption_map_destroy( large_map );
@@ -1765,6 +1822,12 @@ static void test_witness_client_stores_and_echoes_cookie_24_bytes()
 REGISTER_UNIT_TEST( test_witness_client_stores_and_echoes_cookie_24_bytes );
 
 // 21. t12: Comparisons must be constant time.
+// Behavioral regression slice: verifies every single-bit flip across all 16
+// bytes of the token identifier is distinguished on the connection-request
+// path without early prefix truncation.
+// Note: docs/WITNESSES.tsv keeps this row at tier 'none' because a functional
+// unit test proves full-width byte comparison rather than instruction-level
+// constant-time execution.
 static void test_witness_request_comparisons_reject_every_byte_mismatch()
 {
     struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, 8 );
