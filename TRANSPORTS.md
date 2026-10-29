@@ -381,8 +381,9 @@ as root inside a virtme-ng guest.
 The library sets the server thread priority on each network thread a server
 transport creates, from the creating thread right after the create
 (`rocketnet_platform_server_thread_priority`, `sdk/rocketnet_platform.cpp`):
-`SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux, raised to the
-default thread priority (31) on macOS, whose minimum (15) is below it,
+`SCHED_RR` at `sched_get_priority_min( SCHED_RR )` on Linux and at
+`sched_get_priority_max( SCHED_RR )` (47) on macOS, above every ordinary thread
+on both (macOS's minimum, 15, is below its default 31),
 `THREAD_PRIORITY_TIME_CRITICAL` on Windows.
 
 | Transport | Network threads it creates | What the library sets |

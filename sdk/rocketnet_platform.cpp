@@ -389,15 +389,19 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 }
 #endif // #if ROCKETNET_DEV
 
-// sched_get_priority_min( SCHED_RR ), raised to the priority a thread with
-// default attributes already has, so the request never lowers the thread. On
-// Linux the minimum (1) is above every SCHED_OTHER thread (0) and stands. On
-// macOS it is 15, below the default 31 of every ordinary thread: the request
-// demoted the client I/O thread, and under CPU contention its sends and
-// receives stalled for hundreds of milliseconds while the game thread ran.
+// The network threads run above every ordinary thread. On Linux the SCHED_RR
+// minimum (1) already does: ordinary threads are SCHED_OTHER at 0. On macOS
+// the SCHED_RR range is 15 to 47 and an ordinary thread sits at 31, so the
+// minimum demoted the client I/O thread and under CPU contention its sends and
+// receives stalled for hundreds of milliseconds; there the maximum (47, the
+// band of user-interactive threads) is the same intent. Elsewhere the minimum,
+// raised to a default thread's priority where that is higher.
 
 int rocketnet_platform_network_thread_rr_priority()
 {
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    return sched_get_priority_max( SCHED_RR );
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     int priority = sched_get_priority_min( SCHED_RR );
 
     pthread_attr_t attr;
@@ -410,6 +414,7 @@ int rocketnet_platform_network_thread_rr_priority()
     }
 
     return priority;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
 static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
