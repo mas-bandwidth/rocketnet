@@ -114,8 +114,8 @@ ticket. Ready membership is one ticket per channel.
 
 The sized terms are 12W for the resend sequence entry, 16Q for the unreliable ring, 40C for channel send state, and
 64C (40 bytes of channel send state plus 24 bytes of channel receive state).
-A send descriptor is 80 bytes (`rn_send_descriptor_t`). `docs/LOAD.md` prints
-`64C + 116.125W + B + 96Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
+A send descriptor is 72 bytes (`rn_send_descriptor_t`). `docs/LOAD.md` prints
+`64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
 
 ## Verification
 
