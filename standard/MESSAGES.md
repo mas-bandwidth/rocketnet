@@ -2782,11 +2782,11 @@ until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| message_resend_delay_initial_ms | 2000 | ms | the resend delay before the first round-trip sample |
-| message_resend_delay_min_ms | 0 | ms | optional floor for the sampled resend delay; zero disables it |
-| message_resend_delay_max_ms | 2000 | ms | the configured largest resend delay |
-| reliable_message_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
-| min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
+| message_resend_delay_initial_ms | `2000` | ms | the resend delay before the first round-trip sample |
+| message_resend_delay_min_ms | `0` | ms | optional floor for the sampled resend delay; zero disables it |
+| message_resend_delay_max_ms | `2000` | ms | the configured largest resend delay |
+| reliable_message_timeout_ms | `10000` | ms | how long the oldest unacknowledged number may stand |
+| min_resend_attempts | `4` | count | the sends that fit before the reliable timeout |
 
 <a id="m9.3"></a>
 ### m9.3. Resend classes and the reliable timeout

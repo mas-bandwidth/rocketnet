@@ -3251,7 +3251,7 @@ marked as specified by [t14 Replay protection](#t14).
 
 | Name | Value | Unit | Meaning |
 |---|---:|---|---|
-| range count maximum | 255 | entries | Maximum number of gap-and-received-range entries in one block |
+| range count maximum | `255` | entries | Maximum number of gap-and-received-range entries in one block |
 
 <a id="t15.3"></a>
 ### t15.3. Building and processing
