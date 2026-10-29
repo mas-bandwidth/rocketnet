@@ -361,6 +361,7 @@ static int rn_token_binding_select_slot( struct rocketnet_token_table_t * table,
     return oldest;
 }
 
+// tla/RNIndexRing.tla Current: an entry is live when its ticket is its slot's
 static bool rn_token_order_stale( const struct rocketnet_token_table_t * table, int position )
 {
     const int slot = table->order_slot[position];
