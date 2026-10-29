@@ -377,16 +377,43 @@ jobs:
           done
           exit $failed
 
-      - name: Run unit tests (RSS telemetry, deterministic verdict)
+      # The unit suite's three runs share nothing, so they run at once in one
+      # step (Glenn 2026-10-29: serial only when it must be):
+      # - the plain run: RSS telemetry, deterministic verdict;
+      # - on Linux, the suite opens no socket: ./bin/test under strace, failing
+      #   and naming the first opener on any socket() call
+      #   (tools/check_unit_no_sockets.sh);
+      # - ambient config isolation and passing output
+      #   (tools/check_test_environment.py).
+      # Each run's output is printed whole, in that order, once all have ended.
+      - name: Unit suite (plain run, opens no socket, ambient config isolation)
         if: contains(matrix.leg, 'b')
-        run: ./bin/test
-
-      # The unit suite opens no socket: ./bin/test runs under strace and the
-      # check fails, naming the first opener, on any socket() call
-      # (tools/check_unit_no_sockets.sh).
-      - name: Unit suite opens no socket
-        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
-        run: bash tools/check_unit_no_sockets.sh ./bin/test
+        shell: bash
+        run: |
+          set -uo pipefail
+          logs="$RUNNER_TEMP/unit-runs"
+          rm -rf "$logs" && mkdir -p "$logs"
+          names="plain ambient"
+          ./bin/test > "$logs/plain.log" 2>&1 &
+          pids="$!"
+          python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }} > "$logs/ambient.log" 2>&1 &
+          pids="$pids $!"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            bash tools/check_unit_no_sockets.sh ./bin/test > "$logs/sockets.log" 2>&1 &
+            pids="$pids $!"
+            names="$names sockets"
+          fi
+          failed=0
+          set -- $names
+          for pid in $pids; do
+            name=$1; shift
+            if wait "$pid"; then status=ok; else status=FAILED; failed=1; fi
+            echo "::group::unit run $name: $status"
+            cat "$logs/$name.log"
+            echo "::endgroup::"
+            [ "$status" = ok ] || { echo "unit run $name failed:"; tail -40 "$logs/$name.log"; }
+          done
+          exit $failed
 
       # The unit suite reads no real time, sleep, thread or resolver: the
       # check fails, naming file and line, on any such call in the unit
@@ -394,10 +421,6 @@ jobs:
       - name: Unit suite uses no real time, sleep, thread or resolver
         if: contains(matrix.leg, 'b')
         run: python3 tools/check_unit_purity.py .
-
-      - name: Ambient config isolation and passing output
-        if: contains(matrix.leg, 'b')
-        run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }}
 
       # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
       # on the host at once: the check prints the limit, the per-server need

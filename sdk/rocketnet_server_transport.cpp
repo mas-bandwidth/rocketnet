@@ -4022,10 +4022,13 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
     return flushes;
 }
 
+// a build without XDP defines no xdp symbol (tools/check_xdp_compiled_out.py)
+#if ROCKETNET_XDP
 int rocketnet_server_transport_test_xdp_reflush()
 {
     return rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP );
 }
+#endif // #if ROCKETNET_XDP
 
 // A staged send must close the simulator's partial reverse window at the
 // end of the frame, just as the portable send path does.

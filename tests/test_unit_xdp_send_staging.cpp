@@ -45,6 +45,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_send_staging_retains_producer );
 
 #if ROCKETNET_DEV
 
+#if ROCKETNET_XDP
 // The fixture calls the actual transport send_packets with a fake staged
 // backend. After the first call the staged and flushed counters agree.
 int rocketnet_server_transport_test_xdp_reflush();
@@ -54,6 +55,7 @@ static void test_xdp_transport_send_staging_reflushes_without_commit()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_send_staging_reflushes_without_commit );
+#endif // #if ROCKETNET_XDP
 
 // gso retains its producer on a contended or full handoff and io_uring keeps
 // its index while sends wait for CQEs: the next send boundary retries both,
