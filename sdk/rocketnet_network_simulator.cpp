@@ -677,7 +677,10 @@ static bool rocketnet_simulator_index_remove( struct rocketnet_network_simulator
 static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * simulator,
                                         const struct rocketnet_network_simulator_slot_handle_t * handle )
 {
-    if ( !rocketnet_simulator_index_remove( simulator, handle ) )
+    const bool valid_slot = handle != NULL && handle->slot >= 0 && handle->slot < simulator->capacity &&
+                            simulator->used[handle->slot] && simulator->generation[handle->slot] == handle->generation;
+    const bool removed = rocketnet_simulator_index_remove( simulator, handle );
+    if ( !removed && !valid_slot )
         return false;
 
     simulator->used[handle->slot] = 0;
@@ -685,7 +688,7 @@ static bool rocketnet_simulator_retire( struct rocketnet_network_simulator_t * s
     if ( handle->slot < simulator->free_hint )
         simulator->free_hint = handle->slot;
 
-    return true;
+    return removed;
 }
 
 int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t * simulator,

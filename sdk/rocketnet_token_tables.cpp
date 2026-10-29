@@ -569,10 +569,12 @@ int rocketnet_used_token_history_claim_can_record( const struct rocketnet_used_t
     return rn_token_claim_select_slot( table, current_time ) != -1;
 }
 
+#if ROCKETNET_DEV
 int rocketnet_used_token_history_claim_free_count( const struct rocketnet_used_token_history_t * history )
 {
     return history->claims->free_count;
 }
+#endif // #if ROCKETNET_DEV
 
 void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_history_t * history,
                                                  const uint8_t * token_identifier,
