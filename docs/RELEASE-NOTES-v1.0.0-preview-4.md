@@ -100,19 +100,9 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   about 3.2 GB, on Linux ([USAGE.md](../USAGE.md)). Memory is spent to save CPU
   and bandwidth and is taken up front. The plan leaves out what the operating
   system owns: worker stacks, XDP UMEM, the AF_XDP and io_uring rings and
-  kernel socket buffers. Provision host memory for both. Destroy has no
-  promised time bound.
-- A Windows server under LAN load is not qualified: the iocp and rio LAN cells
-  were not made. AF_XDP is recorded in copy mode only.
-- The Linux AF_XDP impaired soak cell lost about twice the configured share of
-  server-to-client payloads. The record attributes the excess to the test
-  client's socket receive buffer being clamped by `net.core.rmem_max`
-  ([record](runs/linux-soak-impaired-xdp-loss.md)). On Linux, set
-  `net.core.rmem_max` to at least the receive buffer the client requests.
+  kernel socket buffers. Provision host memory for both.
 - The io_uring log does not yet name `RLIMIT_MEMLOCK` when create fails; size
   that limit for every io_uring server under one account.
-- macOS packet delivery under a concurrent flood has no root cause yet.
-- A complete security review of the whole library is not yet done.
 
 The [qualification index](QUALIFICATION-v1.0.0-preview-4.md) records the
 tested head and every gate, including those still owed at tag time. The
