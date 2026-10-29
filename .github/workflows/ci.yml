@@ -175,11 +175,11 @@ jobs:
           # (OFF), so every OS runs the suite both ways and the production
           # boundary checks read a production library.
           - { os: ubuntu-24.04, build_type: Debug, leg: unit, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Debug, leg: functional, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Debug, leg: functional, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
           - { os: ubuntu-24.04, build_type: Debug, leg: checks, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Debug, leg: builds, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: unit, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: functional, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: functional, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet","libxdp-1-4"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: checks, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: ubuntu-24.04, build_type: Release, leg: builds, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
           - { os: macos-15, build_type: Debug, leg: unit, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
@@ -449,8 +449,11 @@ jobs:
       # expected failure that passes fails the step, so the mark is removed
       # as the card lands; any other skip fails. No cell holds a mark: the
       # in-memory loopback serves dual stack like the socket transports. The xdp
-      # server is not a cell here: it needs a VM tier, and the XDP job runs its
-      # max-size cases on the runners that carry one.
+      # cell needs root, a namespace and a veth pair, so it runs
+      # test_xdp_transport_max_size_both_ways_ipv4 and _ipv6 (the xdp server, the portable
+      # client) as root inside a virtme-ng guest on the runner's own kernel,
+      # never on the host; a runner with no VM tier fails the cell, so the
+      # Linux functional rows select libxdp-1-4, the label of the VM-tier runner.
       # A client of auto sets no client pin, so that cell runs the client's
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
       # Windows; TRANSPORTS.md "Client transports").
@@ -467,6 +470,7 @@ jobs:
             portable gso
             io_uring portable
             loopback loopback
+            xdp portable
           TRANSPORT_MATRIX_MACOS: |
             portable portable
             portable auto
@@ -483,6 +487,8 @@ jobs:
             *) echo "TRANSPORT-MATRIX no matrix for $RUNNER_OS"; exit 1 ;;
           esac
           socket_cases="test_loopback_transport_udp test_loopback_transport_ipv6 test_transport_dual_stack_ipv4_client test_transport_env_pin_is_honoured"
+          xdp_cases="test_xdp_transport_max_size_both_ways_ipv4 test_xdp_transport_max_size_both_ways_ipv6"
+          cell_cases() { if [ "$1" = xdp ]; then echo "$xdp_cases"; else echo "$socket_cases"; fi; }
           uring_offered=0
           if [ "$RUNNER_OS" = Linux ] && [ "$(cat /proc/sys/kernel/io_uring_disabled 2>/dev/null || echo 0)" = 0 ]; then uring_offered=1; fi
           mkdir -p build
@@ -492,6 +498,27 @@ jobs:
             [ -n "$server" ] || continue
             if [ "$server" = io_uring ] && [ "$uring_offered" = 0 ]; then
               echo "TRANSPORT-MATRIX $server/$client [SKIPPED this kernel disables io_uring]"
+              continue
+            fi
+            if [ "$server" = xdp ]; then
+              (
+                # root, a namespace and a veth pair inside a guest of the
+                # runner's own kernel; the host is never touched
+                vm_kernel="$HOME/vm-kernels/vmlinuz-$(uname -r)"
+                if ! command -v vng >/dev/null || [ ! -r "$vm_kernel" ] || [ ! -w /dev/kvm ]; then
+                  for case in $xdp_cases; do
+                    echo "no VM tier on this runner: needs vng, a readable $vm_kernel and a writable /dev/kvm" > "$logs/$server.$client.$case.log"
+                    echo 1 > "$logs/$server.$client.$case.rc"
+                  done
+                  exit 0
+                fi
+                timeout 120 vng --run "$vm_kernel" --memory 1536M --cpus 2 --append "irqaffinity=0 isolcpus=1 nohz_full=1" --rwdir "$PWD" -- \
+                  sh -c 'for case in '"$xdp_cases"'; do sudo '"$functional"' --run "$case" > "'"$logs/$server.$client"'.$case.log" 2>&1; echo $? > "'"$logs/$server.$client"'.$case.rc"; done' \
+                  > "$logs/$server.$client.vm.log" 2>&1
+                for case in $xdp_cases; do
+                  [ -f "$logs/$server.$client.$case.rc" ] || { echo 1 > "$logs/$server.$client.$case.rc"; tail -n 5 "$logs/$server.$client.vm.log" > "$logs/$server.$client.$case.log"; }
+                done
+              ) &
               continue
             fi
             (
@@ -505,8 +532,9 @@ jobs:
           failed=0
           while read -r server client expected; do
             [ -n "$server" ] && [ -d "$logs" ] || continue
-            [ -f "$logs/$server.$client.${socket_cases##* }.rc" ] || continue
-            for case in $socket_cases; do
+            cases=$(cell_cases "$server")
+            [ -f "$logs/$server.$client.${cases##* }.rc" ] || continue
+            for case in $cases; do
               log="$logs/$server.$client.$case.log"
               rc=$(cat "$logs/$server.$client.$case.rc")
               card=""
