@@ -607,7 +607,7 @@ static void load_warm_cycle( void )
 
     if ( client )
     {
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, rocketnet_time() );
     }
 
     if ( server )
@@ -1685,7 +1685,7 @@ int main( int argc, char ** argv )
                 dropped_client_wire_observed_seconds = rocketnet_time() - dropped_client_wire_start_time;
             }
 
-            rn_cli_client_stop_and_destroy( clients[0] );
+            rn_cli_client_stop_and_destroy( clients[0], rocketnet_time() );
             clients[0] = NULL;
             drop_injected = 1;
         }
@@ -2283,7 +2283,7 @@ int main( int argc, char ** argv )
     {
         if ( clients[i] )
         {
-            rn_cli_client_stop_and_destroy( clients[i] );
+            rn_cli_client_stop_and_destroy( clients[i], rocketnet_time() );
         }
     }
 

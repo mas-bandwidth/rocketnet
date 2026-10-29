@@ -88,7 +88,7 @@ static int create_and_prove( const char * label, const char * transport )
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         rn_cli_server_stop_and_destroy( server );
         return 0;
     }
@@ -131,7 +131,7 @@ static int create_and_prove( const char * label, const char * transport )
         rocketnet_sleep( 0.001 );
     }
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + rocketnet_time() - start );
     rn_cli_server_stop_and_destroy( server );
 
     return received > 0;

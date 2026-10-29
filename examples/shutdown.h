@@ -46,17 +46,28 @@ static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped
     }
 }
 
+// A client wait carries the caller's game clock: update takes the same clock
+// on every call, and a time that goes backwards is API misuse, after
+// disconnect too. The wait passes the caller's last time on every step; the
+// same time again is not backwards.
+struct rn_cli_client_wait_t
+{
+    struct rocketnet_client_t * client;
+    double time;
+};
+
 static inline int rn_cli_client_is_disconnected( void * object )
 {
-    return rocketnet_client_disconnected( (struct rocketnet_client_t *) object );
+    return rocketnet_client_disconnected( ( (struct rn_cli_client_wait_t *) object )->client );
 }
 
 static inline void rn_cli_client_step( void * object )
 {
     // Needed only by an explicitly step-driven client. During shutdown,
-    // update progresses cleanup without reading or changing game time.
+    // update progresses cleanup at the caller's last time.
 
-    rocketnet_client_update( (struct rocketnet_client_t *) object, 1000.0 );
+    const struct rn_cli_client_wait_t * wait = (const struct rn_cli_client_wait_t *) object;
+    rocketnet_client_update( wait->client, wait->time );
 }
 
 static inline int rn_cli_server_is_stopped( void * object )
@@ -64,9 +75,13 @@ static inline int rn_cli_server_is_stopped( void * object )
     return rocketnet_server_stopped( (struct rocketnet_server_t *) object );
 }
 
-static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client )
+// time: the last time the caller passed to rocketnet_client_update, or any
+// later time on the same clock.
+
+static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client, double time )
 {
-    rn_cli_bounded_wait( client, rn_cli_client_is_disconnected, rn_cli_client_step, rocketnet_time, rocketnet_sleep, "client" );
+    struct rn_cli_client_wait_t wait = { client, time };
+    rn_cli_bounded_wait( &wait, rn_cli_client_is_disconnected, rn_cli_client_step, rocketnet_time, rocketnet_sleep, "client" );
 }
 
 static inline void rn_cli_server_wait_stopped( struct rocketnet_server_t * server )
@@ -74,12 +89,12 @@ static inline void rn_cli_server_wait_stopped( struct rocketnet_server_t * serve
     rn_cli_bounded_wait( server, rn_cli_server_is_stopped, NULL, rocketnet_time, rocketnet_sleep, "server" );
 }
 
-static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * client )
+static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * client, double time )
 {
     if ( !client )
         return;
     rocketnet_client_disconnect( client );
-    rn_cli_client_wait_disconnected( client );
+    rn_cli_client_wait_disconnected( client, time );
     rocketnet_client_destroy( client );
 }
 

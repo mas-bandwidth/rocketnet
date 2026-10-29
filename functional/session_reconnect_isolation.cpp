@@ -689,7 +689,7 @@ static void session_run_isolation_pair( const char * server_transport, const cha
     session_check( client_gen3.payloads_received > client_payloads_recv_base3 );
     session_check( client_gen3.receipts_acked - client_receipts_acked_base3 == 1 );
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     if ( server_a )
         rn_cli_server_stop_and_destroy( server_a );
     if ( server_b )

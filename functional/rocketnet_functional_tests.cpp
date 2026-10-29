@@ -4474,7 +4474,7 @@ void rocketnet_test_public_client_server_queries()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         client = NULL;
     }
 
@@ -4746,7 +4746,7 @@ void rocketnet_test_public_client_server_queries()
     rocketnet_check( rn_server_client_stats_of( server, 3 ).packets_sent == 0 );
     rocketnet_check( rocketnet_server_client_id( server, 3 ) == 0 );
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     rn_cli_server_stop_and_destroy( server );
 }
 
@@ -11126,7 +11126,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );
     if ( client && rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
     {
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         client = NULL;
     }
 
@@ -11167,7 +11167,7 @@ static void rocketnet_test_public_client_reads_server_disconnected()
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
     rocketnet_check( !rocketnet_server_client_connected( server, index ) );
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     rn_cli_server_stop_and_destroy( server );
 }
 #endif // #if ROCKETNET_DEV
@@ -11248,7 +11248,7 @@ static void rocketnet_test_two_address_token_connects_over_ipv4()
     rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     rocketnet_check( rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) );
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     rn_cli_server_stop_and_destroy( server );
 
     rocketnet_platform_set_ipv6_socket_available_for_testing( true );
@@ -11386,7 +11386,7 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
             rocketnet_sleep( 0.005 );
         }
         const bool connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - case_start ) );
         printf( "family race over %s: connected %d, raced %d, allocator calls off the caller's thread: %llu mallocs, %llu frees\n",
                 transport, connected ? 1 : 0, (int) race_logged.load(), (unsigned long long) race_off_caller_mallocs.load(),
                 (unsigned long long) race_off_caller_frees.load() );
@@ -11485,7 +11485,7 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
     {
         if ( client != NULL )
         {
-            rn_cli_client_stop_and_destroy( client );
+            rn_cli_client_stop_and_destroy( client, 1000.0 );
         }
 
         rn_cli_server_stop_and_destroy( server );
@@ -11618,7 +11618,7 @@ static void rocketnet_test_public_dev_connect_token_round_trip()
                                rocketnet_server_client_connected( server, rocketnet_client_index( client ) );
     const int completed = both_connected && client_sent && server_received && server_sent && client_received && exchange_ok &&
                           client_bytes == (int) sizeof( server_payload ) && server_bytes == (int) sizeof( client_payload );
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - watchdog_start ) );
     rn_cli_server_stop_and_destroy( server );
     printf( "public dev token exchange: client_connected=%d server_connected=%d client_bytes=%d server_bytes=%d cleanup=ok\n",
             client_connected, server_connected, client_bytes, server_bytes );

@@ -327,10 +327,18 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     // tla/RNOutgoingBuild.tla StartQueued: the start on the queued path, the
     // message handed its region record rather than a transport frame.
 
+    // every refusal of the caller's arguments is logged and counted
+    // (rocketnet.h, "These errors are not API misuse"); a refusal for want of
+    // room is the connection's end, not the caller's error
+
     int type = reliability;
     const int route = rn_endpoint_send_route( endpoint, channel, reliability, bytes, transport_max_payload_bytes, &type );
     if ( route == RN_ENDPOINT_ROUTE_REFUSED )
     {
+        if ( endpoint->pending_type != -1 )
+            rocketnet_error( "message start refused: a start is already pending; finish or abort it first" );
+        else
+            rocketnet_error( "message start refused: channel %d is outside 0 .. %d, or max_bytes %d is below 1", channel, endpoint->config->num_channels - 1, bytes );
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
         return NULL;
     }
@@ -339,6 +347,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
     {
         // a type outside the enabled mask is refused and counted (7.5)
 
+        rocketnet_error( "message start refused: reliability %d is not a reliability this connection sends on channel %d", reliability, channel );
         if ( reliability >= 0 && reliability < ROCKETNET_CHANNEL_NUM_TYPES )
             rn_channels_send_check( &endpoint->ordered.channels, reliability, (uint32_t) channel );
         else
@@ -355,6 +364,7 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
 
     if ( route == RN_ENDPOINT_ROUTE_OVER_MAX )
     {
+        rocketnet_error( "message start refused: max_bytes %d is above max_message_bytes %d", bytes, endpoint->config->max_message_bytes );
         rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_SEND_FAILED );
         return NULL;
     }
@@ -370,7 +380,10 @@ uint8_t * rn_endpoint_start( struct rn_endpoint_t * endpoint, int channel, int r
             if ( rn_region_exhausted( region ) )
                 endpoint->send_error = ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED;     // R5
             else
+            {
+                rocketnet_error( "message start refused: reliability %d on channel %d with max_bytes %d (max_message_bytes %d)", reliability, channel, bytes, endpoint->config->max_message_bytes );
                 rn_endpoint_count( endpoint, ROCKETNET_COUNTER_MESSAGE_SEND_REFUSED );
+            }
             return NULL;
         }
 

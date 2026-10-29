@@ -172,7 +172,7 @@ int main( void )
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         rn_cli_server_stop_and_destroy( server );
 
         rn_cli_loopback_hub_destroy( hub );
@@ -194,7 +194,7 @@ int main( void )
         if ( rocketnet_time() - start > 20.0 )
         {
             printf( "FAIL: the messages did not arrive within 20 seconds\n" );
-            rn_cli_client_stop_and_destroy( client );
+            rn_cli_client_stop_and_destroy( client, 1000.0 + rocketnet_time() - start );
             rn_cli_server_stop_and_destroy( server );
 
             rn_cli_loopback_hub_destroy( hub );
@@ -226,7 +226,7 @@ int main( void )
                 if ( memcmp( batch->data[i], pattern, BIG_BYTES ) != 0 )
                 {
                     printf( "FAIL: the big message arrived changed\n" );
-                    rn_cli_client_stop_and_destroy( client );
+                    rn_cli_client_stop_and_destroy( client, now );
                     rn_cli_server_stop_and_destroy( server );
 
                     rn_cli_loopback_hub_destroy( hub );
@@ -286,7 +286,7 @@ int main( void )
     }
 
     printf( "promotion counter after: %llu\n", (unsigned long long) receipts_acked( client ) );
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + rocketnet_time() - start );
     rn_cli_server_stop_and_destroy( server );
 
     rn_cli_loopback_hub_destroy( hub );

@@ -7845,10 +7845,15 @@ void rocketnet_test_create_before_init_is_refused()
 
 void rocketnet_test_allocator_refusal_is_returned()
 {
-    // after init, a second init with an allocator is refused
+    // after init, a second init with another allocator is refused and
+    // counted as API misuse (init refuses its allocator); a second init with
+    // the allocator already installed is refused and not counted
 
     const uint64_t before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_ALREADY_INITIALIZED );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     // terminated with no live allocations: a partial pair is refused and
     // counted, and both functions are taken
@@ -7857,7 +7862,7 @@ void rocketnet_test_allocator_refusal_is_returned()
     rocketnet_term();
     rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
-    rocketnet_check( rocketnet_api_misuse_count() == before + 2 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 3 );
 
     rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
     rocketnet_check( rocketnet_test_loopback_hub_release() );

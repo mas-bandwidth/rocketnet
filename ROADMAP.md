@@ -398,8 +398,9 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: platform | ✅ | — | — |
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
+| The public contract, the TLA+ models and the code agree: the divergences of the 2026-10-29 contract audit fixed | ❌ | ✅ | ❌ |
 | The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 95% | 100% | 100% |
+| complete | 90% | 100% | 94% |
 
 [Source data](docs/roadmap.sexp)
 

@@ -2625,7 +2625,7 @@ cleanup:
         for ( int i = 0; i < count; ++i )
             if ( clients[i].api )
             {
-                rn_cli_client_stop_and_destroy( clients[i].api );
+                rn_cli_client_stop_and_destroy( clients[i].api, rocketnet_time() );
             }
 
         free( clients );

@@ -149,7 +149,7 @@ and public key. From
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
 
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
@@ -282,7 +282,7 @@ What each step requires:
 
 [examples/game_loop.c](../examples/game_loop.c) is the whole loop at scale: a
 server and up to 1000 clients over `loopback`, the steps numbered (1) to (5)
-on lines 282 to 332, and `--wrong-order` to show the frame of latency an early
+on lines 284 to 334, and `--wrong-order` to show the frame of latency an early
 send costs. [USAGE.md, "Frame loop"](../USAGE.md#frame-loop),
 ["Sending messages"](../USAGE.md#sending-messages),
 ["Receiving messages"](../USAGE.md#receiving-messages) and
@@ -362,7 +362,7 @@ keeps its frame loop running and polls once per frame. A client that is still
 being updated by the game keeps calling update while it polls. The examples
 wait in a loop at exit, with a failure bound; from
 [examples/shutdown.h](../examples/shutdown.h), which every example includes,
-lines 28 to 47 and 67 to 84:
+lines 28 to 47 and 78 to 99:
 
 ```c
 static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped, rn_cli_step_fn step, rn_cli_now_fn now, rn_cli_sleep_fn sleep_fn, const char * what )
@@ -388,9 +388,13 @@ static inline void rn_cli_bounded_wait( void * object, rn_cli_stopped_fn stopped
 ```
 
 ```c
-static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client )
+// time: the last time the caller passed to rocketnet_client_update, or any
+// later time on the same clock.
+
+static inline void rn_cli_client_wait_disconnected( struct rocketnet_client_t * client, double time )
 {
-    rn_cli_bounded_wait( client, rn_cli_client_is_disconnected, rn_cli_client_step, rocketnet_time, rocketnet_sleep, "client" );
+    struct rn_cli_client_wait_t wait = { client, time };
+    rn_cli_bounded_wait( &wait, rn_cli_client_is_disconnected, rn_cli_client_step, rocketnet_time, rocketnet_sleep, "client" );
 }
 
 static inline void rn_cli_server_wait_stopped( struct rocketnet_server_t * server )
@@ -398,19 +402,21 @@ static inline void rn_cli_server_wait_stopped( struct rocketnet_server_t * serve
     rn_cli_bounded_wait( server, rn_cli_server_is_stopped, NULL, rocketnet_time, rocketnet_sleep, "server" );
 }
 
-static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * client )
+static inline void rn_cli_client_stop_and_destroy( struct rocketnet_client_t * client, double time )
 {
     if ( !client )
         return;
     rocketnet_client_disconnect( client );
-    rn_cli_client_wait_disconnected( client );
+    rn_cli_client_wait_disconnected( client, time );
     rocketnet_client_destroy( client );
 }
 ```
 
-The server is the same with `rocketnet_server_stop`,
-`rocketnet_server_stopped` and `rocketnet_server_destroy` (lines 64 to 67 and
-78 to 85). Destroy every client and server, then call `rocketnet_term` and
+The client wait takes the game clock's last time: update reads the time on
+every call, after disconnect too, and a time that goes backwards is API
+misuse. The server is the same with `rocketnet_server_stop`,
+`rocketnet_server_stopped` and `rocketnet_server_destroy` (lines 73 to 76 and
+101 to 108). Destroy every client and server, then call `rocketnet_term` and
 check that it returns `ROCKETNET_STATUS_OK`. Keep
 each object, its allocator and callback contexts alive until its destroy
 returns. [USAGE.md, "Connection lifecycle"](../USAGE.md#connection-lifecycle)
@@ -431,8 +437,9 @@ The contract, stated in full in [USAGE.md, "Threads"](../USAGE.md#threads):
   through the documented callbacks: the allocator functions passed to
   `rocketnet_init` and the log function, which can run on a network thread and
   must be thread-safe, and the assert function, which runs on the thread that
-  fires the assert. `state_change_callback` runs on the caller's thread, during
-  update, disconnect and destroy.
+  fires the assert. `state_change_callback` reports each change of
+  `rocketnet_client_state` once, on the caller's thread, during connect,
+  update, disconnect, destroy and a start message that ends the connection.
 
 The library creates its network threads at client connect and server start.
 They do the socket I/O and bounded background work, and hand their results to
@@ -705,7 +712,7 @@ Pass the opaque base64 token to `rocketnet_client_connect`. From
     if ( status != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: connect refused: %s\n", rocketnet_status_name( status ) );
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
 
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )

@@ -56,8 +56,8 @@ typedef int ( *loopback_hub_client_module_update_t )( double time );
 // rocketnet_loopback_hub_destroy called from the client module's copy
 typedef enum rocketnet_status_t ( *loopback_hub_client_module_destroy_hub_t )( struct rocketnet_loopback_hub_t * hub );
 
-// disconnect and destroy the client, term; returns 1 when each step reported
-// ROCKETNET_STATUS_OK
-typedef int ( *loopback_hub_client_module_stop_t )( void );
+// disconnect and destroy the client, updating from the caller's last frame
+// time, term; returns 1 when each step reported ROCKETNET_STATUS_OK
+typedef int ( *loopback_hub_client_module_stop_t )( double time );
 
 #endif // ROCKETNET_FUNCTIONAL_LOOPBACK_HUB_MODULE_H

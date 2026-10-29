@@ -29,6 +29,7 @@
 #include <sodium.h>
 
 #include <limits.h>
+#include <math.h>
 #include <string.h>
 
 // ---------------------------------------------------------------
@@ -541,6 +542,13 @@ struct rocketnet_client_t
     struct rocketnet_message_client_t * connection;     // NULL while DISCONNECTED or after a refused connect
     struct rocketnet_message_client_t * retiring;       // retained until worker completion and synchronous reclamation
     int refused_state;                                  // token refusal or terminal state retained during retry, 0 otherwise
+    int reported_state;                                 // the rocketnet_client_state the state change callback last reported
+    int receipts_retained;                              // 1 from a disconnect until the next update: the retiring connection's receipts read
+    int update_timed;                                   // 1 once an update without a live connection read a good time
+    double update_time;                                 // that clock (rocketnet_update_clock_advance): the last good time,
+    double update_raw_time;                             // the caller's last time,
+    double update_time_offset;                          // and how far the caller's clock stepped back
+    void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     uint64_t lifetime[RN_CLIENT_COUNT];                 // not-connected drops that outlived their connection
     struct rocketnet_message_batch_t batch;             // the one receive batch, refilled by each receive (in the create-time block)
 };
@@ -984,6 +992,13 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     client->message = message;
     client->kbps = kbps;
     client->memory_budget_bytes = memory_budget;
+
+    // the public client reports rocketnet_client_state to the callback
+    // (rn_client_report_state); its connections' transports carry none, as
+    // their own callback would report the transport's state
+
+    client->state_change_callback = transport.state_change_callback;
+    client->transport.state_change_callback = NULL;
     client->owns_block = memory ? 0 : 1;
     client->block = base + rn_client_header_bytes;
     client->block_bytes = connection_bytes;
@@ -1047,6 +1062,7 @@ static void rn_client_end_connection( struct rocketnet_client_t * client )
     rocketnet_message_client_destroy( client->retiring );
 
     client->retiring = NULL;
+    client->receipts_retained = 0;
 }
 
 static int rn_client_state( const struct rocketnet_client_t * client )
@@ -1078,15 +1094,35 @@ static bool rn_connect_token_decode( const char * connect_token, uint8_t token[R
     return true;
 }
 
+// tla/ClientSession.tla StateReported: the state change callback reports each
+// change of rocketnet_client_state, once, with the value it last reported as
+// the previous state. Every public call that can change the state (connect,
+// update, disconnect, and a start message whose memory exhaustion ends the
+// connection) ends here, so the callback sees exactly the transitions a poll
+// of rocketnet_client_state after each call would see. The value is stored
+// before the call, so a callback that reads the state reads the new one.
+
+static void rn_client_report_state( struct rocketnet_client_t * client )
+{
+    const int previous_state = client->reported_state;
+    const int current_state = (int) rocketnet_client_state( client );
+    if ( current_state == previous_state )
+        return;
+
+    client->reported_state = current_state;
+
+    if ( client->state_change_callback )
+        client->state_change_callback( client->context, (enum rocketnet_client_state_t) previous_state, (enum rocketnet_client_state_t) current_state );
+}
+
+static void rn_client_disconnect( struct rocketnet_client_t * client );
+
 // tla/ClientSession.tla RetryPending: from a terminal state whose worker is
 // still running, connect asks that worker to stop and returns
 // CLIENT_NOT_DISCONNECTED, keeping the public state and starting nothing.
 
-enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
+static enum rocketnet_status_t rn_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
 {
-    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token_string ) )
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
-
     // connect reads no clock: the connection's clock starts at its first update, as create's always has (documented in rocketnet.h)
 
     if ( rn_client_state( client ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
@@ -1117,7 +1153,7 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
     {
         const int terminal_state = rocketnet_client_state( client );
 
-        rocketnet_client_disconnect( client );
+        rn_client_disconnect( client );
 
         client->refused_state = terminal_state;
     }
@@ -1154,6 +1190,18 @@ enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * cl
         client->refused_state = ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED;
 
     return status == ROCKETNET_STATUS_OK ? ROCKETNET_STATUS_INVALID_ARGUMENT : (enum rocketnet_status_t) status;
+}
+
+enum rocketnet_status_t rocketnet_client_connect( struct rocketnet_client_t * client, const char * connect_token_string )
+{
+    if ( !rocketnet_api_null_guard( client ) || !rocketnet_api_null_guard( connect_token_string ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+    const enum rocketnet_status_t status = rn_client_connect( client, connect_token_string );
+
+    rn_client_report_state( client );
+
+    return status;
 }
 
 // tla/ClientSession.tla Destroy: the object goes only once its worker has
@@ -1212,24 +1260,47 @@ void rocketnet_client_destroy( struct rocketnet_client_t * client )
 // WorkerComplete: a retiring connection's transport is stepped through its
 // stop until its worker completes.
 
+// With no live connection the time still meets update's rule: a non-finite or
+// backwards time is counted as API misuse and logged, and the last good time
+// is kept, by the clock a connection keeps (rocketnet_update_clock_advance).
+// Disconnect hands the ended connection's clock to it (rn_client_disconnect),
+// so the update after a disconnect is held to the times before it. A new
+// connection's clock starts at its first update.
+
+static void rn_client_update_time( struct rocketnet_client_t * client, double time )
+{
+    if ( !client->update_timed && isfinite( time ) )
+    {
+        client->update_timed = 1;
+        client->update_time = time;
+        client->update_raw_time = time;
+        client->update_time_offset = 0.0;
+    }
+
+    client->update_time = rocketnet_update_clock_advance( client->update_time, &client->update_raw_time, &client->update_time_offset, time, NULL );
+}
+
 void rocketnet_client_update( struct rocketnet_client_t * client, double time )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return;
 
-    if ( client->retiring )
+    // the retiring connection's receipts were readable until this update
+
+    client->receipts_retained = 0;
+
+    if ( client->connection )
+        (void) rocketnet_message_client_update( client->connection, time );
+    else
     {
-        struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( client->retiring );
+        rn_client_update_time( client, time );
+
+        struct rocketnet_client_transport_t * transport = client->retiring ? rocketnet_message_client_transport( client->retiring ) : NULL;
         if ( transport )
             rocketnet_client_transport_update( transport, time );
-
-        return;
     }
 
-    if ( !client->connection )
-        return;
-
-    (void) rocketnet_message_client_update( client->connection, time );
+    rn_client_report_state( client );
 }
 
 void rocketnet_client_send_packets( struct rocketnet_client_t * client )
@@ -1245,20 +1316,28 @@ void rocketnet_client_send_packets( struct rocketnet_client_t * client )
 // tla/ClientSession.tla ClientDisconnect: from a live state the connection
 // is kicked (its disconnect burst) and its worker asked to stop;
 // DisconnectFromError: from an error state only the stop is asked; both
-// leave the client DISCONNECTED.
+// leave the client DISCONNECTED. The ended connection's receipts stay
+// readable until the next update.
 
-void rocketnet_client_disconnect( struct rocketnet_client_t * client )
+static void rn_client_disconnect( struct rocketnet_client_t * client )
 {
-    if ( !rocketnet_api_null_guard( client ) )
-        return;
-
     if ( client->connection )
     {
         if ( rocketnet_message_client_state( client->connection ) > ROCKETNET_CLIENT_STATE_DISCONNECTED )
             rn_message_object_kick( &client->connection->object, 0, ROCKETNET_DISCONNECT_REASON_NONE );
 
+        const struct rn_message_object_t * object = &client->connection->object;
+        if ( object->clock_started )
+        {
+            client->update_timed = 1;
+            client->update_time = object->time;
+            client->update_raw_time = object->raw_time;
+            client->update_time_offset = object->time_offset;
+        }
+
         client->retiring = client->connection;
         client->connection = NULL;
+        client->receipts_retained = 1;
 
         struct rocketnet_client_transport_t * transport = rocketnet_message_client_transport( client->retiring );
         if ( transport )
@@ -1266,6 +1345,16 @@ void rocketnet_client_disconnect( struct rocketnet_client_t * client )
     }
 
     client->refused_state = ROCKETNET_CLIENT_STATE_DISCONNECTED;
+}
+
+void rocketnet_client_disconnect( struct rocketnet_client_t * client )
+{
+    if ( !rocketnet_api_null_guard( client ) )
+        return;
+
+    rn_client_disconnect( client );
+
+    rn_client_report_state( client );
 }
 
 bool rocketnet_client_disconnected( const struct rocketnet_client_t * client )
@@ -1410,7 +1499,14 @@ uint8_t * rocketnet_client_start_message( struct rocketnet_client_t * client, in
         return NULL;
     }
 
-    return rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
+    uint8_t * pointer = rocketnet_message_client_start( client->connection, channel, (int) reliability, max_bytes );
+
+    // a start the connection's message memory cannot hold ends the connection (MESSAGE_MEMORY_EXHAUSTED)
+
+    if ( !pointer )
+        rn_client_report_state( client );
+
+    return pointer;
 }
 
 // a finish with no start pending (a dropped start included) asserts in a
@@ -1467,14 +1563,19 @@ const struct rocketnet_message_batch_t * rocketnet_client_receive_messages( stru
     return client->batch.num_messages > 0 ? &client->batch : NULL;
 }
 
+// a connection that ended at disconnect (or at the connect that retries a
+// terminal state) keeps its recorded outcomes readable until the next update
+
 int rocketnet_client_receipts( struct rocketnet_client_t * client, struct rocketnet_receipt_t * out, int capacity )
 {
     if ( !rocketnet_api_null_guard( client ) )
         return 0;
-    if ( !client->connection )
+
+    struct rocketnet_message_client_t * connection = client->connection ? client->connection : ( client->receipts_retained ? client->retiring : NULL );
+    if ( !connection )
         return 0;
 
-    return rocketnet_message_client_receipts( client->connection, (struct rocketnet_message_receipt_t *) out, capacity );
+    return rocketnet_message_client_receipts( connection, (struct rocketnet_message_receipt_t *) out, capacity );
 }
 
 // a negative rate is an invalid argument; 0 is the endpoint's default rate. A connection that is not

@@ -520,8 +520,13 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte ga
 // the budget's one variable is the endpoint's budget field,
 // ROCKETNET_CLIENT_SEND_KBPS or ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS
 
+// the default num_channels: 32, or the build's ROCKETNET_MAX_CHANNELS when that
+// is smaller, so every build's default config is one its create accepts
+
+#define ROCKETNET_DEFAULT_NUM_CHANNELS         ( ROCKETNET_MAX_CHANNELS < 32 ? ROCKETNET_MAX_CHANNELS : 32 )
+
 #define ROCKETNET_MESSAGE_CONFIG_TABLE( INT_FIELD, UINT64_FIELD, BYTES_FIELD, STRING_FIELD )                                       \
-    INT_FIELD( num_channels,               32,      1, ROCKETNET_MAX_CHANNELS, 0 ) /* WIRE */                            \
+    INT_FIELD( num_channels, ROCKETNET_DEFAULT_NUM_CHANNELS, 1, ROCKETNET_MAX_CHANNELS, 0 ) /* WIRE */                            \
     INT_FIELD( reliable_messages_in_flight,          1024,     64, 1 << 20,                0 ) /* WIRE, power of two */              \
     INT_FIELD( receive_message_buffer_bytes,    1048576,   4096, 1 << 20,                0 ) /* WIRE, multiple of 16 */            \
     INT_FIELD( max_message_bytes,     1048576,   ROCKETNET_MESSAGE_SINGLE_BYTES, ROCKETNET_MAX_MESSAGE_BYTES, 0 ) /* WIRE, <= receive_message_buffer_bytes */     \

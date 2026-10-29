@@ -163,6 +163,7 @@ int main( void )
         return 1;
 
     int result = 1;
+    double game_time = 1000.0; /* one clock for every update, shutdown included */
     struct rocketnet_server_t * server = NULL;
     struct rocketnet_client_t * client = NULL;
     struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 8, NULL );
@@ -204,14 +205,13 @@ int main( void )
          rocketnet_client_connect( client, token ) != ROCKETNET_STATUS_OK )
         goto cleanup;
 
-    double time = 1000.0;
     const double dt = 1.0 / 60.0;
     int client_sent = 0;
     int client_received_reply = 0;
-    for ( int tick = 0; tick < 300 && !client_received_reply; tick++, time += dt )
+    for ( int tick = 0; tick < 300 && !client_received_reply; tick++, game_time += dt )
     {
-        rocketnet_client_update( client, time );
-        rocketnet_server_update( server, time );
+        rocketnet_client_update( client, game_time );
+        rocketnet_server_update( server, game_time );
 
         const struct rocketnet_message_batch_t * batch = NULL;
         while ( ( batch = rocketnet_client_receive_messages( client ) ) != NULL )
@@ -281,7 +281,7 @@ cleanup:
             if ( rocketnet_time() >= deadline )
                 return 1; /* Fail without freeing storage still owned by I/O. */
             if ( client && !rocketnet_client_disconnected( client ) )
-                rocketnet_client_update( client, 1000.0 );
+                rocketnet_client_update( client, game_time ); /* never back in time */
             rocketnet_sleep( 0.001 );
         }
     }
@@ -444,7 +444,7 @@ RocketNet refuses invalid configuration rather than clamping it. Check returned 
 - **Update returns nothing:** `rocketnet_client_update` and `rocketnet_server_update` return `void`; what an update did is read from `rocketnet_client_state`, the server's per-client calls and the stats calls.
 - **Client states (`enum rocketnet_client_state_t`, `rocketnet_client_state`, `rocketnet_client_state_name`):**
   - Progress states: `ROCKETNET_CLIENT_STATE_DISCONNECTED` (`0`), `ROCKETNET_CLIENT_STATE_REQUESTING_COOKIE` (`1`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_REQUEST` (`2`), `ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE` (`3`), `ROCKETNET_CLIENT_STATE_CONNECTED` (`4`).
-  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED` (`-13`): an update found a delivered message the application had not taken; loop `rocketnet_client_receive_messages` until `NULL` before every update; `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` accepts `ROCKETNET_CLIENT_STATE_DISCONNECTED` and every negative terminal state. A terminal attempt whose old worker has not stopped yet returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` while retaining that terminal state; retry after `rocketnet_client_disconnected` is true. Every positive handshake state and `ROCKETNET_CLIENT_STATE_CONNECTED` are refused with the same status.
+  - Negative states, one for each way an attempt or a connection ends, kept until `rocketnet_client_disconnect`: `ROCKETNET_CLIENT_STATE_MESSAGE_NOT_RECEIVED` (`-13`): an update found a delivered message the application had not taken; loop `rocketnet_client_receive_messages` until `NULL` before every update; `ROCKETNET_CLIENT_STATE_MESSAGE_MEMORY_EXHAUSTED` (`-12`): the connection's send descriptors (`send_queue_messages`) or send buffer (`send_message_buffer_bytes`) ran out of room for a send that could not be dropped; `ROCKETNET_CLIENT_STATE_CONFIG_MISMATCH` (`-11`): wire-checked channel configuration fields (`num_channels`, `reliable_messages_in_flight`, `receive_message_buffer_bytes`, `max_message_bytes`) differed between client and server; `ROCKETNET_CLIENT_STATE_PROTOCOL_VIOLATION` (`-10`): the server sent a malformed message record or violated window or ring bounds, or the connection reached its integrity limit of received data that failed authentication; `ROCKETNET_CLIENT_STATE_RELIABLE_TIMED_OUT` (`-9`): a reliable message went unacknowledged past `reliable_message_timeout_ms`; `ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` (`-8`): the client accepted the server's disconnect packet (the server called `rocketnet_server_disconnect_client`, `rocketnet_server_stop` or `rocketnet_server_destroy`); `ROCKETNET_CLIENT_STATE_CONNECT_TOKEN_EXPIRED` (`-7`), `ROCKETNET_CLIENT_STATE_INVALID_CONNECT_TOKEN` (`-6`), `ROCKETNET_CLIENT_STATE_CONNECTION_TIMED_OUT` (`-5`), `ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT` (`-4`), `ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT` (`-3`), `ROCKETNET_CLIENT_STATE_COOKIE_REQUEST_TIMED_OUT` (`-2`), `ROCKETNET_CLIENT_STATE_CONNECTION_DENIED` (`-1`). `rocketnet_client_connect` accepts `ROCKETNET_CLIENT_STATE_DISCONNECTED` and every negative terminal state. A terminal attempt whose old worker has not stopped yet returns `ROCKETNET_STATUS_CLIENT_NOT_DISCONNECTED` while retaining that terminal state; retry after `rocketnet_client_disconnected` is true. Every positive handshake state and `ROCKETNET_CLIENT_STATE_CONNECTED` are refused with the same status.
   - A NULL client reads as `ROCKETNET_CLIENT_STATE_DISCONNECTED`, and the call counts as misuse.
 - **Server disconnect reasons (`rocketnet_server_disconnect_reason`, `rocketnet_disconnect_reason_name`):** why a server's client slot's connection ended, kept until the slot's next connection.
   - `ROCKETNET_DISCONNECT_REASON_NONE` (`0`): no connection has ended, or the connection is up.

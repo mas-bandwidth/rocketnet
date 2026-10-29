@@ -520,7 +520,7 @@ struct soak_lifecycle_t
 static struct soak_lifecycle_t g_life;
 
 // every client stopped and destroyed, then the server stopped, then destroyed
-static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients, struct rocketnet_server_t * server )
+static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients, struct rocketnet_server_t * server, double time )
 {
     g_life.running_peak_rss = soak_peak_rss_bytes();
 
@@ -530,7 +530,7 @@ static void soak_shutdown( struct rocketnet_client_t ** clients, int num_clients
         for ( int c = 0; c < num_clients; c++ )
             if ( clients[c] )
             {
-                rn_cli_client_stop_and_destroy( clients[c] );
+                rn_cli_client_stop_and_destroy( clients[c], time );
                 clients[c] = NULL;
             }
 
@@ -571,6 +571,7 @@ static int cmp_double( const void * a, const void * b )
 int main( int argc, char ** argv )
 {
     int num_clients = 1000, seconds = 3, exit_code = 1;
+    double sim_time = 1000.0;     // the game clock: every client update, shutdown included
     uint64_t seed = 1, arena_mib = 0;
     const char * transport_name = "loopback";
     const char * out_path = "soak-results.tsv";
@@ -764,7 +765,7 @@ int main( int argc, char ** argv )
 
         if ( clients[c] && rocketnet_client_connect( clients[c], token ) != ROCKETNET_STATUS_OK )
         {
-            rn_cli_client_stop_and_destroy( clients[c] );
+            rn_cli_client_stop_and_destroy( clients[c], 1000.0 );
             clients[c] = NULL;
         }
 
@@ -778,7 +779,6 @@ int main( int argc, char ** argv )
     // before a reply arrives. The connect is bounded by real time, like the
     // shutdown below, and the game clock follows it.
 
-    double sim_time = 1000.0;
     const double connect_started = rocketnet_time();
     const double connect_sim_start = sim_time;
     while ( rocketnet_time() - connect_started < 10.0 )
@@ -1100,7 +1100,7 @@ int main( int argc, char ** argv )
 
     CHECK( disconnected );
     CHECK( rocketnet_server_num_connected_clients( server ) == 0 );
-    soak_shutdown( clients, num_clients, server );
+    soak_shutdown( clients, num_clients, server, sim_time );
     server = NULL;
 
     CHECK( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
@@ -1151,7 +1151,7 @@ int main( int argc, char ** argv )
 cleanup:
     if ( !g_life.shut_down )
     {
-        soak_shutdown( clients, num_clients, server );
+        soak_shutdown( clients, num_clients, server, sim_time );
     }
 
     if ( hub && rocketnet_loopback_hub_destroy( hub ) != ROCKETNET_STATUS_OK )

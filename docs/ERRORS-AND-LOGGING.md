@@ -153,7 +153,9 @@ return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
 `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
 `TRANSPORT_PORT_ZERO_UNSUPPORTED`, `MUTEX_CREATE_FAILED`,
-`THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`.
+`THREAD_CREATE_FAILED` and `TIMER_CREATE_FAILED`. Server start reports a
+transport whose thread the platform refused as `TRANSPORT_LADDER_EXHAUSTED`;
+`THREAD_CREATE_FAILED` comes from client connect.
 `ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED` is -26: a transport returns it
 when it cannot serve both named families, and start returns it when every
 candidate that opened refused for that reason.
@@ -349,7 +351,7 @@ status code and the accompanying `ERROR` log line:
 | `INVALID_ADDRESS` | `rocketnet_server_create` | `ipv4_address` or `ipv6_address` (or its environment override) could not be parsed as its address family (`a.b.c.d:port` or `[v6]:port`). | Pass a valid address string with port for at least one family. |
 | `TRANSPORT_PORT_ZERO_UNSUPPORTED` | `rocketnet_server_start` | The address specifies port `0` on a server transport that cannot discover the kernel-assigned port (such as `xdp`). | Bind an explicit UDP port (`1 .. 65535`) or include a transport that discovers its assigned port. |
 | `CONNECT_TOKEN_PORT_ZERO` | `rocketnet_client_connect` | The token advertises a server address with port `0`. | Fix the token issuer so each advertised address carries the server's bound non-zero port. |
-| `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED` | `create`, `connect`, `start` | The caller allocator returned `NULL` or the OS refused a mutex, thread, or high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`, required by Windows frame sync without coarse fallback). | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor/timer support (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
+| `OUT_OF_MEMORY`, `MUTEX_CREATE_FAILED`, `THREAD_CREATE_FAILED`, `TIMER_CREATE_FAILED` | `create`, `connect`, `start` (`THREAD_CREATE_FAILED`: `connect`) | The caller allocator returned `NULL` or the OS refused a mutex, thread, or high-resolution waitable timer (`CREATE_WAITABLE_TIMER_HIGH_RESOLUTION`, required by Windows frame sync without coarse fallback). | Provision the full `rocketnet_*_required_memory` result and verify OS thread/descriptor/timer support (`ulimit -u`, `ulimit -n`). Do not retry in an unbounded loop. |
 
 ### 5.2 Token, Filter, Transport Mismatch, and Handshake Failures
 

@@ -24,11 +24,20 @@
 \* The next connect finalizes a stopped generation before reusing the block.
 \* Defect instances reverse reset, live refusal, send, completion, and key
 \* isolation guards to make each invariant produce a concrete witness.
+\*
+\* st is the public state, rocketnet_client_state: the server's disconnect
+\* ends a connection in SERVER_DISCONNECTED, an error state like the others.
+\* StateReported: the state change callback runs at the end of every public
+\* call that changes st and reports the change once, from the value it last
+\* reported (reported) to st; lastReport is the step's report, <<>> when the
+\* step reports none. Create and Destroy report nothing: the callback belongs
+\* to the object. The transportstate defect reports the transport's own state,
+\* which reads DISCONNECTED where the public state reads SERVER_DISCONNECTED.
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS MaxSessions, MaxCreates, Defect, UnresetField, StuckWorker
 
-ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected", "destroysilent", "reusepending", "skipstop", "reusekeys", "completionrefused"}
+ASSUME Defect \in {"none", "unreset", "connectanywhere", "queuebeforeconnected", "destroysilent", "reusepending", "skipstop", "reusekeys", "completionrefused", "transportstate"}
 ASSUME MaxSessions \in Nat \ {0} /\ MaxCreates \in Nat \ {0}
 ASSUME StuckWorker \in BOOLEAN
 
@@ -56,7 +65,8 @@ HandshakeStates == {"REQUESTING_COOKIE", "SENDING_CONNECTION_REQUEST",
                     "SENDING_CONNECTION_RESPONSE"}
 Errors == {"CONNECTION_DENIED", "COOKIE_REQUEST_TIMED_OUT",
            "CONNECTION_REQUEST_TIMED_OUT", "CONNECTION_RESPONSE_TIMED_OUT",
-           "CONNECTION_TIMED_OUT", "CONNECT_TOKEN_EXPIRED", "INVALID_CONNECT_TOKEN"}
+           "CONNECTION_TIMED_OUT", "CONNECT_TOKEN_EXPIRED", "INVALID_CONNECT_TOKEN",
+           "SERVER_DISCONNECTED"}
 RestartStates == {"DISCONNECTED"} \cup Errors
 Live == HandshakeStates \cup {"CONNECTED"}
 States == {"NONE", "DISCONNECTED"} \cup Live \cup Errors
@@ -81,16 +91,19 @@ StaleIn(c, fs, s) == {f \in fs : c[f] \notin {0, s}}
 
 VARIABLES st, cur, conn, reason, kept, link, nextSess, creates,
           lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, droppedIn,
-          silentEnd, owner, ownerGen, pending, refusedPending, badReuse
+          silentEnd, owner, ownerGen, pending, refusedPending, badReuse,
+          reported, lastReport
 \* st, cur, conn, reason, kept: the client object (cur is the session tag of
 \*   the connection in progress, 0 outside one)
 \* link: the session tags of server packets in flight to this client (lossy)
 \* nextSess, creates: the environment's counters
 \* lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn,
 \*   droppedIn, silentEnd: ghosts
+\* reported, lastReport: the state change callback (StateReported)
 vars == <<st, cur, conn, reason, kept, link, nextSess, creates,
           lastEnd, connected, observed, crossDelivered, connectFrom, queuedIn, droppedIn,
-          silentEnd, owner, ownerGen, pending, refusedPending, badReuse>>
+          silentEnd, owner, ownerGen, pending, refusedPending, badReuse,
+          reported, lastReport>>
 ghosts == <<observed, crossDelivered, connectFrom, queuedIn, silentEnd>>
 
 Init ==
@@ -102,6 +115,7 @@ Init ==
     /\ droppedIn = {} /\ silentEnd = FALSE
     /\ owner = "none" /\ ownerGen = 0 /\ pending = FALSE
     /\ refusedPending = FALSE /\ badReuse = FALSE
+    /\ reported = "NONE" /\ lastReport = <<>>
 
 \* rocketnet_client_create: no token, DISCONNECTED, a fresh object.
 Create ==
@@ -207,7 +221,7 @@ TokenExpires == st \in HandshakeStates /\ End(conn, "CONNECT_TOKEN_EXPIRED", "CO
 \* The stage deadlines and the connected timeout.
 Timer == st \in Live /\ End(conn, TimedOut(st), TimedOut(st), FALSE) /\ droppedIn' = {}
 
-ServerDisconnect == st = "CONNECTED" /\ End(conn, "DISCONNECTED", "SERVER_DISCONNECTED", FALSE)
+ServerDisconnect == st = "CONNECTED" /\ End(conn, "SERVER_DISCONNECTED", "SERVER_DISCONNECTED", FALSE)
 
 \* The client's disconnect from the handshake or connected: the disconnect
 \* burst is written, then the one Reset.
@@ -276,21 +290,36 @@ Lose(s) ==
     /\ UNCHANGED <<st, cur, conn, reason, kept, nextSess, creates, lastEnd,
                    connected, ghosts, owner, ownerGen, pending, refusedPending, badReuse>>
 
+\* The state the callback reports: the public state, or with the
+\* transportstate defect the transport's, which has no SERVER_DISCONNECTED.
+ReportedView(s) == IF Defect = "transportstate" /\ s = "SERVER_DISCONNECTED" THEN "DISCONNECTED" ELSE s
+
+\* StateReported: at the end of the step the callback reports a changed state
+\* once, from the value it last reported; Create and Destroy report nothing.
+StateReported ==
+    IF st = "NONE" \/ st' = "NONE"
+    THEN /\ reported' = IF st' = "NONE" THEN "NONE" ELSE st'
+         /\ lastReport' = <<>>
+    ELSE /\ reported' = ReportedView(st')
+         /\ lastReport' = IF ReportedView(st') # reported THEN <<reported, ReportedView(st')>> ELSE <<>>
+
 \* Every step but a drop clears droppedIn (the two fair actions also say so
 \* themselves, so that their fairness conditions name a whole step).
 Next ==
-    \/ /\ \/ Create \/ Destroy
-          \/ \E tok \in Tokens : Connect(tok)
-          \/ RetryPending \/ WorkerComplete
-          \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
-          \/ ClientDisconnect \/ DisconnectFromError \/ Send
-          \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
-       /\ droppedIn' = {}
-    \/ DropSend
+    /\ \/ /\ \/ Create \/ Destroy
+             \/ \E tok \in Tokens : Connect(tok)
+             \/ RetryPending \/ WorkerComplete
+             \/ HandshakeStep \/ Deny \/ TokenExpires \/ Timer \/ ServerDisconnect
+             \/ ClientDisconnect \/ DisconnectFromError \/ Send
+             \/ \E s \in Sessions : ServerSend(s) \/ Deliver(s) \/ Lose(s)
+          /\ droppedIn' = {}
+       \/ DropSend
+    /\ StateReported
 
 Spec == Init /\ [][Next]_vars
-\* Fair delivery of the server's handshake replies, and the timers.
-Fairness == WF_vars(HandshakeStep) /\ WF_vars(Timer)
+\* Fair delivery of the server's handshake replies, and the timers; each fair
+\* step carries its report, so that the condition names a whole step.
+Fairness == WF_vars(HandshakeStep /\ StateReported) /\ WF_vars(Timer /\ StateReported)
 LiveSpec == Spec /\ Fairness
 
 TypeOK ==
@@ -306,6 +335,8 @@ TypeOK ==
     /\ owner \in {"none", "running", "stopping", "stopped"}
     /\ ownerGen \in Tags /\ pending \in BOOLEAN
     /\ refusedPending \in BOOLEAN /\ badReuse \in BOOLEAN
+    /\ reported \in States
+    /\ lastReport \in {<<>>} \cup (States \X States)
 
 \* A session is in progress exactly in the live states.
 CurrentOnlyWhileLive == (st \in Live) <=> (cur # 0)
@@ -353,6 +384,12 @@ ReasonKeptUntilNextConnection ==
     reason = IF st = "CONNECTED" THEN "NONE" ELSE lastEnd
 
 DestroyDisconnectsLive == ~silentEnd
+
+\* The callback reports exactly the public state's changes: the value it
+\* last reported is the state a poll reads, and a report is a change.
+CallbackReportsPublicState ==
+    /\ reported = st
+    /\ lastReport # <<>> => lastReport[1] # lastReport[2] /\ lastReport[2] = st
 
 \* A connect reaches CONNECTED or an error state, unless the application
 \* disconnects or destroys the client first.

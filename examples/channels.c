@@ -163,7 +163,7 @@ int main( void )
     if ( !client || client_status != ROCKETNET_STATUS_OK || rocketnet_client_connect( client, connect_token ) != ROCKETNET_STATUS_OK )
     {
         printf( "FAIL: client create/connect: %s\n", rocketnet_status_name( client_status ) );
-        rn_cli_client_stop_and_destroy( client );
+        rn_cli_client_stop_and_destroy( client, 1000.0 );
         rn_cli_server_stop_and_destroy( server );
 
         rn_cli_loopback_hub_destroy( hub );
@@ -273,7 +273,7 @@ int main( void )
 
     const int result = chat_received == NUM_CHAT && in_order ? 0 : 1;
 
-    rn_cli_client_stop_and_destroy( client );
+    rn_cli_client_stop_and_destroy( client, 1000.0 + rocketnet_time() - start );
     rn_cli_server_stop_and_destroy( server );
 
     rn_cli_loopback_hub_destroy( hub );

@@ -230,7 +230,7 @@ int main( int argc, char ** argv )
             printf( "FAIL: client %d create/connect: %s\n", i, rocketnet_status_name( token_status != ROCKETNET_STATUS_OK ? token_status : client_status ) );
             for ( int j = 0; j <= i; j++ )
             {
-                rn_cli_client_stop_and_destroy( clients[j] );
+                rn_cli_client_stop_and_destroy( clients[j], 1000.0 );
             }
 
             free( clients );
@@ -251,6 +251,7 @@ int main( int argc, char ** argv )
     uint32_t measure_from = UINT32_MAX;     // the first frame with every client connected
     uint64_t events_sent = 0, events_received = 0;
     double previous = rocketnet_time(), accumulator = 0.0;
+    double last_now = 1000.0;     // the last frame's game time, for the shutdown's updates
     const char * failure = NULL;
 
     for ( uint32_t frame = 0; !failure && ( measure_from == UINT32_MAX || frame < measure_from + frames ); frame++ )
@@ -270,6 +271,7 @@ int main( int argc, char ** argv )
         accumulator -= FRAME_DT;
 
         const double now = 1000.0 + frame * FRAME_DT;
+        last_now = now;
         const int measuring = frame >= measure_from;
         int connected = 0;
 
@@ -400,10 +402,14 @@ int main( int argc, char ** argv )
     }
 
     // clients run their frames before the server's, so the server reads a
-    // client's message the frame it was sent (0) and a client reads its state
-    // update no earlier than the next frame (1). Server to client passes
-    // through a background receive handoff, which can add frames under load:
-    // that cost is reported, not capped
+    // client's message no earlier than the frame it was sent (0) and a client
+    // reads its state update no earlier than the next frame (1). Both
+    // directions pass through a background handoff (the client never blocks
+    // on its send), which can add frames: that cost is reported, not capped.
+    // The wrong order holds each message one frame more, so it raises both
+    // causal minimums by one; telling it apart exactly would need same-frame
+    // delivery, which the handoff does not promise, so the check is the
+    // minimum and the printed latency shows the rest
 
     if ( !failure && ( to_server.count == 0 || to_client.count == 0 ) )
     {
@@ -425,9 +431,9 @@ int main( int argc, char ** argv )
         {
             failure = "an event did not arrive";
         }
-        else if ( to_server.min != order_frames || to_server.max != order_frames )
+        else if ( to_server.min < order_frames )
         {
-            failure = "client->server latency is not the frame order's";
+            failure = "a client message arrived before its causal minimum";
         }
         else if ( to_client.min < 1 + order_frames )
         {
@@ -437,7 +443,7 @@ int main( int argc, char ** argv )
 
     for ( int i = 0; i < num_clients; i++ )
     {
-        rn_cli_client_stop_and_destroy( clients[i] );
+        rn_cli_client_stop_and_destroy( clients[i], last_now );
     }
 
     free( clients );
