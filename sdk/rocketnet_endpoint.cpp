@@ -114,15 +114,17 @@ static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
 
     if ( endpoint->unreliable_ring_used == entries )
     {
-        // at most queue entries are live, so the pass frees at least half
+        // at most queue entries are live, so the pass frees at least half.
+        // Survivors close up from the head, each written at its own logical
+        // position: that is never ahead of the entry being read, so a wrapped
+        // ring's unread entries are never overwritten.
         uint32_t kept = 0;
         for ( uint32_t i = 0; i < endpoint->unreliable_ring_used; i++ )
         {
             const rn_unreliable_entry_t entry = *rn_unreliable_entry( endpoint, i );
             if ( rn_unreliable_entry_live( region, &entry ) )
-                region->unreliable_ring[kept++] = entry;
+                region->unreliable_ring[( endpoint->unreliable_ring_head + kept++ ) % entries] = entry;
         }
-        endpoint->unreliable_ring_head = 0;
         endpoint->unreliable_ring_used = kept;
     }
 
