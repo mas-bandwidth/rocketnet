@@ -163,6 +163,8 @@ void rocketnet_signature_verify_budget_record_failure( struct rocketnet_signatur
 // never pass. thread_local because the request path runs per receive
 // thread; like the rest of the dataplane, no shared state between queues.
 
+#if ROCKETNET_DEV
+
 thread_local uint64_t rocketnet_server_cookie_mac_calls;
 
 // Read the receive thread's tally in the TU that owns its TLS definition.
@@ -173,13 +175,17 @@ uint64_t rocketnet_server_cookie_mac_count()
     return rocketnet_server_cookie_mac_calls;
 }
 
+#endif // #if ROCKETNET_DEV
+
 static int rocketnet_server_request_cookie_mac( uint8_t * mac,
                                                 const struct rocketnet_address_t * from,
                                                 const uint8_t * connection_salt,
                                                 uint64_t cookie_expire_timestamp,
                                                 const uint8_t * cookie_key )
 {
+#if ROCKETNET_DEV
     rocketnet_server_cookie_mac_calls++;
+#endif // #if ROCKETNET_DEV
     return rocketnet_generate_cookie_mac( mac, from, connection_salt, cookie_expire_timestamp, cookie_key );
 }
 
