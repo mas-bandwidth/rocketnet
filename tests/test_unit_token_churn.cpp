@@ -829,6 +829,65 @@ static void test_claim_interior_churn_is_bounded()
     rocketnet_used_token_history_destroy( history );
 }
 
+// A compaction of a full, wrapped order ring keeps every live claim in order.
+// Capacity 4 gives an 8-entry ring. A, B, C, D fill the table (entries 0-3);
+// A is released and E takes its slot (entry 4); a full-table check drops A's
+// tombstone, so the head is entry 1. Four release-and-reclaim cycles of E fill
+// entries 5, 6, 7 and 0: the ring is full and wrapped, with E's live entry at
+// physical 0. D is released and F claims its slot, which compacts the ring.
+// Once every claim has expired, four fresh tokens must each take one; a live
+// claim the compaction lost (E) would never be found as the oldest again.
+static void test_claim_wrapped_compaction_keeps_live_claims()
+{
+    const int capacity = 4;
+    struct rocketnet_used_token_history_t * history = rocketnet_used_token_history_create( NULL, capacity );
+    check( history );
+
+    struct rocketnet_address_t holder, other;
+    tc_claim_addresses( &holder, &other );
+
+    uint8_t ids[10][ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+    for ( int i = 0; i < 10; ++i )
+    {
+        tc_claim_id( ids[i], (uint8_t) ( 0x70 + i ) );
+    }
+
+    for ( int i = 0; i < 4; ++i )
+    {
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, 1010.0, 1000.0 ) == 1 );
+    }
+
+    rocketnet_used_token_history_claim_release( history, ids[0], &holder );
+    check( rocketnet_used_token_history_claim_record( history, ids[4], &holder, 1010.0, 1000.0 ) == 1 );
+    check( rocketnet_used_token_history_claim_can_record( history, ids[6], 1000.0 ) == 0 );
+
+    for ( int cycle = 0; cycle < 4; ++cycle )
+    {
+        rocketnet_used_token_history_claim_release( history, ids[4], &holder );
+        check( rocketnet_used_token_history_claim_record( history, ids[4], &holder, 1010.0, 1000.0 ) == 1 );
+    }
+
+    rocketnet_used_token_history_claim_release( history, ids[3], &holder );
+    check( rocketnet_used_token_history_claim_record( history, ids[5], &holder, 1010.0, 1000.0 ) == 1 );
+
+    // B, C, E and F are live, and each still refuses another address
+
+    const int live[4] = { 1, 2, 4, 5 };
+    for ( int i = 0; i < 4; ++i )
+    {
+        check( rocketnet_used_token_history_claim_check( history, ids[live[i]], &other, 1001.0 ) == 0 );
+    }
+
+    // all four expire: four fresh tokens take all four slots
+
+    for ( int i = 6; i < 10; ++i )
+    {
+        check( rocketnet_used_token_history_claim_record( history, ids[i], &holder, 1021.0, 1011.0 ) == 1 );
+    }
+
+    rocketnet_used_token_history_destroy( history );
+}
+
 // A full table of live claims is refused in constant time however much it
 // has churned: the head of the insertion order is read, never the table.
 static void test_claim_full_refusal_is_constant_time()
@@ -889,5 +948,6 @@ static void test_claim_equal_deadlines_reuse_in_insertion_order()
 REGISTER_UNIT_TEST( test_claim_flat_index_full_key_collisions_are_bounded );
 REGISTER_UNIT_TEST( test_claim_interior_churn_is_bounded );
 REGISTER_UNIT_TEST( test_claim_full_refusal_is_constant_time );
+REGISTER_UNIT_TEST( test_claim_wrapped_compaction_keeps_live_claims );
 REGISTER_UNIT_TEST( test_claim_equal_deadlines_reuse_in_insertion_order );
 #endif // #if ROCKETNET_DEV
