@@ -44,6 +44,24 @@ int main( int argc, char ** argv )
         return 1;
     }
 
+    // the in-memory loopback transport keeps its endpoints in a hub the caller
+    // owns, sized here for one server and one client; it is destroyed after them
+
+    enum rocketnet_status_t hub_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, &hub_status );
+    if ( !hub || hub_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: loopback hub create: %s\n", rocketnet_status_name( hub_status ) );
+
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
+        return 1;
+    }
+
     const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
     struct rocketnet_server_config_t config;
     const enum rocketnet_status_t server_config_status = rocketnet_server_default_config( &config );
@@ -51,6 +69,7 @@ int main( int argc, char ** argv )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -63,6 +82,7 @@ int main( int argc, char ** argv )
     config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     config.transport = "loopback";
+    config.loopback_hub = hub;
 
     if ( environment[0] == '\0' )
     {
@@ -111,6 +131,7 @@ int main( int argc, char ** argv )
 
     rn_cli_server_stop_and_destroy( server );
 
+    rn_cli_loopback_hub_destroy( hub );
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {

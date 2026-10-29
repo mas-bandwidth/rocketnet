@@ -38,6 +38,7 @@
 #include "../sdk/rocketnet_message_object.h"
 #include "../sdk/rocketnet_send_budget.h"
 #include "../sdk/rocketnet_wire.h"
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -2468,6 +2469,7 @@ static void mo_free( void * context, void * p )
 
 static void test_message_objects_no_allocation_after_create()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, mo_malloc, mo_free ) == ROCKETNET_STATUS_OK );
 
@@ -2546,6 +2548,7 @@ static void test_message_objects_no_allocation_after_create()
         free( allocation );
     }
 
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
@@ -4266,6 +4269,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
     server_config.max_clients = 1;                                              // the new connection can only take slot 0
     memcpy( server_config.backend_public_key, world.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     world.server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world.server != NULL );
     rocketnet_server_public_key( world.server, world.server_public );
@@ -4276,6 +4280,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
         rocketnet_client_test_config_t client_config;
         rocketnet_client_default_config( &client_config );
         client_config.transport = "loopback";
+        client_config.loopback_hub = rocketnet_test_loopback_hub();
         client_config.step_driven = true;
         client_config.time_callback = reconnect_clock;
         world.clients[i] = rocketnet_client_create( NULL, &client_config, NULL );

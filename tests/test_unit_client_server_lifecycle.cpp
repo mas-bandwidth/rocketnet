@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #define LIFECYCLE_PROTOCOL 0x7A11C1C1E5EED001ULL
@@ -79,6 +80,7 @@ static void lifecycle_server_config( rocketnet_server_config_t * config, const l
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     if ( lifecycle_disconnect_packets_per_update > 0 )
     {
         config->disconnect_packets_per_update = lifecycle_disconnect_packets_per_update;
@@ -90,6 +92,7 @@ static void lifecycle_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->step_driven = true;
     config->time_callback = lifecycle_clock;
     lifecycle_queue_config( &config->reliable_messages_in_flight, &config->packets_in_flight, &config->send_queue_messages, &config->send_message_buffer_bytes );
@@ -3334,6 +3337,8 @@ static void lifecycle_assert_session_metrics_reset( const rocketnet_client_stats
 //      ACK receipt + multi-fragment reliable ordered traffic at disconnect)
 //   2. server_a again on slot 0 (tag 0xB1)
 //   3. a second server_b on slot 0 (tag 0xC1)
+// A loopback hub holds one server, so server_b takes the client's hub once
+// server_a has cleared the slot and been destroyed.
 // Proves that session-scoped client metrics and per-slot server stats reset at
 // each boundary, while zero stale messages or ACK receipts from an earlier
 // generation ever surface in a later generation.
@@ -3362,10 +3367,8 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     lifecycle_server_config( &server_config_b, &identity_b, 1 );
 
     rocketnet_server_t * server_a = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config_a, NULL );
-    rocketnet_server_t * server_b = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config_b, NULL );
-    check( server_a != NULL && server_b != NULL );
+    check( server_a != NULL );
     check( rocketnet_server_start( server_a ) == ROCKETNET_STATUS_OK );
-    check( rocketnet_server_start( server_b ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_test_config_t client_config;
     lifecycle_client_config( &client_config );
@@ -3600,6 +3603,23 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     rocketnet_client_update( client, now );
     check( rocketnet_client_disconnected( client ) );
 
+    // server_a drains the old teardown and clears slot 0, then leaves the hub
+
+    for ( int i = 0; i < 40 && rocketnet_server_client_connected( server_a, 0 ); ++i )
+    {
+        now += 0.01;
+        lifecycle_now = now;
+        rocketnet_server_update( server_a, now );
+        rocketnet_server_send_packets( server_a );
+    }
+
+    check( rocketnet_server_client_connected( server_a, 0 ) == 0 );
+    rn_test_server_stop_and_destroy( server_a );
+
+    rocketnet_server_t * server_b = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config_b, NULL );
+    check( server_b != NULL );
+    check( rocketnet_server_start( server_b ) == ROCKETNET_STATUS_OK );
+
     // --- Generation 3 on a different server_b (tag 0xC1) ---
 
     char token_b1[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
@@ -3612,7 +3632,7 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     const uint64_t cumulative_client_payloads_recv_base_3 = after_connect_3.payloads_received;
     const uint64_t cumulative_client_receipts_acked_base_3 = after_connect_3.receipts_acked;
 
-    // step both server_a (draining its old teardown) and server_b + client
+    // step server_b + client
 
     for ( int i = 0; i < 400 && ( rocketnet_client_state( client ) != ROCKETNET_CLIENT_STATE_CONNECTED || !rocketnet_server_client_connected( server_b, 0 ) ); ++i )
     {
@@ -3620,8 +3640,6 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
         lifecycle_now = now;
         rocketnet_client_update( client, now );
         rocketnet_client_send_packets( client );
-        rocketnet_server_update( server_a, now );
-        rocketnet_server_send_packets( server_a );
         rocketnet_server_update( server_b, now );
         rocketnet_server_send_packets( server_b );
     }
@@ -3629,7 +3647,6 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED );
     check( rocketnet_server_client_connected( server_b, 0 ) == 1 );
     check( rocketnet_server_client_id( server_b, 0 ) == 0x4101 );
-    check( rocketnet_server_client_connected( server_a, 0 ) == 0 );
 
     const rocketnet_server_client_stats_t slot_b_fresh = rn_server_client_stats_of( server_b, 0 );
     const rocketnet_server_stats_t server_b_base_3 = rn_server_stats_of( server_b );
@@ -3647,8 +3664,6 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
         lifecycle_now = now;
         rocketnet_client_update( client, now );
         rocketnet_client_send_packets( client );
-        rocketnet_server_update( server_a, now );
-        rocketnet_server_send_packets( server_a );
         rocketnet_server_update( server_b, now );
         rocketnet_server_send_packets( server_b );
 
@@ -3707,7 +3722,6 @@ static void test_client_reconnect_same_and_other_server_isolates_generations()
     check( client_gen3.receipts_acked - cumulative_client_receipts_acked_base_3 == 1 );
 
     rn_test_client_stop_and_destroy( client );
-    rn_test_server_stop_and_destroy( server_a );
     rn_test_server_stop_and_destroy( server_b );
 }
 REGISTER_UNIT_TEST( test_client_reconnect_same_and_other_server_isolates_generations );
@@ -3881,8 +3895,10 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
 
     lifecycle_pressure_allocator_t alloc_state;
     memset( &alloc_state, 0, sizeof( alloc_state ) );
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( rocketnet_init( &alloc_state, lifecycle_pressure_malloc, lifecycle_pressure_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_test_loopback_hub_context( &alloc_state );
 
     lifecycle_identity_t identity;
     lifecycle_identity( &identity );
@@ -4291,6 +4307,7 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     g_lifecycle_delayed_link = NULL;
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( alloc_state.active_allocations == 0 );
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );

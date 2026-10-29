@@ -24,6 +24,7 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_platform.h"
 #include "rocketnet_memory.h"
+#include "rocketnet_driver_loopback.h"
 
 #include <sodium.h>
 
@@ -289,6 +290,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     }
 
     transport->state_change_callback = config->state_change_callback;
+    transport->loopback_hub = config->loopback_hub;
 
     if ( testing )
     {
@@ -376,6 +378,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->handshake_deadline_seconds = config->handshake_deadline_seconds;
     transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
     transport->handshakes_per_update = config->handshakes_per_update;
+    transport->loopback_hub = config->loopback_hub;
     if ( read_env && !rn_dev_simulator_env( "server", transport ) )
     {
         if ( failure )
@@ -629,6 +632,8 @@ static constexpr size_t rn_client_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, message_resend_delay_min_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, message_resend_delay_max_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, reliable_message_timeout_ms ),
+    ROCKETNET_CLIENT_CONFIG_BYTES_1,
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, loopback_hub ),
 };
 static_assert( rn_client_config_field_ends[sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_client_config_t ), "client config field ends" );
 
@@ -662,6 +667,7 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, reliable_message_timeout_ms ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, disconnect_packets_per_update ),
     ROCKETNET_SERVER_CONFIG_BYTES_2,
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, loopback_hub ),
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -788,6 +794,29 @@ static enum rocketnet_status_t rn_client_config_read( rocketnet_client_config_t 
     return ROCKETNET_STATUS_OK;
 }
 
+// A list naming loopback needs a hub this library can use: present, and made
+// by this build (rocketnet_loopback_hub_check). A list that does not name
+// loopback never reads the hub.
+
+static enum rocketnet_status_t rn_loopback_hub_valid( const char * endpoint, const struct rocketnet_transport_ladder_t & ladder, const struct rocketnet_loopback_hub_t * hub )
+{
+    for ( int i = 0; i < ladder.num_candidates; i++ )
+    {
+        if ( ladder.candidates[i] != ROCKETNET_TRANSPORT_LOOPBACK )
+            continue;
+
+        const enum rocketnet_status_t status = rocketnet_loopback_hub_check( hub );
+        if ( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING )
+            rocketnet_error( "%s create refused: the transport list names loopback and loopback_hub is NULL; create a hub with rocketnet_loopback_hub_create and set loopback_hub", endpoint );
+        else if ( status != ROCKETNET_STATUS_OK )
+            rocketnet_error( "%s create refused: loopback_hub was made by another build of the library (magic, version or layout differ)", endpoint );
+
+        return status;
+    }
+
+    return ROCKETNET_STATUS_OK;
+}
+
 // The one validation behind create: the transport table's
 // ranges, the public link simulator's posture and the transport list's parse,
 // each the check connect runs on the same values
@@ -815,6 +844,10 @@ static enum rocketnet_status_t rn_client_config_valid( const struct rocketnet_cl
     struct rocketnet_transport_ladder_t ladder;
     if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder, false ) )
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
+
+    const enum rocketnet_status_t hub = rn_loopback_hub_valid( "client", ladder, transport->loopback_hub );
+    if ( hub != ROCKETNET_STATUS_OK )
+        return hub;
 
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }
@@ -1727,6 +1760,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->handshake_deadline_seconds = transport->handshake_deadline_seconds;
     config->disconnect_packets_per_update = transport->disconnect_packets_per_update;
     config->handshakes_per_update = transport->handshakes_per_update;
+    config->loopback_hub = transport->loopback_hub;
     config->transport = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
 
@@ -1863,6 +1897,10 @@ static enum rocketnet_status_t rn_server_config_valid( const struct rocketnet_se
     struct rocketnet_transport_ladder_t ladder;
     if ( !rocketnet_transport_ladder_parse( transport->transport, available, num_available, &ladder ) )
         return ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
+
+    const enum rocketnet_status_t hub = rn_loopback_hub_valid( "server", ladder, transport->loopback_hub );
+    if ( hub != ROCKETNET_STATUS_OK )
+        return hub;
 
     return rocketnet_message_validate_config( message ) != 0 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 }

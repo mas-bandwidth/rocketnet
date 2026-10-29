@@ -25,6 +25,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
 #include "rocketnet_client_io.h"
+#include "loopback_hub.h"
 
 #if ROCKETNET_DEV
 static double live_link_clock = 1000.0;
@@ -64,6 +65,7 @@ static bool live_link_pair_setup( struct live_link_pair_t * pair )
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     pair->server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
     check( pair->server != NULL );
     if ( !pair->server )
@@ -81,6 +83,7 @@ static bool live_link_pair_setup( struct live_link_pair_t * pair )
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = live_link_time_callback;
     pair->client = rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), pair->time );
@@ -728,6 +731,10 @@ REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
 
+// A revision-1 config is read only to its own end: the sized defaults and the
+// sized creates leave the guard bytes past it untouched. Revision 1 ends
+// before loopback_hub, so a revision-1 caller cannot name a hub and its
+// loopback create is refused; the hub in the current struct is never read.
 static void test_public_link_simulator_revision_1_prefixes()
 {
     struct alignas( alignof( rocketnet_client_transport_config_t ) ) client_revision_1_t
@@ -746,6 +753,7 @@ static void test_public_link_simulator_revision_1_prefixes()
     rocketnet_client_transport_config_t client_current;
     rocketnet_client_transport_default_config_current( &client_current );
     snprintf( client_current.transport, sizeof( client_current.transport ), "%s", "loopback" );
+    client_current.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( client.bytes, &client_current, sizeof( client.bytes ) );
 #if ROCKETNET_DEV
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
@@ -753,9 +761,7 @@ static void test_public_link_simulator_revision_1_prefixes()
     rocketnet_client_transport_t * client_transport = rocketnet_client_transport_create_sized(
         NULL, token, (const rocketnet_client_transport_config_t *) client.bytes,
         sizeof( client.bytes ), 1000.0 );
-    check( client_transport != NULL );
-
-    rn_test_client_transport_stop_and_destroy( client_transport );
+    check( client_transport == NULL );
 
     for ( size_t i = 0; i < sizeof( client.guard ); i++ )
     {
@@ -784,13 +790,12 @@ static void test_public_link_simulator_revision_1_prefixes()
     memset( server_current.server_public_key, 0xCD, 32 );
     memset( server_current.server_secret_key, 0xEF, 32 );
     snprintf( server_current.transport, sizeof( server_current.transport ), "%s", "loopback" );
+    server_current.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( server.bytes, &server_current, sizeof( server.bytes ) );
     rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_sized(
         NULL, "127.0.0.1:0", (const rocketnet_server_transport_config_t *) server.bytes,
         sizeof( server.bytes ) );
-    check( server_transport != NULL );
-
-    rn_test_server_transport_stop_and_destroy( server_transport );
+    check( server_transport == NULL );
 
     for ( size_t i = 0; i < sizeof( server.guard ); i++ )
     {

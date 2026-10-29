@@ -71,6 +71,7 @@
 
 #include <map>
 #include <vector>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -417,6 +418,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, identity.backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
     pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
@@ -444,6 +446,7 @@ static void secrets_wiped_pair_exchange( secrets_wiped_pair_t * pair, const uint
     rocketnet_client_test_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
     client_config.time_callback = secrets_wiped_clock;
     create_status = ROCKETNET_STATUS_OK;
@@ -562,6 +565,7 @@ static int secrets_wiped_secret_bytes( const secrets_wiped_watch_t * watch )
 #if ROCKETNET_DEV
 static void test_secrets_wiped_destroy_writes_only_keys()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -618,6 +622,7 @@ static void test_secrets_wiped_destroy_writes_only_keys()
     secrets_wiped_watched[0] = NULL;
     secrets_wiped_watched[1] = NULL;
     secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -656,6 +661,7 @@ static int secrets_wiped_user_data_live()
 #if ROCKETNET_DEV
 static void secrets_wiped_user_data_case( bool server_first )
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -707,6 +713,7 @@ static void secrets_wiped_user_data_case( bool server_first )
     const int freed = secrets_wiped_user_data_freed;
     secrets_wiped_user_data_armed = false;
     secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -721,6 +728,7 @@ static void secrets_wiped_user_data_case( bool server_first )
 // these are the destroys' own wipes, driven directly.
 static void test_secrets_wiped_user_data_at_slots_and_map_destroy()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -756,6 +764,7 @@ static void test_secrets_wiped_user_data_at_slots_and_map_destroy()
     const int freed = secrets_wiped_user_data_freed;
     secrets_wiped_user_data_armed = false;
     secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -795,6 +804,7 @@ static void secrets_wiped_plant_in_arena( rn_arena_t * arena )
 // planted message is still there at the free.
 static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -829,6 +839,7 @@ static void test_secrets_wiped_arena_destroy_owned_writes_nothing()
     secrets_wiped_copies = NULL;
     secrets_wiped_watched[0] = NULL;
     secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -876,8 +887,8 @@ static void test_secrets_wiped_arena_destroy_in_block_writes_nothing()
 // rocketnet_server_transport_memory_plan's total for one client, planned
 // with the portable transport because the plan has no row for the loopback
 // transport, the client's rocketnet_client_required_memory and its portable
-// transport's rocketnet_client_transport_required_memory, and the two
-// loopback endpoints' create-time queues; plus a stated 64 MiB margin for
+// transport's rocketnet_client_transport_required_memory, and the case's
+// loopback hub; plus a stated 64 MiB margin for
 // the process and the two block maps.
 #if ROCKETNET_DEV
 static long secrets_wiped_destroy_rss_bound_mb()
@@ -900,8 +911,8 @@ static long secrets_wiped_destroy_rss_bound_mb()
     if ( client_bytes == 0 || client_transport_bytes == 0 )
         return 0;
 
-    const uint64_t endpoint = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
-    return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + 2 * endpoint ), 64 );
+    const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
+    return suite_rss_bound_mb( 2 * ( plan.total_bytes + client_bytes + client_transport_bytes + hub ), 64 );
 }
 
 SUITE_CASE_RSS_BOUND( test_secrets_wiped_destroy_writes_only_keys, secrets_wiped_destroy_rss_bound_mb );
@@ -1089,6 +1100,7 @@ REGISTER_UNIT_TEST( test_secrets_wiped_token_block_on_refused_open );
 // are wiped at destroy; released slots were already wiped at release.
 static void test_secrets_wiped_slots_touch_only_live_user_data()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -1133,6 +1145,7 @@ static void test_secrets_wiped_slots_touch_only_live_user_data()
     secrets_wiped_copies = NULL;
     secrets_wiped_user_data_armed = false;
     secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
@@ -1384,6 +1397,7 @@ static int secrets_wiped_planted_message_live()
 
 static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, secrets_wiped_malloc, secrets_wiped_free ) == ROCKETNET_STATUS_OK );
@@ -1538,6 +1552,7 @@ static void test_secrets_wiped_on_disconnect_and_reconnect_without_arena_zeroing
     rocketnet_server_destroy( pair.server );
 
     secrets_wiped_sizes = NULL;
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );

@@ -186,13 +186,17 @@ int main( int argc, char ** argv )
     receive_cost_capture.packet_bytes = (int *) receive_cost_allocate( NULL, sizeof( int ) * (size_t) receive_cost_capture.capacity );
     receive_cost_capture.data = (uint8_t *) receive_cost_allocate( NULL, (size_t) ROCKETNET_RECEIVE_CEILING * (size_t) receive_cost_capture.capacity );
 
+    rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, num_clients, NULL );
+    CHECK( hub );
+
     rocketnet_server_transport_config_t config;
     rocketnet_server_transport_dev_config( &config );
     config.max_clients = num_clients;
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = hub;
 
     int status = 0;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, receive_cost_clock, &status );
     CHECK( server );
     CHECK( !rocketnet_server_transport_staged( server ) );
 
@@ -206,11 +210,12 @@ int main( int argc, char ** argv )
         CHECK( rocketnet_write_test_connect_token( address, (uint64_t) ( 1000 + i ), (uint64_t) time( NULL ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         rocketnet_client_transport_config_t client_config;
-        rocketnet_client_transport_default_config( &client_config );
+        rocketnet_client_transport_default_config_current( &client_config );
         snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+        client_config.loopback_hub = hub;
         client_config.step_driven = 1;
         client_config.time_callback = receive_cost_time_callback;
-        clients[(size_t) i] = rocketnet_client_transport_create( NULL, token, &client_config, receive_cost_clock );
+        clients[(size_t) i] = rocketnet_client_transport_create_current( NULL, token, &client_config, receive_cost_clock );
         CHECK( clients[(size_t) i] );
     }
 
@@ -349,6 +354,7 @@ int main( int argc, char ** argv )
     }
 
     rn_native_server_transport_stop_and_destroy( server );
+    CHECK( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
     rocketnet_term();
     free( receive_cost_arena.memory );
 

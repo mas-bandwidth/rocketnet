@@ -660,6 +660,7 @@ int main( int argc, char ** argv )
     double * srv_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
     double * cli_us = (double *) calloc( MAX_TICKS, sizeof( double ) );
     struct rocketnet_server_t * server = NULL;
+    struct rocketnet_loopback_hub_t * hub = NULL;
     int * index_client = NULL;
     CHECK( c2s && s2c && clients && srv_us && cli_us );
 
@@ -676,6 +677,14 @@ int main( int argc, char ** argv )
     inited = true;
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
+    // the in-memory loopback transport keeps its endpoints in a hub the
+    // caller owns, sized for one server and every client; another transport
+    // never reads it. It is destroyed after the server and the clients
+
+    enum rocketnet_status_t hub_status = ROCKETNET_STATUS_OK;
+    hub = rocketnet_loopback_hub_create( NULL, num_clients, &hub_status );
+    CHECK( hub && hub_status == ROCKETNET_STATUS_OK );
+
     struct rocketnet_server_config_t s_cfg;
     struct rocketnet_client_config_t c_cfg;
 
@@ -687,6 +696,7 @@ int main( int argc, char ** argv )
     CHECK( rocketnet_client_default_config( &c_cfg ) == ROCKETNET_STATUS_OK );
     s_cfg.max_clients = num_clients;
     s_cfg.transport = c_cfg.transport = transport_name;
+    s_cfg.loopback_hub = c_cfg.loopback_hub = hub;
     s_cfg.per_client_send_kbps = c_cfg.send_kbps = 100000;
     s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.max_fragmented_messages = c_cfg.max_fragmented_messages = 2;
@@ -1093,6 +1103,9 @@ int main( int argc, char ** argv )
     soak_shutdown( clients, num_clients, server );
     server = NULL;
 
+    CHECK( rocketnet_loopback_hub_destroy( hub ) == ROCKETNET_STATUS_OK );
+    hub = NULL;
+
     const enum rocketnet_status_t term_status = rocketnet_term();
 
     inited = false;
@@ -1139,6 +1152,11 @@ cleanup:
     if ( !g_life.shut_down )
     {
         soak_shutdown( clients, num_clients, server );
+    }
+
+    if ( hub && rocketnet_loopback_hub_destroy( hub ) != ROCKETNET_STATUS_OK )
+    {
+        exit_code = 1;
     }
 
     if ( inited && rocketnet_term() != ROCKETNET_STATUS_OK )

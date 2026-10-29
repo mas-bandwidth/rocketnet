@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <string>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -282,6 +283,7 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, backend_public, sizeof( backend_public ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
@@ -289,6 +291,7 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
     rocketnet_client_test_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
     client_config.time_callback = message_limit_clock;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, NULL );

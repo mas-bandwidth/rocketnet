@@ -11,6 +11,7 @@
 #include "suite_runner.h"
 #include "test_env_source.h"
 #include "test_unit_registry.h"
+#include "loopback_hub.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -251,6 +252,10 @@ static int rocketnet_unit_worker( const char * name )
         result = rocketnet_unit_run_named( name );
     }
     if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
+    {
+        result = 1;
+    }
+    if ( !rocketnet_test_loopback_hub_release() )
     {
         result = 1;
     }

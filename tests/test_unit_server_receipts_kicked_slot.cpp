@@ -22,6 +22,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #define RECEIPTS_KICKED_PROTOCOL 0x5245434B49434B01ULL
@@ -55,6 +56,7 @@ static rocketnet_server_t * receipts_kicked_server_create( receipts_kicked_ident
     config.max_clients = 2;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     if ( short_reliable_timeout )
     {
         // a reliable send the client never acknowledges ends its
@@ -76,6 +78,7 @@ static rocketnet_client_t * receipts_kicked_client_create()
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = true;
     config.time_callback = receipts_kicked_clock;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );

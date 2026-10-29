@@ -22,6 +22,9 @@
 // functional/harness.inc: the token stamp from the clock that judges it
 uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
 
+#include "../sdk/rocketnet_config.h"
+#include "../tests/loopback_hub.h"
+
 #if defined( _WIN32 )
 #include <stdlib.h>
 #else
@@ -119,8 +122,7 @@ static long rocketnet_server_receive_backlog_rss_bound_mb()
     const uint64_t server_bytes = rocketnet_server_transport_required_memory( &server_config, "portable" );
     const uint64_t client_bytes = rocketnet_client_transport_required_memory( &client_config, "portable" );
 
-    const uint64_t queues = uint64_t( server_receive_backlog_max_clients + 1 ) *
-                            rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS );
+    const uint64_t queues = rocketnet_loopback_hub_bytes( server_receive_backlog_max_clients );
     if ( !server_bytes || !client_bytes )
         return 0; // A missing plan falls back to the strict default bound.
 
@@ -160,9 +162,11 @@ void rocketnet_test_server_async_delivery_with_max_clients()
 
     server_config.game_clock_epoch = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    rocketnet_test_loopback_hub_clients( max_clients );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
+    struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
     server_receive_backlog_require( server != NULL );
     server_receive_backlog_require( status == ROCKETNET_STATUS_OK );
 
@@ -170,9 +174,10 @@ void rocketnet_test_server_async_delivery_with_max_clients()
     snprintf( server_address, sizeof( server_address ), "127.0.0.1:%d", (int) rocketnet_server_transport_port( server ) );
 
     struct rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     client_config.game_clock_epoch = server_config.game_clock_epoch;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     std::vector<struct rocketnet_client_transport_t *> clients;
     clients.reserve( max_clients );
@@ -181,7 +186,7 @@ void rocketnet_test_server_async_delivery_with_max_clients()
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
         server_receive_backlog_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
-        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, time );
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current( NULL, token, &client_config, time );
         server_receive_backlog_require( client != NULL );
         clients.push_back( client );
     }

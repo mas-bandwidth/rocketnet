@@ -181,6 +181,8 @@ REGISTER_UNIT_TEST( test_fake_client_io_table_opens_with_wait_and_wake );
 
 #include <stdio.h>
 #include <stdlib.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
@@ -265,16 +267,17 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     double time = 1000.0;
 
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_server_transport_default_config_current( &server_config );
     server_config.protocol_id = fake_disconnect_protocol_id;
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
-    rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
+    rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, time, &status );
     rocketnet_unit_check( server != NULL && status == ROCKETNET_STATUS_OK );
     rocketnet_server_transport_set_test_timestamp( server, 1000 );
 
@@ -296,8 +299,9 @@ static void test_fake_client_disconnect_burst_keeps_server_address()
     rocketnet_unit_check( rocketnet_client_transport_uses_io_thread( &operations ) );
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
 
     rocketnet_client_transport_t * client = rocketnet_client_transport_create_step_driven_at_timestamp(
         NULL, token, &client_config, time, 1000, &operations, NULL );

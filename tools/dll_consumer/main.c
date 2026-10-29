@@ -157,7 +157,7 @@ int main( void )
     CHECK( rocketnet_version() == ROCKETNET_VERSION );
     CHECK( ROCKETNET_VERSION == ROCKETNET_VERSION_MAJOR * 10000 + ROCKETNET_VERSION_MINOR * 100 + ROCKETNET_VERSION_PATCH );
 
-    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO; i-- )
+    for ( int i = ROCKETNET_STATUS_OK; i >= ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; i-- )
     {
         CHECK( rocketnet_status_name( (enum rocketnet_status_t) i ) != NULL );
     }

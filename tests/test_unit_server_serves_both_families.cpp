@@ -38,6 +38,7 @@
 #define check rocketnet_unit_check
 #define ROCKETNET_COUNTERS_CHECK rocketnet_unit_check
 #include "counters_expect.h"
+#include "loopback_hub.h"
 
 #define BOTH_FAMILIES_PROTOCOL 0xB071FA11A11E5001ULL
 
@@ -81,6 +82,7 @@ static void both_families_fill( rocketnet_server_config_t * config, const both_f
     config->max_clients = max_clients;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
 #if ROCKETNET_DEV
@@ -88,6 +90,7 @@ static void both_families_client_config( rocketnet_client_test_config_t * config
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->step_driven = true;
     config->time_callback = both_families_clock;
 }

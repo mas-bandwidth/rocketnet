@@ -13,8 +13,9 @@ Keep each object and its callback/allocator context alive until destroy returns.
 
 ## Quick start
 
-This example creates both endpoints without opening a socket,
-checks the create status, and tears them down cleanly:
+This example creates both endpoints without opening a socket, connected
+through a loopback hub the caller owns, checks the create status, and tears
+them down cleanly:
 
 <!-- check_readme:example:begin -->
 ```c
@@ -25,13 +26,20 @@ int main( void )
     if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
         return 1;
 
+    /* The loopback transport's endpoints meet in a hub: one server, one client. */
+    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, NULL );
+    if ( !hub )
+        return 1;
+
     struct rocketnet_server_config_t server_config;
     struct rocketnet_client_config_t client_config;
     if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK ||
          rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
         return 1;
     server_config.transport = "loopback";
+    server_config.loopback_hub = hub;
     client_config.transport = "loopback";
+    client_config.loopback_hub = hub;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
     struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
@@ -47,6 +55,8 @@ int main( void )
         return 1;
     rocketnet_client_destroy( client );
     rocketnet_server_destroy( server );
+    if ( rocketnet_loopback_hub_destroy( hub ) != ROCKETNET_STATUS_OK )
+        return 1;
     return rocketnet_term() == ROCKETNET_STATUS_OK ? 0 : 1;
 }
 ```

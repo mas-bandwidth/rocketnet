@@ -282,7 +282,7 @@ What each step requires:
 
 [examples/game_loop.c](../examples/game_loop.c) is the whole loop at scale: a
 server and up to 1000 clients over `loopback`, the steps numbered (1) to (5)
-on lines 200 to 237, and `--wrong-order` to show the frame of latency an early
+on lines 282 to 332, and `--wrong-order` to show the frame of latency an early
 send costs. [USAGE.md, "Frame loop"](../USAGE.md#frame-loop),
 ["Sending messages"](../USAGE.md#sending-messages),
 ["Receiving messages"](../USAGE.md#receiving-messages) and
@@ -304,7 +304,7 @@ common split:
 The channel is the ordering scope. Ordered and sequenced modes hold order only
 within their channel, so a lost chat message holds back later chat on its
 channel and never the positions on another. From
-[examples/channels.c](../examples/channels.c), lines 205 to 239, with the
+[examples/channels.c](../examples/channels.c), lines 231 to 265, with the
 canonical non-`NULL` `start_message` guards:
 
 ```c

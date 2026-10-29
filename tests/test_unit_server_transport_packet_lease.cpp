@@ -22,6 +22,8 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -110,7 +112,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     check( rocketnet_generate_server_keypair( world->server_public, world->server_secret ) == ROCKETNET_STATUS_OK );
 
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_server_transport_default_config_current( &server_config );
     server_config.protocol_id = LEASE_TEST_PROTOCOL;
     server_config.max_clients = 2;
     server_config.game_clock_epoch = LEASE_TEST_EPOCH;
@@ -119,9 +121,10 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     memcpy( server_config.server_public_key, world->server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, world->server_secret, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = ROCKETNET_STATUS_OK;
-    world->server = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, world->time, &status );
+    world->server = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, world->time, &status );
     check( world->server != NULL );
     check( status == ROCKETNET_STATUS_OK );
 
@@ -139,9 +142,10 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     check( loopback_def != NULL && loopback_def->backend != NULL && loopback_def->backend->client != NULL );
 
     rocketnet_client_transport_config_t client_config;
-    rocketnet_client_transport_default_config( &client_config );
+    rocketnet_client_transport_default_config_current( &client_config );
     memset( client_config.packet_filter, 0x5A, sizeof( client_config.packet_filter ) );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     rocketnet_client_transport_io_config_t io_config = { "loopback", &client_config, NULL };
     rocketnet_address_t client_bind;
     check( rocketnet_address_parse( &client_bind, "127.0.0.1:0" ) );

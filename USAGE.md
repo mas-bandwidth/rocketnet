@@ -202,7 +202,11 @@ that is no transport anywhere is a typo and fails loudly. When every name in a
 list is skipped for this platform or endpoint, the endpoint falls back to its
 `auto` order with a warning. The accessor on each
 end reports the transport that won. See [TRANSPORTS.md](TRANSPORTS.md) for the
-full registry table and privilege requirements.
+full registry table and privilege requirements. `loopback` is pin-only and
+also needs the config's `loopback_hub`: a hub from
+`rocketnet_loopback_hub_create`, shared by the server and its clients and
+destroyed after them; create refuses a list naming `loopback` with a `NULL`
+hub (`LOOPBACK_HUB_MISSING`).
 
 Every transport serves IPv4, IPv6, or both: `rocketnet_server_create` takes an
 IPv4 address and an IPv6 address, either NULL but not both. With both, on the

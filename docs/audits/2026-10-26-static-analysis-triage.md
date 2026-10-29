@@ -138,6 +138,12 @@ to appease an analyzer.
 | `rocketnet_tests.cpp` `clang-analyzer-security.FloatLoopCounter` `03238a92bb2cdcfc` | Synthetic-clock test loop; the floating bound is a time deadline, not an iteration count. |
 | same file/check `2d5362edbbd2b319` | Same bounded simulated-time pattern. |
 | same file/check `3f4f072b19b30f81` | Same bounded simulated-time pattern. |
+| `rocketnet_api.cpp` `bugprone-sizeof-expression` `1fbaa9740626a1a7` | `RN_PUBLIC_FIELD_END` measures the `loopback_hub` member itself: the field ends at its offset plus the pointer's size, the intended size of a pointer member. |
+| same file/check `f138bd42500c79b5` | The other config's `loopback_hub` row of the same field-end table. |
+| `rocketnet_config.cpp` `bugprone-sizeof-expression` `3b3ff0baf682cfb6` | `ROCKETNET_CONFIG_LAYOUT_FIELD` asserts that the public and table `loopback_hub` members have equal size; both are the same pointer type. |
+| same file/check `fe2f43fd884d7ca0` | The other config's `loopback_hub` layout assertion. |
+| `rocketnet_tests.cpp` `bugprone-sizeof-expression` `91e27749171958c5` | `RN_TEST_CONFIG_FIELD` records each public config member's offset and size for the layout audit; a pointer member's size is the pointer's. |
+| same file/check `f18a1a07fe6b6bf7` | The other config's `loopback_hub` row of the same audit table. |
 | same file/check `4f8411d8cac2b264` | Same bounded simulated-time pattern. |
 | same file/check `6252e33596eeb478` | Same bounded simulated-time pattern. |
 | same file/check `7818c863b1f21bf8` | Same bounded simulated-time pattern. |

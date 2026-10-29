@@ -43,6 +43,24 @@ int main( void )
         return 1;
     }
 
+    // the in-memory loopback transport keeps its endpoints in a hub the caller
+    // owns, sized here for one server and one client; it is destroyed after them
+
+    enum rocketnet_status_t hub_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, &hub_status );
+    if ( !hub || hub_status != ROCKETNET_STATUS_OK )
+    {
+        printf( "FAIL: loopback hub create: %s\n", rocketnet_status_name( hub_status ) );
+
+        const enum rocketnet_status_t term_status = rocketnet_term();
+        if ( term_status != ROCKETNET_STATUS_OK )
+        {
+            printf( "FAIL: term: %s\n", rocketnet_status_name( term_status ) );
+        }
+
+        return 1;
+    }
+
     // the 1 MiB defaults hold 200 KB already; both ends state the size they need
 
     const uint8_t backend_public_key[] = ROCKETNET_DEV_BACKEND_PUBLIC_KEY;
@@ -52,6 +70,7 @@ int main( void )
     {
         printf( "FAIL: server default config: %s\n", rocketnet_status_name( server_config_status ) );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -64,6 +83,7 @@ int main( void )
     server_config.protocol_id = EXAMPLE_PROTOCOL_ID;
     memcpy( server_config.backend_public_key, backend_public_key, sizeof( backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = hub;
     server_config.max_message_bytes = LIMIT_BYTES;
     server_config.receive_message_buffer_bytes = LIMIT_BYTES;
 
@@ -79,6 +99,7 @@ int main( void )
         printf( "FAIL: server start: %s\n", rocketnet_status_name( server_status ) );
         rn_cli_server_stop_and_destroy( server );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -96,6 +117,7 @@ int main( void )
         printf( "FAIL: server ipv4 address\n" );
         rn_cli_server_stop_and_destroy( server );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -113,6 +135,7 @@ int main( void )
         printf( "FAIL: connect token: %s\n", rocketnet_status_name( token_status ) );
         rn_cli_server_stop_and_destroy( server );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -129,6 +152,7 @@ int main( void )
         printf( "FAIL: client default config: %s\n", rocketnet_status_name( client_config_status ) );
         rn_cli_server_stop_and_destroy( server );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -139,6 +163,7 @@ int main( void )
     }
 
     client_config.transport = "loopback";
+    client_config.loopback_hub = hub;
     client_config.max_message_bytes = LIMIT_BYTES;
     client_config.receive_message_buffer_bytes = LIMIT_BYTES;
 
@@ -150,6 +175,7 @@ int main( void )
         rn_cli_client_stop_and_destroy( client );
         rn_cli_server_stop_and_destroy( server );
 
+        rn_cli_loopback_hub_destroy( hub );
         const enum rocketnet_status_t term_status = rocketnet_term();
         if ( term_status != ROCKETNET_STATUS_OK )
         {
@@ -171,6 +197,7 @@ int main( void )
             rn_cli_client_stop_and_destroy( client );
             rn_cli_server_stop_and_destroy( server );
 
+            rn_cli_loopback_hub_destroy( hub );
             const enum rocketnet_status_t term_status = rocketnet_term();
             if ( term_status != ROCKETNET_STATUS_OK )
             {
@@ -202,6 +229,7 @@ int main( void )
                     rn_cli_client_stop_and_destroy( client );
                     rn_cli_server_stop_and_destroy( server );
 
+                    rn_cli_loopback_hub_destroy( hub );
                     const enum rocketnet_status_t term_status = rocketnet_term();
                     if ( term_status != ROCKETNET_STATUS_OK )
                     {
@@ -261,6 +289,7 @@ int main( void )
     rn_cli_client_stop_and_destroy( client );
     rn_cli_server_stop_and_destroy( server );
 
+    rn_cli_loopback_hub_destroy( hub );
     const enum rocketnet_status_t term_status = rocketnet_term();
     if ( term_status != ROCKETNET_STATUS_OK )
     {

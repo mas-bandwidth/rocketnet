@@ -22,6 +22,7 @@
 #include "../sdk/rocketnet_base64.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_config.h"
+#include "loopback_hub.h"
 
 #define PUBLIC_STEP_PROTOCOL 0x51E7D41A92B3C6D8ULL
 
@@ -61,6 +62,7 @@ static void public_step_server_config( rocketnet_server_config_t * config, const
     config->max_clients = 1;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
 static void public_step_token( uint16_t port, const uint8_t * server_public, const public_step_identity_t * identity, uint8_t * token )
@@ -93,6 +95,7 @@ static void public_step_client_config( rocketnet_client_test_config_t * config )
 {
     rocketnet_client_default_config( config );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->step_driven = true;
     config->time_callback = public_step_clock;
 }

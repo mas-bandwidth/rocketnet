@@ -76,7 +76,7 @@ or static in its sources); a game does not call them.
 Status codes follow these rules:
 
 1. `ROCKETNET_STATUS_OK = 0` is the sole success value.
-2. Every failure code is negative, dense from `-1` to `-31`. `status < 0`
+2. Every failure code is negative, dense from `-1` to `-34`. `status < 0`
    means the call failed.
 3. There is no count value. `rocketnet_status_name` maps each code by value.
    It returns a static ASCII identifier, for example `"INVALID_CONNECT_TOKEN"`,
@@ -130,7 +130,12 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION    = -30,
 
     // a connect token naming a server address with port 0
-    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO            = -31
+    ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO            = -31,
+
+    // the loopback hub (rocketnet_loopback_hub_create, the loopback transport)
+    ROCKETNET_STATUS_LOOPBACK_HUB_MISSING               = -32,
+    ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH              = -33,
+    ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE                = -34
 };
 ```
 
@@ -142,7 +147,8 @@ calls return a handle or `NULL`, write the code through the status
 out-parameter, and log one `ERROR` line with the reason: `NOT_INITIALIZED`,
 `CONFIG_NOT_INITIALIZED`, `INVALID_ARGUMENT`, `CONFIG_ENV_INVALID`,
 `CONFIG_OUT_OF_RANGE`, `MEMORY_BUDGET_EXCEEDED`, `INVALID_TRANSPORT_LIST`,
-`INVALID_ADDRESS` (server) or `OUT_OF_MEMORY`. Client connect and server start
+`LOOPBACK_HUB_MISSING`, `LOOPBACK_HUB_MISMATCH`, `INVALID_ADDRESS` (server) or
+`OUT_OF_MEMORY`. Client connect and server start
 return the token and transport codes: `CLIENT_NOT_DISCONNECTED`,
 `INVALID_CONNECT_TOKEN`, `CONNECT_TOKEN_EXPIRED`, `CONNECT_TOKEN_PORT_ZERO`, `SERVER_NOT_STOPPED`,
 `TRANSPORT_LADDER_EXHAUSTED`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_NOT_BUILT`, `MISSING_KEYS`,
@@ -166,12 +172,20 @@ libxdp (`docs/LINUX.md`). Its string is
 (`ROCKETNET_DEV=0`) refuses the published test packet filter at client and
 server create. `ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION` is -30: a
 production client refuses, at connect, a token sealed to the published
-development server key. `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` is -31, the
-last code: every client refuses, at connect, a token that names a server
-address with port 0, on every platform. No server can be reached at port 0:
-macOS refuses the socket connect, and Linux and Windows accept it and the
-packets reach no server. The client stays `DISCONNECTED`, and connect logs
-one `ERROR` line.
+development server key. `ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO` is -31:
+every client refuses, at connect, a token that names a server address with
+port 0, on every platform. No server can be reached at port 0: macOS refuses
+the socket connect, and Linux and Windows accept it and the packets reach no
+server. The client stays `DISCONNECTED`, and connect logs one `ERROR` line.
+`ROCKETNET_STATUS_LOOPBACK_HUB_MISSING` is -32: client and server create
+refuse a transport list that names `loopback` when the config's
+`loopback_hub` is `NULL`. `ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH` is -33:
+create and `rocketnet_loopback_hub_destroy` refuse a hub whose magic, version
+or layout id differ from this library's, one made by another build.
+`ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE` is -34, the last code:
+`rocketnet_loopback_hub_destroy` refuses while a server or client endpoint is
+registered with the hub, keeps the hub, logs one `ERROR` line and counts API
+misuse.
 
 ### 2.2 Reporting
 

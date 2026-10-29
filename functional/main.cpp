@@ -18,6 +18,7 @@
 #include "../tests/plan_rss.h"
 #include "../tests/suite_runner.h"
 #include "../tests/portable_crt.h"
+#include "../tests/loopback_hub.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -69,7 +70,9 @@ static int rocketnet_functional_worker( const char * name )
 
     rocketnet_functional_prepare();
 
-    const int result = rocketnet_functional_run_named( name );
+    int result = rocketnet_functional_run_named( name );
+    if ( !rocketnet_test_loopback_hub_release() )
+        result = 1;
 
     // a case that ended the library or re-initialised it with a context of
     // its own installed its own allocator, which may hold that context: it is
@@ -148,9 +151,9 @@ static int rocketnet_functional_test_group( const char * name )
 // but an allocator may keep its freed pages resident: macOS does (a 994 MiB
 // peak with both runs, 782 MiB with the full-capacity run alone, while Linux
 // measures 772 MiB either way), so both plans count. Loopback has no plan
-// row: the portable plan stands in for its common storage and each server's
-// loopback queue is added, as the other loopback full-capacity cases do,
-// plus 32 MiB for the process. The servers it builds after these have at
+// row: the portable plan stands in for its common storage, and the process's
+// one loopback hub (tests/loopback_hub.h) is added once, as the other
+// loopback full-capacity cases do, plus 32 MiB for the process. The servers it builds after these have at
 // most 12 clients and reuse that memory.
 
 static long rocketnet_transport_control_rss_bound_mb()
@@ -168,10 +171,13 @@ static long rocketnet_transport_control_rss_bound_mb()
         if ( !rocketnet_server_transport_memory_plan( &config, "portable", plan ) )
             return 0; // a refused plan keeps the strict suite-wide bound
 
-        const uint64_t queue = rocketnet_loopback_queue_bytes( ROCKETNET_LOOPBACK_QUEUE_PACKETS ) + rocketnet_allocation_overhead();
-        if ( !rocketnet_memory_add( planned, 1, plan.total_bytes ) || !rocketnet_memory_add( planned, 1, queue ) )
+        if ( !rocketnet_memory_add( planned, 1, plan.total_bytes ) )
             return 0;
     }
+
+    const uint64_t hub = rocketnet_loopback_hub_bytes( ROCKETNET_TEST_LOOPBACK_HUB_CLIENTS ) + rocketnet_allocation_overhead();
+    if ( !rocketnet_memory_add( planned, 1, hub ) )
+        return 0;
 
     const long bound = suite_rss_bound_mb( planned, 32 );
     char verbose[256];

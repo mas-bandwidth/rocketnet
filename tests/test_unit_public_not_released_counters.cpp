@@ -33,6 +33,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 // the pair is built over the in-memory loopback transport, which this test names in
 // the server transport config; the caller's ROCKETNET_SERVER_TRANSPORT pin wins
@@ -101,13 +103,14 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     check( rocketnet_generate_server_keypair( server_public_key, server_secret_key ) == ROCKETNET_STATUS_OK );
 
     struct rocketnet_server_transport_config_t server_transport_config;
-    rocketnet_server_transport_default_config( &server_transport_config );
+    rocketnet_server_transport_default_config_current( &server_transport_config );
     server_transport_config.protocol_id = protocol_id;
     server_transport_config.max_clients = 1;
     memcpy( server_transport_config.backend_public_key, backend_public_key, sizeof( server_transport_config.backend_public_key ) );
     memcpy( server_transport_config.server_public_key, server_public_key, sizeof( server_transport_config.server_public_key ) );
     memcpy( server_transport_config.server_secret_key, server_secret_key, sizeof( server_transport_config.server_secret_key ) );
     snprintf( server_transport_config.transport, sizeof( server_transport_config.transport ), "%s", "loopback" );
+    server_transport_config.loopback_hub = rocketnet_test_loopback_hub();
 
 #if ROCKETNET_DEV
     char saved_pin[256];
@@ -117,7 +120,7 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
 
     int status = -1;
     struct rocketnet_server_transport_t * server_transport =
-        rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_transport_config, pair->time, &status );
+        rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_transport_config, pair->time, &status );
 
 #if ROCKETNET_DEV
     if ( pinned )
@@ -165,9 +168,10 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     public_not_released_client_operations_init();
 
     struct rocketnet_client_transport_config_t client_transport_config;
-    rocketnet_client_transport_default_config( &client_transport_config );
+    rocketnet_client_transport_default_config_current( &client_transport_config );
     client_transport_config.time_callback = public_not_released_time_callback;
-    struct rocketnet_client_transport_t * client_transport = rocketnet_client_transport_create_step_driven(
+    client_transport_config.loopback_hub = rocketnet_test_loopback_hub();
+    struct rocketnet_client_transport_t * client_transport = rocketnet_client_transport_create_step_driven_current(
         NULL, token, &client_transport_config, 0.0, &public_not_released_client_operations, NULL );
     check( client_transport != NULL );
     if ( !client_transport )

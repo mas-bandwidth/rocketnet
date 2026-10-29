@@ -76,7 +76,13 @@ them.
    caller's prefix never reaches it, so the field takes its default (rule 4).
 3. **A field added later has a default that equals the old behaviour.** A
    caller that never sets it, and a caller compiled before it existed, both
-   get exactly the behaviour of the revision before.
+   get exactly the behaviour of the revision before. One field is a
+   deliberate exception: `loopback_hub` (both configs) defaults to `NULL`,
+   and a list naming `loopback` with a `NULL` hub is refused with
+   `ROCKETNET_STATUS_LOOPBACK_HUB_MISSING`. The loopback transport no longer
+   keeps a process-wide endpoint table to fall back on, so a caller compiled
+   before the field must set it to use loopback; every other transport is
+   unchanged for that caller.
 
 The steps for adding a field:
 

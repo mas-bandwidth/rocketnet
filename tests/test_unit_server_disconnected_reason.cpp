@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 #define SERVER_DISCONNECTED_PROTOCOL 0x5345525644495301ULL
@@ -61,6 +62,7 @@ static rocketnet_server_t * server_disconnected_server_create( server_disconnect
     config.max_clients = 2;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
     check( server != NULL );
 
@@ -74,6 +76,7 @@ static rocketnet_client_t * server_disconnected_client_create()
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = true;
     config.time_callback = server_disconnected_clock;
     rocketnet_client_t * client = rocketnet_client_create( NULL, &config, NULL );

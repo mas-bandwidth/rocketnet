@@ -25,6 +25,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -391,6 +392,7 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
     server_config.max_clients = 1;
     memcpy( server_config.backend_public_key, identity->backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     pair->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( pair->server != NULL );
     check( rocketnet_server_start( pair->server ) == ROCKETNET_STATUS_OK );
@@ -412,6 +414,7 @@ static void capture_pair_create( capture_pair_t * pair, capture_identity_t * ide
     rocketnet_client_test_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = true;
     client_config.time_callback = capture_clock;
     pair->client = rocketnet_client_create( NULL, &client_config, NULL );

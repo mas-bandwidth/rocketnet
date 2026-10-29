@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -87,6 +88,7 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
     memcpy( server_config.server_public_key, server_public_key, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     server_config.simulated_latency_ms = server_pattern.latency_ms;
     server_config.simulated_drop_every_nth = server_pattern.drop_every_nth;
     server_config.simulated_reverse_window = server_pattern.reverse_window;
@@ -108,6 +110,7 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = loopback_loss_reorder_time_callback;
     client_config.simulated_latency_ms = client_pattern.latency_ms;
@@ -693,6 +696,7 @@ static void test_loopback_transport_loss_reorder_production_refusal()
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
     loopback_signed_token( token );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.simulated_reverse_window = 4;
     loopback_error_begin( "simulated_reverse_window" );
     check( rocketnet_client_transport_create_sized( NULL, token, &client_config, sizeof( client_config ), 1000.0 ) == NULL );

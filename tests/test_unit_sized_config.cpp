@@ -35,6 +35,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -74,7 +75,7 @@ static void test_sized_config_accepts_every_known_size()
     sized_config_check_table( message_known_bytes, COUNT( message_known_bytes ), sizeof( struct rocketnet_message_config_t ) );
 
     // Sized defaults match the legacy unsized defaults through their legacy
-    // prefix. The current server revision uses the current internal defaults,
+    // prefix. The server revisions from 4 on use the current internal defaults,
     // including the nonzero appended disconnect allowance.
 
     for ( int i = 0; i < COUNT( client_known_bytes ); i++ )
@@ -93,7 +94,7 @@ static void test_sized_config_accepts_every_known_size()
         struct rocketnet_server_transport_config_t unsized, sized;
         memset( &unsized, 0xAB, sizeof( unsized ) );
         memset( &sized, 0xAB, sizeof( sized ) );
-        if ( server_known_bytes[i] == ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 )
+        if ( server_known_bytes[i] >= ROCKETNET_SERVER_TRANSPORT_CONFIG_BYTES_4 )
             rocketnet_server_transport_default_config_current( &unsized );
         else
             rocketnet_server_transport_default_config( &unsized );
@@ -396,6 +397,7 @@ do                                                                              
     sized_config_dev_server_config( &c );                                                                       \
     c.max_clients = 4;                                                                                          \
     c.transport = "loopback";                                                                                   \
+    c.loopback_hub = rocketnet_test_loopback_hub();                                                             \
     mutation;                                                                                                   \
     enum rocketnet_status_t made_status = ROCKETNET_TEST_STATUS_UNSET;                                               \
     struct rocketnet_server_t * made = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &c, &made_status );        \
@@ -411,6 +413,7 @@ static void test_sized_config_create_refuses_before_init()
     void ( *saved_assert )( const char *, const char *, const char *, int ) = rn_assert_function;
     rocketnet_assert_function( sized_config_quiet_assert );
 
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
     check( !rocketnet_library_initialized() );
 
@@ -611,7 +614,9 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
 
     client_config.num_channels = 0;
     client_config.reliable_message_timeout_ms = -1;
-    client_config.transport = "loopback";
+
+    // the older caller keeps the default transport: its prefix ends before
+    // loopback_hub, so it cannot name a hub and a loopback pin is refused
 
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
@@ -619,8 +624,16 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     check( status == ROCKETNET_STATUS_OK );
 
     rn_test_client_stop_and_destroy( client );
-    client_defaults.transport = "loopback";
     check( rocketnet_client_required_memory( &client_config ) == rocketnet_client_required_memory( &client_defaults ) );
+
+    // loopback_hub is past the prefix and reads its default, NULL: a loopback
+    // pin in the prefix is refused, never served from a global
+
+    client_config.transport = "loopback";
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING );
+    client_config.transport = NULL;
 
     // a prefix value is read: an out-of-range one in it is refused
 
@@ -658,6 +671,12 @@ static void test_public_config_bytes_older_smaller_reads_the_prefix()
     server_defaults.max_clients = 4;
     check( rocketnet_server_required_memory( &server_config ) == rocketnet_server_required_memory( &server_defaults ) );
 
+    server_config.transport = "loopback";
+    status = ROCKETNET_STATUS_OK;
+    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_LOOPBACK_HUB_MISSING );
+    server_config.transport = NULL;
+
     server_config.max_clients = 0;
     status = ROCKETNET_STATUS_OK;
     check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status ) == NULL );
@@ -686,6 +705,7 @@ static void test_public_config_bytes_inside_a_field_is_refused()
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.config_bytes = offsetof( struct rocketnet_client_config_t, transport ) + 4;
     struct rocketnet_client_config_t client_before = client_config;
     check( rocketnet_client_required_memory( &client_config ) == 0 );
@@ -762,7 +782,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );
@@ -779,7 +799,6 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     old_caller.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     memcpy( old_caller.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     old_caller.max_clients = 4;
-    old_caller.transport = "loopback";
 
     enum rocketnet_status_t status = ROCKETNET_TEST_STATUS_UNSET;
     struct rocketnet_server_t * old_server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &old_caller, &status );
@@ -931,6 +950,7 @@ static void public_config_server( struct rocketnet_server_config_t * config, con
     config->max_clients = 1;
     memcpy( config->backend_public_key, identity->backend_public, sizeof( config->backend_public_key ) );
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
 static void public_config_client( struct rocketnet_client_test_config_t * config )
@@ -938,6 +958,7 @@ static void public_config_client( struct rocketnet_client_test_config_t * config
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
 
     config->transport = "loopback";
+    config->loopback_hub = rocketnet_test_loopback_hub();
     config->step_driven = true;
     config->time_callback = public_config_clock;
 }

@@ -69,6 +69,7 @@
 #include <vector>
 
 #include "../tests/suite_runner.h"
+#include "../tests/loopback_hub.h"
 
 // the request path's cookie mac generations, on this thread since it
 // started: defined in rocketnet_server_protocol.cpp, read here as the
@@ -7816,6 +7817,7 @@ void rocketnet_test_create_before_init_is_refused()
 {
     // the worker's init is live; stop it so the creates see no library
 
+    rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
 
     // a refused create must allocate nothing: install a counting allocator and
@@ -7851,12 +7853,14 @@ void rocketnet_test_allocator_refusal_is_returned()
     // terminated with no live allocations: a partial pair is refused and
     // counted, and both functions are taken
 
+    rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     rocketnet_check( rocketnet_init( NULL, NULL, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT );
     rocketnet_check( rocketnet_api_misuse_count() == before + 2 );
 
     rocketnet_check( rocketnet_init( NULL, rocketnet_test_allocator_malloc, rocketnet_test_allocator_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_test_loopback_hub_release() );
     rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
 
     // the system allocator, then the library, for the worker's term
@@ -7902,6 +7906,8 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_log_function",
     "rocketnet_time",
     "rocketnet_sleep",
+    "rocketnet_loopback_hub_create",
+    "rocketnet_loopback_hub_destroy",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_required_memory",
@@ -7961,6 +7967,7 @@ static const char * rocketnet_test_exports[] = {
 };
 
 static const char * rocketnet_test_public_null_case_exports[] = {
+    "rocketnet_loopback_hub_destroy",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_connect",
@@ -8027,6 +8034,7 @@ static const char * rocketnet_test_public_null_exempt_exports[] = {
     "rocketnet_log_function",
     "rocketnet_time",
     "rocketnet_sleep",
+    "rocketnet_loopback_hub_create",
     "rocketnet_client_required_memory",
     "rocketnet_client_create",
     "rocketnet_client_state_name",
@@ -8405,6 +8413,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_dev_connect_token( "127.0.0.1:40000", NULL, token, 30, 10, 1, ROCKETNET_DEV_PROTOCOL_ID, 0, NULL, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
 #endif // #if ROCKETNET_DEV
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_client_connect( NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_SILENT_NULL( rocketnet_check( rocketnet_loopback_hub_destroy( NULL ) == ROCKETNET_STATUS_OK ) );
     RN_TEST_SILENT_NULL( rocketnet_client_destroy( NULL ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_update( NULL, 1000.0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_client_send_packets( NULL ) );
@@ -13307,6 +13316,7 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_min_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, message_resend_delay_max_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, reliable_message_timeout_ms ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, loopback_hub ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
@@ -13339,6 +13349,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, reliable_message_timeout_ms ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, disconnect_packets_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshakes_per_update ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -13366,7 +13377,7 @@ static void rocketnet_test_public_config_fields_have_env( const char * type, con
         offsets[i] = descriptors[i].offset;
         sizes[i] = descriptors[i].size;
 
-        if ( strcmp( name, "config_bytes" ) == 0 || strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 )
+        if ( strcmp( name, "config_bytes" ) == 0 || strcmp( name, "state_change_callback" ) == 0 || strcmp( name, "time_callback" ) == 0 || strcmp( name, "loopback_hub" ) == 0 )
             continue;
 
         const char * row = strcmp( name, "transport" ) == 0 ? "transport" : name;
@@ -16098,6 +16109,7 @@ static struct rocketnet_client_t * rocketnet_test_public_loopback_client()
     rocketnet_check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
 
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
 
     enum rocketnet_status_t status = ROCKETNET_STATUS_INVALID_ARGUMENT;

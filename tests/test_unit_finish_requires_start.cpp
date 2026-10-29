@@ -81,6 +81,7 @@ struct finish_world_t
 {
     uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret[RN_TEST_BACKEND_SECRET_KEY_BYTES];
+    rocketnet_loopback_hub_t * hub;     // the world's own: test_finish_requires_start_transport_packets runs two servers at once
     rocketnet_server_t * server;
     rocketnet_client_t * clients[FINISH_REQUIRES_START_MAX_CLIENTS];
     int num_clients;
@@ -99,12 +100,16 @@ static void finish_world_create( finish_world_t * world, int max_clients, int nu
         seed[i] = (uint8_t) ( seed_tag ^ i );
     check( rocketnet_generate_backend_keypair_from_seed( seed, world->backend_public, world->backend_secret ) == ROCKETNET_STATUS_OK );
 
+    world->hub = rocketnet_loopback_hub_create( NULL, max_clients, NULL );
+    check( world->hub != NULL );
+
     rocketnet_server_config_t server_config;
     rocketnet_server_default_config( &server_config );
     server_config.protocol_id = FINISH_REQUIRES_START_PROTOCOL;
     server_config.max_clients = max_clients;
     memcpy( server_config.backend_public_key, world->backend_public, sizeof( server_config.backend_public_key ) );
     server_config.transport = "loopback";
+    server_config.loopback_hub = world->hub;
 
     world->server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
     check( world->server != NULL );
@@ -116,6 +121,7 @@ static void finish_world_create( finish_world_t * world, int max_clients, int nu
         rocketnet_client_test_config_t client_config;
         rocketnet_client_default_config( &client_config );
         client_config.transport = "loopback";
+        client_config.loopback_hub = world->hub;
         client_config.step_driven = true;
         client_config.time_callback = finish_test_clock;
         world->clients[i] = rocketnet_client_create( NULL, &client_config, NULL );
@@ -128,6 +134,7 @@ static void finish_world_destroy( finish_world_t * world )
     for ( int i = 0; i < world->num_clients; i++ )
         rn_test_client_stop_and_destroy( world->clients[i] );
     rn_test_server_stop_and_destroy( world->server );
+    check( rocketnet_loopback_hub_destroy( world->hub ) == ROCKETNET_STATUS_OK );
 }
 
 static void finish_world_pump( finish_world_t * world, double dt = 0.01 )

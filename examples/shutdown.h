@@ -91,4 +91,16 @@ static inline void rn_cli_server_stop_and_destroy( struct rocketnet_server_t * s
     rn_cli_server_wait_stopped( server );
     rocketnet_server_destroy( server );
 }
+
+static inline void rn_cli_loopback_hub_destroy( struct rocketnet_loopback_hub_t * hub )
+{
+    // after the server and every client on the hub are destroyed; a hub
+    // with an endpoint still registered is refused and kept
+
+    const enum rocketnet_status_t status = rocketnet_loopback_hub_destroy( hub );
+    if ( status != ROCKETNET_STATUS_OK )
+    {
+        fprintf( stderr, "FAIL: loopback hub destroy: %s\n", rocketnet_status_name( status ) );
+    }
+}
 #endif // ROCKETNET_EXAMPLES_SHUTDOWN_H

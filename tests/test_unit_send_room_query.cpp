@@ -20,6 +20,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -120,6 +121,7 @@ static void test_send_room_query_public_api_client_and_server()
     server_config.protocol_id = SEND_ROOM_PROTOCOL;
     server_config.max_clients = 3;
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -147,6 +149,7 @@ static void test_send_room_query_public_api_client_and_server()
         check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
         client_config.transport = "loopback";
+        client_config.loopback_hub = rocketnet_test_loopback_hub();
         client_config.step_driven = 1;
         client_config.time_callback = send_room_clock;
         create_status = ROCKETNET_STATUS_OK;
@@ -354,6 +357,7 @@ static void test_send_room_skip_defer_drain_retry_and_preflight_race()
     server_config.protocol_id = SEND_ROOM_PROTOCOL;
     server_config.max_clients = 1;
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -370,6 +374,7 @@ static void test_send_room_skip_defer_drain_retry_and_preflight_race()
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
 
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = send_room_clock;
     create_status = ROCKETNET_STATUS_OK;

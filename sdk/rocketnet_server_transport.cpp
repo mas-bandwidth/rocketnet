@@ -1087,7 +1087,8 @@ bool rocketnet_server_transport_memory_plan( const rocketnet_server_transport_co
     plan.send_arena_bytes = rocketnet_send_arena_allocation_bytes( ROCKETNET_SEND_ARENA_SLOTS, ( payload + 15 ) & ~15 );
     if ( !rocketnet_builtin_server_memory_plan( config, transport, plan ) )
         return false;
-    if ( !plan.transport_bytes || !plan.send_arena_bytes || !plan.transport_io_bytes )
+    // loopback opens no socket and plans no I/O bytes: its endpoint is in the caller's hub
+    if ( !plan.transport_bytes || !plan.send_arena_bytes || ( plan.sockets != 0 && !plan.transport_io_bytes ) )
         return false;
     for ( uint64_t bytes : { plan.transport_bytes, plan.protocol_bytes, plan.reassembly_bytes,
                              plan.send_arena_bytes, plan.transport_io_bytes, plan.registered_region_bytes } )
@@ -1293,9 +1294,9 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_current(
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address,
-                                                                                    const struct rocketnet_server_transport_config_t * config, int * status )
+                                                                                    const struct rocketnet_server_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status );
+    return rocketnet_server_transport_create_internal( context, address, config, time, status );
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
@@ -3486,7 +3487,7 @@ void rocketnet_server_transport_send_packets( struct rocketnet_server_transport_
 }
 
 // Internal public-server stop path: the last disconnect burst must not wait
-// for a loopback receive worker that holds the endpoint-table mutex.
+// for a loopback receive worker that holds the loopback hub mutex.
 void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * server_transport )
 {
     // the stop path seals every waiting burst: nothing is left for an update

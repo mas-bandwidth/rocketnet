@@ -187,6 +187,9 @@ const char * rocketnet_status_name( enum rocketnet_status_t status )
         case ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION: return "TEST_PACKET_FILTER_IN_PRODUCTION";
         case ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION:  return "DEV_CONNECT_TOKEN_IN_PRODUCTION";
         case ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO:          return "CONNECT_TOKEN_PORT_ZERO";
+        case ROCKETNET_STATUS_LOOPBACK_HUB_MISSING:             return "LOOPBACK_HUB_MISSING";
+        case ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH:            return "LOOPBACK_HUB_MISMATCH";
+        case ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE:              return "LOOPBACK_HUB_IN_USE";
         default:
             break;
     }

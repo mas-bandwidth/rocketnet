@@ -28,6 +28,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 
 // The loopback pair names the in-memory loopback transport in its transport configs;
 // a caller's ROCKETNET_SERVER_TRANSPORT / ROCKETNET_CLIENT_TRANSPORT pin wins over
@@ -594,20 +596,21 @@ static rocketnet_message_server_t * reset_loopback_server_create( double now, co
 {
     const reset_loopback_keys_t * keys = reset_loopback_keys();
     rocketnet_server_transport_config_t config;
-    rocketnet_server_transport_default_config( &config );
+    rocketnet_server_transport_default_config_current( &config );
     config.protocol_id = RESET_LOOPBACK_PROTOCOL_ID;
     config.max_clients = RESET_LOOPBACK_MAX_CLIENTS;
     memcpy( config.backend_public_key, keys->backend_public, sizeof( config.backend_public_key ) );
     memcpy( config.server_public_key, keys->server_public, sizeof( config.server_public_key ) );
     memcpy( config.server_secret_key, keys->server_secret, sizeof( config.server_secret_key ) );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
 #if ROCKETNET_DEV
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
 #endif // #if ROCKETNET_DEV
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &config, now, &status );
 #if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
@@ -638,8 +641,9 @@ static rocketnet_message_client_t * reset_loopback_client_create( rocketnet_mess
                                                      token, sizeof( token ) ) == ROCKETNET_STATUS_OK );
 
     rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
 #if ROCKETNET_DEV
     reset_env_pin_t pin;
@@ -904,20 +908,21 @@ static void test_connection_reset_deferred_disconnect_does_not_charge_reused_slo
     double now = 1000.0;
 
     rocketnet_server_transport_config_t server_config;
-    rocketnet_server_transport_default_config( &server_config );
+    rocketnet_server_transport_default_config_current( &server_config );
     server_config.protocol_id = RESET_LOOPBACK_PROTOCOL_ID;
     server_config.max_clients = DEFERRED_MAX_CLIENTS;
     memcpy( server_config.backend_public_key, keys->backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, keys->server_public, sizeof( server_config.server_public_key ) );
     memcpy( server_config.server_secret_key, keys->server_secret, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
 
     int status = -1;
 #if ROCKETNET_DEV
     reset_env_pin_t pin;
     reset_env_pin_set_aside( &pin, "ROCKETNET_SERVER_TRANSPORT" );
 #endif // #if ROCKETNET_DEV
-    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
+    rocketnet_server_transport_t * transport = rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_config, now, &status );
 #if ROCKETNET_DEV
     reset_env_pin_put_back( &pin );
 #endif // #if ROCKETNET_DEV
@@ -1451,6 +1456,7 @@ static void reset_alloc_failure_free( void * context, void * p )
 
 static void test_connection_reset_slot_clean_fails_closed_on_allocation_failure()
 {
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, reset_alloc_failure_malloc, reset_alloc_failure_free ) == ROCKETNET_STATUS_OK );
 
@@ -1473,6 +1479,7 @@ static void test_connection_reset_slot_clean_fails_closed_on_allocation_failure(
     check( strstr( failure, "rocketnet_server_acks_t.endpoints" ) != NULL );
 
     reset_loopback_destroy( &f );
+    check( rocketnet_test_loopback_hub_release() );
     rocketnet_term();
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }

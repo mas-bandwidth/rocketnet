@@ -39,6 +39,8 @@
 #include "rocketnet_connect_token.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_driver_loopback.h"
+#include "rocketnet_config.h"
+#include "loopback_hub.h"
 #include "rocketnet_platform.h"
 
 #include <stdint.h>
@@ -119,11 +121,13 @@ static void transport_oom_release( void * context, void * pointer )
 static void transport_oom_begin( transport_oom_allocator_t * state )
 {
     memset( state, 0, sizeof( *state ) );
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
 
     int status = -1;
     check( rocketnet_init_ex( state, transport_oom_allocate, transport_oom_release, &status ) );
     check( status == ROCKETNET_STATUS_OK );
+    rocketnet_test_loopback_hub_context( state );
 }
 
 // a clean term, then the default allocator back for the worker's own term,
@@ -132,6 +136,7 @@ static void transport_oom_begin( transport_oom_allocator_t * state )
 static void transport_oom_end( transport_oom_allocator_t * state )
 {
     state->fail_at = 0;
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state->live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
@@ -307,13 +312,14 @@ static void test_transport_open_reports_out_of_memory()
 #if ROCKETNET_DEV
 static void transport_oom_production_server_config( struct rocketnet_server_transport_config_t * config, const char * transport )
 {
-    rocketnet_server_transport_default_config( config );
+    rocketnet_server_transport_default_config_current( config );
     memset( config->backend_public_key, 0x42, 32 );
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
     config->max_clients = 1;
     snprintf( config->transport, sizeof( config->transport ), "%s", transport );
+    config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
 // the allocations of a pinned loopback create, counted by failing each in
@@ -325,25 +331,29 @@ static int transport_oom_walk_server( transport_oom_allocator_t * state, const c
     struct rocketnet_server_transport_config_t config;
     transport_oom_production_server_config( &config, transport );
 
+    // the hub the config names is live from here on; the walk counts the rest
+
+    const int hub_live = state->live;
+
     for ( int k = 1; k <= 256; k++ )
     {
         state->fail_at = state->calls + k;
 
         int status = -1;
-        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex( state, "127.0.0.1:0", &config, 1000.0, &status );
+        struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex( state, "127.0.0.1:0", &config, 1000.0, &status );
         if ( server )
         {
             check( status == ROCKETNET_STATUS_OK );
             rn_test_server_transport_stop_and_destroy( server );
             state->fail_at = 0;
-            check( state->live == 0 );
-            check( rocketnet_loopback_endpoints_live() == 0 );
+            check( state->live == hub_live );
+            check( rocketnet_loopback_endpoints_live( rocketnet_test_loopback_hub() ) == 0 );
             return k - 1;
         }
 
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
-        check( state->live == 0 );
-        check( rocketnet_loopback_endpoints_live() == 0 );
+        check( state->live == hub_live );
+        check( rocketnet_loopback_endpoints_live( rocketnet_test_loopback_hub() ) == 0 );
     }
 
     check( false );
@@ -387,30 +397,35 @@ static double transport_oom_time_callback( void * ) { return transport_oom_clock
 static int transport_oom_walk_client( transport_oom_allocator_t * state, const uint8_t * token, const char * transport )
 {
     struct rocketnet_client_transport_config_t config;
-    rocketnet_client_transport_default_config( &config );
+    rocketnet_client_transport_default_config_current( &config );
     snprintf( config.transport, sizeof( config.transport ), "%s", transport );
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
     config.time_callback = transport_oom_time_callback;
+
+    // the hub the config names is live from here on; the walk counts the rest
+
+    const int hub_live = state->live;
 
     for ( int k = 1; k <= 256; k++ )
     {
         state->fail_at = state->calls + k;
 
         int status = -1;
-        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( state, token, &config, 1000.0, &status );
+        struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current_ex( state, token, &config, 1000.0, &status );
         if ( client )
         {
             check( status == ROCKETNET_STATUS_OK );
             rn_test_client_transport_stop_and_destroy( client );
             state->fail_at = 0;
-            check( state->live == 0 );
-            check( rocketnet_loopback_endpoints_live() == 0 );
+            check( state->live == hub_live );
+            check( rocketnet_loopback_endpoints_live( rocketnet_test_loopback_hub() ) == 0 );
             return k - 1;
         }
 
         check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
-        check( state->live == 0 );
-        check( rocketnet_loopback_endpoints_live() == 0 );
+        check( state->live == hub_live );
+        check( rocketnet_loopback_endpoints_live( rocketnet_test_loopback_hub() ) == 0 );
     }
 
     check( false );
@@ -469,6 +484,7 @@ static void test_platform_init_survives_a_refusing_allocator()
 {
     transport_oom_allocator_t state;
     memset( &state, 0, sizeof( state ) );
+    check( rocketnet_test_loopback_hub_release() );
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     state.refuse_through = TRANSPORT_OOM_GIVE_WAY;
 

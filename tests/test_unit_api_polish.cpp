@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <type_traits>
+#include "loopback_hub.h"
 
 #define check rocketnet_unit_check
 
@@ -265,7 +266,7 @@ static void test_api_polish_lookups_say_unknown()
 {
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_OK ), "OK" ) == 0 );
     check( strcmp( rocketnet_status_name( ROCKETNET_STATUS_FLOW_ID_RESERVED ), "FLOW_ID_RESERVED" ) == 0 );
-    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -32 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_status_name( (rocketnet_status_t) -35 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_status_name( (rocketnet_status_t) 1 ), "UNKNOWN" ) == 0 );
 
     check( strcmp( rocketnet_log_level_name( ROCKETNET_LOG_LEVEL_NONE ), "NONE" ) == 0 );
@@ -325,7 +326,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
 
-    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO; status-- )
+    for ( int status = (int) ROCKETNET_STATUS_OK; status >= (int) ROCKETNET_STATUS_LOOPBACK_HUB_IN_USE; status-- )
     {
         const char * name = rocketnet_status_name( (enum rocketnet_status_t) status );
         check( name != NULL && strcmp( name, "UNKNOWN" ) != 0 );
@@ -423,6 +424,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     server_config.protocol_id = API_POLISH_INDEX_PROTOCOL;
     server_config.max_clients = 1;
     server_config.transport = "loopback";
+    server_config.loopback_hub = rocketnet_test_loopback_hub();
     memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
@@ -442,6 +444,7 @@ static void test_api_polish_client_index_is_minus_one_until_connected()
     struct rocketnet_client_test_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
     client_config.transport = "loopback";
+    client_config.loopback_hub = rocketnet_test_loopback_hub();
     client_config.step_driven = 1;
     client_config.time_callback = api_polish_index_clock;
     create_status = ROCKETNET_STATUS_OK;
