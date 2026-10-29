@@ -37,11 +37,6 @@ static void rn_endpoint_count( rn_endpoint_t * endpoint, int counter, uint64_t a
 
 static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
 {
-    // the unreliable FIFO is the flat send_descriptors array ordered by
-    // enqueue_ticket (tla/RNChannelQueues.tla's sequence): the head is the live
-    // unreliable descriptor with the smallest ticket, and the next entry is the
-    // smallest ticket after a given one. No descriptor points at another.
-
     return descriptor->in_use &&
            ( descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE ||
              descriptor->reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ||
@@ -49,50 +44,74 @@ static bool rn_unreliable_member( const rn_send_descriptor_t * descriptor )
            rn_descriptor_schedule_live( descriptor );
 }
 
-static uint32_t rn_unreliable_next_live( const rn_region_t * region, uint32_t after_ticket )
+// The unreliable FIFO is a ring of descriptor entries in push order
+// (tla/RNIndexRing.tla): an entry whose descriptor is no longer queued under
+// the ticket it was pushed with is a tombstone. The head skips tombstones,
+// and a push that finds the ring full drops them all in one pass, at most
+// once per queue-many pushes.
+
+static bool rn_unreliable_entry_live( const rn_region_t * region, const rn_unreliable_entry_t * entry )
 {
-    uint32_t best = RN_DESCRIPTOR_NONE;
-    uint32_t best_ticket = 0;
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
+    const rn_send_descriptor_t * descriptor = &region->send_descriptors[entry->descriptor];
+    return rn_unreliable_member( descriptor ) && descriptor->enqueue_ticket == entry->ticket;
+}
+
+static const rn_unreliable_entry_t * rn_unreliable_entry( const rn_endpoint_t * endpoint, uint32_t position )
+{
+    const rn_region_t * region = endpoint->region;
+    return &region->unreliable_ring[( endpoint->unreliable_ring_head + position ) % region->unreliable_ring_entries];
+}
+
+// the first live entry at or after *position (from the head), RN_DESCRIPTOR_NONE past the end
+static uint32_t rn_unreliable_scan( const rn_endpoint_t * endpoint, uint32_t * position )
+{
+    while ( *position < endpoint->unreliable_ring_used )
     {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_unreliable_member( descriptor ) || !rn_descriptor_schedule_live( descriptor ) )
-            continue;
-
-        if ( descriptor->enqueue_ticket <= after_ticket )
-            continue;
-
-        if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
-        {
-            best = d;
-            best_ticket = descriptor->enqueue_ticket;
-        }
+        const rn_unreliable_entry_t * entry = rn_unreliable_entry( endpoint, *position );
+        if ( rn_unreliable_entry_live( endpoint->region, entry ) )
+            return entry->descriptor;
+        ( *position )++;
     }
 
-    return best;
+    return RN_DESCRIPTOR_NONE;
 }
 
 static void rn_unreliable_sync( rn_endpoint_t * endpoint )
 {
-    rn_region_t * region = endpoint->region;
-    endpoint->unreliable_head = rn_unreliable_next_live( region, 0 );
-
-    uint32_t tail = RN_DESCRIPTOR_NONE;
-    uint32_t tail_ticket = 0;
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
+    const rn_region_t * region = endpoint->region;
+    while ( endpoint->unreliable_ring_used > 0 && !rn_unreliable_entry_live( region, rn_unreliable_entry( endpoint, 0 ) ) )
     {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_unreliable_member( descriptor ) || !rn_descriptor_schedule_live( descriptor ) )
-            continue;
-
-        if ( tail == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket > tail_ticket )
-        {
-            tail = d;
-            tail_ticket = descriptor->enqueue_ticket;
-        }
+        endpoint->unreliable_ring_head = ( endpoint->unreliable_ring_head + 1 ) % region->unreliable_ring_entries;
+        endpoint->unreliable_ring_used--;
     }
 
-    endpoint->unreliable_tail = tail;
+    endpoint->unreliable_head = endpoint->unreliable_ring_used > 0 ? rn_unreliable_entry( endpoint, 0 )->descriptor : RN_DESCRIPTOR_NONE;
+}
+
+static void rn_unreliable_push( rn_endpoint_t * endpoint, uint32_t d )
+{
+    rn_region_t * region = endpoint->region;
+    const uint32_t entries = region->unreliable_ring_entries;
+
+    if ( endpoint->unreliable_ring_used == entries )
+    {
+        // at most queue entries are live, so the pass frees at least half
+        uint32_t kept = 0;
+        for ( uint32_t i = 0; i < endpoint->unreliable_ring_used; i++ )
+        {
+            const rn_unreliable_entry_t entry = *rn_unreliable_entry( endpoint, i );
+            if ( rn_unreliable_entry_live( region, &entry ) )
+                region->unreliable_ring[kept++] = entry;
+        }
+        endpoint->unreliable_ring_head = 0;
+        endpoint->unreliable_ring_used = kept;
+    }
+
+    rn_unreliable_entry_t * tail = &region->unreliable_ring[( endpoint->unreliable_ring_head + endpoint->unreliable_ring_used ) % entries];
+    tail->descriptor = d;
+    tail->ticket = region->send_descriptors[d].enqueue_ticket;
+    endpoint->unreliable_ring_used++;
+    rn_unreliable_sync( endpoint );
 }
 
 // the public promotion threshold is the record rule at the full payload capacity
@@ -177,7 +196,8 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
     endpoint->in_place_receipt = 0;
     endpoint->in_place_admitted = 0;
     endpoint->unreliable_head = RN_DESCRIPTOR_NONE;
-    endpoint->unreliable_tail = RN_DESCRIPTOR_NONE;
+    endpoint->unreliable_ring_head = 0;
+    endpoint->unreliable_ring_used = 0;
     endpoint->unreliable_count = 0;
 
     endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
@@ -486,7 +506,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
         }
 
         endpoint->unreliable_count++;
-        rn_unreliable_sync( endpoint );
+        rn_unreliable_push( endpoint, d );
     }
 
     endpoint->serial = serial;
@@ -1131,12 +1151,12 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
 
     rn_region_t * region = endpoint->region;
     int count = 0;
-    uint32_t after = 0;
+    uint32_t position = 0;
     uint32_t d;
-    while ( ( d = rn_unreliable_next_live( region, after ) ) != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS )
+    while ( ( d = rn_unreliable_scan( endpoint, &position ) ) != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        after = descriptor->enqueue_ticket;
+        position++;
 
         if ( descriptor->queue_epoch != region->schedule_epoch )
             continue;
@@ -1255,13 +1275,13 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
                 taken_count++;
             }
 
-            uint32_t after = 0;
+            uint32_t position = 0;
             int taken = 0;
             uint32_t d;
-            while ( taken < taken_count && ( d = rn_unreliable_next_live( region, after ) ) != RN_DESCRIPTOR_NONE )
+            while ( taken < taken_count && ( d = rn_unreliable_scan( endpoint, &position ) ) != RN_DESCRIPTOR_NONE )
             {
                 const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-                after = descriptor->enqueue_ticket;
+                position++;
 
                 const bool match = d == taken_index[taken] &&
                                    descriptor->generation == taken_generation[taken] &&
