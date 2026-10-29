@@ -455,8 +455,8 @@ static void test_unreliable_promotion_every_mode()
             const int header = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? 3 + 3 + 3 + ( channel >= 256 ? 2 : 1 ) : ROCKETNET_MESSAGE_RECORD_FIXED_BYTES;
             const int one_packet_capacity = reliability == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED ? record_capacity : ( record_capacity < ROCKETNET_MESSAGE_SINGLE_BYTES ? record_capacity : ROCKETNET_MESSAGE_SINGLE_BYTES );
             const int edge = one_packet_capacity - header - 1;
-            int sizes[10] = { 1404, 1405, 1406, edge - 1, edge, edge + 1, edge * 2, edge * 4, 16384, 16385 };
-            int size_count = 10;
+            int sizes[] = { 1404, 1405, 1406, 1412, 1413, 1414, 1415, edge - 1, edge, edge + 1, edge * 2, edge * 4, 16384, 16385 };
+            int size_count = (int) ( sizeof( sizes ) / sizeof( sizes[0] ) );
             for ( int a = 0; a < size_count; ++a )
                 for ( int b = a + 1; b < size_count; ++b )
                     if ( sizes[b] == sizes[a] )

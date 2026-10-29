@@ -10,364 +10,1967 @@ normative section it argues for.
 <a id="t1"></a>
 ## t1. Introduction, scope, terminology and conventions
 
-[RN-1 t1 Introduction, scope, terminology and conventions](TRANSPORT.md#t1) RN-1 and RN-2 state requirements only, and every reason lives here under the same section id, so that an implementer reads the rules without the argument and a reviewer finds the argument without hunting. The split into a connection layer and a message layer follows the code's own seam: the message layer is carried entirely inside connection layer payloads and changes none of its bytes, so a connection layer implementation can conform without implementing messages.
-[RN-1 t1 Introduction, scope, terminology and conventions](TRANSPORT.md#t1) Little-endian order everywhere, including ports and IPv6 groups, is the opposite of what socket interfaces hand an implementer, which is why the convention names those cases. Time is an input so that every rule that depends on elapsed time can be tested without a clock, and so that an application that updates at any rate gets the same behaviour.
-[RN-1 t1 Introduction, scope, terminology and conventions](TRANSPORT.md#t1) The lower-case words "must", "should" and "shall" are kept out of the normative documents entirely. BCP 14 allows them with their ordinary English meaning, but a reader who has to decide whether a lower-case "must" binds is exactly the ambiguity a standard exists to remove.
+[RN-1 t1 Introduction, scope, terminology and conventions](TRANSPORT.md#t1)
+RN-1 and RN-2 state requirements only, and every reason lives here under the same
+section id, so that an implementer reads the rules without the argument and a reviewer
+finds the argument without hunting. The split into a connection layer and a message
+layer follows the code's own seam: the message layer is carried entirely inside
+connection layer payloads and changes none of its bytes, so a connection layer
+implementation can conform without implementing messages.
+
+[RN-1 t1 Introduction, scope, terminology and conventions](TRANSPORT.md#t1)
+Little-endian order everywhere, including ports and IPv6 groups, is the opposite of what
+socket interfaces hand an implementer, which is why the convention names those cases.
+Time is an input so that every rule that depends on elapsed time can be tested without a
+clock, and so that an application that updates at any rate gets the same behaviour.
+
+[RN-1 t1 Introduction, scope, terminology and conventions](TRANSPORT.md#t1)
+The lower-case words "must", "should" and "shall" are kept out of the normative
+documents entirely. BCP 14 allows them with their ordinary English meaning, but a reader
+who has to decide whether a lower-case "must" binds is exactly the ambiguity a standard
+exists to remove.
 
 <a id="t2"></a>
 ## t2. Architecture and key inventory
 
-[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2) The key inventory is closed because the design's central property is a negative one: there is no secret shared between the backend and the servers, except the prefilter magic, which protects no session and no key. A server holds only the backend's public key and its own keypair, so a compromised server cannot mint tokens and exposes only its own sessions; that is what allows servers on hardware the backend operator does not control. A closed table makes an added key a visible change to the standard rather than an implementation detail.
-[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2) The configuration surface binds every field, not only the connection layer's, because the audience of an override is the operator deploying an already built binary, who has no code to edit. Refusing an out-of-range value instead of clamping it keeps every running value one the operator chose; logging every override keeps a forgotten variable in a service file from silently diverging a fleet.
-[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2) Transport selection is an ordered list so that one configuration line can be deployed unchanged to machines with different capabilities, while a one-name list stays a pin that refuses rather than falls back; a fallback nobody chose can hide a provisioning error indefinitely.
+[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2)
+The key inventory is closed because the design's central property is a negative one:
+there is no secret shared between the backend and the servers, except the prefilter
+magic, which protects no session and no key. A server holds only the backend's public
+key and its own keypair, so a compromised server cannot mint tokens and exposes only its
+own sessions; that is what allows servers on hardware the backend operator does not
+control. A closed table makes an added key a visible change to the standard rather than
+an implementation detail.
+
+[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2)
+The configuration surface binds every field, not only the connection layer's, because
+the audience of an override is the operator deploying an already built binary, who has
+no code to edit. Refusing an out-of-range value instead of clamping it keeps every
+running value one the operator chose; logging every override keeps a forgotten variable
+in a service file from silently diverging a fleet.
+
+[RN-1 t2 Architecture and key inventory](TRANSPORT.md#t2)
+Transport selection is an ordered list so that one configuration line can be deployed
+unchanged to machines with different capabilities, while a one-name list stays a pin
+that refuses rather than falls back; a fallback nobody chose can hide a provisioning
+error indefinitely.
 
 <a id="t3"></a>
 ## t3. Constants and registries
 
-[RN-1 t3 Constants and registries](TRANSPORT.md#t3) One table holds every constant and default so that an implementer never hunts for a number and no number is stated twice. A value stated in two places is two values the moment one of them is edited. Each row is pinned to the expression the reference implementation compiles, and the conformance checker compares the document, the pin and the compiler, so the table cannot drift from the code without a red check.
+[RN-1 t3 Constants and registries](TRANSPORT.md#t3)
+One table holds every constant and default so that an implementer never hunts for a
+number and no number is stated twice. A value stated in two places is two values the
+moment one of them is edited. Each row is pinned to the expression the reference
+implementation compiles, and the conformance checker compares the document, the pin and
+the compiler, so the table cannot drift from the code without a red check.
 
 <a id="t4"></a>
 ## t4. Wire encoding primitives
 
-[RN-1 t4 Wire encoding primitives](TRANSPORT.md#t4) Every primitive here is chosen so that an implementation reads and writes bytes without guessing: little-endian integers everywhere, packed fields with no implicit padding, and a variable-length form whose shortest encoding is the only accepted one. A wire format that permits two encodings of one value forces every receiver to canonicalise and every vector to test both, so the standard admits exactly one encoding for each value.
+[RN-1 t4 Wire encoding primitives](TRANSPORT.md#t4)
+Every primitive here is chosen so that an implementation reads and writes bytes without
+guessing: little-endian integers everywhere, packed fields with no implicit padding, and
+a variable-length form whose shortest encoding is the only accepted one. A wire format
+that permits two encodings of one value forces every receiver to canonicalise and every
+vector to test both, so the standard admits exactly one encoding for each value.
 
 <a id="t5"></a>
 ## t5. Prefilter header
 
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The geometry never varies and the meaning of the filter value is decided by one byte.** The epoch selects which rule produced the value, so a receiver branches once on a byte it has already loaded, and every packet is parsed with the same fixed offsets whatever the deployment. There is no length prefix, no optional field and no per-type layout.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **Epoch 0 is the whole of RocketNet 1.0.** A title with no backend feeding its servers per-packet secrets carries its constant, and the header costs one compare against 32 bits. The keyed form is specified here, in full, and is not implemented by 1.0 — *the format exists now so that adopting it later is a configuration change and not a wire break.*
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The tag depends on nothing but the title.** Not the source address, not the destination address, not the port, not the packet length. This is a requirement, not a simplification, and it is the accumulated lesson of the design this one descends from:
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) *This is the reason the keyless per-packet structural header — a value derived from the addresses and the length, varying every packet with no secret involved — is not available to this protocol and is not specified. It is a real technique and the design this one descends from used it; it requires the sender to know the addresses the receiver will observe, and under NAT the sender does not. What replaces it here is the keyed value, which the sender computes from a secret and its own packet alone.*
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The unkeyed filter cannot resist a targeted attacker, and is not asked to.** Nothing in it is secret: an attacker who observes one packet learns the constant and can reproduce it forever. So the only threat it addresses is *unaimed* traffic: internet background noise, scanners, and floods of random bytes at the port. Against that it is decisive. A 32-bit constant admits one packet in 4.3 billion, and the type and size checks that accompany it cost nothing; even a 10 Gbps flood of minimum-size frames — about 14.9 million packets per second — puts one packet every five minutes in front of a check that rejects it in a handful of instructions. **The drop is silent**: no error, no response, no timing signal, so a flood tool receives nothing to iterate against. *That last clause is true of the unkeyed form only. A keyed receiver rejects a dead epoch on a comparison and spends a MAC on a live one, which is measurable from outside and tells a patient prober which generations are live -- the cost of making verification cheap, and worth naming rather than leaving to be discovered.*
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The constant for the embedded test title of this standard, used with the published test keys, is `b7 59 01 00`.**
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The magic is 16 bytes**, SipHash-2-4's key length. Packet type is the single type byte, and packet length is the UDP payload length as a little-endian uint16. **The four bytes following the header are taken uniformly for every packet type**, with no per-type case: for sealed packets they are the sequence number, for a connection request the first four bytes of the return cookie field, and for a connection cookie the first four bytes of the connection salt. One rule, one offset, and nothing to get wrong per type.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) *The honest limit of that uniformity: on a client's very first connection request the return cookie field is zero, so the filter value is constant for a given epoch, type and length. That path is already the one the address validation cookie exists to rate limit, and it costs an attacker a captured packet and gains them entry to a gate that answers with 38 bytes.*
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The epoch byte is what makes verification cheap, and it is the reason it is on the wire.** A receiver holding several live magics would otherwise have to try each in turn — the design this one descends from tried its three generations that way, one MAC computation per live generation for every packet that reached that stage. Here the sender names the generation, so the receiver indexes its magic array once and computes **one** MAC. A packet whose epoch names a generation the receiver does not hold is dropped before any MAC is computed at all, on a comparison.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **Generations advance 1, 2, 3 and so on, wrapping from 255 back to 1.** Zero is never a generation, so the unkeyed meaning of epoch 0 is unambiguous forever and a wrap cannot silently turn a keyed deployment into an unkeyed one.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **A receiver must accept at least two live generations**, so that a rotation does not break packets already in flight, and must drop any epoch outside that window. *How many beyond two, and how long a generation lasts, are deployment choices rather than interoperability ones: a sender always uses the epoch it was most recently given, and a receiver's window is purely local policy — widening it accepts older packets and narrows nothing.* The window must be small enough that a captured packet stops being replayable quickly, which is the property rotation exists to buy.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **A receiver must not treat epoch 0 as keyed**, and a deployment that has adopted the keyed form must reject epoch 0 rather than falling back to a constant: a fallback an attacker can select is not a filter.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **A 32-bit MAC is proportionate and is not authentication.** It admits one forged packet in 4.3 billion, which at a 10 Gbps flood is one every five minutes reaching the next check, and the next check is replay protection followed by an AEAD that the attacker cannot satisfy at all. The filter's job is to make floods cheap to refuse, not to prove anything; **the sealed layer beneath it carries every guarantee this protocol makes**, and no deployment should read a passing filter value as evidence of anything.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **There are no default magics, and a conforming implementation must not ship one.** A published secret is not a secret, and a protocol that ships one invites a deployment to inherit it and believe it has the property. A deployment either has a backend distributing real magics or it runs at epoch 0 and knows exactly what it has. *This is the one place where the published development keys pattern used elsewhere in this standard is deliberately not repeated: those keys make an unsecured development path work out of the box and are documented as worthless, where a default magic would make a **secured-looking** path work out of the box, which is worse than not having the feature.*
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The magic is a secret the client never ships**, but receives at run time from the backend — so an attacker who disassembles a game client obtains the algorithm and the layout and can still mint nothing. The security of the keyed filter reduces exactly to the confidentiality of connect tokens and the rotation period, both of which are already the backend's job. **Obscurity is thereby demoted to what it is good for**: making commodity flood tooling not work.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **How magics reach servers and clients is deliberately not specified here, and 1.0 provides no channel for it.** The connect token is a fixed 768 bytes with every field enumerated, and its free space inside the signature travels in the clear inside every connection request, so a secret cannot be carried there. Sixty-four bytes of pad do sit outside the signature, beside the clear session keys, and that is the one place in the token where a secret could ride -- 1.0 defines no field there. **And a server never receives that part of the token at all**, so no amount of token slack gives a server its magic; that half needs a channel of its own regardless. Specifying the channel belongs with the backend layer that would distribute it, and this section stops at the wire format the channel would feed.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) *Which scopes the claim this format is designed on: adopting the keyed form costs no change to the packet header, because the epoch and the value are already there. It is not a promise that nothing else changes -- carrying magics will require a token field or a server-side channel that 1.0 does not have.*
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **None of this is available without a backend the servers talk to**, which is the same requirement the identity posture below rests on, and the two arrive together or not at all.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **And it is unavailable to player-hosted fleets, which is the deployment model this standard headlines.** A player-hosted server is untrusted by construction -- that is why the backend shares no secret with it -- and the keyed filter would hand it a live magic, and through it every client's. A title running community servers runs at epoch 0; the keyed form belongs to fleets whose servers the operator controls.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) **The upgrade path for a deployment that needs to resist a targeted flood is a whitelist in the kernel** — an XDP map of currently authorized source addresses. That is stateful, is outside this standard, and is the only thing that actually helps; no header, keyed or not, can substitute for it.
-[RN-1 t5 Prefilter header](TRANSPORT.md#t5) *Where such a whitelist gets its addresses is the design decision that matters, and this protocol makes the better answer available.* Steam Datagram Relay populates its relay whitelist with the client address the backend observed during the backend conversation, which assumes a client reaches the backend and the server from the same address — usually true, and not always: some carrier-grade NAT deployments egress from an address pool, and a dual-stack client may reach an HTTPS backend over IPv6 while reaching a game server over IPv4. A RocketNet server does not need to guess: the address-validated handshake ends with the server holding the client's actual UDP source address, **proven** by the cookie round trip rather than assumed. A whitelist populated after the handshake, from verified addresses, is correct under CGNAT address pools and dual-stack mismatch alike.
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The geometry never varies and the meaning of the filter value is decided by one
+byte.** The epoch selects which rule produced the value, so a receiver branches once on
+a byte it has already loaded, and every packet is parsed with the same fixed offsets
+whatever the deployment. There is no length prefix, no optional field and no per-type
+layout.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**Epoch 0 is the whole of RocketNet 1.0.** A title with no backend feeding its servers
+per-packet secrets carries its constant, and the header costs one compare against 32
+bits. The keyed form is specified here, in full, and is not implemented by 1.0 — *the
+format exists now so that adopting it later is a configuration change and not a wire
+break.*
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The tag depends on nothing but the title.** Not the source address, not the
+destination address, not the port, not the packet length. This is a requirement, not a
+simplification, and it is the accumulated lesson of the design this one descends from:
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+*This is the reason the keyless per-packet structural header — a value derived from the
+addresses and the length, varying every packet with no secret involved — is not
+available to this protocol and is not specified. It is a real technique and the design
+this one descends from used it; it requires the sender to know the addresses the
+receiver will observe, and under NAT the sender does not. What replaces it here is the
+keyed value, which the sender computes from a secret and its own packet alone.*
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The unkeyed filter cannot resist a targeted attacker, and is not asked to.** Nothing
+in it is secret: an attacker who observes one packet learns the constant and can
+reproduce it forever. So the only threat it addresses is *unaimed* traffic: internet
+background noise, scanners, and floods of random bytes at the port. Against that it is
+decisive. A 32-bit constant admits one packet in 4.3 billion, and the type and size
+checks that accompany it cost nothing; even a 10 Gbps flood of minimum-size frames —
+about 14.9 million packets per second — puts one packet every five minutes in front of a
+check that rejects it in a handful of instructions. **The drop is silent**: no error, no
+response, no timing signal, so a flood tool receives nothing to iterate against. *That
+last clause is true of the unkeyed form only. A keyed receiver rejects a dead epoch on a
+comparison and spends a MAC on a live one, which is measurable from outside and tells a
+patient prober which generations are live -- the cost of making verification cheap, and
+worth naming rather than leaving to be discovered.*
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The constant for the embedded test title of this standard, used with the published
+test keys, is `b7 59 01 00`.**
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The magic is 16 bytes**, SipHash-2-4's key length. Packet type is the single type
+byte, and packet length is the UDP payload length as a little-endian uint16. **The four
+bytes following the header are taken uniformly for every packet type**, with no per-type
+case: for sealed packets they are the sequence number, for a connection request the
+first four bytes of the return cookie field, and for a connection cookie the first four
+bytes of the connection salt. One rule, one offset, and nothing to get wrong per type.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+*The honest limit of that uniformity: on a client's very first connection request the
+return cookie field is zero, so the filter value is constant for a given epoch, type and
+length. That path is already the one the address validation cookie exists to rate limit,
+and it costs an attacker a captured packet and gains them entry to a gate that answers
+with 38 bytes.*
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The epoch byte is what makes verification cheap, and it is the reason it is on the
+wire.** A receiver holding several live magics would otherwise have to try each in turn
+— the design this one descends from tried its three generations that way, one MAC
+computation per live generation for every packet that reached that stage. Here the
+sender names the generation, so the receiver indexes its magic array once and computes
+**one** MAC. A packet whose epoch names a generation the receiver does not hold is
+dropped before any MAC is computed at all, on a comparison.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**Generations advance 1, 2, 3 and so on, wrapping from 255 back to 1.** Zero is never a
+generation, so the unkeyed meaning of epoch 0 is unambiguous forever and a wrap cannot
+silently turn a keyed deployment into an unkeyed one.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**A receiver must accept at least two live generations**, so that a rotation does not
+break packets already in flight, and must drop any epoch outside that window. *How many
+beyond two, and how long a generation lasts, are deployment choices rather than
+interoperability ones: a sender always uses the epoch it was most recently given, and a
+receiver's window is purely local policy — widening it accepts older packets and narrows
+nothing.* The window must be small enough that a captured packet stops being replayable
+quickly, which is the property rotation exists to buy.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**A receiver must not treat epoch 0 as keyed**, and a deployment that has adopted the
+keyed form must reject epoch 0 rather than falling back to a constant: a fallback an
+attacker can select is not a filter.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**A 32-bit MAC is proportionate and is not authentication.** It admits one forged packet
+in 4.3 billion, which at a 10 Gbps flood is one every five minutes reaching the next
+check, and the next check is replay protection followed by an AEAD that the attacker
+cannot satisfy at all. The filter's job is to make floods cheap to refuse, not to prove
+anything; **the sealed layer beneath it carries every guarantee this protocol makes**,
+and no deployment should read a passing filter value as evidence of anything.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**There are no default magics, and a conforming implementation must not ship one.** A
+published secret is not a secret, and a protocol that ships one invites a deployment to
+inherit it and believe it has the property. A deployment either has a backend
+distributing real magics or it runs at epoch 0 and knows exactly what it has. *This is
+the one place where the published development keys pattern used elsewhere in this
+standard is deliberately not repeated: those keys make an unsecured development path
+work out of the box and are documented as worthless, where a default magic would make a
+**secured-looking** path work out of the box, which is worse than not having the
+feature.*
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The magic is a secret the client never ships**, but receives at run time from the
+backend — so an attacker who disassembles a game client obtains the algorithm and the
+layout and can still mint nothing. The security of the keyed filter reduces exactly to
+the confidentiality of connect tokens and the rotation period, both of which are already
+the backend's job. **Obscurity is thereby demoted to what it is good for**: making
+commodity flood tooling not work.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**How magics reach servers and clients is deliberately not specified here, and 1.0
+provides no channel for it.** The connect token is a fixed 768 bytes with every field
+enumerated, and its free space inside the signature travels in the clear inside every
+connection request, so a secret cannot be carried there. Sixty-four bytes of pad do sit
+outside the signature, beside the clear session keys, and that is the one place in the
+token where a secret could ride -- 1.0 defines no field there. **And a server never
+receives that part of the token at all**, so no amount of token slack gives a server its
+magic; that half needs a channel of its own regardless. Specifying the channel belongs
+with the backend layer that would distribute it, and this section stops at the wire
+format the channel would feed.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+*Which scopes the claim this format is designed on: adopting the keyed form costs no
+change to the packet header, because the epoch and the value are already there. It is
+not a promise that nothing else changes -- carrying magics will require a token field or
+a server-side channel that 1.0 does not have.*
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**None of this is available without a backend the servers talk to**, which is the same
+requirement the identity posture below rests on, and the two arrive together or not at
+all.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**And it is unavailable to player-hosted fleets, which is the deployment model this
+standard headlines.** A player-hosted server is untrusted by construction -- that is why
+the backend shares no secret with it -- and the keyed filter would hand it a live magic,
+and through it every client's. A title running community servers runs at epoch 0; the
+keyed form belongs to fleets whose servers the operator controls.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+**The upgrade path for a deployment that needs to resist a targeted flood is a whitelist
+in the kernel** — an XDP map of currently authorized source addresses. That is stateful,
+is outside this standard, and is the only thing that actually helps; no header, keyed or
+not, can substitute for it.
+
+[RN-1 t5 Prefilter header](TRANSPORT.md#t5)
+*Where such a whitelist gets its addresses is the design decision that matters, and this
+protocol makes the better answer available.* Steam Datagram Relay populates its relay
+whitelist with the client address the backend observed during the backend conversation,
+which assumes a client reaches the backend and the server from the same address —
+usually true, and not always: some carrier-grade NAT deployments egress from an address
+pool, and a dual-stack client may reach an HTTPS backend over IPv6 while reaching a game
+server over IPv4. A RocketNet server does not need to guess: the address-validated
+handshake ends with the server holding the client's actual UDP source address,
+**proven** by the cookie round trip rather than assumed. A whitelist populated after the
+handshake, from verified addresses, is correct under CGNAT address pools and dual-stack
+mismatch alike.
 
 <a id="t6"></a>
 ## t6. Connect token
 
-[RN-1 t6 Connect token](TRANSPORT.md#t6) *This is deliberate. Because both addresses belong to one server, they share one used-token history, and that history binds a token to the source address whose response first opened under it. A client that failed over between families would present the same token from a different source address and be refused — locking itself out of both paths. Failover between families is therefore not a client behavior; it is the backend's job, exactly as failover between servers is.*
-[RN-1 t6 Connect token](TRANSPORT.md#t6) *If it helps to place this: a connect token is a JWT for game servers.* Signed claims, an issuer the verifier trusts by public key, an expiry, and an audience — the named server — with the whole thing carried by the party it describes. That is the same shape, and saying so is worth more than pretending otherwise: this converges on a well-understood pattern, which is a point in its favor whichever way it was arrived at.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) *What the fixed layout does and does not protect against, since it is easy to credit it with the wrong thing.* Length extension proper — the Merkle-Damgård weakness where `H(secret ‖ message)` can be extended without knowing the secret — does not apply anywhere in this protocol, and not because of the layout. Ed25519 is a Schnorr construction with no message-extension operation, and BLAKE2b carries a finalization flag in its last block for exactly this purpose; both would be safe with variable-length data. What the fixed layout removes is the neighbouring family, which is the one that has actually produced vulnerabilities in token formats: a length parsed out of the data being validated, two encodings of one logical message with a single signature valid for both, and ambiguity about precisely what the signature covered. Fixed offsets over a fixed buffer make all three unrepresentable rather than merely unlikely.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **The client id is inside the seal deliberately.** A connection request crosses the open internet, so anything in its clear portion is visible to any observer on the path, and an identifier naming a player must not be one of those things.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **The version is an opaque 32-bit constant, not a readable string.** It has to be on the wire in the clear, because the connection request carries the signed data a server verifies before it trusts anything. A protocol banner in ASCII would be a universal signature for every RocketNet deployment in existence, readable by anyone scanning traffic, which would undo in the connect path what the per-title prefilter constant is for. A future version takes an unrelated constant rather than an increment.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **The attack is not subtle and it is not theoretical.** Authenticate, obtain a token, give it to somebody else, repeat. Each token is a playable seat sold or shared from an account that paid for one, and the backend's authentication — the thing the whole architecture exists to enforce — is bypassed without ever being attacked.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **The only posture that removes the incentive is identity based: a given player may be connected to one server at a time.** Connect elsewhere and the previous session ends. A token handed to somebody else does not multiply the sharer's access, it **transfers** it: whoever connects second takes the seat and the other is put out. Sharing stops being a way to get more and becomes a way to lose what you have, so the system does not have to detect it — the incentive does the enforcement, and detection and bans are needed only for the abusive tail.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) *This is stated as strongly as it is because the protocol this one descends from does not do it, and the omission is a real defect rather than a scope choice. netcode 1.02 binds a token to a server address and an expiry and stops there; a token is transferable for its whole lifetime and nothing in the protocol notices. Every later refinement of token security is downstream of getting this one right.*
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **So this standard specifies no client address field in the connect token**, and a server must not require that a request arrive from any particular address. The address is still the connection identity once a connection exists, per _The client address is the connection identity_, and the handshake still proves the client can receive at the address it claimed. Those are properties of a *connection*; they are not a property of the *credential*.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **This cannot be implemented by a server alone.** A server knows only its own connected clients; the property is about all servers at once. It requires a backend that maintains the connected set — which players are on which servers, live — and that can tell a server to end a session when the same player appears elsewhere.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **The protocol carries what those steps need and no more.** The client id in the sealed private connect token data is the identity a backend keys on, unforgeable because it is sealed to the server and covered by the signature. The 256 bytes of user data carry whatever else a backend wants bound to the session. And a server implementation must expose a means of disconnecting a specific connected client, which is the one verb this posture needs from the transport — the reasons for disconnecting are the game's and the backend's, never the transport's.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **A single server still enforces the property locally, with no backend at all**, and this standard requires it: a connection request or response naming a client id already connected to this server is refused, per _Processing Connection Requests_. That is the same rule at the scope one server can see. The backend widens the scope from one server to the fleet; it does not introduce the idea.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) **A live client id holds its slot until that slot ends.** A connection request or response naming a client id already connected to this server is refused and counted, and every retry is refused the same way, with no response, until the slot is gone. A slot ends at once when its client disconnects cleanly, or, if the client goes silent, when the connection's idle timeout releases it. That timeout is the token's `timeout seconds`, chosen by whoever mints the token: the library's own minting writes 10 seconds, so that is the default, and the server's `max_timeout_seconds` (60) is a ceiling on the field, not a default. A retry therefore proceeds as soon as the slot ends — immediately after a clean disconnect, and otherwise after a short timeout. Who may connect after that is the backend's rule, per the connected set above.
-[RN-1 t6 Connect token](TRANSPORT.md#t6) *A deployment without a backend connected set has a weaker property, and should know which one it has: tokens are transferable between players, and the only cost to a sharer is that they cannot both be on the same server.*
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+*This is deliberate. Because both addresses belong to one server, they share one
+used-token history, and that history binds a token to the source address whose response
+first opened under it. A client that failed over between families would present the same
+token from a different source address and be refused — locking itself out of both paths.
+Failover between families is therefore not a client behavior; it is the backend's job,
+exactly as failover between servers is.*
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+*If it helps to place this: a connect token is a JWT for game servers.* Signed claims,
+an issuer the verifier trusts by public key, an expiry, and an audience — the named
+server — with the whole thing carried by the party it describes. That is the same shape,
+and saying so is worth more than pretending otherwise: this converges on a
+well-understood pattern, which is a point in its favor whichever way it was arrived at.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+*What the fixed layout does and does not protect against, since it is easy to credit it
+with the wrong thing.* Length extension proper — the Merkle-Damgård weakness where
+`H(secret ‖ message)` can be extended without knowing the secret — does not apply
+anywhere in this protocol, and not because of the layout. Ed25519 is a Schnorr
+construction with no message-extension operation, and BLAKE2b carries a finalization
+flag in its last block for exactly this purpose; both would be safe with variable-length
+data. What the fixed layout removes is the neighbouring family, which is the one that
+has actually produced vulnerabilities in token formats: a length parsed out of the data
+being validated, two encodings of one logical message with a single signature valid for
+both, and ambiguity about precisely what the signature covered. Fixed offsets over a
+fixed buffer make all three unrepresentable rather than merely unlikely.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**The client id is inside the seal deliberately.** A connection request crosses the open
+internet, so anything in its clear portion is visible to any observer on the path, and
+an identifier naming a player must not be one of those things.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**The version is an opaque 32-bit constant, not a readable string.** It has to be on the
+wire in the clear, because the connection request carries the signed data a server
+verifies before it trusts anything. A protocol banner in ASCII would be a universal
+signature for every RocketNet deployment in existence, readable by anyone scanning
+traffic, which would undo in the connect path what the per-title prefilter constant is
+for. A future version takes an unrelated constant rather than an increment.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**The attack is not subtle and it is not theoretical.** Authenticate, obtain a token,
+give it to somebody else, repeat. Each token is a playable seat sold or shared from an
+account that paid for one, and the backend's authentication — the thing the whole
+architecture exists to enforce — is bypassed without ever being attacked.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**The only posture that removes the incentive is identity based: a given player may be
+connected to one server at a time.** Connect elsewhere and the previous session ends. A
+token handed to somebody else does not multiply the sharer's access, it **transfers**
+it: whoever connects second takes the seat and the other is put out. Sharing stops being
+a way to get more and becomes a way to lose what you have, so the system does not have
+to detect it — the incentive does the enforcement, and detection and bans are needed
+only for the abusive tail.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+*This is stated as strongly as it is because the protocol this one descends from does
+not do it, and the omission is a real defect rather than a scope choice. netcode 1.02
+binds a token to a server address and an expiry and stops there; a token is transferable
+for its whole lifetime and nothing in the protocol notices. Every later refinement of
+token security is downstream of getting this one right.*
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**So this standard specifies no client address field in the connect token**, and a
+server must not require that a request arrive from any particular address. The address
+is still the connection identity once a connection exists, per _The client address is
+the connection identity_, and the handshake still proves the client can receive at the
+address it claimed. Those are properties of a *connection*; they are not a property of
+the *credential*.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**This cannot be implemented by a server alone.** A server knows only its own connected
+clients; the property is about all servers at once. It requires a backend that maintains
+the connected set — which players are on which servers, live — and that can tell a
+server to end a session when the same player appears elsewhere.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**The protocol carries what those steps need and no more.** The client id in the sealed
+private connect token data is the identity a backend keys on, unforgeable because it is
+sealed to the server and covered by the signature. The 256 bytes of user data carry
+whatever else a backend wants bound to the session. And a server implementation must
+expose a means of disconnecting a specific connected client, which is the one verb this
+posture needs from the transport — the reasons for disconnecting are the game's and the
+backend's, never the transport's.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**A single server still enforces the property locally, with no backend at all**, and
+this standard requires it: a connection request or response naming a client id already
+connected to this server is refused, per _Processing Connection Requests_. That is the
+same rule at the scope one server can see. The backend widens the scope from one server
+to the fleet; it does not introduce the idea.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+**A live client id holds its slot until that slot ends.** A connection request or
+response naming a client id already connected to this server is refused and counted, and
+every retry is refused the same way, with no response, until the slot is gone. A slot
+ends at once when its client disconnects cleanly, or, if the client goes silent, when
+the connection's idle timeout releases it. That timeout is the token's `timeout
+seconds`, chosen by whoever mints the token: the library's own minting writes 10
+seconds, so that is the default, and the server's `max_timeout_seconds` (60) is a
+ceiling on the field, not a default. A retry therefore proceeds as soon as the slot ends
+— immediately after a clean disconnect, and otherwise after a short timeout. Who may
+connect after that is the backend's rule, per the connected set above.
+
+[RN-1 t6 Connect token](TRANSPORT.md#t6)
+*A deployment without a backend connected set has a weaker property, and should know
+which one it has: tokens are transferable between players, and the only cost to a sharer
+is that they cannot both be on the same server.*
 
 <a id="t7"></a>
 ## t7. Key schedule
 
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) **Both sides contribute, and the server's contribution is chosen at the moment the mapping is created.** The client's salt is chosen per attempt; the server's **session nonce** is a fresh random 64-bit value generated when it creates the encryption mapping, and sent in the clear in the challenge so the client can derive with it.
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) *Choosing it at mapping-creation time rather than earlier is what makes the guarantee hold.* A nonce issued earlier — at cookie time, say — inherits the cookie's replayability: replaying the exchange that carried it reproduces the same derived keys with the sending sequence reset to zero, a repeated (key, nonce) pair. The same reasoning applies across a restart. Binding the nonce to the creation of the mapping removes the whole class: a mapping is created once, gets one nonce, and a nonce a server has used is never reachable again, so no lifecycle path — replacement, eviction, expiry, rebuild, restart — can recreate a key whose sequence has been reset.
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) *Both sides contribute for a reason that generalizes: whichever party is the only contributor to key derivation decides whether a key recurs, and if that party is the client, so does anyone who can spoof it. No lifecycle rule about mapping replacement can substitute, because lifecycles have more exits — eviction, expiry, retry, restart — than any rule enumerates. Key uniqueness has to come from the derivation itself.*
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) **`crypto_scalarmult` returns an error for a small-order public key from the other side of the connection, and an implementation must check it and abandon the handshake on failure.** Ignoring that return is a classic way to end up agreeing on an all-zero shared secret with an attacker who chose the point.
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) **The context distinguishes the direction as well as the phase**, so the two directions are separated by the derivation itself and not only by the backend having generated two different token keys. If a backend ever set the two token keys equal, identical contexts would produce identical derived keys in both directions, and an attacker spoofing the server's address could reflect a client's own packet back at it and have it authenticate: same associated data, same nonce, and replay windows are per direction so a fresh sequence passes. A protocol should not depend on a backend's key-generation hygiene for a property it can make structural at no cost.
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) **The whole cost is in the handshake: 64 bytes across two packets and two scalar multiplications per side, once per connection. Not one byte and not one operation is added to any game packet.** That is the condition this was built to satisfy: forward secrecy is worth having only if the packets carrying the game do not pay for it.
-[RN-1 t7 Key schedule](TRANSPORT.md#t7) **Ephemeral secrets must be erased, and a property with no destruction requirement is a comment rather than a property.** Both sides must zero the shared secret as soon as the four keys are derived, and must zero their own ephemeral secret once it is no longer needed for a handshake in progress.
+[RN-1 t7 Key schedule](TRANSPORT.md#t7)
+**Fresh inputs prevent replay from selecting the working keys.** The client chooses a
+fresh salt and ephemeral keypair for each attempt. The server chooses a fresh session
+nonce and ephemeral keypair when it creates a mapping. A repeated request for an
+existing mapping gets the stored challenge; it does not recreate the mapping or reset
+its sending sequence.
+
+[RN-1 t7 Key schedule](TRANSPORT.md#t7)
+**Fresh randomness is a probabilistic safeguard, not proof that a collision is
+impossible.** In particular, the handshake derivation uses the token key, salt, session
+nonce and direction label; it does not include the ephemeral exchange. A repeated
+derivation input under the same token key would repeat that handshake key. Generating
+the nonce at mapping creation prevents a replayed cookie from deterministically choosing
+it, but cannot make a finite random space collision-free. Reliable random generation
+across restarts and independent freshness of both endpoints remain assumptions.
+
+[RN-1 t7 Key schedule](TRANSPORT.md#t7)
+**The ephemeral exchange protects session keys.** Both sides check the X25519 result and
+abandon the attempt for a small-order remote key. The session derivation binds the
+shared secret and both ephemeral public keys, as well as the salt, nonce and direction
+label. Handshake keys and session keys have distinct inputs and roles.
+
+[RN-1 t7 Key schedule](TRANSPORT.md#t7)
+**Direction labels also separate keys when the token's two keys happen to be equal.**
+Without different labels, a packet could authenticate after reflection into the opposite
+direction. Key separation is structural rather than dependent on the backend choosing
+unequal token keys.
+
+[RN-1 t7 Key schedule](TRANSPORT.md#t7)
+**Strict verification is not signature uniqueness.** Canonical encodings, scalar bounds
+and small-order checks reject malformed or malleable encodings. A holder of the signing
+secret can nevertheless produce distinct signatures that verify for the same message and
+public key; verification cannot establish that the signer used deterministic nonce
+generation. Token identity is therefore the hash of the signed connect data, independent
+of the signature. See RFC 8032, sections 5.1.6 and 5.1.7.
+
+[RN-1 t7 Key schedule](TRANSPORT.md#t7)
+**Forward secrecy depends on erasure and the time of compromise.** Erasing ephemeral
+secrets and the shared secret after derivation, and session keys at teardown, protects
+recorded session traffic from a later disclosure of long-term keys. It does not protect
+plaintext or live session keys read from a compromised endpoint, and it does not make
+the handshake itself forward secret.
 
 <a id="t8"></a>
 ## t8. Packet formats
 
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) **There are four sending sequences per connection: one for each direction of each key phase.** Handshake and session packets do not share a counter. Each of the four starts at one and increments by one per packet built under that key. A byte-identical retransmission of a stored packet is the same packet, not a new one: it repeats its sequence by construction, which is safe precisely because the bytes are identical.
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) **Sequence zero is never sent and never valid: a receiver must ignore any packet whose reconstructed sequence is zero.** Zero is what an uninitialized counter, a zeroed structure or a forgotten field produces, so making it invalid on the wire turns that whole class of implementation bug into an immediate, visible rejection instead of a silently accepted packet.
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) *Why not a variable-length encoding.* Packing the sequence into 1 to 8 bytes with the count in a nibble makes every packet parse do nibble unpacking, a range check, and offset arithmetic that depends on the result — variable geometry that every consumer of the layout has to get right, and the classic source of size-recheck and offset defects. A fixed field deletes the encoding, the range check and the dependent arithmetic.
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) *Why not a fixed 8 bytes.* **It is not this protocol's business to decide how often an application sends.** A transport that assumes a packet rate becomes the thing an application has to work around, and the rates differ by orders of magnitude between a turn-based game, a shooter at 60Hz, and a simulation fragmenting large state across many packets per frame. Four extra bytes on every packet is negligible at the low end and a measurable fraction of the link at the high end, so the choice is made where it costs nothing either way: four bytes on the wire, a 64-bit value reconstructed in about ten lines, never wrapping, and no rate assumed.
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) *Why not two bytes.* A 16-bit sequence wraps quickly enough at high send rates to leave no room for reordering or a loss burst, which would put a ceiling on the application's send rate — exactly the constraint this protocol must not impose.
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) **A cookie packet does not provoke a reply.** A client that receives one stores it and includes it in its next *scheduled* request; it must not send a request because a cookie arrived. Otherwise the packet becomes an amplifier pointed at the server — 38 bytes in, 710 out — that anyone able to see a client's salt could drive at whatever rate they chose. With the rule, the client's request rate is its own retransmit rate no matter how many cookie packets arrive, and the pair is not a provoked pair at all.
-[RN-1 t8 Packet formats](TRANSPORT.md#t8) **A client must discard a cookie packet whose connection salt does not match its current attempt**, which is why the salt is echoed in the clear alongside the cookie. Without that check the packet is an off-path denial of service and not a mild one: injecting a cookie requires only the client's address and the ability to spoof the server's, where dropping the client's packets requires being on its path. An attacker injecting junk faster than the client's retransmit rate would ensure every request the client sends carries an unusable cookie, so it never passes the gate — a permanent connect denial against a named player for a few bytes every hundred milliseconds. With the salt checked, an off-path attacker must guess an eight-byte random value it has never seen.
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+**There are four sending sequences per connection: one for each direction of each key
+phase.** Handshake and session packets do not share a counter. Each of the four starts
+at one and increments by one per packet built under that key. A byte-identical
+retransmission of a stored packet is the same packet, not a new one: it repeats its
+sequence by construction, which is safe precisely because the bytes are identical.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+**Sequence zero is never sent and never valid: a receiver must ignore any packet whose
+reconstructed sequence is zero.** Zero is what an uninitialized counter, a zeroed
+structure or a forgotten field produces, so making it invalid on the wire turns that
+whole class of implementation bug into an immediate, visible rejection instead of a
+silently accepted packet.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+*Why not a variable-length encoding.* Packing the sequence into 1 to 8 bytes with the
+count in a nibble makes every packet parse do nibble unpacking, a range check, and
+offset arithmetic that depends on the result — variable geometry that every consumer of
+the layout has to get right, and the classic source of size-recheck and offset defects.
+A fixed field deletes the encoding, the range check and the dependent arithmetic.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+*Why not a fixed 8 bytes.* **It is not this protocol's business to decide how often an
+application sends.** A transport that assumes a packet rate becomes the thing an
+application has to work around, and the rates differ by orders of magnitude between a
+turn-based game, a shooter at 60Hz, and a simulation fragmenting large state across many
+packets per frame. Four extra bytes on every packet is negligible at the low end and a
+measurable fraction of the link at the high end, so the choice is made where it costs
+nothing either way: four bytes on the wire, a 64-bit value reconstructed in about ten
+lines, never wrapping, and no rate assumed.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+*Why not two bytes.* A 16-bit sequence wraps quickly enough at high send rates to leave
+no room for reordering or a loss burst, which would put a ceiling on the application's
+send rate — exactly the constraint this protocol must not impose.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+**A cookie packet does not provoke a reply.** A client that receives one stores it and
+includes it in its next *scheduled* request; it must not send a request because a cookie
+arrived. Otherwise the packet becomes an amplifier pointed at the server — 38 bytes in,
+710 out — that anyone able to see a client's salt could drive at whatever rate they
+chose. With the rule, the client's request rate is its own retransmit rate no matter how
+many cookie packets arrive, and the pair is not a provoked pair at all.
+
+[RN-1 t8 Packet formats](TRANSPORT.md#t8)
+**A client must discard a cookie packet whose connection salt does not match its current
+attempt**, which is why the salt is echoed in the clear alongside the cookie. Without
+that check the packet is an off-path denial of service and not a mild one: injecting a
+cookie requires only the client's address and the ability to spoof the server's, where
+dropping the client's packets requires being on its path. An attacker injecting junk
+faster than the client's retransmit rate would ensure every request the client sends
+carries an unusable cookie, so it never passes the gate — a permanent connect denial
+against a named player for a few bytes every hundred milliseconds. With the salt
+checked, an off-path attacker must guess an eight-byte random value it has never seen.
 
 <a id="t9"></a>
 ## t9. Packet protection
 
-[RN-1 t9 Packet protection](TRANSPORT.md#t9) **The session types — keep-alive (4), payload (5), disconnect (6), ack (8) and payload fragment (9) — share one sealed framing: the sealed plaintext begins with the ack block of _Acks_, and the per-packet type data follows it.** One framing for every session packet means the ack path is exercised by every session packet ever sent — there is no rare ack codepath — and a receiver validates one geometry, not five. The handshake types 1, 2 and 3 carry no ack block: their delivery is proven by the handshake's own progress, and their layouts do not move. Types 8 and 9 are session-phase packets: they seal under the session keys and spend the session sequence spaces, and are never valid under handshake keys.
-[RN-1 t9 Packet protection](TRANSPORT.md#t9) **The challenge and the denied packet are both preceded, in the clear and outside the sealed data, by the session nonce the server chose for the mapping**, because both can be the first packet of a handshake the client ever receives, and the client cannot derive the handshake key without it:
-[RN-1 t9 Packet protection](TRANSPORT.md#t9) **The client's ephemeral public key is in the associated data of the connection challenge and the connection response**, types 2 and 3 only. It is omitted from the connection denied packet, type 1, because its authenticity rests on the handshake key, which the ephemeral exchange does not feed — binding the ephemeral into its associated data would add nothing, where types 2 and 3 bind it because they are the packets that carry out the exchange — and from the session types 4, 5, 6, 8 and 9 — so it costs nothing on any game packet. It is there because the client ephemeral travels in the clear, outside the signature, and without this binding an on-path attacker who alters it in flight achieves something worse than a dropped packet: the handshake runs to completion on handshake keys, which do not involve the ephemeral, the server assigns a slot, and only then does the client discover it cannot open a session-keyed packet. The slot is held for the full timeout. One modified packet per connecting player would empty a server and hold it empty, which is exactly the zombie-client outcome this protocol is required to prevent. With the ephemeral in the associated data the client cannot open the challenge, never responds, and no slot is ever allocated.
+[RN-1 t9 Packet protection](TRANSPORT.md#t9)
+**The session types — keep-alive (4), payload (5), disconnect (6), ack (8) and payload
+fragment (9) — share one sealed framing: the sealed plaintext begins with the ack block
+of _Acks_, and the per-packet type data follows it.** One framing for every session
+packet means the ack path is exercised by every session packet ever sent — there is no
+rare ack codepath — and a receiver validates one geometry, not five. The handshake types
+1, 2 and 3 carry no ack block: their delivery is proven by the handshake's own progress,
+and their layouts do not move. Types 8 and 9 are session-phase packets: they seal under
+the session keys and spend the session sequence spaces, and are never valid under
+handshake keys.
+
+[RN-1 t9 Packet protection](TRANSPORT.md#t9)
+**The challenge and the denied packet are both preceded, in the clear and outside the
+sealed data, by the session nonce the server chose for the mapping**, because both can
+be the first packet of a handshake the client ever receives, and the client cannot
+derive the handshake key without it:
+
+[RN-1 t9 Packet protection](TRANSPORT.md#t9)
+**The client's ephemeral public key is in the associated data of the connection
+challenge and the connection response**, types 2 and 3 only. It is omitted from the
+connection denied packet, type 1, because its authenticity rests on the handshake key,
+which the ephemeral exchange does not feed — binding the ephemeral into its associated
+data would add nothing, where types 2 and 3 bind it because they are the packets that
+carry out the exchange — and from the session types 4, 5, 6, 8 and 9 — so it costs
+nothing on any game packet. It is there because the client ephemeral travels in the
+clear, outside the signature, and without this binding an on-path attacker who alters it
+in flight achieves something worse than a dropped packet: the handshake runs to
+completion on handshake keys, which do not involve the ephemeral, the server assigns a
+slot, and only then does the client discover it cannot open a session-keyed packet. The
+slot is held for the full timeout. One modified packet per connecting player would empty
+a server and hold it empty, which is exactly the zombie-client outcome this protocol is
+required to prevent. With the ephemeral in the associated data the client cannot open
+the challenge, never responds, and no slot is ever allocated.
 
 <a id="t10"></a>
 ## t10. Receive processing
 
-[RN-1 t10 Receive processing](TRANSPORT.md#t10) **Every check this standard specifies is defined by what it rejects and in what order, never by where it runs.** A transport may perform any prefix of the sequence as early as it is able. This is a general property of the design and worth stating once rather than per check.
-[RN-1 t10 Receive processing](TRANSPORT.md#t10) **A kernel map is a hash table too, and inherits the same question.** A whitelist held in a `BPF_MAP_TYPE_HASH` is subject to the same collision concern as a userspace table, and the same reasoning resolves it — with the same ordering of importance.
-[RN-1 t10 Receive processing](TRANSPORT.md#t10) **Two rules keep this safe.** A transport that rejects early must reject exactly what the full sequence would have rejected: no more, or it discards legitimate traffic that the userspace path would have accepted; no less, or the guarantee is weaker than specified. And the userspace path must not assume an earlier stage ran, since the same implementation serves every transport. Pushing work down therefore reduces the *volume* reaching userspace rather than removing code from it — the check still runs, but on the handful of packets that survived instead of on the flood. That is where the win is, and it keeps one implementation of the logic rather than one per transport.
-[RN-1 t10 Receive processing](TRANSPORT.md#t10) **The server slot gate runs before decryption, not after it.** A server acts on no session packet for a mapping that holds no slot: the only sealed packet a half-open mapping exists to receive is the connection response, a lost response is repaired by the client retransmitting it, and a client that gives up before its slot is assigned sends a disconnect burst that the mapping's own deadline makes redundant. Opening such a packet would buy nothing, since it is dropped whatever the open says, and it would hand anyone who can send from a half-open address one AEAD per packet. So the gate sits after the cheap sequence checks and before the open. The drop counts `NOT_CONNECTED` and nothing else: the packet was never opened, so it is not counted as forged, and it does not feed the integrity limit, which a half-open mapping does not need because its handshake deadline already bounds it.
+[RN-1 t10 Receive processing](TRANSPORT.md#t10)
+**Every check this standard specifies is defined by what it rejects and in what order,
+never by where it runs.** A transport may perform any prefix of the sequence as early as
+it is able. This is a general property of the design and worth stating once rather than
+per check.
+
+[RN-1 t10 Receive processing](TRANSPORT.md#t10)
+**A kernel map is a hash table too, and inherits the same question.** A whitelist held
+in a `BPF_MAP_TYPE_HASH` is subject to the same collision concern as a userspace table,
+and the same reasoning resolves it — with the same ordering of importance.
+
+[RN-1 t10 Receive processing](TRANSPORT.md#t10)
+**Two rules keep this safe.** A transport that rejects early must reject exactly what
+the full sequence would have rejected: no more, or it discards legitimate traffic that
+the userspace path would have accepted; no less, or the guarantee is weaker than
+specified. And the userspace path must not assume an earlier stage ran, since the same
+implementation serves every transport. Pushing work down therefore reduces the *volume*
+reaching userspace rather than removing code from it — the check still runs, but on the
+handful of packets that survived instead of on the flood. That is where the win is, and
+it keeps one implementation of the logic rather than one per transport.
+
+[RN-1 t10 Receive processing](TRANSPORT.md#t10)
+**The server slot gate runs before decryption, not after it.** A server acts on no
+session packet for a mapping that holds no slot: the only sealed packet a half-open
+mapping exists to receive is the connection response, a lost response is repaired by the
+client retransmitting it, and a client that gives up before its slot is assigned sends a
+disconnect burst that the mapping's own deadline makes redundant. Opening such a packet
+would buy nothing, since it is dropped whatever the open says, and it would hand anyone
+who can send from a half-open address one AEAD per packet. So the gate sits after the
+cheap sequence checks and before the open. The drop counts `NOT_CONNECTED` and nothing
+else: the packet was never opened, so it is not counted as forged, and it does not feed
+the integrity limit, which a half-open mapping does not need because its handshake
+deadline already bounds it.
 
 <a id="t11"></a>
 ## t11. Handshake: client
 
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) *The third exchange carries no cookie, and that is a deliberate subtraction.* A third-exchange cookie would exist to prove the address again, or to carry state for a server that stayed stateless through the handshake. Neither purpose exists here. The address was already proved in step 1, so proving it again is redundant; and by step 3 the server holds a mapping for that address, so it is not stateless and has nowhere it needs the client to carry its state for it. What remains for the response to prove is possession of the handshake key, and an empty sealed packet proves exactly that: a party who captured the request bytes but cannot open the challenge cannot produce one.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **The response carries 24 bytes of required zero padding, and the padding is there for anti-amplification.** Having removed the cookie, the response became smaller than the keep-alive it provokes, which would have made a connected client a small reflector. The padding restores the invariant that no response exceeds the packet that provoked it. **A receiver must check both the size and that the padding is zero** — padding that is merely permitted rather than required is no protection at all, since an attacker simply omits it.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **Step 3 is still necessary, and it is worth saying what it stops.** Without it a server would assign a slot at the end of step 2, and an on-path attacker who spoofs a victim's address could replay the victim's captured request, take the victim's slot, and leave the victim refused as already connected. Because the challenge goes to the address, not to the attacker, only the real client can answer it.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **The machine steps forward or fails; it never moves sideways.** A client climbs the positive states monotonically — 1, 2, 3, 4 — entering each exactly once per attempt, and every connection goes through every step, so there is no shortcut, no state reachable by two routes, and no rarely-taken path. On any failure it does not detour into recovery: it fails to a terminal state, and recovery is a fresh attempt from the start with a fresh salt — which means the recovery path *is* the ordinary connect path, the one that runs every time. This is deliberate case reduction: one route to success and one kind of failure handling is less to implement, less to secure, and less to test than in-flight repair could ever be, and it is why the invariants below can exist at all.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **The state must be readable from outside at any time**, and it is the primary means of diagnosing a connection that is not progressing. A state machine whose current position cannot be observed can only be debugged by inference, and the failure it is worst at explaining is the one that matters most here: a client that never connects and never says why.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) *Why the cookie phase gets a state of its own.* The client sends a request with an empty cookie field and waits for a cookie, then sends a request carrying that cookie and waits for a challenge. Those are two different waits with two different failure meanings, and collapsing them would make the protocol's two most common deployment faults indistinguishable: _cookie request timed out_ means nothing was ever heard from the server — wrong address, wrong port, wrong filter value, server down, a firewall — while _connection request timed out_ means the server answered, issued a cookie, and then silently refused the token, which points at the signature, the sealed block, the advertised address or the protocol id. Both surface as a client that will not connect; only the state separates them.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **The numbering carries an invariant: a waiting state N times out to state -(N+1).** _requesting cookie_ (1) → -2, _sending connection request_ (2) → -3, _sending connection response_ (3) → -4, _connected_ (4) → -5. Outside the pairing: _connection denied_ (-1), which is told to the client rather than inferred from silence; _invalid connect token_ (-6), detected before anything is sent; and _connect token expired_ (-7), which is the total connect deadline's terminal and is also entered before the first send when the token is already expired on arrival. These fall outside it. An implementation should assert the pairing, so that a state added later cannot silently ship without its timeout.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **The ordering is load-bearing, not cosmetic.** The handshake is exactly the range `state > disconnected && state < connected`, so any rule that applies "while connecting" is one range check that stays correct as states are added between. The rule below relies on it.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **A total connect deadline bounds the client, as the handshake deadline bounds the server.** Per-state timeouts alone are not enough on either side: a client that keeps making just enough progress could walk between states indefinitely, and per-state timers would never fire. So while the client is in the handshake range it must abandon the attempt once the token's lifetime — `expire - create`, measured from the start of the attempt — has elapsed, transitioning to _connect token expired_ (-7). The deadline is measured as a duration from the attempt's start rather than against the absolute expire timestamp, so that a client whose clock disagrees with the backend's still gives up after the intended interval. The check stops at _connected_: an established connection is governed by its idle timeout, not by the token that admitted it.
-[RN-1 t11 Handshake: client](TRANSPORT.md#t11) **The client trusts only the server, so a cookie refreshes nothing.** The cookie's echoed salt is the client's only check on it, and the salt rode in the clear in the request: anyone who saw the request can send a cookie the client accepts. Accepting one is harmless, because a cookie only lets the next request reach the server, which checks the MAC itself. Letting it refresh the client's receive time would let that observer keep an attempt alive against a dead or unreachable server for as long as the token lasts, and letting it give a round-trip sample would let the observer set the client's first RTT. So the timeout runs from the attempt's start until the first packet that opens under the attempt's keys, the challenge, and the first sample is the challenge's. The cost is that a cookie answered late leaves less of the timeout for the challenge; the token's timeout is seconds and one round trip is milliseconds. A client with a socket of its own connects it to the server, so the operating system drops datagrams from every other source before the client reads them; the client's own source check stays behind it.
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+*The third exchange carries no cookie, and that is a deliberate subtraction.* A
+third-exchange cookie would exist to prove the address again, or to carry state for a
+server that stayed stateless through the handshake. Neither purpose exists here. The
+address was already proved in step 1, so proving it again is redundant; and by step 3
+the server holds a mapping for that address, so it is not stateless and has nowhere it
+needs the client to carry its state for it. What remains for the response to prove is
+possession of the handshake key, and an empty sealed packet proves exactly that: a party
+who captured the request bytes but cannot open the challenge cannot produce one.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**The response carries 24 bytes of required zero padding, and the padding is there for
+anti-amplification.** Having removed the cookie, the response became smaller than the
+keep-alive it provokes, which would have made a connected client a small reflector. The
+padding restores the invariant that no response exceeds the packet that provoked it. **A
+receiver must check both the size and that the padding is zero** — padding that is
+merely permitted rather than required is no protection at all, since an attacker simply
+omits it.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**Step 3 is still necessary, and it is worth saying what it stops.** Without it a server
+would assign a slot at the end of step 2, and an on-path attacker who spoofs a victim's
+address could replay the victim's captured request, take the victim's slot, and leave
+the victim refused as already connected. Because the challenge goes to the address, not
+to the attacker, only the real client can answer it.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**The machine steps forward or fails; it never moves sideways.** A client climbs the
+positive states monotonically — 1, 2, 3, 4 — entering each exactly once per attempt, and
+every connection goes through every step, so there is no shortcut, no state reachable by
+two routes, and no rarely-taken path. On any failure it does not detour into recovery:
+it fails to a terminal state, and recovery is a fresh attempt from the start with a
+fresh salt — which means the recovery path *is* the ordinary connect path, the one that
+runs every time. This is deliberate case reduction: one route to success and one kind of
+failure handling is less to implement, less to secure, and less to test than in-flight
+repair could ever be, and it is why the invariants below can exist at all.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**The state must be readable from outside at any time**, and it is the primary means of
+diagnosing a connection that is not progressing. A state machine whose current position
+cannot be observed can only be debugged by inference, and the failure it is worst at
+explaining is the one that matters most here: a client that never connects and never
+says why.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+*Why the cookie phase gets a state of its own.* The client sends a request with an empty
+cookie field and waits for a cookie, then sends a request carrying that cookie and waits
+for a challenge. Those are two different waits with two different failure meanings, and
+collapsing them would make the protocol's two most common deployment faults
+indistinguishable: _cookie request timed out_ means nothing was ever heard from the
+server — wrong address, wrong port, wrong filter value, server down, a firewall — while
+_connection request timed out_ means the server answered, issued a cookie, and then
+silently refused the token, which points at the signature, the sealed block, the
+advertised address or the protocol id. Both surface as a client that will not connect;
+only the state separates them.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**The numbering carries an invariant: a waiting state N times out to state -(N+1).**
+_requesting cookie_ (1) → -2, _sending connection request_ (2) → -3, _sending connection
+response_ (3) → -4, _connected_ (4) → -5. Outside the pairing: _connection denied_ (-1),
+which is told to the client rather than inferred from silence; _invalid connect token_
+(-6), detected before anything is sent; and _connect token expired_ (-7), which is the
+total connect deadline's terminal and is also entered before the first send when the
+token is already expired on arrival. These fall outside it. An implementation should
+assert the pairing, so that a state added later cannot silently ship without its
+timeout.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**The ordering is load-bearing, not cosmetic.** The handshake is exactly the range
+`state > disconnected && state < connected`, so any rule that applies "while connecting"
+is one range check that stays correct as states are added between. The rule below relies
+on it.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**A total connect deadline bounds the client, as the handshake deadline bounds the
+server.** Per-state timeouts alone are not enough on either side: a client that keeps
+making just enough progress could walk between states indefinitely, and per-state timers
+would never fire. So while the client is in the handshake range it must abandon the
+attempt once the token's lifetime — `expire - create`, measured from the start of the
+attempt — has elapsed, transitioning to _connect token expired_ (-7). The deadline is
+measured as a duration from the attempt's start rather than against the absolute expire
+timestamp, so that a client whose clock disagrees with the backend's still gives up
+after the intended interval. The check stops at _connected_: an established connection
+is governed by its idle timeout, not by the token that admitted it.
+
+[RN-1 t11 Handshake: client](TRANSPORT.md#t11)
+**The client trusts only the server, so a cookie refreshes nothing.** The cookie's
+echoed salt is the client's only check on it, and the salt rode in the clear in the
+request: anyone who saw the request can send a cookie the client accepts. Accepting one
+is harmless, because a cookie only lets the next request reach the server, which checks
+the MAC itself. Letting it refresh the client's receive time would let that observer
+keep an attempt alive against a dead or unreachable server for as long as the token
+lasts, and letting it give a round-trip sample would let the observer set the client's
+first RTT. So the timeout runs from the attempt's start until the first packet that
+opens under the attempt's keys, the challenge, and the first sample is the challenge's.
+The cost is that a cookie answered late leaves less of the timeout for the challenge;
+the token's timeout is seconds and one round trip is milliseconds. A client with a
+socket of its own connects it to the server, so the operating system drops datagrams
+from every other source before the client reads them; the client's own source check
+stays behind it.
 
 <a id="t12"></a>
 ## t12. Handshake: server
 
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Every lookup a server performs per packet or per connection must be constant time in the number of client slots.** A linear scan is tolerable at a few dozen clients and is whole cores at the reference target of a thousand, because the per-packet rows multiply by the aggregate packet rate:
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **A free slot is found from a free list, not a search** — a stack of unused indices, popped on connect and pushed on disconnect.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **The address and client-id lookups are hash tables, and the hash must be keyed with a secret generated at server start.** The obvious objection to hashing an attacker-influenced key is that an attacker can choose collisions and restore the linear behavior deliberately. Two things answer it, and the second is the stronger:
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *The header spends two bytes on the epoch and the wider filter value, and this document declines two bytes twice elsewhere — the slot index just below, and a connection identifier under _The client address is the connection identity_. The difference is that both of those buy a capability for the packet carrying them, where these two buy the ability to change the filter later without moving the wire, which is a cost paid once against a break that would otherwise be paid by every implementation at once. A reader who weighs it the other way is not being unreasonable.*
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *An alternative was considered and declined: carrying the client's slot index in the clear in every packet, so a server indexes its slot array directly and verifies that the slot's address matches the source. That is genuinely constant time with no hash and no collision surface at all. It was declined because it costs two bytes on every game packet, and per-packet overhead is the budget this protocol guards most closely; a keyed hash costs tens of nanoseconds and no bytes. The option is recorded because it is the right answer if a future deployment ever finds the hash to be the bottleneck.*
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **The governing intent, which every rule in this section serves: a client without a valid connect token must be trivially rejectable.** That is what the connect token is for beyond authorization — it is the protection against being flooded off the internet. A server should be able to throw away traffic from anyone who has not been sent by the matchmaker at a cost so small that an attacker gains nothing by sending it, and the moment rejection stops being trivial the token has stopped doing half its job.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Public key cryptography puts that intent under real pressure, which is why the cookie exists.** Verifying a signature is not trivial, and an attacker who can make a server verify one has made rejection expensive by definition. The cookie restores the property: a request without one is refused after a single keyed hash, and only an address that has proved it can receive gets any asymmetric work spent on it. Read the ordering below as the implementation of the intent above, not as a list of checks that happen to be in an order.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **The two properties, and why they take four layers.** What a server must have is a bar that is hard to get over — you cannot connect unless the matchmaker sent you — and no way to occupy a slot with a zombie client that is not really there. A shared-secret design gets both from one symmetric check, because the shared key makes the bar real *and* makes enforcing it cost about a microsecond, so cheap rejection and a high bar are the same operation. Without a shared secret the two separate, and they are rebuilt as a ladder, each rung rejecting what it can at its own cost so the expensive rung is reached only by traffic that has already cleared the cheap ones:
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Address validation always comes before asymmetric work.** A server must require a valid return cookie before performing the signature verification, and answers a request without one by sending a _connection cookie packet_ and stopping. There is no threshold and no mode: the cookie exchange happens on every connection.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *Always-on rather than load-triggered, for two reasons. The round trip is cheap here: connections last minutes and a connect already takes on the order of a second, so one extra exchange at the start is invisible — a protocol with short, numerous connections would weigh this differently. And a defence that engages only above a threshold is a code path that never runs in normal operation or in testing, most likely to be found broken the day it is first needed, with a tuning knob and a seam an attacker can sit just underneath. Always-on deletes the rate measurement, the threshold, the seam, and the untested branch.*
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *Why this is required rather than advised, and why the earlier mitigations were not enough.* Every check that precedes the signature verify reads a field the attacker either controls or can copy from the client binary: the size, the version, the protocol id, the expire timestamp it writes itself, the address flags, the advertised address, the server public key, and a used-token identifier that is a hash of its own bytes and therefore unique every time. The already-connected check passes trivially, because a spoofed source is never connected. So a request built from public constants and random padding forces a full Ed25519 verification, from a spoofed address, with no captured packet and no on-path position. At roughly a hundred microseconds each that is about ten thousand per second per core, or **tens of megabits per second of attack traffic to saturate a core** — three orders of magnitude below what the same attack costs against a symmetric check. The prefilter cannot help at epoch 0: it is unkeyed and its constant ships in every client. A keyed filter raises the cost — a forger without the magic is refused before the request is parsed at all — but it is available only to a deployment with a backend, and the magic itself reaches clients, so a real account still yields one. Rate limiting cannot help: the source address is spoofable, which this standard already says. The used-token history cannot help: it bounds replays of captured tokens, not fabrications. **The cookie is the only one of these that changes the attacker's cost**, and it changes it completely — to obtain a cookie you must receive at the address you claim, so the flood must come from addresses you really hold, where per-source rate limiting finally bites. This is the SYN cookie pattern, and it is what DTLS 1.3 and QUIC both do: cheap keyed symmetric work first, expensive asymmetric work only for an address that has answered. Making it load-triggered rather than always-on follows DTLS 1.3, which performs the cookie exchange by default but permits a deployment to skip it where amplification is not a threat.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *This is placed after every check above it and before every check below it, and the position is deliberate on both sides.* Everything above is a fixed-offset comparison against a constant that rejects silently and costs nothing, so a server must not answer a packet that fails one of them: doing so would emit a cookie packet for any datagram carrying a passing filter value and a zero type byte, making the server a packet-rate reflector for garbage and spending a hash and a system call on every piece of it. Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three asymmetric operations follow — so nothing below may run for an address that has not answered. * **A server should bound the post-cookie handshake work it performs in one update: at most 16 connection requests whose cookie validated, per server, per update by default.** This check sits after the cookie validates and before the used-token lookup and the signature verify, so a request past the budget spends no asymmetric work. A refused request sees no answer, and the server increments `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`; the client sends its request again at its send rate, so a burst larger than the budget is spread across updates rather than refused. One request costs one signature verify and, when it verifies, a sealed-box open, a keypair and a key exchange, so the default bounds one update's handshake work to a few milliseconds while a thousand clients joining at once still connect within a ten-second token timeout at a 10 Hz update. The budget is local policy, reset at the start of each update; an implementation may choose another value. * If the token identifier already appears in the used-token history bound to a different source address and port, ignore it. This is also the cheap refusal of a token a connected client holds, before any signature verify or open. **The token identifier is the output of `crypto_generichash` invoked with a 16-byte output length and no key, over the 576-byte signed connect data** — a content-determined value. BLAKE2b binds its output length into the hash, so a 16-byte invocation is not a truncation of the 32-byte one; implementations must use the 16-byte output length, not truncate. *(It is deliberately not the signature bytes. Signature malleability means an implementation that does not enforce canonical Ed25519 verification would see a mangled copy of the same token as a new one, and an attacker could mint unbounded distinct identifiers from one captured request. Hashing the signed data has no such freedom, and is smaller per entry.)* Comparisons must be constant time. * **A server should apply a failed-signature budget before the verify: at most 90 failed signature verifications per 10-second window by default.** Once the budget is spent, a request from a source that has already failed this window is refused before the verify. A refused request sees no answer, and the server increments `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. The budget and its window are local policy; an implementation may choose other values. * **Verify the signature over the 576-byte signed connect data against the backend public key (`crypto_sign_verify_detached`). If it fails, ignore the packet.** This is the authenticity check and it comes before the seal is opened. * Open the sealed private block with the keypair named by the server public key field (`crypto_box_seal_open`). If it fails, ignore the packet. * If the protocol id or expire timestamp inside the sealed block does not equal the signed one, ignore the packet. * If a client with this client id is already connected, ignore it. * Do not record the token in the used-token history here. **A request proves nothing about who holds the token's keys** — anyone who saw it on the wire can replay it from an address of their own — so the binding is made only when a response from this address opens under the handshake key (_Processing Connection Response Packets_). Until then several addresses may each hold a mapping for one token; at most one of them can be admitted.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Every valid request is answered every time it arrives, not only the first time.** This is an invariant of the whole protocol, and the reason is packet loss: a response sent only once is a response that can be lost, leaving the client retransmitting a request that is silently ignored forever — a connection that dies not from any failure but from one dropped packet. So a request without a valid cookie gets a cookie packet on every arrival; a request whose mapping exists gets the stored challenge on every arrival; a request that finds the slots full is denied on every arrival; a retransmitted connection response finds the client connected and is ignored, but the keep-alives that answer it are generated at the send rate for as long as the client is connected, so the answer repeats anyway. Silence is reserved for invalid traffic. When adding any new exchange, this invariant is part of its design: the response must be repeatable, and the state that repeats it must live somewhere.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Half-open state, and the two deadlines that bound it.** A handshake that is started and never finished is the classic way to attack a connection protocol, and there are two separate things to get right: what a stalled handshake can occupy, and how long it can occupy it.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *What it can occupy is an encryption mapping, never a client slot.* Slots are assigned only in step 3, after the client has answered a challenge sent to the address it claimed, so no amount of stalling before that point consumes live server capacity. This separation is the structural defence; everything below is about duration.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *How long it can occupy it is bounded twice, and the second bound is the one that matters.*
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **The handshake deadline must not be the token's `timeout seconds`.** That field is the *connected* idle timeout — how long an established player may go quiet before being dropped — and it is sized for gameplay, in tens of seconds. A legitimate client completes steps 2 and 3 in one round trip; a few seconds covers that with room for several retransmissions. Reusing the gameplay timeout here would hand an attacker a ten- to sixty-fold multiplier on the duration of every mapping they hold, bought with nothing. The handshake deadline is a server-side configuration value, in seconds, and it is not carried in the token, because it protects the server and nothing the client presents should set it.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **It has a sensible default and it is tunable per game.** The server config field `handshake_deadline_seconds` defaults to five seconds (range 1 to 60): a client retransmitting at the send rate gets tens of attempts inside it, which covers ordinary loss and a poor round trip with room to spare, while cutting an attacker's hold time to a fraction of a gameplay timeout. But five seconds is a judgement about a population of players, not a property of the protocol, and the population differs per game — a title with satellite or cellular players wants more, a LAN or console title under attack wants less. So the value is exposed as configuration, with the default chosen to be safe for a game that never touches it. The same applies to the idle deadline and to the client's total connect deadline: each has a default that works unattended, and each can be tuned by a deployment that knows its players better than this document does.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **On establishment the handshake deadline is discharged**, and the mapping is governed by the idle deadline alone.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Size the mapping table far above the slot count.** Mappings are small and short-lived where slots are large and long-lived, so there is no reason to ration them; a generous table decouples pressure on the handshake from capacity for live players, and makes filling it a much more expensive thing to attempt. An implementation must document the ratio it chose.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) *What remains, and whose problem it is.* A client holding a real token can complete the whole handshake, take a slot, and then send nothing but keep-alives forever. That is not a protocol defect: it is a connected client that the backend admitted and that is behaving legally, and this layer cannot tell it from a player sitting in a menu. The bound on it is the backend's issuance policy, and the decision to drop it belongs to the game, which knows what a player ought to be doing. This layer's obligation is to make it *visible* — see the counters below — not to police it.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **One token structure, and one rule that needs no structure.**
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **The used-token history** binds a token identifier to the first source address whose connection response opened under it, so a captured request cannot be replayed from elsewhere. It is a fixed-size structure; an implementation must document its capacity and eviction policy, and should size it to at least eight entries per client slot with oldest-first eviction. Entries expire with the tokens they name. Eviction is security-relevant: an attacker holding several legitimately obtained tokens can flush a victim's entry and then replay the victim's captured request from a different address, so capacity should exceed the plausible rate of legitimate connections within a token lifetime.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **One token, one live connection, and no structure of its own.** A connect token is meant to be used once, soon after it is minted. Three existing rungs keep a token to one live connection: the used-token history refuses it from any address but the one it is bound to, before any asymmetric work; a connected address provokes nothing from the request path; and a token carries one client id, so the client-id check refuses a second connection while the first lives, at the request after the open and at the response, where two addresses may each hold a mapping for one token. A slot is freed when its connection closes, and nothing outlives it: a fresh token at a server with a free slot always connects, however many players have come and gone before it, unless its client id still holds a slot (a player rejoining before the old connection times out is refused by the client-id check until it does). **A token whose connection has closed may connect again until it expires**: from the address it is bound to; from a second address that held a mapping for it before the first response bound it; or from any address once the history has dropped its entry. That is the accepted residual risk of this design, and the token's expiry bounds it: a deployment should mint tokens that expire 30 seconds after they are created, as a netcode.io token does by default; the server places no limit of its own on a token's lifetime, and refuses only a token created more than the creation skew in its future. The expire timestamp is signed and sits at a fixed offset in the clear, so an expired token is the cheapest refusal on the request path, before the cookie gate.
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Every lookup a server performs per packet or per connection must be constant time in
+the number of client slots.** A linear scan is tolerable at a few dozen clients and is
+whole cores at the reference target of a thousand, because the per-packet rows multiply
+by the aggregate packet rate:
 
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **The request claim is bounded, not closed, and the bound is the mapping's own lifetime.** An observer on the network path can copy a first connection request, earn a cookie at its own address, and replay the request ahead of the real client; the signature verifies, so that address claims the token and the client's retries are refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. Closing the window outright would mean giving one token many half-open mappings, and the one-mapping rule is what keeps a captured token from buying unbounded handshake work. The claim is therefore released whenever its half-open mapping is removed, so its window is min(handshake deadline, half-open idle deadline): an observer that stops sending loses it at the idle deadline, and one that keeps sending loses it at the handshake deadline. A refused client recovers by retrying from its own address within its token timeout. The residual is the same one an on-path party already has with packet loss, and the bound keeps it finite without adding a table, a rate limit or a per-address key.
-[RN-1 t12 Handshake: server](TRANSPORT.md#t12) **Rate limiting.** A deployment should rate limit connection requests per source address, and must not treat that as sufficient: connection requests are unauthenticated and their source address is spoofable, so per-source limiting does not bound the attacker it most needs to stop. An implementation may cache recently verified (signed data hash → verified) results and short-circuit the signature check on a byte-identical repeat, which is sound because it accepts only data already verified.
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**A free slot is found from a free list, not a search** — a stack of unused indices,
+popped on connect and pushed on disconnect.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**The address and client-id lookups are hash tables, and the hash must be keyed with a
+secret generated at server start.** The obvious objection to hashing an
+attacker-influenced key is that an attacker can choose collisions and restore the linear
+behavior deliberately. Two things answer it, and the second is the stronger:
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*The header spends two bytes on the epoch and the wider filter value, and this document
+declines two bytes twice elsewhere — the slot index just below, and a connection
+identifier under _The client address is the connection identity_. The difference is that
+both of those buy a capability for the packet carrying them, where these two buy the
+ability to change the filter later without moving the wire, which is a cost paid once
+against a break that would otherwise be paid by every implementation at once. A reader
+who weighs it the other way is not being unreasonable.*
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*An alternative was considered and declined: carrying the client's slot index in the
+clear in every packet, so a server indexes its slot array directly and verifies that the
+slot's address matches the source. That is genuinely constant time with no hash and no
+collision surface at all. It was declined because it costs two bytes on every game
+packet, and per-packet overhead is the budget this protocol guards most closely; a keyed
+hash costs tens of nanoseconds and no bytes. The option is recorded because it is the
+right answer if a future deployment ever finds the hash to be the bottleneck.*
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**The governing intent, which every rule in this section serves: a client without a
+valid connect token must be trivially rejectable.** That is what the connect token is
+for beyond authorization — it is the protection against being flooded off the internet.
+A server should be able to throw away traffic from anyone who has not been sent by the
+matchmaker at a cost so small that an attacker gains nothing by sending it, and the
+moment rejection stops being trivial the token has stopped doing half its job.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Public key cryptography puts that intent under real pressure, which is why the cookie
+exists.** Verifying a signature is not trivial, and an attacker who can make a server
+verify one has made rejection expensive by definition. The cookie restores the property:
+a request without one is refused after a single keyed hash, and only an address that has
+proved it can receive gets any asymmetric work spent on it. Read the ordering below as
+the implementation of the intent above, not as a list of checks that happen to be in an
+order.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**The two properties, and why they take four layers.** What a server must have is a bar
+that is hard to get over — you cannot connect unless the matchmaker sent you — and no
+way to occupy a slot with a zombie client that is not really there. A shared-secret
+design gets both from one symmetric check, because the shared key makes the bar real
+*and* makes enforcing it cost about a microsecond, so cheap rejection and a high bar are
+the same operation. Without a shared secret the two separate, and they are rebuilt as a
+ladder, each rung rejecting what it can at its own cost so the expensive rung is reached
+only by traffic that has already cleared the cheap ones:
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Address validation always comes before asymmetric work.** A server must require a
+valid return cookie before performing the signature verification, and answers a request
+without one by sending a _connection cookie packet_ and stopping. There is no threshold
+and no mode: the cookie exchange happens on every connection.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*Always-on rather than load-triggered, for two reasons. The round trip is cheap here:
+connections last minutes and a connect already takes on the order of a second, so one
+extra exchange at the start is invisible — a protocol with short, numerous connections
+would weigh this differently. And a defence that engages only above a threshold is a
+code path that never runs in normal operation or in testing, most likely to be found
+broken the day it is first needed, with a tuning knob and a seam an attacker can sit
+just underneath. Always-on deletes the rate measurement, the threshold, the seam, and
+the untested branch.*
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*Why this is required rather than advised, and why the earlier mitigations were not
+enough.* Every check that precedes the signature verify reads a field the attacker
+either controls or can copy from the client binary: the size, the version, the protocol
+id, the expire timestamp it writes itself, the address flags, the advertised address,
+the server public key, and a used-token identifier that is a hash of its own bytes and
+therefore unique every time. The already-connected check passes trivially, because a
+spoofed source is never connected. So a request built from public constants and random
+padding forces a full Ed25519 verification, from a spoofed address, with no captured
+packet and no on-path position. At roughly a hundred microseconds each that is about ten
+thousand per second per core, or **tens of megabits per second of attack traffic to
+saturate a core** — three orders of magnitude below what the same attack costs against a
+symmetric check. The prefilter cannot help at epoch 0: it is unkeyed and its constant
+ships in every client. A keyed filter raises the cost — a forger without the magic is
+refused before the request is parsed at all — but it is available only to a deployment
+with a backend, and the magic itself reaches clients, so a real account still yields
+one. Rate limiting cannot help: the source address is spoofable, which this standard
+already says. The used-token history cannot help: it bounds replays of captured tokens,
+not fabrications. **The cookie is the only one of these that changes the attacker's
+cost**, and it changes it completely — to obtain a cookie you must receive at the
+address you claim, so the flood must come from addresses you really hold, where
+per-source rate limiting finally bites. This is the SYN cookie pattern, and it is what
+DTLS 1.3 and QUIC both do: cheap keyed symmetric work first, expensive asymmetric work
+only for an address that has answered. Making it load-triggered rather than always-on
+follows DTLS 1.3, which performs the cookie exchange by default but permits a deployment
+to skip it where amplification is not a threat.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*This is placed after every check above it and before every check below it, and the
+position is deliberate on both sides.* Everything above is a fixed-offset comparison
+against a constant that rejects silently and costs nothing, so a server must not answer
+a packet that fails one of them: doing so would emit a cookie packet for any datagram
+carrying a passing filter value and a zero type byte, making the server a packet-rate
+reflector for garbage and spending a hash and a system call on every piece of it.
+Everything below it is expensive — the used-token lookup hashes 576 bytes, and the three
+asymmetric operations follow — so nothing below may run for an address that has not
+answered. * **A server should bound the post-cookie handshake work it performs in one
+update: at most 16 connection requests whose cookie validated, per server, per update by
+default.** This check sits after the cookie validates and before the used-token lookup
+and the signature verify, so a request past the budget spends no asymmetric work. A
+refused request sees no answer, and the server increments
+`CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`; the client sends its request again at
+its send rate, so a burst larger than the budget is spread across updates rather than
+refused. One request costs one signature verify and, when it verifies, a sealed-box
+open, a keypair and a key exchange, so the default bounds one update's handshake work to
+a few milliseconds while a thousand clients joining at once still connect within a
+ten-second token timeout at a 10 Hz update. The budget is local policy, reset at the
+start of each update; an implementation may choose another value. * If the token
+identifier already appears in the used-token history bound to a different source address
+and port, ignore it. This is also the cheap refusal of a token a connected client holds,
+before any signature verify or open. **The token identifier is the output of
+`crypto_generichash` invoked with a 16-byte output length and no key, over the 576-byte
+signed connect data** — a content-determined value. BLAKE2b binds its output length into
+the hash, so a 16-byte invocation is not a truncation of the 32-byte one;
+implementations must use the 16-byte output length, not truncate. *(It is deliberately
+not the signature bytes. Signature malleability means an implementation that does not
+enforce canonical Ed25519 verification would see a mangled copy of the same token as a
+new one, and an attacker could mint unbounded distinct identifiers from one captured
+request. Hashing the signed data has no such freedom, and is smaller per entry.)*
+Comparisons must be constant time. * **A server should apply a failed-signature budget
+before the verify: at most 90 failed signature verifications per 10-second window by
+default.** Once the budget is spent, a request from a source that has already failed
+this window is refused before the verify. A refused request sees no answer, and the
+server increments `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. The budget and its window
+are local policy; an implementation may choose other values. * **Verify the signature
+over the 576-byte signed connect data against the backend public key
+(`crypto_sign_verify_detached`). If it fails, ignore the packet.** This is the
+authenticity check and it comes before the seal is opened. * Open the sealed private
+block with the keypair named by the server public key field (`crypto_box_seal_open`). If
+it fails, ignore the packet. * If the protocol id or expire timestamp inside the sealed
+block does not equal the signed one, ignore the packet. * If a client with this client
+id is already connected, ignore it. * Do not record the token in the used-token history
+here. **A request proves nothing about who holds the token's keys** — anyone who saw it
+on the wire can replay it from an address of their own — so the binding is made only
+when a response from this address opens under the handshake key (_Processing Connection
+Response Packets_). Until then several addresses may each hold a mapping for one token;
+at most one of them can be admitted.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Every valid request is answered every time it arrives, not only the first time.** This
+is an invariant of the whole protocol, and the reason is packet loss: a response sent
+only once is a response that can be lost, leaving the client retransmitting a request
+that is silently ignored forever — a connection that dies not from any failure but from
+one dropped packet. So a request without a valid cookie gets a cookie packet on every
+arrival; a request whose mapping exists gets the stored challenge on every arrival; a
+request that finds the slots full is denied on every arrival; a retransmitted connection
+response finds the client connected and is ignored, but the keep-alives that answer it
+are generated at the send rate for as long as the client is connected, so the answer
+repeats anyway. Silence is reserved for invalid traffic. When adding any new exchange,
+this invariant is part of its design: the response must be repeatable, and the state
+that repeats it must live somewhere.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Half-open state, and the two deadlines that bound it.** A handshake that is started
+and never finished is the classic way to attack a connection protocol, and there are two
+separate things to get right: what a stalled handshake can occupy, and how long it can
+occupy it.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*What it can occupy is an encryption mapping, never a client slot.* Slots are assigned
+only in step 3, after the client has answered a challenge sent to the address it
+claimed, so no amount of stalling before that point consumes live server capacity. This
+separation is the structural defence; everything below is about duration.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*How long it can occupy it is bounded twice, and the second bound is the one that
+matters.*
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**The handshake deadline must not be the token's `timeout seconds`.** That field is the
+*connected* idle timeout — how long an established player may go quiet before being
+dropped — and it is sized for gameplay, in tens of seconds. A legitimate client
+completes steps 2 and 3 in one round trip; a few seconds covers that with room for
+several retransmissions. Reusing the gameplay timeout here would hand an attacker a ten-
+to sixty-fold multiplier on the duration of every mapping they hold, bought with
+nothing. The handshake deadline is a server-side configuration value, in seconds, and it
+is not carried in the token, because it protects the server and nothing the client
+presents should set it.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**It has a sensible default and it is tunable per game.** The server config field
+`handshake_deadline_seconds` defaults to five seconds (range 1 to 60): a client
+retransmitting at the send rate gets tens of attempts inside it, which covers ordinary
+loss and a poor round trip with room to spare, while cutting an attacker's hold time to
+a fraction of a gameplay timeout. But five seconds is a judgement about a population of
+players, not a property of the protocol, and the population differs per game — a title
+with satellite or cellular players wants more, a LAN or console title under attack wants
+less. So the value is exposed as configuration, with the default chosen to be safe for a
+game that never touches it. The same applies to the idle deadline and to the client's
+total connect deadline: each has a default that works unattended, and each can be tuned
+by a deployment that knows its players better than this document does.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**On establishment the handshake deadline is discharged**, and the mapping is governed
+by the idle deadline alone.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Size the mapping table far above the slot count.** Mappings are small and short-lived
+where slots are large and long-lived, so there is no reason to ration them; a generous
+table decouples pressure on the handshake from capacity for live players, and makes
+filling it a much more expensive thing to attempt. An implementation must document the
+ratio it chose.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+*What remains, and whose problem it is.* A client holding a real token can complete the
+whole handshake, take a slot, and then send nothing but keep-alives forever. That is not
+a protocol defect: it is a connected client that the backend admitted and that is
+behaving legally, and this layer cannot tell it from a player sitting in a menu. The
+bound on it is the backend's issuance policy, and the decision to drop it belongs to the
+game, which knows what a player ought to be doing. This layer's obligation is to make it
+*visible* — see the counters below — not to police it.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**One token structure, and one rule that needs no structure.**
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**The used-token history** binds a token identifier to the first source address whose
+connection response opened under it, so a captured request cannot be replayed from
+elsewhere. It is a fixed-size structure; an implementation must document its capacity
+and eviction policy, and should size it to at least eight entries per client slot with
+oldest-first eviction. Entries expire with the tokens they name. Eviction is
+security-relevant: an attacker holding several legitimately obtained tokens can flush a
+victim's entry and then replay the victim's captured request from a different address,
+so capacity should exceed the plausible rate of legitimate connections within a token
+lifetime.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**One token, one live connection, and no structure of its own.** A connect token is
+meant to be used once, soon after it is minted. Three existing rungs keep a token to one
+live connection: the used-token history refuses it from any address but the one it is
+bound to, before any asymmetric work; a connected address provokes nothing from the
+request path; and a token carries one client id, so the client-id check refuses a second
+connection while the first lives, at the request after the open and at the response,
+where two addresses may each hold a mapping for one token. A slot is freed when its
+connection closes, and nothing outlives it: a fresh token at a server with a free slot
+always connects, however many players have come and gone before it, unless its client id
+still holds a slot (a player rejoining before the old connection times out is refused by
+the client-id check until it does). **A token whose connection has closed may connect
+again until it expires**: from the address it is bound to; from a second address that
+held a mapping for it before the first response bound it; or from any address once the
+history has dropped its entry. That is the accepted residual risk of this design, and
+the token's expiry bounds it: a deployment should mint tokens that expire 30 seconds
+after they are created, as a netcode.io token does by default; the server places no
+limit of its own on a token's lifetime, and refuses only a token created more than the
+creation skew in its future. The expire timestamp is signed and sits at a fixed offset
+in the clear, so an expired token is the cheapest refusal on the request path, before
+the cookie gate.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**The request claim is bounded, not closed, and the bound is the mapping's own
+lifetime.** An observer on the network path can copy a first connection request, earn a
+cookie at its own address, and replay the request ahead of the real client; the
+signature verifies, so that address claims the token and the client's retries are
+refused as `CONNECTION_REQUEST_TOKEN_ALREADY_USED`. Closing the window outright would
+mean giving one token many half-open mappings, and the one-mapping rule is what keeps a
+captured token from buying unbounded handshake work. The claim is therefore released
+whenever its half-open mapping is removed, so its window is min(handshake deadline,
+half-open idle deadline): an observer that stops sending loses it at the idle deadline,
+and one that keeps sending loses it at the handshake deadline. A refused client recovers
+by retrying from its own address within its token timeout. The residual is the same one
+an on-path party already has with packet loss, and the bound keeps it finite without
+adding a table, a rate limit or a per-address key.
+
+[RN-1 t12 Handshake: server](TRANSPORT.md#t12)
+**Rate limiting.** A deployment should rate limit connection requests per source
+address, and must not treat that as sufficient: connection requests are unauthenticated
+and their source address is spoofable, so per-source limiting does not bound the
+attacker it most needs to stop. An implementation may cache recently verified (signed
+data hash → verified) results and short-circuit the signature check on a byte-identical
+repeat, which is sound because it accepts only data already verified.
 
 <a id="t13"></a>
 ## t13. Session: keep-alive, timeout, disconnect, slot reset
 
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **RocketNet assumes a client keeps the same IP address and port for the whole duration of its connection to a server.** This is stated rather than left implicit, because it is the assumption everything else rests on: a server keys its encryption mapping — the server's per-address record of derived keys and handshake state, specified fully in _Processing Connection Requests_ — its client slot, its replay state and its cookie check on the client's source address and port. A packet arriving from a different address is a packet from a different client.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Deliberate scope choice, and deliberately not a wire break to reverse.** Migration needs an identifier only at the moment the path changes, not on every packet. It can be added later as a new packet type: sealed under the existing session keys, carrying an identifier so the server need not trial-decrypt against every connected client, and followed by the same cookie round trip to the new address that the connection made at connect time — which is the anti-redirection protection QUIC's path validation provides. Cost on ordinary packets: nothing. Cost when it fires: one round trip, rarely. **Packet types 10 through 255 are reserved and must be ignored by a conforming receiver**, so a later implementation adding migration degrades gracefully against an earlier one: the packet is ignored and the client reconnects, which is exactly today's behavior.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **RocketNet 1.0 endpoints are IP addresses, and nothing else.** The address encoding below is the whole story: an IPv4 or IPv6 address and a port, in the token and on the wire. Non-IP transports naming endpoints by opaque strings are a future version's concern, carried under a new version constant — which is what the version constant is for. A future design doing this must make the endpoint a fixed-size field with a length byte bounded against a constant, never a length parsed out of the data being validated.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **The confirmed flag.** A slot is marked unconfirmed when it is assigned. It becomes confirmed the first time the server receives any sealed packet from that client on that slot — a keep-alive, a payload, a fragment, an ack or a disconnect. The flag exists because until such a packet arrives the server has heard nothing at all from this slot, and so has no basis on which to treat the client as reachable. It says nothing about whether the client received its keep-alive; the paragraph below states why it cannot.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **What the flag does not decide.** The confirmed flag says a sealed packet arrived from this client. It does **not** say the client holds its client index: the session keys exist from the challenge, so a client can legally seal before it is _connected_ — indeed _Acks_ permits one to send a standalone ack from _sending connection response_. **Keep-alive generation therefore does not read this flag**; it reads the acknowledgment test below. The flag keeps its own job, which is telling the server whether it has heard from a slot at all.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **A client processes payloads only once connected, as netcode.io's client does.** The session keys derive at the challenge, so a client in _sending connection response_ could open a payload, and an earlier revision delivered it. That let the application read a message and reply before the client held its index and could send: on the XDP server the first payloads (a configuration and an arm message) reached the client ahead of the keep-alive that connects it in four runs of five, and every reply was refused as not connected and lost. A payload or fragment in _sending connection response_ is therefore ignored, counted `WRONG_STATE`, and the server's resend carries a reliable message again after the keep-alive. The keep-alive still carries the client index and the slot count, and receiving the first one is still what moves the client to _connected_.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Keep-alive generation, and what suppression is allowed to read.** The rule turns on one question: **has this client acknowledged a keep-alive?**
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **What the acknowledgment actually tells the server.** A keep-alive carries the client index, and processing a keep-alive is the client's *only* transition to _connected_. So a client that acknowledges a keep-alive is claiming to have received the one packet that would have connected it: if the claim is true the client holds its index and is connected, and the packet whose receipt it claims is the packet that connects it.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **It is a claim, not a proof, and the server neither validates it nor needs to.** An ack block is the sender's statement about its own receive state, and no receiver can check it — _Acks_ requires a block to name only sequences its sender opened, but that is a sender obligation, unverifiable on the wire. The server takes the claim at face value. Every session packet carries a block, so the claim arrives on whatever the client is already sending, and no particular packet type is required of it.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **What makes it the right test is which clients can trip it.** The defect this rule exists to prevent is *a client that has not established being starved of the packet that would establish it*, so the test must not be satisfiable by a client that is behaving correctly but has not established. Measured on that axis, two alternatives that look adequate are not:
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Both failure directions.** If the client's acks are lost or delayed, the test stays unsatisfied and unsuppressed keep-alives continue — more keep-alives, never fewer. Loss degrades toward extra bandwidth, never toward stranding; the pacing is the send interval, subject to the discrete-check caveat below.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Such a client strands only itself.** The block rides inside a packet sealed under that connection's own session keys, applies only to that client's own slot, and cannot be produced by anyone else for it; no other client's pacing is affected, and the slot table and reclaim behave normally.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) *This is the paragraph to read first if you are writing a client and seeing connections hang in _sending connection response_ while other traffic arrives normally — and note "other traffic", not "payloads": the server may be sending this slot nothing but standalone acks.* The likely cause is an ack block that claims more than it opened — a cumulative or optimistic acknowledgment scheme, rather than one built strictly from the sequences actually opened. The transport cannot detect this for you, because on the wire an over-claiming block is indistinguishable from a truthful one.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **What the two regimes actually look like from the server, which is less distinctive than it sounds.** Taking the claim does not stop keep-alives; it only makes them suppressible. Before the claim they are paced off the keep-alive clock, so other outbound traffic does not defer them. After it they are paced off the last send of *anything* — and since a keep-alive is itself a send, an otherwise idle server goes on emitting them on the same pacing it used before. Neither regime is characterised here by a rate: what an implementation actually emits is subject to the discrete-check caveat below.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **The sufficient condition for total suppression is a gap, not a rate, and it holds in one direction only.** After the claim, a keep-alive is emitted only when the server has sent that slot nothing at all for a full send interval — that is, emission requires the elapsed time to have *reached* the interval, not merely approached it. **So if every gap in the server's outbound stream to that slot is strictly shorter than one send interval, keep-alives stop entirely.** That direction follows from the generation rule by construction and needs no measurement. Note the strictness: a stream whose gaps are exactly one interval is *not* covered, and belongs to the indeterminate band below.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **The converse does not hold, and must not be assumed.** A gap longer than an interval does not guarantee a keep-alive in it: generation is checked discretely, once per update, so a keep-alive appears only if a check instant falls inside the gap. Whether one does depends on the update rate and on the phase between the two. **Gaps from one send interval up to and including one interval plus one update tick are therefore indeterminate** — a closed band, not the single equal-gap point, and at a slow update rate against a fast send rate it spans many send intervals. Determinate emission begins only *above* that band. At the band's lower edge a second mechanism applies on top of the first: an elapsed time computed from wall-clock doubles lands either side of the interval depending on the absolute clock value, so even a stream constructed to have gaps of exactly one interval is not determinate. Do not infer from a gap in the outbound stream that the client is being served.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) *Do not restate this as a relationship between the keep-alive rate and the application's send rate.* No such relationship holds: the residual keep-alive rate below total suppression is a sawtooth in the ratio of the two intervals, it is not monotone in the application's rate, and over much of the range it *rises* with that rate rather than falling. It also shifts with the update tick, since the generation check runs once per update. Do not reach for a formula in the tick either: the spacing is not the send interval rounded up to a whole tick, because where the interval is a whole multiple of the tick the comparison lands on the float edge described above and the spacing sometimes takes an extra tick. An implementation that needs a number must measure its own configuration.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **What matters for the stranding is that "anything" is not just payloads.** The suppression clock is stamped by every session send to that slot: payloads, payload fragments, the keep-alives themselves, **and the transport's own standalone acks**, which a client eliciting enough ack debt will provoke with no application traffic whatever. A server whose application is sending that slot nothing at all can still suppress every keep-alive to it, purely from answering that client's own inbound stream.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **An invariant the confirmation test depends on — stated here so it cannot be broken silently.** The test above is exact only because *an authentically opened keep-alive always reaches its state transition at the client*. That is not self-evident, because two checks stand between opening a packet and acting on it — the ack block's validity check and the type's opened-size check — and _Reading packets_ requires the replay window to be marked **before** both. A packet's sequence therefore enters the client's outgoing ack block earlier than the point at which the packet is acted on. If either check were reachable for an authentic keep-alive, a *correct* client could acknowledge a keep-alive it never acted on — its block naming a sequence it did open, so breaking no rule — and the server would read that as a claim to an index the client does not hold. The stranding this section exists to prevent would return, and it would return for conformant clients, which is the failure mode the acknowledgment test was chosen to rule out.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **This is a required property, not a happy accident.** Any change to the ack block's encoding or validity rules, to the keep-alive's type data or size, or to the order in which the replay window is marked relative to those checks, must preserve it. A change that makes either check reachable for an authentic keep-alive breaks the reasoning above, and _Keep-alive generation_'s confirmation test must then be re-derived rather than assumed to still hold.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Why the carve-out is mandatory, not an optimization.** The keep-alive is the only packet that carries the client index, and receiving one is the only thing that moves a client from _sending connection response_ to _connected_. A client that has not received one cannot ask for one. It is not that the server ignores everything such a client sends — a standalone ack from _sending connection response_ is acted on, per _Processing session packets at the server_ — but that **nothing it can send re-provokes a keep-alive**: its connection response is ignored as already connected, and no session type elicits one. So the repair can only come from the server's own pacing. If suppression read the last send of anything in that state, a server application sending payloads continuously would restamp the clock the repair waits on, every keep-alive after the lost one would be suppressed, and the client would be stranded until its total connect deadline failed an attempt that was carrying payloads the whole time. That is the case the loss walkthrough's invariant forbids — no loss may leave an end waiting for something that will never be sent again — and this is the rule that keeps the walkthrough's guarantee true for the establishment keep-alive: that another one keeps coming, and that no traffic pattern can stop it.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **What it costs.** A client whose keep-alive has not yet been acknowledged receives keep-alives on the send rate's pacing in addition to whatever the application sends it. The window is one round trip in the ordinary case. **The bound is the client's behaviour, not either of the server's deadlines**, and it is worth being exact about why. The handshake deadline governs only a mapping that has not established, and a slot is assigned at establishment, so such a slot is already past it. The connection timeout does not close the window on its own either: a retransmitted connection response refreshes the slot's last-received time even though the response itself is ignored as already connected. So the window lasts as long as the client keeps retransmitting without ever acknowledging a keep-alive, and for a client that follows this document that is its own total connect deadline — the token lifetime — after which it stops and the connection timeout fires.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Establishment on the client.** A client transitions to _connected_ on the first keep-alive it receives, taking its client index and the slot count from that packet.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) *If a client stays in _sending connection response_ while other traffic arrives normally, a leading candidate is its own ack block — see the failure directions under _Keep-alive generation_.* The thing to audit is whether the block can name a **keep-alive** sequence the client never opened. Over-claiming across payload sequences alone does not produce this symptom, because the server reads only the keep-alives it sent; a cumulative or optimistic scheme whose ranges can extend over a missed keep-alive does.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Do not rule this cause out by looking at the application's send rate.** What suppresses the keep-alive is the server having sent that slot *anything* within the last send interval, and that includes the transport's own standalone acks, which a client's own inbound stream elicits. A server application sending nothing at all is entirely consistent with this fault. The blocks are what to audit, whatever the payload rate looks like.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Payload delivery.** A payload packet carries application bytes with no interpretation. Payloads received on an established connection are delivered in the order they arrive; this layer does not reorder, retransmit, or deduplicate beyond refusing replays.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Timeout.** An established connection times out at either end when no packet has been received from the other side of the connection for the connection timeout interval. The server resets the slot and destroys the encryption mapping; the client transitions to _connection timed out_.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Deliberate disconnect.** An end that disconnects on purpose sends ten redundant disconnect packets, sealed, at consecutive sequence numbers, and then immediately releases its state without waiting for any acknowledgement. The redundancy is because a disconnect is never retransmitted — it is the last thing sent — so its delivery is bought with copies rather than with time, and losing all ten costs only a receiver that waits for the timeout instead. This describes protocol session state only; it does not promise that an API object, worker, or backing memory is immediately destroyed.
-[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13) **Slot reset.** Releasing a slot clears the client id, the user data, the confirmed flag and the mapping reference, and destroys the associated encryption mapping — which zeroes its keys and its sequence and replay state, the mapping being their only home. A released slot is immediately available for reuse. An implementation must zero the key material rather than merely marking the slot free.
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**RocketNet assumes a client keeps the same IP address and port for the whole duration
+of its connection to a server.** This is stated rather than left implicit, because it is
+the assumption everything else rests on: a server keys its encryption mapping — the
+server's per-address record of derived keys and handshake state, specified fully in
+_Processing Connection Requests_ — its client slot, its replay state and its cookie
+check on the client's source address and port. A packet arriving from a different
+address is a packet from a different client.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Deliberate scope choice, and deliberately not a wire break to reverse.** Migration
+needs an identifier only at the moment the path changes, not on every packet. It can be
+added later as a new packet type: sealed under the existing session keys, carrying an
+identifier so the server need not trial-decrypt against every connected client, and
+followed by the same cookie round trip to the new address that the connection made at
+connect time — which is the anti-redirection protection QUIC's path validation provides.
+Cost on ordinary packets: nothing. Cost when it fires: one round trip, rarely. **Packet
+types 10 through 255 are reserved and must be ignored by a conforming receiver**, so a
+later implementation adding migration degrades gracefully against an earlier one: the
+packet is ignored and the client reconnects, which is exactly today's behavior.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**RocketNet 1.0 endpoints are IP addresses, and nothing else.** The address encoding
+below is the whole story: an IPv4 or IPv6 address and a port, in the token and on the
+wire. Non-IP transports naming endpoints by opaque strings are a future version's
+concern, carried under a new version constant — which is what the version constant is
+for. A future design doing this must make the endpoint a fixed-size field with a length
+byte bounded against a constant, never a length parsed out of the data being validated.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**The confirmed flag.** A slot is marked unconfirmed when it is assigned. It becomes
+confirmed the first time the server receives any sealed packet from that client on that
+slot — a keep-alive, a payload, a fragment, an ack or a disconnect. The flag exists
+because until such a packet arrives the server has heard nothing at all from this slot,
+and so has no basis on which to treat the client as reachable. It says nothing about
+whether the client received its keep-alive; the paragraph below states why it cannot.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**What the flag does not decide.** The confirmed flag says a sealed packet arrived from
+this client. It does **not** say the client holds its client index: the session keys
+exist from the challenge, so a client can legally seal before it is _connected_ — indeed
+_Acks_ permits one to send a standalone ack from _sending connection response_.
+**Keep-alive generation therefore does not read this flag**; it reads the acknowledgment
+test below. The flag keeps its own job, which is telling the server whether it has heard
+from a slot at all.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**A client processes payloads only once connected, as netcode.io's client does.** The
+session keys derive at the challenge, so a client in _sending connection response_ could
+open a payload, and an earlier revision delivered it. That let the application read a
+message and reply before the client held its index and could send: on the XDP server the
+first payloads (a configuration and an arm message) reached the client ahead of the
+keep-alive that connects it in four runs of five, and every reply was refused as not
+connected and lost. A payload or fragment in _sending connection response_ is therefore
+ignored, counted `WRONG_STATE`, and the server's resend carries a reliable message again
+after the keep-alive. The keep-alive still carries the client index and the slot count,
+and receiving the first one is still what moves the client to _connected_.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Keep-alive generation, and what suppression is allowed to read.** The rule turns on
+one question: **has this client acknowledged a keep-alive?**
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**What the acknowledgment actually tells the server.** A keep-alive carries the client
+index, and processing a keep-alive is the client's *only* transition to _connected_. So
+a client that acknowledges a keep-alive is claiming to have received the one packet that
+would have connected it: if the claim is true the client holds its index and is
+connected, and the packet whose receipt it claims is the packet that connects it.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**It is a claim, not a proof, and the server neither validates it nor needs to.** An ack
+block is the sender's statement about its own receive state, and no receiver can check
+it — _Acks_ requires a block to name only sequences its sender opened, but that is a
+sender obligation, unverifiable on the wire. The server takes the claim at face value.
+Every session packet carries a block, so the claim arrives on whatever the client is
+already sending, and no particular packet type is required of it.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**What makes it the right test is which clients can trip it.** The defect this rule
+exists to prevent is *a client that has not established being starved of the packet that
+would establish it*, so the test must not be satisfiable by a client that is behaving
+correctly but has not established. Measured on that axis, two alternatives that look
+adequate are not:
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Both failure directions.** If the client's acks are lost or delayed, the test stays
+unsatisfied and unsuppressed keep-alives continue — more keep-alives, never fewer. Loss
+degrades toward extra bandwidth, never toward stranding; the pacing is the send
+interval, subject to the discrete-check caveat below.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Such a client strands only itself.** The block rides inside a packet sealed under that
+connection's own session keys, applies only to that client's own slot, and cannot be
+produced by anyone else for it; no other client's pacing is affected, and the slot table
+and reclaim behave normally.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+*This is the paragraph to read first if you are writing a client and seeing connections
+hang in _sending connection response_ while other traffic arrives normally — and note
+"other traffic", not "payloads": the server may be sending this slot nothing but
+standalone acks.* The likely cause is an ack block that claims more than it opened — a
+cumulative or optimistic acknowledgment scheme, rather than one built strictly from the
+sequences actually opened. The transport cannot detect this for you, because on the wire
+an over-claiming block is indistinguishable from a truthful one.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**What the two regimes actually look like from the server, which is less distinctive
+than it sounds.** Taking the claim does not stop keep-alives; it only makes them
+suppressible. Before the claim they are paced off the keep-alive clock, so other
+outbound traffic does not defer them. After it they are paced off the last send of
+*anything* — and since a keep-alive is itself a send, an otherwise idle server goes on
+emitting them on the same pacing it used before. Neither regime is characterised here by
+a rate: what an implementation actually emits is subject to the discrete-check caveat
+below.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**The sufficient condition for total suppression is a gap, not a rate, and it holds in
+one direction only.** After the claim, a keep-alive is emitted only when the server has
+sent that slot nothing at all for a full send interval — that is, emission requires the
+elapsed time to have *reached* the interval, not merely approached it. **So if every gap
+in the server's outbound stream to that slot is strictly shorter than one send interval,
+keep-alives stop entirely.** That direction follows from the generation rule by
+construction and needs no measurement. Note the strictness: a stream whose gaps are
+exactly one interval is *not* covered, and belongs to the indeterminate band below.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**The converse does not hold, and must not be assumed.** A gap longer than an interval
+does not guarantee a keep-alive in it: generation is checked discretely, once per
+update, so a keep-alive appears only if a check instant falls inside the gap. Whether
+one does depends on the update rate and on the phase between the two. **Gaps from one
+send interval up to and including one interval plus one update tick are therefore
+indeterminate** — a closed band, not the single equal-gap point, and at a slow update
+rate against a fast send rate it spans many send intervals. Determinate emission begins
+only *above* that band. At the band's lower edge a second mechanism applies on top of
+the first: an elapsed time computed from wall-clock doubles lands either side of the
+interval depending on the absolute clock value, so even a stream constructed to have
+gaps of exactly one interval is not determinate. Do not infer from a gap in the outbound
+stream that the client is being served.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+*Do not restate this as a relationship between the keep-alive rate and the application's
+send rate.* No such relationship holds: the residual keep-alive rate below total
+suppression is a sawtooth in the ratio of the two intervals, it is not monotone in the
+application's rate, and over much of the range it *rises* with that rate rather than
+falling. It also shifts with the update tick, since the generation check runs once per
+update. Do not reach for a formula in the tick either: the spacing is not the send
+interval rounded up to a whole tick, because where the interval is a whole multiple of
+the tick the comparison lands on the float edge described above and the spacing
+sometimes takes an extra tick. An implementation that needs a number must measure its
+own configuration.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**What matters for the stranding is that "anything" is not just payloads.** The
+suppression clock is stamped by every session send to that slot: payloads, payload
+fragments, the keep-alives themselves, **and the transport's own standalone acks**,
+which a client eliciting enough ack debt will provoke with no application traffic
+whatever. A server whose application is sending that slot nothing at all can still
+suppress every keep-alive to it, purely from answering that client's own inbound stream.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**An invariant the confirmation test depends on — stated here so it cannot be broken
+silently.** The test above is exact only because *an authentically opened keep-alive
+always reaches its state transition at the client*. That is not self-evident, because
+two checks stand between opening a packet and acting on it — the ack block's validity
+check and the type's opened-size check — and _Reading packets_ requires the replay
+window to be marked **before** both. A packet's sequence therefore enters the client's
+outgoing ack block earlier than the point at which the packet is acted on. If either
+check were reachable for an authentic keep-alive, a *correct* client could acknowledge a
+keep-alive it never acted on — its block naming a sequence it did open, so breaking no
+rule — and the server would read that as a claim to an index the client does not hold.
+The stranding this section exists to prevent would return, and it would return for
+conformant clients, which is the failure mode the acknowledgment test was chosen to rule
+out.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**This is a required property, not a happy accident.** Any change to the ack block's
+encoding or validity rules, to the keep-alive's type data or size, or to the order in
+which the replay window is marked relative to those checks, must preserve it. A change
+that makes either check reachable for an authentic keep-alive breaks the reasoning
+above, and _Keep-alive generation_'s confirmation test must then be re-derived rather
+than assumed to still hold.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Why the carve-out is mandatory, not an optimization.** The keep-alive is the only
+packet that carries the client index, and receiving one is the only thing that moves a
+client from _sending connection response_ to _connected_. A client that has not received
+one cannot ask for one. It is not that the server ignores everything such a client sends
+— a standalone ack from _sending connection response_ is acted on, per _Processing
+session packets at the server_ — but that **nothing it can send re-provokes a
+keep-alive**: its connection response is ignored as already connected, and no session
+type elicits one. So the repair can only come from the server's own pacing. If
+suppression read the last send of anything in that state, a server application sending
+payloads continuously would restamp the clock the repair waits on, every keep-alive
+after the lost one would be suppressed, and the client would be stranded until its total
+connect deadline failed an attempt that was carrying payloads the whole time. That is
+the case the loss walkthrough's invariant forbids — no loss may leave an end waiting for
+something that will never be sent again — and this is the rule that keeps the
+walkthrough's guarantee true for the establishment keep-alive: that another one keeps
+coming, and that no traffic pattern can stop it.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**What it costs.** A client whose keep-alive has not yet been acknowledged receives
+keep-alives on the send rate's pacing in addition to whatever the application sends it.
+The window is one round trip in the ordinary case. **The bound is the client's
+behaviour, not either of the server's deadlines**, and it is worth being exact about
+why. The handshake deadline governs only a mapping that has not established, and a slot
+is assigned at establishment, so such a slot is already past it. The connection timeout
+does not close the window on its own either: a retransmitted connection response
+refreshes the slot's last-received time even though the response itself is ignored as
+already connected. So the window lasts as long as the client keeps retransmitting
+without ever acknowledging a keep-alive, and for a client that follows this document
+that is its own total connect deadline — the token lifetime — after which it stops and
+the connection timeout fires.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Establishment on the client.** A client transitions to _connected_ on the first
+keep-alive it receives, taking its client index and the slot count from that packet.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+*If a client stays in _sending connection response_ while other traffic arrives
+normally, a leading candidate is its own ack block — see the failure directions under
+_Keep-alive generation_.* The thing to audit is whether the block can name a
+**keep-alive** sequence the client never opened. Over-claiming across payload sequences
+alone does not produce this symptom, because the server reads only the keep-alives it
+sent; a cumulative or optimistic scheme whose ranges can extend over a missed keep-alive
+does.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Do not rule this cause out by looking at the application's send rate.** What
+suppresses the keep-alive is the server having sent that slot *anything* within the last
+send interval, and that includes the transport's own standalone acks, which a client's
+own inbound stream elicits. A server application sending nothing at all is entirely
+consistent with this fault. The blocks are what to audit, whatever the payload rate
+looks like.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Payload delivery.** A payload packet carries application bytes with no interpretation.
+Payloads received on an established connection are delivered in the order they arrive;
+this layer does not reorder, retransmit, or deduplicate beyond refusing replays.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Timeout.** An established connection times out at either end when no packet has been
+received from the other side of the connection for the connection timeout interval. The
+server resets the slot and destroys the encryption mapping; the client transitions to
+_connection timed out_.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Deliberate disconnect.** An end that disconnects on purpose sends ten redundant
+disconnect packets, sealed, at consecutive sequence numbers, and then immediately
+releases its state without waiting for any acknowledgement. The redundancy is because a
+disconnect is never retransmitted — it is the last thing sent — so its delivery is
+bought with copies rather than with time, and losing all ten costs only a receiver that
+waits for the timeout instead. This describes protocol session state only; it does not
+promise that an API object, worker, or backing memory is immediately destroyed.
+
+[RN-1 t13 Session: keep-alive, timeout, disconnect, slot reset](TRANSPORT.md#t13)
+**Slot reset.** Releasing a slot clears the client id, the user data, the confirmed flag
+and the mapping reference, and destroys the associated encryption mapping — which zeroes
+its keys and its sequence and replay state, the mapping being their only home. A
+released slot is immediately available for reuse. An implementation must zero the key
+material rather than merely marking the slot free.
 
 <a id="t14"></a>
 ## t14. Replay protection
 
-[RN-1 t14 Replay protection](TRANSPORT.md#t14) **A server and a client must each count the sealed packets that fail to open on a connection, across all of that connection's keys, and must disconnect it on reaching 2^36 failures.** ChaCha20-Poly1305's integrity limit is 2^36 invalid packets; both QUIC and DTLS 1.3 make counting them mandatory and name the same number, because a datagram protocol silently discards what it cannot authenticate and therefore grants an attacker unlimited forgery attempts where a stream protocol would have torn down the connection on the first one.
-[RN-1 t14 Replay protection](TRANSPORT.md#t14) *This is not only theoretical bookkeeping.* At the minimum sealed packet size, 2^36 attempts is a few terabytes, which is under an hour at 10 Gbps against one connection — and this standard explicitly contemplates sessions running for hours. In practice a server would exhaust its CPU on the AEAD opens long before the counter filled, so this is a backstop rather than the thing that saves it; the RFCs require it regardless, and it is four lines.
-[RN-1 t14 Replay protection](TRANSPORT.md#t14) **Replay and delivery history are explicit memory budgets in sequence numbers, never frame-rate, send-rate or ACK-rate contracts.** A replay window must hold at least 4096 sequences and must not hold more than 32768. Implementations must document their retained depth. The application does not need to declare a packets-per-second rate, and an implementation must not throttle application sends to preserve an assumed time span of history.
+[RN-1 t14 Replay protection](TRANSPORT.md#t14)
+**A server and a client must each count the sealed packets that fail to open on a
+connection, across all of that connection's keys, and must disconnect it on reaching
+2^36 failures.** ChaCha20-Poly1305's integrity limit is 2^36 invalid packets; both QUIC
+and DTLS 1.3 make counting them mandatory and name the same number, because a datagram
+protocol silently discards what it cannot authenticate and therefore grants an attacker
+unlimited forgery attempts where a stream protocol would have torn down the connection
+on the first one.
+
+[RN-1 t14 Replay protection](TRANSPORT.md#t14)
+*This is not only theoretical bookkeeping.* At the minimum sealed packet size, 2^36
+attempts is a few terabytes, which is under an hour at 10 Gbps against one connection —
+and this standard explicitly contemplates sessions running for hours. In practice a
+server would exhaust its CPU on the AEAD opens long before the counter filled, so this
+is a backstop rather than the thing that saves it; the RFCs require it regardless, and
+it is four lines.
+
+[RN-1 t14 Replay protection](TRANSPORT.md#t14)
+**Replay and delivery history are explicit memory budgets in sequence numbers, never
+frame-rate, send-rate or ACK-rate contracts.** A replay window must hold at least 4096
+sequences and must not hold more than 32768. Implementations must document their
+retained depth. The application does not need to declare a packets-per-second rate, and
+an implementation must not throttle application sends to preserve an assumed time span
+of history.
 
 <a id="t15"></a>
 ## t15. Acknowledgement
 
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **The transport tells a sender which of its packets arrived. It never resends anything.** That is the whole contract: a delivery notification primitive, and every policy about what loss *means* — resend, send newer state, give up — belongs to whatever rides above. One primitive under every policy is the flexibility this layer sells, and it is the oldest good idea in game networking's book.
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **The block describes exactly the interval it enumerates, and nothing below it.** Reading downward from _largest received_: the first range is a contiguous run of received sequences ending at _largest_ inclusive, so _first range length_ is at least 1 whenever _largest_ is nonzero; then each entry states a gap of missing sequences followed by a run of received ones. Below the last entry the block is silent — not received, not lost, simply unspoken. Silence rather than a completeness claim is what keeps the encoding honest forever on an unreliable wire: a sequence lost a minute ago leaves a permanent hole, and a block that had to describe all history would grow without bound, where one that describes the recent interval stays proportional to recent loss events. **When _largest received_ is zero — nothing opened yet — _first range length_ must be zero, and must not be zero otherwise.** The all-zero 7-byte block is the valid statement of a fresh connection, by construction rather than by special case. **The empty test is made on the wire fields, never on the reconstructed _largest_:** reconstruction is relative to the reader's own highest sent sequence, so once that reaches 2^31 a wire zero reconstructs to 2^32 and the fresh-connection block would be refused, while the three zero fields are unambiguous on their own, because a block naming a sequence always has a _first range length_ of at least one.
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **A block must not name a sequence its sender has not opened.** The ranges are a statement about the sender's own receive state, and every received run it enumerates must consist of sequences it actually opened. This is a *sender* obligation and the receiver cannot verify it — a block that over-claims is indistinguishable on the wire from a truthful one, because only the sender knows what it received. It is stated as a must because rules elsewhere depend on it: _Keep-alive generation_ reads an acknowledgment as the client's claim to have received a keep-alive, and delivery notification generally is only as truthful as the blocks it is built from. An implementation that over-claims corrupts its own delivery information and, per _Keep-alive generation_, can strand its own connection; it cannot affect any other.
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **Validity.** A block is malformed, and refuses its whole packet as `BAD_ACK_BLOCK`, when any of the following holds — each stated so that two implementations reject the same bytes:
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **Build rule.** A sender fills the block from its current receive state: _largest received_, then ranges descending, newest first, as many as exist and fit. Two caps bound it: _range count_ is at most 255, and the block never takes space the packet does not have — in a payload or fragment packet the application's bytes come first and the block truncates to the remaining room, oldest entries dropped first. *(In a fragment packet the stride is chosen against the minimum block, so a current block with ranges always truncates there; the stride never shrinks to make room.)* Truncation loses only the oldest information, which the next block or a standalone ack restates. **The 7-byte minimum always fits: every session packet carries at least _largest received_ and its first range.**
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **What acks describe is the session sequence space, per direction.** Handshake sequences are never acked; a handshake proves its own delivery by progressing.
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **Blocks report opened packets; elicitation decides only when a block must be sent, and the two are deliberately not the same set.** A block's contents are built from every opened session sequence, all five types — one received state, the same one replay protection already maintains, with no second high-water mark and no holes manufactured by exemptions. Received session packets of types 4, 5, 6 and 9 **elicit** acknowledgment: they add to the ack debt that obliges a block to go out. **Type 8 does not elicit.** A standalone ack is opened, replay-marked and reported like any session packet, but receiving one never obliges an ack in return, because a quiet client and server each obliged to acknowledge the other's acknowledgments would exchange them forever — the exemption is what makes the ack conversation terminate, and it costs nothing: the information in an ack block is restated by every later block, so the delivery of any one ack packet is never load-bearing, and a sender that sees its own type 8 sequence covered by a range simply has nothing to surface for it.
-[RN-1 t15 Acknowledgement](TRANSPORT.md#t15) **Round trip time rides the acks.** The first block that acknowledges a sequence yields one RTT sample: the elapsed time between sending that sequence and receiving the block, measured at the sender. The sample overstates the true network time by the receiver's aggregation delay — up to a send interval when acks ride keep-alives — which is the precedent this family has always shipped, and the standalone ack keeps the error small exactly where rates are high enough for it to matter. The block deliberately carries no delay-compensation field; if a future revision needs tighter RTT it adds one, and nothing in this encoding forecloses it.
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**The transport tells a sender which of its packets arrived. It never resends
+anything.** That is the whole contract: a delivery notification primitive, and every
+policy about what loss *means* — resend, send newer state, give up — belongs to whatever
+rides above. One primitive under every policy is the flexibility this layer sells, and
+it is the oldest good idea in game networking's book.
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**The block describes exactly the interval it enumerates, and nothing below it.**
+Reading downward from _largest received_: the first range is a contiguous run of
+received sequences ending at _largest_ inclusive, so _first range length_ is at least 1
+whenever _largest_ is nonzero; then each entry states a gap of missing sequences
+followed by a run of received ones. Below the last entry the block is silent — not
+received, not lost, simply unspoken. Silence rather than a completeness claim is what
+keeps the encoding honest forever on an unreliable wire: a sequence lost a minute ago
+leaves a permanent hole, and a block that had to describe all history would grow without
+bound, where one that describes the recent interval stays proportional to recent loss
+events. **When _largest received_ is zero — nothing opened yet — _first range length_
+must be zero, and must not be zero otherwise.** The all-zero 7-byte block is the valid
+statement of a fresh connection, by construction rather than by special case. **The
+empty test is made on the wire fields, never on the reconstructed _largest_:**
+reconstruction is relative to the reader's own highest sent sequence, so once that
+reaches 2^31 a wire zero reconstructs to 2^32 and the fresh-connection block would be
+refused, while the three zero fields are unambiguous on their own, because a block
+naming a sequence always has a _first range length_ of at least one.
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**A block must not name a sequence its sender has not opened.** The ranges are a
+statement about the sender's own receive state, and every received run it enumerates
+must consist of sequences it actually opened. This is a *sender* obligation and the
+receiver cannot verify it — a block that over-claims is indistinguishable on the wire
+from a truthful one, because only the sender knows what it received. It is stated as a
+must because rules elsewhere depend on it: _Keep-alive generation_ reads an
+acknowledgment as the client's claim to have received a keep-alive, and delivery
+notification generally is only as truthful as the blocks it is built from. An
+implementation that over-claims corrupts its own delivery information and, per
+_Keep-alive generation_, can strand its own connection; it cannot affect any other.
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**Validity.** A block is malformed, and refuses its whole packet as `BAD_ACK_BLOCK`,
+when any of the following holds — each stated so that two implementations reject the
+same bytes:
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**Build rule.** A sender fills the block from its current receive state: _largest
+received_, then ranges descending, newest first, as many as exist and fit. Two caps
+bound it: _range count_ is at most 255, and the block never takes space the packet does
+not have — in a payload or fragment packet the application's bytes come first and the
+block truncates to the remaining room, oldest entries dropped first. *(In a fragment
+packet the stride is chosen against the minimum block, so a current block with ranges
+always truncates there; the stride never shrinks to make room.)* Truncation loses only
+the oldest information, which the next block or a standalone ack restates. **The 7-byte
+minimum always fits: every session packet carries at least _largest received_ and its
+first range.**
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**What acks describe is the session sequence space, per direction.** Handshake sequences
+are never acked; a handshake proves its own delivery by progressing.
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**Blocks report opened packets; elicitation decides only when a block must be sent, and
+the two are deliberately not the same set.** A block's contents are built from every
+opened session sequence, all five types — one received state, the same one replay
+protection already maintains, with no second high-water mark and no holes manufactured
+by exemptions. Received session packets of types 4, 5, 6 and 9 **elicit**
+acknowledgment: they add to the ack debt that obliges a block to go out. **Type 8 does
+not elicit.** A standalone ack is opened, replay-marked and reported like any session
+packet, but receiving one never obliges an ack in return, because a quiet client and
+server each obliged to acknowledge the other's acknowledgments would exchange them
+forever — the exemption is what makes the ack conversation terminate, and it costs
+nothing: the information in an ack block is restated by every later block, so the
+delivery of any one ack packet is never load-bearing, and a sender that sees its own
+type 8 sequence covered by a range simply has nothing to surface for it.
+
+[RN-1 t15 Acknowledgement](TRANSPORT.md#t15)
+**Round trip time rides the acks.** The first block that acknowledges a sequence yields
+one RTT sample: the elapsed time between sending that sequence and receiving the block,
+measured at the sender. The sample overstates the true network time by the receiver's
+aggregation delay — up to a send interval when acks ride keep-alives — which is the
+precedent this family has always shipped, and the standalone ack keeps the error small
+exactly where rates are high enough for it to matter. The block deliberately carries no
+delay-compensation field; if a future revision needs tighter RTT it adds one, and
+nothing in this encoding forecloses it.
 
 <a id="t16"></a>
 ## t16. Fragmentation and reassembly
 
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16) **A payload larger than one packet's capacity is split into fragments, each riding an ordinary sealed session packet, and reassembled per connection on the far side.** Fragmentation is this layer's own self-contained mechanism: it consumes nothing from the ack system, keeps its own bookkeeping, and delivers to the application exactly what a payload packet delivers — bytes, once, or nothing. **Unreliable semantics stand: a lost fragment loses the whole payload**, the counters make it visible, and anything smarter is a policy for the tier above, built on the delivery notifications the transport already provides.
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16) **Handshake and control packets are never fragmented, and fragmentation of large payloads is allowed only once the connection is fully established and verified.** A fragment (type 9) is accepted only on a connected slot: at the server, a fragment for a mapping without a slot is dropped and counted (`FRAGMENT_NOT_CONNECTED`) before it touches any reassembly state; at the client, a fragment in any state other than connected is refused (`CLIENT_FRAGMENT_WRONG_STATE`) before the open and before any reassembly call. Only the payload send path reaches the fragment splitter, every control type is written by its fixed-size writer, and a reassembled payload is delivered only as payload bytes, never dispatched by its first byte.
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16) **Sending.** The sender assigns the payload the next **payload id** — a uint32 counter per direction, starting at 1, incrementing per fragmented payload — and splits it into equal-size fragments, the last carrying the remainder. The fragment size is the sender's choice up to its payload capacity for a type 9 packet (budget − 26 − block minimum − 6), and in practice is exactly that capacity, since fewer fragments is the whole game; each fragment goes out as its own sealed packet with its own sequence, and nothing is retained for resending: fire and forget, exactly as for any other packet.
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16) **Loss multiplies.** The probability a fragmented payload survives is the per-packet delivery rate to the power of the fragment count: at 1% loss, a two-fragment payload dies 2% of the time and a 256-fragment payload 92.4% of the time. The mechanism is priced for payloads of a few fragments carrying state that tolerates loss; a deployment moving large blocks that must arrive builds that above the transport, on the notifications.
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16) **Receiving.** Reassembly is per connection, keyed by payload id in a fixed-size sequence buffer of **reassembly slots**, the modulo-indexed structure this protocol already uses for replay state. The receiver's checks, in order, each with its own counter:
-[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16) **Storage is allocated once, at create, to the maximum.** A reassembly slot owns capacity for the configured maximum payload size plus its one staging buffer at the 1,413-byte maximum fragment size (1452 − 26 − 7 − 6), and the slot count is configuration; the arena is slots × (maximum payload + staging), allocated at create time and never grown, resized or shared. At the moment of delivery the reassembled payload is copied out once — the one copy fragmentation inherently costs — and wire-shaped packets everywhere else keep their zero-copy batch views. A receiver under fragment flood can therefore allocate nothing, fragment no heap, and lose nothing but the slots' bounded memory, which was spent at create. This is the answer to every resource-exhaustion attack reassembly invites, and it is the same answer this protocol gives everywhere: fixed tables, spent up front, no surprises at the 999th client.
+[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
+**A payload larger than one packet's capacity is split into fragments, each riding an
+ordinary sealed session packet, and reassembled per connection on the far side.**
+Fragmentation is this layer's own self-contained mechanism: it consumes nothing from the
+ack system, keeps its own bookkeeping, and delivers to the application exactly what a
+payload packet delivers — bytes, once, or nothing. **Unreliable semantics stand: a lost
+fragment loses the whole payload**, the counters make it visible, and anything smarter
+is a policy for the tier above, built on the delivery notifications the transport
+already provides.
+
+[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
+**Handshake and control packets are never fragmented, and fragmentation of large
+payloads is allowed only once the connection is fully established and verified.** A
+fragment (type 9) is accepted only on a connected slot: at the server, a fragment for a
+mapping without a slot is dropped and counted (`FRAGMENT_NOT_CONNECTED`) before it
+touches any reassembly state; at the client, a fragment in any state other than
+connected is refused (`CLIENT_FRAGMENT_WRONG_STATE`) before the open and before any
+reassembly call. Only the payload send path reaches the fragment splitter, every control
+type is written by its fixed-size writer, and a reassembled payload is delivered only as
+payload bytes, never dispatched by its first byte.
+
+[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
+**Sending.** The sender assigns the payload the next **payload id** — a uint32 counter
+per direction, starting at 1, incrementing per fragmented payload — and splits it into
+equal-size fragments, the last carrying the remainder. The fragment size is the sender's
+choice up to its payload capacity for a type 9 packet (budget − 26 − block minimum − 6),
+and in practice is exactly that capacity, since fewer fragments is the whole game; each
+fragment goes out as its own sealed packet with its own sequence, and nothing is
+retained for resending: fire and forget, exactly as for any other packet.
+
+[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
+**Loss multiplies.** The probability a fragmented payload survives is the per-packet
+delivery rate to the power of the fragment count: at 1% loss, a two-fragment payload
+dies 2% of the time and a 256-fragment payload 92.4% of the time. The mechanism is
+priced for payloads of a few fragments carrying state that tolerates loss; a deployment
+moving large blocks that must arrive builds that above the transport, on the
+notifications.
+
+[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
+**Receiving.** Reassembly is per connection, keyed by payload id in a fixed-size
+sequence buffer of **reassembly slots**, the modulo-indexed structure this protocol
+already uses for replay state. The receiver's checks, in order, each with its own
+counter:
+
+[RN-1 t16 Fragmentation and reassembly](TRANSPORT.md#t16)
+**Storage is allocated once, at create, to the maximum.** A reassembly slot owns
+capacity for the configured maximum payload size plus its one staging buffer at the
+1,413-byte maximum fragment size (1452 − 26 − 7 − 6), and the slot count is
+configuration; the arena is slots × (maximum payload + staging), allocated at create
+time and never grown, resized or shared. At the moment of delivery the reassembled
+payload is copied out once — the one copy fragmentation inherently costs — and
+wire-shaped packets everywhere else keep their zero-copy batch views. A receiver under
+fragment flood can therefore allocate nothing, fragment no heap, and lose nothing but
+the slots' bounded memory, which was spent at create. This is the answer to every
+resource-exhaustion attack reassembly invites, and it is the same answer this protocol
+gives everywhere: fixed tables, spent up front, no surprises at the 999th client.
 
 <a id="t17"></a>
 ## t17. Timing and defaults
 
-[RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **The send rate is a rate in time, not a rate per update.** An implementation must not send a packet per application update. This protocol places no constraint on how often an application updates or how many packets it sends, and an application may update at a thousand hertz; a handshake that retransmitted on every update would flood the network on such an application and starve on a slow one. Retransmission and keep-alive generation are driven by elapsed time and nothing else.
-[RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **Retransmission is at a fixed rate, with no backoff and no round-trip estimation.** This is a connection protocol whose handshake completes in a handful of packets and whose deadline is a few seconds; an adaptive scheme would add state and failure modes to buy nothing measurable over that interval. A deployment may raise the send rate — 20 Hz is reasonable — and must keep it constant for the duration of an attempt.
-[RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **Only the handshake deadline is a configuration field.** The other timing values are fixed constants of this revision. The values are chosen so that a game that never touches them is correct and safe.
-[RN-1 t17 Timing and defaults](TRANSPORT.md#t17) *A note on one interaction:* the cookie lifetime and the send rate together determine whether a client can lose a race — if a cookie expires before the client's next scheduled request, the server reissues one and the client uses it on the request after that. A cookie lifetime shorter than two send intervals makes that race likely and wastes a round trip; a few seconds against a 10 Hz send rate leaves ample margin.
-[RN-1 t17 Timing and defaults](TRANSPORT.md#t17) **The client's attempt deadline is the token's lifetime from the attempt start, as in netcode 1.02.** The deadline is the difference between the token's expire and create timestamps, so an attempt begun after the create timestamp runs past the expire timestamp; the server's own expiry refusal at the connection request ([RN-1 t12 Handshake: server](TRANSPORT.md#t12), item 4) still bounds when a token is admitted.
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
+**The send rate is a rate in time, not a rate per update.** An implementation must not
+send a packet per application update. This protocol places no constraint on how often an
+application updates or how many packets it sends, and an application may update at a
+thousand hertz; a handshake that retransmitted on every update would flood the network
+on such an application and starve on a slow one. Retransmission and keep-alive
+generation are driven by elapsed time and nothing else.
+
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
+**Retransmission is at a fixed rate, with no backoff and no round-trip estimation.**
+This is a connection protocol whose handshake completes in a handful of packets and
+whose deadline is a few seconds; an adaptive scheme would add state and failure modes to
+buy nothing measurable over that interval. A deployment may raise the send rate — 20 Hz
+is reasonable — and must keep it constant for the duration of an attempt.
+
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
+**Only the handshake deadline is a configuration field.** The other timing values are
+fixed constants of this revision. The values are chosen so that a game that never
+touches them is correct and safe.
+
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
+*A note on one interaction:* the cookie lifetime and the send rate together determine
+whether a client can lose a race — if a cookie expires before the client's next
+scheduled request, the server reissues one and the client uses it on the request after
+that. A cookie lifetime shorter than two send intervals makes that race likely and
+wastes a round trip; a few seconds against a 10 Hz send rate leaves ample margin.
+
+[RN-1 t17 Timing and defaults](TRANSPORT.md#t17)
+**The client's attempt deadline is the token's lifetime from the attempt start, as in
+netcode 1.02.** The deadline is the difference between the token's expire and create
+timestamps, so an attempt begun after the create timestamp runs past the expire
+timestamp; the server's own expiry refusal at the connection request ([RN-1 t12 Handshake: server](TRANSPORT.md#t12), rule 5) still bounds when a token is admitted.
 
 <a id="t18"></a>
 ## t18. Error handling and counters
 
-[RN-1 t18 Error handling and counters](TRANSPORT.md#t18) **An implementation must maintain one counter per distinct reason a packet is rejected**, not one per category. `wrong size`, `token expired` and `signature did not verify` are three counters and never one `connection_request_errors`. The granularity is the entire value: a single error counter tells you something is wrong, which you already knew, while a counter per reason tells you which check refused and therefore where to look.
-[RN-1 t18 Error handling and counters](TRANSPORT.md#t18) **The prefilter is not exempt, and it has four reasons rather than one**: too short, too large, wrong epoch, and wrong filter value. A single `prefilter_dropped` would answer none of the questions worth asking of it — a deployment that has just rotated a magic needs to know whether it is refusing epochs or values, and a title investigating a flood needs to know whether the traffic is malformed or merely foreign. The same split belongs in a kernel filter, so the two report in the same shape.
-[RN-1 t18 Error handling and counters](TRANSPORT.md#t18) **The connection request path is the one that matters most**, because it is the attack surface and because it has the most ways to fail. Every step of the ordered list in _Processing Connection Requests_ gets its own counter, in that order:
-[RN-1 t18 Error handling and counters](TRANSPORT.md#t18) **`MAPPING_HANDSHAKE_DEADLINE_EXPIRED` is the direct observable for the stalled handshake described above**, and it is the counter to watch. A deployment under that attack shows a large and climbing count here with no matching growth in `CLIENT_CONNECTED` — clients starting handshakes and walking away — and there is no other signal that says so. In ordinary operation it is near zero, which is what makes a rise legible.
+[RN-1 t18 Error handling and counters](TRANSPORT.md#t18)
+**An implementation must maintain one counter per distinct reason a packet is
+rejected**, not one per category. `wrong size`, `token expired` and `signature did not
+verify` are three counters and never one `connection_request_errors`. The granularity is
+the entire value: a single error counter tells you something is wrong, which you already
+knew, while a counter per reason tells you which check refused and therefore where to
+look.
+
+[RN-1 t18 Error handling and counters](TRANSPORT.md#t18)
+**The prefilter is not exempt, and it has four reasons rather than one**: too short, too
+large, wrong epoch, and wrong filter value. A single `prefilter_dropped` would answer
+none of the questions worth asking of it — a deployment that has just rotated a magic
+needs to know whether it is refusing epochs or values, and a title investigating a flood
+needs to know whether the traffic is malformed or merely foreign. The same split belongs
+in a kernel filter, so the two report in the same shape.
+
+[RN-1 t18 Error handling and counters](TRANSPORT.md#t18)
+**The connection request path is the one that matters most**, because it is the attack
+surface and because it has the most ways to fail. Every step of the ordered list in
+_Processing Connection Requests_ gets its own counter, in that order:
+
+[RN-1 t18 Error handling and counters](TRANSPORT.md#t18)
+**`MAPPING_HANDSHAKE_DEADLINE_EXPIRED` is the direct observable for the stalled
+handshake described above**, and it is the counter to watch. A deployment under that
+attack shows a large and climbing count here with no matching growth in
+`CLIENT_CONNECTED` — clients starting handshakes and walking away — and there is no
+other signal that says so. In ordinary operation it is near zero, which is what makes a
+rise legible.
 
 <a id="t19"></a>
 ## t19. Security considerations
 
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **The deliberate cost this design carries: rejecting a request that reaches the signature check costs an Ed25519 verify plus a seal-open, on the order of a hundred microseconds — roughly a hundred times a symmetric check.** That cost is the price of servers that hold no shared secret, and the reason it is safe to pay is that it is reachable only from an address that has proven it can receive: a request without a valid cookie is refused after one keyed hash. The prefilter, the used-token history and per-source rate limiting are all real and all specified above, but none of them binds a spoofing attacker, and this document says so where each is described. The cookie is the one that does.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **A sealed box proves nothing about its sender.** Repeated here because it is the one way this design fails quietly: anyone can seal a block to a server's public key. An implementation that treats a successful open as authenticity lets any party mint tokens for that server. Verify, then open.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Session traffic has forward secrecy; the handshake does not, and that is the right split.** Recovering a token, a server's X25519 secret, or even the backend's signing key at some later date does not decrypt recorded game traffic, because the session keys also require an ephemeral secret that existed only for the duration of the connection and was never transmitted. What such a compromise still yields is the handshake packets — a cookie and a client index — which carry nothing worth recovering.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) *The exposure this closes is wider than it first appears.* The token keys are generated by the backend and travel inside the connect token, so without the ephemeral exchange the readers of a session's traffic would include: the backend, permanently and for every server it ever issued for, including player-hosted ones it does not control; anyone who obtained a server's X25519 secret at any later date; and anyone who found a connect token in a proxy cache, a log or a crash dump. That is a stronger trust anchor than a certificate authority, which can impersonate but cannot decrypt. It now costs 64 bytes across two handshake packets, two scalar multiplications per side, and **nothing at all per game packet**.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Connection-request replay cannot bind a token to the attacker's address.** An on-path observer can capture a connection request and replay it from its own address; it cannot complete the handshake, because the challenge returns sealed under a key it does not hold. The used-token history records a token only when a response opens under the handshake key, and the handshake key is derived from the token's sealed keys, so the replaying address never reaches the record: its mapping holds no slot and dies at the handshake deadline, while the legitimate client's own request, arriving before or after the replay, is answered and its response binds the token to the client's address. The replay costs the server one mapping for one handshake deadline, and an on-path attacker who wants the client kept out must drop the client's packets instead, which is no attack this layer can stop.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **No response may be larger than the packet that provoked it.** This is a normative invariant, not inherited advice, and **every packet type must be re-checked against it whenever any size changes.** It is easy to break by accident and hard to notice, because shrinking one packet quietly changes some other pair's margin: the _connection response_ carries 24 bytes of required padding for exactly this reason — without it the response would be smaller than the keep-alive it provokes, and a connected client would be a small reflector.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) *The keep-alive row is its fresh-block minimum, which is what a first keep-alive carries. A keep-alive's ack block grows only because the client's own session packets — each at least 33 bytes — added ranges to report, so a larger keep-alive is always answered traffic, never amplification: the invariant holds per provoking packet, not merely at connect.*
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Client proof-of-work was considered and declined.** Requiring a client to solve a puzzle before connecting, with difficulty scaled up under attack, is a recurring proposal and it is the wrong tool here. The cost falls about equally on an attacker and on a legitimate client, but the attacker commands a botnet's aggregate compute and is indifferent to latency, while the player is on a laptop, a console or a phone on battery and is watching a loading screen — so the tax is regressive against exactly the clients least able to pay it. It also misses every threat that matters: it removes not one byte of a volumetric flood, the cookie already defeats a spoofed one more cheaply, and an attacker with real addresses needs real connect tokens to get past the bar at all.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **This layer handles:** traffic that is not this title's, at line rate, for a byte comparison. Spoofed source addresses, for one keyed hash and no allocated state. Clients the matchmaker never authorized, by a signature they cannot produce. Zombie clients that never answer, which never reach a slot. Amplification, structurally, since no response may exceed the packet that provoked it. Tampering with any packet or any token field, by construction. Forged delivery reports, because ack blocks live inside the seal — an off-path attacker cannot tell a sender its packets arrived when they did not. And reassembly resource exhaustion, because fragment storage is a fixed arena spent at create: a fragment flood can waste slots, never memory the deployment did not already budget.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **This layer cannot handle, and does not pretend to:** a volumetric flood large enough to fill the link. Nothing a server does with a packet matters once the pipe is saturated; that is answered by capacity and by upstream scrubbing at the provider, and it is where a kernel whitelist would eventually help by moving the drop as early as the machine allows. Nor can it handle an attacker holding many genuinely issued connect tokens, because such an attacker is past every bar this protocol has by definition.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Both of those are the backend's to answer, and that is the deliberate division.** The backend is the only party that knows *who* is asking — an account, a session, a payment history — where a server knows only an address. Rate limiting by identity is a control that works; rate limiting by address is one an attacker routes around. So the real denial-of-service posture of a deployment lives in how its backend issues tokens, not in how its servers parse packets. This protocol's job is to make sure that anyone the backend did not send is rejected as cheaply as possible, and that being rejected is never more expensive for the server than for the attacker.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **It is also not a new responsibility.** A backend already decides whether a player owns the game, whether they are who they claim to be, and whether they are banned. The connect token is that decision made concrete: it is the backend saying *I vouch for this player, on this server, until this timestamp*. Declining to vouch for someone who is abusing a server is the same gate the backend is already standing at, applied for one more reason — not a denial-of-service mechanism grafted onto a system that had none. Everything a server enforces here is downstream of a judgment the backend was making anyway.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **And it is delegation, not abdication, because the delegated control is made to work.** A protocol can push a problem upstream and leave the upstream party holding a lever connected to nothing. This one does not: **a connect token buys one live connection, for its short lifetime.** The used-token history binds a token to the first source address that opens a response under it, and a client id already connected is refused. An attacker who wants a thousand concurrent connections therefore needs a thousand genuinely issued tokens, and their cost scales linearly with the number of times they can authenticate to the backend. That is what makes issuance limiting an effective control rather than a hopeful one.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **What the backend must do to hold up its end**, stated so a deployment does not discover it during an incident: issue tokens with short expiry, since expiry bounds both the reuse window and the revocation latency; rate limit issuance per authenticated identity rather than per address; and refuse issuance to identities that abuse it.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **The backend and the game servers may talk to each other, and probably will — and that is not this standard's business.** It is not our backend and not our game. A title's backend and its fleet will have whatever relationship the title needs: health reporting, allocation, bans, shutdown, abuse signals. None of it is specified here, none of it is required here, and a flood of validly issued tokens is handled there.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **That is the connect token's quieter purpose, and it is a product property as much as a security one: the token gets this library out of the loop.** A customer runs their own backend, authenticates their own players, enforces their own bans, and orchestrates their own servers. The only thing that has to cross from their world into ours is a signed token, and the only thing we have to do with it is verify it. We never need to know how they decided, never need to be told when they change their minds, and never need to run anything on their behalf. That is what makes this a library a customer adopts rather than a service they depend on — and it is why removing the backend-to-server shared secret matters beyond cryptography: a shared secret would have put us back in the middle of a relationship that is theirs.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **The backend is the real admission control.** A server allocates an encryption mapping only for a request carrying a valid backend signature, so the number of mappings an attacker can create is bounded by the number of real tokens they hold, not by the packets they can send. That is a strong bound and it is the backend's to maintain: **a deployment that issues connect tokens freely has removed the only limit that works against a determined attacker.** Token issuance policy is outside this standard and inside its security argument.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Bound the token lifetime.** A deployment should keep `expire - create` short — 30 seconds by default, for a matchmaker that assigns a server at request time. It bounds reuse: a token whose connection has closed can connect again only until it expires. Token lifetime is the revocation latency of this design: if a server's X25519 secret key leaks, tokens already sealed to it stay openable until they expire, and nothing can recall them. It also bounds how large a used-token history must be to be useful.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Clamp the timeout.** `timeout seconds` is signed, and only a positive value is valid. It is inside the signed data so a client cannot forge it, but a backend bug or a leaked token could otherwise produce a connection that never times out and never frees its slot. A server should hold a configured maximum and clamp the token's value to it. **Zero and negative are invalid at both ends: a server must ignore a request whose token carries one, and a client must refuse such a token before it sends anything.** An earlier draft let a negative value disable the timeout for development behind a server switch; no deployment set the switch, a client that accepted such a token never timed out, and the switch was removed so the rule is one comparison at each end.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **Require a strict Ed25519 verification profile.** Ed25519 verifiers disagree in practice on non-canonical scalars, small-order points, and cofactored versus cofactorless equations, so two implementations can differ on whether a signature is valid. A conforming implementation must reject non-canonical `S` values and small-order public keys — the behavior libsodium's `crypto_sign_verify_detached` already has. This matters more here than in a closed implementation, because this document invites independent ones.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **The AEAD is not swappable.** ChaCha20-Poly1305's confidentiality limit is larger than the number of packets a connection can carry, which is why this protocol needs no key update mechanism at all. That reasoning does not survive substitution: AES-GCM's confidentiality limit is about 8.4 million encrypted packets, which at the packet rates this standard contemplates is **minutes**, and responding to it requires a key update this protocol does not have. An implementation must not substitute another AEAD without adding one.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **There is no 0-RTT and no session resumption, deliberately.** Both add a replay surface that the standards containing them spend chapters bounding, and the strongest advice in those chapters is that disabling the feature is the most effective defense. A game connects once per match, so the round trip it would save is not worth the class of attack it opens.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **No stateless reset, for a structural reason rather than an oversight.** A crash at the other side of the connection is discovered here by timeout, where QUIC discovers it immediately via a stateless reset token. That mechanism requires a static key shared across a server fleet — which is exactly the fleet-wide shared secret this design exists to eliminate. Omitting it follows from the central commitment. Graceful close is already covered by the sealed, redundantly sent _connection disconnect_; only the crash case waits out a timeout, and a game reporting a lost connection after a few seconds is acceptable.
-[RN-1 t19 Security considerations](TRANSPORT.md#t19) **If connection migration is ever added, three things must arrive together.** A connection identifier alone would be a regression. It needs path validation before the server sends anything to a new address, or an off-path attacker who reads the identifier can redirect a session onto a victim; the cookie in this protocol is already exactly that primitive. It needs header protection or identifier rotation, or the identifier becomes a permanent cleartext tag that follows a player across every network they join — strictly worse for privacy than today's address keying, which offers nothing to link. And **if header protection is ever added, the replay check must move to after the open**: it is placed before the open here precisely because the sequence is already in the clear, so an early drop leaks nothing and costs a window lookup instead of an AEAD.
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**The deliberate cost this design carries: rejecting a request that reaches the
+signature check costs an Ed25519 verify plus a seal-open, on the order of a hundred
+microseconds — roughly a hundred times a symmetric check.** That cost is the price of
+servers that hold no shared secret, and the reason it is safe to pay is that it is
+reachable only from an address that has proven it can receive: a request without a valid
+cookie is refused after one keyed hash. The prefilter, the used-token history and
+per-source rate limiting are all real and all specified above, but none of them binds a
+spoofing attacker, and this document says so where each is described. The cookie is the
+one that does.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**A sealed box proves nothing about its sender.** Repeated here because it is the one
+way this design fails quietly: anyone can seal a block to a server's public key. An
+implementation that treats a successful open as authenticity lets any party mint tokens
+for that server. Verify, then open.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Session traffic has forward secrecy; the handshake does not, and that is the right
+split.** Recovering a token, a server's X25519 secret, or even the backend's signing key
+at some later date does not decrypt recorded game traffic, because the session keys also
+require an ephemeral secret that existed only for the duration of the connection and was
+never transmitted. What such a compromise still yields is the handshake packets — a
+cookie and a client index — which carry nothing worth recovering.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+*The exposure this closes is wider than it first appears.* The token keys are generated
+by the backend and travel inside the connect token, so without the ephemeral exchange
+the readers of a session's traffic would include: the backend, permanently and for every
+server it ever issued for, including player-hosted ones it does not control; anyone who
+obtained a server's X25519 secret at any later date; and anyone who found a connect
+token in a proxy cache, a log or a crash dump. That is a stronger trust anchor than a
+certificate authority, which can impersonate but cannot decrypt. It now costs 64 bytes
+across two handshake packets, two scalar multiplications per side, and **nothing at all
+per game packet**.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Connection-request replay cannot bind a token to the attacker's address.** An on-path
+observer can capture a connection request and replay it from its own address; it cannot
+complete the handshake, because the challenge returns sealed under a key it does not
+hold. The used-token history records a token only when a response opens under the
+handshake key, and the handshake key is derived from the token's sealed keys, so the
+replaying address never reaches the record: its mapping holds no slot and dies at the
+handshake deadline, while the legitimate client's own request, arriving before or after
+the replay, is answered and its response binds the token to the client's address. The
+replay costs the server one mapping for one handshake deadline, and an on-path attacker
+who wants the client kept out must drop the client's packets instead, which is no attack
+this layer can stop.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**No response may be larger than the packet that provoked it.** This is a normative
+invariant, not inherited advice, and **every packet type must be re-checked against it
+whenever any size changes.** It is easy to break by accident and hard to notice, because
+shrinking one packet quietly changes some other pair's margin: the _connection response_
+carries 24 bytes of required padding for exactly this reason — without it the response
+would be smaller than the keep-alive it provokes, and a connected client would be a
+small reflector.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+*The keep-alive row is its fresh-block minimum, which is what a first keep-alive
+carries. A keep-alive's ack block grows only because the client's own session packets —
+each at least 33 bytes — added ranges to report, so a larger keep-alive is always
+answered traffic, never amplification: the invariant holds per provoking packet, not
+merely at connect.*
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Client proof-of-work was considered and declined.** Requiring a client to solve a
+puzzle before connecting, with difficulty scaled up under attack, is a recurring
+proposal and it is the wrong tool here. The cost falls about equally on an attacker and
+on a legitimate client, but the attacker commands a botnet's aggregate compute and is
+indifferent to latency, while the player is on a laptop, a console or a phone on battery
+and is watching a loading screen — so the tax is regressive against exactly the clients
+least able to pay it. It also misses every threat that matters: it removes not one byte
+of a volumetric flood, the cookie already defeats a spoofed one more cheaply, and an
+attacker with real addresses needs real connect tokens to get past the bar at all.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**This layer handles:** traffic that is not this title's, at line rate, for a byte
+comparison. Spoofed source addresses, for one keyed hash and no allocated state. Clients
+the matchmaker never authorized, by a signature they cannot produce. Zombie clients that
+never answer, which never reach a slot. Amplification, structurally, since no response
+may exceed the packet that provoked it. Tampering with any packet or any token field, by
+construction. Forged delivery reports, because ack blocks live inside the seal — an
+off-path attacker cannot tell a sender its packets arrived when they did not. And
+reassembly resource exhaustion, because fragment storage is a fixed arena spent at
+create: a fragment flood can waste slots, never memory the deployment did not already
+budget.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**This layer cannot handle, and does not pretend to:** a volumetric flood large enough
+to fill the link. Nothing a server does with a packet matters once the pipe is
+saturated; that is answered by capacity and by upstream scrubbing at the provider, and
+it is where a kernel whitelist would eventually help by moving the drop as early as the
+machine allows. Nor can it handle an attacker holding many genuinely issued connect
+tokens, because such an attacker is past every bar this protocol has by definition.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Both of those are the backend's to answer, and that is the deliberate division.** The
+backend is the only party that knows *who* is asking — an account, a session, a payment
+history — where a server knows only an address. Rate limiting by identity is a control
+that works; rate limiting by address is one an attacker routes around. So the real
+denial-of-service posture of a deployment lives in how its backend issues tokens, not in
+how its servers parse packets. This protocol's job is to make sure that anyone the
+backend did not send is rejected as cheaply as possible, and that being rejected is
+never more expensive for the server than for the attacker.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**It is also not a new responsibility.** A backend already decides whether a player owns
+the game, whether they are who they claim to be, and whether they are banned. The
+connect token is that decision made concrete: it is the backend saying *I vouch for this
+player, on this server, until this timestamp*. Declining to vouch for someone who is
+abusing a server is the same gate the backend is already standing at, applied for one
+more reason — not a denial-of-service mechanism grafted onto a system that had none.
+Everything a server enforces here is downstream of a judgment the backend was making
+anyway.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**And it is delegation, not abdication, because the delegated control is made to work.**
+A protocol can push a problem upstream and leave the upstream party holding a lever
+connected to nothing. This one does not: **a connect token buys one live connection, for
+its short lifetime.** The used-token history binds a token to the first source address
+that opens a response under it, and a client id already connected is refused. An
+attacker who wants a thousand concurrent connections therefore needs a thousand
+genuinely issued tokens, and their cost scales linearly with the number of times they
+can authenticate to the backend. That is what makes issuance limiting an effective
+control rather than a hopeful one.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**What the backend must do to hold up its end**, stated so a deployment does not
+discover it during an incident: issue tokens with short expiry, since expiry bounds both
+the reuse window and the revocation latency; rate limit issuance per authenticated
+identity rather than per address; and refuse issuance to identities that abuse it.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**The backend and the game servers may talk to each other, and probably will — and that
+is not this standard's business.** It is not our backend and not our game. A title's
+backend and its fleet will have whatever relationship the title needs: health reporting,
+allocation, bans, shutdown, abuse signals. None of it is specified here, none of it is
+required here, and a flood of validly issued tokens is handled there.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**That is the connect token's quieter purpose, and it is a product property as much as a
+security one: the token gets this library out of the loop.** A customer runs their own
+backend, authenticates their own players, enforces their own bans, and orchestrates
+their own servers. The only thing that has to cross from their world into ours is a
+signed token, and the only thing we have to do with it is verify it. We never need to
+know how they decided, never need to be told when they change their minds, and never
+need to run anything on their behalf. That is what makes this a library a customer
+adopts rather than a service they depend on — and it is why removing the
+backend-to-server shared secret matters beyond cryptography: a shared secret would have
+put us back in the middle of a relationship that is theirs.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**The backend is the real admission control.** A server allocates an encryption mapping
+only for a request carrying a valid backend signature, so the number of mappings an
+attacker can create is bounded by the number of real tokens they hold, not by the
+packets they can send. That is a strong bound and it is the backend's to maintain: **a
+deployment that issues connect tokens freely has removed the only limit that works
+against a determined attacker.** Token issuance policy is outside this standard and
+inside its security argument.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Bound the token lifetime.** A deployment should keep `expire - create` short — 30
+seconds by default, for a matchmaker that assigns a server at request time. It bounds
+reuse: a token whose connection has closed can connect again only until it expires.
+Token lifetime is the revocation latency of this design: if a server's X25519 secret key
+leaks, tokens already sealed to it stay openable until they expire, and nothing can
+recall them. It also bounds how large a used-token history must be to be useful.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Clamp the timeout.** `timeout seconds` is signed, and only a positive value is valid.
+It is inside the signed data so a client cannot forge it, but a backend bug or a leaked
+token could otherwise produce a connection that never times out and never frees its
+slot. A server should hold a configured maximum and clamp the token's value to it.
+**Zero and negative are invalid at both ends: a server must ignore a request whose token
+carries one, and a client must refuse such a token before it sends anything.** An
+earlier draft let a negative value disable the timeout for development behind a server
+switch; no deployment set the switch, a client that accepted such a token never timed
+out, and the switch was removed so the rule is one comparison at each end.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**Require a strict Ed25519 verification profile.** Ed25519 verifiers disagree in
+practice on non-canonical scalars, small-order points, and cofactored versus
+cofactorless equations, so two implementations can differ on whether a signature is
+valid. A conforming implementation must reject non-canonical `S` values and small-order
+public keys — the behavior libsodium's `crypto_sign_verify_detached` already has. This
+matters more here than in a closed implementation, because this document invites
+independent ones.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**The AEAD is not swappable.** ChaCha20-Poly1305's confidentiality limit is larger than
+the number of packets a connection can carry, which is why this protocol needs no key
+update mechanism at all. That reasoning does not survive substitution: AES-GCM's
+confidentiality limit is about 8.4 million encrypted packets, which at the packet rates
+this standard contemplates is **minutes**, and responding to it requires a key update
+this protocol does not have. An implementation must not substitute another AEAD without
+adding one.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**There is no 0-RTT and no session resumption, deliberately.** Both add a replay surface
+that the standards containing them spend chapters bounding, and the strongest advice in
+those chapters is that disabling the feature is the most effective defense. A game
+connects once per match, so the round trip it would save is not worth the class of
+attack it opens.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**No stateless reset, for a structural reason rather than an oversight.** A crash at the
+other side of the connection is discovered here by timeout, where QUIC discovers it
+immediately via a stateless reset token. That mechanism requires a static key shared
+across a server fleet — which is exactly the fleet-wide shared secret this design exists
+to eliminate. Omitting it follows from the central commitment. Graceful close is already
+covered by the sealed, redundantly sent _connection disconnect_; only the crash case
+waits out a timeout, and a game reporting a lost connection after a few seconds is
+acceptable.
+
+[RN-1 t19 Security considerations](TRANSPORT.md#t19)
+**If connection migration is ever added, three things must arrive together.** A
+connection identifier alone would be a regression. It needs path validation before the
+server sends anything to a new address, or an off-path attacker who reads the identifier
+can redirect a session onto a victim; the cookie in this protocol is already exactly
+that primitive. It needs header protection or identifier rotation, or the identifier
+becomes a permanent cleartext tag that follows a player across every network they join —
+strictly worse for privacy than today's address keying, which offers nothing to link.
+And **if header protection is ever added, the replay check must move to after the
+open**: it is placed before the open here precisely because the sequence is already in
+the clear, so an early drop leaks nothing and costs a window lookup instead of an AEAD.
 
 <a id="t20"></a>
 ## t20. Conformance
 
-[RN-1 t20 Conformance](TRANSPORT.md#t20) **A build order that keeps every step testable before the next:** conventions and constants; token minting and verification against the frozen token; the prefilter; packet layouts against the assembled vectors; sealing against the per-type vectors; the cookie; the request path check by check; challenge and response; connected traffic, timeouts and disconnect; counters throughout, never after.
-[RN-1 t20 Conformance](TRANSPORT.md#t20) **A reason counter with no test naming it is an untested branch.** The counter list and the test list should be the same list, and diffing them is a coverage check that costs nothing and does not depend on a coverage tool understanding the kernel dataplane.
-[RN-1 t20 Conformance](TRANSPORT.md#t20) **Every rule in this document that exists because of a specific failure needs a test that reproduces that failure.** Much of what is written here is of the form "do X, because otherwise Y" — the response carries required padding or a connected client becomes a reflector; the session nonce is chosen at mapping creation or a replayed cookie makes a key recur; the handshake deadline never refreshes or a client stays half-open forever. Each of those `Y`s is a situation that is hard to stumble into and easy to reintroduce, and the prose explaining it protects nothing once the code is being changed for some other reason.
-[RN-1 t20 Conformance](TRANSPORT.md#t20) **The failure mode this guards against is repairing one defect and breaking something essential in the process**, and it is not a careless-programmer problem — it is what happens to someone concentrating hard on a different part of the protocol. These rules interact: a change to how mappings are replaced touches key derivation, a change to a packet's size touches the amplification invariant, a change to when a nonce is chosen touches replay. The person making the second change is being careful about the second thing. Only a test is careful about the first.
-[RN-1 t20 Conformance](TRANSPORT.md#t20) **Known-answer test vectors are required for interoperability.** A conforming implementation publishes, and checks itself against, fixed vectors covering: a connect token built from a fixed backend keypair and server keypair, the four derived per-connection keys, one sealed packet of each type with its exact associated data bytes, and one cookie MAC. Self-consistency proves an implementation agrees with itself; only vectors prove two implementations agree with each other. The failure this prevents is the expensive one — two correct readings of an ambiguous sentence, and a handshake that silently never completes.
+[RN-1 t20 Conformance](TRANSPORT.md#t20)
+**A build order that keeps every step testable before the next:** conventions and
+constants; token minting and verification against the frozen token; the prefilter;
+packet layouts against the assembled vectors; sealing against the per-type vectors; the
+cookie; the request path check by check; challenge and response; connected traffic,
+timeouts and disconnect; counters throughout, never after.
+
+[RN-1 t20 Conformance](TRANSPORT.md#t20)
+**A reason counter with no test naming it is an untested branch.** The counter list and
+the test list should be the same list, and diffing them is a coverage check that costs
+nothing and does not depend on a coverage tool understanding the kernel dataplane.
+
+[RN-1 t20 Conformance](TRANSPORT.md#t20)
+**Every rule in this document that exists because of a specific failure needs a test
+that reproduces that failure.** Much of what is written here is of the form "do X,
+because otherwise Y" — the response carries required padding or a connected client
+becomes a reflector; the session nonce is chosen at mapping creation or a replayed
+cookie makes a key recur; the handshake deadline never refreshes or a client stays
+half-open forever. Each of those `Y`s is a situation that is hard to stumble into and
+easy to reintroduce, and the prose explaining it protects nothing once the code is being
+changed for some other reason.
+
+[RN-1 t20 Conformance](TRANSPORT.md#t20)
+**The failure mode this guards against is repairing one defect and breaking something
+essential in the process**, and it is not a careless-programmer problem — it is what
+happens to someone concentrating hard on a different part of the protocol. These rules
+interact: a change to how mappings are replaced touches key derivation, a change to a
+packet's size touches the amplification invariant, a change to when a nonce is chosen
+touches replay. The person making the second change is being careful about the second
+thing. Only a test is careful about the first.
+
+[RN-1 t20 Conformance](TRANSPORT.md#t20)
+**Known-answer test vectors are required for interoperability.** A conforming
+implementation publishes, and checks itself against, fixed vectors covering: a connect
+token built from a fixed backend keypair and server keypair, the four derived
+per-connection keys, one sealed packet of each type with its exact associated data
+bytes, and one cookie MAC. Matching known-answer vectors establishes agreement on the
+covered cases. Independent interoperability exercises, malformed-input tests and
+state-machine tests provide additional evidence; matching a finite vector set is not a
+proof of the whole protocol. The failure this prevents is the expensive one — two
+correct readings of an ambiguous sentence, and a handshake that silently never
+completes.
 
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta) **Fixed inputs.** The test backend and server keypairs and the test title constant are the published values from _Development without a backend_ and _The Prefilter Header_. In addition:
-[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta) **Deterministic outputs.**
-[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta) **Ack block encodings.** Frozen now; they involve no key. Each is checkable by eye against _Acks_:
-[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta) **Assembled wire packets**, byte-complete as they leave the socket — these pin the geometry the per-field vectors cannot: the prefilter header, the clear session nonce's position on types 1 and 2, and every offset in the unsealed request. The request embeds the frozen token below and carries a zero return cookie, as the first request of an attempt does; the challenge is the type 2 sealed vector above in its full framing at sequence 1.
-[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta) **The frozen connect token** above is not reproducible byte-for-byte — sealing draws randomness — so its vector runs the other way: a conforming server-side implementation verifies its signature against the test backend public key, opens its sealed block with the test server keypair, and recovers exactly the private fields listed in the fixed inputs. The token identifier printed above is the 16-byte unkeyed `crypto_generichash` of its first 576 bytes and is deterministic.
+[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
+**Fixed inputs.** The test backend and server keypairs and the test title constant are
+the published values from _Development without a backend_ and _The Prefilter Header_. In
+addition:
+
+[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
+**Deterministic outputs.**
+
+[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
+**Ack block encodings.** Frozen now; they involve no key. Each is checkable by eye
+against _Acks_:
+
+[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
+**Assembled wire packets**, byte-complete as they leave the socket — these pin the
+geometry the per-field vectors cannot: the prefilter header, the clear session nonce's
+position on types 1 and 2, and every offset in the unsealed request. The request embeds
+the frozen token below and carries a zero return cookie, as the first request of an
+attempt does; the challenge is the type 2 sealed vector above in its full framing at
+sequence 1.
+
+[RN-1 ta Appendix A: test vectors](TRANSPORT.md#ta)
+**The frozen connect token** above is not reproducible byte-for-byte — sealing draws
+randomness — so its vector runs the other way: a conforming server-side implementation
+verifies its signature against the test backend public key, opens its sealed block with
+the test server keypair, and recovers exactly the private fields listed in the fixed
+inputs. The token identifier printed above is the 16-byte unkeyed `crypto_generichash`
+of its first 576 bytes and is deterministic.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
 
-[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb) The departures from netcode 1.02 are deliberate and each removes a defect rather than adding a feature. Netcode binds a token to a server address and an expiry and stops there; this standard binds a token to one live connection per player, which turns sharing from a way to multiply access into a way to lose it. The connect token carries no client address, so it survives NAT and a server-side address change, and a token handed to another party transfers the seat rather than multiplying it.
-[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb) Netcode's sizes derive from a 1280-byte MTU; this standard derives every packet limit from a 1500-byte MTU and defaults the budget to 1452 bytes, which is not backward compatible and is why both ends update together. The 24-bit sequence and the 32768-sequence replay window replace netcode's shorter sequence history, and the receive window is sized explicitly in sequence numbers rather than by a packet count. Keep-alive prefixing for unconfirmed clients was removed in favour of the confirmed flag and the ack-carried elicitation described in the session section, because the prefixing could strand a client that had nothing else to send.
-[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb) The standard also declines connection migration, 0-RTT, session resumption and stateless reset, each for a reason stated in its own section: migration needs an address-independent identifier this version does not carry, and the other three add replay or state surfaces this design does not need. A connect token is a JWT for game servers in role, not in format; the format here has no algorithm field and no extension point, which removes the places JWT deployments have historically gone wrong.
+[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
+The departures from netcode 1.02 are deliberate and each removes a defect rather than
+adding a feature. Netcode binds a token to a server address and an expiry and stops
+there; this standard binds a token to one live connection per player, which turns
+sharing from a way to multiply access into a way to lose it. The connect token carries
+no client address, so it survives NAT and a server-side address change, and a token
+handed to another party transfers the seat rather than multiplying it.
+
+[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
+Netcode's sizes derive from a 1280-byte MTU; this standard derives every packet limit
+from a 1500-byte MTU and defaults the budget to 1452 bytes, which is not backward
+compatible and is why both ends update together. The 24-bit sequence and the
+32768-sequence replay window replace netcode's shorter sequence history, and the receive
+window is sized explicitly in sequence numbers rather than by a packet count. Keep-alive
+prefixing for unconfirmed clients was removed in favour of the confirmed flag and the
+ack-carried elicitation described in the session section, because the prefixing could
+strand a client that had nothing else to send.
+
+[RN-1 tb Appendix B: changes from netcode 1.02](TRANSPORT.md#tb)
+The standard also declines connection migration, 0-RTT, session resumption and stateless
+reset, each for a reason stated in its own section: migration needs an
+address-independent identifier this version does not carry, and the other three add
+replay or state surfaces this design does not need. A connect token is a JWT for game
+servers in role, not in format; the format here has no algorithm field and no extension
+point, which removes the places JWT deployments have historically gone wrong.
 
 <a id="tc"></a>
 ## tc. Appendix C (informative): implementation notes
 
-[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc) **The development backend key is published as a fixed test value, identical for everyone.** Its public half is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. Publishing it is the point: it is worthless as security.
-[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc) **There is no test magic, and this standard publishes none.** The published keys above make an unsecured path work out of the box and are documented as worthless precisely so nobody mistakes them for security. A default magic would be a different thing: it would make a **secured-looking** path work out of the box, and a deployment inheriting it would hold a filter that verifies against a secret every attacker also has. The keyed filter is available to deployments that have a backend distributing real magics, and to nobody else — see _The Prefilter Header_.
-[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc) **The safety property is that the keys are public, not that a flag is off**, and that distinction is the whole design. A mode flag that disables checks behaves identically in development and in production, so nothing fails when it ships by accident — the bug is discovered by an attacker. Published keys fail in exactly the right direction: a deployment that leaves them enabled has an authorization system every one of its players can forge, which is not a subtle condition, and any adversarial look finds it immediately. There is no state in which the test keys are quietly load-bearing.
-[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc) **The test keys are never used unless configured.** A developer who wants the no-backend flow configures them explicitly; a deployment that supplies no keys does not silently inherit a public credential. Supplying real keys is what takes an act, and that act belongs to the deployment, not to the person trying the library for the first time.
-[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc) **Nothing else is relaxed, and that is the point.** The handshake, the cookie exchange, the address validation, the sealing, the key derivation, the replay protection and the erasure requirements all run exactly as specified. A development server is a real server that trusts a public signing key, so the code path exercised on a laptop is the code path that ships. This document asks transports elsewhere not to have defences that only run under attack; the same principle applies to itself.
+[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc)
+**The development backend key is published as a fixed test value, identical for
+everyone.** Its public half is `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`. Publishing it is the
+point: it is worthless as security.
+
+[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc)
+**There is no test magic, and this standard publishes none.** The published keys above
+make an unsecured path work out of the box and are documented as worthless precisely so
+nobody mistakes them for security. A default magic would be a different thing: it would
+make a **secured-looking** path work out of the box, and a deployment inheriting it
+would hold a filter that verifies against a secret every attacker also has. The keyed
+filter is available to deployments that have a backend distributing real magics, and to
+nobody else — see _The Prefilter Header_.
+
+[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc)
+**The safety property is that the keys are public, not that a flag is off**, and that
+distinction is the whole design. A mode flag that disables checks behaves identically in
+development and in production, so nothing fails when it ships by accident — the bug is
+discovered by an attacker. Published keys fail in exactly the right direction: a
+deployment that leaves them enabled has an authorization system every one of its players
+can forge, which is not a subtle condition, and any adversarial look finds it
+immediately. There is no state in which the test keys are quietly load-bearing.
+
+[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc)
+**The test keys are never used unless configured.** A developer who wants the no-backend
+flow configures them explicitly; a deployment that supplies no keys does not silently
+inherit a public credential. Supplying real keys is what takes an act, and that act
+belongs to the deployment, not to the person trying the library for the first time.
+
+[RN-1 tc Appendix C (informative): implementation notes](TRANSPORT.md#tc)
+**Nothing else is relaxed, and that is the point.** The handshake, the cookie exchange,
+the address validation, the sealing, the key derivation, the replay protection and the
+erasure requirements all run exactly as specified. A development server is a real server
+that trusts a public signing key, so the code path exercised on a laptop is the code
+path that ships. This document asks transports elsewhere not to have defences that only
+run under attack; the same principle applies to itself.
 
 <a id="m1"></a>
 ## m1. Scope, terminology and relation to RN-1
 
-[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1) The preconditions in are the facts about the connection layer that the message layer's correctness rests on. They are stated as requirements on the connection layer, in RN-2, because RN-2 is the party that relies on them, and an RN-1 implementation that carries only opaque payloads need not keep the stronger ones. The replay window bound is the reason 24-bit message numbers are enough: a stale resend cannot arrive from further back than the window admits, and within that distance the signed half-range reading of a number never aliases. Both depth bounds are pinned to named constants of the reference implementation.
-[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1) A send on a connection that is not connected is dropped rather than held. Holding it adds state and latency for nothing: a game sends every frame, so the first frame after the connection is established carries the current state anyway. One rule for both endpoints matches the server, which never had a connection to send on before its slot was assigned. The drop is counted so that it stays visible.
+[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1)
+The preconditions in are the facts about the connection layer that the message layer's
+correctness rests on. They are stated as requirements on the connection layer, in RN-2,
+because RN-2 is the party that relies on them, and an RN-1 implementation that carries
+only opaque payloads need not keep the stronger ones. The replay window bound is the
+reason 24-bit message numbers are enough: a stale resend cannot arrive from further back
+than the window admits, and within that distance the signed half-range reading of a
+number never aliases. Both depth bounds are pinned to named constants of the reference
+implementation.
+
+[RN-2 m1 Scope, terminology and relation to RN-1](MESSAGES.md#m1)
+A send on a connection that is not connected is dropped rather than held. Holding it
+adds state and latency for nothing: a game sends every frame, so the first frame after
+the connection is established carries the current state anyway. One rule for both
+endpoints matches the server, which never had a connection to send on before its slot
+was assigned. The drop is counted so that it stays visible.
 
 <a id="m2"></a>
 ## m2. Payload forms and sender size rules
 
-[RN-2 m2 Payload forms and sender size rules](MESSAGES.md#m2) The form byte is last because the application's message begins at payload offset zero, which is the transport's aligned root; that is what makes the zero-copy form possible. SINGLE costs one byte and carries exactly one unreliable message, while RECORDS aggregates many small messages, reliable records, resends and the control record into one packet, so that a busy connection does not pay a payload header per small message.
+[RN-2 m2 Payload forms and sender size rules](MESSAGES.md#m2)
+The form byte is last because the application's message begins at payload offset zero,
+which is the transport's aligned root; that is what makes the zero-copy form possible.
+SINGLE costs one byte and carries exactly one unreliable message, while RECORDS
+aggregates many small messages, reliable records, resends and the control record into
+one packet, so that a busy connection does not pay a payload header per small message.
 
 <a id="m3"></a>
 ## m3. Record format
 
-[RN-2 m3 Record format](MESSAGES.md#m3) **The conditions are defined for every flags byte, including one the receiver will refuse.** A code of 5 to 7 carries none of the code-dependent fields, and BLOCK adds the ring and the two fragment fields whatever the code. So the receiver measures a header before it judges the flags, and check 2 below runs before check 3 without guessing.
-[RN-2 m3 Record format](MESSAGES.md#m3) **Every record has exactly one encoding.** A sender sets WIDE exactly when `channel >= 256`, and a receiver refuses WIDE with a channel below 256. A field a record does not carry is absent, not zero-filled. So a payload a receiver accepts packs back to the same bytes from the records it parsed, and no byte of an accepted payload is ignored.
+[RN-2 m3 Record format](MESSAGES.md#m3)
+**The conditions are defined for every flags byte, including one the receiver will
+refuse.** A code of 5 to 7 carries none of the code-dependent fields, and BLOCK adds the
+ring and the two fragment fields whatever the code. So the receiver measures a header
+before it judges the flags, and check 2 below runs before check 3 without guessing.
+
+[RN-2 m3 Record format](MESSAGES.md#m3)
+**Every record has exactly one encoding.** A sender sets WIDE exactly when `channel >=
+256`, and a receiver refuses WIDE with a channel below 256. A field a record does not
+carry is absent, not zero-filled. So a payload a receiver accepts packs back to the same
+bytes from the records it parsed, and no byte of an accepted payload is ignored.
 
 <a id="m4"></a>
 ## m4. Receiver checks
 
-[RN-2 m4 Receiver checks](MESSAGES.md#m4) The receiver's checks are ordered from the cheapest and most local to the most expensive, and each refusal has its own counter so that a malformed sender is attributable rather than merely dropped. A check that needs state already validated by an earlier check relies on that order; moving a check earlier never changes which packets are accepted, only how much work a hostile packet can force.
+[RN-2 m4 Receiver checks](MESSAGES.md#m4)
+The receiver's checks are ordered from the cheapest and most local to the most
+expensive, and each refusal has its own counter so that a malformed sender is
+attributable rather than merely dropped. A check that needs state already validated by
+an earlier check relies on that order; moving a check earlier never changes which
+packets are accepted, only how much work a hostile packet can force.
 
 <a id="m5"></a>
 ## m5. Message numbering and the reliable window
 
-[RN-2 m5 Message numbering and the reliable window](MESSAGES.md#m5) A record takes its number only when it is first written into a packet, never at send time, because unreliable records never take a number and a number assigned earlier would waste the window on data that is never sent. The count bound and the byte bound are both necessary: the count keeps the receiver's slot table from aliasing, and the byte bound keeps its ring from being overwritten before the sender has seen an acknowledgement. When either bound fails the sender stalls new reliable numbering while resends and unreliable sends continue, so a full window stalls one class rather than the connection.
+[RN-2 m5 Message numbering and the reliable window](MESSAGES.md#m5)
+A record takes its number only when it is first written into a packet, never at send
+time, because unreliable records never take a number and a number assigned earlier would
+waste the window on data that is never sent. The count bound and the byte bound are both
+necessary: the count keeps the receiver's slot table from aliasing, and the byte bound
+keeps its ring from being overwritten before the sender has seen an acknowledgement.
+When either bound fails the sender stalls new reliable numbering while resends and
+unreliable sends continue, so a full window stalls one class rather than the connection.
 
 <a id="m6"></a>
 ## m6. Delivery: unreliable codes 0 and 1
 
-[RN-2 m6 Delivery: unreliable codes 0 and 1](MESSAGES.md#m6) Unreliable codes 0 and 1 carry no acknowledgement and no replay state beyond the message sequence, so they can be dropped at any point without the sender learning. That makes them cheap and makes them unsuitable for anything whose loss the application cannot tolerate; the standard keeps the delivery promise exactly as weak as the code names it.
+[RN-2 m6 Delivery: unreliable codes 0 and 1](MESSAGES.md#m6)
+Unreliable codes 0 and 1 carry no acknowledgement and no replay state beyond the message
+sequence, so they can be dropped at any point without the sender learning. That makes
+them cheap and makes them unsuitable for anything whose loss the application cannot
+tolerate; the standard keeps the delivery promise exactly as weak as the code names it.
 
 <a id="m7"></a>
 ## m7. Delivery: reliable codes 2, 3 and 4
 
-[RN-2 m7 Delivery: reliable codes 2, 3 and 4](MESSAGES.md#m7) Reliable codes 2, 3 and 4 differ in what the receiver must hold before delivery: code 2 delivers on arrival, while codes 3 and 4 wait for a number or an ordering predecessor. The distinction exists so that an application pays for ordering only where it asks for it, and so that the receive ring can be sized from the number of records that can be held rather than from the number in flight.
+[RN-2 m7 Delivery: reliable codes 2, 3 and 4](MESSAGES.md#m7)
+Reliable codes 2, 3 and 4 differ in what the receiver must hold before delivery: code 2
+delivers on arrival, while codes 3 and 4 wait for a number or an ordering predecessor.
+The distinction exists so that an application pays for ordering only where it asks for
+it, and so that the receive ring can be sized from the number of records that can be
+held rather than from the number in flight.
 
 <a id="m8"></a>
 ## m8. Blocks
 
-[RN-2 m8 Blocks](MESSAGES.md#m8) A block exists because one message can exceed the bytes one record can hold. Its fragments take consecutive numbers and one ring span reserved at once, so the receiver knows the whole extent before the first fragment arrives and never has to grow a buffer. The sender pays for the whole block in the window even before it is acked, which is what bounds the receiver's memory by the same number the sender is allowed to have in flight.
+[RN-2 m8 Blocks](MESSAGES.md#m8)
+A block exists because one message can exceed the bytes one record can hold. Its
+fragments take consecutive numbers and one ring span reserved at once, so the receiver
+knows the whole extent before the first fragment arrives and never has to grow a buffer.
+The sender pays for the whole block in the window even before it is acked, which is what
+bounds the receiver's memory by the same number the sender is allowed to have in flight.
 
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
 
-[RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9) Acknowledgement mapping is kept in the sent-packet ring rather than in the per-number table, because one packet can carry several records and one record can be resent in a later packet. Resend delay follows the measured round trip, with a fixed floor and no exponential backoff, because a game connection has a bounded lifetime: backing off would make the last seconds of a lossy connection slower than the first, while a steady rate converges as soon as the path recovers. The send budget is a rate in time, not a rate per update, so an application that updates at any rate gets the same wire behaviour.
+[RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9)
+Acknowledgement mapping is kept in the sent-packet ring rather than in the per-number
+table, because one packet can carry several records and one record can be resent in a
+later packet. Resend delay follows the measured round trip, with a fixed additive
+margin, an optional configured floor and no exponential backoff, because a game
+connection has a bounded lifetime: backing off would make the last seconds of a lossy
+connection slower than the first, while a steady rate converges as soon as the path
+recovers. The send budget is a rate in time, not a rate per update, so an application
+that updates at any rate gets the same wire behaviour.
 
 <a id="m10"></a>
 ## m10. Channels and priorities
 
-[RN-2 m10 Channels and priorities](MESSAGES.md#m10) Channels are a per-send property rather than a separate connection, so a game can give chat, state and events their own ordering and priority without paying for another handshake. Every channel's state is allocated at create even when the channel is unused, which keeps the hot path branch-free and makes an added channel a configuration change rather than a reallocation. Priority is a send-order decision only; it never changes what the receiver must hold.
+[RN-2 m10 Channels and priorities](MESSAGES.md#m10)
+Channels are a per-send property rather than a separate connection, so a game can give
+chat, state and events their own ordering and priority without paying for another
+handshake. Every channel's state is allocated at create even when the channel is unused,
+which keeps the hot path branch-free and makes an added channel a configuration change
+rather than a reallocation. Priority is a send-order decision only; it never changes
+what the receiver must hold.
 
 <a id="m11"></a>
 ## m11. CONFIG control record
 
-[RN-2 m11 CONFIG control record](MESSAGES.md#m11) The CONFIG record is the one message the message layer sends on its own account: it announces the channel count and the limits the other side of the connection must apply before it sends. It rides the reliable path because a receiver that missed it would use the wrong geometry, and a wrong geometry is not recoverable by resending an application message.
+[RN-2 m11 CONFIG control record](MESSAGES.md#m11)
+The CONFIG record is the one message the message layer sends on its own account: it
+announces the channel count and the limits the other side of the connection must apply
+before it sends. It rides the reliable path because a receiver that missed it would use
+the wrong geometry, and a wrong geometry is not recoverable by resending an application
+message.
 
 <a id="m12"></a>
 ## m12. Receipts
 
-[RN-2 m12 Receipts](MESSAGES.md#m12) A receipt is an API outcome, not a wire record: it distinguishes a send result from the transport acknowledgement for a packet while the message uses its base wire code. A large type-5 send keeps its receipt while using reliable delivery.
+[RN-2 m12 Receipts](MESSAGES.md#m12)
+A receipt is an API outcome, not a wire record: it distinguishes a send result from the
+transport acknowledgement for a packet while the message uses its base wire code. A
+large type-5 send keeps its receipt while using reliable delivery.
 
 <a id="m13"></a>
 ## m13. Security considerations
 
-[RN-2 m13 Security considerations](MESSAGES.md#m13) The message layer inherits the connection layer's confidentiality and authenticity and adds no key of its own. Its security boundary is therefore the record parser: every length, count and ring offset the remote endpoint supplies is checked against the connection's configured geometry before use, and a violation ends the connection rather than being clamped. The message layer makes no claim about traffic analysis, endpoint compromise or a client that holds a valid token, which remain the connection layer's and the backend's concerns.
+[RN-2 m13 Security considerations](MESSAGES.md#m13)
+The message layer inherits the connection layer's confidentiality and authenticity and
+adds no key of its own. Its security boundary is therefore the record parser: every
+length, count and ring offset the remote endpoint supplies is checked against the
+connection's configured geometry before use, and a violation ends the connection rather
+than being clamped. The message layer makes no claim about traffic analysis, endpoint
+compromise or a client that holds a valid token, which remain the connection layer's and
+the backend's concerns.
 
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
 
-[RN-2 ma Appendix A: test vectors](MESSAGES.md#ma) The message vectors are frozen independently of the transport vectors because they exercise the record codec and the scheduler without a key. Each vector is a byte string a conforming implementation reproduces exactly, so a disagreement is a wire difference rather than an interpretation.
+[RN-2 ma Appendix A: test vectors](MESSAGES.md#ma)
+The message vectors are frozen independently of the transport vectors because they
+exercise the record codec and the scheduler without a key. Each vector is a byte string
+a conforming implementation reproduces exactly, so a disagreement is a wire difference
+rather than an interpretation.
 
 <a id="rh"></a>
 ## rh. Revision history

@@ -767,11 +767,14 @@ def check_language(docs, faults, only):
                     elif match and not section.pending:
                         faults.append((section.id, "%s informative text uses the key word %r" % (where, match.group(1))))
                     continue
+                # Inline code may contain a field named "required", but it
+                # must not hide an implementation citation from the standard.
+                citations = LINK_RE.sub(" ", line)
                 for pattern, what in ((LOWER_RE, "lower-case requirement word"),
                                       (PATH_RE, "file citation"),
                                       (TLA_RE, "model citation"),
                                       (TEST_RE, "test citation")):
-                    match = pattern.search(plain)
+                    match = pattern.search(plain if pattern is LOWER_RE else citations)
                     if match:
                         faults.append((section.id, "%s %s %r in normative text" % (where, what, match.group(0))))
 

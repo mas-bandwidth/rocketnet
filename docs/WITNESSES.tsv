@@ -3,7 +3,7 @@ t7	When the scalar multiplication reports a small-order public key, the endpoint
 t2.2	An endpoint MUST erase an ephemeral secret key, and every derived key, when the attempt or connection that owns it ends	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
 t7	Both endpoints MUST erase the shared secret as soon as the four keys are derived	EphemeralErasedOutsideHandshake	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
 t7	MUST erase an ephemeral secret key when no handshake that needs it remains	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
-t7	the server MUST generate one for every mapping or take the current keypair of a bounded rotation window	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
+t7	the server MUST generate a fresh keypair for every mapping	-	sdk/rocketnet_keys.cpp:rocketnet_derive_connection_keys	-	none
 t10	A connection response that opens and whose padding is not all zero is `CONNECTION_RESPONSE_PADDING_NOT_ZERO`	-	sdk/rocketnet_server_protocol.cpp:rocketnet_server_process_sealed_packet	sdk/rocketnet_tests.cpp:test_integrity_limit	unit
 t11.1	A client that accepts a cookie MUST store its last 24 bytes and MUST send nothing in response.	-	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	-	none
 t11.1	A cookie accepted in sending connection request (2) MUST replace only the latest cookie	HandshakeNeverRewinds	sdk/rocketnet_client_protocol.cpp:rocketnet_client_process_cookie	tests/test_unit_client_trusts_only_server.cpp:test_client_forged_cookie_never_displaces_kept_cookie	unit
@@ -57,3 +57,5 @@ t13	confirmation test must then be re-derived rather than assumed to still hold	
 t13.4	It MUST zero all key material rather than merely mark the slot free.	-	sdk/rocketnet_connection_reset.cpp:rocketnet_client_connection_reset	sdk/rocketnet_tests.cpp:test_client_token_keys_wiped_on_disconnect	unit
 t11	a server config that names both families serves both, and a client on each family reaches connected	BothFamiliesConnect	sdk/rocketnet_server_protocol.cpp:rocketnet_server_token_address_is_advertised	proofs/tla/MCServerConnectionServesBothFamilies.cfg	model
 t11	a server that names both families but serves only the first leaves the other family's client unconnected	BothFamiliesConnect	sdk/rocketnet_server_protocol.cpp:rocketnet_server_token_address_is_advertised	proofs/tla/MCServerConnectionBrokenOneFamilyServed.cfg	model
+t7	A verifier MUST test the signature equation as well as these encoding checks.	-	sodium/sodium.c:crypto_sign_verify_detached	tests/test_unit_standard_key_schedule.cpp:test_standard_key_schedule_vectors	unit
+t7	A server MUST identify a token by its signed connect data	-	sdk/rocketnet_connect_token.cpp:rocketnet_connect_token_identifier	tests/test_unit_standard_key_schedule.cpp:test_standard_key_schedule_vectors	unit

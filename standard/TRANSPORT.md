@@ -8,8 +8,8 @@ Companion documents: RN-2 (`MESSAGES.md`), the message layer; RN-R
 Abstract. RN-1 specifies a secure client/server connection protocol over UDP:
 a connect token minted by a backend, an address-validated handshake, sealed
 packets with per-connection keys, replay protection, acknowledgement and
-fragmentation. An implementation built from RN-1 alone interoperates with any
-other conforming implementation.
+fragmentation. Its byte layouts and state rules define the shared contract
+for independently implemented clients, servers and backends.
 
 <a id="t1"></a>
 ## t1. Introduction, scope, terminology and conventions
@@ -179,8 +179,9 @@ of both configurations:
 1. Every field MUST have an environment variable that overrides it, named
    `ROCKETNET_SERVER_` or `ROCKETNET_CLIENT_` followed by the field name in
    upper case (the server field `max_clients` is `ROCKETNET_SERVER_MAX_CLIENTS`).
-   The only fields exempt are fields that hold a callback or a pointer, and
-   each exempt field MUST be stated as exempt where it is declared.
+   Fields that hold a callback or a pointer, the server's `server_secret_key`,
+   and the configuration's `config_bytes` size marker are exempt. Each exempt
+   field MUST be stated as exempt where it is declared.
 2. Precedence is default, then configuration struct, then environment: a
    value from the environment replaces a value from the struct, which
    replaces the default.
@@ -192,8 +193,8 @@ of both configurations:
    create, naming the variable, when a value does not parse. An empty value
    is treated as an unset variable, with one log line.
 4. An endpoint MUST log each environment override at create, naming the
-   variable and the value it displaced. A field that holds secret material
-   MUST be logged, and refused, with its value redacted.
+   variable and the value it displaced. In override logs and refusal
+   diagnostics, an endpoint MUST redact values that hold secret material.
 5. An endpoint MUST refuse to create, with an error naming the field, when any
    field holds a value outside its valid range, from the struct or from the
    environment alike. It MUST NOT clamp or otherwise correct a value.
@@ -216,6 +217,7 @@ field's default.
 | server max_clients limit | `1000` | integer | none: a limit of this revision | |
 | server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
+| server server_secret_key | `none` | bytes[32] | none: exempt secret configuration | all zero selects a generated keypair; otherwise an application-supplied X25519 secret key |
 | server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
@@ -227,8 +229,11 @@ field's default.
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
 | reassembled payload maximum | `16384` | bytes | none: a limit of this revision; no config field sets it | |
 
-The server's X25519 keypair has no configuration field and no environment
-variable. The server generates it at create.
+The server's X25519 keypair is fixed at create. When `server_secret_key` is
+all zero, the server MUST generate a fresh keypair. Otherwise it MUST copy
+the supplied secret and derive the corresponding public key. There is no
+environment variable for this field. The server MUST erase its owned copy
+when it is destroyed; the application remains responsible for its own copy.
 
 An implementation MAY add fields of its own (for example a count of kernel
 queues for one transport); each one keeps rules 1 to 5.
@@ -1056,8 +1061,8 @@ Rules:
    of [t3 Constants and registries](#t3). A server MUST NOT reuse a session
    nonce across mappings.
 4. Each endpoint MUST use one X25519 keypair for the attempt: the client MUST
-   generate a fresh keypair for every attempt, and the server MUST generate one
-   for every mapping or take the current keypair of a bounded rotation window.
+   generate a fresh keypair for every attempt, and the server MUST generate a
+   fresh keypair for every mapping.
    The client MUST send its ephemeral public key in the clear in the connection
    request. The server MUST send its ephemeral public key inside the sealed
    connection challenge. Both keys are X25519 public keys of
@@ -1086,8 +1091,11 @@ Rules:
    reject a signature
    whose S component is not reduced modulo the group order, MUST reject an R
    component or public key that is not a canonical encoding or is of small
-   order, MUST reject a public key that does not decode to a curve point, and
-   MUST NOT accept two distinct signature byte strings for one message.
+   order, and MUST reject a public key that does not decode to a curve point.
+   A verifier MUST test the signature equation as well as these encoding
+   checks. These checks do not establish that only one valid signature exists
+   for a message. A server MUST identify a token by its signed connect data,
+   as [t6 Connect token](#t6) specifies, rather than by its signature bytes.
 10. Both endpoints MUST erase the shared secret as soon as the four keys are
     derived, MUST erase an ephemeral secret key when no handshake that needs it
     remains, and MUST erase the four keys and the token keys when the attempt
@@ -1242,6 +1250,21 @@ input: client ephemeral public key = 3a553d74792d727efa9b9a4cde3da1ad93f1a2d0c09
 input: server ephemeral public key = 0000000000000000000000000000000000000000000000000000000000000000
 input: key derivation label = "RKTNSESC"
 00
+```
+
+A signature verification vector uses a synthetic signed buffer, not a complete
+admissible connect token. It reports five one-byte booleans: acceptance
+of signature 1, acceptance of signature 2, acceptance of signature 1 after
+flipping bit 0 of message byte 0, acceptance of signature 1 after adding the
+Ed25519 group order to S, and equality of token identifiers after changing
+only the appended signature. A result of `01` is true; `00` is false.
+
+```vector t7.signature-verification
+input: signed data is 576 bytes; byte i is i modulo 256, starting at i = 0
+public key: 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+signature 1: 5ebb1841a19d7dc4f15bfc4d1129ca25e0b89592e7707191046dc3b9c0d55468febcf49e12a5cb474f05c82607820f87591ca54e13d9d6bbeb288beccdd1e404
+signature 2: c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912dba084da7f6ff698e0001e75f846b23a7c54eb9a84fdaa3213477d318cd6a505
+01 01 00 00 01
 ```
 
 <a id="t8"></a>
@@ -1786,8 +1809,8 @@ ad c5 bd df c7 8f aa 2a 94 fb 2b 78
 <a id="t9"></a>
 ## t9. Packet protection
 
-Every sealed packet carries its per-packet data and its tag encrypted and
-authenticated with ChaCha20-Poly1305 (IETF) under one key of the connection.
+Every sealed packet carries encrypted per-packet data followed by the
+authentication tag of ChaCha20-Poly1305 (IETF), under one key of the connection.
 The associated data binds the version, the application protocol id, the
 packet type and the connection salt, and, for the two handshake types that
 carry the ephemeral exchange, the client's ephemeral public key. It never
@@ -3107,18 +3130,20 @@ in the kernel. The prefilter never advances the mark.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| fresh | sequence received | none | open; set the bit; high-water mark = sequence | tracking |
+| fresh | sequence received | open succeeds | set the bit; high-water mark = sequence | tracking |
 | tracking | sequence received | high-water mark at least one depth and sequence at or below high-water mark minus depth | refuse; no change | tracking |
-| tracking | sequence received | received bit set | refuse; no change | tracking |
-| tracking | sequence received | received bit clear and sequence at or below high-water mark | set the bit; no change to the high-water mark | tracking |
-| tracking | sequence received | sequence above high-water mark | clear the skipped bits, the whole ring when the jump is at least one depth; set the bit; high-water mark = sequence | tracking |
+| tracking | sequence received | sequence at or below high-water mark and received bit set | refuse; no change | tracking |
+| tracking | sequence received | within the window, received bit clear and sequence at or below high-water mark; open succeeds | set the bit; no change to the high-water mark | tracking |
+| tracking | sequence received | sequence above high-water mark; open succeeds | clear the skipped bits, the whole ring when the jump is at least one depth; set the bit; high-water mark = sequence | tracking |
 | any | open fails | none | no mark; count one integrity failure | unchanged |
 
 A replay vector's bytes are the window depth as a 4-byte little-endian
 unsigned integer, the final high-water mark as an 8-byte little-endian
 unsigned integer, then one byte per probe in input order: `01` when the probe
 is accepted, `00` when it is refused. A probe is accepted when its sequence is
-not behind the high-water mark and its received bit is clear.
+ahead of the high-water mark, or when it is within the retained window and its
+received bit is clear. A probe does not open a packet or mark its sequence;
+it tests replay eligibility only.
 
 ```vector t14.in-window-duplicate
 input: from an empty window, mark sequences 1000 and 1010 received
@@ -4108,9 +4133,9 @@ the property the row it carries.
 | Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
 | Token reuse from another address refused | used-token history keyed on a hash of the signed data |
 | An on-path replay of a first request cannot hold a token past its mapping | the request claim is released with its half-open mapping; the claim window is min(handshake deadline, half-open idle deadline), and a refused client retries from its own address within its token timeout |
-| A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
+| Working keys are scoped to one connection | keys derived per connection from a fresh salt and a fresh session nonce; teardown erases the keys |
 | No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
-| Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
+| Recorded session traffic resists later compromise of long-term keys | ephemeral X25519 exchange; ephemeral and shared secrets erased after derivation, and session keys erased at teardown |
 | A compromised server mints nothing | servers hold no signing key |
 
 <a id="t19.1"></a>
@@ -4224,9 +4249,9 @@ role and the revision of RN-1 it meets.
 A conforming implementation MUST publish, and check itself against, fixed
 known-answer vectors covering: a connect token built from fixed keys, the four
 derived per-connection keys, one sealed packet of each type with its exact
-associated data bytes, and one cookie MAC. Self-consistency proves an
-implementation agrees with itself; only known-answer vectors prove that two
-implementations agree with each other.
+associated data bytes, and one cookie MAC. Matching known-answer vectors
+establishes agreement on those cases. It does not establish agreement on
+every state transition, malformed input, resource limit or packet schedule.
 
 A negative test of a receive check MUST assert two counters: the reason counter,
 and the packet type's received counter. The reason alone does not show that a
@@ -4238,9 +4263,9 @@ the counter list and the test list MUST be the same list.
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-The index of the vectors of RN-1 by section is printed by
-`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
-in the sections.
+The vectors of RN-1 appear in their defining sections. Each vector has a
+unique section-qualified identifier, declared inputs and expected output bytes.
+The vector identifier stays with the case when surrounding prose changes.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02
