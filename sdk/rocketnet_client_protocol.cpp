@@ -1067,10 +1067,10 @@ static int rocketnet_client_process_keep_alive( struct rocketnet_client_protocol
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
     int type_data_bytes = rocketnet_client_open_session( client, ROCKETNET_CONNECTION_KEEP_ALIVE_PACKET,
-                                                          &type_counters,
-                                                          packet_data, packet_bytes,
-                                                          current_time, opened, (int) sizeof( opened ), &type_data_offset,
-                                                          rocketnet_client_validate_keep_alive );
+                                                         &type_counters,
+                                                         packet_data, packet_bytes,
+                                                         current_time, opened, (int) sizeof( opened ), &type_data_offset,
+                                                         rocketnet_client_validate_keep_alive );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -1112,9 +1112,9 @@ static int rocketnet_client_process_payload( struct rocketnet_client_protocol_t 
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
     int type_data_bytes = rocketnet_client_open_session( client, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
-                                                          &type_counters,
-                                                          packet_data, packet_bytes,
-                                                          current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
+                                                         &type_counters,
+                                                         packet_data, packet_bytes,
+                                                         current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -1150,9 +1150,9 @@ static int rocketnet_client_process_ack( struct rocketnet_client_protocol_t * cl
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
     int type_data_bytes = rocketnet_client_open_session( client, ROCKETNET_CONNECTION_ACK_PACKET,
-                                                          &type_counters,
-                                                          packet_data, packet_bytes,
-                                                          current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
+                                                         &type_counters,
+                                                         packet_data, packet_bytes,
+                                                         current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -1197,9 +1197,9 @@ static int rocketnet_client_process_fragment( struct rocketnet_client_protocol_t
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
     int type_data_bytes = rocketnet_client_open_session( client, ROCKETNET_CONNECTION_FRAGMENT_PACKET,
-                                                          &type_counters,
-                                                          packet_data, packet_bytes,
-                                                          current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
+                                                         &type_counters,
+                                                         packet_data, packet_bytes,
+                                                         current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 
@@ -1271,9 +1271,9 @@ static int rocketnet_client_process_disconnect( struct rocketnet_client_protocol
     uint8_t opened[ROCKETNET_RECEIVE_CEILING];
     int type_data_offset = 0;
     int type_data_bytes = rocketnet_client_open_session( client, ROCKETNET_CONNECTION_DISCONNECT_PACKET,
-                                                          &type_counters,
-                                                          packet_data, packet_bytes,
-                                                          current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
+                                                         &type_counters,
+                                                         packet_data, packet_bytes,
+                                                         current_time, opened, (int) sizeof( opened ), &type_data_offset, NULL );
     if ( type_data_bytes < 0 )
         return 0;
 

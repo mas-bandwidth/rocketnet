@@ -80,8 +80,7 @@ struct rn_endpoint_config_t
     X( in_place_admitted, int in_place_admitted ) /* the wire bytes admitted to the budget (0: uncapped) */ /* the queued UNRELIABLE sends: the flat send-descriptor array ordered by enqueue_ticket */                                                                   \
     X( unreliable_head, uint32_t unreliable_head )                                                                                                    \
     X( unreliable_tail, uint32_t unreliable_tail )                                                                                                    \
-    X( unreliable_count, uint32_t unreliable_count )                                                                                                  \
-    /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */ /* writes it, packet_sent or packet_failed ends it */                                                                                             \
+    X( unreliable_count, uint32_t unreliable_count ) /* the write pass (9.3): next_packet_bytes plans a packet, write_packet */ /* writes it, packet_sent or packet_failed ends it */                                                                                             \
     X( write_phase, int write_phase ) /* RN_ENDPOINT_WRITE_* */                                                                                       \
     X( written, int written ) /* packets this update, in place and queued, against packets_per_update */                                          \
     X( packet_kind, int packet_kind ) /* RN_ENDPOINT_PACKET_* of the planned packet */                                                                \
