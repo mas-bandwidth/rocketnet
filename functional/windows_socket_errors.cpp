@@ -457,10 +457,13 @@ static void windows_server_drops( const windows_socket_errors_transport_t * tran
     windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
 
     // drain: every datagram reaches its counter, and the live pair keeps
-    // exchanging
+    // exchanging; at least 0.5 s, then until both sides have received more
+    // than 30 payloads, bounded at 10 s
 
     const double drain = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - drain < 0.5 )
+    while ( rocketnet_platform_time() - drain < 0.5 ||
+            ( ( session.server_received - server_received_before <= 30 || session.client_received - client_received_before <= 30 ) &&
+              rocketnet_platform_time() - drain < 10.0 ) )
     {
         windows_socket_errors_tick( &session );
     }
