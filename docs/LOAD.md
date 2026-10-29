@@ -518,8 +518,8 @@ Two build variants are shown side by side:
 1. **Development build (`ROCKETNET_DEV=1`, `-DROCKETNET_DEV=ON`)**: links
    `librocketnet_dev.a` (used by `bin/load` and `bin/transport_memory`), which
    includes the network simulator and packet-capture (`pcap`) fields inside the
-   endpoint and transport structs, and permits the all-zero / published test
-   four-byte `packet_filter` (`00:01:02:03`) and development keys.
+   endpoint and transport structs, and permits both an all-zero filter and
+   the published test `packet_filter` (`b7:59:01:00`), plus development keys.
 2. **Production build (`ROCKETNET_DEV=0`, `-DROCKETNET_DEV=OFF`)**: links
    `librocketnet.a`, which compiles out the simulator and `pcap` fields (saving
    `785,804` bytes on a client and `6,396,372` bytes on a 1,000-client server)
@@ -527,10 +527,12 @@ Two build variants are shown side by side:
    **Important production planning rule**: `rocketnet_client_required_memory`
    and `rocketnet_server_required_memory` run the same configuration validation
    as `rocketnet_client_create` and `rocketnet_server_create`. In a production
-   build (`ROCKETNET_DEV=0`), leaving `config.packet_filter` at all zeros (or
-   set to `00:01:02:03`) without setting `ROCKETNET_CLIENT_PACKET_FILTER` /
-   `ROCKETNET_SERVER_PACKET_FILTER` causes `rocketnet_*_required_memory` to
-   reject the test filter and return `0`. Always populate the application's
+   build (`ROCKETNET_DEV=0`), leaving `config.packet_filter` at its default
+   published test value (`b7:59:01:00`) without setting
+   `ROCKETNET_CLIENT_PACKET_FILTER` / `ROCKETNET_SERVER_PACKET_FILTER` causes
+   `rocketnet_*_required_memory` to reject the test filter and return `0`.
+   An all-zero filter is accepted by this validation; it is not the default
+   test filter. Always populate the application's
    non-test four-byte `packet_filter` before calling `rocketnet_*_required_memory`
    in `ROCKETNET_DEV=0` builds.
 

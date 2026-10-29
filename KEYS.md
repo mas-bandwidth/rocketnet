@@ -5,7 +5,7 @@ A RocketNet deployment has two long-lived keys and one short-lived secret:
 | Key | Algorithm | Made by | Held by |
 | --- | --- | --- | --- |
 | Backend keypair | Ed25519 | `keygen`, once per title | the secret on the backend only; the public key on every server |
-| Server keypair | X25519 | `rocketnet_server_create`, once per server object | the server object; the public key is registered with the backend |
+| Server keypair | X25519 | Generated at create, or derived from the application's supplied `config.server_secret_key` | the server object; the public key is registered with the backend |
 | Connect token | (a token, not a key) | the backend, once per client connection | the client |
 
 The backend signs every connect token with its Ed25519 secret, and the server
@@ -181,4 +181,5 @@ What the code supports today:
 What it does not support: a server cannot accept two backend public keys at
 once, there is no grace window for tokens signed by the previous key, and the
 backend key cannot be changed on a server object after create. A server's own
-keypair cannot be supplied or replaced except by creating a new server object.
+keypair is fixed at create: supply `server_secret_key` then, or leave it zero
+to generate a keypair. Replacing that key requires creating a new server object.

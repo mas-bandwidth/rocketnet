@@ -91,7 +91,7 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | transport | server rank | client rank | row |
 | --- | ---: | ---: | --- |
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc` |
-| `gso` | 20 | pin only | `sdk/rocketnet_drivers.inc` |
+| `gso` | 20 | 10 | `sdk/rocketnet_drivers.inc` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc` |
 | `portable` | development: 30; production: 50 | 30 | `sdk/rocketnet_drivers.inc` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc` |
@@ -99,8 +99,8 @@ comes first in `auto`, zero means the endpoint does not have that transport
 The Linux server `auto` order in both builds is **xdp → gso → io_uring → portable**. A build without liburing omits
 `io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
-(`TRANSPORTS.md`, `sdk/rocketnet_driver.h`). The Linux client has one
-transport in `auto`, `portable` (`test_driver.cpp`), and `gso` as a pin-only client (TRANSPORTS.md); on Linux it
+(`TRANSPORTS.md`, `sdk/rocketnet_driver.h`). The Linux client `auto` order is
+**gso → portable** (`sdk/rocketnet_drivers.inc`). The Linux portable transport
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 (`sdk/rocketnet_driver_builtin.cpp`,
 `sdk/rocketnet_platform.cpp`).
@@ -416,11 +416,12 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   (`sdk/rocketnet_server_socket_linux.cpp`).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
   default 1 (`sdk/rocketnet_driver_builtin.cpp`, `BUILDING.md`).
-- Memory: each queue's UMEM is 65536 frames of 4096 bytes, 256 MiB
+- Memory: each queue's UMEM is 49152 frames of 4096 bytes, 192 MiB:
+  32768 send frames plus 16384 receive frames
   (`sdk/rocketnet_constants.h`, `sdk/rocketnet_server_socket_linux.cpp`);
-  seven queues are 1,879,048,192 bytes of UMEM inside a plan of roughly 4.2 GiB
-  (`BUILDING.md`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
-  budget (`BUILDING.md`, `sdk/rocketnet_server_socket_linux.cpp`).
+  seven queues are 1,409,286,144 bytes of UMEM, within the 4096 MiB
+  `ROCKETNET_XDP_MEMORY_MIB` budget. UMEM is one part of the server's full
+  memory plan; use [the memory planner](MEMORY.md) for the selected configuration.
 - Both families on one interface: `rocketnet_server_create` names an IPv4
   and an IPv6 address on the same port, and `xdp` carries both destinations when both
   addresses are on that interface (`sdk/rocketnet_server_socket_linux.cpp`).

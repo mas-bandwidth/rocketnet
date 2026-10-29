@@ -212,7 +212,7 @@ under the labels shown above:
 | --- | --- | --- | --- |
 | `ROCKETNET_BACKEND_PRIVATE_KEY` | 64 bytes (base64) | Backend token service only | Game clients, game servers, source control, logs, or docs |
 | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | 32 bytes (base64) | Every game server (`config.backend_public_key` or env) | Not secret (public verification key) |
-| Server X25519 secret key | 32 bytes (in-memory) | Generated inside `rocketnet_server_create`; wiped by `rocketnet_server_destroy` | Never exported by any API |
+| Server X25519 secret key | 32 bytes (in-memory) | Generated at create or copied from `config.server_secret_key`; the server's copy is wiped at destroy | Never exported by any API |
 | Server X25519 public key (`rocketnet_server_public_key`) | 32 bytes (base64) | Exported by each live server and registered with the backend | Not secret (public sealing key) |
 | Per-token session keys (`client_to_server_key`, `server_to_client_key`) | 2 x 32 bytes | Minted per token, sealed to the server, included in the token for the client, then wiped in backend memory | Logs, persistent storage, or other clients |
 
@@ -331,7 +331,7 @@ Expected output across the client and server terminals:
   backend_server: mode=production transport=portable
   ...
   server received from client 2a: hello from the backend's client
-  server client disconnected (reason NONE)
+  server client disconnected (reason CLIENT_DISCONNECTED)
   PASS
   ```
   (`0x2a` = decimal `42`, the authenticated `client_id` recovered by opening the
