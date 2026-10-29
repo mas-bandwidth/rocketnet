@@ -345,6 +345,14 @@ endif()
 function(rocketnet_warning_floor target)
 endfunction()
 
+# The public include directory: rocketnet.h alone, copied from sdk/ at
+# configure time (an edit to sdk/rocketnet.h reconfigures). A parent project's
+# add_subdirectory(rocketnet) and RocketNet::rocketnet hand it this directory
+# and nothing else, so a consumer that includes an internal header fails to
+# compile (tools/package_consumer, the embedded internal_header_refused test).
+set(ROCKETNET_PUBLIC_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/rocketnet_public_include")
+configure_file(sdk/rocketnet.h "${ROCKETNET_PUBLIC_INCLUDE_DIR}/rocketnet.h" COPYONLY)
+
 # Explicit STATIC: a parent's BUILD_SHARED_LIBS must not change the target's meaning.
 add_library(rocketnet STATIC ${ROCKETNET_SOURCE} ${ROCKETNET_SODIUM_SOURCE})
 if(ROCKETNET_BUILD_SHARED)
@@ -452,9 +460,16 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
         ROCKETNET_HISTORY_PACKETS=${ROCKETNET_HISTORY_PACKETS}
         ${ROCKETNET_MEMORY_BUDGET_DEFINITIONS})
     target_include_directories(${target} BEFORE PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
-    target_include_directories(${target} PUBLIC
-        "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/sdk>"
-        "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>")
+    # A consumer sees only rocketnet.h: the public include directory holds
+    # that one header (ROCKETNET_PUBLIC_INCLUDE_DIR below), the install
+    # interface is the installed include directory holding the same one file,
+    # and sdk/ with the internal headers stays private to the library.
+    target_include_directories(${target}
+        PUBLIC
+            "$<BUILD_INTERFACE:${ROCKETNET_PUBLIC_INCLUDE_DIR}>"
+            "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
+        PRIVATE
+            "${CMAKE_CURRENT_SOURCE_DIR}/sdk")
     rocketnet_use_sodium(${target})
     target_link_libraries(${target} PRIVATE Threads::Threads)
     # Family strict floating-point floor for the library's own compile; a
@@ -493,6 +508,11 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
         endif()
     endif()
 endforeach()
+# This project's own tests, tools and examples are white-box: every target
+# created after this point in this directory sees sdk/ and its internal
+# headers. Directory scope never reaches a parent project's targets.
+include_directories("${CMAKE_CURRENT_SOURCE_DIR}/sdk")
+
 if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW AND TARGET rocketnet_shared)
     target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
 endif()

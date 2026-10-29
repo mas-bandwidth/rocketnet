@@ -11,6 +11,22 @@ if(ROCKETNET_SOURCE_PATH)
     if(NOT static_type STREQUAL "STATIC_LIBRARY")
         message(FATAL_ERROR "Parent BUILD_SHARED_LIBS changed the static target")
     endif()
+    # The embedded target hands a consumer rocketnet.h and nothing else: its
+    # include interface names no sdk/ directory, and a program that includes
+    # an internal header through it fails to compile (internal_header_refused).
+    foreach(linkage rocketnet rocketnet_shared)
+        if(TARGET ${linkage})
+            get_target_property(public_includes ${linkage} INTERFACE_INCLUDE_DIRECTORIES)
+            if(public_includes MATCHES "/sdk(>|;|$)")
+                message(FATAL_ERROR "${linkage} exposes sdk/ to consumers: ${public_includes}")
+            endif()
+        endif()
+    endforeach()
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/internal_header.c"
+        "#include \"rocketnet.h\"\n#include \"rocketnet_internal.h\"\nint main( void ) { return 0; }\n")
+    add_executable(internal_header_probe EXCLUDE_FROM_ALL "${CMAKE_CURRENT_BINARY_DIR}/internal_header.c")
+    target_link_libraries(internal_header_probe PRIVATE RocketNet::rocketnet)
+    set(ROCKETNET_EXPECT_INTERNAL_REFUSED ON)
 else()
     find_package(RocketNet 1.0 CONFIG REQUIRED)
     # the package's full release label must be the installed
@@ -21,6 +37,11 @@ else()
     set(ROCKETNET_PACKAGE_VERSION_STRING "${RocketNet_VERSION_STRING}")
 endif()
 enable_testing()
+if(ROCKETNET_EXPECT_INTERNAL_REFUSED)
+    add_test(NAME internal_header_refused
+        COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/expect_internal_header_refused.cmake")
+endif()
 foreach(linkage rocketnet rocketnet_shared)
     foreach(language c cpp)
         set(consumer "consumer_${linkage}_${language}")
