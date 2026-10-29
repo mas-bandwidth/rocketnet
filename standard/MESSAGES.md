@@ -2212,9 +2212,9 @@ A sender chooses unreliable or unreliable sequenced in [m1.3 Reliability types](
 4. The per-update unreliable delivery allowance is the connection's `unreliable_messages_per_update` configuration field. A code 0 delivery and a code 1 delivery each count against it. When the update has already made that many code 0 and code 1 deliveries, a receiver MUST drop each further code 0 record and each further code 1 record, MUST count the drop as `MESSAGE_UNRELIABLE_DELIVERY_FULL`, and MUST NOT treat the drop as a violation.
 5. A receiver MUST keep, for each channel, an ordered read index and a sequencing watermark. A code 1 record is in its epoch when its ordering index equals the read index. A record in its epoch whose sequencing index is at or after the watermark MUST be delivered, and the receiver MUST then set the watermark to one past that sequencing index modulo the counter modulus.
 6. A code 1 record in its epoch whose sequencing index is before the watermark MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`. A code 1 record whose ordering index is behind the read index, when the difference lies in the upper half of the counter modulus, MUST be dropped and counted `MESSAGE_SEQUENCED_STALE`.
-7. A code 1 record ahead of its epoch by less than the window MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_messages_held` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`.
+7. A code 1 record ahead of its epoch MUST be held as the channel's newest held message. A receiver MUST keep at most one held code 1 message per channel, in one slot of the connection's `sequenced_messages_held` configuration field. A newer held message, ordered by ordering index and then by sequencing index, MUST replace the held message, and the replaced message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A candidate that is not newer than the held message MUST be dropped and counted `MESSAGE_SEQUENCED_SUPERSEDED`. A record larger than one hold slot, or a record with no free hold slot, MUST be dropped and counted `MESSAGE_SEQUENCED_HOLD_FULL`.
 8. When an ordered message is delivered on a channel, the receiver MUST set the channel's read index to one past that ordering index and MUST reset the channel's watermark to zero. The receiver MUST then deliver the channel's held message when its ordering index is the read index and its sequencing index is at or after the watermark, and MUST clear the hold.
-9. A code 1 record ahead of the read index by at least the window MUST be refused as a violation and counted `MESSAGE_ORDERING_AHEAD`. A violation ends the connection.
+9. A receiver MUST NOT refuse a code 1 record for how far ahead of the read index its ordering index is: the sender takes it from the ordered write index under rule 10, which runs ahead of the read index by the sender's ordered backlog, a bound the receiver does not know. A record ahead of its epoch is held under rule 7.
 10. A sender MUST take a code 1 record's ordering index from the channel's ordered write index and its sequencing index from the channel's sequencing write index, and MUST increment the sequencing write index. An ordered send MUST take the ordered write index as its ordering index, MUST increment the ordered write index, and MUST reset the sequencing write index to zero.
 11. A sender that promotes a send under rule 1 MUST make the promotion visible to the application as a named outcome or counter. The promotion is never silent.
 
@@ -2238,14 +2238,13 @@ The rows are the code 1 record's outcome on one channel. An event a row does not
 | current | code 1 record | ordering equals read index and sequencing at or after watermark | deliver, watermark becomes one past sequencing | current |
 | current | code 1 record | ordering equals read index and sequencing before watermark | drop, count `MESSAGE_SEQUENCED_STALE` | current |
 | current | code 1 record | ordering equals read index and the update's unreliable delivery allowance is full | drop, count `MESSAGE_UNRELIABLE_DELIVERY_FULL` | current |
-| current | code 1 record | ordering ahead by less than the window | hold as newest | held |
+| current | code 1 record | ordering ahead of the read index | hold as newest | held |
 | held | code 1 record | ordering ahead of the read index and newer than the held message | supersede the held message, count `MESSAGE_SEQUENCED_SUPERSEDED` | held |
 | held | code 1 record | ordering ahead of the read index and not newer than the held message | drop, count `MESSAGE_SEQUENCED_SUPERSEDED` | held |
 | held | code 1 record | ordering behind the read index | drop, count `MESSAGE_SEQUENCED_STALE` | held |
 | held | code 1 record | ordering equals read index | deliver if sequencing at or after watermark and the allowance is not full; otherwise drop as stale or by the allowance; the hold stays | held |
 | held | ordered delivery | read index reaches the held ordering index and the allowance is not full | deliver the held message, reset watermark, clear the hold | current |
 | held | ordered delivery | read index reaches the held ordering index and the allowance is full | drop the held message, count `MESSAGE_UNRELIABLE_DELIVERY_FULL`, reset watermark, clear the hold | current |
-| any | code 1 record | ordering ahead by at least the window | violation, count `MESSAGE_ORDERING_AHEAD` | ended |
 | any | code 1 record | no free hold slot or larger than one hold slot | drop, count `MESSAGE_SEQUENCED_HOLD_FULL` | unchanged |
 
 <a id="m6.4"></a>
@@ -2283,7 +2282,7 @@ step 14: code 1 channel 0 ordering 1026 sequencing 0 data 78
 01 00 01 00 02 00 00 02 00 03 01 00 6f 00 01 01
 00 65 02 00 00 01 00 01 01 00 68 01 00 00 02 00
 03 01 00 70 00 01 01 00 69 02 00 00 01 00 01 01
-00 6b 05 00
+00 6b 01 00
 ```
 
 ```vector m6.code1-hold-full-trace
@@ -2455,11 +2454,11 @@ input: code 4 number 5 ring 2 ordering 2 sequencing 1 channel 0 data 35 (replace
 input: code 4 number 6 ring 2 ordering 2 sequencing 0 channel 0 data 36 (superseded)
 input: code 3 number 7 ring 1 ordering 1 channel 0 data 37 (opens epoch 1 and drains)
 input: code 4 number 8 ring 2 ordering 2 sequencing 3 channel 0 data 38
-input: code 4 number 9 ring 3 ordering 66 sequencing 0 channel 0 data 39 (64 ahead of the next ordering index)
+input: code 4 number 9 ring 3 ordering 66 sequencing 0 channel 0 data 39 (64 ahead of the next ordering index, held: a record is never refused for its distance)
 01 00 01 03 00 01 00 30 01 00 01 04 00 01 00 31
 01 00 01 04 00 01 00 32 03 00 00 02 00 00 02 00
 00 03 00 00 01 00 02 03 00 01 00 37 04 00 01 00
-35 01 00 01 04 00 01 00 38 00 01 00
+35 01 00 01 04 00 01 00 38 02 00 00
 ```
 
 <a id="m8"></a>

@@ -81,7 +81,7 @@ static const rn_standard_vector_t standard_delivery_reliable_table[] = {
                         "01 00 01 03 00 01 00 30 01 00 01 04 00 01 00 31"
                         "01 00 01 04 00 01 00 32 03 00 00 02 00 00 02 00"
                         "00 03 00 00 01 00 02 03 00 01 00 37 04 00 01 00"
-                        "35 01 00 01 04 00 01 00 38 00 01 00" ),
+                        "35 01 00 01 04 00 01 00 38 02 00 00" ),
 };
 
 static bool trace_append( uint8_t * out, int capacity, int * used, const uint8_t * bytes, int count )
