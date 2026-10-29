@@ -99,6 +99,13 @@ static const char * const rocketnet_functional_nightly_cases[] = {
     "test_posix_connect_disconnect_1000_portable_*",
     "test_posix_connect_disconnect_1000_msgx_portable",
 #endif // #if defined( __APPLE__ )
+#if defined( __linux__ )
+    // XDP cases share the host's XDP state (the pre-flight answer, the commit
+    // barrier, interfaces): they cannot run beside other cases, so they run in
+    // the Linux nightly tier, which runs serially (nightly.yml)
+    "test_xdp_transport_*",
+    "test_session_reconnect_isolation_xdp",
+#endif // #if defined( __linux__ )
 #if defined( _WIN32 )
     // the RIO and IOCP x1000 server cycles, 16-45 s each on the Windows bench
     // (captain, 2026-10-29); the portable x1000 cycles stay on every commit

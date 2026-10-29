@@ -195,11 +195,14 @@ jobs:
       - name: Build (Release, through the Makefile)
         run: make -j8
 
-      - name: Functional suite, nightly tier
+      # serial: the Linux tier holds the XDP cases, which share the host's XDP
+      # state and cannot run beside other cases
+      - name: Functional suite, nightly tier (serial)
         timeout-minutes: 20
         env:
           ROCKETNET_TEST_NIGHTLY: "1"
           ROCKETNET_TEST_REPORT: "1"
+          ROCKETNET_TEST_JOBS: "1"
         run: ./bin/functional
 
       - name: Functional suite, portable rung pinned by env
