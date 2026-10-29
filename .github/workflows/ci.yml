@@ -357,22 +357,25 @@ jobs:
 
       - name: Replay the fuzz corpora without libFuzzer
         if: runner.os == 'macOS'
+        shell: bash
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
-            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
-            cmake --build build --target "fuzz_replay_${harness}" --parallel 2
+          # the ten harnesses build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          targets=""
+          for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
+          cmake --build build --target $targets --parallel
+          pids=""
+          for harness in $harnesses; do
+            corpus="fuzz/corpus${harness#rocketnet_fuzz}"
+            "./bin/fuzz_replay_$harness" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
+            pids="$pids $!:$harness"
           done
-          ./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
-          ./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
-          ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
-          ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
-          ./bin/fuzz_replay_rocketnet_fuzz_token_private fuzz/corpus_token_private/*
-          ./bin/fuzz_replay_rocketnet_fuzz_round_trip fuzz/corpus_round_trip/*
-          ./bin/fuzz_replay_rocketnet_fuzz_config fuzz/corpus_config/*
-          ./bin/fuzz_replay_rocketnet_fuzz_server_transport fuzz/corpus_server_transport/*
-          ./bin/fuzz_replay_rocketnet_fuzz_client_transport fuzz/corpus_client_transport/*
-          ./bin/fuzz_replay_rocketnet_fuzz_session fuzz/corpus_session/*
+          failed=0
+          for entry in $pids; do
+            if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
+          done
+          exit $failed
 
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: contains(matrix.leg, 'b')
@@ -1024,21 +1027,23 @@ jobs:
       - name: Replay the fuzz corpora without libFuzzer
         shell: bash
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
-            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
-            cmake --build build --config Release --target "fuzz_replay_${harness}" --parallel 2
+          # the ten harnesses build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          targets=""
+          for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
+          cmake --build build --config Release --target $targets --parallel
+          pids=""
+          for harness in $harnesses; do
+            corpus="fuzz/corpus${harness#rocketnet_fuzz}"
+            "./bin/Release/fuzz_replay_$harness.exe" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
+            pids="$pids $!:$harness"
           done
-          ./bin/Release/fuzz_replay_rocketnet_fuzz.exe fuzz/corpus/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_message.exe fuzz/corpus_message/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_connect_token.exe fuzz/corpus_connect_token/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_receive_structured.exe fuzz/corpus_receive_structured/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_token_private.exe fuzz/corpus_token_private/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_round_trip.exe fuzz/corpus_round_trip/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_config.exe fuzz/corpus_config/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_server_transport.exe fuzz/corpus_server_transport/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_client_transport.exe fuzz/corpus_client_transport/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_session.exe fuzz/corpus_session/*
+          failed=0
+          for entry in $pids; do
+            if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
+          done
+          exit $failed
 
       # ---- leg (a): the suite as the runner executes it ----
 
