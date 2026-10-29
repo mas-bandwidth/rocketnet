@@ -876,11 +876,11 @@ static void test_generation_tagged_slots_and_lifo_stack()
 }
 #endif // #if ROCKETNET_DEV
 
-// Live spans order by allocation ticket: the oldest live span pins the
+// Live spans are linked in allocation order: the oldest live span pins the
 // reclaim floor while interior spans churn, holes are never overwritten, and
 // the floor advances only when the oldest span is freed.
 
-static void test_span_tickets_pin_oldest_live()
+static void test_span_links_pin_oldest_live()
 {
     rocketnet_counters_t counters;
     memset( &counters, 0, sizeof( counters ) );
@@ -902,8 +902,9 @@ static void test_span_tickets_pin_oldest_live()
     const uint32_t s2 = rn_region_send_alloc_span( region, span_bytes );
     check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE && s2 != RN_DESCRIPTOR_NONE );
     check( region->span_first == s0 && region->span_last == s2 );
-    check( region->send_descriptors[s0].span_ticket < region->send_descriptors[s1].span_ticket );
-    check( region->send_descriptors[s1].span_ticket < region->send_descriptors[s2].span_ticket );
+    check( region->send_descriptors[s0].span_prev == RN_DESCRIPTOR_NONE && region->send_descriptors[s0].span_next == s1 );
+    check( region->send_descriptors[s1].span_prev == s0 && region->send_descriptors[s1].span_next == s2 );
+    check( region->send_descriptors[s2].span_prev == s1 && region->send_descriptors[s2].span_next == RN_DESCRIPTOR_NONE );
 
     const uint32_t floor = region->span_head;
     check( floor == region->send_descriptors[s0].span_start );
@@ -912,11 +913,12 @@ static void test_span_tickets_pin_oldest_live()
 
     rn_region_send_free( region, s1 );
     check( region->span_first == s0 && region->span_head == floor );
+    check( region->send_descriptors[s0].span_next == s2 && region->send_descriptors[s2].span_prev == s0 );
 
     const uint32_t s1b = rn_region_send_alloc_span( region, span_bytes );
     check( s1b != RN_DESCRIPTOR_NONE );
     check( region->span_first == s0 && region->span_head == floor );
-    check( region->send_descriptors[s1b].span_ticket > region->send_descriptors[s2].span_ticket );
+    check( region->send_descriptors[s2].span_next == s1b && region->send_descriptors[s1b].span_prev == s2 );
     check( region->span_last == s1b );
 
     // freeing the oldest advances the floor to the next-oldest live span
@@ -928,47 +930,6 @@ static void test_span_tickets_pin_oldest_live()
     rn_region_send_free( region, s2 );
     rn_region_send_free( region, s1b );
     check( region->span_first == RN_DESCRIPTOR_NONE && region->span_head == 0 && region->span_tail == 0 );
-
-    rn_arena_destroy( arena );
-}
-
-// Near ticket exhaustion: tickets renumber in order instead of wrapping onto
-// a live span's ticket, so oldest-live order survives the wrap.
-
-static void test_span_ticket_wraparound_renumbers()
-{
-    rocketnet_counters_t counters;
-    memset( &counters, 0, sizeof( counters ) );
-
-    rocketnet_message_config_t config;
-    rocketnet_message_default_config( &config );
-    config.client_send_kbps = config.server_send_kbps = 0;
-    config.send_queue_messages = 16;
-
-    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
-    check( arena );
-
-    rn_region_t * region = rn_arena_region( arena, 0 );
-
-    const uint32_t s0 = rn_region_send_alloc_span( region, 2048 );
-    const uint32_t s1 = rn_region_send_alloc_span( region, 2048 );
-    check( s0 != RN_DESCRIPTOR_NONE && s1 != RN_DESCRIPTOR_NONE );
-    region->span_ticket_next = 0xFFFFFFFFu;
-
-    const uint32_t s2 = rn_region_send_alloc_span( region, 2048 );
-    check( s2 != RN_DESCRIPTOR_NONE );
-    check( region->send_descriptors[s2].span_ticket == 0xFFFFFFFFu );
-
-    const uint32_t s3 = rn_region_send_alloc_span( region, 2048 );
-    check( s3 != RN_DESCRIPTOR_NONE );
-
-    // renumbered 1..3 in allocation order, the new span last
-
-    check( region->send_descriptors[s0].span_ticket == 1 );
-    check( region->send_descriptors[s1].span_ticket == 2 );
-    check( region->send_descriptors[s2].span_ticket == 3 );
-    check( region->send_descriptors[s3].span_ticket == 4 );
-    check( region->span_first == s0 && region->span_last == s3 );
 
     rn_arena_destroy( arena );
 }
@@ -1026,8 +987,7 @@ REGISTER_UNIT_TEST( test_span_granted_after_reset );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
 #endif // #if ROCKETNET_DEV
-REGISTER_UNIT_TEST( test_span_tickets_pin_oldest_live );
-REGISTER_UNIT_TEST( test_span_ticket_wraparound_renumbers );
+REGISTER_UNIT_TEST( test_span_links_pin_oldest_live );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );
 #endif // #if ROCKETNET_DEV

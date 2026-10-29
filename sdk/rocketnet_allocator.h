@@ -116,12 +116,12 @@ struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W 
     uint32_t used;
 };
 
-struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight send (Q of them)
+struct rn_send_descriptor_t             // 72 bytes: one queued or in-flight send (Q of them)
 {
     uint32_t chunk;                     // the first store chunk of a block's contiguous run
     uint32_t bytes;
     uint32_t serial;                    // the receipt serial (7.4)
-    uint32_t next;                      // retired queue link: always RN_DESCRIPTOR_NONE while queued; flat channel/unreliable FIFOs order live descriptors by enqueue_ticket over this array
+    uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
     uint32_t ordering;
     uint32_t sequencing;
     uint64_t first_number;              // the first message number, once numbered (6.2)
@@ -136,11 +136,9 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
     uint8_t reserved[2];                // unused spare bytes
     uint32_t enqueue_ticket;            // 0 not queued; else the enqueue ticket (from 1)
     uint32_t queue_next;                // the next descriptor in its channel's reliable FIFO, RN_DESCRIPTOR_NONE at the tail
-    uint32_t order_slot;                // the flat live-span order array's slot at this descriptor's index: the descriptor at that order position, RN_DESCRIPTOR_NONE outside the live segment
-    uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
+    uint32_t span_prev;                 // RN_SEND_FLAG_SPAN: the next older live span, RN_DESCRIPTOR_NONE at span_first
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
-    uint32_t span_ticket;               // RN_SEND_FLAG_SPAN: the span's allocation ticket (order among live spans)
-    uint32_t span_pos;                  // RN_SEND_FLAG_SPAN: this span's position in the order array, RN_DESCRIPTOR_NONE when not a live span
+    uint32_t span_next;                 // RN_SEND_FLAG_SPAN: the next newer live span, RN_DESCRIPTOR_NONE at span_last
     uint32_t free_slot;                 // the flat descriptor free stack's slot at this descriptor's index: the descriptor at that stack depth
 };
 
@@ -414,7 +412,6 @@ struct rn_region_t
     uint32_t span_head;                 // the byte offset of the oldest live span's start (the reclaim floor)
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
-    uint32_t span_ticket_next;          // the next span allocation ticket; the flat span order array orders live spans, tickets mirror that order
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;

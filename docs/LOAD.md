@@ -640,7 +640,7 @@ Each connection's message region is sub-allocated from a single 64-byte-aligned
 block (`sdk/rocketnet_allocator.cpp`, `docs/CHANNELS.md` section 14):
 
 ```text
-connection_bytes = 64C + 116.125W + B + 96Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR
+connection_bytes = 64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR
 ```
 
 where `Q`, `S`, and `SR` include the resend-delay payload reserve derived from
