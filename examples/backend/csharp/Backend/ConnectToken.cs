@@ -240,6 +240,12 @@ namespace RocketNet.Backend
         public const ulong ExampleProtocolId = 0x52434b544e455431;
 
         public int Port = 8080;
+
+        // loopback unless ROCKETNET_BACKEND_LISTEN_ADDRESS says otherwise:
+        // registration and token issuance are unauthenticated
+        public const string DefaultListenAddress = "127.0.0.1";
+        public string ListenAddress = DefaultListenAddress;
+        public bool ListenAddressIsLoopback => System.Net.IPAddress.IsLoopback( System.Net.IPAddress.Parse( ListenAddress ) );
         public byte[] BackendPrivateKey = DevBackendPrivateKey;
         public ulong ProtocolId = ExampleProtocolId;
         public string[] ServerAddresses = { "127.0.0.1:40000" };
@@ -269,6 +275,14 @@ namespace RocketNet.Backend
                 if ( !ushort.TryParse( text, NumberStyles.None, CultureInfo.InvariantCulture, out ushort port ) || port == 0 )
                     throw new ArgumentException( $"ROCKETNET_BACKEND_PORT is not 1 to 65535: \"{text}\"" );
                 config.Port = port;
+            }
+
+            text = getenv( "ROCKETNET_BACKEND_LISTEN_ADDRESS" );
+            if ( !string.IsNullOrEmpty( text ) )
+            {
+                if ( !System.Net.IPAddress.TryParse( text, out System.Net.IPAddress? address ) )
+                    throw new ArgumentException( $"ROCKETNET_BACKEND_LISTEN_ADDRESS is not an IP address: \"{text}\"" );
+                config.ListenAddress = address.ToString();
             }
 
             text = getenv( "ROCKETNET_BACKEND_PRIVATE_KEY" );
@@ -342,6 +356,7 @@ namespace RocketNet.Backend
             return new BackendConfig
             {
                 Port = Port,
+                ListenAddress = ListenAddress,
                 BackendPrivateKey = BackendPrivateKey,
                 ProtocolId = ProtocolId,
                 ServerAddresses = server.Addresses,

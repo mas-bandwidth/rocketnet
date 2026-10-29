@@ -264,3 +264,30 @@ func TestConfigRefused(t *testing.T) {
 		}
 	}
 }
+
+// the backend listens on loopback unless told otherwise: registration and
+// token issuance are unauthenticated
+
+func TestListenAddress(t *testing.T) {
+	config, err := readConfigMode(environment(map[string]string{}), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if config.listenAddress != "127.0.0.1" || !listenAddressIsLoopback(config.listenAddress) || listenHostPort(config) != "127.0.0.1:8080" {
+		t.Fatalf("default listen address is not loopback: %q", listenHostPort(config))
+	}
+	config, err = readConfigMode(environment(map[string]string{"ROCKETNET_BACKEND_LISTEN_ADDRESS": "0.0.0.0", "ROCKETNET_BACKEND_PORT": "9000"}), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listenHostPort(config) != "0.0.0.0:9000" || listenAddressIsLoopback(config.listenAddress) {
+		t.Fatalf("explicit listen address not honoured: %q", listenHostPort(config))
+	}
+	config, err = readConfigMode(environment(map[string]string{"ROCKETNET_BACKEND_LISTEN_ADDRESS": "::1"}), false)
+	if err != nil || listenHostPort(config) != "[::1]:8080" || !listenAddressIsLoopback(config.listenAddress) {
+		t.Fatalf("::1: %v %v", err, config)
+	}
+	if _, err := readConfigMode(environment(map[string]string{"ROCKETNET_BACKEND_LISTEN_ADDRESS": "localhost"}), false); err == nil {
+		t.Fatal("a non-IP listen address was accepted")
+	}
+}

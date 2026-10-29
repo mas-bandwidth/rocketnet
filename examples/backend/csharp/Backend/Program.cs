@@ -77,7 +77,10 @@ if ( args.Length != 0 )
 }
 
 WebApplicationBuilder builder = WebApplication.CreateSlimBuilder();
-builder.WebHost.UseUrls( $"http://*:{config.Port}" );
+string listenHost = config.ListenAddress.Contains( ':' ) ? $"[{config.ListenAddress}]" : config.ListenAddress;
+builder.WebHost.UseUrls( $"http://{listenHost}:{config.Port}" );
+if ( !config.ListenAddressIsLoopback )
+    Console.Error.WriteLine( $"rocketnet-backend: warning: listening on {config.ListenAddress}, not loopback: server registration and token issuance are unauthenticated here; production needs authenticated registration and player authorization" );
 WebApplication app = builder.Build();
 
 ServerRegistry registry = new ServerRegistry( RandomNumberGenerator.GetInt32 );
@@ -135,6 +138,6 @@ app.MapGet( "/match/{clientId}", ( string clientId, HttpResponse response ) =>
     return Results.Text( token, "text/plain; charset=utf-8" );
 } );
 
-Console.Error.WriteLine( $"rocketnet-backend: started backend on port {config.Port}" );
+Console.Error.WriteLine( $"rocketnet-backend: started backend on {listenHost}:{config.Port}" );
 app.Run();
 return 0;
