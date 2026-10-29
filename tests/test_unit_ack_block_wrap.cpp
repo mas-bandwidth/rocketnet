@@ -4,14 +4,14 @@
 */
 
 // The ack block's largest received across the wire's 32-bit wrap
-// (standard/TRANSPORT.md t15; tla/AckBlockWrap.tla).
+// (standard/TRANSPORT.md t15; proofs/tla/AckBlockWrap.tla).
 //
 // The empty block -- wire largest 0, first range length 0, range count 0 --
 // is recognised by its wire fields at any highest sent session sequence of
 // the reader. The rule before 2026-10-24 made the empty test on the
 // reconstructed largest, so a reader whose highest sent had reached 2^31
 // reconstructed the wire 0 to 2^32 and refused the block
-// (tla/MCAckBlockWrapBrokenHalfRange.cfg). Every other block reconstructs its
+// (proofs/tla/MCAckBlockWrapBrokenHalfRange.cfg). Every other block reconstructs its
 // largest by the nearest-to-highest-sent rule, so a genuine largest whose low
 // 32 bits are zero (2^32) still reads nonempty, because a block naming a
 // sequence always has a first range length of at least one.

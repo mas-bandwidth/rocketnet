@@ -11,7 +11,7 @@
  * acknowledged; each control message is reliable ordered, so a lost packet
  * is the SDK's resend and costs delay, never the message. A client answers
  * ARM and GO once it is connected (tools/load_split_startup.h).
- * tla/SplitStart.tla models the windows and checks that a shard gives up on
+ * proofs/tla/SplitStart.tla models the windows and checks that a shard gives up on
  * its own clock only after the server has failed the start. */
 
 /* The server waits this long for every ARM ACK, then again for every GO ACK. */

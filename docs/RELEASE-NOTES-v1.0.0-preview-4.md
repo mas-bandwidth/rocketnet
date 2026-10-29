@@ -66,7 +66,7 @@ and the standard ([TRANSPORT.md](../standard/TRANSPORT.md),
 - **Configuration.** `num_channels` defaults to the smaller of 32 and
   `ROCKETNET_MAX_CHANNELS`, and its range is 1 to `ROCKETNET_MAX_CHANNELS`.
   The cross-field configuration rules are written in the header and in
-  [USAGE.md](../USAGE.md). The light configurations carry messages of at most
+  [USAGE.md](USAGE.md). The light configurations carry messages of at most
   1415 bytes, each in at most two parts.
 - **Misuse is counted and logged.** A message left in the receive queue at
   update, invalid start-message arguments, and a non-finite or backwards update
@@ -91,13 +91,13 @@ and the standard ([TRANSPORT.md](../standard/TRANSPORT.md),
   UndefinedBehaviorSanitizer covered every macOS fuzz target for 900 seconds
   each and found no crash ([record](runs/macos-fuzz.md)).
 
-See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
-[USAGE.md](../USAGE.md) for the supported configuration and API contracts.
+See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
+[USAGE.md](USAGE.md) for the supported configuration and API contracts.
 
 ## Known limits
 
 - A default 1,000-client server requires about 20.9 GB, and the light profile
-  about 3.2 GB, on Linux ([USAGE.md](../USAGE.md)). Memory is spent to save CPU
+  about 3.2 GB, on Linux ([USAGE.md](USAGE.md)). Memory is spent to save CPU
   and bandwidth and is taken up front. The plan leaves out what the operating
   system owns: worker stacks, XDP UMEM, the AF_XDP and io_uring rings and
   kernel socket buffers. Provision host memory for both.
@@ -106,4 +106,4 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
 
 The [qualification index](QUALIFICATION-v1.0.0-preview-4.md) records the
 tested head and every gate, including those still owed at tag time. The
-[roadmap](../ROADMAP.md) carries the remaining work.
+[roadmap](ROADMAP.md) carries the remaining work.

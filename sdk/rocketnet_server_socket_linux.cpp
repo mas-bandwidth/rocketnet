@@ -11,7 +11,7 @@
 // Finish one AF_XDP RX pass after peeking num_packets descriptors and
 // consuming num_consumed of them while the staging buffer had room: cancel the
 // peeked descriptors not consumed before releasing num_consumed (modelled in
-// tla/RNXdpReceiveRing.tla, Finish).
+// proofs/tla/RNXdpReceiveRing.tla, Finish).
 void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consumed,
                                         void ( *cancel )( void * ring, uint32_t count ),
                                         void ( *release )( void * ring, uint32_t count ),
@@ -2235,7 +2235,7 @@ int rocketnet_server_socket_send_queue( const rocketnet_address_t * to, int num_
     return (int) ( hash % (uint64_t) num_queues );
 }
 
-// tla/RNDriverSendStaging.tla XdpStart: stages a packet in the producer buffer
+// proofs/tla/RNDriverSendStaging.tla XdpStart: stages a packet in the producer buffer
 // being filled, or refuses it (NULL) when no producer buffer is filling
 
 uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server_socket_t * server_socket, uint64_t /* packet_id */, int queue, const rocketnet_address_t * to, const uint8_t * destination_mac )
@@ -2305,8 +2305,8 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, destination_mac );
 }
 
-// tla/SendHandoff.tla Finish: writes the byte count of the packet slot start_packet staged in the filling buffer
-// tla/SendHandoff.tla StaleFinish: refuses a packet pointer outside the filling buffer (one from before the last flip) instead of rewriting a published packet
+// proofs/tla/SendHandoff.tla Finish: writes the byte count of the packet slot start_packet staged in the filling buffer
+// proofs/tla/SendHandoff.tla StaleFinish: refuses a packet pointer outside the filling buffer (one from before the last flip) instead of rewriting a published packet
 
 void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
 {
@@ -2387,7 +2387,7 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
     send_buffer->packet_info[packet_index].packet_bytes = 0;
 }
 
-// tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: before a producer
+// proofs/tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: before a producer
 // buffer is published, drop each keep-alive to a session whose first mark
 // (a zero) the kernel refused, or that the buffer could not queue: the first
 // keep-alive is how a client learns it is connected, so until the mark lands
@@ -2430,7 +2430,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
         rocketnet_server_socket_hold_greetings( server_socket, &socket->send_buffer[index] );
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
             continue;
-        // tla/RNDriverSendStaging.tla Publish (PublishWith, retaining the
+        // proofs/tla/RNDriverSendStaging.tla Publish (PublishWith, retaining the
         // producer): with no free replacement, keep
         // the producer and its complete packets staged. The next call retries
         // after worker recycle (WorkerRetire).
@@ -2492,7 +2492,7 @@ bool rocketnet_server_socket_replay_mark( struct rocketnet_server_socket_t * ser
     const bool queued = rocketnet_xdp_replay_marks_mark( server_socket->replay_marks, address, high_water );
 
     // a new session's zero mark the buffer refused: its key is not held
-    // anywhere, so the next publish holds every keep-alive (tla/RNXdpReplay.tla
+    // anywhere, so the next publish holds every keep-alive (proofs/tla/RNXdpReplay.tla
     // HoldGreetingUntilMarked, markOwed); the walk owes the mark and asks again
 
     if ( !queued && high_water == 0 )
@@ -2513,7 +2513,7 @@ void rocketnet_server_socket_replay_commit( struct rocketnet_server_socket_t * s
 
     struct rocketnet_xdp_replay_marks_t * marks = server_socket->replay_marks;
 
-    // tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
+    // proofs/tla/RNXdpReplay.tla, Commit: every forget is applied, then every mark,
     // in one commit; this is the only writer of the kernel map. A forget the
     // kernel refuses stays pending for the next commit (ForgetOwedUntilApplied)
     // until it lands or a newer mark of its key lands (RetryNeverDeletesNewerMark);
@@ -2912,7 +2912,7 @@ bool rocketnet_server_socket_test_replay_marks()
     valid &= server->replay_marks->mark_count == 2;
     valid &= server->replay_marks->refused == 0;
 
-    // tla/RNXdpReplay.tla HoldGreetingUntilMarked against a staged producer
+    // proofs/tla/RNXdpReplay.tla HoldGreetingUntilMarked against a staged producer
     // buffer: a keep-alive to a session whose zero mark the kernel refused is
     // held at publish; its other packets, and a keep-alive to another
     // session, leave
@@ -3155,7 +3155,7 @@ void rocketnet_server_socket_xdp_counters( struct rocketnet_server_socket_t * se
     }
 }
 
-// tla/RNXdpReceiveRing.tla Drain: the application takes the buffer the XDP
+// proofs/tla/RNXdpReceiveRing.tla Drain: the application takes the buffer the XDP
 // worker staged, claimed under the receive mutex
 
 void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server_socket )
@@ -3301,12 +3301,12 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
         // reservation retains the entire batch for a later iteration. The
         // fill ring has a slot for every frame beyond the kernel's unpublished
         // batch (ROCKETNET_XDP_FILL_RING_SIZE), so a flush never waits on the
-        // kernel ending its batch (tla/RNXdpReceiveRing.tla Refill: the
+        // kernel ending its batch (proofs/tla/RNXdpReceiveRing.tla Refill: the
         // pending return flushed at the top of the pass).
 
         return_pending_frames();
 
-        // see if there are any packets to receive (tla/RNXdpReceiveRing.tla
+        // see if there are any packets to receive (proofs/tla/RNXdpReceiveRing.tla
         // Peek: xsk_ring_cons__peek, at most the staging room and pending storage)
 
         uint32_t receive_index;
@@ -3336,7 +3336,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
             // (xsk_ring_cons__cancel) before releasing num_consumed
             // (xsk_ring_cons__release), so the next peek returns the skipped
             // descriptors first. The frame ownership is modelled in
-            // tla/RNXdpReceiveRing.tla; the loop below is its Take, one
+            // proofs/tla/RNXdpReceiveRing.tla; the loop below is its Take, one
             // descriptor read and its frame held while the staging buffer has room.
 
             uint32_t num_consumed = 0;
@@ -3363,7 +3363,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 // only a receive-region frame goes back to the fill queue; a
                 // descriptor naming any other frame is dropped, never refilled
-                // (tla/RNXdpReceiveRing.tla FillHoldsOnlyReceiveFrames)
+                // (proofs/tla/RNXdpReceiveRing.tla FillHoldsOnlyReceiveFrames)
 
                 if ( rocketnet_xdp_fill_return( desc->addr, receive_region_begin, receive_region_end, &frame[num_returned] ) )
                     num_returned++;
@@ -3561,7 +3561,7 @@ static void rocketnet_server_socket_xdp_thread_function( void * data )
 
                 // UMEM now owns every copied packet. Only after the final copy
                 // may this worker reset and return staging to the free ring
-                // (tla/RNDriverSendStaging.tla WorkerRetire).
+                // (proofs/tla/RNDriverSendStaging.tla WorkerRetire).
 
                 if ( send_buffer->packet_start_index == num_staged_packets )
                 {

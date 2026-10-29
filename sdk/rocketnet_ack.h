@@ -60,7 +60,7 @@ uint64_t rocketnet_reconstruct_ack_largest( uint32_t wire_value, uint64_t highes
 
 // Decodes and validates a block at the front of opened session data. The
 // empty block is recognised on its wire fields at any highest sent: wire
-// largest 0, first range length 0 and no ranges (tla/AckBlockWrap.tla
+// largest 0, first range length 0 and no ranges (proofs/tla/AckBlockWrap.tla
 // ReadBlock); a zero first range length with anything else nonzero is
 // malformed. Every other block is evaluated on the reconstructed 64-bit
 // largest, by every rule in _Acks_/Validity: geometry contained in the opened
@@ -282,7 +282,7 @@ struct rocketnet_ack_endpoint_t
 
     uint8_t keep_alive_acked;
 
-    // The running aggregates (sdk/rocketnet_ack.cpp, tla/RNServerStats.tla).
+    // The running aggregates (sdk/rocketnet_ack.cpp, proofs/tla/RNServerStats.tla).
     // Every counted window is a function of its high-water mark, the same
     // one update_stats walks, so nothing here stores an edge: the sent
     // window is [base, top] with base = max(1, highest - N + 1) and top =
@@ -373,7 +373,7 @@ bool rocketnet_ack_endpoint_state_equal( const struct rocketnet_ack_endpoint_t *
 // transmit. It never imposes a send-rate or ACK-rate requirement.
 //
 // record_sent_classified says what the write did to the record it replaced,
-// the four outcomes of tla/RNSentHistory.tla:
+// the four outcomes of proofs/tla/RNSentHistory.tla:
 //
 //   RECORDED         the slot was empty or its record was acknowledged:
 //                    nothing was lost from the history.

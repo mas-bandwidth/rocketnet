@@ -912,7 +912,7 @@ int main()
     // geometry all refuse to 0, and planning allocates nothing. The payload is
     // fixed at ROCKETNET_DEFAULT_MAX_PAYLOAD_BYTES (no config field). A
     // create-time counting-allocator match needs a live socket, so it is left
-    // to bench/transport_memory.cpp.
+    // to benchmarks/transport_memory.cpp.
 
     rocketnet_client_transport_config_t client_memory_config;
     rocketnet_client_transport_default_config( &client_memory_config );

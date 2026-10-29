@@ -7,7 +7,7 @@
 # still carries a bare -j.
 set -u
 
-files="Makefile bench/Makefile"
+files="Makefile benchmarks/Makefile"
 
 bad=0
 for f in $files; do

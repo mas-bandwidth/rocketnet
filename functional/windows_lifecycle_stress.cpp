@@ -641,7 +641,7 @@ static bool windows_ledger_result( const char * case_name, const windows_cell_t 
 
 // The restart case's live set between cycles. rocketnet_server_stop keeps the
 // stopped transport (server->retiring, sdk/rocketnet_api.cpp) until the next
-// start or destroy frees it (tla/ServerSession.tla Start, Destroy), so after
+// start or destroy frees it (proofs/tla/ServerSession.tla Start, Destroy), so after
 // any cycle the identities the last stop left are live: the same kinds and
 // counts as after the warm cycle, each either one that was live then or one
 // opened since. A held identity older than the warm cycle's, or any count that

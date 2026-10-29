@@ -160,7 +160,7 @@ static void test_xdp_transport_replay_marks_full_refuses_and_counts()
 
 static void test_xdp_transport_replay_marks_failed_forgets_kept()
 {
-    // tla/RNXdpReplay.tla ForgetOwedUntilApplied: a forget the kernel refused
+    // proofs/tla/RNXdpReplay.tla ForgetOwedUntilApplied: a forget the kernel refused
     // stays pending, in order, ahead of the next walk's forgets
 
     struct rocketnet_xdp_replay_marks_t marks;
@@ -201,7 +201,7 @@ static void test_xdp_transport_replay_marks_failed_forgets_kept()
     uint32_t mark_count = 0;
     rocketnet_xdp_replay_marks_marks( &marks, &mark_keys, &mark_values, &mark_count );
 
-    // tla/RNXdpReplay.tla MarkOwedUntilApplied: the six refused marks are kept
+    // proofs/tla/RNXdpReplay.tla MarkOwedUntilApplied: the six refused marks are kept
     // too, in order, with their values
 
     rocketnet_unit_check( mark_count == 6 );
@@ -357,7 +357,7 @@ static bool replay_fake_sink_mark( void * context, const struct rocketnet_addres
 
 static void test_xdp_transport_replay_marks_stale_forget_never_deletes_a_newer_mark()
 {
-    // tla/RNXdpReplay.tla RetryNeverDeletesNewerMark, walk to fake kernel
+    // proofs/tla/RNXdpReplay.tla RetryNeverDeletesNewerMark, walk to fake kernel
     // map: an old session's forget the kernel refuses, a new session from the
     // same address whose mark lands while the old forget is refused again,
     // then a commit whose deletes succeed. The new session's entry survives.
@@ -473,7 +473,7 @@ static bool replay_fake_kernel_admits( const struct replay_fake_map_t * map, con
 
 static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
 {
-    // tla/RNXdpReplay.tla NewSessionNeverDroppedByOldMark, walk to fake
+    // proofs/tla/RNXdpReplay.tla NewSessionNeverDroppedByOldMark, walk to fake
     // kernel map: an old session's mark far past the window, then a new
     // session from the same address while the old delete is still owed --
     // (1) queued and refused by the kernel, the new session in another slot;
@@ -602,7 +602,7 @@ static void test_xdp_transport_replay_marks_reconnect_admits_the_new_session()
 
 static void test_xdp_transport_replay_marks_refused_reconnect_mark_is_retried()
 {
-    // tla/RNXdpReplay.tla MarkOwedUntilApplied, HoldGreetingUntilMarked and
+    // proofs/tla/RNXdpReplay.tla MarkOwedUntilApplied, HoldGreetingUntilMarked and
     // NewSessionNeverDroppedByOldMark, walk to fake kernel map: a new session
     // takes the old session's slot before any walk and the kernel refuses its
     // zero mark once. Its greeting is held while the old entry stands, so it

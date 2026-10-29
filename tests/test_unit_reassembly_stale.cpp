@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The reassembly stale rule (STANDARD.md _Fragmentation_, tla/FragmentsAndAcks.tla
+// The reassembly stale rule (STANDARD.md _Fragmentation_, proofs/tla/FragmentsAndAcks.tla
 // StaleOnlyIfOlder): an honest sender's payloads are never refused as stale after
 // any loss pattern, one hostile fragment with an id far ahead neither evicts
 // an occupant nor holds a slot, and one bad fragment nearer costs at most the

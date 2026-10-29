@@ -5,7 +5,7 @@ native Linux, macOS and Windows unit and functional results are recorded in
 [the qualification index](QUALIFICATION-v1.0.0-preview-3.md) and, once the tag
 is cut, in the
 [GitHub release](https://github.com/mas-bandwidth/rocketnet/releases/tag/v1.0.0-preview-3).
-See [TESTING.md](../TESTING.md) for the historical tables.
+See [TESTING.md](TESTING.md) for the historical tables.
 
 RocketNet provides encrypted client/server UDP connections and eight message
 delivery modes through a C API. Your application supplies message bytes and
@@ -24,7 +24,7 @@ and preview-3 clients and servers were not tested.
 `max_payload_bytes` is removed. `max_message_bytes` covers every reliability
 type, and its default is now 1 MiB (1,048,576 bytes; it was 262,144).
 `packets_in_flight` defaults to 1024 (it was 256) and create refuses a value
-below `reliable_messages_in_flight`. See [USAGE.md](../USAGE.md) for the
+below `reliable_messages_in_flight`. See [USAGE.md](USAGE.md) for the
 ranges.
 
 ### Take every message before the next update
@@ -191,8 +191,8 @@ t7, t13, t15, t17, t19, m9, m11 and m13) change no rule.
 - **Source tree.** The whole tree is formatted with clang-format, checked in
   CI; later layout-only passes changed no compiled output.
 
-See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
-[USAGE.md](../USAGE.md) for the supported configuration and API contracts.
+See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
+[USAGE.md](USAGE.md) for the supported configuration and API contracts.
 
 ## Known limits and release qualification
 
@@ -204,7 +204,7 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
   100-microsecond per-call check still fails at larger client counts, and
   server encryption still runs on the game thread.
 - A default 1,000-client server requires about 20.9 GB, and the light profile
-  about 3.2 GB, on Linux ([USAGE.md](../USAGE.md)). Memory is spent to save CPU
+  about 3.2 GB, on Linux ([USAGE.md](USAGE.md)). Memory is spent to save CPU
   and bandwidth and is taken up front. The plan leaves out what the operating
   system owns: worker stacks, XDP UMEM, the AF_XDP and io_uring rings and
   kernel socket buffers. Provision host memory for both. Destroy has no
@@ -233,4 +233,4 @@ See [BUILDING.md](../BUILDING.md), [TRANSPORTS.md](../TRANSPORTS.md) and
 
 The [qualification index](QUALIFICATION-v1.0.0-preview-3.md) records the
 tested head and every gate, including those still owed at tag time. The
-[roadmap](../ROADMAP.md) carries the remaining work.
+[roadmap](ROADMAP.md) carries the remaining work.

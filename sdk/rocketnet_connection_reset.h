@@ -116,8 +116,8 @@ struct rn_message_object_t;
     are called. They are the only per-connection bytes permitted to outlive the
     reset.
 
-    The protocol overloads implement tla/ClientSession.tla End and
-    tla/ServerSession.tla EndClient. The message-object overloads implement the
+    The protocol overloads implement proofs/tla/ClientSession.tla End and
+    proofs/tla/ServerSession.tla EndClient. The message-object overloads implement the
     corresponding message/channel cleanup when the transport connection id
     changes. All declarations are internal and are intentionally absent from
     sdk/rocketnet.h.

@@ -6,14 +6,14 @@
 # NOT routed through the CMake target (which already carries the floor PRIVATE)
 # and fails on any compiler line that omits it.
 #
-# server_xdp/Makefile is exempt: `clang ... -target bpf -c server_xdp.c`
+# sdk/xdp/Makefile is exempt: `clang ... -target bpf -c server_xdp.c`
 # compiles a BPF object, which has no floating point at all.
 #
 # `<compiler> --version` with no other argument is a version query, not a
 # compilation, and is skipped.
 set -u
 
-files="Makefile bench/Makefile .github/workflows/ci.yml .github/workflows/fuzz-nightly.yml .github/workflows/nightly.yml .github/workflows/nightly-soak.yml .github/workflows/release-check.yml"
+files="Makefile benchmarks/Makefile .github/workflows/ci.yml .github/workflows/fuzz-nightly.yml .github/workflows/nightly.yml .github/workflows/nightly-soak.yml .github/workflows/release-check.yml"
 
 is_compiler()
 {
@@ -79,7 +79,7 @@ done
 
 # the shared CFLAGS/CXXFLAGS definitions themselves must carry the floor, so a
 # rule that expands $(CFLAGS) inherits it.
-for f in Makefile bench/Makefile; do
+for f in Makefile benchmarks/Makefile; do
     [ -f "$f" ] || continue
     while IFS= read -r line; do
         stript="${line#"${line%%[![:space:]]*}"}"

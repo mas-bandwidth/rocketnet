@@ -71,7 +71,7 @@ On an Apple-silicon Mac `lipo` prints `arm64` and `vtool` prints `minos 12.0`.
 
 ### Universal binaries, the Xcode generator, the deployment target
 
-See [BUILDING.md](../BUILDING.md) for the universal build, the Xcode generator
+See [BUILDING.md](BUILDING.md) for the universal build, the Xcode generator
 and the deployment target.
 
 ## The macOS transports

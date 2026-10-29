@@ -1,7 +1,7 @@
 # TLA+ inventory
 
-The `tla/` directory contains executable specifications for RocketNet's
-bounded protocol and message machines. `tla/RUNS.tsv` is the
+The `proofs/tla/` directory contains executable specifications for RocketNet's
+bounded protocol and message machines. `proofs/tla/RUNS.tsv` is the
 maintained run inventory; the repository TLA checker validates its schema,
 inputs and recorded result for each required group.
 

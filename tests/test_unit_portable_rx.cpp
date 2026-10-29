@@ -3,7 +3,7 @@
 #include "suite_runner.h"
 #include "../sdk/rocketnet_platform.h"
 
-// Uses the private portable transport test-hook build (tla/RNPortableRx.tla).
+// Uses the private portable transport test-hook build (proofs/tla/RNPortableRx.tla).
 // Both cases run on this thread with no socket read, no worker thread and no
 // clock: the handoff case drives the FIFO, full, contended, partial and
 // oversize transitions; the worker-steps case steps the worker pass through

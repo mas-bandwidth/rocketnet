@@ -144,8 +144,8 @@ REGISTER_UNIT_TEST( test_client_bind_family_ipv4_server_with_ipv6 );
 REGISTER_UNIT_TEST( test_client_bind_family_ipv6_server );
 REGISTER_UNIT_TEST( test_client_pick_server_address_by_host_capability );
 
-// The family race (TRANSPORT.md t11 rule 3, tla/ClientConnection.tla
-// OneRequestFamily and CommitsOnAnswer, tla/ServerConnection.tla InFlight).
+// The family race (TRANSPORT.md t11 rule 3, proofs/tla/ClientConnection.tla
+// OneRequestFamily and CommitsOnAnswer, proofs/tla/ServerConnection.tla InFlight).
 // A token naming 203.0.113.10:40000 and [2001:db8::1]:40000 on a host with
 // both families; the IPv6 route is broken, so nothing sent to the IPv6
 // server is ever answered, and a real server protocol answers on IPv4. The
@@ -311,7 +311,7 @@ static void test_client_connect_keeps_the_family_that_answers()
         {
             // the commit is observed by the reading step, which closes the
             // losing socket's handles at its next wait or receive and frees
-            // nothing (tla/RNClientRace.tla ReaderStep)
+            // nothing (proofs/tla/RNClientRace.tla ReaderStep)
             rocketnet_client_io_step( io, false );
             closes_at_commit = fake->close_calls;
             destroys_at_commit = fake->destroy_calls;

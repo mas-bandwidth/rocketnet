@@ -3,8 +3,8 @@
 A connection owns every item marked **RESET**. Ending a connection runs one
 internal reset for that side before a slot or client object can be reused. A
 **KEEP** row is object-lifetime state and includes the reason it survives.
-`tla/ClientSession.tla` models the client `End` transition and
-`tla/ServerSession.tla` models `EndSlot` and the per-slot `Reset(i)`.
+`proofs/tla/ClientSession.tla` models the client `End` transition and
+`proofs/tla/ServerSession.tla` models `EndSlot` and the per-slot `Reset(i)`.
 
 The same decisions are data in `sdk/rocketnet_connection_reset.h`, one X-macro
 per struct. Each of these structs is declared from a manifest list beside it
@@ -204,7 +204,7 @@ material is overwritten in place with `sodium_memzero`:
   still finishing. `messages_dropped_not_connected` stays on the client handle
   and remains monotonic across connections. Rate and quality gauges stay
   session-scoped and read 0 without a connection. The public struct is
-  unchanged. `tla/ClientSession.tla` `End` leaves `kept` unchanged, and
+  unchanged. `proofs/tla/ClientSession.tla` `End` leaves `kept` unchanged, and
   `kept` includes `lifetime`. `HandshakeStep` into `CONNECTED` increments
   `kept.lifetime`. That model text does not describe this getter.
 

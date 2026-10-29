@@ -254,8 +254,8 @@ static rocketnet_loopback_packet_t * loopback_queue_tail( rocketnet_loopback_end
 {
     // the next queue slot, or NULL after counting a drop at the fixed ceiling.
     // All queue storage is allocated at hub create; traffic never allocates.
-    // tla/LoopbackQueue.tla Send: enqueue at tail mod Capacity when count < Capacity;
-    // a full queue drops and counts. tla/LoopbackHubLayout.tla Send carries
+    // proofs/tla/LoopbackQueue.tla Send: enqueue at tail mod Capacity when count < Capacity;
+    // a full queue drops and counts. proofs/tla/LoopbackHubLayout.tla Send carries
     // this arithmetic at capacity 3: the mask is the slot mod a power-of-two
     // capacity, and the uint32_t wrap is a multiple of it.
 
@@ -274,8 +274,8 @@ static void loopback_queue_pop( rocketnet_loopback_endpoint_t * ep )
     // advance head and shrink count, and when the queue empties restart both
     // indices at slot zero. A queue that empties therefore writes only the slots
     // its deepest backlog reached; FIFO cannot change because an empty queue has
-    // nothing to reorder. tla/LoopbackQueue.tla Receive and Drop;
-    // tla/LoopbackHubLayout.tla Receive.
+    // nothing to reorder. proofs/tla/LoopbackQueue.tla Receive and Drop;
+    // proofs/tla/LoopbackHubLayout.tla Receive.
 
     ++ep->head;
     --ep->count;
@@ -334,9 +334,9 @@ uint64_t rocketnet_loopback_hub_bytes( int max_clients )
 
 rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int max_clients, enum rocketnet_status_t * status )
 {
-    // tla/LoopbackHub.tla Create: one block with every record free. The
+    // proofs/tla/LoopbackHub.tla Create: one block with every record free. The
     // queues follow the records in it, the server's first, then each
-    // client's, the layout tla/LoopbackHubLayout.tla checks (Base, Addr)
+    // client's, the layout proofs/tla/LoopbackHubLayout.tla checks (Base, Addr)
 
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -425,7 +425,7 @@ rocketnet_loopback_hub_t * rocketnet_loopback_hub_create( void * context, int ma
 
 enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t * hub )
 {
-    // tla/LoopbackHub.tla Destroy: refused, and the hub kept, while any
+    // proofs/tla/LoopbackHub.tla Destroy: refused, and the hub kept, while any
     // endpoint is registered with it
 
     if ( !hub )
@@ -463,7 +463,7 @@ enum rocketnet_status_t rocketnet_loopback_hub_destroy( rocketnet_loopback_hub_t
 
 static void * loopback_create( rocketnet_loopback_hub_t * hub, rocketnet_address_t * bind, bool server )
 {
-    // tla/LoopbackHub.tla RegisterServer and RegisterClient: the server takes
+    // proofs/tla/LoopbackHub.tla RegisterServer and RegisterClient: the server takes
     // record 0, a client the first free record after it; a full hub refuses
 
     if ( bind->type != ROCKETNET_ADDRESS_IPV4 && bind->type != ROCKETNET_ADDRESS_IPV6 )
@@ -554,7 +554,7 @@ static void * loopback_client_create( void *, const rocketnet_client_transport_i
 
 static void loopback_destroy( void * transport )
 {
-    // tla/LoopbackHub.tla Unregister: the record and its queue stay in the
+    // proofs/tla/LoopbackHub.tla Unregister: the record and its queue stay in the
     // hub for the next endpoint; nothing is freed
 
     rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
@@ -687,14 +687,14 @@ static int loopback_server_receive_batch( void * transport, rocketnet_address_t 
         if ( stride <= 0 || packet->bytes <= 0 || packet->bytes > stride )
         {
             ++ep->dropped;
-            loopback_queue_pop( ep );    // tla/LoopbackQueue.tla Drop
+            loopback_queue_pop( ep );    // proofs/tla/LoopbackQueue.tla Drop
             continue;
         }
 
         from[received] = packet->from;
         bytes[received] = packet->bytes;
         memcpy( data + (size_t) received * (size_t) stride, packet->data, (size_t) packet->bytes );
-        loopback_queue_pop( ep );        // tla/LoopbackQueue.tla Receive
+        loopback_queue_pop( ep );        // proofs/tla/LoopbackQueue.tla Receive
         ++received;
     }
 
@@ -713,14 +713,14 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
     if ( packet->bytes > capacity )
     {
         ++ep->dropped;
-        loopback_queue_pop( ep );        // tla/LoopbackQueue.tla Drop
+        loopback_queue_pop( ep );        // proofs/tla/LoopbackQueue.tla Drop
         return 0;
     }
 
     *from = packet->from;
     const int bytes = packet->bytes;
     memcpy( data, packet->data, (size_t) bytes );
-    loopback_queue_pop( ep );            // tla/LoopbackQueue.tla Receive
+    loopback_queue_pop( ep );            // proofs/tla/LoopbackQueue.tla Receive
 
     return bytes;
 }

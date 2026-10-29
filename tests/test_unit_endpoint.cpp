@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The endpoint as a pure machine (docs/CHANNELS.md 10.1, tla/RNEndpoint.tla):
+// The endpoint as a pure machine (docs/CHANNELS.md 10.1, proofs/tla/RNEndpoint.tla):
 // two endpoints back to back through a lossy, duplicating, reordering array
 // that stands in for the transport, with time a loop variable from 1000.0.
 // No socket, no clock, no transport.
@@ -616,7 +616,7 @@ static void test_endpoint_never_allocates_or_reads_a_clock()
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
-// R6 (docs/CHANNELS.md 11.5; tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
+// R6 (docs/CHANNELS.md 11.5; proofs/tla/RNSendBudget.tla UncappedNeverDropsOrWaits):
 // an uncapped endpoint's large sequenced state, larger than one packet, is
 // written whole and never touches the bucket: no charge, no settle, no
 // refusal, no drop. Simulated time from 1000.0; no transport but this loop.

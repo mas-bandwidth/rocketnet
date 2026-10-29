@@ -4,7 +4,7 @@
 */
 
 // The N-buffer handoff (sdk/rocketnet_buffer_handoff.h) in the orders
-// tla/RNBufferHandoff.tla allows, on one thread: no sockets, no real time.
+// proofs/tla/RNBufferHandoff.tla allows, on one thread: no sockets, no real time.
 // The owner of every buffer is checked after each exchange (OneOwner), a
 // publish with no free buffer or a full ready queue is owed and reported to
 // the consumer's next exchange (ArrivedDelivered's wake), and buffers leave

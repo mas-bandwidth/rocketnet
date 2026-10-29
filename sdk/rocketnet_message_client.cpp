@@ -7,8 +7,8 @@
 // sdk/rocketnet_message_server.cpp with one connection, over a
 // rocketnet_client_transport_t. Its one connection is bound at create and never
 // bound again; when its region is exhausted the client disconnects itself with
-// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (R5, tla/RNConnectionMemory.tla
-// Kick). The spec of the update and release rules is tla/RNSlots.tla.
+// ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (R5, proofs/tla/RNConnectionMemory.tla
+// Kick). The spec of the update and release rules is proofs/tla/RNSlots.tla.
 
 #include <string.h>
 

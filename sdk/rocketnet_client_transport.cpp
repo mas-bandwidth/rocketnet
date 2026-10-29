@@ -75,13 +75,13 @@ double rocketnet_clamp_update_time( double last_good, double time, bool * clampe
 }
 
 // The update clock the three owners share: the caller's raw time beside the
-// clamped time they hand out. tla/RNUpdateClock.tla models it: ForwardStep, a
+// clamped time they hand out. proofs/tla/RNUpdateClock.tla models it: ForwardStep, a
 // forward raw step, BackwardStep, a backwards raw step, and NonFiniteStep, a
 // non-finite sample. A forward step of d advances the clamped time by exactly
 // d while the caller's clock is still behind, so a clock whose caller
 // stepped backwards resumes with the caller instead of standing still until
 // the caller's clock passes the last good time again (BASE's rule, which
-// tla/MCRNUpdateClockBrokenStall.cfg reverses). Once the caller's clock has
+// proofs/tla/MCRNUpdateClockBrokenStall.cfg reverses). Once the caller's clock has
 // caught up, the clock is the caller's clock again. While no backwards step
 // has happened the offset is exactly 0.0 and the returned time is the
 // caller's time, bit for bit: the common path never adds to the last good
@@ -236,7 +236,7 @@ struct rocketnet_client_transport_counters_t
 };
 
 // BASE uses the same N-buffer ownership exchange as the I/O core
-// (tla/RNBufferHandoffBase.tla). The
+// (proofs/tla/RNBufferHandoffBase.tla). The
 // worker always owns fill; update drains every READY batch within its packet
 // budget and returns it in the same call. Contended returns stay caller-owned.
 struct rocketnet_client_legacy_receive_state_t
@@ -260,7 +260,7 @@ struct rocketnet_client_legacy_receive_state_t
 #define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( X )                       \
     /* the cache-line-aligned members lead, each a whole number of cache */ \
     /* lines, so the compiler inserts no alignment padding before any of them */                                     \
-    X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases ) /* three rings of one layout (tla/RNBufferHandoff.tla): game threads */ /* fill payload_ring[client_io.send_fill]. The BASE path never hands */ /* off, so it fills ring 0 only. */                                                                              \
+    X( packet_leases, rocketnet_packet_leases_t<1024> packet_leases ) /* three rings of one layout (proofs/tla/RNBufferHandoff.tla): game threads */ /* fill payload_ring[client_io.send_fill]. The BASE path never hands */ /* off, so it fills ring 0 only. */                                                                              \
     X( payload_ring, struct rocketnet_client_payload_ring_t payload_ring[ROCKETNET_CLIENT_IO_NUM_RINGS] )            \
     X( context, void * context )                                                                                     \
     X( bound_port, uint16_t bound_port )                                                                             \
@@ -497,7 +497,7 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 // The link simulator's live setting (sdk/rocketnet_network_simulator.cpp):
 // the caller hands a new setting over as a config record under the
 // simulator's own tiny mutex, and the thread that owns the simulator takes it
-// before its next send.  tla/MCLinkReconfigure.tla models the change: the
+// before its next send.  proofs/tla/MCLinkReconfigure.tla models the change: the
 // setting in force at the send holds the packet, and the change itself
 // removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
 // stubs below stand in for the development build's functions there.
@@ -537,7 +537,7 @@ static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, i
 }
 #endif // #if ROCKETNET_DEV
 
-// The deterministic drop and reverse patterns (tla/Link.tla "everynth" and
+// The deterministic drop and reverse patterns (proofs/tla/Link.tla "everynth" and
 // ReverseWindow) are on when the config names either and the link simulator
 // exists. With both fields zero nothing below differs from the link
 // simulator alone: every branch keyed on this predicate is the BASE branch.
@@ -608,15 +608,15 @@ static inline void rocketnet_client_link_flush( rocketnet_client_transport_t * t
 // update. While both are in flight every packet sent to the primary server
 // goes to the other server too, and both sockets are read. The first valid
 // connection cookie commits the attempt to the family it arrived on
-// (rocketnet_client_race_commit, tla/ClientConnection.tla ClientRecvCookie,
-// tla/ServerConnection.tla CommitChoices): from then on only that family is
+// (rocketnet_client_race_commit, proofs/tla/ClientConnection.tla ClientRecvCookie,
+// proofs/tla/ServerConnection.tla CommitChoices): from then on only that family is
 // sent to and read, so a connection request goes to one family only
 // (OneRequestFamily, OneFamilyPerAttempt), and the other family's socket is
 // closed by the thread that reads the sockets, at its next wait or receive.
 // A late answer from the other family that was already read fails the
 // source check and is counted as a foreign source.
 //
-// Threads (tla/RNClientRace.tla). The caller's thread commits (in update)
+// Threads (proofs/tla/RNClientRace.tla). The caller's thread commits (in update)
 // and is the only thread that sends to a server address it reads from the
 // protocol; the reading thread (the I/O thread, the legacy worker, or the
 // caller's own step) closes the losing family's operating-system handles
@@ -656,7 +656,7 @@ static uint64_t rocketnet_client_race_family_send_failures( const rocketnet_clie
 }
 
 // the reading thread closes the losing family's handles once it sees the
-// commit (tla/RNClientRace.tla ReaderStep); its memory stays until destroy
+// commit (proofs/tla/RNClientRace.tla ReaderStep); its memory stays until destroy
 
 static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
 {
@@ -675,7 +675,7 @@ static int rocketnet_client_race_kept( rocketnet_client_race_t * race )
     return committed;
 }
 
-// the caller's thread, after the reading thread is joined (tla/RNClientRace.tla
+// the caller's thread, after the reading thread is joined (proofs/tla/RNClientRace.tla
 // CallerDestroy): both families' memory, the losing one's handles already
 // closed
 
@@ -701,7 +701,7 @@ static int rocketnet_client_race_family_of( const rocketnet_client_race_t * race
     return to->type == race->server_address[1].type ? 1 : 0;
 }
 
-// tla/RNClientRace.tla CallerSend: the caller's thread sends to both
+// proofs/tla/RNClientRace.tla CallerSend: the caller's thread sends to both
 // families while they are in flight, then to the kept family only
 
 static void rocketnet_client_race_send( void * instance, const rocketnet_address_t * to, const uint8_t * packet_data, int packet_bytes )
@@ -836,7 +836,7 @@ static uint64_t rocketnet_client_race_send_failures( void * instance )
            rocketnet_client_race_family_send_failures( &race->family[1] );
 }
 
-// the commit, on the caller's thread (tla/RNClientRace.tla CallerCommit): the
+// the commit, on the caller's thread (proofs/tla/RNClientRace.tla CallerCommit): the
 // attempt keeps the family that answered first, and its server is the
 // protocol's server from now on
 
@@ -871,7 +871,7 @@ static void rocketnet_client_link_send( rocketnet_client_transport_t * transport
                                       to, packet_data, packet_bytes, transport->time );
 }
 
-// tla/RNClientLinkStop.tla Drain: a running update sends every copy the link
+// proofs/tla/RNClientLinkStop.tla Drain: a running update sends every copy the link
 // simulator holds that has come due by now.  A held packet leaves on the
 // thread that owns the simulator: the caller's thread on both paths, since
 // the per-packet path sends there and the ring path's hand-off is there too.
@@ -898,7 +898,7 @@ static void rocketnet_client_link_drain( rocketnet_client_transport_t * transpor
 // afterward. Step-driven transports do this in their explicit shutdown step.
 // Shutdown holds the clock fixed, so a held packet would never come due. The
 // loss and duplicate policy already ran at send; what remains leaves now,
-// ahead of its latency (tla/RNClientLinkStop.tla WorkerComplete).
+// ahead of its latency (proofs/tla/RNClientLinkStop.tla WorkerComplete).
 
 static void rocketnet_client_link_drain_at_stop( rocketnet_client_transport_t * transport )
 {
@@ -984,7 +984,7 @@ void rocketnet_client_io_wipe( void * data, size_t bytes )
     sodium_memzero( data, bytes );
 }
 
-// tla/RNClientIoDecrypt.tla PublishKeys: the protocol's hook at the challenge
+// proofs/tla/RNClientIoDecrypt.tla PublishKeys: the protocol's hook at the challenge
 
 static void rocketnet_client_transport_publish_keys( void * context, const struct rocketnet_client_protocol_t * client )
 {
@@ -994,7 +994,7 @@ static void rocketnet_client_transport_publish_keys( void * context, const struc
                                       &client->server_address );
 }
 
-// tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state.
+// proofs/tla/RNClientIoDecrypt.tla RetireKeys: the protocol's hook at a terminal state.
 // When no background I/O thread owns the open block, take the retired epoch
 // immediately so sodium_memzero erases session_server_to_client and salt at the
 // terminal transition instead of leaving the retired copy in memory until the
@@ -1029,7 +1029,7 @@ bool rocketnet_client_transport_uses_io_thread( const rocketnet_client_transport
 // The plan takes no token, so it is the bound for the worst token: one naming
 // both families on a host that can use both, whose create opens the family
 // race's second socket of the granted transport (no second thread) and its
-// rocketnet_client_race_t (TRANSPORT.md t11 rule 3, tla/ServerConnection.tla
+// rocketnet_client_race_t (TRANSPORT.md t11 rule 3, proofs/tla/ServerConnection.tla
 // RaceFamilies). A one-family create allocates less than the plan.
 
 // total_bytes is all through the caller's allocator; thread_stack_bytes is
@@ -2084,7 +2084,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     client_transport->transport = granted_transport;
 
-    // the family race (TRANSPORT.md t11 rule 3, tla/ServerConnection.tla
+    // the family race (TRANSPORT.md t11 rule 3, proofs/tla/ServerConnection.tla
     // RaceFamilies): a token naming both families on a host that can use
     // both selected its IPv6 server above, and the IPv4 server is dialed
     // too, on a second socket of the granted transport, bound with the
@@ -2258,7 +2258,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // a transport with wait and wake runs the I/O thread design of
     // docs/CLIENT-IO.md through rocketnet_client_io_t, modelled by
-    // tla/RNClientIo.tla (every RNClientIo action named here). Built-in
+    // proofs/tla/RNClientIo.tla (every RNClientIo action named here). Built-in
     // loopback uses the same core with bounded worker polling. Custom drivers
     // without wait/wake keep the BASE path: per-packet sends on the main
     // thread and a polling receive worker that exchanges buffer ownership
@@ -2317,15 +2317,15 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->step_in_update = false;
 #endif // #if ROCKETNET_DEV
 
-    // tla/RNClientIoShutdown.tla Start: create starts the worker generation
+    // proofs/tla/RNClientIoShutdown.tla Start: create starts the worker generation
     // below, the I/O thread or the legacy receive thread.
-    // tla/RNClientIo.tla OnThread: outside the step-driven mode the I/O thread
+    // proofs/tla/RNClientIo.tla OnThread: outside the step-driven mode the I/O thread
     // created here runs every core action.
-    // tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoPublish, IoOwe,
+    // proofs/tla/RNClientIo.tla IoSend, IoFinishRing, IoReceive, IoPublish, IoOwe,
     // IoWait, IoWake, IoClearWake and IoExit: the I/O thread's step sends each
     // handed-off ring, drains datagrams into its buffer and publishes it, waits
     // and wakes, and exits once quit is stored.
-    // tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
+    // proofs/tla/RNClientIoShutdown.tla TakeRing and FinishRing: the worker takes the
     // handed-off ring and marks it sent when every slot left.
 
     if ( client_transport->io_thread || client_transport->step_in_update )
@@ -2352,7 +2352,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         client_transport->client_io.prefilter_too_large =
             &client_transport->counters.values[ROCKETNET_COUNTER_PREFILTER_TOO_LARGE];
 
-        // tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
+        // proofs/tla/RNClientIoDecrypt.tla PublishKeys and RetireKeys: the protocol
         // publishes the open copy at the challenge and retires it at every
         // terminal state; destroy retires it too
 
@@ -2422,24 +2422,24 @@ static const rocketnet_address_t * rocketnet_client_transport_fill_destination( 
     return &client_transport->client_io.to[client_transport->client_io.send_fill];
 }
 
-// tla/RNClientIoShutdown.tla abstracts this request/completion ownership;
+// proofs/tla/RNClientIoShutdown.tla abstracts this request/completion ownership;
 // native backend and thread behavior still need their platform gates.
 // Requests never join, call a backend send, or wait for a ring. The final
 // filling ring is published without reopening the other ring: no producer may
 // touch either ring after stop, and the worker can drain both independently.
-// tla/RNClientIoShutdown.tla RequestStop, RepeatStop and RequestReturn: the
+// proofs/tla/RNClientIoShutdown.tla RequestStop, RepeatStop and RequestReturn: the
 // first call publishes the final filling ring with quit, a repeat returns at
 // once, and neither waits on the worker.
-// tla/RNClientIo.tla Stop: stores quit and wakes the I/O thread
+// proofs/tla/RNClientIo.tla Stop: stores quit and wakes the I/O thread
 // (rocketnet_client_io_stop).
-// tla/RNBufferHandoff.tla MainStop: hands the Filling ring to the worker with
+// proofs/tla/RNBufferHandoff.tla MainStop: hands the Filling ring to the worker with
 // the quit store.
-// tla/RNClientLinkStop.tla Stop: on the legacy path publishes quit without
+// proofs/tla/RNClientLinkStop.tla Stop: on the legacy path publishes quit without
 // draining the link simulator or calling the backend (the worker's
 // completion drains it); on the I/O-core path, where the caller keeps the
 // simulator, sends every copy it holds and then publishes quit.
 
-// tla/RNClientRace.tla CallerStop: the reading thread is asked to exit; it
+// proofs/tla/RNClientRace.tla CallerStop: the reading thread is asked to exit; it
 // still owns the losing family's handles until it has.
 
 void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_transport )
@@ -2452,7 +2452,7 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
 
     if ( rocketnet_client_io_core( client_transport ) )
     {
-        // tla/RNClientLinkStop.tla Stop, path iocore: the I/O worker never
+        // proofs/tla/RNClientLinkStop.tla Stop, path iocore: the I/O worker never
         // owns the link simulator, so the packets it holds leave here, with
         // the stop, ahead of their latency
         rocketnet_client_link_drain( client_transport, DBL_MAX );
@@ -2478,10 +2478,10 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     }
 }
 
-// tla/RNClientIoShutdown.tla BeginPoll and PollReturn: reads the worker's
+// proofs/tla/RNClientIoShutdown.tla BeginPoll and PollReturn: reads the worker's
 // completion flag and returns without waiting.
 
-// tla/RNClientRace.tla ReaderExit: that flag is the reading thread's exit.
+// proofs/tla/RNClientRace.tla ReaderExit: that flag is the reading thread's exit.
 
 bool rocketnet_client_transport_stopped( const rocketnet_client_transport_t * client_transport )
 {
@@ -2504,7 +2504,7 @@ static void rocketnet_client_transport_flush_disconnect( rocketnet_client_transp
     client_transport->stop_burst_pending.store( false, std::memory_order_release );
 }
 
-// tla/RNClientIoShutdown.tla WorkerQuiesce: the legacy worker sends what it
+// proofs/tla/RNClientIoShutdown.tla WorkerQuiesce: the legacy worker sends what it
 // still holds, then stores stopped.
 
 static void rocketnet_client_transport_finish_stop( rocketnet_client_transport_t * client_transport )
@@ -2539,21 +2539,21 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNClientIo.tla Join and Free: the I/O thread is joined before the
+// proofs/tla/RNClientIo.tla Join and Free: the I/O thread is joined before the
 // transport is freed.
 
-// tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
+// proofs/tla/RNClientIoShutdown.tla DestroyBegin, Join and Free: destroy refuses a
 // transport not yet stopped, joins the worker thread, then frees.
-// tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
+// proofs/tla/RNClientIo.tla DestroyBegin, DestroyWait, DestroyWaitDone, Timeout and
 // Done: destroy makes its last hand-off, waits at the deadline for the other
 // ring to reach Sent, drops the committed slots it cannot hand off, joins,
 // frees and ends.
-// tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
+// proofs/tla/RNClientIoShutdown.tla BeginRestart: a restart joins the prior worker
 // generation before the next one runs, as the synchronous destroy and the
 // next connect do here.
-// tla/RNClientIoShutdown.tla Done: the freed endpoint's terminal state.
+// proofs/tla/RNClientIoShutdown.tla Done: the freed endpoint's terminal state.
 
-// tla/RNClientRace.tla CallerJoin and CallerDestroy: the reading thread is
+// proofs/tla/RNClientRace.tla CallerJoin and CallerDestroy: the reading thread is
 // joined, then the caller's thread frees both race families, the losing
 // one's handles already closed by the reading thread.
 
@@ -2618,7 +2618,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     // redundant disconnect packets still in flight are dropped uncounted.
 
     // While the family race is in flight the other family's server is
-    // dialed too (tla/ServerConnection.tla InFlight); once the race commits
+    // dialed too (proofs/tla/ServerConnection.tla InFlight); once the race commits
     // it is foreign like any other source, so a late answer from it is
     // dropped and counted here.
 
@@ -2644,7 +2644,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     uint8_t overflow[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
 
-    // tla/RNClientIoDecrypt.tla UpdateConsume: a record the I/O thread opened
+    // proofs/tla/RNClientIoDecrypt.tla UpdateConsume: a record the I/O thread opened
     // or refused is consumed with its verdict; a raw one is processed as at
     // BASE
 
@@ -2655,7 +2655,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
                                               &payload_bytes );
 
     // the first valid cookie moves the client out of requesting cookie: the
-    // race commits to the family it arrived on (tla/ClientConnection.tla
+    // race commits to the family it arrived on (proofs/tla/ClientConnection.tla
     // ClientRecvCookie). Nothing else leaves requesting cookie forward.
 
     if ( racing && state_before == ROCKETNET_CLIENT_TRANSPORT_STATE_REQUESTING_COOKIE &&
@@ -2709,10 +2709,10 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 // yield, no retry; a ring the I/O thread holds is never reused
 // (HandOffNeverWaits, NoReuseBeforeSent).
 
-// tla/RNClientIo.tla HandOffTo, DeferTo and Reopen: hands the Filling ring to
+// proofs/tla/RNClientIo.tla HandOffTo, DeferTo and Reopen: hands the Filling ring to
 // the I/O thread, or counts the deferral when the other ring is busy; after a
 // hand-off it empties the reopened ring send_fill now names.
-// tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
+// proofs/tla/RNClientIo.tla WaitDone: the reversed witness's blocked main resumes once
 // the other ring is Sent; the fixed main never waits for the I/O thread.
 
 static void rocketnet_client_transport_io_hand_off( rocketnet_client_transport_t * client_transport, const rocketnet_address_t * destination = NULL )
@@ -2803,11 +2803,11 @@ static void rocketnet_client_transport_io_commit_packet( rocketnet_client_transp
 
 // Try once at each caller handoff. Unit tests can refuse either phase without
 // starting a competing thread or depending on scheduler timing.
-// tla/RNBufferHandoff.tla MainTryLock: main takes a free mutex or skips this
+// proofs/tla/RNBufferHandoff.tla MainTryLock: main takes a free mutex or skips this
 // exchange, never waiting.
-// tla/RNBufferHandoff.tla MainLockWait: the reversed witness's blocked main
+// proofs/tla/RNBufferHandoff.tla MainLockWait: the reversed witness's blocked main
 // waits for a held mutex; the fixed main only try-acquires and never waits.
-// tla/RNBufferHandoffBase.tla MainTry: the try-lock of update's expose and
+// proofs/tla/RNBufferHandoffBase.tla MainTry: the try-lock of update's expose and
 // return phases.
 
 static bool rocketnet_client_legacy_try_acquire( rocketnet_client_transport_t * client_transport, unsigned phase )
@@ -2835,9 +2835,9 @@ static void rocketnet_client_legacy_publish_returns( rocketnet_client_legacy_rec
 // Take the oldest READY buffers that fit the packet budget. If the worker
 // owns the mutex, leave everything in place and continue this update without
 // receiving. Returning previously processed buffers precedes taking new ones.
-// tla/RNBufferHandoffBase.tla Expose: returns the deferred cleared buffers and
+// proofs/tla/RNBufferHandoffBase.tla Expose: returns the deferred cleared buffers and
 // takes the oldest READY prefix within the packet budget.
-// tla/RNBufferHandoff.tla ConsumerExchange and Unlock: main's release-and-take
+// proofs/tla/RNBufferHandoff.tla ConsumerExchange and Unlock: main's release-and-take
 // index exchange under the mutex, then the release.
 
 static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_transport_t * client_transport, int * exposed )
@@ -2868,7 +2868,7 @@ static int rocketnet_client_update_expose_legacy_receive( rocketnet_client_trans
 
 // Keep processed buffers caller-owned if the worker has the mutex. They are
 // neither READY nor FREE, so neither side can process or overwrite them again.
-// tla/RNBufferHandoffBase.tla ReleaseOnly: clears the processed buffers
+// proofs/tla/RNBufferHandoffBase.tla ReleaseOnly: clears the processed buffers
 // outside the mutex and returns them without taking any.
 
 static void rocketnet_client_update_return_legacy_receive( rocketnet_client_transport_t * client_transport, const int * exposed, int num_exposed )
@@ -2941,12 +2941,12 @@ static void rocketnet_client_update_stats( rocketnet_client_transport_t * client
     }
 }
 
-// tla/RNClientIo.tla Expose, Return and OnMain: update exposes the Ready
+// proofs/tla/RNClientIo.tla Expose, Return and OnMain: update exposes the Ready
 // buffer at its start and returns it at its end, on the main thread.
-// tla/RNClientIo.tla StepBegin, StepEnd and OnCaller: with step_in_update the
+// proofs/tla/RNClientIo.tla StepBegin, StepEnd and OnCaller: with step_in_update the
 // I/O step runs on the caller's thread inside update, never blocking.
-// tla/RNBufferHandoff.tla Consume: update reads and clears the buffer it took.
-// tla/RNBufferHandoffBase.tla Process and EndUpdate: update reads every exposed
+// proofs/tla/RNBufferHandoff.tla Consume: update reads and clears the buffer it took.
+// proofs/tla/RNBufferHandoffBase.tla Process and EndUpdate: update reads every exposed
 // buffer outside the mutex, and its end begins the next expose.
 
 void rocketnet_client_transport_update( rocketnet_client_transport_t * client_transport, double time )
@@ -3136,7 +3136,7 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_client_transport_send_packets( client_transport );
 }
 
-// tla/FragmentsAndAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring, the arena or the lease refuses the frame.
+// proofs/tla/FragmentsAndAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring, the arena or the lease refuses the frame.
 // The client's acquire family: the same shape, layout and phase
 // contract as the server's, minus the client index. The convenience send
 // above rides this path and flushes immediately, preserving its
@@ -3144,9 +3144,9 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
 
 static void rocketnet_client_transport_abort_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context );
 
-// tla/RNClientIo.tla Write and OnGame: a game thread takes a free slot of the
+// proofs/tla/RNClientIo.tla Write and OnGame: a game thread takes a free slot of the
 // Filling ring.
-// tla/RNBufferHandoff.tla Produce: on send the producer writes its ring outside
+// proofs/tla/RNBufferHandoff.tla Produce: on send the producer writes its ring outside
 // the mutex.
 
 uint8_t * rocketnet_client_transport_start_packet( rocketnet_client_transport_t * client_transport, int request_bytes, struct rocketnet_packet_context_t * context )
@@ -3295,8 +3295,8 @@ void rocketnet_client_transport_abort_packet( rocketnet_client_transport_t * cli
     context->frame = NULL;
 }
 
-// tla/FragmentsAndAcks.tla BurnOne: a sequence already taken is spent unsent when the ring is full before any frame is sealed.
-// tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate leaves every frame unsent.
+// proofs/tla/FragmentsAndAcks.tla BurnOne: a sequence already taken is spent unsent when the ring is full before any frame is sealed.
+// proofs/tla/FragmentsAndAcks.tla BurnFragmented: a seal refusal after the fragment reservation, payload id and aggregate leaves every frame unsent.
 // The arena finish: the request was over the wire's capacity, so the
 // payload sits contiguous in an arena slot. A write that turned out to fit
 // one packet collapses to a single ordinary payload -- one copy into one
@@ -3416,7 +3416,7 @@ static int rocketnet_client_transport_finish_arena_packet( rocketnet_client_tran
     return total_wire_bytes;
 }
 
-// tla/RNClientIo.tla Commit: seals the slot in place and commits it.
+// proofs/tla/RNClientIo.tla Commit: seals the slot in place and commits it.
 
 static int rocketnet_client_transport_finish_packet_unchecked( rocketnet_client_transport_t * client_transport, struct rocketnet_packet_context_t * context, int payload_bytes )
 {
@@ -3487,7 +3487,7 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     return result;
 }
 
-// tla/FragmentsAndAcks.tla Flush: puts the outbox on the wire in fill order.
+// proofs/tla/FragmentsAndAcks.tla Flush: puts the outbox on the wire in fill order.
 
 void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * client_transport )
 {
@@ -3687,9 +3687,9 @@ int rocketnet_client_transport_client_index( rocketnet_client_transport_t * clie
     return client_transport->protocol.client_index;
 }
 
-// tla/RNClientIo.tla Disconnect: seals the burst into the Filling ring and
+// proofs/tla/RNClientIo.tla Disconnect: seals the burst into the Filling ring and
 // hands it off to the address saved before the protocol reset.
-// tla/RNClientLinkStop.tla Disconnect: with the link simulator the burst takes
+// proofs/tla/RNClientLinkStop.tla Disconnect: with the link simulator the burst takes
 // the loss policy and its surviving copies are staged in the simulator queue.
 
 void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * client_transport )
@@ -3948,9 +3948,9 @@ void rocketnet_client_ack_stats_public_client_for_test_free( struct rocketnet_cl
 // buffer that cannot publish leaves datagrams in the transport until a later
 // update frees one. No buffer another side owns is ever written.
 
-// tla/RNBufferHandoff.tla WorkerLock, ProducerExchange and Unlock: the receive
+// proofs/tla/RNBufferHandoff.tla WorkerLock, ProducerExchange and Unlock: the receive
 // worker locks, publishes its buffer index and takes a free one, then unlocks.
-// tla/RNBufferHandoffBase.tla WorkerLock and Publish: the same lock and publish
+// proofs/tla/RNBufferHandoffBase.tla WorkerLock and Publish: the same lock and publish
 // with MaxReady N-1.
 
 static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * client_transport )
@@ -3970,11 +3970,11 @@ static void rocketnet_client_legacy_publish( rocketnet_client_transport_t * clie
     }
 }
 
-// tla/RNBufferHandoff.tla Produce: the receive worker writes datagrams into
+// proofs/tla/RNBufferHandoff.tla Produce: the receive worker writes datagrams into
 // its buffer outside the mutex.
-// tla/RNBufferHandoff.tla WriteReady: the reversed witness's receive worker
+// proofs/tla/RNBufferHandoff.tla WriteReady: the reversed witness's receive worker
 // writes into a buffer it already published, which update now holds.
-// tla/RNBufferHandoffBase.tla Produce: the same write into the producer buffer.
+// proofs/tla/RNBufferHandoffBase.tla Produce: the same write into the producer buffer.
 
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time )
 {
@@ -4086,12 +4086,12 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNBufferHandoff.tla WorkerExit: on receive the worker exits once quit is
+// proofs/tla/RNBufferHandoff.tla WorkerExit: on receive the worker exits once quit is
 // seen.
-// tla/RNBufferHandoff.tla WorkerWait, WorkerWakes and Terminated: the worker
+// proofs/tla/RNBufferHandoff.tla WorkerWait, WorkerWakes and Terminated: the worker
 // sleeps when nothing was done and wakes on the wake or readable, and the
 // behaviour ends with both threads done.
-// tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
+// proofs/tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
 // stop is complete.
 
 static void rocketnet_client_thread_function( void * data )

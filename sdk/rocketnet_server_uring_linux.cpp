@@ -14,7 +14,7 @@
 #include <string.h>
 
 // The io_uring server transport. See rocketnet_server_uring.h for the shape;
-// this file is the machinery. tla/RNUringDriver.tla models it: each function
+// this file is the machinery. proofs/tla/RNUringDriver.tla models it: each function
 // that implements a model action names the action.
 //
 // One io_uring per transport, touched only by the main thread; no worker
@@ -740,10 +740,10 @@ static bool rocketnet_server_uring_arm( struct rocketnet_server_uring_t * uring,
     return true;
 }
 
-// one receive CQE's datagrams into the FILL bank (tla/RNUringDriver.tla Reap,
+// one receive CQE's datagrams into the FILL bank (proofs/tla/RNUringDriver.tla Reap,
 // the "recv" case, which copies every segment of the buffer: always the fill
 // bank, whether reaped here from receive_packets or from inside
-// send_packets), then its buffer back to the ring (tla/RNUringDriver.tla
+// send_packets), then its buffer back to the ring (proofs/tla/RNUringDriver.tla
 // ReturnBuffer, after the last segment's copy; ReturnAfterLastCopy). with UDP_GRO the buffer holds one coalesced receive, cut at the
 // stride its UDP_GRO cmsg carries (rocketnet_coalesce_split); each segment is
 // copied, or counted dropped, before the buffer goes back. a fill bank that
@@ -849,7 +849,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
         }
     }
 
-    // tla/RNUringDriver.tla ReturnBuffer: every segment is in a bank (or
+    // proofs/tla/RNUringDriver.tla ReturnBuffer: every segment is in a bank (or
     // counted dropped), so the buffer goes back to the ring
 
     io_uring_buf_ring_add( queue->buf_ring, queue->buffers[buffer_id], ROCKETNET_URING_RECV_BUFFER_BYTES,
@@ -857,7 +857,7 @@ static void rocketnet_server_uring_receive_cqe( struct rocketnet_server_uring_t 
     io_uring_buf_ring_advance( queue->buf_ring, 1 );
 }
 
-// tla/RNUringDriver.tla Reap(c), the "term" case: the multishot ended, so it is
+// proofs/tla/RNUringDriver.tla Reap(c), the "term" case: the multishot ended, so it is
 // disarmed. the one-shot re-arm is not guaranteed (it can find no submission
 // entry), so receive_packets re-arms a disarmed queue; each failed arm here
 // is counted too.
@@ -877,7 +877,7 @@ static void rocketnet_server_uring_multishot_ended( struct rocketnet_server_urin
     }
 }
 
-// tla/RNUringDriver.tla Reap(c): one CQE, by the kind in its tag
+// proofs/tla/RNUringDriver.tla Reap(c): one CQE, by the kind in its tag
 
 static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
 {
@@ -971,7 +971,7 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
 }
 
 // reap the CQEs available now, oldest first, without blocking and at most
-// budget of them (tla/RNUringDriver.tla Reap within a call's Budget); returns how
+// budget of them (proofs/tla/RNUringDriver.tla Reap within a call's Budget); returns how
 // many. CQEs past the budget stay in the completion queue for a later call.
 
 static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_t * uring, int budget )
@@ -1453,7 +1453,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
 // Stop retains every buffer the kernel may own. A check does one bounded
 // cancellation/reap pass; a stalled completion keeps the object pending.
-// tla/RNUringDriver.tla Destroy: marks the driver destroying, so no multishot
+// proofs/tla/RNUringDriver.tla Destroy: marks the driver destroying, so no multishot
 // is re-armed; stopped sends the cancels.
 void rocketnet_server_uring_stop( rocketnet_server_uring_t * uring )
 {
@@ -1461,7 +1461,7 @@ void rocketnet_server_uring_stop( rocketnet_server_uring_t * uring )
     uring->destroying = true;
 }
 
-// tla/RNUringDriver.tla Destroy and Reap: cancels every armed multishot, then
+// proofs/tla/RNUringDriver.tla Destroy and Reap: cancels every armed multishot, then
 // reaps one bounded pass of destroy's drain; true once Free may run
 
 bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
@@ -1500,7 +1500,7 @@ bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
     return true;
 }
 
-// tla/RNUringDriver.tla Free and Done: once stopped reports every send and
+// proofs/tla/RNUringDriver.tla Free and Done: once stopped reports every send and
 // cancel CQE in and no multishot armed, frees the buffer rings, the ring, the
 // sockets and the driver (Free), and nothing runs on it after (Done)
 
@@ -1596,7 +1596,7 @@ void rocketnet_server_uring_receive_drops( struct rocketnet_server_uring_t * uri
 // send
 // ---------------------------------------------------------------------------
 
-// tla/RNUringDriver.tla Reserve: one fetch_add takes the next slot; NULL when full
+// proofs/tla/RNUringDriver.tla Reserve: one fetch_add takes the next slot; NULL when full
 
 uint8_t * rocketnet_server_uring_start_packet( struct rocketnet_server_uring_t * uring, const struct rocketnet_address_t * to, uint64_t * packet_id )
 {
@@ -1637,7 +1637,7 @@ static int rocketnet_server_uring_slot( struct rocketnet_server_uring_t * uring,
     return slot;
 }
 
-// tla/RNUringDriver.tla Finish(s): the bytes are recorded
+// proofs/tla/RNUringDriver.tla Finish(s): the bytes are recorded
 
 void rocketnet_server_uring_finish_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
 {
@@ -1655,7 +1655,7 @@ void rocketnet_server_uring_finish_packet( struct rocketnet_server_uring_t * uri
     uring->send.info[slot].packet_bytes = packet_bytes;
 }
 
-// tla/RNUringDriver.tla Abort(s): the bytes are zeroed, so send_packets skips the slot
+// proofs/tla/RNUringDriver.tla Abort(s): the bytes are zeroed, so send_packets skips the slot
 
 void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * uring, uint64_t packet_id, uint8_t * packet_data )
 {
@@ -1673,7 +1673,7 @@ void rocketnet_server_uring_abort_packet( struct rocketnet_server_uring_t * urin
     uring->send.info[slot].packet_bytes = 0;
 }
 
-// tla/RNUringDriver.tla Submit, Reap, SendReturn and ResetIndex: one SENDMSG per
+// proofs/tla/RNUringDriver.tla Submit, Reap, SendReturn and ResetIndex: one SENDMSG per
 // send run of slots with bytes not submitted by an earlier call (a run is
 // one slot without UDP_SEGMENT), in chunks no larger than the free
 // submission queue space, rotated across the group's sockets; then
@@ -1862,7 +1862,7 @@ static void rocketnet_server_uring_rearm_unarmed( struct rocketnet_server_uring_
     }
 }
 
-// tla/RNUringDriver.tla RecvBegin, Reap and Swap: the call begins (RecvBegin),
+// proofs/tla/RNUringDriver.tla RecvBegin, Reap and Swap: the call begins (RecvBegin),
 // reaps at most ROCKETNET_URING_RECEIVE_BUDGET CQEs without blocking into the
 // fill bank (Reap within the Budget; CQEs past it stay in the completion
 // queue, counted REAP_DEFERRED), submits any re-arm, then Swap:
@@ -1907,7 +1907,7 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
     }
 }
 
-// tla/RNUringDriver.tla TransportReads: the transport reads the exposed bank, which
+// proofs/tla/RNUringDriver.tla TransportReads: the transport reads the exposed bank, which
 // stays put until the next receive_packets swaps
 
 struct rocketnet_server_socket_process_packets_t * rocketnet_server_uring_process_packets( struct rocketnet_server_uring_t * uring )

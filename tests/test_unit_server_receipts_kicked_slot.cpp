@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Server receipts for a slot its connection has ended (tla/RNReceipts.tla
+// Server receipts for a slot its connection has ended (proofs/tla/RNReceipts.tla
 // TakeReceipt, which stays takeable after Disconnect): the outcomes an
 // update recorded for a slot stay readable after that same update kicks
 // the slot, and after rocketnet_server_disconnect_client ends it between

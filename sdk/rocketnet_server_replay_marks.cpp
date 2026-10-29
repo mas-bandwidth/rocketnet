@@ -81,7 +81,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
     rocketnet_assert( sink->forget );
     rocketnet_assert( sink->mark );
 
-    // tla/RNXdpReplay.tla Walk: first the forgets -- every slot that was seen
+    // proofs/tla/RNXdpReplay.tla Walk: first the forgets -- every slot that was seen
     // connected and is no longer connected, or whose mapping changed address,
     // whether or not it held a mark: the transport's forget drops the reply
     // MAC of that address too, and a delete of a missing key is harmless.
@@ -149,7 +149,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( slot->seen && !rocketnet_address_equal( address, &slot->seen_address ) )
             continue;
 
-        // tla/RNXdpReplay.tla Marks, NewSessionNeverDroppedByOldMark: a slot
+        // proofs/tla/RNXdpReplay.tla Marks, NewSessionNeverDroppedByOldMark: a slot
         // first seen, or whose highest_opened fell below its mark (a new
         // session in the slot), is marked even at zero, so the commit before
         // its first keep-alive leaves overwrites any older session's entry
@@ -167,7 +167,7 @@ void rocketnet_server_replay_marks_walk( struct rocketnet_server_replay_marks_t 
         if ( !first_seen && !mark_owed && high_water == last_marked )
             continue;
 
-        // tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the
+        // proofs/tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the
         // sink cannot queue leaves the cache where it was and the slot owes
         // it, so the next walk takes it again (MarkOwedUntilApplied)
 

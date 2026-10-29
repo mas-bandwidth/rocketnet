@@ -331,7 +331,7 @@ REGISTER_UNIT_TEST( test_config_refuses_fewer_than_four_attempts );
 
 #if ROCKETNET_DEV
 // test_resend_timing_witness_replays: the schedule of
-// tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
+// proofs/tla/MCRNResendTimingBrokenBackoff.cfg against the code. The first version's
 // resend delay settings (resend_delay_initial 1000 ms, resend_delay_min 50 ms, resend_delay_max 2000 ms,
 // reliable_timeout 10 s), one RTT sample of 500 ms (which drives the first
 // version's resend_delay to exactly 1.5 s), and the record's own sends all lost. The
@@ -407,7 +407,7 @@ REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
 // The chunks of a block wait the resend delay alone (docs/CHANNELS.md 6.4 "Resend";
-// tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
+// proofs/tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
 // witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
 // every version of layer 3 has (the walk's output and resend_count), so they
 // build against the one-FIFO walk too and show where it differs.

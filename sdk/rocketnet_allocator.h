@@ -33,7 +33,7 @@
 // ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED, the owner's update reads
 // rn_connection_memory_decide and disconnects that connection (a server
 // kicks the slot, a client disconnects itself), and rn_region_reset gives
-// the slot's next client a fresh region (tla/RNConnectionMemory.tla).
+// the slot's next client a fresh region (proofs/tla/RNConnectionMemory.tla).
 //
 // A region is one connection's, under the one-writer-per-connection rule
 // (16.1): nothing here locks. The counters it refuses into are its owner's,
@@ -208,7 +208,7 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
-struct rn_unreliable_entry_t            // 8 bytes: one unreliable queue entry (tla/RNIndexRing.tla)
+struct rn_unreliable_entry_t            // 8 bytes: one unreliable queue entry (proofs/tla/RNIndexRing.tla)
 {
     uint32_t descriptor;                // the queued send descriptor
     uint32_t ticket;                    // its enqueue ticket when pushed; a tombstone once the descriptor's ticket differs
@@ -221,7 +221,7 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
     uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
 };
 
-// Queue scheduling (tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
+// Queue scheduling (proofs/tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
 // unique on the connection until the counter wraps, and the flat descriptor
 // array ordered by that ticket is the channel and unreliable FIFO storage: a
 // hole is a ticketless entry an interior cancel leaves in place, and compact
@@ -312,7 +312,7 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 //
 // A handle is the class in its top two bits and the chunk index below.
 
-// The pool is lazy (tla/RNLazyPool.tla): chunks [0, fresh) have been
+// The pool is lazy (proofs/tla/RNLazyPool.tla): chunks [0, fresh) have been
 // taken at least once since the init and are free or held; chunks
 // [fresh, num_chunks) were never taken, and neither their meta nor their
 // bytes are written or read until they are. A take scans the meta array's
@@ -344,7 +344,7 @@ uint32_t rn_send_store_chunks_needed( int bytes );
 void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
 
 // true when `bytes` can be taken now, with the first chunk of the run the
-// take would use: the one test the allocation makes (tla/RNSendStore.tla
+// take would use: the one test the allocation makes (proofs/tla/RNSendStore.tla
 // Alloc's guard); pure
 bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_first );
 
@@ -434,7 +434,7 @@ struct rn_region_t
 
     uint32_t descriptors_free_top;      // the descriptor free stack's depth: taken-then-freed handles on the stack, in the descriptors' free_slot array
     uint32_t descriptors_free;          // queue less the descriptors in use
-    uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (tla/RNLazyPool.tla)
+    uint32_t descriptors_fresh;         // descriptors [0, fresh) have been taken since the carve; the rest are untouched (proofs/tla/RNLazyPool.tla)
 
     uint32_t exhausted;                 // sticky until reset: an operation found no room (RNConnectionMemory Exhaust)
     int32_t exhausted_reason;           // ROCKETNET_DISCONNECT_REASON_*: NONE, or MESSAGE_MEMORY_EXHAUSTED
@@ -485,7 +485,7 @@ rn_span_cost_t rn_span_cost_read();
 
 // at connect: every table back to its empty state, every free list
 // emptied (the descriptor pool and the store's classes are lazy,
-// tla/RNLazyPool.tla) and the exhausted state cleared, in the region's own
+// proofs/tla/RNLazyPool.tla) and the exhausted state cleared, in the region's own
 // memory. Allocates nothing. The ring's, the store's and the pools' bytes
 // are not cleared: nothing reads them before writing them.
 void rn_region_carve( rn_region_t * region );
@@ -589,7 +589,7 @@ void rn_region_send_room_exhausted( const rn_region_t * region, int is_server, i
 
 // One send's descriptor and a contiguous span of the send spans, both or
 // neither, for a message of 1 to max_message_bytes bytes. The span is placed
-// as RNRing places a holdable record (tla/RNRing.tla, PlaceSingle): at the
+// as RNRing places a holdable record (proofs/tla/RNRing.tla, PlaceSingle): at the
 // tail, or at the start of the ring when the tail leaves too little room
 // before the end, and admitted only when it stays clear of the oldest live
 // span's start. Spans are freed in any order; the head moves to the oldest

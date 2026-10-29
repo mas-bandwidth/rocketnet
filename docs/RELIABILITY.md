@@ -2,7 +2,7 @@
 
 RocketNet exposes eight reliability choices through
 `enum rocketnet_reliability_t`. The public names and behavior are authoritative
-in `sdk/rocketnet.h`, [USAGE.md](../USAGE.md), and
+in `sdk/rocketnet.h`, [USAGE.md](USAGE.md), and
 [standard/MESSAGES.md](../standard/MESSAGES.md).
 
 | RocketNet reliability | Delivery contract |

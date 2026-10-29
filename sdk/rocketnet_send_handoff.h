@@ -10,7 +10,7 @@
 // Transport-owned staging generations. The caller holds its publication mutex
 // for every operation. Producers write only the acquired buffer, after joining
 // before publish; the worker retires only after copying its final packet.
-// tla/RNDriverSendStaging.tla Publish: retain producer storage until a replacement
+// proofs/tla/RNDriverSendStaging.tla Publish: retain producer storage until a replacement
 // is free; a later flush retries after the worker retires a generation.
 // reopen remains the defensive recovery for a preexisting fully queued state:
 // it hands back the newest generation, never the front.
@@ -28,7 +28,7 @@ template <int NumBuffers> struct rocketnet_send_handoff_t
         for ( int i = 0; i < NumBuffers; ++i )
             free[i] = true;
     }
-    // tla/SendHandoff.tla Acquire: reserves a free generation as the filling one.
+    // proofs/tla/SendHandoff.tla Acquire: reserves a free generation as the filling one.
     int acquire()
     {
         if ( filling >= 0 )
@@ -41,11 +41,11 @@ template <int NumBuffers> struct rocketnet_send_handoff_t
             }
         return -1;
     }
-    // tla/SendHandoff.tla Publish: appends the filling generation to the queue.
+    // proofs/tla/SendHandoff.tla Publish: appends the filling generation to the queue.
     bool publish()
     {
         rocketnet_assert( filling >= 0 && count < NumBuffers );
-        // tla/SendHandoff.tla Publish needs a filling generation: the model
+        // proofs/tla/SendHandoff.tla Publish needs a filling generation: the model
         // enables it only with one, so a publish without one is refused here
         // instead of queueing -1.
         if ( filling < 0 )
@@ -57,7 +57,7 @@ template <int NumBuffers> struct rocketnet_send_handoff_t
         filling = -1;
         return true;
     }
-    // tla/SendHandoff.tla Reopen: reopen takes the newest queued generation, never
+    // proofs/tla/SendHandoff.tla Reopen: reopen takes the newest queued generation, never
     // the front. The producer asks for storage while every generation is
     // queued (two flushes inside one worker latency). The newest queued
     // generation is not the front, so the worker has not started it: hand it
@@ -73,13 +73,13 @@ template <int NumBuffers> struct rocketnet_send_handoff_t
         --count;
         return filling = queued[( head + count ) % NumBuffers];
     }
-    // tla/SendHandoff.tla TakeFront: the worker reads the front generation.
+    // proofs/tla/SendHandoff.tla TakeFront: the worker reads the front generation.
     int front() const { return count ? queued[head] : -1; }
-    // tla/SendHandoff.tla Retire: frees the copied front and advances the queue.
+    // proofs/tla/SendHandoff.tla Retire: frees the copied front and advances the queue.
     void retire()
     {
         rocketnet_assert( count > 0 );
-        // tla/SendHandoff.tla Retire needs a queued generation: the model
+        // proofs/tla/SendHandoff.tla Retire needs a queued generation: the model
         // enables it only with one, so a retire on an empty queue is refused
         // here instead of freeing a stale generation.
         if ( count == 0 )

@@ -10,9 +10,9 @@
 #include "rocketnet_platform.h"
 #include "rocketnet_test_seams.h"
 
-// Layer 6's packet builder (docs/CHANNELS.md 9.3). tla/RNChannel.tla's
-// WritePacket is the packet, tla/RNSendBudget.tla's Send, Wait and Drop are
-// the budget's answers, tla/RNScheduler.tla's Write is the order items are
+// Layer 6's packet builder (docs/CHANNELS.md 9.3). proofs/tla/RNChannel.tla's
+// WritePacket is the packet, proofs/tla/RNSendBudget.tla's Send, Wait and Drop are
+// the budget's answers, proofs/tla/RNScheduler.tla's Write is the order items are
 // taken in; each function names the action it implements.
 
 static void rn_builder_count( rocketnet_counters_t * counters, int counter )
@@ -22,7 +22,7 @@ static void rn_builder_count( rocketnet_counters_t * counters, int counter )
 }
 
 // The per-level stride and seed: stride (1 << p) * (p + 1) + p, seed (1 << p) * p + p.
-// tla/RNScheduler.tla's Stride and Seed.
+// proofs/tla/RNScheduler.tla's Stride and Seed.
 
 static const uint64_t rn_builder_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 5, 14, 35 };
 static const uint64_t rn_builder_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 3, 10, 27 };
@@ -41,7 +41,7 @@ static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
     // RNScheduler!Init and Tick's reset: with nothing queued the clocks go back to
     // the seeds, so the interleave describes a backlog and nothing else.
 
-    // tla/RNScheduler.tla, Init and Tick's clock reset
+    // proofs/tla/RNScheduler.tla, Init and Tick's clock reset
 
     for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
         builder->level_clock[p] = rn_builder_seed[p];
@@ -51,7 +51,7 @@ static void rn_builder_reset_clocks( struct rn_packet_builder_t * builder )
 
 bool rn_packet_builder_init( struct rn_packet_builder_t * builder, struct rn_region_t * region, struct rn_window_ack_t * ack, struct rocketnet_send_budget_t * budget, int packets_per_update, int payload_capacity )
 {
-    // tla/RNScheduler.tla, Init and Seeds (round_robin = num_channels - 1 so the first turn is channel 0's)
+    // proofs/tla/RNScheduler.tla, Init and Seeds (round_robin = num_channels - 1 so the first turn is channel 0's)
 
     if ( !builder )
         return false;
@@ -223,7 +223,7 @@ static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_pac
     // Returns true when a writable item has a class outside the budget's four,
     // so it is never taken and the plan never drains.
 
-    // tla/RNScheduler.tla, IsHead and Boost
+    // proofs/tla/RNScheduler.tla, IsHead and Boost
 
     uint8_t alternate[ROCKETNET_PACKET_BUILDER_MAX_ITEMS];
     uint32_t count = 0;
@@ -309,7 +309,7 @@ static bool rn_builder_plan( struct rn_packet_builder_t * builder, struct rn_pac
 
 static uint64_t rn_builder_effective_clock( const struct rn_packet_builder_t * builder, int level )
 {
-    // tla/RNScheduler.tla, PickLevel's pull-forward: a clock behind clock_base counts as clock_base
+    // proofs/tla/RNScheduler.tla, PickLevel's pull-forward: a clock behind clock_base counts as clock_base
 
     const uint64_t clock = builder->level_clock[level];
     return clock > builder->clock_base ? clock : builder->clock_base;
@@ -338,7 +338,7 @@ static int rn_builder_next_in_class( struct rn_packet_builder_t * builder, struc
     // with something to send (at most ROCKETNET_MAX_CHANNELS, plus any channel
     // at or past it), never the plan.
 
-    // tla/RNScheduler.tla, PickLevel and PickIn
+    // proofs/tla/RNScheduler.tla, PickLevel and PickIn
 
     const uint32_t channels = builder->num_channels > 0 ? builder->num_channels : 1;
 
@@ -398,7 +398,7 @@ static void rn_builder_take_level( struct rn_packet_builder_t * builder, int lev
     // RNScheduler!Write's clock step: the level taken becomes the origin and its
     // clock advances by its stride.
 
-    // tla/RNScheduler.tla, Write's clock step (the level taken becomes the origin and advances by its stride)
+    // proofs/tla/RNScheduler.tla, Write's clock step (the level taken becomes the origin and advances by its stride)
 
     const uint64_t clock = rn_builder_effective_clock( builder, level );
     builder->clock_base = clock;
@@ -407,7 +407,7 @@ static void rn_builder_take_level( struct rn_packet_builder_t * builder, int lev
 
 int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_packet_item_t * items, int num_items, uint8_t ** payloads, int num_payloads )
 {
-    // tla/RNScheduler.tla, Write (class order, clock step, rr') and Tick's clock reset (every item taken)
+    // proofs/tla/RNScheduler.tla, Write (class order, clock step, rr') and Tick's clock reset (every item taken)
 
     if ( !builder || builder->packets_per_update == 0 )
         return 0;
@@ -489,7 +489,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
                     goto packet_done;
 
                 // an item that travels alone starts a packet and ends it
-                // (tla/RNChannel.tla: a chunk travels alone)
+                // (proofs/tla/RNChannel.tla: a chunk travels alone)
 
                 if ( items[i].alone && records > 0 )
                     goto packet_done;
@@ -544,7 +544,7 @@ int rn_packet_builder_write( struct rn_packet_builder_t * builder, struct rn_pac
 
         if ( decision != ROCKETNET_SEND_BUDGET_SEND )
         {
-            // tla/RNChannel.tla DropUnreliableForBudget: an unreliable packet that does not fit the budget is dropped and counted.
+            // proofs/tla/RNChannel.tla DropUnreliableForBudget: an unreliable packet that does not fit the budget is dropped and counted.
             // The packet is not written. Its items stay as they were: a
             // reliable one waits for the next update and is never dropped, an
             // unreliable one is dropped and counted. Either way nothing after

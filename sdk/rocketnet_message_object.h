@@ -20,8 +20,8 @@
 
 // layers 7 and 8 of the message layer (docs/CHANNELS.md 10 and 11), condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
-// objects over the transports. tla/RNSlots.tla is the spec of the object's
-// update, release and slot rules; tla/RNConnectionMemory.tla of exhaustion and
+// objects over the transports. proofs/tla/RNSlots.tla is the spec of the object's
+// update, release and slot rules; proofs/tla/RNConnectionMemory.tla of exhaustion and
 // reuse; each function in sdk/rocketnet_message_client.cpp and
 // sdk/rocketnet_message_server.cpp names the action it implements (R7). Each
 // connection's own message state is its endpoint (layer 7, CHANNELS.md 10.1,
@@ -248,7 +248,7 @@ struct rn_message_object_t
     // instead of always serving the low indices.
     int send_next_connection;
 
-    // the in-place unreliable send (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla):
+    // the in-place unreliable send (docs/OUTGOING-BUILD.md, proofs/tla/RNOutgoingBuild.tla):
     // the pending start is written in this transport frame
     int in_place;                               // pending start: 0 region, 1 whole frame, 2 appended record
     struct rocketnet_packet_context_t in_place_context;

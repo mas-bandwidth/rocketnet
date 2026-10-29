@@ -548,7 +548,7 @@ static void stats_accept( rocketnet_ack_endpoint_t * endpoint, struct rocketnet_
 // a previously unseen sequence that replay admits more than one received
 // ring behind the high-water mark shares its slot with a newer counted
 // record: the received statistics refuse it and keep the newer record
-// counted (tla/RNServerStats.tla Write, invariant RetainedIsNewest)
+// counted (proofs/tla/RNServerStats.tla Write, invariant RetainedIsNewest)
 
 static void test_ack_received_late_alias_keeps_counted_newer()
 {

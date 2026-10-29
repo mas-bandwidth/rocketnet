@@ -25,7 +25,7 @@ void rn_slots_init( struct rn_slots_t * slots, int max_clients )
     slots->max_clients = max_clients;
 }
 
-// tla/RNSlots.tla Observe
+// proofs/tla/RNSlots.tla Observe
 int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_id )
 {
     if ( !slots || slot < 0 || slot >= slots->max_clients )
@@ -42,7 +42,7 @@ int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_i
     return connection_id != 0 ? RN_SLOTS_RESET : RN_SLOTS_DROP;
 }
 
-// tla/RNSlots.tla Admit
+// proofs/tla/RNSlots.tla Admit
 int rn_slots_admit( const struct rn_slots_t * slots, int slot, uint64_t entry_connection_id )
 {
     if ( !slots || slot < 0 || slot >= slots->max_clients )

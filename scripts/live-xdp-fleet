@@ -299,7 +299,7 @@ print_host_common()
 echo
 echo "== server $server_label ($server_ssh) =="
 print_host_common "$server_ssh"
-echo "  XDP SAFETY 1: server_xdp/server_xdp.c returns XDP_PASS for every packet that is not the server's UDP port and address (server_xdp.c:126-128); it is never edited or reloaded by this run"
+echo "  XDP SAFETY 1: sdk/xdp/server_xdp.c returns XDP_PASS for every packet that is not the server's UDP port and address (server_xdp.c:126-128); it is never edited or reloaded by this run"
 echo "  preflight (read-only, before anything is attached): ssh $server_ssh $remote_path preflight $commit $server_nic $server_queues $server_address"
 echo "  root check: ssh $server_ssh sudo -n true   (a failure stops the run with not-done; no password is ever supplied)"
 echo "  XDP SAFETY 2: arm the dead-man timer before load: ssh $server_ssh sudo -n --preserve-env=ROCKETNET_SERVER_TRANSPORT,ROCKETNET_SERVER_PRINT_COUNTERS $remote_path arm $server_nic"

@@ -36,7 +36,7 @@ specific plans. Both role runs, and both planners, first pay one warm cycle
 (init, a one-client loopback server, one client, term) so first-use
 operating-system retention falls outside the measured cycle. They then take a
 census of threads and handles by identity at pre-init, post-init, pre-term and
-post-term (`load_census.h`) and fail on any thread or handle that survives
+post-term (`tests/load/load_census.h`) and fail on any thread or handle that survives
 post-init to pre-term or pre-init to post-term, and on a failed
 `rocketnet_term`. Windows process thread pool workers (start routine in ntdll)
 and their handles belong to the operating system: they are reported as
@@ -87,7 +87,7 @@ one authority on the start windows. A client shard waits for ARM, GO and RUN
 against one deadline from its own connection: the server's 10-second
 population window, both 10-second start windows, and one client
 `reliable_message_timeout_ms` for RUN itself
-(`tools/load_split_barrier.h`, modelled in `tla/SplitStart.tla`). Shards
+(`tools/load_split_barrier.h`, modelled in `proofs/tla/SplitStart.tla`). Shards
 finish setup at different times, and the first to connect waits for the
 last; its own clock never cuts short a start the server would complete.
 Either role ends the wait at once when a client it still waits for

@@ -57,7 +57,7 @@ it is complete and newer than the channel's sequenced watermark; a newer
 in-turn message supersedes an in-turn block still collecting fragments, and
 one no newer is discarded; a held future state never touches it. Only a
 message ahead of its turn is held, at most one per channel, newest wins
-(`tla/RNChannelTypes.tla`, `InTurnOneRule`).
+(`proofs/tla/RNChannelTypes.tla`, `InTurnOneRule`).
 
 The resend delay starts at `message_resend_delay_initial_ms`, follows the shared RTT
 estimator, and remains within `message_resend_delay_min_ms` and
@@ -96,39 +96,41 @@ is delivered or the connection reaches its timeout.
 
 ## Queue scheduling
 
-Reliable resend, the per-channel descriptor FIFO, ready-channel membership, and
-the unreliable endpoint FIFO name an entry by descriptor generation and the
-connection's schedule epoch (`tla/RNChannelQueues.tla`). A carve restarts that
-epoch at 1 and clears tickets, flags, and resend sequence keys, so a reused slot matches
-a slot carved once. Inside the connection, freeing a descriptor bumps its
-generation, and An ACK removes only the named generation. A resend slot is in at most one
-flat resend sequence; capacity is W, and an acked resend hole stays sequenced so a walk
-still counts it. The per-channel and unreliable FIFOs are the flat
-send-descriptor array ordered by enqueue ticket, ready membership is the flat
-channel array ordered by ready ticket, and each resend sequence is the flat
-resend array ordered by its entries' sequence keys: no queue element points
-at another. Channel enqueue tickets are distinct because
-reliable numbers are assigned later. CONFIG is spliced at the front of channel
-0 and that one channel's tickets are rebased so CONFIG holds the smallest
-ticket. Ready membership is one ticket per channel.
+The message layer uses bounded storage with explicit identity and lifetime.
+The current container choices are recorded in the
+[owned storage manifest](SEQUENCE-BUFFERS.md#owned-storage-manifest):
 
-The sized terms are 12W for the resend sequence entry, 16Q for the unreliable ring, 40C for channel send state, and
-64C (40 bytes of channel send state plus 24 bytes of channel receive state).
-A send descriptor is 72 bytes (`rn_send_descriptor_t`). `docs/LOAD.md` prints
-`64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR`.
+| Queue | Representation | Why |
+| --- | --- | --- |
+| Per-channel send FIFO | Descriptor indices linked inside the fixed descriptor array | Constant-time tail append, front insertion for CONFIG, and head removal |
+| Ready channels | Previous/next channel indices inside the fixed channel array | Constant-time insertion and removal of a named channel |
+| Reliable resends | Slot indices linked inside the fixed reliable window | Constant-time insertion after a slot and interior removal |
+| Unreliable sends | Bounded insertion-order ring with tickets and tombstones | Amortized constant-time push/pop; bounded compaction when full |
+| Live send spans | Descriptor indices linked inside the fixed descriptor array | Reclaim the oldest span while acknowledgements can free spans in any order |
+
+These index links are deliberate exceptions to the general preference for
+flat arrays and rings. They do not allocate nodes or point outside their owning
+array. Descriptor generations and connection epochs distinguish current entries
+from stale handles. The [approved-link policy](SEQUENCE-BUFFERS.md#approved-index-links)
+also states the limits of the textual audit; a clean audit is not a proof that
+all code is link-free or that every operation meets a wall-clock target.
+
+Use [memory planning](MEMORY.md) and [the storage model](LOAD.md) for capacity.
+Do not copy a historical byte formula into a new allocator without checking
+its config and build inputs.
 
 ## Verification
 
 The executable message invariants are split by concern:
 
-- `tla/RNChannel.tla` and `tla/RNChannelTypes.tla`: ordering, sequencing and
+- `proofs/tla/RNChannel.tla` and `proofs/tla/RNChannelTypes.tla`: ordering, sequencing and
   exactly-once delivery;
-- `tla/RNBlocks.tla` and `tla/FragmentsAndAcks.tla`: bounded fragmentation,
+- `proofs/tla/RNBlocks.tla` and `proofs/tla/FragmentsAndAcks.tla`: bounded fragmentation,
   reassembly and acknowledgement coupling;
-- `tla/RNReceipts.tla` and `tla/RNSentHistory.tla`: receipt and sent-history
+- `proofs/tla/RNReceipts.tla` and `proofs/tla/RNSentHistory.tla`: receipt and sent-history
   behavior;
 - unit and functional suites: public calls, all reliability values, reset,
   capacity and cross-endpoint behavior.
 
-The model configurations and `tla/RUNS.tsv` are the maintained execution
+The model configurations and `proofs/tla/RUNS.tsv` are the maintained execution
 inventory.

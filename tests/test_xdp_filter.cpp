@@ -1000,7 +1000,7 @@ static bool config_layout_matches_header( filter_t * filter )
 }
 
 // ---------------------------------------------------------------------------
-// replay: the read-only high-water map (tla/RNXdpReplay.tla, KernelFilter).
+// replay: the read-only high-water map (proofs/tla/RNXdpReplay.tla, KernelFilter).
 // The same rows as the host tier's test_xdp_transport_host_replay_drops_behind_the_window,
 // judged here by the verifier-accepted program, the kernel's hash map and
 // its helpers. load_filter cleared every pin path, so the map is private to

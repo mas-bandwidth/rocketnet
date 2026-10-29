@@ -4,7 +4,7 @@
 // allocator and context, its range, the refusal of a loopback create with no
 // hub, the refusal of a destroy while an endpoint is registered, and the
 // refusal of a hub whose header names another build. No socket, no thread, no
-// clock. The registration lifecycle is modelled in tla/LoopbackHub.tla.
+// clock. The registration lifecycle is modelled in proofs/tla/LoopbackHub.tla.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"

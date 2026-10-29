@@ -181,7 +181,7 @@ REGISTER_UNIT_TEST( test_dst_check_whole_message_over_65535_bytes );
 
 // Types 1 and 4 share one sequenced_write and one sequenced_watermark per
 // channel (rn_channels_send_sequenced in sdk/rocketnet_channel.cpp;
-// SequencedNewestWins in tla/RNChannelTypes.tla), so the end-of-run sequenced
+// SequencedNewestWins in proofs/tla/RNChannelTypes.tla), so the end-of-run sequenced
 // liveness check judges type 4 across both types on the channel. Session 17
 // is client 1; channel 8 is the mixed channel.
 //

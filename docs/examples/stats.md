@@ -80,7 +80,7 @@ history, so the caller's server-slot stats call copies values that already
 include the latest ack, and an idle slot costs nothing. Server update does no
 statistics pass and runs no statistics thread. A reset clears the slot's values
 with the rest of its connection state (sdk/rocketnet_ack.cpp,
-tla/RNServerStats.tla).
+proofs/tla/RNServerStats.tla).
 
 The final API changes the client's previous receive-direction, one-second loss
 estimate and smoothed arrival-gap jitter to these shared definitions. Existing

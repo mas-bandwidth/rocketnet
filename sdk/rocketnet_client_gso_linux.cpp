@@ -5,7 +5,7 @@
 
 // The gso transport's client side: sendmmsg with UDP_SEGMENT on send, recvmmsg
 // with UDP_GRO on receive. See sdk/rocketnet_client_gso.h for the shape, docs/CLIENT-IO.md
-// for the I/O thread it runs under (tla/RNClientIo.tla, tla/RNBufferHandoff.tla).
+// for the I/O thread it runs under (proofs/tla/RNClientIo.tla, proofs/tla/RNBufferHandoff.tla).
 
 #include "rocketnet_internal.h"
 
@@ -481,7 +481,7 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     return client;
 }
 
-// the family race's losing family, on the reading thread (tla/RNClientRace.tla
+// the family race's losing family, on the reading thread (proofs/tla/RNClientRace.tla
 // ReaderStep): the wake's handle, then the socket's; the memory stays for
 // destroy on the caller's thread
 

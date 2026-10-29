@@ -138,7 +138,7 @@ static void test_unreliable_receipt_loss_at_deadline_sweep()
     receipt_fixture_destroy( &f );
 }
 
-// tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: the receipt deadline is
+// proofs/tla/RNReceipts.tla SweepLoss, LossOnlyAfterDeadline: the receipt deadline is
 // the fixed maximum resend delay, not the adaptive resend delay. An ACK that
 // arrives after the resend delay but inside the deadline reports ACKED.
 
@@ -176,7 +176,7 @@ static void test_receipt_late_ack_inside_deadline_is_acked()
     receipt_fixture_destroy( &f );
 }
 
-// tla/RNReceipts.tla LossOnlyAfterDeadline: no LOSS before send time plus the
+// proofs/tla/RNReceipts.tla LossOnlyAfterDeadline: no LOSS before send time plus the
 // receipt deadline, LOSS on the first update at or after it, one outcome.
 
 static void test_receipt_loss_only_after_deadline()

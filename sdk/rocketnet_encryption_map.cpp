@@ -145,7 +145,7 @@ static void rocketnet_encryption_mapping_wipe_secrets( struct rocketnet_encrypti
     // the mapping's secrets, and only those: the session keys, the session
     // nonce they were derived with, and the connect token's user data, which
     // came out of the token's private part and can carry the game's secrets
-    // (tla/RNDestroyWipe.tla: Remove, and Destroy for a live mapping)
+    // (proofs/tla/RNDestroyWipe.tla: Remove, and Destroy for a live mapping)
 
     sodium_memzero( &mapping->keys, sizeof( mapping->keys ) );
     sodium_memzero( mapping->session_nonce, sizeof( mapping->session_nonce ) );
@@ -248,7 +248,7 @@ static int rocketnet_encryption_map_lookup( const struct rocketnet_encryption_ma
     return -1;
 }
 
-// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast FALSE): the hole
+// proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast FALSE): the hole
 // clears first, then the scan moves back each entry whose home is not
 // cyclically in (hole, scan]; EraseBound: it examines at most capacity cells
 static void rocketnet_encryption_map_erase_index( struct rocketnet_encryption_map_t * map, int hole )
@@ -301,13 +301,13 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
     return map->num_free == 0 || map->next_generation == 0;
 }
 
-// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )
 {
-    // tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
+    // proofs/tla/RNDestroyWipe.tla Add: inserts a live mapping, which then holds that mapping's secrets.
 
     rocketnet_assert( map );
     rocketnet_assert( address );
@@ -432,7 +432,7 @@ bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * 
 
 void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index )
 {
-    // tla/RNDestroyWipe.tla Remove: drops the current mapping from live and wipes its secrets.
+    // proofs/tla/RNDestroyWipe.tla Remove: drops the current mapping from live and wipes its secrets.
 
     rocketnet_assert( map );
     rocketnet_assert( index >= 0 && index < map->capacity );

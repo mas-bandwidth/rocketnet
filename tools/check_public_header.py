@@ -12,7 +12,7 @@
     development static library builds, links and runs tools/header_alone as C
     and as C++: a message server and client on 127.0.0.1 exchange one message
     each way;
-(e) no comment cites an internal design reference (a tla/ module, a docs/
+(e) no comment cites an internal design reference (a proofs/tla/ module, a docs/
     design note, a README- note, a pull request or issue number); user
     documents such as USAGE.md and BUILDING.md may be cited.
 
@@ -64,7 +64,7 @@ def line_of(text, offset):
 
 # (e) -----------------------------------------------------------------------
 
-INTERNAL_REFERENCE = re.compile(r"tla/|\.tla\b|docs/|README-|PR #|#[0-9]{3}")
+INTERNAL_REFERENCE = re.compile(r"proofs/tla/|\.tla\b|docs/|README-|PR #|#[0-9]{3}")
 
 
 def check_no_internal_references(text):

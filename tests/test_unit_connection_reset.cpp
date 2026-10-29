@@ -1645,7 +1645,7 @@ REGISTER_UNIT_TEST( test_connection_reset_client_disconnect_is_clean );
 // replay window, ack, reassembly slot or fragment id of the earlier attempt
 // is carried, the salt and the ephemeral keypair are new, the sequences are
 // at one, and what the client keeps across attempts (counters, filter, send
-// rate, reassembly set) is kept. tla/ClientConnection.tla
+// rate, reassembly set) is kept. proofs/tla/ClientConnection.tla
 // FreshAttemptFromFailure, MCClientConnectionRetryFromFailure.cfg.
 
 static void test_connection_reset_connect_from_each_failure_state()
@@ -1903,7 +1903,7 @@ static void reset_loopback_explicit_server_disconnect_reason_scenario()
 
     // A disconnect at the transport alone takes the real protocol reset path
     // with SERVER_DISCONNECTED, which the next update's Observe reads for the
-    // slot it finds dropped (tla/RNSlots.tla Observe).
+    // slot it finds dropped (proofs/tla/RNSlots.tla Observe).
 
     rocketnet_server_transport_disconnect_client( rocketnet_message_server_transport( f.server ), slot );
     f.now += 0.01;

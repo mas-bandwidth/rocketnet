@@ -1,158 +1,97 @@
 # RocketNet
 
-Low-level client/server UDP transport library.
-
-Main frame calls aim for less than 100 microseconds in Release builds. Measured
-server calls exceed this budget at larger client counts; 1000-client performance
-is not qualified. Large configurations can also spike in memory during shutdown;
-the 1000-client example soak can run out of memory on Linux. Create may take longer.
-Client disconnect and server stop request shutdown
-without waiting for I/O workers. Poll `rocketnet_client_disconnected` or
-`rocketnet_server_stopped`, then call synchronous destroy to join and free.
-Keep each object and its callback/allocator context alive until destroy returns.
+RocketNet is a client/server UDP transport and message library with a C API.
+It connects clients using backend-issued tokens, authenticates and encrypts
+traffic, and delivers opaque messages with a choice of reliability modes.
+Your application owns serialization, simulation, and the frame loop.
 
 ## Quick start
 
-This example creates both endpoints without opening a socket, connected
-through a loopback hub the caller owns, checks the create status, and tears
-them down cleanly:
+Start with [Getting started](docs/GETTING-STARTED.md). It takes you through
+building the library, sending a message over an in-memory connection, and
+running a client and server in separate processes over UDP.
 
-<!-- check_readme:example:begin -->
-```c
-#include "rocketnet.h"
+With the [platform prerequisites](docs/BUILDING.md#prerequisites) installed, from
+the repository root on Linux or macOS:
 
-int main( void )
-{
-    if ( rocketnet_init( NULL, NULL, NULL ) != ROCKETNET_STATUS_OK )
-        return 1;
-
-    /* The loopback transport's endpoints meet in a hub: one server, one client. */
-    struct rocketnet_loopback_hub_t * hub = rocketnet_loopback_hub_create( NULL, 1, NULL );
-    if ( !hub )
-        return 1;
-
-    struct rocketnet_server_config_t server_config;
-    struct rocketnet_client_config_t client_config;
-    if ( rocketnet_server_default_config( &server_config ) != ROCKETNET_STATUS_OK ||
-         rocketnet_client_default_config( &client_config ) != ROCKETNET_STATUS_OK )
-        return 1;
-    server_config.transport = "loopback";
-    server_config.loopback_hub = hub;
-    client_config.transport = "loopback";
-    client_config.loopback_hub = hub;
-
-    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &status );
-    if ( !server || status != ROCKETNET_STATUS_OK )
-        return 1;
-
-    struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &status );
-    if ( !client || status != ROCKETNET_STATUS_OK )
-        return 1;
-
-    /* Never connected or started: both completion queries are already true. */
-    if ( !rocketnet_client_disconnected( client ) || !rocketnet_server_stopped( server ) )
-        return 1;
-    rocketnet_client_destroy( client );
-    rocketnet_server_destroy( server );
-    if ( rocketnet_loopback_hub_destroy( hub ) != ROCKETNET_STATUS_OK )
-        return 1;
-    return rocketnet_term() == ROCKETNET_STATUS_OK ? 0 : 1;
-}
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=ON
+cmake --build build --target example_hello --parallel 4
+./bin/example_hello
 ```
-<!-- check_readme:example:end -->
+
+On Windows, use the [Windows build commands](docs/BUILDING.md#windows).
+The example prints `server received: hello from the client`, then `PASS`
+after reconnect and cleanup checks. It needs no socket or backend service.
+
+<a id="documentation"></a>
 
 ## Connect your game
 
-Start with [Getting started](docs/GETTING-STARTED.md) to build a dedicated
-server and a client that exchange messages. Then follow the references as you
-integrate:
+| Task | Start here |
+| --- | --- |
+| Build, install, or embed the SDK | [Building](docs/BUILDING.md) |
+| Update, receive, simulate, queue, and send each frame | [Integration guide](docs/USAGE.md#frame-loop) |
+| Understand tokens and key ownership | [Sessions](docs/SESSION.md), [Keys](docs/KEYS.md) |
+| Replace development tokens with a backend | [Production integration](docs/PRODUCTION.md) |
+| Choose and deploy a transport | [Transports](docs/TRANSPORTS.md) and its platform guides |
+| Size buffers, capacity, and host resources | [Memory and capacity](docs/MEMORY.md) |
+| Diagnose a refused call, missing message, or shutdown wait | [Troubleshooting](docs/ERRORS-AND-LOGGING.md) |
+| Find reference, engineering, and qualification documents | [Documentation index](docs/README.md) |
 
-1. [Build and link](BUILDING.md) the library into your game.
-2. [Drive the frame loop](USAGE.md): update, receive, simulate, queue messages,
-   and send packets. The same guide explains buffer ownership, backpressure,
-   and asynchronous shutdown.
-3. [Connect through your backend](examples/backend/README.md), using the Go or
-   C# token examples. [Sessions](docs/SESSION.md) explains connection identity
-   and reconnects; [Keys](KEYS.md) explains which component holds each key.
-4. [Choose a transport](TRANSPORTS.md) and follow its platform guide before
-   deployment. [Errors and logging](docs/ERRORS-AND-LOGGING.md) helps diagnose
-   refusals and runtime failures.
-
-Point your coding AI at [AGENTS.md](AGENTS.md) for the integration guide.
-The [public header](sdk/rocketnet.h) defines the C API; the
-[standards](STANDARD.md) define the wire and message protocols.
-
-Recorded 1,000-client results — not a general guarantee — are in [the LAN proof results](docs/runs/lan-1000-proof.md) ([Linux gso and io_uring](docs/runs/lan-1000-proof-linux.md), [AF_XDP](docs/runs/lan-1000-proof-xdp.md)): on 2026-10-25, 1,000 clients stayed connected for 600 s (300 s for AF_XDP) against Linux `gso` and `io_uring` servers (head `1ca477339e150220f90e96bbe7c61be5b175eb51`), a macOS `msgx` server (head `813b4adbe3dec2eee496577e3da2c0d7d66b8063`), and a Linux AF_XDP server in copy mode (head `534cce2e10159b52074ea9b10f7a2f0b074f7298`), with minimum per-client rates of 276–283 kbps. The [preview-2 qualification record](docs/QUALIFICATION-v1.0.0-preview-2.md) separately records 60-second non-timing correctness rungs at 1–1,000 clients. `max_clients = 1000` is the default ceiling under those recorded workloads, topologies, and conditions only. Above 1000 clients, users must research, stabilize, and qualify their own configuration.
+For a complete C program, see [the integration example](docs/INTEGRATION-EXAMPLE.md).
+For an AI coding agent, start with [AGENTS.md](docs/AGENTS.md). The
+[public header](sdk/rocketnet.h) defines the C API; [STANDARD.md](docs/STANDARD.md)
+links to the normative wire and message protocols.
 
 ## Building
 
-See [BUILDING.md](BUILDING.md). Binaries land in `bin/`, and on Windows in
-`bin\Release\`; run the test suite with `./bin/test`, or with
-`bin\Release\test.exe` on Windows (PowerShell or cmd.exe).
-
-A default build is for development. Before deployment, configure CMake with
+The default build is for development. Before deployment, build with
 `-DROCKETNET_DEV=OFF`, link the resulting production library, and supply your
-own backend keys and packet filter. Production builds refuse development
-credentials and the test packet filter. Portable clients and servers are
-available; production server auto selection prefers native transports. Follow [Before production](AGENTS.md#before-production).
+title's backend public key, protocol id, and packet filter. Production builds
+refuse development credentials and the test packet filter. Follow the
+[production integration guide](docs/PRODUCTION.md); changing a build flag
+alone does not provide a production backend.
 
 ## Preview status
 
-The [preview-4 notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md) describe changes
-from preview-3, the required migration steps and the known limits. Preview-4
-qualification is the CI run on the tag commit; see
-[docs/QUALIFICATION-v1.0.0-preview-4.md](docs/QUALIFICATION-v1.0.0-preview-4.md). The
-[preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) and
-[qualification record](docs/QUALIFICATION-v1.0.0-preview-3.md), and the
-[preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) and
-[qualification record](docs/QUALIFICATION-v1.0.0-preview-2.md), keep their
-original scope. Large-server memory use and some transport qualification still
-need attention; see the [roadmap](ROADMAP.md).
+RocketNet is a preview. Read the [preview-4 release notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md)
+for migration requirements and [qualification index](docs/TESTING.md) for the
+scope and gaps in the recorded evidence.
+
+- Main frame calls target less than 100 microseconds in Release builds.
+  Measured server calls exceed that budget at larger client counts;
+  1000-client performance is not qualified. Create may take longer.
+- Capacity and memory must be planned for the selected configuration.
+  Large configurations can spike in memory during shutdown; the 1000-client
+  example soak can run out of memory on Linux.
+- Disconnect and stop request shutdown asynchronously. Keep the object and
+  callback/allocator contexts alive, poll `rocketnet_client_disconnected` or
+  `rocketnet_server_stopped`, then destroy. See [lifecycle](docs/USAGE.md#connection-lifecycle).
+
+Recorded 1000-client runs are workload-specific evidence. They do not promise
+that any 1000-player game meets its latency or memory budget. The
+[capacity guide](docs/MEMORY.md#qualification-and-scale) explains their limits;
+the [roadmap](docs/ROADMAP.md) records remaining work.
 
 ## What the tests establish
 
-Portable host-shim unit tests exercise XDP filter and replay logic on the host.
-They do **not** exercise the Linux kernel XDP path, AF_XDP sockets, a NIC, or
-zero-copy operation. See [live XDP validation](docs/LIVE-XDP.md) for the real
-transport checks, and [TESTING.md](TESTING.md) for qualification evidence.
-A passing unit suite is not a throughput or player-count measurement.
+Unit tests, live transport tests, performance runs, and model checks answer
+different questions. In particular, a portable XDP host-shim test exercises
+filter or frame-codec logic without loading a kernel program, binding AF_XDP,
+using a NIC, or measuring throughput. Live XDP qualification must identify
+copy or zero-copy mode and the host/NIC configuration. Use the
+[testing guide](docs/TESTING.md) to find the evidence for the property you need.
 
-## Documentation
+## Repository layout
 
-- [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — start here: from a fresh checkout to a dedicated server and a client exchanging messages, and the order to read the rest.
-- [v1.0.0-preview-4 release notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md) — migration from preview-3 and known limits.
-- [v1.0.0-preview-3 release notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) — migration from preview-2, wire changes and known limits; the previous preview.
-- [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits; the previous preview.
-- [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the first preview.
-
-- [AGENTS.md](AGENTS.md) — guide for AI coding agents integrating RocketNet into a game.
-- [docs/SESSION.md](docs/SESSION.md) — sessions, connect tokens, session isolation, and reconnect rules.
-- [KEYS.md](KEYS.md) — the backend and server keys: generating, where each lives, development versus production, rotation.
-- [USAGE.md](USAGE.md) — how to drive it: the frame, message sending and
-  receiving, channels, configuration, and state transitions.
-- [docs/LINUX.md](docs/LINUX.md) — the Linux server guide: the transport ladder
-  (`xdp`, `gso`, `io_uring`, `portable`) and pinning, host requirements,
-  provisioning, socket errors and ICMP, limits, containers, and verifying a host.
-- [docs/MACOS.md](docs/MACOS.md) — building on macOS, the msgx and portable
-  transports, App Nap and QoS, socket errors, the firewall prompt, lldb and
-  verification on a Mac.
-- [docs/WINDOWS.md](docs/WINDOWS.md) — building with MSVC, the portable, iocp
-  and rio transports and pinning, host requirements, the firewall, connection
-  reset, limits and verifying a Windows host.
-- [docs/PLATFORMS.md](docs/PLATFORMS.md) — supported, nightly, and unsupported platform rows and the CI workflows that prove them.
-- [TRANSPORTS.md](TRANSPORTS.md) — choosing a transport (every transport by platform, its `auto` rank and how to pin it), then the native transport registry, capabilities, and extension interface.
-- [sdk/rocketnet.h](sdk/rocketnet.h) — the public C API: names, types, and
-  calling contracts. [STANDARD.md](STANDARD.md) identifies the normative wire
-  and message specifications.
-- [examples/README.md](examples/README.md) — the feature-focused examples series, starting with hello.
-- [standard/TRANSPORT.md](standard/TRANSPORT.md) — the transport standard: the wire format.
-- [standard/MESSAGES.md](standard/MESSAGES.md) — the message standard.
-- [standard/RATIONALE.md](standard/RATIONALE.md) — the rationale for both.
-- [ROADMAP.md](ROADMAP.md) — the releases and the work planned.
-- [TESTING.md](TESTING.md) — test scope and recorded release qualification.
-- [HARDENING.md](HARDENING.md) — red teaming, verification methods, load testing and evidence limits.
-- [CREDITS.md](CREDITS.md) — the people and models helping build rocketnet.
-- [CLAUDE.md](CLAUDE.md) — contributor guide.
-
-Private repository. License: [AGPL-3.0](LICENSE).
+| Directory | Contents |
+| --- | --- |
+| `sdk/` | Library sources, including the XDP program in `sdk/xdp/` |
+| `examples/` | Programs demonstrating the public API |
+| `tests/` | Unit and functional tests, client/server harnesses, load and soak tools |
+| `benchmarks/` | Transport and instruction-count measurement harnesses |
+| `proofs/` | Formal models and proofs, grouped under `tla/` and `cbmc/` |
+| `standard/` | Normative protocol documents, rationale, and checked constant pins |
+| `docs/` | Integration guides, engineering notes, decisions, and recorded evidence |
+| `tools/` | Developer utilities and repository checks |

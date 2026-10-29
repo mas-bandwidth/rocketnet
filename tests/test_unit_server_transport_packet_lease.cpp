@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Server transport packet lease reset contract (tla/RNDriverSendStaging.tla):
+// Server transport packet lease reset contract (proofs/tla/RNDriverSendStaging.tla):
 // finishing a packet after its lease was reset by send_packets, update or stop
 // is caller misuse: rocketnet_server_transport_finish_packet refuses with 0 in
 // every build, counts one api_misuse, logs the reason, and does not hit

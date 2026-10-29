@@ -94,7 +94,7 @@
     what is checked.
 */
 
-// tla/Link.tla: Send, Deliver, Drop, Duplicate, Reorder, ReverseWindow, Delay, Age;
+// proofs/tla/Link.tla: Send, Deliver, Drop, Duplicate, Reorder, ReverseWindow, Delay, Age;
 // the drop-every-Nth schedule is Link!Send with Pattern "everynth", the window
 // reversal is Link!ReverseWindow (rocketnet_network_simulator_flush_window)
 #define ROCKETNET_SIMULATOR_NO_SLOT (-1)
@@ -439,7 +439,7 @@ void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator
     // happens under the lock: the lock covers the record and the flag, and the
     // send, the loss roll and the delivery stay outside it.
     //
-    // tla/MCLinkReconfigure.tla models the change: the setting in force at the
+    // proofs/tla/MCLinkReconfigure.tla models the change: the setting in force at the
     // send holds the packet (MCSend), and the change itself removes nothing that
     // was already in flight (MCReconfigure, LiveSettingHolds).
 

@@ -297,7 +297,7 @@ void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t byt
         cls->data = memory + (uint64_t) c * third;
         cls->meta = (uint32_t *) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
 
-        // tla/RNLazyPool.tla Reset: nothing taken, no meta written
+        // proofs/tla/RNLazyPool.tla Reset: nothing taken, no meta written
 
         cls->free_head = 0;
         cls->free_count = cls->num_chunks;
@@ -321,7 +321,7 @@ static void rn_send_store_init_counts( rn_send_store_t * store, uint8_t * memory
         cls->data = memory + offset;
         cls->meta = (uint32_t *) ( cls->data + (uint64_t) cls->num_chunks * cls->chunk_bytes );
 
-        // tla/RNLazyPool.tla Reset: nothing taken, no meta written
+        // proofs/tla/RNLazyPool.tla Reset: nothing taken, no meta written
 
         cls->free_head = 0;
         cls->free_count = cls->num_chunks;
@@ -393,7 +393,7 @@ bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * ou
     return rn_store_find_run( &store->classes[rn_send_store_class_for( bytes )], rn_send_store_chunks_needed( bytes ), out_first );
 }
 
-    // tla/RNSendStore.tla Alloc
+    // proofs/tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
     // all or none (CHANNELS section 4): a block the class cannot hold whole in one contiguous run takes nothing
@@ -413,7 +413,7 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first 
     const uint32_t needed = rn_send_store_chunks_needed( bytes );
     rn_store_class_t * cls = &store->classes[c];
 
-    // tla/RNLazyPool.tla Take: the run's chunks are taken together; a
+    // proofs/tla/RNLazyPool.tla Take: the run's chunks are taken together; a
     // multi-chunk block's chunks share the take's generation tag, a single
     // chunk's tag bumps on every take of that chunk
 
@@ -456,7 +456,7 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first 
     return ( (uint32_t) c << 30 ) | first;
 }
 
-    // tla/RNSendStore.tla Free and FreeAgain: a block's head frees the whole
+    // proofs/tla/RNSendStore.tla Free and FreeAgain: a block's head frees the whole
     // block, and a second free of it is refused with nothing changed
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
 {
@@ -681,7 +681,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
     rn_send_store_init_counts( &region->store, region->store_memory, layout->store_chunks );
 }
 
-    // tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
+    // proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
 void rn_region_carve( rn_region_t * region )
 {
     rocketnet_assert( region && region->base );
@@ -722,7 +722,7 @@ void rn_region_carve( rn_region_t * region )
     memset( region->held_index, 0, sizeof( rn_held_entry_t ) * region->held_entries );
 
     // the send descriptor pool: a LIFO free stack in the descriptors'
-    // free_slot array, lazy (tla/RNLazyPool.tla Reset):
+    // free_slot array, lazy (proofs/tla/RNLazyPool.tla Reset):
     // nothing taken, no descriptor written. A take initializes its descriptor
     // whole, preserving its generation tag and any live stack slot it holds.
     // Clear schedule tickets on the descriptors this connection took before
@@ -749,7 +749,7 @@ void rn_region_carve( rn_region_t * region )
 
     rn_send_store_init_counts( &region->store, region->store_memory, store_chunks );
 
-    // the send spans: empty, nothing live (tla/RNSendSpans.tla, Reset)
+    // the send spans: empty, nothing live (proofs/tla/RNSendSpans.tla, Reset)
 
     region->span_head = 0;
     region->span_tail = 0;
@@ -791,13 +791,13 @@ void rn_region_carve( rn_region_t * region )
 
 void rn_region_reset( rn_region_t * region )
 {
-    // tla/RNConnectionMemory.tla, Connect after Reuse: the slot's region is
+    // proofs/tla/RNConnectionMemory.tla, Connect after Reuse: the slot's region is
     // carved again before its next client, so ReusedSlotStartsClean holds --
     // used room, the exhausted state and every record of the previous client
     // are gone. The server resets lazily: a slot whose connection ended is
     // freed in O(1) and its region is carved here only when the slot is bound
     // to its next connection (rn_message_connection_release,
-    // sdk/rocketnet_message_server.cpp; tla/RNSlots.tla ResetFree, Observe),
+    // sdk/rocketnet_message_server.cpp; proofs/tla/RNSlots.tla ResetFree, Observe),
     // never for the whole population in the update after a mass disconnect.
     // The region holds message bytes only; session keys are wiped by the
     // transport when the slot ends.
@@ -807,7 +807,7 @@ void rn_region_reset( rn_region_t * region )
 
 void rn_region_exhaust( rn_region_t * region )
 {
-    // tla/RNConnectionMemory.tla, Exhaust: sticky with its one reason
+    // proofs/tla/RNConnectionMemory.tla, Exhaust: sticky with its one reason
     // (ExhaustedReasonNamed), counted once per exhausted connection
 
     rocketnet_assert( region );
@@ -836,7 +836,7 @@ int rn_region_exhausted_reason( const rn_region_t * region )
 
 int rn_connection_memory_decide( const rn_region_t * region )
 {
-    // tla/RNConnectionMemory.tla, Kick's guard: an exhausted connection's only
+    // proofs/tla/RNConnectionMemory.tla, Kick's guard: an exhausted connection's only
     // step is the disconnect (ExhaustionOnlyLeadsToDisconnect), and the
     // decision is this region's alone (NoCrossSlotEffect)
 
@@ -845,7 +845,7 @@ int rn_connection_memory_decide( const rn_region_t * region )
     return region->exhausted ? ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED : ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
-// tla/RNLazyPool.tla Take: a descriptor off the free stack (the descriptors'
+// proofs/tla/RNLazyPool.tla Take: a descriptor off the free stack (the descriptors'
 // free_slot array, its top at descriptors_free_top - 1), or the first one
 // never taken since the carve. The caller checked descriptors_free. The take
 // initializes the descriptor whole, preserving its generation tag (bumped
@@ -890,7 +890,7 @@ static uint32_t rn_region_descriptor_take( rn_region_t * region )
     return d;
 }
 
-// tla/RNLazyPool.tla Release for a descriptor: push its handle on the free
+// proofs/tla/RNLazyPool.tla Release for a descriptor: push its handle on the free
 // stack (the free_slot array slot at the stack's depth).
 
 static void rn_region_descriptor_release( rn_region_t * region, uint32_t d )
@@ -907,7 +907,7 @@ static void rn_region_descriptor_release( rn_region_t * region, uint32_t d )
 
 int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first )
 {
-    // tla/RNConnectionMemory.tla, Use's guard: the decision rn_region_send_alloc acts on, read alone by the room query
+    // proofs/tla/RNConnectionMemory.tla, Use's guard: the decision rn_region_send_alloc acts on, read alone by the room query
 
     rocketnet_assert( region );
 
@@ -917,7 +917,7 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
         return RN_SEND_FIT_REFUSED;
 
     // sticky exhaustion: once exhausted, every send is refused until reset
-    // (tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
+    // (proofs/tla/RNConnectionMemory.tla, Exhaust sets the sticky flag; Use requires ~exhausted)
 
     if ( region->exhausted )
         return RN_SEND_FIT_EXHAUSTED;
@@ -938,7 +938,7 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * 
 // A refused allocation's effects, by its decision. Exhaustion is a counted
 // refusal, never growth (R1, 4), and nothing is taken from either pool when
 // one of them refuses. It is also the end of the connection: the region is
-// exhausted (tla/RNConnectionMemory.tla, Exhaust) and its owner kicks it on
+// exhausted (proofs/tla/RNConnectionMemory.tla, Exhaust) and its owner kicks it on
 // the next decision. A send refused while the region stays exhausted is
 // counted under MESSAGE_MEMORY_EXHAUSTED, the counter that names this refusal,
 // on every refused send, not just at the transition to exhausted.
@@ -967,7 +967,7 @@ static void rn_region_send_refuse( rn_region_t * region, int fit )
 
 uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 {
-    // tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
+    // proofs/tla/RNConnectionMemory.tla, Use (room found) or Exhaust (none)
     // ExhaustionOnlyLeadsToDisconnect: once exhausted, no further Use; the
     // steps left are Release (an ack returning room, which nothing takes
     // again), Kick (disconnect) and Reuse (reset).
@@ -999,7 +999,7 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 // ----------------------------------------------------------------
 
 // The spans are one ring of SR bytes with RNRing's placement rules for the
-// sender's side (tla/RNRing.tla, Pos and PlaceSingle): the next span goes at
+// sender's side (proofs/tla/RNRing.tla, Pos and PlaceSingle): the next span goes at
 // the tail; when it would cross the end of the ring it goes to the start,
 // leaving the skipped bytes as padding; it is admitted only when it ends at or
 // before the oldest live span's start (the floor). The live spans are a list,
@@ -1008,16 +1008,16 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 // oldest one goes, and the bytes of a younger freed span wait for it.
 //
 // This representation (offsets in 0..SR-1, head/tail, the first..last list)
-// is modelled in tla/RNSendSpans.tla, checked by tla/MCRNSendSpans.cfg with
+// is modelled in proofs/tla/RNSendSpans.tla, checked by proofs/tla/MCRNSendSpans.cfg with
 // the reversed witnesses MCRNSendSpansBrokenFloorAtNewest.cfg and
-// MCRNSendSpansBrokenNoPadding.cfg (tla/CASES.tsv group rnsendspans).
+// MCRNSendSpansBrokenNoPadding.cfg (proofs/tla/CASES.tsv group rnsendspans).
 
 static uint64_t rn_span_round16( uint64_t bytes )
 {
     return ( bytes + 15 ) & ~(uint64_t) 15;
 }
 
-// tla/RNSendSpans.tla, Place (PadOnWrap is the wrap branch below)
+// proofs/tla/RNSendSpans.tla, Place (PadOnWrap is the wrap branch below)
 
 static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t * out_start )
 {
@@ -1069,7 +1069,7 @@ static bool rn_span_place( const rn_region_t * region, uint64_t len16, uint32_t 
 // floor; they are never overwritten while any older span lives. Every link
 // and unlink is O(1).
 
-// tla/RNSendSpans.tla, Alloc (FloorAtOldest: head moves only for the first span)
+// proofs/tla/RNSendSpans.tla, Alloc (FloorAtOldest: head moves only for the first span)
 
 static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint64_t len16 )
 {
@@ -1095,7 +1095,7 @@ static void rn_span_link( rn_region_t * region, uint32_t d, uint32_t start, uint
     region->span_tail = end == region->span_bytes ? 0 : (uint32_t) end;
 }
 
-// tla/RNSendSpans.tla, Free (any order; head follows the oldest, EmptyIsZero)
+// proofs/tla/RNSendSpans.tla, Free (any order; head follows the oldest, EmptyIsZero)
 
 static void rn_span_unlink( rn_region_t * region, uint32_t d )
 {
@@ -1139,7 +1139,7 @@ static void rn_span_unlink( rn_region_t * region, uint32_t d )
 
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start )
 {
-    // tla/RNConnectionMemory.tla, UseSpan's guard: the decision rn_region_send_alloc_span acts on, read alone by the room query
+    // proofs/tla/RNConnectionMemory.tla, UseSpan's guard: the decision rn_region_send_alloc_span acts on, read alone by the room query
 
     rocketnet_assert( region );
 
@@ -1147,7 +1147,7 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
         return RN_SEND_FIT_REFUSED;
 
     // sticky exhaustion, the same guard as rn_region_send_fit_store: Use (and
-    // UseSpan) in tla/RNConnectionMemory.tla require ~exhausted, so an
+    // UseSpan) in proofs/tla/RNConnectionMemory.tla require ~exhausted, so an
     // exhausted region takes no span until rn_region_reset, even when acks
     // have returned room
 
@@ -1179,11 +1179,11 @@ uint32_t rn_region_send_take( rn_region_t * region, int bytes )
 
 uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
 {
-    // tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
-    // is tla/RNRing.tla's PlaceSingle on the sender's side, and its PlaceBlock
+    // proofs/tla/RNConnectionMemory.tla, UseSpan (room found) or Exhaust (none); the span
+    // is proofs/tla/RNRing.tla's PlaceSingle on the sender's side, and its PlaceBlock
     // for a send of more than one fragment: one contiguous span, both bounds
     // checked once, fragment i at start + i * F (rn_region_send_data).
-    // tla/RNSendSpans.tla Exhaust: no descriptor or no place for the span,
+    // proofs/tla/RNSendSpans.tla Exhaust: no descriptor or no place for the span,
     // so rn_region_send_refuse exhausts the region.
 
     rocketnet_assert( region );
@@ -1210,7 +1210,7 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes )
     return d;
 }
 
-// tla/RNRing.tla PlaceSingle
+// proofs/tla/RNRing.tla PlaceSingle
 
 const uint8_t * rn_region_send_data( const rn_region_t * region, uint32_t d, uint32_t fragment, uint32_t * out_bytes )
 {
@@ -1271,10 +1271,10 @@ uint8_t * rn_region_send_write_pointer( rn_region_t * region, uint32_t d )
 
 void rn_region_send_free( rn_region_t * region, uint32_t d )
 {
-    // tla/RNConnectionMemory.tla, Release: allowed on an exhausted region (an
+    // proofs/tla/RNConnectionMemory.tla, Release: allowed on an exhausted region (an
     // ack or an abort between Exhaust and Kick), it only returns room, and
     // both allocators refuse to take it again until rn_region_reset.
-    // tla/RNLazyPool.tla Release: the descriptor pushed on the free stack.
+    // proofs/tla/RNLazyPool.tla Release: the descriptor pushed on the free stack.
 
     rocketnet_assert( region );
     rocketnet_assert( d < region->descriptors_fresh );
@@ -1297,7 +1297,7 @@ void rn_region_send_free( rn_region_t * region, uint32_t d )
 
 void rn_region_send_free_fragment( rn_region_t * region, uint32_t d, uint32_t chain_index )
 {
-    // tla/RNConnectionMemory.tla, Release (one fragment's room)
+    // proofs/tla/RNConnectionMemory.tla, Release (one fragment's room)
 
     rocketnet_assert( region );
     rocketnet_assert( d < region->descriptors_fresh );
@@ -1581,7 +1581,7 @@ bool rn_region_contains( const rn_region_t * region, const void * p, uint64_t by
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNRing.tla SpanInsideRing
+// proofs/tla/RNRing.tla SpanInsideRing
 
 bool rn_region_ring_span_valid( const rn_region_t * region, uint64_t offset, uint64_t bytes )
 {
@@ -1661,7 +1661,7 @@ static rn_arena_t * rn_arena_build( uint8_t * memory, void * context, int owns_m
     return arena;
 }
 
-    // tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
+    // proofs/tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create( void * context, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
     rocketnet_message_config_t defaults;
@@ -1711,7 +1711,7 @@ uint64_t rn_arena_required_bytes( const rocketnet_message_config_t * config, int
     return bytes;
 }
 
-    // tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
+    // proofs/tla/RNConnectionMemory.tla, Init: every slot is Free with a carved region
 rn_arena_t * rn_arena_create_in_block( void * block, uint64_t block_bytes, const rocketnet_message_config_t * config, int num_regions, rocketnet_counters_t * counters )
 {
     rocketnet_message_config_t defaults;

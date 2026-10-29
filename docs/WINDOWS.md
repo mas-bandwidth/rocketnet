@@ -5,7 +5,7 @@ build with MSVC, which transport a server and a client get and how to pin one,
 what `iocp` and `rio` need from the host, the firewall, what a dead client's
 ICMP answers do, the limits for 1000 clients, and the commands that verify a
 host, in order. The transport table for every platform is at the top of
-[TRANSPORTS.md](../TRANSPORTS.md); the engineering detail for each Windows
+[TRANSPORTS.md](TRANSPORTS.md); the engineering detail for each Windows
 transport is further down that page, and this guide links to it rather than
 repeating it. The support tiers are in [PLATFORMS.md](PLATFORMS.md); this page
 does not widen them.
@@ -26,7 +26,7 @@ unsupported.
 Install once: Visual Studio 2026 (Visual Studio 18) with the **Desktop
 development with C++** workload, CMake 4.2 or later, and Python 3 from
 python.org for the `py` launcher. libsodium is vendored; nothing else is
-needed. [BUILDING.md](../BUILDING.md) says why each is required. From the
+needed. [BUILDING.md](BUILDING.md) says why each is required. From the
 checkout, in cmd.exe or PowerShell, one command per line:
 
 ```bat

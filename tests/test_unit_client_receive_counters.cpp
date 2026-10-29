@@ -951,7 +951,7 @@ REGISTER_UNIT_TEST( test_client_fragment_receive_counters_move_exactly );
 
 // ---------------------------------------------------------------------------
 // a fragment packet becomes ack-eligible only once reassembly accepts it
-// (standard/TRANSPORT.md t15.3; tla/FragmentsAndAcks.tla RecvData,
+// (standard/TRANSPORT.md t15.3; proofs/tla/FragmentsAndAcks.tla RecvData,
 // NamedOnlyIfAccepted): a fragment reassembly refuses is never named in a
 // later ack block and adds no ack debt, at the client and at the server
 // ---------------------------------------------------------------------------

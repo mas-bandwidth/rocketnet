@@ -93,7 +93,7 @@ void rocketnet_server_socket_destroy( struct rocketnet_server_socket_t * server_
 // keeping every forget the kernel refused (anything but a missing key) to be
 // tried first in the next commit, unless a mark of the same key applied in
 // that commit superseded it: the entry is then the newer session's, and the
-// stale forget is dropped (tla/RNXdpReplay.tla, RetryNeverDeletesNewerMark).
+// stale forget is dropped (proofs/tla/RNXdpReplay.tla, RetryNeverDeletesNewerMark).
 // A failed syscall adds to the commit failure
 // count and logs one debug line naming the call, never a key. A mark the
 // kernel refuses is kept too and applied again in the next commit, unless a

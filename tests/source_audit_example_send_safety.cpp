@@ -107,7 +107,7 @@ static const manifest_row_t manifest[] = {
     { "examples/backend/README.md", "md" },
     { "examples/backend/go/main.go", "inventory" },
     { "examples/backend/csharp/Backend/Program.cs", "inventory" },
-    { "AGENTS.md", "md" },
+    { "docs/AGENTS.md", "md" },
     { "README.md", "md" },
     { "docs/GETTING-STARTED.md", "md" },
     { "docs/CHANNELS.md", "md" },

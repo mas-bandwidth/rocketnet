@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check every tla/COVERAGE.tsv row against its model and code."""
+"""Check every proofs/tla/COVERAGE.tsv row against its model and code."""
 
 import argparse
 import re
@@ -8,8 +8,8 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-COVERAGE = ROOT / "tla" / "COVERAGE.tsv"
-TLA_DIR = ROOT / "tla"
+COVERAGE = ROOT / "proofs" / "tla" / "COVERAGE.tsv"
+TLA_DIR = ROOT / "proofs" / "tla"
 
 FUNC_RE = re.compile(r"(?:rn_|rocketnet_)[A-Za-z0-9_]+")
 FUNC_WITH_PATH_RE = re.compile(
@@ -19,7 +19,7 @@ _PATH_TOKEN_RE = re.compile(
 DST_CHECK_RE = re.compile(r'rocketnet_dst_check_fail\(\s*\w+,\s*"([a-z0-9_]+)"')
 
 CITATION_RE = re.compile(
-    r"((?:sdk|tests|tla)/[A-Za-z0-9_./-]+\.[a-z]+):"
+    r"((?:sdk|tests|(?:proofs/)?tla)/[A-Za-z0-9_./-]+\.[a-z]+):"
     r"(?:\s*(?:\*\))?\s*\n\s*(?:\(\*|//|\*)?\s*)?(\d+)(?:-(\d+))?")
 CITATION_SCAN_FILES = (
     "sdk/rocketnet_driver.h",
@@ -29,14 +29,14 @@ CITATION_SCAN_FILES = (
     "sdk/rocketnet_server_uring_linux.cpp",
     "sdk/rocketnet_server_uring.h",
     "sdk/rocketnet_replay.h",
-    "tla/ReplayWindow.tla",
-    "tla/MCReplayWindow.tla",
-    "tla/ServerSession.tla",
-    "tla/RNSlots.tla",
-    "tla/RNClientReceiveQuit.tla",
-    "tla/README-ReplayWindow.md",
-    "tla/README-ClientConnection.md",
-    "tla/README-FragmentsAndAcks.md",
+    "proofs/tla/ReplayWindow.tla",
+    "proofs/tla/MCReplayWindow.tla",
+    "proofs/tla/ServerSession.tla",
+    "proofs/tla/RNSlots.tla",
+    "proofs/tla/RNClientReceiveQuit.tla",
+    "proofs/tla/README-ReplayWindow.md",
+    "proofs/tla/README-ClientConnection.md",
+    "proofs/tla/README-FragmentsAndAcks.md",
 )
 _FUNC_HEADER_RE = re.compile(
     r"^\s*(?:static\s+|extern\s+\"C\"\s+|inline\s+)*[A-Za-z_][\w\s\*&<>:,]*?"
@@ -136,8 +136,8 @@ def check_citations():
     names (the nearest rn_/rocketnet_ name before the citation)."""
     failures = []
     scan_files = list(CITATION_SCAN_FILES)
-    for pattern in ("tla/MCReplayWindow*.tla", "tla/MCServerSession*.tla",
-                    "tla/MCRNSlots*.tla", "tla/MCRNClientReceiveQuit*.tla"):
+    for pattern in ("proofs/tla/MCReplayWindow*.tla", "proofs/tla/MCServerSession*.tla",
+                    "proofs/tla/MCRNSlots*.tla", "proofs/tla/MCRNClientReceiveQuit*.tla"):
         for path in sorted(ROOT.glob(pattern)):
             rel = path.relative_to(ROOT).as_posix()
             if rel not in scan_files:
@@ -149,6 +149,8 @@ def check_citations():
         text = path.read_text(errors="replace")
         for m in CITATION_RE.finditer(text):
             target_rel, line_no = m.group(1), int(m.group(2))
+            if target_rel.startswith("tla/"):
+                target_rel = "proofs/" + target_rel
             target = ROOT / target_rel
             if not target.is_file():
                 failures.append(f"{rel}: citation {target_rel}:{line_no} "
@@ -231,7 +233,7 @@ def check_row(row, dst_names):
         if module != "-":
             module_file = TLA_DIR / f"{module}.tla"
             if not module_file.exists():
-                failures.append(f"{module}: tla/{module}.tla does not exist")
+                failures.append(f"{module}: proofs/tla/{module}.tla does not exist")
         if "," in code:
             failures.append(f"{module}: {machine} code column must hold one path, one per row")
             return failures
@@ -248,7 +250,7 @@ def check_row(row, dst_names):
 
     module_file = TLA_DIR / f"{module}.tla"
     if not module_file.exists():
-        failures.append(f"{module}: tla/{module}.tla does not exist")
+        failures.append(f"{module}: proofs/tla/{module}.tla does not exist")
 
     if "," in code:
         failures.append(f"{module}: {machine} code column must hold one path, one per row")
@@ -260,7 +262,7 @@ def check_row(row, dst_names):
             failures.append(f"{module}: {code} does not exist")
             return failures
         text = code_file.read_text(errors="replace")
-        cite = f"tla/{module}.tla"
+        cite = f"proofs/tla/{module}.tla"
         if cite not in text:
             failures.append(f"{module}: {code} does not cite {cite}")
         for fn, fn_path in note_function_citations(note):
@@ -273,7 +275,7 @@ def check_row(row, dst_names):
 def owed_but_cited(rows):
     """An owed row says no code implements its model; a model that a file
     under sdk/ cites is implemented, so its owed row is stale. The citation
-    counts with or without the tla/ prefix: sdk/rocketnet_client_receive_
+    counts with or without the proofs/tla/ prefix: sdk/rocketnet_client_receive_
     handshake.h writes RNClientIo.tla bare, seven times."""
     failures = []
     sdk = ROOT / "sdk"
@@ -286,7 +288,7 @@ def owed_but_cited(rows):
         if row.get("status", "") != "owed":
             continue
         module = row["module"]
-        forms = (f"tla/{module}.tla", f"{module}.tla")
+        forms = (f"proofs/tla/{module}.tla", f"{module}.tla")
         for name, text in texts.items():
             cite = next((form for form in forms if form in text), None)
             if cite:
@@ -480,7 +482,7 @@ def state_changing(name, defs, memo, visiting):
 def module_actions(module):
     path = TLA_DIR / f"{module}.tla"
     if not path.exists():
-        return set(), [f"{module}: tla/{module}.tla does not exist"]
+        return set(), [f"{module}: proofs/tla/{module}.tla does not exist"]
     text = strip_comments(path.read_text(errors="replace"))
     defs = find_definitions(text)
     if "Next" not in defs:
@@ -526,9 +528,9 @@ def top_conjuncts(body):
 
 
 def module_cfgs(module):
-    """The model-checking configs of a module: tla/MC<Module>.cfg and
-    tla/MC<Module><Suffix>.cfg, skipping a suffix that names a longer
-    module (MCRNSlotsFoo.cfg belongs to RNSlotsFoo when tla/RNSlotsFoo.tla
+    """The model-checking configs of a module: proofs/tla/MC<Module>.cfg and
+    proofs/tla/MC<Module><Suffix>.cfg, skipping a suffix that names a longer
+    module (MCRNSlotsFoo.cfg belongs to RNSlotsFoo when proofs/tla/RNSlotsFoo.tla
     exists)."""
     cfgs = {}
     modules = {p.stem for p in TLA_DIR.glob("*.tla")}
@@ -627,9 +629,9 @@ def comment_blocks(text):
 
 
 def is_action_cited(code_text, module, action):
-    # The module name starts the word: line start, whitespace or tla/
-    # before it, so tla/MCActMod.tla never cites ActMod.
-    mod_pat = re.compile(r"(?:^|(?<=\s)|(?<=tla/))" + re.escape(module)
+    # The module name starts the word: line start, whitespace or proofs/tla/
+    # before it, so proofs/tla/MCActMod.tla never cites ActMod.
+    mod_pat = re.compile(r"(?:^|(?<=\s)|(?<=proofs/tla/))" + re.escape(module)
                          + r"\.tla", re.MULTILINE)
     act_pat = re.compile(r"(?<![A-Za-z0-9_])" + re.escape(action)
                          + r"(?![A-Za-z0-9_])")
@@ -715,7 +717,7 @@ def main():
 
     for machine, count in Counter(row["machine"] for row in rows).items():
         if count > 1:
-            failures.append(f"{machine}: row appears twice in tla/COVERAGE.tsv")
+            failures.append(f"{machine}: row appears twice in proofs/tla/COVERAGE.tsv")
 
     have = {row["module"] for row in rows}
     required = set()

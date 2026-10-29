@@ -44,7 +44,7 @@ in the report; the reference column matches that run.
 
 * **the rocketnet replay case** drives whole handshakes, because the server
   binds a token to its source when a connection response opens, never at
-  the request (`standard/TRANSPORT.md`; `tla/RNSecurityTables.tla`,
+  the request (`standard/TRANSPORT.md`; `proofs/tla/RNSecurityTables.tla`,
   `BoundOnlyToOpener`). netcode 1.02 binds at the request. A first client
   holding the token connects (request, cookie, challenge, response) through
   `rocketnet_server_protocol_process_packet`, and the server admits it. A

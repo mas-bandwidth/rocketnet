@@ -294,9 +294,9 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
     return position >= 0 && found ? rocketnet_client_slot_index_entries( slots )[position] : -1;
 }
 
-// tla/RNDestroyWipe.tla Add: copies the mapping's user data into the slot as the slot becomes live.
+// proofs/tla/RNDestroyWipe.tla Add: copies the mapping's user data into the slot as the slot becomes live.
 
-// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
@@ -452,7 +452,7 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
 // leaves no tombstones for repeated churn to accumulate. num_buckets need not
 // be a power of two, so wrap is explicit rather than a bit mask.
 
-// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// proofs/tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
 // moves back each entry whose home is not cyclically in (hole, scan], and the
 // final hole clears last; the scan ends only on a cell already empty, so the
 // index is sized at twice its capacity
@@ -577,7 +577,7 @@ uint64_t rocketnet_client_slots_test_total_probes( const struct rocketnet_client
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
+// proofs/tla/RNDestroyWipe.tla Remove: clears the slot's user data and returns the slot to the free list.
 
 void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, int client_index )
 {
@@ -585,7 +585,7 @@ void rocketnet_client_slots_release( struct rocketnet_client_slots_t * slots, in
     rocketnet_assert( client_index >= 0 && client_index < slots->max_clients );
     rocketnet_assert( slots->connected[client_index] );
 
-    // tla/RNDestroyWipe.tla Remove requires m \in live: a free slot is refused before anything is touched
+    // proofs/tla/RNDestroyWipe.tla Remove requires m \in live: a free slot is refused before anything is touched
 
     if ( client_index < 0 || client_index >= slots->max_clients || !slots->connected[client_index] )
     {

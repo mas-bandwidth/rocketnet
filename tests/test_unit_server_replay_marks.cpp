@@ -4,7 +4,7 @@
 */
 
 // The server replay walk (sdk/rocketnet_server_replay_marks.h) against
-// tla/RNXdpReplay.tla Walk: the forgets first, then the marks, once per
+// proofs/tla/RNXdpReplay.tla Walk: the forgets first, then the marks, once per
 // update. The client slots and encryption map are built directly, time is an
 // argument, and there is no transport, transport or clock.
 
@@ -162,7 +162,7 @@ static void server_replay_marks_check_forget( const struct server_replay_marks_c
 // Walk pass 2: each connected slot is marked once for its current
 // highest_opened, a slot first seen at zero included (that zero mark
 // overwrites an older session's kernel entry for the address,
-// tla/RNXdpReplay.tla NewSessionNeverDroppedByOldMark), a second walk with
+// proofs/tla/RNXdpReplay.tla NewSessionNeverDroppedByOldMark), a second walk with
 // nothing changed marks none, and an advance marks exactly that slot.
 
 static void test_server_replay_marks_mark_connected_slots_once()
@@ -430,7 +430,7 @@ static void test_server_replay_marks_forget_a_released_slot_without_a_mark()
     server_replay_marks_fixture_destroy( &fixture );
 }
 
-// tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the sink
+// proofs/tla/RNXdpReplay.tla Walk, AdvanceOnQueueRefusal = FALSE: a mark the sink
 // cannot queue leaves the slot's cache where it was and the slot owes it, so
 // the next walk asks again with the same value: a reconnect's zero mark, a
 // first-seen zero mark and an advanced mark alike. Once queued, nothing more.

@@ -8,10 +8,10 @@
 // (11.3), so the core lives here and sdk/rocketnet_message_client.cpp adds the
 // client's link and C API.
 //
-// The spec is tla/RNSlots.tla (the update, slot observation, admission, kick,
-// reset and release) with tla/RNConnectionMemory.tla (exhaustion and reuse);
+// The spec is proofs/tla/RNSlots.tla (the update, slot observation, admission, kick,
+// reset and release) with proofs/tla/RNConnectionMemory.tla (exhaustion and reuse);
 // each function names the action it implements (R7). The connection's own
-// message state is layers 3 to 6 (sdk/rocketnet_channel.h, tla/RNChannel.tla).
+// message state is layers 3 to 6 (sdk/rocketnet_channel.h, proofs/tla/RNChannel.tla).
 //
 // Memory (R2): rn_message_object_create makes one block -- or takes the
 // caller's -- holding the object, its connections, their receive bookkeeping
@@ -23,7 +23,7 @@
 // reserves room at the committed end of the connection's open transport
 // frame and hands out a pointer there, finish writes the record header in
 // front and commits it, and later records append behind it until the frame
-// is full or a flush seals it (docs/OUTGOING-BUILD.md, tla/RNOutgoingBuild.tla
+// is full or a flush seals it (docs/OUTGOING-BUILD.md, proofs/tla/RNOutgoingBuild.tla
 // StartInPlace, FinishInPlace, SealBuild). Every other message is
 // written once by the application, in place, into its region record (start,
 // finish). THE COPIES (a): each packet write copies
@@ -393,7 +393,7 @@ static void rn_message_flush_unreliable( rn_message_object_t * object, int index
     else if ( records > 0 )
     {
         if ( admitted )
-            rocketnet_send_budget_settle( &connection->budget, admitted, 0 );    // tla/RNSendBudget.tla SendFailed: refund the whole charge
+            rocketnet_send_budget_settle( &connection->budget, admitted, 0 );    // proofs/tla/RNSendBudget.tla SendFailed: refund the whole charge
 
         for ( int i = 0; i < records; ++i )
             rn_message_count( object, failed_counter );
@@ -509,8 +509,8 @@ static void rn_message_connection_cancel_at_reset( rn_message_object_t * object,
 
 static void rn_message_connection_release( rn_message_object_t * object, int index )
 {
-    // RNSlots ResetFree, the lazy reset (tla/RNSlots.tla ResetFree, Observe;
-    // tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
+    // RNSlots ResetFree, the lazy reset (proofs/tla/RNSlots.tla ResetFree, Observe;
+    // proofs/tla/RNConnectionMemory.tla Reuse, whose one step this splits by a stutter):
     // a server slot whose connection ended is freed here in O(1) -- only its
     // binding cleared, its open unreliable build already discarded by
     // rn_message_connection_cancel_at_reset -- and its region is carved only when
@@ -538,7 +538,7 @@ static void rn_message_connection_release( rn_message_object_t * object, int ind
 
 void rn_message_object_kick( struct rn_message_object_t * object, int index, int reason )
 {
-    // tla/RNSlots.tla Kick: ends the connection, cancels its pending start, and records the reason.
+    // proofs/tla/RNSlots.tla Kick: ends the connection, cancels its pending start, and records the reason.
     // Nothing more is sent or delivered from its region. Views the application
     // already holds stay valid until the next update.
 
@@ -604,8 +604,8 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
     int result = ROCKETNET_UPDATE_OK;
 
-    // tla/RNSlots.tla BeginUpdate: enters the transport phase once every view from the last update is released.
-    // tla/RNSlots.tla RejectUnreleasedUpdate: a view still held sets the not-released result this update returns.
+    // proofs/tla/RNSlots.tla BeginUpdate: enters the transport phase once every view from the last update is released.
+    // proofs/tla/RNSlots.tla RejectUnreleasedUpdate: a view still held sets the not-released result this update returns.
     // A held view is the application's error: it asserts in a debug build and returns the named
     // error. The views die with the transport's batch either way,
     // so they are taken back here and memory never grows from a held view.
@@ -685,7 +685,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         connection->hot->receive_cursor = 0;
         connection->hot->held = 0;
 
-        // tla/RNSlots.tla ResetFree: a kicked connection's region is cleared before the transport update can give the slot to another client
+        // proofs/tla/RNSlots.tla ResetFree: a kicked connection's region is cleared before the transport update can give the slot to another client
 
         if ( object->hot_connections[i].state == RN_MESSAGE_CONNECTION_KICKED )
         {
@@ -726,7 +726,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_slots_observe( &object->slots, 0, 0 );
     }
 
-    // tla/RNSlots.tla Observe: reads each slot's connection after the transport update and resets a slot whose binding changed
+    // proofs/tla/RNSlots.tla Observe: reads each slot's connection after the transport update and resets a slot whose binding changed
 
     if ( object->is_server )
     {
@@ -767,7 +767,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
-    // tla/RNSlots.tla TransportAck: feeds the transport's acked packet ids to the slot each one was opened on
+    // proofs/tla/RNSlots.tla TransportAck: feeds the transport's acked packet ids to the slot each one was opened on
     {
         const int * client_index = NULL;
         const uint64_t * packet_ids = NULL;
@@ -789,7 +789,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         rn_endpoint_tick( connection, time );          // RNEndpoint Tick: RNReceipts SweepLoss, the reliable timeout
     }
 
-    // tla/RNSlots.tla TransportOpen: feeds each opened payload to the slot it arrived on (RNChannel OpenPacket, DeliverMessage)
+    // proofs/tla/RNSlots.tla TransportOpen: feeds each opened payload to the slot it arrived on (RNChannel OpenPacket, DeliverMessage)
     {
         const int * client_index = NULL;
         uint8_t * const * payload_data = NULL;
@@ -832,7 +832,7 @@ int rn_message_object_update( struct rn_message_object_t * object, double time )
         }
     }
 
-    // tla/RNSlots.tla EndUpdate: the update returns, and the application then sees this update's views
+    // proofs/tla/RNSlots.tla EndUpdate: the update returns, and the application then sees this update's views
 
     return result;
 }
@@ -855,8 +855,8 @@ static int rn_message_send_channel( int channel, int reliability )
 
 static bool rn_message_send_connected( const struct rn_message_object_t * object, const rn_message_connection_t * connection )
 {
-    // standard/MESSAGES.md m1.5 (tla/ClientSession.tla DropSend,
-    // tla/ServerSession.tla ServerDropSend): an application message is sent
+    // standard/MESSAGES.md m1.5 (proofs/tla/ClientSession.tla DropSend,
+    // proofs/tla/ServerSession.tla ServerDropSend): an application message is sent
     // only on a CONNECTED connection. A link with no connection query (a bare
     // object with no transport) has no transport state to wait on.
 
@@ -876,8 +876,8 @@ static int rn_message_send_transport_max( const struct rn_message_object_t * obj
 
 uint8_t * rn_message_object_start( struct rn_message_object_t * object, int index, int channel, int reliability, int bytes )
 {
-    // tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
-    // tla/RNSlots.tla StartPending: one start stays pending on this slot until finish or abort.
+    // proofs/tla/RNSlots.tla Request: reserves room for one message and returns the pointer the application writes.
+    // proofs/tla/RNSlots.tla StartPending: one start stays pending on this slot until finish or abort.
 
     if ( !object )
         return NULL;
@@ -1227,7 +1227,7 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
         if ( bytes < 1 || (uint32_t) bytes > reserved )
             rocketnet_error( "message finish refused: bytes_written %d outside 1..reserved %u; the start is aborted", bytes, (unsigned) reserved );
 
-        rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (tla/RNSlots.tla FinishPending)
+        rn_message_connection_cancel_pending( object, index );         // a refused finish aborts its start (proofs/tla/RNSlots.tla FinishPending)
         return 0;
     }
 
@@ -1268,7 +1268,7 @@ uint32_t rn_message_object_send( struct rn_message_object_t * object, int index,
 
 static bool rn_message_connection_write( rn_message_object_t * object, int index )
 {
-    // tla/RNSlots.tla Send: writes one requested record into a transport frame under the transport's packet id (RNSlots Send).
+    // proofs/tla/RNSlots.tla Send: writes one requested record into a transport frame under the transport's packet id (RNSlots Send).
     // RNChannel WritePacket with the send budget, for one connection: the endpoint plans the frame
     // (rn_endpoint_next_packet_bytes), the object starts one frame from the transport at a time,
     // the endpoint writes it in place, and the object finishes it.
@@ -1373,7 +1373,7 @@ flush:
 
 static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t * object, int * out_index, uint32_t * out_entry )
 {
-    // tla/RNChannel.tla Take: hands the application the next delivery and advances the queue
+    // proofs/tla/RNChannel.tla Take: hands the application the next delivery and advances the queue
 
     for ( int i = object->receive_connection; i < object->num_connections; i++ )
     {
@@ -1463,7 +1463,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
 
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
 {
-    // tla/RNSlots.tla Release: a held view returns, and the region's charge for that message returns with it.
+    // proofs/tla/RNSlots.tla Release: a held view returns, and the region's charge for that message returns with it.
     // A release takes the received message alone; the view is looked for in the connection the
     // queue is at first, then in every connection that holds one.
 

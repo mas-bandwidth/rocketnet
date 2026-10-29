@@ -251,7 +251,7 @@ static void test_standard_blocks_vectors()
 REGISTER_UNIT_TEST( test_standard_blocks_vectors );
 
 // A region whose ring is zero bytes (a carve outside the validated config
-// path; tla/RNRing.tla ASSUME B > 0 does not hold) stalls a holdable first
+// path; proofs/tla/RNRing.tla ASSUME B > 0 does not hold) stalls a holdable first
 // write and a block first write instead of dividing by zero, counting the
 // stall once. A block of more numbers than the window holds stalls at first
 // write instead of being admitted: without that guard W - count wraps.

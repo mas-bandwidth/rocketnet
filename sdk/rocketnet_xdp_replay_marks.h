@@ -21,7 +21,7 @@
 // slot whose replay high-water mark advanced -- and the transport applies every
 // forget, then every mark, in one commit, then resets keeping every forget the
 // kernel refused that no applied mark for the same key superseded, so it is
-// tried again first in the next commit (tla/RNXdpReplay.tla, Commit,
+// tried again first in the next commit (proofs/tla/RNXdpReplay.tla, Commit,
 // ForgetOwedUntilApplied and RetryNeverDeletesNewerMark), and every mark the
 // kernel refused, so it is tried again in the next commit until it lands, a
 // newer mark of its key replaces it, or a forget of its key drops it
@@ -81,7 +81,7 @@ static inline void rocketnet_xdp_replay_marks_reset( struct rocketnet_xdp_replay
 // The end of a commit: forget_failed[i] says the kernel refused forget i,
 // mark_applied[j] says the kernel took mark j. The refused forgets move to
 // the front in their order and stay pending, so the next commit applies them
-// before any mark (tla/RNXdpReplay.tla, Commit) -- except a refused forget
+// before any mark (proofs/tla/RNXdpReplay.tla, Commit) -- except a refused forget
 // whose key a mark applied in the same commit: that mark, taken after the
 // forget was queued, is a newer session's and now owns the kernel entry, so
 // the stale forget is superseded and dropped, and a later retry can never
@@ -155,7 +155,7 @@ static inline void rocketnet_xdp_replay_marks_drop_kept( struct rocketnet_xdp_re
 // the refusal, when the forget list is full. A queued forget drops a kept mark
 // of the same key: that mark was taken before the slot let the address go,
 // and the commit applies forgets before marks, so kept it would rewrite the
-// released address's entry (tla/RNXdpReplay.tla, ForgetDropsKeptMark).
+// released address's entry (proofs/tla/RNXdpReplay.tla, ForgetDropsKeptMark).
 
 static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_replay_marks_t * marks, const struct rocketnet_address_t * address )
 {
@@ -183,7 +183,7 @@ static inline bool rocketnet_xdp_replay_marks_forget( struct rocketnet_xdp_repla
 
 // Adds a mark of the high-water value for the source the address names. A
 // kept mark of the same key, refused by the last commit, is replaced in
-// place: the newer value is the one owed (tla/RNXdpReplay.tla, Walk). Only
+// place: the newer value is the one owed (proofs/tla/RNXdpReplay.tla, Walk). Only
 // the kept prefix is searched; the walk marks each key once per update.
 // Returns false, and counts the refusal, when the mark list is full.
 
@@ -229,7 +229,7 @@ static inline void rocketnet_xdp_replay_marks_forgets( const struct rocketnet_xd
 }
 #endif // #if ROCKETNET_DEV
 
-// tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: a kept mark of 0 is a
+// proofs/tla/RNXdpReplay.tla Commit, HoldGreetingUntilMarked: a kept mark of 0 is a
 // new session's first mark that the kernel refused, so the old session's
 // entry may still stand for its key, and the session must not be greeted.
 // True when any kept mark is 0 (the kept prefix is empty in steady state).

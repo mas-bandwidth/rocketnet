@@ -297,7 +297,7 @@ bool rocketnet_server_gso_test_receive_ready( struct rocketnet_server_gso_t * gs
 
 #endif // #if ROCKETNET_DEV
 
-// tla/RNGsoHandoff.tla TxMainLock and TxPublish: main's frame boundary
+// proofs/tla/RNGsoHandoff.tla TxMainLock and TxPublish: main's frame boundary
 // try-publishes exactly one complete bank. All fill threads have joined; no
 // worker can see the producer until the exchange completes. A contended
 // mutex or an empty free FIFO retains the producer: main never waits.
@@ -335,7 +335,7 @@ static bool rocketnet_server_gso_publish_send( rocketnet_server_gso_t * gso )
     return true;
 }
 
-// tla/RNGsoHandoff.tla TxWorkerLock, TxTake and TxTakeNone: FIFO ready banks
+// proofs/tla/RNGsoHandoff.tla TxWorkerLock, TxTake and TxTakeNone: FIFO ready banks
 // precede the final unpublished producer at stop. Quit is
 // observed with ready emptiness under the handoff lock, so an earlier empty
 // observation cannot strand a later publication. Stop's release transfers the
@@ -365,7 +365,7 @@ static int rocketnet_server_gso_take_send( rocketnet_server_gso_t * gso, bool * 
     return index;
 }
 
-// tla/RNGsoHandoff.tla TxReturn: a bank rejoins the free FIFO only after
+// proofs/tla/RNGsoHandoff.tla TxReturn: a bank rejoins the free FIFO only after
 // its synchronous sends finished (the worker cleared it first).
 static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int index )
 {
@@ -379,7 +379,7 @@ static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int 
 static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
                                        rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso );
 
-// tla/RNGsoHandoff.tla TxSend: the worker sends each taken bank outside
+// proofs/tla/RNGsoHandoff.tla TxSend: the worker sends each taken bank outside
 // the ownership mutex; stop's final bank is sent last and ends the worker.
 static void rocketnet_server_gso_send_worker( void * context )
 {
@@ -415,7 +415,7 @@ static void rocketnet_server_gso_send_worker( void * context )
         rocketnet_server_gso_return_send( gso, index );
     }
 
-    // tla/RNGsoHandoff.tla TxWorkerExitIdle and the final-bank exit of
+    // proofs/tla/RNGsoHandoff.tla TxWorkerExitIdle and the final-bank exit of
     // TxSend: the worker reports stopped only after its drain.
 
     gso->send_stopped.store( true, std::memory_order_release );
@@ -655,7 +655,7 @@ static int rocketnet_server_gso_open_socket( const rocketnet_address_t * bind_ad
 
 // ---------------------------------------------------------------------------
 
-// tla/RNGsoHandoff.tla RxFill: the receive worker drains the socket with
+// proofs/tla/RNGsoHandoff.tla RxFill: the receive worker drains the socket with
 // recvmmsg, staging each segment into its own buffer outside the mutex.
 // the receive worker: drain the socket with recvmmsg, split GRO runs at the
 // kernel-reported segment stride, stage each segment into the worker buffer.
@@ -706,7 +706,7 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
     return segment_bytes;
 }
 
-// tla/RNGsoHandoff.tla RxPublish: the worker's filled buffer becomes the
+// proofs/tla/RNGsoHandoff.tla RxPublish: the worker's filled buffer becomes the
 // ready buffer and it takes the free buffer, under the mutex, only when no
 // ready buffer waits and a free buffer exists; otherwise nothing moves and
 // the worker retains its buffer (the queue's bounded backpressure). The
@@ -895,7 +895,7 @@ static void rocketnet_server_gso_worker( void * data )
         rocketnet_server_gso_publish_receive( queue );
     }
 
-    // tla/RNGsoHandoff.tla RxWorkerExit: last access to queue-owned
+    // proofs/tla/RNGsoHandoff.tla RxWorkerExit: last access to queue-owned
     // storage; destroy acquires this before join.
 
     queue->stopped.store( true, std::memory_order_release );
@@ -1123,7 +1123,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     return gso;
 }
 
-// tla/RNGsoHandoff.tla MainStop: quit is stored for both workers; the
+// proofs/tla/RNGsoHandoff.tla MainStop: quit is stored for both workers; the
 // final producer passes to the TX worker with the store.
 void rocketnet_server_gso_stop( rocketnet_server_gso_t * gso )
 {
@@ -1155,7 +1155,7 @@ bool rocketnet_server_gso_stopped( rocketnet_server_gso_t * gso )
     return true;
 }
 
-// tla/RNGsoHandoff.tla Join and Free: destroy joins both workers before
+// proofs/tla/RNGsoHandoff.tla Join and Free: destroy joins both workers before
 // freeing any storage, and frees nothing while a worker has not exited
 // (StopJoinsBeforeFree); Terminated is the freed state itself.
 void rocketnet_server_gso_destroy( struct rocketnet_server_gso_t * gso )
@@ -1263,7 +1263,7 @@ void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, ui
 // send
 // ---------------------------------------------------------------------------
 
-// tla/RNGsoHandoff.tla TxStage: a fill thread stages one packet into the
+// proofs/tla/RNGsoHandoff.tla TxStage: a fill thread stages one packet into the
 // producer bank, outside the ownership mutex.
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id )
 {
@@ -1573,7 +1573,7 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso )
 // receive
 // ---------------------------------------------------------------------------
 
-// tla/RNGsoHandoff.tla RxClaim and RxConsume: consume a retained bank
+// proofs/tla/RNGsoHandoff.tla RxClaim and RxConsume: consume a retained bank
 // before claiming a newer ready bank. The previous
 // public view expires at this receive call, but a partial tail remains owned by
 // main and cannot be recycled. Counters are folded exactly once when claimed.

@@ -8,7 +8,7 @@
 // plain struct with the producer, consumer and cached indices and the same
 // index arithmetic as libxdp's xsk_ring_cons__peek, __cancel and __release
 // (<xdp/xsk.h>). No socket, no kernel object, no clock. The frame ownership
-// these cases check is modelled in tla/RNXdpReceiveRing.tla.
+// these cases check is modelled in proofs/tla/RNXdpReceiveRing.tla.
 
 #include <stdint.h>
 #include <string.h>

@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The reversed handshake witnesses of tla/ClientConnection.tla and
-// tla/ServerConnection.tla, turned into tests on the real protocol objects,
+// The reversed handshake witnesses of proofs/tla/ClientConnection.tla and
+// proofs/tla/ServerConnection.tla, turned into tests on the real protocol objects,
 // driven with time passed in and no sockets, no network and no real clock.
 // Each witness names the model action it reverses and the config switch that
 // reverses it (README-ClientConnection.md, README-ServerConnection.md).
@@ -892,7 +892,7 @@ static void test_token_create_skew_enforced_without_lifetime_cap()
 // The claim is written only after the signature verifies
 // (sdk/rocketnet_server_protocol.cpp, rocketnet_used_token_history_claim_can_record
 // at the claim rung, rocketnet_used_token_history_claim_record after
-// rocketnet_verify_signed_connect_data; tla/ReceiveOrder.tla,
+// rocketnet_verify_signed_connect_data; proofs/tla/ReceiveOrder.tla,
 // ClaimOnlyAfterSignature). A request whose signature fails touches nothing
 // in the claim table, so it cannot disturb a live claim either: here the
 // first address holds a live claim on the token (written directly: only a

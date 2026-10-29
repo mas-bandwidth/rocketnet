@@ -18,14 +18,14 @@ GOOD_NOTE = (
     "RNSendBudget models the send budget in sdk/rocketnet_send_budget.h "
     "(rocketnet_send_budget_init): Init."
 )
-HEADER_TEXT = "// tla/RNSendBudget.tla\nvoid rocketnet_send_budget_init(void);\n"
+HEADER_TEXT = "// proofs/tla/RNSendBudget.tla\nvoid rocketnet_send_budget_init(void);\n"
 MODULE_TEXT = "MODULE RNSendBudget\n"
 
 
 def run_check(root, argv=None):
     check_tla_coverage.ROOT = root
-    check_tla_coverage.COVERAGE = root / "tla" / "COVERAGE.tsv"
-    check_tla_coverage.TLA_DIR = root / "tla"
+    check_tla_coverage.COVERAGE = root / "proofs" / "tla" / "COVERAGE.tsv"
+    check_tla_coverage.TLA_DIR = root / "proofs" / "tla"
     old_argv = sys.argv
     sys.argv = ["check_tla_coverage.py"] + (argv or [])
     out = io.StringIO()
@@ -41,7 +41,7 @@ def run_check(root, argv=None):
 def write_row(tmp, row):
     line = "\t".join([row["machine"], row["code"], row["module"],
                       row["status"], row["owed_by"], row["note"]])
-    (tmp / "tla" / "COVERAGE.tsv").write_text(HEAD + "\n" + line + "\n")
+    (tmp / "proofs" / "tla" / "COVERAGE.tsv").write_text(HEAD + "\n" + line + "\n")
 
 
 class CheckTlaCoverageTest(unittest.TestCase):
@@ -53,9 +53,9 @@ class CheckTlaCoverageTest(unittest.TestCase):
 
     def plant_basic_repo(self):
         root = Path(self.tmp.name)
-        (root / "tla").mkdir()
+        (root / "proofs" / "tla").mkdir(parents=True)
         (root / "sdk").mkdir()
-        (root / "tla" / "RNSendBudget.tla").write_text(MODULE_TEXT)
+        (root / "proofs" / "tla" / "RNSendBudget.tla").write_text(MODULE_TEXT)
         (root / "sdk" / "rocketnet_send_budget.h").write_text(HEADER_TEXT)
         return root
 
@@ -102,7 +102,7 @@ class CheckTlaCoverageTest(unittest.TestCase):
         code, out = run_check(root)
         self.assertNotEqual(code, 0, out)
         self.assertIn("RNSendBudget: rn-send-budget is owed but "
-                      "sdk/rocketnet_send_budget.h cites tla/RNSendBudget.tla", out)
+                      "sdk/rocketnet_send_budget.h cites proofs/tla/RNSendBudget.tla", out)
 
     def test_owed_row_no_sdk_file_cites_passes(self):
         root = self.plant_basic_repo()
@@ -206,7 +206,7 @@ class CheckTlaCoverageTest(unittest.TestCase):
     def test_citation_outside_named_symbol_fails(self):
         root = self.plant_basic_repo()
         (root / "sdk" / "rocketnet_send_budget.h").write_text(
-            "// tla/RNSendBudget.tla\n"
+            "// proofs/tla/RNSendBudget.tla\n"
             "void rocketnet_send_budget_init(void);\n"
             "void rocketnet_other_init(void)\n{\n}\n")
         (root / "sdk" / "rocketnet_driver.h").write_text(
@@ -228,10 +228,10 @@ class CheckTlaCoverageTest(unittest.TestCase):
     def test_wrapped_citation_outside_named_symbol_fails(self):
         root = self.plant_basic_repo()
         (root / "sdk" / "rocketnet_send_budget.h").write_text(
-            "// tla/RNSendBudget.tla\n"
+            "// proofs/tla/RNSendBudget.tla\n"
             "void rocketnet_send_budget_init(void);\n"
             "void rocketnet_other_init(void)\n{\n}\n")
-        (root / "tla" / "ReplayWindow.tla").write_text(
+        (root / "proofs" / "tla" / "ReplayWindow.tla").write_text(
             "(* rocketnet_send_budget_init (sdk/rocketnet_send_budget.h:  *)\n"
             "(* 4) *)\n")
         write_row(root, {
@@ -268,9 +268,9 @@ Next == ActionA \/ ActionB \/ EnvStep
 
     def plant_action_repo(self, code_text, note=None, module_text=None):
         root = Path(self.tmp.name)
-        (root / "tla").mkdir()
+        (root / "proofs" / "tla").mkdir(parents=True)
         (root / "sdk").mkdir()
-        (root / "tla" / "ActMod.tla").write_text(module_text or self.ACTION_MODULE)
+        (root / "proofs" / "tla" / "ActMod.tla").write_text(module_text or self.ACTION_MODULE)
         (root / "sdk" / "act.c").write_text(code_text)
         write_row(root, {
             "machine": "rn-act",
@@ -283,16 +283,16 @@ Next == ActionA \/ ActionB \/ EnvStep
         return root
 
     def test_actions_read_from_next(self):
-        code_text = ("// tla/ActMod.tla ActionA\n"
-                     "// tla/ActMod.tla ActionB\n"
-                     "// tla/ActMod.tla EnvStep\n")
+        code_text = ("// proofs/tla/ActMod.tla ActionA\n"
+                     "// proofs/tla/ActMod.tla ActionB\n"
+                     "// proofs/tla/ActMod.tla EnvStep\n")
         root = self.plant_action_repo(code_text)
         code, out = run_check(root, ["--actions"])
         self.assertEqual(code, 0, out)
         self.assertIn("ACTIONS UNCITED 0", out)
 
     def test_actions_uncited_action_reported(self):
-        code_text = "// tla/ActMod.tla ActionA\n"
+        code_text = "// proofs/tla/ActMod.tla ActionA\n"
         root = self.plant_action_repo(code_text)
         code, out = run_check(root, ["--actions"])
         self.assertEqual(code, 0, out)
@@ -301,7 +301,7 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("ACTIONS UNCITED 2", out)
 
     def test_actions_citation_spans_comment_lines(self):
-        code_text = "// tla/ActMod.tla ActionA and\n// ActionB\n"
+        code_text = "// proofs/tla/ActMod.tla ActionA and\n// ActionB\n"
         root = self.plant_action_repo(code_text)
         code, out = run_check(root, ["--actions"])
         self.assertEqual(code, 0, out)
@@ -310,17 +310,17 @@ Next == ActionA \/ ActionB \/ EnvStep
 
     def test_actions_cited_in_any_current_row_file(self):
         root = Path(self.tmp.name)
-        (root / "tla").mkdir()
+        (root / "proofs" / "tla").mkdir(parents=True)
         (root / "sdk").mkdir()
-        (root / "tla" / "ActMod.tla").write_text(self.ACTION_MODULE)
+        (root / "proofs" / "tla" / "ActMod.tla").write_text(self.ACTION_MODULE)
         (root / "sdk" / "act.c").write_text(
-            "// tla/ActMod.tla ActionB\n// tla/ActMod.tla EnvStep\n")
-        (root / "sdk" / "act2.c").write_text("// tla/ActMod.tla ActionA\n")
+            "// proofs/tla/ActMod.tla ActionB\n// proofs/tla/ActMod.tla EnvStep\n")
+        (root / "sdk" / "act2.c").write_text("// proofs/tla/ActMod.tla ActionA\n")
         head = "\t".join(["machine", "code", "module", "status", "owed_by", "note"])
         lines = [head,
                  "\t".join(["rn-act", "sdk/act.c", "ActMod", "current", "-", self.ACTION_NOTE]),
                  "\t".join(["rn-act-2", "sdk/act2.c", "ActMod", "current", "-", self.ACTION_NOTE])]
-        (root / "tla" / "COVERAGE.tsv").write_text("\n".join(lines) + "\n")
+        (root / "proofs" / "tla" / "COVERAGE.tsv").write_text("\n".join(lines) + "\n")
         code, out = run_check(root, ["--actions"])
         self.assertEqual(code, 0, out)
         self.assertIn("ACTIONS UNCITED 0", out)
@@ -338,12 +338,12 @@ Next == ActionA \/ ActionB \/ EnvStep
     )
 
     def plant_witness_cfgs(self, root, passing):
-        (root / "tla" / "MCActMod.cfg").write_text("CONSTANTS\n    Broken = %s\n" % passing)
-        (root / "tla" / "MCActModBrokenDefect.cfg").write_text(
+        (root / "proofs" / "tla" / "MCActMod.cfg").write_text("CONSTANTS\n    Broken = %s\n" % passing)
+        (root / "proofs" / "tla" / "MCActModBrokenDefect.cfg").write_text(
             "CONSTANTS\n    Broken = {\"defect\"}\n")
 
     def test_actions_witness_only_exempt_from_cfgs(self):
-        root = self.plant_action_repo("// tla/ActMod.tla ActionA\n",
+        root = self.plant_action_repo("// proofs/tla/ActMod.tla ActionA\n",
                                       module_text=self.WITNESS_MODULE)
         self.plant_witness_cfgs(root, "{}")
         code, out = run_check(root, ["--actions"])
@@ -353,7 +353,7 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("ActMod Defect: MCActModBrokenDefect", out)
 
     def test_actions_witness_guard_enabled_by_passing_cfg_is_cited(self):
-        root = self.plant_action_repo("// tla/ActMod.tla ActionA\n",
+        root = self.plant_action_repo("// proofs/tla/ActMod.tla ActionA\n",
                                       module_text=self.WITNESS_MODULE)
         self.plant_witness_cfgs(root, "{\"defect\"}")
         code, out = run_check(root, ["--actions"])
@@ -363,8 +363,8 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("ACTIONS WITNESS-ONLY 0", out)
 
     def test_actions_environment_note_exempts(self):
-        code_text = ("// tla/ActMod.tla ActionA\n"
-                     "// tla/ActMod.tla ActionB\n")
+        code_text = ("// proofs/tla/ActMod.tla ActionA\n"
+                     "// proofs/tla/ActMod.tla ActionB\n")
         note = "ActMod models the demo; environment actions EnvStep."
         root = self.plant_action_repo(code_text, note=note)
         code, out = run_check(root, ["--actions"])
@@ -372,8 +372,8 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("ACTIONS UNCITED 0", out)
 
     def test_actions_environment_note_names_unknown_action_fails(self):
-        code_text = ("// tla/ActMod.tla ActionA\n"
-                     "// tla/ActMod.tla ActionB\n")
+        code_text = ("// proofs/tla/ActMod.tla ActionA\n"
+                     "// proofs/tla/ActMod.tla ActionB\n")
         note = "ActMod models the demo; environment actions EnvStep and Bogus."
         root = self.plant_action_repo(code_text, note=note)
         code, out = run_check(root, ["--actions-strict"])
@@ -381,16 +381,16 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("unknown action Bogus", out)
 
     def test_actions_strict_fails_on_uncited(self):
-        code_text = "// tla/ActMod.tla ActionA\n"
+        code_text = "// proofs/tla/ActMod.tla ActionA\n"
         root = self.plant_action_repo(code_text)
         code, out = run_check(root, ["--actions-strict"])
         self.assertNotEqual(code, 0, out)
         self.assertIn("ACTIONS UNCITED 2", out)
 
     def test_actions_model_checking_module_does_not_cite(self):
-        code_text = ("// tla/ActMod.tla ActionA ActionB\n"
+        code_text = ("// proofs/tla/ActMod.tla ActionA ActionB\n"
                      "\n"
-                     "// tla/MCActMod.tla EnvStep\n")
+                     "// proofs/tla/MCActMod.tla EnvStep\n")
         root = self.plant_action_repo(code_text)
         code, out = run_check(root, ["--actions-strict"])
         self.assertNotEqual(code, 0, out)
@@ -398,9 +398,9 @@ Next == ActionA \/ ActionB \/ EnvStep
         self.assertIn("ACTIONS UNCITED 1", out)
 
     def test_actions_trailing_comment_cites(self):
-        code_text = ("int x = 0;    // tla/ActMod.tla ActionA\n"
+        code_text = ("int x = 0;    // proofs/tla/ActMod.tla ActionA\n"
                      "\n"
-                     "// tla/ActMod.tla ActionB and EnvStep\n")
+                     "// proofs/tla/ActMod.tla ActionB and EnvStep\n")
         root = self.plant_action_repo(code_text)
         code, out = run_check(root, ["--actions-strict"])
         self.assertEqual(code, 0, out)

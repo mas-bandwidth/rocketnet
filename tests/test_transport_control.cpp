@@ -344,7 +344,7 @@ static void test_buffered_control_pressure( int clients = 300 )
     seed_stats_rtt_samples( server, clients );
     f->requests = ROCKETNET_SERVER_MAX_RECEIVE_PACKETS;
 
-    // the per-slot stats are current as the acks land (tla/RNServerStats.tla):
+    // the per-slot stats are current as the acks land (proofs/tla/RNServerStats.tla):
     // every slot's RTT is checked after a few updates, and the response and
     // ACK/keep-alive checks run on every individual update
 
@@ -640,7 +640,7 @@ static void test_entries_carry_connection_id( bool staged )
             memset( payload, 0x50 + k, 8 );
 
             // the server assigns the sequence when finish accepts the payload
-            // (test_unit_sequence_burn.cpp; tla/FragmentsAndAcks.tla
+            // (test_unit_sequence_burn.cpp; proofs/tla/FragmentsAndAcks.tla
             // BurnedNeverNamed), so it is read after finish, never at start
 
             CHECK( rocketnet_server_transport_finish_packet( server, &context, 8 ) > 0 );

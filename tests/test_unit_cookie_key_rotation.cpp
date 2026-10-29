@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Unit tests for server cookie key rotation (tla/RNSecurityTables.tla):
+// Unit tests for server cookie key rotation (proofs/tla/RNSecurityTables.tla):
 // the current key, the one-period previous-key acceptance window, the stall
 // branch past a full window, and key freshness across rotations.
 

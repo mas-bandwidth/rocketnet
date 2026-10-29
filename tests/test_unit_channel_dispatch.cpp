@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 4's dispatch, unit tier (docs/CHANNELS.md 7; tla/RNChannel.tla). No
+// Layer 4's dispatch, unit tier (docs/CHANNELS.md 7; proofs/tla/RNChannel.tla). No
 // sockets, no threads, no wall clock: time is an argument.
 
 #include <stdio.h>
@@ -351,7 +351,7 @@ static void test_ack_feed_marks_only_carried_numbers()
 }
 #endif // #if ROCKETNET_DEV
 
-// the reversed witnesses of tla/README-RNChannel.md that concern dispatch and
+// the reversed witnesses of proofs/tla/README-RNChannel.md that concern dispatch and
 // the builder: the code refuses the broken step.
 
 static void test_rnchannel_witness_replays()
@@ -596,7 +596,7 @@ static void test_default_mask_enables_all_eight_types()
 }
 
 // A block whose numbers cross 2^24 is released whole at the end of the update:
-// every number of the update's deliveries is free after it (tla/RNChannel.tla
+// every number of the update's deliveries is free after it (proofs/tla/RNChannel.tla
 // EndUpdate). Fragments two and three of a block starting at 0xFFFFFE carry the
 // wire numbers 0 and 1, and a stale descriptor there refuses the next record in
 // the same slot as MESSAGE_SLOT_COLLISION.

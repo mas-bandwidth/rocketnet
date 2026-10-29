@@ -4,7 +4,7 @@
 */
 
 // The iocp client's posted receives (sdk/rocketnet_client_iocp.h,
-// tla/RNClientIocp.tla) on a fake completion port: the port seam records every
+// proofs/tla/RNClientIocp.tla) on a fake completion port: the port seam records every
 // post, writes a datagram into a posted buffer only when the case delivers
 // one, queues completions in order, and on close aborts every posted receive,
 // releasing the aborts as the case says. No socket, no thread; the fake's

@@ -18,6 +18,6 @@ A future flow implementation must preserve the existing message contracts:
 - sending to a flow is equivalent to one ordinary per-client send for each
   current subscriber, including budget and receipt behavior.
 
-`tla/RNFlows.tla` records these state-machine requirements. Public names,
+`proofs/tla/RNFlows.tla` records these state-machine requirements. Public names,
 configuration and counters require a future API revision before this planned
 layer can ship.

@@ -8,10 +8,10 @@
 // clients calling rocketnet_client_disconnect in the same update. Both run
 // over the in-process loopback transport with time as an argument starting at
 // 1000.0; the bound on each call's work is a count the transport keeps under
-// ROCKETNET_DEV, never wall time (tla/ServerSession.tla DisconnectAll,
+// ROCKETNET_DEV, never wall time (proofs/tla/ServerSession.tla DisconnectAll,
 // DrainDisconnectBurst). The same population joining at once is the
 // handshake burst the per-update handshake work budget spreads across updates
-// (tla/RNSecurityTables.tla HonestRequest).
+// (proofs/tla/RNSecurityTables.tla HonestRequest).
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -321,7 +321,7 @@ SUITE_CASE_RSS_BOUND( test_mass_join_spreads_handshakes_across_updates, mass_dis
 // default handshake work budget; the rest are dropped unanswered and counted,
 // and each client's next request is processed in a later update, so every
 // client connects inside its 10-second token timeout: 16 per send interval
-// seats 1000 in about 6.3 s (tla/RNSecurityTables.tla HonestRequest,
+// seats 1000 in about 6.3 s (proofs/tla/RNSecurityTables.tla HonestRequest,
 // HonestConnectsUnderFlood). Every request here is honest, so each one the
 // budget admits sends one fresh challenge: the per-update count of fresh
 // challenges is the work it did.
@@ -524,7 +524,7 @@ static void test_server_disconnect_all_1000_real_time()
     const int allowance = ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE;
     check( call_seals <= (uint64_t) allowance );
 
-    // the slot state ends in the same call (tla/ServerSession.tla DisconnectAll)
+    // the slot state ends in the same call (proofs/tla/ServerSession.tla DisconnectAll)
 
     check( rocketnet_server_num_connected_clients( server ) == 0 );
 

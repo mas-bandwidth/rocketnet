@@ -53,7 +53,7 @@ static void test_rio_transport_overflow_seam()
 
 REGISTER_UNIT_TEST( test_rio_transport_overflow_seam );
 
-// The I/O worker's handoffs (tla/RNRioWorker.tla), stepped on this thread
+// The I/O worker's handoffs (proofs/tla/RNRioWorker.tla), stepped on this thread
 // with a fake kernel: no socket, no worker thread, no clock.
 static void test_rio_transport_worker_handoff()
 {

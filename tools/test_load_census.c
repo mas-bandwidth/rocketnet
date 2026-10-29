@@ -1,6 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 
-/* The load harness resource census (load_census.h) finds the thread and the
+/* The load harness resource census (tests/load/load_census.h) finds the thread and the
    handle a cycle leaves behind, and nothing when it leaves nothing. Build and
    run beside the harness, from the repository root:
 
@@ -13,7 +13,7 @@
 #define _DARWIN_C_SOURCE
 #endif // #if !defined( _WIN32 )
 
-#include "load_census.h"
+#include "tests/load/load_census.h"
 #include "tests/portable_crt.h"
 
 #include <assert.h>

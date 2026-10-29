@@ -4,8 +4,8 @@
 */
 
 // The I/O step (sdk/rocketnet_client_io.h) against the fake client transport
-// (tests/fake_client_driver.h), the RNClientIo actions of tla/RNClientIo.tla
-// and the exchanges of tla/RNBufferHandoff.tla. Single-threaded: no sockets,
+// (tests/fake_client_driver.h), the RNClientIo actions of proofs/tla/RNClientIo.tla
+// and the exchanges of proofs/tla/RNBufferHandoff.tla. Single-threaded: no sockets,
 // no real time.
 
 #include "test_unit_registry.h"

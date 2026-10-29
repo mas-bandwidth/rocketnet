@@ -1367,7 +1367,7 @@ void live_message_matrix_loopback()
     rocketnet_client_transport_disconnect( rocketnet_message_client_transport( m->client ) );
     {
         // the disconnect burst is deferred when the I/O thread is still
-        // sending the other ring (tla/RNClientIo.tla Defer) and leaves with
+        // sending the other ring (proofs/tla/RNClientIo.tla Defer) and leaves with
         // the client's next hand-off, so the client is updated too
 
         const double start = rocketnet_platform_time();

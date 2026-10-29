@@ -50,7 +50,7 @@ An in-process loopback transport is available for local integration tests.
 AF_XDP requires host provisioning and separate privileged validation. A
 successful ordinary test run does not establish AF_XDP attachment or
 line-rate throughput. See the [platform support policy](PLATFORMS.md) and
-[transport guide](../TRANSPORTS.md) for the supported configurations.
+[transport guide](TRANSPORTS.md) for the supported configurations.
 
 ## Known issues and remaining work
 
@@ -77,13 +77,13 @@ includes hardening, longer testing and performance work.
 - Protocol refusal paths, token-claim behavior and low-rate reliable-message
   timeouts still have follow-up work recorded in the roadmap.
 
-The [Known issues table](../ROADMAP.md#known-issues-addressed-in-the-final-deliverable)
+The [Known issues table](ROADMAP.md#known-issues-addressed-in-the-final-deliverable)
 records the individual issues and the planned fixes. Consult it before
 choosing a deployment configuration.
 
 ## Getting started
 
-Use [BUILDING.md](../BUILDING.md) to build and link the library, the
+Use [BUILDING.md](BUILDING.md) to build and link the library, the
 [examples](../examples/README.md) to try the frame loop, and
 [rocketnet.h](../sdk/rocketnet.h) for the API contract.
 

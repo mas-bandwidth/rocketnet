@@ -275,7 +275,7 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
     // flight one to a packet, all sent inside one round trip, so a map
     // smaller than W evicts entries whose acks are still on the way and the
     // numbers they carried are resent (6.4, standard/MESSAGES.md m9.1;
-    // tla/RNSentMap.tla NoLiveEviction).
+    // proofs/tla/RNSentMap.tla NoLiveEviction).
 
     if ( config->packets_in_flight < W )
     {

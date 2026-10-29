@@ -139,5 +139,5 @@ release commit's green CI run, which is the qualification. They call out any wir
 change explicitly and link the relevant section of
 [standard/TRANSPORT.md](../standard/TRANSPORT.md) and the compatibility impact. A security release names the advisory it fixes and
 the first fixed version, and follows the disclosure terms in
-[SECURITY.md](../SECURITY.md). Release notes do not contain credentials, private
+[SECURITY.md](SECURITY.md). Release notes do not contain credentials, private
 contacts, or embargoed exploit details.

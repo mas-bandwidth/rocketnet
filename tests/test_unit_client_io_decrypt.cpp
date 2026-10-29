@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Decrypt on the client I/O thread (tla/RNClientIoDecrypt.tla,
+// Decrypt on the client I/O thread (proofs/tla/RNClientIoDecrypt.tla,
 // docs/CLIENT-IO-DECRYPT.md If decrypt moves): the I/O step opens each session
 // datagram before IoPublish with its own copy of the open key and its own
 // replay window, and update consumes the records in arrival order. Single
@@ -135,7 +135,7 @@ static int client_io_decrypt_push_payload( client_io_decrypt_fixture_t * f, uint
     return client_io_decrypt_push_payload_from( f, &f->server, sequence, payload_byte, forge );
 }
 
-// update's consume of one exposed record (tla/RNClientIoDecrypt.tla UpdateConsume)
+// update's consume of one exposed record (proofs/tla/RNClientIoDecrypt.tla UpdateConsume)
 
 static int client_io_decrypt_consume( client_io_decrypt_fixture_t * f, rocketnet_client_receive_buffer_t * buffer, int i,
                                       uint8_t * payload, int * payload_bytes )

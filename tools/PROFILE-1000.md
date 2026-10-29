@@ -2,7 +2,7 @@
 
 This procedure collects evidence for the open final-deliverable requirement in
 `docs/roadmap.sexp` and `docs/testing.sexp`: every main call in a Release frame
-must take **less than 100 µs** at 1000 clients on each platform. `load.c`
+must take **less than 100 µs** at 1000 clients on each platform. `tests/load/load.c`
 reports counts, exact maxima and threshold misses, and histogram percentile
 upper bounds for the calls it exercises during traffic and drain. Coverage
 still excludes other public calls and setup/teardown, so the runner says
@@ -48,7 +48,7 @@ fields or nonzero values for a zero-sample category make the receipt
 `INCOMPLETE`. Neither state qualifies the every-main-call budget. Do **not**
 average away a failing run; a qualifying gate must enforce
 the strict per-call threshold on each run, keep counts and raw distributions,
-and cover every main call. The existing `load.c` cannot make that claim.
+and cover every main call. The existing `tests/load/load.c` cannot make that claim.
 
 For macOS sampled CPU attribution, use a separate run. Sampling adds overhead
 and its wall-clock times must never be used for the latency gate:

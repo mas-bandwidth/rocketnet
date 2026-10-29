@@ -98,7 +98,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_XDP_RECV_QUEUE_SIZE >= 2 * ROCKETNET_XDP_SEND
 // then. With a ring of exactly the frames, the worker cannot hand back a frame
 // until the kernel has used its whole batch, and the kernel then finds the fill
 // ring empty and drops ("rx fill ring empty"). Twice the frames always has a
-// slot for every frame the worker holds (tla/RNXdpReceiveRing.tla,
+// slot for every frame the worker holds (proofs/tla/RNXdpReceiveRing.tla,
 // PendingReturnedEachPass). The frames fit the RX ring and the worker's
 // pending return, so neither can overflow while every frame is out.
 
@@ -133,7 +133,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * ROCKETNET_SERVER_MAX_SEND_PACKETS,
                          "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
 
-// The disconnect packets one server update may seal (tla/ServerSession.tla
+// The disconnect packets one server update may seal (proofs/tla/ServerSession.tla
 // DrainDisconnectBurst, sdk/rocketnet_server_transport.cpp): a disconnect
 // ends its slot at once, and a burst this allowance cannot hold whole waits
 // for the following updates, so ending every client at once costs each call
@@ -230,7 +230,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_FRAME_STRIDE <= ROCKETNET_FRAME_SIZE, "a fram
 // packet is known lost once the receiver has acknowledged a sequence at least
 // this many above it. sequence based, so it needs no clock and fits the
 // sequence-distance windows of the standard's _Replay window sizing_.
-// tla/RNSentHistory.tla models the classification it drives.
+// proofs/tla/RNSentHistory.tla models the classification it drives.
 
 #define ROCKETNET_LOSS_PACKET_THRESHOLD                                   3
 

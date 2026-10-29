@@ -811,7 +811,7 @@ REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
 // link simulator the burst is staged in the caller-owned queue. Stop transfers
 // the queue to the worker, which drains it before publishing completion; the
 // step-driven fixture explicitly runs that completion. Shutdown holds the
-// clock fixed, so latency must not keep the burst back (tla/RNClientLinkStop.tla).
+// clock fixed, so latency must not keep the burst back (proofs/tla/RNClientLinkStop.tla).
 
 static void test_client_disconnect_sends_burst_staged_in_link_simulator()
 {

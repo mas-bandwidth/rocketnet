@@ -2,7 +2,7 @@
 # build time and embeds in the library: CMake rebuilds the object when one of
 # them changes, and tools/check_xdp_archive.py reads the same list.
 set(ROCKETNET_XDP_SOURCES
-    server_xdp/server_xdp.c
+    sdk/xdp/server_xdp.c
     sdk/rocketnet.h
     sdk/rocketnet_wire.h
     sdk/rocketnet_xdp_limits.h

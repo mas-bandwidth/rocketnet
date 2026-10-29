@@ -21,7 +21,7 @@
 #include "rocketnet_window_send.h"
 
 // Layer 4 of the message layer: the per-channel state and the dispatch
-// (docs/CHANNELS.md 7). tla/RNChannel.tla is the spec; each function below
+// (docs/CHANNELS.md 7). proofs/tla/RNChannel.tla is the spec; each function below
 // names the action it implements (owner rule R7).
 //
 // The state lives in the connection's region (layer 1): C rn_channel_send_t
@@ -176,7 +176,7 @@ uint32_t rn_channels_send_sequenced( struct rn_channels_t * channels, uint32_t c
 // NULL (and no
 // message) for a type that is not enabled (counted MESSAGE_SEND_TYPE_NOT_ENABLED),
 // a bad channel or size, a start already pending, a region already exhausted,
-// or no room: no room is region exhaustion (R5, tla/RNConnectionMemory.tla
+// or no room: no room is region exhaustion (R5, proofs/tla/RNConnectionMemory.tla
 // Exhaust), counted beside MESSAGE_SEND_STORE_FULL or MESSAGE_SEND_QUEUE_FULL,
 // and the owner's next rn_connection_memory_decide kicks the connection.
 
@@ -259,7 +259,7 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel );
 // base, or it is MESSAGE_BAD_BLOCK. The chunk is copied to ring + index * F and
 // counted in the anchor, so a block completes when the anchor's count does,
 // with no rescan. Returns the anchor, or NULL with the violation counted or
-// the region exhausted. tla/RNBlocks.tla Receive.
+// the region exhausted. proofs/tla/RNBlocks.tla Receive.
 
 #define RN_HELD_RELIABLE_BLOCK      0xFFFFFFFFu     // code 2's key channel: above every channel index
 
@@ -380,7 +380,7 @@ struct rn_ordered_t
     struct rocketnet_send_budget_t * budget;        // R6, or NULL
     struct rocketnet_message_limits_t limits;       // what layer 2's reader checks a payload against
 
-    // CONFIG (docs/CHANNELS.md 10.3, 13.4; tla/RNEndpoint.tla)
+    // CONFIG (docs/CHANNELS.md 10.3, 13.4; proofs/tla/RNEndpoint.tla)
     struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
     int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
     int config_received;                            // the remote endpoint's CONFIG was taken and equals this end's (RNEndpoint remoteCfg # NoCfg)
@@ -428,7 +428,7 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes );
 
-// tla/RNEndpoint.tla Reset, the CONFIG half (CHANNELS.md 10.3): queues this
+// proofs/tla/RNEndpoint.tla Reset, the CONFIG half (CHANNELS.md 10.3): queues this
 // end's one CONFIG control record, code 2 with CONTROL set and the 28-byte
 // body of 13.4 written from `config` (NULL: the defaults) and the enabled
 // mask, at the head of IMMEDIATE on channel 0, so it takes the connection's
@@ -439,7 +439,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
 
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
 
-// tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
+// proofs/tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
 // the remote endpoint's CONFIG record, already accepted by layer 3, read and compared
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line
@@ -459,7 +459,7 @@ uint32_t rn_ordered_deliveries( const struct rn_ordered_t * ordered );
 void rn_ordered_end_update( struct rn_ordered_t * ordered );
 
 // What to end the connection with, or ROCKETNET_DISCONNECT_REASON_NONE: the region's
-// exhaustion first (tla/RNConnectionMemory.tla Kick), then a wire violation,
+// exhaustion first (proofs/tla/RNConnectionMemory.tla Kick), then a wire violation,
 // then an unacked reliable message past its timeout (6.4). The owner reads it
 // every update.
 

@@ -26,7 +26,7 @@
 // holds a coalesced receive that is split by its stride into the receive
 // bank. each send_packets and receive_packets call reaps at most a fixed
 // completion budget, so a call returns under sustained traffic.
-// tla/RNUringDriver.tla models the send staging, the two receive banks, the
+// proofs/tla/RNUringDriver.tla models the send staging, the two receive banks, the
 // per-call budget and destroy; the functions that implement a model action
 // cite it.
 //

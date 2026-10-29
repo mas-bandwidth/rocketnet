@@ -61,6 +61,6 @@ because it sends 32 packets. Unit tests additionally count message payload
 copies, exercise short finish/abort, receipt boundaries, packet budgets,
 interleaved server destinations and stopping with open builds.
 
-`tla/RNOutgoingBuild.tla` describes the previous one-message-per-frame design.
+`proofs/tla/RNOutgoingBuild.tla` describes the previous one-message-per-frame design.
 Its existing results do not qualify aggregation; a revised model has not yet
 been checked. The executable tests above are the evidence for this change.

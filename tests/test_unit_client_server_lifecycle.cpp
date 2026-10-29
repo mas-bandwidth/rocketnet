@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The public client and server lifecycle (tla/ClientSession.tla,
-// tla/ServerSession.tla): a client connects, disconnects and connects again;
+// The public client and server lifecycle (proofs/tla/ClientSession.tla,
+// proofs/tla/ServerSession.tla): a client connects, disconnects and connects again;
 // a server starts, stops and starts again. Everything runs in one process
 // over the in-memory loopback transport with step-driven clients: no socket,
 // no thread, no sleep, and time is an argument starting at 1000.0.
@@ -726,7 +726,7 @@ REGISTER_UNIT_TEST( test_client_error_state_retries_after_completion );
 // a fresh connection whose sequences and channels count from zero, so the
 // exchange after it delivers its values from 0 in order and nothing else.
 // Once from CONNECTION_DENIED, once from COOKIE_REQUEST_TIMED_OUT, each in its
-// own world. tla/ClientConnection.tla FreshAttemptFromFailure.
+// own world. proofs/tla/ClientConnection.tla FreshAttemptFromFailure.
 
 static void test_client_connect_from_failure_carries_nothing()
 {
@@ -844,7 +844,7 @@ static uint32_t lifecycle_server_finish_without_start( rocketnet_server_t * serv
 
 // A send on a connection that is not CONNECTED is dropped and counted, on the
 // client and on the server alike (standard/MESSAGES.md m1.5;
-// tla/ClientSession.tla DropSend, tla/ServerSession.tla ServerDropSend):
+// proofs/tla/ClientSession.tla DropSend, proofs/tla/ServerSession.tla ServerDropSend):
 // start message returns NULL, finish message asserts in Debug and returns 0 in
 // Release, the NOT_CONNECTED_DROPS counter moves by exactly 1 per start, the
 // misuse count does not move, and nothing of it is ever sent.
@@ -1253,7 +1253,7 @@ static void test_server_start_stop_start_again()
 }
 REGISTER_UNIT_TEST( test_server_start_stop_start_again );
 
-// tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
+// proofs/tla/ServerSession.tla NoAdmitUnlessRunning. A stopped server admits no
 // client. rocketnet_server_update returns while !server->running
 // (sdk/rocketnet_api.cpp:1797), and the transport reads only while RUNNING
 // (sdk/rocketnet_server_transport.cpp:2388).

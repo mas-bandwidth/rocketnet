@@ -4,7 +4,7 @@
 */
 
 // The server keeps per-slot statistics with no thread of its own: the running
-// aggregates in sdk/rocketnet_ack.cpp (tla/RNServerStats.tla) move on every
+// aggregates in sdk/rocketnet_ack.cpp (proofs/tla/RNServerStats.tla) move on every
 // send, receive and ack, on the caller's thread inside update, and the stats
 // read returns them. There is no background recompute and no schedule that
 // reaches a few slots per update. The server runs on the in-memory loopback

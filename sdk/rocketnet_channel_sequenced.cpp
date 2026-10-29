@@ -21,7 +21,7 @@ thread_local unsigned long long g_sequenced_hold_visit_count = 0;
 // descriptor index from a code-1 Ru hold without changing channel state.
 static const uint32_t RN_SEQUENCED_RELIABLE_HOLD = 0x80000000u;
 
-// tla/RNChannelTypes.tla OpenPacket
+// proofs/tla/RNChannelTypes.tla OpenPacket
 
 static bool rn_sequenced_reliable_hold( uint32_t hold )
 {
@@ -41,7 +41,7 @@ static rn_receive_descriptor_t * rn_sequenced_descriptor( rn_channels_t * channe
     return descriptor;
 }
 
-// tla/RNChannel.tla BuffersBounded: a returned hold rejoins the free stack in O(1).
+// proofs/tla/RNChannel.tla BuffersBounded: a returned hold rejoins the free stack in O(1).
 
 static void rn_sequenced_hold_return( rn_region_t * region, uint32_t slot )
 {
@@ -132,7 +132,7 @@ static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t
     return delivery;
 }
 
-// tla/RNChannelTypes.tla DispatchFragment
+// proofs/tla/RNChannelTypes.tla DispatchFragment
 // RNChannelTypes!DispatchFragment for a code-4 block. The first fragment to
 // arrive is the anchor; *hold names it and *first holds its first number. An
 // in-turn block collects in rx->block_in_turn, a future one in the one
@@ -246,7 +246,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
-// tla/RNChannelTypes.tla InTurnOneRule
+// proofs/tla/RNChannelTypes.tla InTurnOneRule
 // RNChannelTypes!Dispatch and !DispatchFragment in turn (delta == 0), one rule
 // for a record and a block: the message is checked against the in-turn block
 // and the watermark only, never against the held future state, and delivered
@@ -310,7 +310,7 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
     return ROCKETNET_CHANNEL_DISPATCH_DELIVERED;
 }
 
-// tla/RNChannelTypes.tla Dispatch
+// proofs/tla/RNChannelTypes.tla Dispatch
 // RNChannelTypes!Dispatch: code 1 does not consult the reliable receive window.
 
 int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, struct rn_delivery_t * out )
@@ -422,7 +422,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
         return ROCKETNET_CHANNEL_DISPATCH_HELD;
     }
 
-    // tla/RNChannel.tla BuffersBounded: a free hold is the free stack's top, in O(1)
+    // proofs/tla/RNChannel.tla BuffersBounded: a free hold is the free stack's top, in O(1)
 
     if ( region->sequenced_hold_free_count == 0 )
     {
@@ -446,7 +446,7 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     return ROCKETNET_CHANNEL_DISPATCH_HELD;
 }
 
-// tla/RNChannelTypes.tla Drain
+// proofs/tla/RNChannelTypes.tla Drain
 // RNChannelTypes!Drain: the ordered transition has already opened the epoch.
 
 bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t channel )
@@ -513,7 +513,7 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
 
     if ( !rn_channels_deliver_sequenced( channels, channel, ordering, sequencing ) )
     {
-        // standard/MESSAGES.md m7.4 (nothing is silent): the refused record is stale, so release it and count it (tla/RNChannelTypes.tla DrainStale)
+        // standard/MESSAGES.md m7.4 (nothing is silent): the refused record is stale, so release it and count it (proofs/tla/RNChannelTypes.tla DrainStale)
         rx->held_sequenced = slot;
         rn_sequenced_release_hold( channels, rx );
 
@@ -545,7 +545,7 @@ void rn_channels_end_update_sequenced( struct rn_channels_t * channels )
         return;
 
     // RNChannel!EndUpdate: only slots whose views expired return to the pool.
-    // tla/RNChannel.tla EndUpdate: the pass visits the delivered list only, and does nothing when it is empty.
+    // proofs/tla/RNChannel.tla EndUpdate: the pass visits the delivered list only, and does nothing when it is empty.
 
     rn_region_t * region = channels->region;
     for ( uint32_t i = 0; i < region->sequenced_holds_delivered_count; i++ )

@@ -24,7 +24,7 @@ GET /match/{clientID}
   game client passes that opaque string directly to `rocketnet_client_connect`.
 
 The token written by both backends is byte-for-byte identical to the 768-byte
-connect token specified in [STANDARD.md](../../STANDARD.md) and implemented in
+connect token specified in [STANDARD.md](../../docs/STANDARD.md) and implemented in
 [`sdk/rocketnet_connect_token.cpp`](../../sdk/rocketnet_connect_token.cpp):
 
 - The backend signs the 576-byte `signed_connect_data` prefix (`offsets 0..575`)
@@ -188,7 +188,7 @@ umask 077
 or the C SDK `keygen` executable. The Go and C# `--keygen` modes print the
 two environment assignments below directly; the C `keygen` tool instead
 prints labelled lines (`backend public key base64 = ...` and
-`backend private key base64 = ...`, `keygen.cpp`), so convert its output:
+`backend private key base64 = ...`, `tools/keygen.cpp`), so convert its output:
 
 ```sh
 umask 077
@@ -206,13 +206,13 @@ under the labels shown above:
 - `ROCKETNET_BACKEND_PRIVATE_KEY` (64-byte Ed25519 secret signing key: 32-byte
   seed followed by the 32-byte public key)
 
-**Key boundaries (see [KEYS.md](../../KEYS.md)):**
+**Key boundaries (see [KEYS.md](../../docs/KEYS.md)):**
 
 | Material | Size | Where it lives | Must never reach |
 | --- | --- | --- | --- |
 | `ROCKETNET_BACKEND_PRIVATE_KEY` | 64 bytes (base64) | Backend token service only | Game clients, game servers, source control, logs, or docs |
 | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | 32 bytes (base64) | Every game server (`config.backend_public_key` or env) | Not secret (public verification key) |
-| Server X25519 secret key | 32 bytes (in-memory) | Generated inside `rocketnet_server_create`; wiped by `rocketnet_server_destroy` | Never exported by any API |
+| Server X25519 secret key | 32 bytes (in-memory) | Generated at create or copied from `config.server_secret_key`; the server's copy is wiped at destroy | Never exported by any API |
 | Server X25519 public key (`rocketnet_server_public_key`) | 32 bytes (base64) | Exported by each live server and registered with the backend | Not secret (public sealing key) |
 | Per-token session keys (`client_to_server_key`, `server_to_client_key`) | 2 x 32 bytes | Minted per token, sealed to the server, included in the token for the client, then wiped in backend memory | Logs, persistent storage, or other clients |
 
@@ -331,7 +331,7 @@ Expected output across the client and server terminals:
   backend_server: mode=production transport=portable
   ...
   server received from client 2a: hello from the backend's client
-  server client disconnected (reason NONE)
+  server client disconnected (reason CLIENT_DISCONNECTED)
   PASS
   ```
   (`0x2a` = decimal `42`, the authenticated `client_id` recovered by opening the

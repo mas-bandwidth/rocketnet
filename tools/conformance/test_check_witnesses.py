@@ -7,7 +7,7 @@
 
 Each test builds a small fixture tree in a temporary directory -- a
 standard/TRANSPORT.md, a standard/MESSAGES.md, a standard/RATIONALE.md, a
-tla/ model, a code file and a test file -- and drives the checker against
+proofs/tla/ model, a code file and a test file -- and drives the checker against
 it. The checker is a pure function of its root, so the tests need no
 network, no time and no socket, and each stays inside its own temporary
 directory.
@@ -69,7 +69,7 @@ class CheckerFixture(unittest.TestCase):
         root = tempfile.mkdtemp(prefix="witnesses-")
         os.makedirs(os.path.join(root, "docs"))
         os.makedirs(os.path.join(root, "standard"))
-        os.makedirs(os.path.join(root, "tla"))
+        os.makedirs(os.path.join(root, "proofs", "tla"))
         os.makedirs(os.path.join(root, "sdk"))
         with open(os.path.join(root, "standard", "TRANSPORT.md"), "w") as handle:
             handle.write(TRANSPORT)
@@ -77,7 +77,7 @@ class CheckerFixture(unittest.TestCase):
             handle.write(MESSAGES)
         with open(os.path.join(root, "standard", "RATIONALE.md"), "w") as handle:
             handle.write(RATIONALE)
-        with open(os.path.join(root, "tla", "Fixture.tla"), "w") as handle:
+        with open(os.path.join(root, "proofs", "tla", "Fixture.tla"), "w") as handle:
             handle.write(TLA)
         with open(os.path.join(root, "sdk", "code.cpp"), "w") as handle:
             handle.write(CODE)
@@ -153,7 +153,7 @@ class CheckerFixture(unittest.TestCase):
         ])
         code, report = check_witnesses.run(root)
         self.assertEqual(code, 1)
-        self.assertIn("is in no tla/*.tla", report)
+        self.assertIn("is in no proofs/tla/*.tla", report)
 
     def test_stale_test_anchor_fails(self):
         root = self.build([

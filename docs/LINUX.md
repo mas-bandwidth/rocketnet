@@ -26,7 +26,7 @@ transport. Neither case prevents building XDP. See BUILDING.md, "Ubuntu
 runtime qualification boundary.
 
 The XDP program is compiled at build time, never on the server host.
-`cmake/EmbedXdp.cmake` compiles `server_xdp/server_xdp.c` to `server_xdp.o`
+`cmake/EmbedXdp.cmake` compiles `sdk/xdp/server_xdp.c` to `server_xdp.o`
 with a clang that has the BPF target, against the kernel UAPI headers
 (`linux-libc-dev`, which `build-essential` pulls in) and libbpf's
 `bpf/bpf_helpers.h`, and embeds the object's bytes in the library;
@@ -91,7 +91,7 @@ comes first in `auto`, zero means the endpoint does not have that transport
 | transport | server rank | client rank | row |
 | --- | ---: | ---: | --- |
 | `xdp` | 10 | 0 | `sdk/rocketnet_drivers.inc` |
-| `gso` | 20 | pin only | `sdk/rocketnet_drivers.inc` |
+| `gso` | 20 | 10 | `sdk/rocketnet_drivers.inc` |
 | `io_uring` | 25 | 0 | `sdk/rocketnet_drivers.inc` |
 | `portable` | development: 30; production: 50 | 30 | `sdk/rocketnet_drivers.inc` |
 | `loopback` | pin only | pin only | `sdk/rocketnet_drivers.inc` |
@@ -99,8 +99,8 @@ comes first in `auto`, zero means the endpoint does not have that transport
 The Linux server `auto` order in both builds is **xdp → gso → io_uring → portable**. A build without liburing omits
 `io_uring` from the list. The portable client side remains available.
 `loopback` is in-process, never chosen by `auto`, and selected only by name
-(`TRANSPORTS.md`, `sdk/rocketnet_driver.h`). The Linux client has one
-transport in `auto`, `portable` (`test_driver.cpp`), and `gso` as a pin-only client (TRANSPORTS.md); on Linux it
+(`TRANSPORTS.md`, `sdk/rocketnet_driver.h`). The Linux client `auto` order is
+**gso → portable** (`sdk/rocketnet_drivers.inc`). The Linux portable transport
 batches with `sendmmsg`/`recvmmsg` and waits on an eventfd beside its socket
 (`sdk/rocketnet_driver_builtin.cpp`,
 `sdk/rocketnet_platform.cpp`).
@@ -416,11 +416,12 @@ startup and an `xdp` transport label alone do not establish zero-copy.
   (`sdk/rocketnet_server_socket_linux.cpp`).
 - Queues: `num_xdp_queues`, default 7; worker CPUs start at `num_os_cpus`,
   default 1 (`sdk/rocketnet_driver_builtin.cpp`, `BUILDING.md`).
-- Memory: each queue's UMEM is 65536 frames of 4096 bytes, 256 MiB
+- Memory: each queue's UMEM is 49152 frames of 4096 bytes, 192 MiB:
+  32768 send frames plus 16384 receive frames
   (`sdk/rocketnet_constants.h`, `sdk/rocketnet_server_socket_linux.cpp`);
-  seven queues are 1,879,048,192 bytes of UMEM inside a plan of roughly 4.2 GiB
-  (`BUILDING.md`), within the 4096 MiB `ROCKETNET_XDP_MEMORY_MIB`
-  budget (`BUILDING.md`, `sdk/rocketnet_server_socket_linux.cpp`).
+  seven queues are 1,409,286,144 bytes of UMEM, within the 4096 MiB
+  `ROCKETNET_XDP_MEMORY_MIB` budget. UMEM is one part of the server's full
+  memory plan; use [the memory planner](MEMORY.md) for the selected configuration.
 - Both families on one interface: `rocketnet_server_create` names an IPv4
   and an IPv6 address on the same port, and `xdp` carries both destinations when both
   addresses are on that interface (`sdk/rocketnet_server_socket_linux.cpp`).
@@ -541,7 +542,7 @@ cover a hard-killed client and the socket error paths per transport cell.
 `max_clients` defaults to it (`sdk/rocketnet_internal.h`).
 
 **File descriptors.** A server opens a fixed set of sockets, independent of
-`max_clients`: the plan's `sockets` field (`bench/transport_memory.cpp`).
+`max_clients`: the plan's `sockets` field (`benchmarks/transport_memory.cpp`).
 For 1000 clients: `portable` 1, `gso` 4, `io_uring` 4 plus its ring, `xdp` 7
 (the plan output in section 10). The default soft limit of 1024 is ample; the
 section 10 commands create 1000-client `gso` and four-queue `io_uring` servers
@@ -611,7 +612,7 @@ succeeds.
 **Memory.** `./bin/transport_memory <clients> <payload> <slots> <transport> <queues> --plan-only`
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
-(`bench/transport_memory.cpp`, `BUILDING.md`). At 1000 clients,
+(`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients,
 1416-byte payloads and 16 reassembly slots the plans are 483,668,499 bytes
 (`portable`), 625,876,730 (`gso`), 594,710,098 (`io_uring`) and 4,269,352,940
 (`xdp`, 7 queues, of which 1,879,048,192 UMEM). This entire numeric set is

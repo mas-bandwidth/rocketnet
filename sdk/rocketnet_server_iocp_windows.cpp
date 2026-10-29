@@ -980,7 +980,7 @@ void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
 {
     if ( !iocp || iocp->stopping.load( std::memory_order_acquire ) )
         return;
-    // tla/RNBufferHandoff.tla MainStop transfers the final producer with quit.
+    // proofs/tla/RNBufferHandoff.tla MainStop transfers the final producer with quit.
     // Fill threads have joined before stop. The release transfers the final
     // unpublished producer to TX, without scanning it or acquiring a mutex.
 
@@ -1587,7 +1587,7 @@ static bool rocketnet_iocp_post_send_run( rocketnet_server_iocp_t * iocp, const 
 
 static void rocketnet_iocp_send_bank( rocketnet_server_iocp_t * iocp, rocketnet_iocp_send_bank_t * bank )
 {
-    // tla/RNBufferHandoff.tla Consume and WorkerExit keep sending after quit.
+    // proofs/tla/RNBufferHandoff.tla Consume and WorkerExit keep sending after quit.
     const uint64_t count = (uint64_t) bank->count;
 
     if ( iocp->features.load( std::memory_order_relaxed ) & ROCKETNET_IOCP_FEATURE_USO )
@@ -1663,7 +1663,7 @@ void rocketnet_server_iocp_send_packets( rocketnet_server_iocp_t * iocp )
 
 static void rocketnet_iocp_send_worker( void * argument )
 {
-    // tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
+    // proofs/tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
     rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t *) argument;
 
     for ( ;; )

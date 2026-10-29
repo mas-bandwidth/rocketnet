@@ -70,8 +70,8 @@ void rocketnet_client_connection_reset( struct rocketnet_client_protocol_t * cli
 
 void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * server, int client_index, int reason )
 {
-    // tla/RNXdpReplay.tla Release: ends the session for this slot.
-    // tla/RNDestroyWipe.tla Remove: wipes the mapping's secrets and then clears the slot's user data.
+    // proofs/tla/RNXdpReplay.tla Release: ends the session for this slot.
+    // proofs/tla/RNDestroyWipe.tla Remove: wipes the mapping's secrets and then clears the slot's user data.
 
     rocketnet_assert( server );
 
@@ -98,12 +98,12 @@ void rocketnet_server_connection_reset( struct rocketnet_server_protocol_t * ser
     if ( rocketnet_client_slots_connected( server->client_slots, client_index ) )
         rocketnet_client_slots_release( server->client_slots, client_index );
 
-    // tla/RNSlots.tla Disconnect: the slot's connection id returns to none
+    // proofs/tla/RNSlots.tla Disconnect: the slot's connection id returns to none
 
     if ( server->connection_ids )
         server->connection_ids[client_index] = 0;
 
-    // tla/RNSlots.tla Disconnect: the ending path's reason, which the message
+    // proofs/tla/RNSlots.tla Disconnect: the ending path's reason, which the message
     // layer reads when its Observe finds the slot dropped
 
     if ( server->end_reasons )

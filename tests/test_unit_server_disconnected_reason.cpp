@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED (tla/ClientSession.tla
+// ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED (proofs/tla/ClientSession.tla
 // ServerDisconnect): a client that accepts the server's disconnect packet
 // reads it from rocketnet_client_state until its next connect starts a new
 // handshake. The server ends the connection three ways
@@ -386,8 +386,8 @@ static void test_client_disconnect_and_timeout_read_none()
 
 REGISTER_UNIT_TEST( test_client_disconnect_and_timeout_read_none );
 
-// The server's side of the same ends (tla/RNSlots.tla Disconnect, Observe;
-// tla/ServerSession.tla SlotTimeout, ClientLeaves): a slot the transport
+// The server's side of the same ends (proofs/tla/RNSlots.tla Disconnect, Observe;
+// proofs/tla/ServerSession.tla SlotTimeout, ClientLeaves): a slot the transport
 // ends reads the reason its ending path named, TIMED_OUT when no packet
 // arrived within the connection timeout and CLIENT_DISCONNECTED when the
 // client's disconnect packet arrived, kept across updates until the slot's
@@ -585,7 +585,7 @@ REGISTER_UNIT_TEST( test_client_link_without_end_reason_reads_none );
 // A server disconnect ends the slot in every query and send at once, before
 // the next update: rocketnet_server_disconnect_client and
 // rocketnet_server_disconnect_all_clients go through the message layer's kick
-// (tla/RNSlots.tla PublicDisconnect), as the client's disconnect does. The
+// (proofs/tla/RNSlots.tla PublicDisconnect), as the client's disconnect does. The
 // slot reads not connected, a start on it is dropped and counted in
 // NOT_CONNECTED_DROPS, and an in-place start opened on it before the
 // disconnect is cancelled, so its finish returns 0. Each failing line is

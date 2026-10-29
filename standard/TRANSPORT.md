@@ -534,6 +534,7 @@ Every constant this section states is a row of the table below.
 | last keyed filter epoch | `255` | | registry |
 | keyed filter input width | `7` | bytes | size |
 
+<a id="t5.1"></a>
 ### t5.1. Keyed epochs (optional extension)
 
 This subsection is an optional extension. It is not part of conformance: an
@@ -711,6 +712,7 @@ A connect token is a fixed-size credential that a backend gives to a client. It 
 3. The backend MUST write the session keys twice: in the clear for the client, and inside the sealed block for the server. A client MUST NOT verify the signature; it trusts the clear copy because the secure channel delivered the token. A tampered clear copy causes the handshake to fail and nothing worse.
 4. The token identifier MUST be the BLAKE2b hash, of the `token identifier` size of [t3 Constants and registries](#t3) and with no key, of the signed connect data. The identifier is content-determined, never the signature bytes.
 
+<a id="t6.1"></a>
 ### t6.1. Private connect token data
 
 The private connect token data is the block that only the target server reads. Before sealing it is:
@@ -747,6 +749,7 @@ The private connect token data is the block that only the target server reads. B
 
 A backend MUST seal this block with crypto_box_seal to the server's X25519 public key: draw an ephemeral X25519 key pair, write the ephemeral public key, then the ciphertext of crypto_box_easy under the nonce that is the BLAKE2b-192 hash of the ephemeral public key concatenated with the server public key. The sealed block is the `sealed block` size of [t3 Constants and registries](#t3): the private block plus the `sealed box overhead` size of [t3 Constants and registries](#t3). A server MUST open the sealed block with its own X25519 secret key.
 
+<a id="t6.2"></a>
 ### t6.2. Signed connect data
 
 Everything the server checks is gathered into one fixed buffer of the `signed connect data` size of [t3 Constants and registries](#t3) and signed by the backend. The token carries this buffer and its signature verbatim, so the server verifies with no shared secret. The signature MUST be an Ed25519 detached signature over the whole buffer, including its zero padding.

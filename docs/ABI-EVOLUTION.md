@@ -89,7 +89,8 @@ The steps for adding a field:
 1. Add the field at the end of the struct, starting at or after the previous
    revision's `sizeof`, with a default that equals the old behaviour.
 2. Write its default in the library's default fill, and its environment
-   variable beside the field in the header, as for every other field.
+   variable beside the field in the header when it has one. Callbacks,
+   `loopback_hub`, `server_secret_key`, and `config_bytes` have no environment form.
 3. Add a case to `tests/test_unit_sized_config.cpp` that passes the previous
    revision's size as `config_bytes` and checks the new field reads its
    default.
@@ -106,10 +107,12 @@ bytes used are the smaller of the caller's `config_bytes` and the library's
 caller's struct, after `config_bytes`, which it keeps; a create or
 required-memory call fills a full struct with the defaults and copies the
 caller's bytes over them, then runs on the full struct. The server config
-contains the backend's public key and protocol id; it never contains a secret
-key. Each server object generates its own X25519 keypair during create,
-exposes its public key through `rocketnet_server_public_key`, and wipes its
-secret key when destroyed.
+contains the backend's public key and protocol id, plus an optional
+`server_secret_key`. An all-zero server secret requests a generated X25519
+keypair; a supplied secret is copied and its public key derived during create.
+The backend signing secret never belongs in this config. Read the server public
+key through `rocketnet_server_public_key`; destroy wipes the server's secret
+copy. The caller wipes its supplied copy after create. See [Keys](KEYS.md).
 
 The internal transport and message configs keep oldest-first known-size lists
 in the internal layer header, checked in `sdk/rocketnet_abi.cpp`; the public

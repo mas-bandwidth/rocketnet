@@ -3,7 +3,7 @@
 
 # TLA cards append ledger rows; a doubled row after a merge is refused by
 # tlacheck and tools/check_tla_coverage.py.
-tla/CASES.tsv merge=union
-tla/COVERAGE.tsv merge=union
-tla/RUNS.tsv merge=union
-tla/README.md merge=union
+proofs/tla/CASES.tsv merge=union
+proofs/tla/COVERAGE.tsv merge=union
+proofs/tla/RUNS.tsv merge=union
+proofs/tla/README.md merge=union

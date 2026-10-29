@@ -202,7 +202,7 @@ struct rocketnet_client_transport_io_operations_t
     // operating-system handles (socket, wake, completion port) and frees
     // nothing: destroy, on the caller's thread, frees the memory later and
     // closes nothing more. The family race closes its losing family here
-    // (sdk/rocketnet_client_transport.cpp, tla/RNClientRace.tla). NULL for a
+    // (sdk/rocketnet_client_transport.cpp, proofs/tla/RNClientRace.tla). NULL for a
     // transport with nothing to close before destroy.
     void ( *close )( void * transport );
 };

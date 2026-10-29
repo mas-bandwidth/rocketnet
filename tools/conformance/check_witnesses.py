@@ -38,7 +38,7 @@ sys.path.insert(0, HERE)
 import check_rn_standard as rn_standard  # noqa: E402
 
 TSV = os.path.join(ROOT, "docs", "WITNESSES.tsv")
-TLA_DIR = os.path.join(ROOT, "tla")
+TLA_DIR = os.path.join(ROOT, "proofs", "tla")
 
 COLUMNS = ["section", "rule", "tla_invariant", "code_function", "test", "tier"]
 TIERS = ("unit", "none", "model")
@@ -100,7 +100,7 @@ def rule_carried(docs, rationale, ident, rule):
 
 
 def anchor_invariant_exists(root, name):
-    tla_dir = os.path.join(root, "tla")
+    tla_dir = os.path.join(root, "proofs", "tla")
     pattern = re.compile(r"(?m)^\s*" + re.escape(name) + r"\s*==")
     for entry in sorted(os.listdir(tla_dir)):
         if not entry.endswith(".tla"):
@@ -179,7 +179,7 @@ def run(root=None):
 
         if invariant != "-":
             if anchor_invariant_exists(root, invariant) is None:
-                failures.append("%s: TLA+ invariant %r is in no tla/*.tla"
+                failures.append("%s: TLA+ invariant %r is in no proofs/tla/*.tla"
                                 % (where, invariant))
 
         if code != "-":

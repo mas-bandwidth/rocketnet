@@ -3,8 +3,8 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// RNWindow and RNRing operation sequences (tla/README-RNWindow.md,
-// tla/README-RNRing.md) against the production sender and receiver window
+// RNWindow and RNRing operation sequences (proofs/tla/README-RNWindow.md,
+// proofs/tla/README-RNRing.md) against the production sender and receiver window
 // operations (sdk/rocketnet_window_send.h and sdk/rocketnet_window_receive.h):
 // the count bound and the ring floor both read U', not U. An independent
 // reference of count, U', ring occupancy, descriptor ownership and delivery is
@@ -887,7 +887,7 @@ static void probe_walk( world_t * w, uint64_t seed, uint64_t first, int steps, i
         world_apply( w, action );
 
         // An exhausted region refuses every further send until reset (sticky,
-        // tla/RNConnectionMemory.tla ExhaustionOnlyLeadsToDisconnect). Reset it
+        // proofs/tla/RNConnectionMemory.tla ExhaustionOnlyLeadsToDisconnect). Reset it
         // (the model's Reuse) so the walk keeps exercising live window state;
         // without this the guard stops all writes for the rest of the walk.
 
