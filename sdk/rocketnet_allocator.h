@@ -50,13 +50,13 @@
 #define RN_CHUNK_NONE           0xFFFFFFFFu
 #define RN_RESEND_NONE          0xFFFFFFFFu
 
-struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation
+struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a ticket plus the head generation, linked by channel index
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
     uint32_t queue_head, queue_tail;    // cached first/last live descriptor of this channel's flat FIFO, ordered by enqueue_ticket over the send_descriptors array; RN_DESCRIPTOR_NONE when empty
     uint16_t queued[4];                 // live queued count per priority (holes are not counted)
-    uint32_t ready_prev, ready_next;    // retired ready-list links: always RN_DESCRIPTOR_NONE; ready order is the flat ready_ticket sequence over the channel_send array
+    uint32_t ready_prev, ready_next;    // the neighbouring ready channels, RN_DESCRIPTOR_NONE at the ends and when not ready
     uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
     uint32_t ready_generation;          // generation of the live queue head when this channel joined the ready list
 };
