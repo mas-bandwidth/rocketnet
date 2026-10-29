@@ -475,6 +475,7 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
 
         descriptor->bytes = (uint32_t) bytes;
         descriptor->serial = serial;
+        // tla/RNChannelQueues.tla EnqueueUnreliable: the newest ticket, the FIFO's tail
         rn_descriptor_enqueue_stamp( region, descriptor );
 
         if ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
@@ -1138,6 +1139,8 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
         after = descriptor->enqueue_ticket;
 
+        // tla/RNChannelQueues.tla StaleEpoch and Expire: an entry of an earlier
+        // epoch is never written, and the rest keep their order
         if ( descriptor->queue_epoch != region->schedule_epoch )
             continue;
 

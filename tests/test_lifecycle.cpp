@@ -547,19 +547,19 @@ static void check_token_history_create_sweep( allocator_state & state )
 {
     const int baseline = state.live;
 
-    // rocketnet_used_token_history_create: 19 allocations (fail N=1..19,
-    // succeed N=20). One history holder, eight allocations for the
-    // independent response-binding table, and ten for the claim table, whose
-    // two extra arrays hold generation-tagged chronological handles.
+    // rocketnet_used_token_history_create: 17 allocations (fail N=1..17,
+    // succeed N=18). One history holder, seven allocations for the
+    // response-binding table, and nine for the claim table, whose deadline
+    // and two insertion-order ring arrays replace the binding's expiry.
 
     check( sweep_component_create<rocketnet_used_token_history_t>(
                state,
                [&]()
                { return rocketnet_used_token_history_create( &state, 16 ); },
                []( rocketnet_used_token_history_t * h )
-               { rocketnet_used_token_history_destroy( h ); } ) == 19 );
+               { rocketnet_used_token_history_destroy( h ); } ) == 17 );
     check( state.live == baseline );
-    printf( "token history allocation sweep OK: 19 allocations\n" );
+    printf( "token history allocation sweep OK: 17 allocations\n" );
 }
 
 static void check_component_create_sweeps( allocator_state & state )
