@@ -3896,6 +3896,16 @@ void rocketnet_test_server_serves_both_families()
     snprintf( server_config.second_public_address, sizeof( server_config.second_public_address ), "[::1]:0" );
 
     struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "127.0.0.1:0", &server_config, sizeof( server_config ) );
+
+    // one socket serves both families only where IPV6_V6ONLY can be cleared;
+    // elsewhere (OpenBSD) the portable server refuses the pair at create
+
+    if ( !rocketnet_platform_client_dual_stack() )
+    {
+        rocketnet_check( server == NULL );
+        return;
+    }
+
     rocketnet_check( server );
 
     const int port = rocketnet_server_transport_port( server );
