@@ -1631,9 +1631,11 @@ struct rocketnet_server_config_t
     /// The server's X25519 secret key, for a backend that seals tokens to a
     /// fixed server public key. All zeros, the default, makes create generate
     /// a fresh keypair. Otherwise create uses this key and derives its public
-    /// key, which rocketnet_server_public_key returns. Create copies it; the
-    /// caller may wipe its own copy once create returns, and destroy wipes the
-    /// server's. A production build (ROCKETNET_DEV=0) refuses the published
+    /// key, which rocketnet_server_public_key returns. Always start from
+    /// rocketnet_server_default_config: a config that skipped it carries
+    /// whatever bytes were here, and create takes nonzero bytes as the key.
+    /// Create copies it; the caller wipes its own copy of a supplied secret
+    /// once create returns, and destroy wipes the server's. A production build (ROCKETNET_DEV=0) refuses the published
     /// development server key at start with
     /// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION. It has no environment form.
 

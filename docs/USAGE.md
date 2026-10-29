@@ -592,7 +592,10 @@ environment (`ROCKETNET_SERVER_PROTOCOL_ID`,
 `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY`) is the recommended place for them, and
 setting them in code works too. Each server generates its own keypair at
 create unless the config's `server_secret_key` supplies one, for a backend that
-seals tokens to a fixed server public key (KEYS.md). A client
+seals tokens to a fixed server public key (KEYS.md). Always start from
+`rocketnet_server_default_config`: create takes any nonzero bytes in that field
+as the key, including uninitialized ones. Wipe your own copy of a supplied
+secret once create returns. A client
 config holds no keys: the connect token carries them, whether the backend mints
 it in code, a tool generates it, or the program reads it from the environment.
 For local work a development build sets `ROCKETNET_DEV_BACKEND_PUBLIC_KEY`

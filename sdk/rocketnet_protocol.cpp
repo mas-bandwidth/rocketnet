@@ -13,6 +13,7 @@
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_ack.h"
+#include "rocketnet_platform.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -123,6 +124,19 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
     rocketnet_write_bytes( &p, client_ephemeral_public_key, ROCKETNET_KEY_BYTES );
 
     return ROCKETNET_AD_WITH_EPHEMERAL_BYTES;
+}
+
+uint64_t rocketnet_session_sequence_take( uint64_t * next_sequence )
+{
+    rocketnet_assert( next_sequence );
+
+    // a counter never returns to zero (it would take 2^64 sends), so the
+    // load and the add need not be one step
+
+    if ( rocketnet_platform_atomic_load_u64( next_sequence ) == 0 )
+        return 0;
+
+    return rocketnet_platform_atomic_add_u64( next_sequence, 1 );
 }
 
 static void rocketnet_sequence_nonce( uint8_t * nonce, uint64_t sequence )

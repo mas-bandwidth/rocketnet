@@ -36,7 +36,9 @@ Follow [Production integration](PRODUCTION.md). The essential boundaries are:
   fields. Callbacks, `loopback_hub`, `server_secret_key`, and `config_bytes`
   have no environment form. Do not hard-code production secrets.
 - A server generates a key by default, or copies a supplied `server_secret_key`
-  at create. Register its public key and actual bound addresses through an
+  at create. Always start from `rocketnet_server_default_config`: create takes
+  any nonzero bytes in that field as the key, including uninitialized ones.
+  Wipe your own copy of a supplied secret once create returns. Register its public key and actual bound addresses through an
   authenticated application channel. [Keys](KEYS.md) owns the rotation rules.
 - Add authentication and authorization to the example backend before deployment.
 - Qualify the chosen client count, transport, workload, and host resources.

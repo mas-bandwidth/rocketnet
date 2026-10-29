@@ -66,6 +66,16 @@ int rocketnet_write_packet_associated_data( uint8_t * associated_data,
                                             const uint8_t * connection_salt,
                                             const uint8_t * client_ephemeral_public_key );
 
+// Takes the next session sequence from a connection's send counter in one
+// atomic fetch-add and returns the value taken, the one the caller seals:
+// no two session packets under one directional key can carry the same
+// sequence -- the AEAD nonce (rocketnet_sequence_nonce) -- whatever order
+// control and fill-phase sends are driven in. A counter at zero is unset,
+// is never advanced, and returns zero, which every seal refuses. A taken
+// sequence whose seal fails is burned, never reused.
+
+uint64_t rocketnet_session_sequence_take( uint64_t * next_sequence );
+
 // Sealed packet construction. Builds prefilter header, the low 32 bits of the
 // sequence, the clear session nonce on types 1 and 2, then the data sealed
 // with ChaCha20-Poly1305 under the sequence-derived nonce and the associated

@@ -66,6 +66,24 @@ uint64_t rocketnet_dev_session_sequence_start( void )
     static const uint64_t start = rocketnet_dev_session_sequence_start_from_env();
     return start;
 }
+
+// the sequence-taken seam (sdk/rocketnet_test_seams.h): per thread, so a
+// case that installs it touches no other thread's sends
+
+static thread_local rocketnet_dev_sequence_taken_function_t * rocketnet_dev_sequence_taken_function;
+static thread_local void * rocketnet_dev_sequence_taken_context;
+
+void rocketnet_dev_set_sequence_taken_hook( rocketnet_dev_sequence_taken_function_t * function, void * context )
+{
+    rocketnet_dev_sequence_taken_function = function;
+    rocketnet_dev_sequence_taken_context = context;
+}
+
+void rocketnet_dev_session_sequence_taken( uint64_t sequence )
+{
+    if ( rocketnet_dev_sequence_taken_function )
+        rocketnet_dev_sequence_taken_function( rocketnet_dev_sequence_taken_context, sequence );
+}
 #endif // #if ROCKETNET_DEV
 
 uint64_t rocketnet_encryption_map_allocation_bytes( int capacity )

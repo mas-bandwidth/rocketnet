@@ -3557,7 +3557,9 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
 
     burst->plaintext_bytes = rocketnet_session_ack_block_build( burst->plaintext, 0, &mapping->accepted_session );
     burst->to = *client_address;
-    burst->first_sequence = mapping->send_sequence_session;
+    // the whole burst's sequences are taken in one atomic add, so nothing
+    // else sealed under this key can carry one of them
+    burst->first_sequence = rocketnet_platform_atomic_add_u64( &mapping->send_sequence_session, (uint64_t) ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
     burst->sealed = 0;
     memcpy( burst->connection_salt, mapping->connection_salt, sizeof( burst->connection_salt ) );
     memcpy( server_transport->disconnect_burst_keys[index], mapping->keys.session_server_to_client, ROCKETNET_KEY_BYTES );
