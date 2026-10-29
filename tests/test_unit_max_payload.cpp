@@ -501,6 +501,39 @@ static void test_sealed_packet_at_max_size_opens()
         check( received == (int) sizeof( payload ) && memcmp( g_received, payload, sizeof( payload ) ) == 0 );
     }
 
+    // a fragment at the full stride, under both long histories: the ack block
+    // takes only the room the fragment header and bytes leave, so the packet
+    // stays inside the send budget from either end
+    {
+        static uint8_t fragment[ROCKETNET_MAX_FRAGMENT_BYTES];
+        max_payload_fill( fragment, (int) sizeof( fragment ), 17 );
+
+        static uint8_t packet[ROCKETNET_RECEIVE_CEILING + 64];
+        uint64_t sequence = 0;
+
+        // the acks a packet carries are built from the accepted history
+
+        for ( uint64_t s = 4000; s <= 6000; s++ )
+        {
+            if ( s % 3 != 0 )
+                rocketnet_replay_advance( &pair.client.accepted_session, s );
+            if ( s % 5 != 0 )
+                rocketnet_replay_advance( &mapping->accepted_session, s );
+        }
+
+        static uint8_t block[ROCKETNET_ACK_BLOCK_MAX_BYTES];
+        check( rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &pair.client.accepted_session ) > 100 );
+        check( rocketnet_ack_block_build( block, ROCKETNET_ACK_BLOCK_MAX_BYTES, &mapping->accepted_session ) > 100 );
+
+        check( rocketnet_client_protocol_start_fragments( &pair.client, 2, &sequence ) );
+        int wire_bytes = rocketnet_client_protocol_seal_fragment( &pair.client, sequence, 1, 0, 2, fragment, (int) sizeof( fragment ), 0, pair.time, packet );
+        check( wire_bytes > 0 && wire_bytes <= ROCKETNET_SEND_BUDGET );
+
+        check( rocketnet_server_protocol_start_fragments( &pair.server, 0, 2, &sequence ) );
+        wire_bytes = rocketnet_server_protocol_seal_fragment( &pair.server, 0, sequence, 1, 0, 2, fragment, (int) sizeof( fragment ), 0, pair.time, packet );
+        check( wire_bytes > 0 && wire_bytes <= ROCKETNET_SEND_BUDGET );
+    }
+
     // one byte over the capacity is refused at the seal, not truncated
     {
         static uint8_t payload[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 1];
