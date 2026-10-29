@@ -12645,16 +12645,21 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_portable_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_portable_ipv6, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_iocp_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_iocp_ipv6, NULL },
+#if ROCKETNET_DEV
+    // Forcing plain IOCP requires the development-only USO/URO test seam.
     { "test_iocp_transport_windows_connreset_hard_killed_client_plain_ipv4", windows_connreset_hard_killed_client_iocp_plain_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_plain_ipv6", windows_connreset_hard_killed_client_iocp_plain_ipv6, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_rio_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_rio_ipv4, NULL },
     { "test_rio_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_rio_ipv6, NULL },
     { "test_portable_transport_windows_connreset_send_to_closed_port_ipv4", windows_connreset_send_to_closed_port_portable_ipv4, NULL },
     { "test_portable_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_portable_ipv6, NULL },
     { "test_iocp_transport_windows_connreset_send_to_closed_port_ipv4", windows_connreset_send_to_closed_port_iocp_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_iocp_ipv6, NULL },
+#if ROCKETNET_DEV
     { "test_iocp_transport_windows_connreset_send_to_closed_port_plain_ipv4", windows_connreset_send_to_closed_port_iocp_plain_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_send_to_closed_port_plain_ipv6", windows_connreset_send_to_closed_port_iocp_plain_ipv6, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_rio_transport_windows_connreset_send_to_closed_port_ipv4", windows_connreset_send_to_closed_port_rio_ipv4, NULL },
     { "test_rio_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_rio_ipv6, NULL },
     { "test_windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4, NULL },

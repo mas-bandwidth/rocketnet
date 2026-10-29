@@ -1129,6 +1129,8 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     #   functional/posix_hard_killed_client.cpp (platform test seams)
     #   functional/windows_socket_errors.cpp (server/client transport test seams)
     #   functional/windows_lifecycle_stress.cpp (Windows SDK resource ledger, ROCKETNET_DEV on Windows)
+    # The four Windows connreset iocp_plain cases also require development-only
+    # USO/URO force flags; production retains the ordinary IOCP cases instead.
     # and, in functional/rocketnet_functional_tests.cpp, the registry entries
     # for those files plus test_client_ipv4_without_ipv6_stack (ipv6 test
     # seam), test_server_handshake_deadline_from_config (internal client
