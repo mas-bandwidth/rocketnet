@@ -475,7 +475,16 @@ static void posix_classify( const uint8_t * data, int bytes, struct posix_expect
 static void posix_send_datagram( int sender, const struct sockaddr_storage * to, socklen_t to_bytes, const uint8_t * data, int bytes,
                                  struct posix_expect_t * expect )
 {
-    const ssize_t sent = sendto( sender, data, (size_t) bytes, 0, (const struct sockaddr *) to, to_bytes );
+    // a non-blocking send the OS refuses for now (EAGAIN, ENOBUFS: OpenBSD
+    // under the storm) is the host's queue, not the library: wait and resend
+
+    ssize_t sent = sendto( sender, data, (size_t) bytes, 0, (const struct sockaddr *) to, to_bytes );
+    for ( int attempt = 0; sent != bytes && ( errno == EAGAIN || errno == ENOBUFS ) && attempt < 1000; attempt++ )
+    {
+        rocketnet_platform_sleep( 0.001 );
+        sent = sendto( sender, data, (size_t) bytes, 0, (const struct sockaddr *) to, to_bytes );
+    }
+
     if ( sent != bytes )
     {
         printf( "raw send of %d bytes answered %d (%s)\n", bytes, (int) sent, strerror( errno ) );
@@ -563,6 +572,29 @@ static const struct rocketnet_counters_t * posix_pair_counters( struct posix_pai
 // comes from the server's own socket (the one address the client listens to)
 // and the server sends the valid traffic.
 
+
+// one valid datagram through the transport, the index its payload carries
+
+static void posix_weather_send_valid( struct posix_pair_t * pair, bool at_server, int index )
+{
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair->client, POSIX_WEATHER_VALID_BYTES, &context )
+                                : rocketnet_server_transport_start_packet( pair->server, pair->client_index, POSIX_WEATHER_VALID_BYTES, &context );
+    posix_check( frame != NULL );
+    posix_valid_payload( index, frame + context.payload_index );
+
+    if ( at_server )
+    {
+        posix_check( rocketnet_client_transport_finish_packet( pair->client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+        rocketnet_client_transport_send_packets( pair->client );
+    }
+    else
+    {
+        posix_check( rocketnet_server_transport_finish_packet( pair->server, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
+        rocketnet_server_transport_send_packets( pair->server );
+    }
+}
+
 static void posix_weather_cell( int ipv6, int at_server, const char * server_transport_io, const char * client_transport_io,
                                 const char * server_pump, const char * client_pump )
 {
@@ -602,26 +634,11 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
         // the valid traffic for this round leaves first, through the
         // transport, so its datagram is in flight while the weather lands
 
-        {
-            struct rocketnet_packet_context_t context;
-            uint8_t * frame = at_server ? rocketnet_client_transport_start_packet( pair.client, POSIX_WEATHER_VALID_BYTES, &context )
-                                        : rocketnet_server_transport_start_packet( pair.server, pair.client_index, POSIX_WEATHER_VALID_BYTES, &context );
-            posix_check( frame != NULL );
-            posix_valid_payload( valid_sent, frame + context.payload_index );
+        rocketnet_platform_socket_t * valid_socket = at_server ? pair.client_socket : pair.server_socket;
+        uint64_t refused = rocketnet_platform_socket_send_failures( valid_socket );
 
-            if ( at_server )
-            {
-                posix_check( rocketnet_client_transport_finish_packet( pair.client, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
-                rocketnet_client_transport_send_packets( pair.client );
-            }
-            else
-            {
-                posix_check( rocketnet_server_transport_finish_packet( pair.server, &context, POSIX_WEATHER_VALID_BYTES ) > 0 );
-                rocketnet_server_transport_send_packets( pair.server );
-            }
-
-            valid_sent++;
-        }
+        posix_weather_send_valid( &pair, at_server, valid_sent );
+        valid_sent++;
 
         // the first round carries the oversize datagram and the two runts
 
@@ -709,6 +726,17 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
             posix_counters_read( posix_pair_counters( &pair, at_server ), &now );
             if ( posix_expect_equal( &now, &expect ) && valid_seen == valid_sent )
                 break;
+
+            // a valid send the OS refused (OpenBSD, when the client cell's
+            // storm shares the library's server socket) was dropped and
+            // counted by the library: it is sent again, as an application would
+
+            const uint64_t refused_now = rocketnet_platform_socket_send_failures( valid_socket );
+            if ( refused_now != refused && valid_seen < valid_sent )
+            {
+                refused = refused_now;
+                posix_weather_send_valid( &pair, at_server, valid_sent - 1 );
+            }
 
             const bool short_now = rocketnet_platform_time() >= deadline;
             if ( short_now )
