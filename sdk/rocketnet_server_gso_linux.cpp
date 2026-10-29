@@ -1545,16 +1545,31 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 return message_first_slot[sent];
             }
 
-            // EAGAIN and everything else: the socket cannot take more this
+            // a full socket (or a signal): the socket cannot take more this
             // flush. the transport's semantics price this as packets lost on
             // the wire, counted, never resent.
 
-            for ( int i = sent; i < num_messages; i++ )
-                gso->counter_send_dropped += (uint64_t) message_num_packets[i];
+            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM || errno == EINTR )
+            {
+                for ( int i = sent; i < num_messages; i++ )
+                    gso->counter_send_dropped += (uint64_t) message_num_packets[i];
 
-            rocketnet_spam( "gso transport sendmmsg refused: %s. %d messages dropped", strerror( errno ), num_messages - sent );
+                rocketnet_spam( "gso transport sendmmsg refused: %s. %d messages dropped", strerror( errno ), num_messages - sent );
 
-            sent = num_messages;
+                sent = num_messages;
+                continue;
+            }
+
+            // nothing went in this call, so the first unsent message is the
+            // one the kernel refused (an unroutable destination, say): drop
+            // it and send the rest in order, as the portable batch and the
+            // client gso do
+
+            gso->counter_send_dropped += (uint64_t) message_num_packets[sent];
+
+            rocketnet_spam( "gso transport sendmmsg refused: %s. one message dropped", strerror( errno ) );
+
+            sent++;
         }
 
         slot = batch_end;
@@ -1669,14 +1684,14 @@ static void rocketnet_server_gso_test_fill( struct rocketnet_server_gso_recv_buf
     }
 }
 
-static bool rocketnet_server_gso_test_stage( struct rocketnet_server_gso_t * gso )
+static bool rocketnet_server_gso_test_stage( struct rocketnet_server_gso_t * gso, uint16_t port )
 {
     struct rocketnet_address_t to;
     memset( &to, 0, sizeof( to ) );
     to.type = ROCKETNET_ADDRESS_IPV4;
     to.data.ipv4[0] = 127;
     to.data.ipv4[3] = 1;
-    to.port = 40000;
+    to.port = port;
 
     uint64_t packet_id = 0;
     uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
@@ -1687,11 +1702,12 @@ static bool rocketnet_server_gso_test_stage( struct rocketnet_server_gso_t * gso
     return true;
 }
 
-bool rocketnet_server_gso_test_worker_handoff()
+// one queue, no socket, no thread: the fixture every stepped test runs on
+static struct rocketnet_server_gso_t * rocketnet_server_gso_test_create()
 {
     void * storage = rocketnet_malloc( NULL, sizeof( struct rocketnet_server_gso_t ) );
     if ( !storage )
-        return false;
+        return NULL;
     struct rocketnet_server_gso_t * gso = new ( storage ) rocketnet_server_gso_t();
     gso->context = NULL;
     gso->num_queues = 1;
@@ -1700,7 +1716,7 @@ bool rocketnet_server_gso_test_worker_handoff()
     {
         gso->~rocketnet_server_gso_t();
         rocketnet_free( NULL, storage );
-        return false;
+        return NULL;
     }
 
     struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
@@ -1724,8 +1740,29 @@ bool rocketnet_server_gso_test_worker_handoff()
         rocketnet_free( NULL, gso->queues );
         gso->~rocketnet_server_gso_t();
         rocketnet_free( NULL, storage );
-        return false;
+        return NULL;
     }
+
+    return gso;
+}
+
+// the fixture started no threads, so destroy has no handle to join; it
+// releases the receive mutex itself, then destroy frees the storage
+static void rocketnet_server_gso_test_destroy( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_platform_mutex_destroy( &gso->queues[0].receive_mutex );
+    rocketnet_server_gso_destroy( gso );
+}
+
+bool rocketnet_server_gso_test_worker_handoff()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+        return false;
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+
+    bool valid = true;
 
     // Receive: the worker publishes a filled buffer and takes the free one.
 
@@ -1777,12 +1814,12 @@ bool rocketnet_server_gso_test_worker_handoff()
     // Transmit: two publishes empty the free FIFO; the third retains the
     // producer bank instead of waiting or overwriting a bank in flight.
 
-    valid = valid && rocketnet_server_gso_test_stage( gso );
+    valid = valid && rocketnet_server_gso_test_stage( gso, 40000 );
     rocketnet_server_gso_send_packets( gso );
-    valid = valid && rocketnet_server_gso_test_stage( gso );
+    valid = valid && rocketnet_server_gso_test_stage( gso, 40000 );
     rocketnet_server_gso_send_packets( gso );
     valid = valid && gso->send_producer == 2 && gso->send_ready_count == 2 && gso->send_free_count == 0;
-    valid = valid && rocketnet_server_gso_test_stage( gso );
+    valid = valid && rocketnet_server_gso_test_stage( gso, 40000 );
     rocketnet_server_gso_send_packets( gso );
     valid = valid && gso->send_producer == 2 && gso->send_ready_count == 2;
 
@@ -1810,11 +1847,66 @@ bool rocketnet_server_gso_test_worker_handoff()
     gso->send_stopped.store( true, std::memory_order_release );
     valid = valid && rocketnet_server_gso_stopped( gso );
 
-    // The fixture started no threads, so destroy has no handle to join; it
-    // releases the receive mutex itself, then destroy frees the storage.
+    rocketnet_server_gso_test_destroy( gso );
 
-    rocketnet_platform_mutex_destroy( &queue->receive_mutex );
-    rocketnet_server_gso_destroy( gso );
+    return valid;
+}
+
+// A refused sendmmsg, stepped on this thread through the send-failure seam
+// with no socket and no thread: a full socket drops the rest of the flush,
+// any other errno drops the one refused message and sends the rest in
+// order, as the portable batch and the client gso do.
+bool rocketnet_server_gso_test_send_refusals()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+        return false;
+
+    bool valid = true;
+
+    // three messages to three destinations. an unroutable destination
+    // refuses its own message only: three attempts, one packet dropped each
+
+    for ( int i = 0; i < 3; i++ )
+        valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 + i ) );
+    rocketnet_server_gso_send_packets( gso );
+
+    bool final = false;
+    int taken = rocketnet_server_gso_take_send( gso, &final );
+    valid = valid && taken >= 0 && !final;
+
+    rocketnet_server_gso_test_fail_sends( gso, 3, EHOSTUNREACH );
+    bool disable_gso = false;
+    int next = rocketnet_server_gso_flush( gso, &gso->send_banks[taken], 0, 3, &disable_gso );
+    valid = valid && next == 3 && !disable_gso;
+    valid = valid && gso->counter_send_syscalls == 3 && gso->counter_send_dropped == 3 && gso->counter_packets_sent == 0;
+    valid = valid && gso->test_fail_sends.load( std::memory_order_relaxed ) == 0;
+    rocketnet_server_gso_return_send( gso, taken );
+
+    // a full socket drops the rest of the flush in one attempt
+
+    for ( int i = 0; i < 3; i++ )
+        valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 + i ) );
+    rocketnet_server_gso_send_packets( gso );
+
+    taken = rocketnet_server_gso_take_send( gso, &final );
+    valid = valid && taken >= 0 && !final;
+
+    rocketnet_server_gso_test_fail_sends( gso, 1, EAGAIN );
+    next = rocketnet_server_gso_flush( gso, &gso->send_banks[taken], 0, 3, &disable_gso );
+    valid = valid && next == 3 && !disable_gso;
+    valid = valid && gso->counter_send_syscalls == 4 && gso->counter_send_dropped == 6 && gso->counter_packets_sent == 0;
+    rocketnet_server_gso_return_send( gso, taken );
+
+    rocketnet_server_gso_stop( gso );
+    taken = rocketnet_server_gso_take_send( gso, &final );
+    valid = valid && final;
+
+    gso->queues[0].stopped.store( true, std::memory_order_release );
+    gso->send_stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+
+    rocketnet_server_gso_test_destroy( gso );
 
     return valid;
 }
