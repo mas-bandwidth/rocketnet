@@ -970,9 +970,27 @@ static void rocketnet_server_uring_reap_cqe( struct rocketnet_server_uring_t * u
     }
 }
 
+// a receive CQE the fill bank has room for: a coalesced receive carries up
+// to ROCKETNET_URING_MAX_SEGMENTS datagrams, and the bank takes what the
+// send reaps and the receive reap put in it between two swaps, so the reap
+// stops short of the last ROCKETNET_URING_MAX_SEGMENTS slots and the CQE
+// (and its ring buffer) waits for the next call (proofs/tla/RNUringDriver.tla
+// Reap within Room). destroy's drain reaps regardless: the bank is never
+// read again, and a full bank counts the overflow
+
+static bool rocketnet_server_uring_reap_has_room( struct rocketnet_server_uring_t * uring, const struct io_uring_cqe * cqe )
+{
+    if ( uring->destroying )
+        return true;
+    if ( rocketnet_uring_tag_kind( cqe->user_data ) != ROCKETNET_URING_TAG_RECV || cqe->res < 0 )
+        return true;
+    return uring->banks[uring->fill_bank].num_packets + ROCKETNET_URING_MAX_SEGMENTS <= ROCKETNET_URING_BANK_SIZE;
+}
+
 // reap the CQEs available now, oldest first, without blocking and at most
 // budget of them (proofs/tla/RNUringDriver.tla Reap within a call's Budget); returns how
-// many. CQEs past the budget stay in the completion queue for a later call.
+// many. CQEs past the budget, and a receive CQE the fill bank has no room
+// for, stay in the completion queue for a later call.
 
 static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_t * uring, int budget )
 {
@@ -988,11 +1006,18 @@ static int rocketnet_server_uring_reap_available( struct rocketnet_server_uring_
         if ( count == 0 )
             break;
 
-        for ( unsigned i = 0; i < count; i++ )
-            rocketnet_server_uring_reap_cqe( uring, cqes[i] );
+        unsigned reaped = 0;
+        while ( reaped < count && rocketnet_server_uring_reap_has_room( uring, cqes[reaped] ) )
+        {
+            rocketnet_server_uring_reap_cqe( uring, cqes[reaped] );
+            reaped++;
+        }
 
-        rocketnet_server_uring_ring_advance( uring, count );
-        total += (int) count;
+        rocketnet_server_uring_ring_advance( uring, reaped );
+        total += (int) reaped;
+
+        if ( reaped < count )
+            break;
     }
 
     return total;
@@ -1815,7 +1840,7 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
         budget -= rocketnet_server_uring_reap_available( uring, budget );
     }
 
-    if ( budget == 0 && rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
+    if ( rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
 
     // re-arms queued while reaping
@@ -1864,8 +1889,9 @@ static void rocketnet_server_uring_rearm_unarmed( struct rocketnet_server_uring_
 
 // proofs/tla/RNUringDriver.tla RecvBegin, Reap and Swap: the call begins (RecvBegin),
 // reaps at most ROCKETNET_URING_RECEIVE_BUDGET CQEs without blocking into the
-// fill bank (Reap within the Budget; CQEs past it stay in the completion
-// queue, counted REAP_DEFERRED), submits any re-arm, then Swap:
+// fill bank (Reap within the Budget and within Room; CQEs past the budget or
+// past the bank's room stay in the completion queue, counted REAP_DEFERRED),
+// submits any re-arm, then Swap:
 // the fill bank becomes the exposed bank the transport reads until the next
 // call, and the other bank is emptied as the new fill bank
 
@@ -1881,11 +1907,10 @@ void rocketnet_server_uring_receive_packets( struct rocketnet_server_uring_t * u
     }
 #endif // #if ROCKETNET_DEV
 
-    if ( rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET ) == ROCKETNET_URING_RECEIVE_BUDGET &&
-         rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
-    {
+    rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
+
+    if ( rocketnet_server_uring_ring_cq_ready( uring ) > 0 )
         uring->counters[ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED]++;
-    }
 
     rocketnet_server_uring_rearm_unarmed( uring );
 
