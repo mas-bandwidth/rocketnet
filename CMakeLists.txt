@@ -533,14 +533,14 @@ if(ROCKETNET_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 if(ROCKETNET_BUILD_TESTS)
-    # oss-fuzz/build.sh is the one build path that does not go through this
+    # tests/oss-fuzz/build.sh is the one build path that does not go through this
     # file, so the -ffp-contract=off floor has to be pinned there separately:
     # this holds every $CC/$CXX compile line in it to the flag. A build target,
     # not a ctest: the unit binary's target name "test" is reserved once CTest
     # is enabled. ci.yml runs the same script beside tools/check_fp_contract.sh.
     add_custom_target(oss_fuzz_fp_contract
         COMMAND ${CMAKE_COMMAND}
-            -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/oss-fuzz/build.sh
+            -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=${CMAKE_CURRENT_SOURCE_DIR}/tests/oss-fuzz/build.sh
             -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/check_oss_fuzz_fp_contract.cmake
         VERBATIM)
     find_package(Python3 COMPONENTS Interpreter)
@@ -713,7 +713,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # Both lists reach it as compile definitions, relative to the source
     # directory, so the audit never walks a directory itself.
     file( GLOB ROCKETNET_COUNTER_TEST_SOURCES CONFIGURE_DEPENDS RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/functional/*.cpp" )
+        "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/*.cpp" )
     if(NOT ROCKETNET_DEV)
         list(REMOVE_ITEM ROCKETNET_COUNTER_TEST_SOURCES
             "tests/test_unit_connection_internal_error_counters.cpp")
@@ -930,7 +930,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # test_xdp, test_xdp_filter, test_msgx and test_iocp open real sockets,
     # start threads, sleep or read the wall clock, so none of them is a unit
     # test. ./bin/functional runs test_serialize, test_transport_control and
-    # the platform's transport binary (the execs table in functional/main.cpp's
+    # the platform's transport binary (the execs table in tests/functional/main.cpp's
     # main); CI runs test_lifecycle and test_transport in steps named
     # "Functional: ...".
     foreach(test_target test_lifecycle)
@@ -940,12 +940,12 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         rocketnet_warning_floor(${test_target})
     endforeach()
     if(NOT ROCKETNET_DEV)
-        add_executable(test_production_client_lifecycle functional/production_client_lifecycle.cpp)
+        add_executable(test_production_client_lifecycle tests/functional/production_client_lifecycle.cpp)
         target_link_libraries(test_production_client_lifecycle PRIVATE rocketnet)
         rocketnet_warning_floor(test_production_client_lifecycle)
     endif()
     # Real platform behavior against the selected DEV mode, without test hooks.
-    add_executable(test_platform_primitives functional/platform_primitives.cpp)
+    add_executable(test_platform_primitives tests/functional/platform_primitives.cpp)
     target_compile_definitions(test_platform_primitives PRIVATE ROCKETNET_PLATFORM_PRIMITIVES_STANDALONE=1)
     target_link_libraries(test_platform_primitives PRIVATE rocketnet Threads::Threads)
     rocketnet_warning_floor(test_platform_primitives)
@@ -1037,30 +1037,30 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             rocketnet_warning_floor(test_windows_transports_production)
         endif()
     endif()
-    file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/functional/channel_*.cpp" )
+    file( GLOB ROCKETNET_CHANNEL_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional/channel_*.cpp" )
     add_executable(functional
-        functional/main.cpp
-        functional/unit_case_memory.cpp
-        functional/rocketnet_functional_tests.cpp
-        functional/platform_primitives.cpp
-        functional/server_receive_backlog.cpp
-        functional/server_receive_low_tick.cpp
-        functional/lifecycle_driver.cpp
-        functional/cpp_transports.cpp
-        functional/live_matrix.cpp
-        functional/windows_socket_errors.cpp
-        functional/windows_connreset.cpp
-        functional/windows_lifecycle_stress.cpp
-        functional/environment_wiring.cpp
-        functional/posix_hard_killed_client.cpp
-        functional/posix_lifecycle_stress.cpp
-        functional/posix_socket_errors.cpp
-        functional/corpus_consistency.cpp
-        functional/shared_library_tokens.cpp
-        functional/loopback_hub_shared_objects.cpp
-        functional/process_thread_counts.cpp
-        functional/session_reconnect_isolation.cpp
-        functional/destroy_early_keep.cpp
+        tests/functional/main.cpp
+        tests/functional/unit_case_memory.cpp
+        tests/functional/rocketnet_functional_tests.cpp
+        tests/functional/platform_primitives.cpp
+        tests/functional/server_receive_backlog.cpp
+        tests/functional/server_receive_low_tick.cpp
+        tests/functional/lifecycle_driver.cpp
+        tests/functional/cpp_transports.cpp
+        tests/functional/live_matrix.cpp
+        tests/functional/windows_socket_errors.cpp
+        tests/functional/windows_connreset.cpp
+        tests/functional/windows_lifecycle_stress.cpp
+        tests/functional/environment_wiring.cpp
+        tests/functional/posix_hard_killed_client.cpp
+        tests/functional/posix_lifecycle_stress.cpp
+        tests/functional/posix_socket_errors.cpp
+        tests/functional/corpus_consistency.cpp
+        tests/functional/shared_library_tokens.cpp
+        tests/functional/loopback_hub_shared_objects.cpp
+        tests/functional/process_thread_counts.cpp
+        tests/functional/session_reconnect_isolation.cpp
+        tests/functional/destroy_early_keep.cpp
         ${ROCKETNET_CHANNEL_TEST_SOURCES})
     target_link_libraries(functional PRIVATE rocketnet_dev Threads::Threads)
     rocketnet_warning_floor(functional)
@@ -1074,7 +1074,7 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         target_compile_definitions(functional PRIVATE ROCKETNET_USE_SYSTEM_SODIUM=1)
     endif()
     set_property(TARGET functional APPEND PROPERTY BUILD_RPATH "$<TARGET_FILE_DIR:rocketnet_shared>")
-    # test_loopback_hub_two_shared_objects (functional/loopback_hub_shared_objects.cpp):
+    # test_loopback_hub_two_shared_objects (tests/functional/loopback_hub_shared_objects.cpp):
     # the library built into two separate shared objects, a server module and a
     # client module, each linking its own static copy of rocketnet_dev and
     # exporting only its loopback_hub_*_module_ entry points, loaded through the
@@ -1084,9 +1084,9 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # library's symbols are kept local (--exclude-libs) and on macOS only the
     # entry points are exported, each loaded with dlopen.
     foreach(side IN ITEMS server client)
-        add_library(loopback_hub_${side}_module MODULE functional/loopback_hub_${side}_module.cpp)
+        add_library(loopback_hub_${side}_module MODULE tests/functional/loopback_hub_${side}_module.cpp)
         target_link_libraries(loopback_hub_${side}_module PRIVATE rocketnet_dev Threads::Threads)
-        target_include_directories(loopback_hub_${side}_module PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/functional")
+        target_include_directories(loopback_hub_${side}_module PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/tests/functional")
         target_compile_features(loopback_hub_${side}_module PRIVATE cxx_std_11)
         set_target_properties(loopback_hub_${side}_module PROPERTIES
             C_VISIBILITY_PRESET hidden CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN YES)
@@ -1127,16 +1127,16 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # CI creates it on the Linux, macOS and Windows Release rows.
     # Excluded from functional_production, by source file, because the case
     # needs development scaffolding (never by weakening a case):
-    #   functional/channel_*.cpp (in-memory network simulator/lossy link)
-    #   functional/environment_wiring.cpp (development env/simulator cases)
-    #   functional/shared_library_tokens.cpp (development-token minting)
-    #   functional/process_thread_counts.cpp (development server secret)
-    #   functional/posix_hard_killed_client.cpp (platform test seams)
-    #   functional/windows_socket_errors.cpp (server/client transport test seams)
-    #   functional/windows_lifecycle_stress.cpp (Windows SDK resource ledger, ROCKETNET_DEV on Windows)
+    #   tests/functional/channel_*.cpp (in-memory network simulator/lossy link)
+    #   tests/functional/environment_wiring.cpp (development env/simulator cases)
+    #   tests/functional/shared_library_tokens.cpp (development-token minting)
+    #   tests/functional/process_thread_counts.cpp (development server secret)
+    #   tests/functional/posix_hard_killed_client.cpp (platform test seams)
+    #   tests/functional/windows_socket_errors.cpp (server/client transport test seams)
+    #   tests/functional/windows_lifecycle_stress.cpp (Windows SDK resource ledger, ROCKETNET_DEV on Windows)
     # The four Windows connreset iocp_plain cases also require development-only
     # USO/URO force flags; production retains the ordinary IOCP cases instead.
-    # and, in functional/rocketnet_functional_tests.cpp, the registry entries
+    # and, in tests/functional/rocketnet_functional_tests.cpp, the registry entries
     # for those files plus test_client_ipv4_without_ipv6_stack (ipv6 test
     # seam), test_server_handshake_deadline_from_config (internal client
     # protocol test filter) and test_public_client_server_queries,
@@ -1159,15 +1159,15 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # test_posix_send_to_closed_port_xdp_ipv6_client_portable,
     # test_posix_client_server_gone_xdp_ipv4_client_portable and
     # test_posix_client_server_gone_xdp_ipv6_client_portable (their body is
-    # functional/posix_hard_killed_client.cpp), and
+    # tests/functional/posix_hard_killed_client.cpp), and
     # test_client_destroy_early_threaded_keeps_then_frees and
     # test_server_destroy_early_threaded_keeps_then_frees (their body is
-    # functional/destroy_early_keep.cpp, which this executable does not
+    # tests/functional/destroy_early_keep.cpp, which this executable does not
     # compile). The stall-destroy tail of test_server_uring_probe is omitted
     # here because it calls rocketnet_server_uring_test_stall_destroy and
     # rocketnet_server_uring_test_resume_stop; the rest of that case runs.
     # Every other functional case runs here through the production
-    # shim in functional/harness.inc (test-owned production keys minted with
+    # shim in tests/functional/harness.inc (test-owned production keys minted with
     # rocketnet_write_production_connect_token), so the portable transport
     # and each native transport the OS builds (gso/io_uring on Linux, msgx
     # on macOS, iocp/rio on Windows) execute against the shipped library.
@@ -1176,19 +1176,19 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         file(GENERATE OUTPUT "${ROCKETNET_FUNCTIONAL_PRODUCTION_SHIM_HEADER}" CONTENT
 "#pragma once\n#include \"rocketnet.h\"\n#include \"rocketnet_layers.h\"\n#include \"rocketnet_connect_token.h\"\n#include <stddef.h>\n#include <stdint.h>\nvoid rocketnet_functional_production_server_config( struct rocketnet_server_transport_config_t * config );\nenum rocketnet_status_t rocketnet_functional_production_write_token( const char * server_address_string, uint64_t client_id, uint64_t current_timestamp, uint8_t * connect_token, size_t connect_token_bytes );\nenum rocketnet_status_t rocketnet_functional_production_create_token( const char * server_address_ipv4, const char * server_address_ipv6, const uint8_t * server_public_key, int expire_seconds, int timeout_seconds, uint64_t client_id, uint64_t protocol_id, uint64_t unix_timestamp, const uint8_t * user_data, char * connect_token );\nextern const uint8_t rocketnet_functional_production_backend_secret_key[64];\n#define rocketnet_server_transport_dev_config rocketnet_functional_production_server_config\n#define rocketnet_write_test_connect_token rocketnet_functional_production_write_token\n#define rocketnet_create_dev_connect_token rocketnet_functional_production_create_token\n#define rocketnet_dev_backend_secret_key rocketnet_functional_production_backend_secret_key\n#define rocketnet_platform_set_ipv6_socket_available_for_testing( x ) ((void)0)\n")
         add_executable(functional_production
-            functional/main.cpp
-            functional/rocketnet_functional_tests.cpp
-            functional/platform_primitives.cpp
-            functional/server_receive_backlog.cpp
-            functional/server_receive_low_tick.cpp
-            functional/lifecycle_driver.cpp
-            functional/cpp_transports.cpp
-            functional/live_matrix.cpp
-            functional/windows_connreset.cpp
-            functional/posix_lifecycle_stress.cpp
-            functional/posix_socket_errors.cpp
-            functional/corpus_consistency.cpp
-            functional/session_reconnect_isolation.cpp)
+            tests/functional/main.cpp
+            tests/functional/rocketnet_functional_tests.cpp
+            tests/functional/platform_primitives.cpp
+            tests/functional/server_receive_backlog.cpp
+            tests/functional/server_receive_low_tick.cpp
+            tests/functional/lifecycle_driver.cpp
+            tests/functional/cpp_transports.cpp
+            tests/functional/live_matrix.cpp
+            tests/functional/windows_connreset.cpp
+            tests/functional/posix_lifecycle_stress.cpp
+            tests/functional/posix_socket_errors.cpp
+            tests/functional/corpus_consistency.cpp
+            tests/functional/session_reconnect_isolation.cpp)
         target_link_libraries(functional_production PRIVATE rocketnet Threads::Threads)
         rocketnet_use_sodium(functional_production)
         rocketnet_warning_floor(functional_production)
@@ -1274,14 +1274,14 @@ if(ROCKETNET_BUILD_TOOLS)
             "${CMAKE_CURRENT_BINARY_DIR}/instruction_count")
     rocketnet_use_sodium(soak_sim)
     rocketnet_use_sodium(keygen)
-    # The corpus replay transports: fuzz/replay_main.cpp provides the main the
+    # The corpus replay transports: tests/fuzz/replay_main.cpp provides the main the
     # libFuzzer runtime would provide, reading each named file whole and
     # calling the harness's LLVMFuzzerTestOneInput once, so the committed
     # corpora replay on platforms with no libFuzzer runtime. Built against
     # the development library with the same includes as the NDEBUG fuzz
     # build in ci.yml.
     #
-    # The pair harnesses (fuzz/rocketnet_fuzz_pair.h: the server and client
+    # The pair harnesses (tests/fuzz/rocketnet_fuzz_pair.h: the server and client
     # transports' real receive loops and the scripted session over the
     # loopback transport) compile sdk/rocketnet_server_transport.cpp and
     # sdk/rocketnet_driver_loopback.cpp into the harness, as the unit suite's
@@ -1291,9 +1291,9 @@ if(ROCKETNET_BUILD_TOOLS)
     set(ROCKETNET_FUZZ_PAIR_HARNESSES rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session)
     foreach(harness rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config ${ROCKETNET_FUZZ_PAIR_HARNESSES})
         if(harness IN_LIST ROCKETNET_FUZZ_PAIR_HARNESSES)
-            add_executable(fuzz_replay_${harness} fuzz/${harness}.cpp fuzz/replay_main.cpp)
+            add_executable(fuzz_replay_${harness} tests/fuzz/${harness}.cpp tests/fuzz/replay_main.cpp)
         else()
-            add_executable(fuzz_replay_${harness} fuzz/replay_main.cpp fuzz/${harness}.cpp)
+            add_executable(fuzz_replay_${harness} tests/fuzz/replay_main.cpp tests/fuzz/${harness}.cpp)
         endif()
         target_compile_definitions(fuzz_replay_${harness} PRIVATE ROCKETNET_DEV=1)
         target_compile_features(fuzz_replay_${harness} PRIVATE cxx_std_17)

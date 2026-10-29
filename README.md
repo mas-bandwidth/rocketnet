@@ -89,7 +89,7 @@ copy or zero-copy mode and the host/NIC configuration. Use the
 | --- | --- |
 | `sdk/` | Library sources, including the XDP program in `sdk/xdp/` |
 | `examples/` | Programs demonstrating the public API |
-| `tests/` | Unit and functional tests, client/server harnesses, load and soak tools |
+| `tests/` | Unit and functional tests, fuzzing, client/server harnesses, load and soak tools |
 | `benchmarks/` | Transport and instruction-count measurement harnesses |
 | `proofs/` | Formal models and proofs, grouped under `tla/` and `cbmc/` |
 | `standard/` | Normative protocol documents, rationale, and checked constant pins |

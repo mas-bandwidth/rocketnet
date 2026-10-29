@@ -347,7 +347,7 @@ All tests were executed on the Windows x64 MSVC bench under its exclusive bench 
 
 ### 5.2 IOCP and RIO Functional Cases (`functional.exe --run <case>`)
 
-Every IOCP and RIO functional test case registered in `functional/` was executed in both `ROCKETNET_DEV=ON` and `ROCKETNET_DEV=OFF`:
+Every IOCP and RIO functional test case registered in `tests/functional/` was executed in both `ROCKETNET_DEV=ON` and `ROCKETNET_DEV=OFF`:
 
 - **25 IOCP functional cases** (`src-on-func-iocp/*.log` and `src-off-func-iocp/*.log` — **25/25 PASS**, `rc=0`, `0` skipped in both `DEV=ON` and `DEV=OFF`):
   - `test_iocp_client_transport_wire_dual_stack`

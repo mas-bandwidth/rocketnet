@@ -277,7 +277,7 @@ jobs:
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
           bash tools/check_fp_contract.sh
-          cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
+          cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=tests/oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
       - name: Check every child make has a bounded -j
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
@@ -347,7 +347,7 @@ jobs:
           cmake --build build --target $targets --parallel
           pids=""
           for harness in $harnesses; do
-            corpus="fuzz/corpus${harness#rocketnet_fuzz}"
+            corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
             "./bin/fuzz_replay_$harness" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
             pids="$pids $!:$harness"
           done
@@ -597,11 +597,11 @@ jobs:
         run: python3 tools/check_transport_matrix.py
 
       # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
-      # does not match its named workflow (check_row, :139) or when functional/
+      # does not match its named workflow (check_row, :139) or when tests/functional/
       # holds a wildcard address literal outside WILDCARD_ALLOWED (:30,
       # check_wildcard_binds :185). It reads files only, so one leg per Linux
       # row runs it.
-      - name: Check the platform policy and functional/ wildcard binds
+      - name: Check the platform policy and tests/functional/ wildcard binds
         if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: python3 tools/check_platform_policy.py
 
@@ -999,7 +999,7 @@ jobs:
           cmake --build build --config Release --target $targets --parallel
           pids=""
           for harness in $harnesses; do
-            corpus="fuzz/corpus${harness#rocketnet_fuzz}"
+            corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
             "./bin/Release/fuzz_replay_$harness.exe" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
             pids="$pids $!:$harness"
           done
@@ -1019,7 +1019,7 @@ jobs:
           ./bin/Release/test_sodium.exe
 
       # Leg (c), 2026-10-29: the functional suite is back on every commit, its
-      # cases in parallel (functional/main.cpp), the slowest RIO and IOCP x1000
+      # cases in parallel (tests/functional/main.cpp), the slowest RIO and IOCP x1000
       # cycles in the nightly tier. The note below is its history.
       - name: Run functional suite (parallel)
         if: matrix.leg == 'c'
@@ -1537,7 +1537,7 @@ jobs:
   # the same verdict, every run. So the gate below is the first step -- every
   # committed corpus file executed exactly once through the four wire-facing
   # parsers under asan+ubsan, seconds, no randomness anywhere in it. Each
-  # file in fuzz/corpus is a shape the wire can carry or a shape a defect
+  # file in tests/fuzz/corpus is a shape the wire can carry or a shape a defect
   # once had, and the harness carries oracles beyond memory safety (base64
   # round-trip, the fragment plan's arithmetic, the ladder's output range),
   # so a wrong ANSWER fails it too, not only a wrong access.
@@ -1610,7 +1610,7 @@ jobs:
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
+            -Isdk tests/fuzz/rocketnet_fuzz.cpp build-fuzz/librocketnet.a \
             -lbpf -lxdp -luring -lpthread \
             -o bin/fuzz
 
@@ -1619,7 +1619,7 @@ jobs:
           clang++ -g -O1 -std=c++17 \
             -ffp-contract=off \
             -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-            -Isdk fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
+            -Isdk tests/fuzz/rocketnet_fuzz_message.cpp build-fuzz/librocketnet.a \
             -lbpf -lxdp -luring -lpthread \
             -o bin/fuzz_message
 
@@ -1630,12 +1630,12 @@ jobs:
       - name: Replay the regression corpus
         env:
           ASAN_OPTIONS: detect_leaks=0
-        run: ./bin/fuzz fuzz/corpus/*
+        run: ./bin/fuzz tests/fuzz/corpus/*
 
       - name: Replay the message corpus
         env:
           ASAN_OPTIONS: detect_leaks=0
-        run: ./bin/fuzz_message fuzz/corpus_message/*
+        run: ./bin/fuzz_message tests/fuzz/corpus_message/*
 
       - name: Exact-field oracle rejects memory-safe truncation
         run: python3 tools/check_fuzz_oracle.py build-fuzz
@@ -1653,14 +1653,14 @@ jobs:
         run: |
           # RUNNER_TEMP, not /tmp: on a persistent self-hosted host /tmp/fuzz-corpus outlives the job and is
           # shared by every runner on the machine, so the pass would start from another run's grown corpus
-          cp -r fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
+          cp -r tests/fuzz/corpus "$RUNNER_TEMP/fuzz-corpus"
           ./bin/fuzz "$RUNNER_TEMP/fuzz-corpus" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Message mutation pass (time-boxed, fixed seed)
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          cp -r fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
+          cp -r tests/fuzz/corpus_message "$RUNNER_TEMP/fuzz-corpus_message"
           ./bin/fuzz_message "$RUNNER_TEMP/fuzz-corpus_message" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers
@@ -1675,7 +1675,7 @@ jobs:
             leak-*
           if-no-files-found: ignore
 
-  # THE NDEBUG LEG: every fuzzer under fuzz/ compiled with -DNDEBUG, so every
+  # THE NDEBUG LEG: every fuzzer under tests/fuzz/ compiled with -DNDEBUG, so every
   # assertion in the harnesses is compiled out, and the corpora replayed. The
   # fuzz oracles deliberately do not rely on assert -- each fires its own
   # fprintf/abort helper (rocketnet_fuzz_require) -- so a bound that only
@@ -1744,7 +1744,7 @@ jobs:
               -ffp-contract=off \
               -DROCKETNET_DEV=1 -DNDEBUG \
               -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer \
-              -Isodium -Isdk -Itest "fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
+              -Isodium -Isdk -Itest "tests/fuzz/${src}.cpp" build-fuzz/librocketnet_dev.a \
               -lbpf -lxdp -luring -lpthread \
               -o "bin/${src}_ndebug"
           done
@@ -1753,16 +1753,16 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          ./bin/rocketnet_fuzz_ndebug fuzz/corpus/*
-          ./bin/rocketnet_fuzz_connect_token_ndebug fuzz/corpus_connect_token/*
-          ./bin/rocketnet_fuzz_receive_structured_ndebug fuzz/corpus_receive_structured/*
-          ./bin/rocketnet_fuzz_message_ndebug fuzz/corpus_message/*
-          ./bin/rocketnet_fuzz_token_private_ndebug fuzz/corpus_token_private/*
-          ./bin/rocketnet_fuzz_round_trip_ndebug fuzz/corpus_round_trip/*
-          ./bin/rocketnet_fuzz_config_ndebug fuzz/corpus_config/*
-          ./bin/rocketnet_fuzz_server_transport_ndebug fuzz/corpus_server_transport/*
-          ./bin/rocketnet_fuzz_client_transport_ndebug fuzz/corpus_client_transport/*
-          ./bin/rocketnet_fuzz_session_ndebug fuzz/corpus_session/*
+          ./bin/rocketnet_fuzz_ndebug tests/fuzz/corpus/*
+          ./bin/rocketnet_fuzz_connect_token_ndebug tests/fuzz/corpus_connect_token/*
+          ./bin/rocketnet_fuzz_receive_structured_ndebug tests/fuzz/corpus_receive_structured/*
+          ./bin/rocketnet_fuzz_message_ndebug tests/fuzz/corpus_message/*
+          ./bin/rocketnet_fuzz_token_private_ndebug tests/fuzz/corpus_token_private/*
+          ./bin/rocketnet_fuzz_round_trip_ndebug tests/fuzz/corpus_round_trip/*
+          ./bin/rocketnet_fuzz_config_ndebug tests/fuzz/corpus_config/*
+          ./bin/rocketnet_fuzz_server_transport_ndebug tests/fuzz/corpus_server_transport/*
+          ./bin/rocketnet_fuzz_client_transport_ndebug tests/fuzz/corpus_client_transport/*
+          ./bin/rocketnet_fuzz_session_ndebug tests/fuzz/corpus_session/*
 
       # The connect token and receive/structured targets are built only in
       # this job, so their time-boxed mutation pass lives here, after the
@@ -1772,14 +1772,14 @@ jobs:
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          cp -r fuzz/corpus_connect_token "$RUNNER_TEMP/fuzz-corpus_connect_token"
+          cp -r tests/fuzz/corpus_connect_token "$RUNNER_TEMP/fuzz-corpus_connect_token"
           ./bin/rocketnet_fuzz_connect_token_ndebug "$RUNNER_TEMP/fuzz-corpus_connect_token" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Receive structured mutation pass (time-boxed, fixed seed)
         env:
           ASAN_OPTIONS: detect_leaks=0
         run: |
-          cp -r fuzz/corpus_receive_structured "$RUNNER_TEMP/fuzz-corpus_receive_structured"
+          cp -r tests/fuzz/corpus_receive_structured "$RUNNER_TEMP/fuzz-corpus_receive_structured"
           ./bin/rocketnet_fuzz_receive_structured_ndebug "$RUNNER_TEMP/fuzz-corpus_receive_structured" -seed=1 -max_total_time=5 -timeout=10 -rss_limit_mb=2048 -print_final_stats=1
 
       - name: Upload crash reproducers

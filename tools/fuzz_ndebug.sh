@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# The NDEBUG fuzz campaign: every fuzz/ harness, and the library under it,
+# The NDEBUG fuzz campaign: every tests/fuzz/ harness, and the library under it,
 # built with NDEBUG, so rocketnet_assert compiles to nothing
 # (sdk/rocketnet_internal.h, ROCKETNET_ASSERTS) and a bound that only an
 # assert holds is fuzzed the way a release build runs it.
@@ -25,7 +25,7 @@
 #
 # Environment: CC / CXX (default clang / clang++, which must carry the
 # libFuzzer runtime); ASAN_OPTIONS / UBSAN_OPTIONS (default as the nightly's
-# Linux leg). The seed corpora under fuzz/ are read, never written: new
+# Linux leg). The seed corpora under tests/fuzz/ are read, never written: new
 # inputs go to <out>/corpus/<target>. A crash writes its reproducer to
 # <out>/crashes/<target>/ and the script exits 1 naming it.
 #
@@ -170,7 +170,7 @@ build_target() {
         -ffp-contract=off \
         -DROCKETNET_DEV=1 -DNDEBUG \
         "${SAN_BIN[@]}" \
-        -Isodium -Isdk "${extra[@]}" "fuzz/$t.cpp" "$LIB" \
+        -Isodium -Isdk "${extra[@]}" "tests/fuzz/$t.cpp" "$LIB" \
         "${LINK[@]}" \
         -o "$BIN/$t"
 }
@@ -186,11 +186,11 @@ done
 
 # 4. fuzz: seeds and dictionary as the nightly's leg names them
 seeds_of() {
-    if [ "$1" = rocketnet_fuzz ]; then echo fuzz/corpus; else echo "fuzz/corpus_${1#rocketnet_fuzz_}"; fi
+    if [ "$1" = rocketnet_fuzz ]; then echo tests/fuzz/corpus; else echo "tests/fuzz/corpus_${1#rocketnet_fuzz_}"; fi
 }
 
 dict_of() {
-    if [ -f "fuzz/dict/$1.dict" ]; then echo "fuzz/dict/$1.dict"; else echo fuzz/rocketnet.dict; fi
+    if [ -f "tests/fuzz/dict/$1.dict" ]; then echo "tests/fuzz/dict/$1.dict"; else echo tests/fuzz/rocketnet.dict; fi
 }
 
 fuzz_target() {

@@ -337,11 +337,11 @@ static bool rn_blaster_case_contract( const rn_blaster_case_t & item )
     {
         case RN_BLASTER_CASE_TRUNCATE:
             return strcmp( item.name, "prefilter-too-short" ) == 0 &&
-                   strcmp( item.source, "fuzz/corpus/prefilter_too_short" ) == 0 &&
+                   strcmp( item.source, "tests/fuzz/corpus/prefilter_too_short" ) == 0 &&
                    accepted && item.argument == 5u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_OVERSIZE:
             return strcmp( item.name, "prefilter-too-large" ) == 0 &&
-                   strcmp( item.source, "fuzz/corpus/prefilter_too_large" ) == 0 &&
+                   strcmp( item.source, "tests/fuzz/corpus/prefilter_too_large" ) == 0 &&
                    accepted && item.argument == ROCKETNET_RECEIVE_CEILING + 1u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_WRONG_EPOCH:
             return strcmp( item.name, "wrong-filter-epoch" ) == 0 &&
@@ -349,7 +349,7 @@ static bool rn_blaster_case_contract( const rn_blaster_case_t & item )
                    accepted && item.argument == 1u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_WRONG_FILTER:
             return strcmp( item.name, "wrong-filter-value" ) == 0 &&
-                   strcmp( item.source, "fuzz/corpus/prefilter_pcap_hostile_prefilter_1df577ed2292" ) == 0 &&
+                   strcmp( item.source, "tests/fuzz/corpus/prefilter_pcap_hostile_prefilter_1df577ed2292" ) == 0 &&
                    accepted && item.argument == 128u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_RESERVED_TYPE:
             return strcmp( item.name, "reserved-packet-type" ) == 0 &&
@@ -357,12 +357,12 @@ static bool rn_blaster_case_contract( const rn_blaster_case_t & item )
                    accepted && item.argument == 10u && item.expected_delta == 1u && fresh_recovery;
         case RN_BLASTER_CASE_REPLAY:
             return strcmp( item.name, "session-replay" ) == 0 &&
-                   strcmp( item.source, "fuzz/corpus/prefilter_payload" ) == 0 &&
+                   strcmp( item.source, "tests/fuzz/corpus/prefilter_payload" ) == 0 &&
                    accepted && item.argument == 2u && item.expected_delta == 2u &&
                    strcmp( item.expected_recovery, "next-sequence-authenticated-payload-accepted" ) == 0;
         case RN_BLASTER_CASE_BAD_TAG:
             return strcmp( item.name, "bad-session-tag" ) == 0 &&
-                   strcmp( item.source, "fuzz/corpus/prefilter_payload_full" ) == 0 &&
+                   strcmp( item.source, "tests/fuzz/corpus/prefilter_payload_full" ) == 0 &&
                    fresh && item.argument == 1u && item.expected_delta == 1u && fresh_recovery;
     }
     return false;
@@ -448,7 +448,7 @@ static bool rn_blaster_manifest_load( const std::string & path, struct rn_blaste
         operation_bits |= operation_bit;
         if ( strncmp( item.source, "sdk/rocketnet_wire.h", 20 ) != 0 &&
              strncmp( item.source, "tests/pcapng/regress/", 21 ) != 0 &&
-             strncmp( item.source, "fuzz/corpus/", 12 ) != 0 )
+             strncmp( item.source, "tests/fuzz/corpus/", 12 ) != 0 )
         {
             *error = "manifest source is not an approved existing schema or corpus";
             return false;

@@ -533,7 +533,7 @@ What each path does with the errors it can see:
   again (section 5); a submit error other than `EINTR`, `EAGAIN` or `EBUSY` is
   logged (`sdk/rocketnet_server_uring_linux.cpp`).
 
-`functional/posix_hard_killed_client.cpp` and `functional/posix_socket_errors.cpp`
+`tests/functional/posix_hard_killed_client.cpp` and `tests/functional/posix_socket_errors.cpp`
 cover a hard-killed client and the socket error paths per transport cell.
 
 ## 8. Limits for 1000 clients

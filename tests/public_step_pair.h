@@ -6,7 +6,7 @@
 // The shared development-only step-driven client/server pair setup for the
 // test_public_step_driven_client_* cases in
 // tests/test_unit_public_step_driven_client.cpp (unit) and
-// functional/process_thread_counts.cpp (functional). The loopback transport
+// tests/functional/process_thread_counts.cpp (functional). The loopback transport
 // carries packets in memory; callers provide every update time from 1000.0,
 // and no test sleeps or opens a socket. The includer defines `check` before
 // including. The pair setup itself counts no threads; the functional thread

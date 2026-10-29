@@ -1,5 +1,5 @@
 # The nightly channel seed sweep: every functional channel case
-# (functional/channel_*.cpp) over a rolling range of 2000 simulator seeds.
+# (tests/functional/channel_*.cpp) over a rolling range of 2000 simulator seeds.
 # The range start is derived from the run number (run 1 starts at seed 1),
 # so consecutive nights cover different ranges of the same length; the log
 # prints the range with its replay line. Each functional case

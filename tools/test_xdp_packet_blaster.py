@@ -125,7 +125,7 @@ def main() -> int:
         assert case["expected_recovery"]
         assert case["expected_delta"] in {1, 2}
         assert case["sequence_state"] in {"accepted", "fresh"}
-        assert case["source"].startswith(("sdk/rocketnet_wire.h", "tests/pcapng/regress/", "fuzz/corpus/"))
+        assert case["source"].startswith(("sdk/rocketnet_wire.h", "tests/pcapng/regress/", "tests/fuzz/corpus/"))
         for profile in profiles:
             expected_stage, expected_counter = xdp_oracles[case["operation"]] if profile == "xdp" else generic_prefilter[case["operation"]]
             assert case[f"expected_stage_{profile}"] == expected_stage

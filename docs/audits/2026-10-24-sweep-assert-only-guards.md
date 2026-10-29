@@ -1,6 +1,6 @@
 # Assert-only guard sweep, 2026-10-24
 
-Sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfbd` for one bug class: an array index, a divisor, a size or length, or a pointer whose only check before use is `rocketnet_assert`, which compiles to nothing when `NDEBUG` is defined (`sdk/rocketnet_internal.h:285`–315, `ROCKETNET_ASSERTS` follows `NDEBUG`), so a release build reads, writes or divides unchecked. Scope read: every `.cpp` and `.h` in `sdk/` (`sdk/rocketnet_tests.cpp` only where it defines helpers production code calls), `functional/*.cpp`, and the `tests/*.h` helpers the functional and DST tiers share. Method: five patterns were run and every hit was judged by reading its function and following the value to its use, back through every caller reachable from the public API (`sdk/rocketnet.h`), the wire, or a config value. Pattern 1, `rocketnet_assert` over `sdk/*.cpp sdk/*.h functional/*.cpp tests/*.h`: 1059 hits. Pattern 2, a division by a lower-case name, `[^/*]/ [a-z_]` over the same files with comment lines dropped: 132 hits (the unfiltered `[^/]/ [a-z_]` gives 148; the 16 more are comment lines). Pattern 3, a modulo by a name or expression, `[a-zA-Z0-9_)\]] ?%=? ?[a-zA-Z_(]` over the same files with comment lines and format-string lines dropped: 225 hits. Reading showed divisions the second pattern misses (a cast or parenthesised divisor, such as `sdk/rocketnet_ack.cpp:752`), so it was widened twice over `sdk/` (test bodies and comment lines dropped): pattern 4, a parenthesised or cast divisor, `[^/*]/ ?\(` without `sizeof`: 15 hits; pattern 5, an upper-case divisor, `[^/*]/ ?[A-Z]`: 26 code hits, every one a compile-time constant. Of the 1457 hits, 13 are the seven findings below, 9 are already filed, 903 are in class and guarded by a real check, and 532 are out of class. Line numbers are at `9775266a`. Findings follow the format of `docs/audits/2026-10-24-code-quality-a.md`: severity (`bug` / `risk` / `quality`), `file:line`, a one-sentence defect, a one-sentence concrete failure or cost, and the smallest fix, most severe first. No source was changed. No hit reached a `bug`: every in-class use reachable from the public API, the wire or a supported config is guarded by a real check, a validated config bound applied at create, or a compile-time constant; the five risks are uses that a state the code permits, or a build option, would reach.
+Sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfbd` for one bug class: an array index, a divisor, a size or length, or a pointer whose only check before use is `rocketnet_assert`, which compiles to nothing when `NDEBUG` is defined (`sdk/rocketnet_internal.h:285`–315, `ROCKETNET_ASSERTS` follows `NDEBUG`), so a release build reads, writes or divides unchecked. Scope read: every `.cpp` and `.h` in `sdk/` (`sdk/rocketnet_tests.cpp` only where it defines helpers production code calls), `tests/functional/*.cpp`, and the `tests/*.h` helpers the functional and DST tiers share. Method: five patterns were run and every hit was judged by reading its function and following the value to its use, back through every caller reachable from the public API (`sdk/rocketnet.h`), the wire, or a config value. Pattern 1, `rocketnet_assert` over `sdk/*.cpp sdk/*.h tests/functional/*.cpp tests/*.h`: 1059 hits. Pattern 2, a division by a lower-case name, `[^/*]/ [a-z_]` over the same files with comment lines dropped: 132 hits (the unfiltered `[^/]/ [a-z_]` gives 148; the 16 more are comment lines). Pattern 3, a modulo by a name or expression, `[a-zA-Z0-9_)\]] ?%=? ?[a-zA-Z_(]` over the same files with comment lines and format-string lines dropped: 225 hits. Reading showed divisions the second pattern misses (a cast or parenthesised divisor, such as `sdk/rocketnet_ack.cpp:752`), so it was widened twice over `sdk/` (test bodies and comment lines dropped): pattern 4, a parenthesised or cast divisor, `[^/*]/ ?\(` without `sizeof`: 15 hits; pattern 5, an upper-case divisor, `[^/*]/ ?[A-Z]`: 26 code hits, every one a compile-time constant. Of the 1457 hits, 13 are the seven findings below, 9 are already filed, 903 are in class and guarded by a real check, and 532 are out of class. Line numbers are at `9775266a`. Findings follow the format of `docs/audits/2026-10-24-code-quality-a.md`: severity (`bug` / `risk` / `quality`), `file:line`, a one-sentence defect, a one-sentence concrete failure or cost, and the smallest fix, most severe first. No source was changed. No hit reached a `bug`: every in-class use reachable from the public API, the wire or a supported config is guarded by a real check, a validated config bound applied at create, or a compile-time constant; the five risks are uses that a state the code permits, or a build option, would reach.
 
 ## Findings
 
@@ -842,7 +842,7 @@ Every hit of the five patterns that is not a finding above or already filed belo
 | `sdk/rocketnet_network_simulator.cpp:986` | out of class | deliver_packets test/soak-only caller; per-entry null check at network_simulator.cpp:993 |
 | `sdk/rocketnet_network_simulator.cpp:987` | out of class | deliver_packets test/soak-only caller |
 | `sdk/rocketnet_network_simulator.cpp:988` | out of class | deliver_packets test/soak-only caller; negative count just skips the loop |
-| `sdk/rocketnet_network_simulator.cpp:1007` | out of class | rocketnet_network_simulator_receive is called only by test/soak harnesses (soak_sim.cpp, tests/, functional/channel_harness.h, fuzz/) |
+| `sdk/rocketnet_network_simulator.cpp:1007` | out of class | rocketnet_network_simulator_receive is called only by test/soak harnesses (soak_sim.cpp, tests/, tests/functional/channel_harness.h, tests/fuzz/) |
 | `sdk/rocketnet_network_simulator.cpp:1008` | out of class | receive test/soak-only caller |
 | `sdk/rocketnet_network_simulator.cpp:1009` | out of class | receive test/soak-only caller |
 | `sdk/rocketnet_network_simulator.cpp:1010` | out of class | receive test/soak-only caller |
@@ -1011,8 +1011,8 @@ Every hit of the five patterns that is not a finding above or already filed belo
 | `sdk/rocketnet_window_send.cpp:162` | guarded | send embedded, region set at init (channel.cpp:1157) |
 | `sdk/rocketnet_window_send.cpp:182` | out of class | invariant over number/fragment values; U_prime is only used modulo W (window_send.cpp:38) and in subtractions guarded at :33 |
 | `sdk/rocketnet_window_send.cpp:195` | guarded | send embedded, region set at init (channel.cpp:1157) |
-| `functional/rocketnet_functional_tests.cpp:1906` | out of class | installs an assert hook (test code); not an assert |
-| `functional/rocketnet_functional_tests.cpp:1910` | out of class | restores the assert hook (test code); not an assert |
+| `tests/functional/rocketnet_functional_tests.cpp:1906` | out of class | installs an assert hook (test code); not an assert |
+| `tests/functional/rocketnet_functional_tests.cpp:1910` | out of class | restores the assert hook (test code); not an assert |
 | `sdk/rocketnet.cpp:56` | out of class | assert callback variable definition, not an assert |
 | `sdk/rocketnet.cpp:58` | out of class | rocketnet_assert_function setter definition, not an assert |
 | `sdk/rocketnet.h:913` | out of class | typedef of the assert callback |
@@ -1159,31 +1159,31 @@ Every hit of the five patterns that is not a finding above or already filed belo
 | `sdk/rocketnet_tests.cpp:12841` | out of class | test code, sizeof/sizeof |
 | `sdk/rocketnet_tests.cpp:15007` | out of class | test code, sizeof/sizeof |
 | `sdk/rocketnet_replay.h:29` | out of class | sizeof/sizeof in a constant expression |
-| `functional/channel_resend_timing.cpp:517` | out of class | functional test harness, not library code |
-| `functional/main.cpp:165` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/channel_resend_timing.cpp:517` | out of class | functional test harness, not library code |
+| `tests/functional/main.cpp:165` | out of class | functional test harness, sizeof/sizeof |
 | `sdk/rocketnet_rio_layout.h:73` | guarded | frame_stride = round_up64(frame_bytes, 64) with frame_bytes <= 0 refused at rio_layout.h:58, so >= 64 |
 | `sdk/rocketnet_rio_layout.h:76` | guarded | addr_stride >= 64: address_bytes <= 0 refused at rio_layout.h:58 |
 | `sdk/rocketnet_rio_layout.h:79` | guarded | slice_stride >= 64: receive_slice_bytes <= 0 refused at rio_layout.h:58 |
 | `sdk/rocketnet_rio_layout.h:82` | guarded | addr_stride >= 64: address_bytes <= 0 refused at rio_layout.h:58 |
-| `functional/posix_lifecycle_stress.cpp:193` | out of class | functional test harness |
-| `functional/posix_lifecycle_stress.cpp:346` | out of class | functional test harness, sizeof/sizeof |
-| `functional/posix_lifecycle_stress.cpp:958` | out of class | functional test harness |
-| `functional/posix_socket_errors.cpp:2143` | out of class | functional test harness |
-| `functional/posix_socket_errors.cpp:2144` | out of class | functional test harness |
-| `functional/channel_ordered.cpp:109` | out of class | functional test harness (and ternary-guarded) |
-| `functional/windows_socket_errors.cpp:100` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/posix_lifecycle_stress.cpp:193` | out of class | functional test harness |
+| `tests/functional/posix_lifecycle_stress.cpp:346` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/posix_lifecycle_stress.cpp:958` | out of class | functional test harness |
+| `tests/functional/posix_socket_errors.cpp:2143` | out of class | functional test harness |
+| `tests/functional/posix_socket_errors.cpp:2144` | out of class | functional test harness |
+| `tests/functional/channel_ordered.cpp:109` | out of class | functional test harness (and ternary-guarded) |
+| `tests/functional/windows_socket_errors.cpp:100` | out of class | functional test harness, sizeof/sizeof |
 | `sdk/rocketnet_stats_window.h:14` | out of class | compile-time constant divisor N-1 with static_assert( N > 1 ) at stats_window.h:12 |
 | `tests/dst_checks.h:6` | out of class | comment |
 | `tests/dst_harness.h:1354` | out of class | test harness, sizeof/sizeof |
-| `functional/live_matrix.cpp:919` | out of class | functional test harness, sizeof/sizeof |
-| `functional/live_matrix.cpp:920` | out of class | functional test harness, sizeof/sizeof |
-| `functional/live_matrix.cpp:1032` | out of class | functional test harness, sizeof/sizeof |
-| `functional/posix_hard_killed_client.cpp:1230` | out of class | functional test harness, sizeof/sizeof |
-| `functional/posix_hard_killed_client.cpp:1244` | out of class | functional test harness, sizeof/sizeof |
-| `functional/posix_hard_killed_client.cpp:1245` | out of class | functional test harness, sizeof/sizeof |
-| `functional/channel_unreliable_packing.cpp:44` | out of class | functional test harness |
+| `tests/functional/live_matrix.cpp:919` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/live_matrix.cpp:920` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/live_matrix.cpp:1032` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/posix_hard_killed_client.cpp:1230` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/posix_hard_killed_client.cpp:1244` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/posix_hard_killed_client.cpp:1245` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/channel_unreliable_packing.cpp:44` | out of class | functional test harness |
 | `tests/live_verify.h:11` | out of class | comment |
-| `functional/rocketnet_functional_tests.cpp:9949` | out of class | functional test harness, sizeof/sizeof |
+| `tests/functional/rocketnet_functional_tests.cpp:9949` | out of class | functional test harness, sizeof/sizeof |
 | `tests/suite_runner.h:177` | out of class | test runner harness |
 | `tests/suite_runner.h:263` | out of class | test runner harness, sizeof/sizeof |
 | `tests/suite_runner.h:420` | out of class | test runner harness |
@@ -1393,30 +1393,30 @@ Every hit of the five patterns that is not a finding above or already filed belo
 | `sdk/rocketnet_tests.cpp:10406` | out of class | test code |
 | `sdk/rocketnet_tests.cpp:12024` | out of class | test code |
 | `sdk/rocketnet_tests.cpp:12025` | out of class | test code |
-| `functional/channel_resend_timing.cpp:8` | out of class | comment (percent sign) |
-| `functional/channel_resend_timing.cpp:341` | out of class | comment (percent sign) |
+| `tests/functional/channel_resend_timing.cpp:8` | out of class | comment (percent sign) |
+| `tests/functional/channel_resend_timing.cpp:341` | out of class | comment (percent sign) |
 | `sdk/rocketnet_window_send.cpp:39` | guarded | W = region->window = reliable_messages_in_flight (allocator.cpp:426), table minimum 64 (internal.h:578) validated at allocator.cpp:105 before carving |
 | `sdk/rocketnet_window_send.cpp:66` | guarded | region->window >= 64 (as :39) |
 | `sdk/rocketnet_window_send.cpp:165` | guarded | region->window >= 64 (as :39) |
 | `sdk/rocketnet_window_send.cpp:171` | guarded | region->window >= 64 (as :39) |
 | `sdk/rocketnet_window_send.cpp:181` | guarded | region->window >= 64 (as :39) |
-| `functional/channel_reliable_sequenced.cpp:115` | out of class | functional test harness |
+| `tests/functional/channel_reliable_sequenced.cpp:115` | out of class | functional test harness |
 | `sdk/rocketnet_allocator.h:72` | out of class | comment |
 | `sdk/rocketnet_allocator.h:96` | out of class | comment |
 | `sdk/rocketnet_allocator.h:202` | out of class | comment |
 | `sdk/rocketnet_allocator.h:357` | out of class | comment |
-| `functional/live_matrix.cpp:497` | out of class | functional test harness |
-| `functional/live_matrix.cpp:502` | out of class | functional test harness |
-| `functional/live_matrix.cpp:515` | out of class | functional test harness |
-| `functional/live_matrix.cpp:555` | out of class | functional test harness |
-| `functional/lifecycle_driver.cpp:119` | out of class | functional test harness, constant modulus |
-| `functional/lifecycle_driver.cpp:141` | out of class | functional test harness, constant modulus |
-| `functional/posix_lifecycle_stress.cpp:959` | out of class | functional test harness |
-| `functional/posix_lifecycle_stress.cpp:961` | out of class | functional test harness |
-| `functional/posix_lifecycle_stress.cpp:965` | out of class | functional test harness |
-| `functional/posix_lifecycle_stress.cpp:986` | out of class | functional test harness |
-| `functional/posix_hard_killed_client.cpp:1274` | out of class | functional test harness |
-| `functional/posix_hard_killed_client.cpp:1276` | out of class | functional test harness |
+| `tests/functional/live_matrix.cpp:497` | out of class | functional test harness |
+| `tests/functional/live_matrix.cpp:502` | out of class | functional test harness |
+| `tests/functional/live_matrix.cpp:515` | out of class | functional test harness |
+| `tests/functional/live_matrix.cpp:555` | out of class | functional test harness |
+| `tests/functional/lifecycle_driver.cpp:119` | out of class | functional test harness, constant modulus |
+| `tests/functional/lifecycle_driver.cpp:141` | out of class | functional test harness, constant modulus |
+| `tests/functional/posix_lifecycle_stress.cpp:959` | out of class | functional test harness |
+| `tests/functional/posix_lifecycle_stress.cpp:961` | out of class | functional test harness |
+| `tests/functional/posix_lifecycle_stress.cpp:965` | out of class | functional test harness |
+| `tests/functional/posix_lifecycle_stress.cpp:986` | out of class | functional test harness |
+| `tests/functional/posix_hard_killed_client.cpp:1274` | out of class | functional test harness |
+| `tests/functional/posix_hard_killed_client.cpp:1276` | out of class | functional test harness |
 | `tests/dst_checks.h:226` | out of class | test harness, constant modulus |
 | `tests/dst_checks.h:237` | out of class | test harness, constant modulus |
 | `tests/dst_checks.h:247` | out of class | test harness, constant modulus |
@@ -1433,25 +1433,25 @@ Every hit of the five patterns that is not a finding above or already filed belo
 | `sdk/rocketnet_send_handoff.h:55` | out of class | template constant modulus NumBuffers |
 | `sdk/rocketnet_send_handoff.h:64` | out of class | template constant modulus NumBuffers |
 | `sdk/rocketnet_xdp_free_list.h:19` | out of class | compile-time constant modulus ROCKETNET_XDP_FRAME_SIZE |
-| `functional/channel_config.cpp:9` | out of class | comment (percent sign) |
-| `functional/windows_socket_errors.cpp:362` | out of class | functional test harness, constant modulus |
-| `functional/windows_socket_errors.cpp:518` | out of class | functional test harness, constant modulus |
+| `tests/functional/channel_config.cpp:9` | out of class | comment (percent sign) |
+| `tests/functional/windows_socket_errors.cpp:362` | out of class | functional test harness, constant modulus |
+| `tests/functional/windows_socket_errors.cpp:518` | out of class | functional test harness, constant modulus |
 | `tests/dst_harness.h:106` | out of class | test harness |
-| `functional/posix_socket_errors.cpp:581` | out of class | functional test harness |
-| `functional/posix_socket_errors.cpp:2212` | out of class | functional test harness |
-| `functional/posix_socket_errors.cpp:2217` | out of class | functional test harness |
+| `tests/functional/posix_socket_errors.cpp:581` | out of class | functional test harness |
+| `tests/functional/posix_socket_errors.cpp:2212` | out of class | functional test harness |
+| `tests/functional/posix_socket_errors.cpp:2217` | out of class | functional test harness |
 | `tests/fake_client_driver.h:93` | out of class | test harness, constant modulus |
 | `tests/fake_client_driver.h:126` | out of class | test harness, constant modulus |
 | `tests/fake_client_driver.h:206` | out of class | test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:4585` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:5462` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:5481` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:5510` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:5538` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:6209` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:6228` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:6254` | out of class | functional test harness, constant modulus |
-| `functional/rocketnet_functional_tests.cpp:6303` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:4585` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:5462` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:5481` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:5510` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:5538` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:6209` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:6228` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:6254` | out of class | functional test harness, constant modulus |
+| `tests/functional/rocketnet_functional_tests.cpp:6303` | out of class | functional test harness, constant modulus |
 | `tests/serialize.h:59` | out of class | comment (percent sign) |
 | `tests/serialize.h:82` | out of class | comment (percent sign) |
 | `tests/serialize.h:500` | out of class | test-tree serializer (tests/), not the sdk library |

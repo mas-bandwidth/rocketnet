@@ -12,7 +12,7 @@
 // socket, no sleep and no real time.
 //
 // The create/update thread-count case moved to the functional suite
-// (functional/process_thread_counts.cpp): reading the process's thread count
+// (tests/functional/process_thread_counts.cpp): reading the process's thread count
 // from /proc/self/task is OS state. The world setup is shared from
 // tests/no_worker_world.h.
 

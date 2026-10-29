@@ -1,6 +1,6 @@
 # Count-before-success sweep, 2026-10-24
 
-A sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfbd` (`main`) for one bug class: a counter, budget, quota, reference count, sequence or index that is charged (incremented, reserved, advanced, acquired) before the operation it pays for succeeds and is never refunded on the failure return, so a failure permanently consumes capacity or inflates a published counter. Scope read: every `.cpp` and `.h` under `sdk/` except `sdk/rocketnet_tests.cpp` (it builds only into the `rocketnet_test_support` target, and no production source calls into it), plus `functional/` (`.cpp`, `.h`, `.inc`) and the `tests/*.h` helpers the functional and DST tiers share. Method: grep, then for every hit the enclosing function was read, the charged value was followed to its use, every return after the charge was checked for a refund, and a candidate defect's callers were traced back to the public API (`sdk/rocketnet.h`), the wire or a config value. Patterns and hit counts: the brief's raw pattern `(\+\+|\+= |fetch_add|--|-= |fetch_sub)` over `sdk/` gives 2124 lines; 725 comment lines and 476 `for (` loop headers were set aside, and the rest were split into (A) a member or field update, `(->|\.)name([...])? (++|+=|-=|--)`, a prefix `++`/`--` on a member, or `fetch_add`/`fetch_sub`: 504 hits; (B) an array element or `g_`/`s_` global update: 137 hits; (H) a bare identifier update (locals, parameters, cursors), widened in after the first pass to catch a local later stored into state: 281 hits. Reservations, `(reserve|claim|acquire|admit|lease_insert|alloc_slot|take)[A-Za-z_0-9]*\s*\(` over `sdk/` (C): 184 hits. The shared test tiers: the A and B patterns over `functional/` and `tests/*.h` (D): 137 hits; the reservation pattern there (E): 19 hits. Reading showed charges the first patterns missed (an atomic add helper charging sent statistics, a counting helper charging a published counter), so two patterns were widened in: atomic add/sub helper calls, `atomic_(add|sub|increment|decrement)[A-Za-z_0-9]*\s*\(`, 54 hits, and counting-helper calls, `\b(rn|rocketnet)_[A-Za-z_0-9]*_count\s*\(`, 68 hits; 122 of these were new (F: 46 judged safe, 8 findings; G: 67 safe, 1 finding). In all 1384 distinct hits were judged: 18 belong to the six findings below, 3 to findings already filed, and 1363 are judged not a defect, each with its row in the table, plus one instance found by reading. No code was changed. Findings are ordered most severe first; each gives severity (`bug` / `risk` / `quality`), `file:line` at 9775266a, a one-sentence defect, a one-sentence concrete failure or cost, and the smallest fix.
+A sweep of `mas-bandwidth/rocketnet` at `9775266a705148969cc00fcadc1463b06879cfbd` (`main`) for one bug class: a counter, budget, quota, reference count, sequence or index that is charged (incremented, reserved, advanced, acquired) before the operation it pays for succeeds and is never refunded on the failure return, so a failure permanently consumes capacity or inflates a published counter. Scope read: every `.cpp` and `.h` under `sdk/` except `sdk/rocketnet_tests.cpp` (it builds only into the `rocketnet_test_support` target, and no production source calls into it), plus `tests/functional/` (`.cpp`, `.h`, `.inc`) and the `tests/*.h` helpers the functional and DST tiers share. Method: grep, then for every hit the enclosing function was read, the charged value was followed to its use, every return after the charge was checked for a refund, and a candidate defect's callers were traced back to the public API (`sdk/rocketnet.h`), the wire or a config value. Patterns and hit counts: the brief's raw pattern `(\+\+|\+= |fetch_add|--|-= |fetch_sub)` over `sdk/` gives 2124 lines; 725 comment lines and 476 `for (` loop headers were set aside, and the rest were split into (A) a member or field update, `(->|\.)name([...])? (++|+=|-=|--)`, a prefix `++`/`--` on a member, or `fetch_add`/`fetch_sub`: 504 hits; (B) an array element or `g_`/`s_` global update: 137 hits; (H) a bare identifier update (locals, parameters, cursors), widened in after the first pass to catch a local later stored into state: 281 hits. Reservations, `(reserve|claim|acquire|admit|lease_insert|alloc_slot|take)[A-Za-z_0-9]*\s*\(` over `sdk/` (C): 184 hits. The shared test tiers: the A and B patterns over `tests/functional/` and `tests/*.h` (D): 137 hits; the reservation pattern there (E): 19 hits. Reading showed charges the first patterns missed (an atomic add helper charging sent statistics, a counting helper charging a published counter), so two patterns were widened in: atomic add/sub helper calls, `atomic_(add|sub|increment|decrement)[A-Za-z_0-9]*\s*\(`, 54 hits, and counting-helper calls, `\b(rn|rocketnet)_[A-Za-z_0-9]*_count\s*\(`, 68 hits; 122 of these were new (F: 46 judged safe, 8 findings; G: 67 safe, 1 finding). In all 1384 distinct hits were judged: 18 belong to the six findings below, 3 to findings already filed, and 1363 are judged not a defect, each with its row in the table, plus one instance found by reading. No code was changed. Findings are ordered most severe first; each gives severity (`bug` / `risk` / `quality`), `file:line` at 9775266a, a one-sentence defect, a one-sentence concrete failure or cost, and the smallest fix.
 
 ## Findings
 
@@ -54,132 +54,132 @@ One row per grep hit judged safe (1363), plus one instance found by reading (`re
 
 | Hit | Pattern | Why it is safe |
 |---|---|---|
-| `functional/channel_harness.h:184` | D | counts the failure on its own past-budget refusal path |
-| `functional/channel_harness.h:189` | D | charged after the packet block was written |
-| `functional/channel_harness.h:414` | D | counts the failure on its own overflow refusal path |
-| `functional/channel_harness.h:429` | D | charged after slot linked in; no later failure |
-| `functional/channel_harness.h:457` | D | decrement on release, after unlink succeeded; matching add in ring_push |
-| `functional/channel_harness.h:480` | D | counts the failure on its own overflow refusal path |
-| `functional/channel_harness.h:483` | D | charged after the bounds checks; no failure after it |
-| `functional/channel_harness.h:499` | D | counts bytes offered to the link; WIRE_DROP is simulated loss, not failure |
-| `functional/channel_harness.h:501` | D | counts bytes offered to the link; WIRE_DROP is simulated loss, not failure |
-| `functional/channel_harness.h:639` | D | after start_payload succeeded; ids need uniqueness only, gaps harmless |
-| `functional/channel_harness.h:663` | D | charged only when seal returned wire_bytes > 0 |
-| `functional/channel_harness.h:686` | D | counts bytes the endpoint transmitted; drop/hold are simulated link behaviour |
-| `functional/channel_harness.h:688` | D | counts bytes the endpoint transmitted; drop/hold are simulated link behaviour |
-| `functional/channel_harness.h:696` | D | counts the failure on its own held-capacity refusal path |
-| `functional/channel_harness.h:702` | D | charged after the held copy was stored |
-| `functional/channel_harness.h:1014` | D | test clock advance, not a capacity counter |
-| `functional/channel_ordered.cpp:120` | D | local histogram bin, does not outlive the call |
-| `functional/channel_ordered.cpp:183` | D | precomputed planned payload total for the lower bound, not a success count |
-| `functional/channel_ordered.cpp:238` | D | charged after the exact-match check (mismatch aborts via check) |
-| `functional/channel_resend_timing.cpp:225` | D | bound checked fatally before; records an observed send |
-| `functional/channel_smoke.cpp:156` | D | per-index seen count; duplicate detection on its own result |
-| `functional/channel_smoke.cpp:168` | D | per-index seen count; duplicate detection on its own result |
-| `functional/channel_smoke.cpp:284` | E | function definition matched on name, no acquire |
-| `functional/channel_unreliable_duplicates.cpp:100` | D | send failure is fatal via dup_check (exit), nothing continues |
-| `functional/channel_unreliable_duplicates.cpp:110` | D | send failure is fatal via dup_check (exit), nothing continues |
-| `functional/lifecycle_driver.cpp:45` | D | counts allocation calls including injected failures, by design (fail_at index) |
-| `functional/lifecycle_driver.cpp:55` | D | charged after malloc succeeded |
-| `functional/lifecycle_driver.cpp:64` | D | decrement on release; matching add in allocate |
-| `functional/live_matrix.cpp:225` | D | counts the failure itself |
-| `functional/live_matrix.cpp:262` | E | read-only room query, reserves nothing |
-| `functional/live_matrix.cpp:294` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:319` | D | charged after the entry was found and marked receipted; bad status fails separately |
-| `functional/live_matrix.cpp:322` | D | charged on ACKED status only |
-| `functional/live_matrix.cpp:326` | D | counts LOSS status itself |
-| `functional/live_matrix.cpp:383` | D | charged after rocketnet_live_check verified the arrival |
-| `functional/live_matrix.cpp:385` | D | charged after rocketnet_live_check verified the arrival |
-| `functional/live_matrix.cpp:412` | D | charged after every refusal check returned |
-| `functional/live_matrix.cpp:416` | D | charged after every refusal check returned |
-| `functional/live_matrix.cpp:418` | D | charged after every refusal check returned |
-| `functional/live_matrix.cpp:420` | D | charged after every refusal check returned |
-| `functional/live_matrix.cpp:487` | D | token refill, clamped to rate; not paying for an operation |
-| `functional/live_matrix.cpp:490` | D | token refill, clamped to rate; not paying for an operation |
-| `functional/live_matrix.cpp:511` | E | read-only room query; refusal counted as paced, nothing reserved |
-| `functional/live_matrix.cpp:514` | D | counts the held-back send itself |
-| `functional/live_matrix.cpp:534` | D | charged after start_finish returned a nonzero serial |
-| `functional/live_matrix.cpp:545` | D | charged after serial and receipt slot (fatal check) both succeeded |
-| `functional/live_matrix.cpp:548` | D | charged after start_finish returned a nonzero serial |
-| `functional/live_matrix.cpp:549` | D | charged after start_finish returned a nonzero serial |
-| `functional/live_matrix.cpp:551` | D | tokens spent only after the send succeeded |
-| `functional/live_matrix.cpp:553` | D | tokens spent only after the send succeeded |
-| `functional/live_matrix.cpp:726` | D | counts refusal probes made; wrong outcome already recorded as failure |
-| `functional/live_matrix.cpp:768` | D | charged after a nonzero serial and receipt slot claimed |
-| `functional/live_matrix.cpp:794` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:795` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:841` | D | reclassifies the just-charged failure as an edge failure |
-| `functional/live_matrix.cpp:842` | D | counts the never-arrived failure itself |
-| `functional/live_matrix.cpp:859` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:860` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:895` | D | local search for the closing sequence, reset each window |
-| `functional/live_matrix.cpp:933` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:934` | E | drains receipts, reserves nothing |
-| `functional/live_matrix.cpp:979` | D | iteration counter, not paying for an operation |
-| `functional/live_matrix.cpp:1011` | D | counts the undelivered shortfall itself |
-| `functional/live_matrix.cpp:1041` | D | counts the counter failure itself |
-| `functional/platform_primitives.cpp:159` | D | charged after every check of the minted token passed |
-| `functional/platform_primitives.cpp:235` | D | wrong count sets ok=false, which the test asserts |
-| `functional/posix_hard_killed_client.cpp:383` | D | charged after payload validated |
-| `functional/posix_hard_killed_client.cpp:404` | D | charged after payload validated and slot matched |
-| `functional/posix_hard_killed_client.cpp:424` | D | send_packet is void; counts calls to a connected slot, which is what line 733 asserts |
-| `functional/posix_hard_killed_client.cpp:427` | D | send_packet is void; a silent drop makes received != sent fail the test |
-| `functional/posix_hard_killed_client.cpp:447` | D | send_packet is void; a silent drop makes received != sent fail the test |
-| `functional/posix_hard_killed_client.cpp:514` | D | charged after payload validated |
-| `functional/posix_hard_killed_client.cpp:528` | D | charged after payload validated and slot matched |
-| `functional/posix_lifecycle_stress.cpp:609` | D | clock skip counter, not paying for an operation |
-| `functional/posix_lifecycle_stress.cpp:928` | E | computes a port; the file it opens is closed on every path |
-| `functional/posix_lifecycle_stress.cpp:1014` | E | call to a pure port computation, nothing held |
-| `functional/posix_socket_errors.cpp:418` | D | called after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:420` | D | called after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:422` | D | called after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:424` | D | called after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:446` | D | charged after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:448` | D | charged after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:450` | D | charged after sendto checked fatally for full send |
-| `functional/posix_socket_errors.cpp:1164` | E | consumes received packets, reserves nothing |
-| `functional/posix_socket_errors.cpp:1180` | D | counts the duplicate itself |
-| `functional/posix_socket_errors.cpp:1184` | D | charged after the packet validated and was new |
-| `functional/posix_socket_errors.cpp:1203` | E | consumes received packets, reserves nothing |
-| `functional/posix_socket_errors.cpp:1315` | E | consumes received packets, reserves nothing |
-| `functional/posix_socket_errors.cpp:1969` | D | caller sends first; posix_send_datagram fails fatally on short send |
-| `functional/posix_socket_errors.cpp:1971` | D | caller sends first; posix_send_datagram fails fatally on short send |
-| `functional/posix_socket_errors.cpp:1973` | D | caller sends first; posix_send_datagram fails fatally on short send |
-| `functional/posix_socket_errors.cpp:1975` | D | caller sends first; posix_send_datagram fails fatally on short send |
-| `functional/posix_socket_errors.cpp:2187` | D | charged after posix_send_datagram, which fails fatally on short send |
-| `functional/posix_socket_errors.cpp:2188` | D | charged after posix_send_datagram, which fails fatally on short send |
-| `functional/posix_socket_errors.cpp:2200` | D | charged after posix_send_datagram, which fails fatally on short send |
-| `functional/posix_socket_errors.cpp:2204` | D | charged after posix_send_datagram, which fails fatally on short send |
-| `functional/posix_socket_errors.cpp:2206` | D | charged after posix_send_datagram, which fails fatally on short send |
-| `functional/posix_socket_errors.cpp:2215` | D | charged after posix_send_datagram, which fails fatally on short send |
-| `functional/rocketnet_functional_tests.cpp:289` | D | counts every callback by design; array write bounded at 16 |
-| `functional/rocketnet_functional_tests.cpp:1114` | D | local copy mutated to forge a context, does not outlive the loop |
-| `functional/rocketnet_functional_tests.cpp:1115` | D | local copy mutated to forge a context, does not outlive the loop |
-| `functional/rocketnet_functional_tests.cpp:1116` | D | local copy mutated to forge a context, does not outlive the loop |
-| `functional/rocketnet_functional_tests.cpp:1900` | G | test reads the misuse count into a local; no charge |
-| `functional/rocketnet_functional_tests.cpp:1912` | G | test compares the misuse count; no charge |
-| `functional/rocketnet_functional_tests.cpp:6767` | E | std::unordered_map capacity reserve, freed with the local map |
-| `functional/rocketnet_functional_tests.cpp:6768` | E | std::unordered_map capacity reserve, freed with the local map |
-| `functional/rocketnet_functional_tests.cpp:6820` | D | charged after the payload validated and sequence in range |
-| `functional/rocketnet_functional_tests.cpp:6834` | D | charged after the payload validated, slot matched, sequence in range |
-| `functional/rocketnet_functional_tests.cpp:8940` | E | extern declaration matched on name, no acquire |
-| `functional/rocketnet_functional_tests.cpp:9969` | G | returns a list length; not a counter |
-| `functional/rocketnet_functional_tests.cpp:9974` | G | list length used as a bound; not a counter |
-| `functional/rocketnet_functional_tests.cpp:9975` | G | list length used as an index offset; not a counter |
-| `functional/rocketnet_functional_tests.cpp:9996` | G | local loop bound |
-| `functional/server_receive_backlog.cpp:163` | E | std::vector capacity reserve, freed with the local vector |
-| `functional/windows_connreset.cpp:406` | D | tick sequence stamp, not paying for an operation |
-| `functional/windows_connreset.cpp:428` | D | charged after payload accepted by record_payload |
-| `functional/windows_connreset.cpp:452` | D | send_packet is void; a silent drop makes received < sent fail the test |
-| `functional/windows_connreset.cpp:641` | D | charged only when accepted |
-| `functional/windows_socket_errors.cpp:201` | D | tick sequence stamp, not paying for an operation |
-| `functional/windows_socket_errors.cpp:206` | D | charged after receive_packet returned > 0 |
-| `functional/windows_socket_errors.cpp:222` | D | charged per payload the server returned |
-| `functional/windows_socket_errors.cpp:233` | D | tick schedule advance, not a counter |
-| `functional/windows_socket_errors.cpp:444` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
-| `functional/windows_socket_errors.cpp:446` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
-| `functional/windows_socket_errors.cpp:448` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
-| `functional/windows_socket_errors.cpp:450` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
+| `tests/functional/channel_harness.h:184` | D | counts the failure on its own past-budget refusal path |
+| `tests/functional/channel_harness.h:189` | D | charged after the packet block was written |
+| `tests/functional/channel_harness.h:414` | D | counts the failure on its own overflow refusal path |
+| `tests/functional/channel_harness.h:429` | D | charged after slot linked in; no later failure |
+| `tests/functional/channel_harness.h:457` | D | decrement on release, after unlink succeeded; matching add in ring_push |
+| `tests/functional/channel_harness.h:480` | D | counts the failure on its own overflow refusal path |
+| `tests/functional/channel_harness.h:483` | D | charged after the bounds checks; no failure after it |
+| `tests/functional/channel_harness.h:499` | D | counts bytes offered to the link; WIRE_DROP is simulated loss, not failure |
+| `tests/functional/channel_harness.h:501` | D | counts bytes offered to the link; WIRE_DROP is simulated loss, not failure |
+| `tests/functional/channel_harness.h:639` | D | after start_payload succeeded; ids need uniqueness only, gaps harmless |
+| `tests/functional/channel_harness.h:663` | D | charged only when seal returned wire_bytes > 0 |
+| `tests/functional/channel_harness.h:686` | D | counts bytes the endpoint transmitted; drop/hold are simulated link behaviour |
+| `tests/functional/channel_harness.h:688` | D | counts bytes the endpoint transmitted; drop/hold are simulated link behaviour |
+| `tests/functional/channel_harness.h:696` | D | counts the failure on its own held-capacity refusal path |
+| `tests/functional/channel_harness.h:702` | D | charged after the held copy was stored |
+| `tests/functional/channel_harness.h:1014` | D | test clock advance, not a capacity counter |
+| `tests/functional/channel_ordered.cpp:120` | D | local histogram bin, does not outlive the call |
+| `tests/functional/channel_ordered.cpp:183` | D | precomputed planned payload total for the lower bound, not a success count |
+| `tests/functional/channel_ordered.cpp:238` | D | charged after the exact-match check (mismatch aborts via check) |
+| `tests/functional/channel_resend_timing.cpp:225` | D | bound checked fatally before; records an observed send |
+| `tests/functional/channel_smoke.cpp:156` | D | per-index seen count; duplicate detection on its own result |
+| `tests/functional/channel_smoke.cpp:168` | D | per-index seen count; duplicate detection on its own result |
+| `tests/functional/channel_smoke.cpp:284` | E | function definition matched on name, no acquire |
+| `tests/functional/channel_unreliable_duplicates.cpp:100` | D | send failure is fatal via dup_check (exit), nothing continues |
+| `tests/functional/channel_unreliable_duplicates.cpp:110` | D | send failure is fatal via dup_check (exit), nothing continues |
+| `tests/functional/lifecycle_driver.cpp:45` | D | counts allocation calls including injected failures, by design (fail_at index) |
+| `tests/functional/lifecycle_driver.cpp:55` | D | charged after malloc succeeded |
+| `tests/functional/lifecycle_driver.cpp:64` | D | decrement on release; matching add in allocate |
+| `tests/functional/live_matrix.cpp:225` | D | counts the failure itself |
+| `tests/functional/live_matrix.cpp:262` | E | read-only room query, reserves nothing |
+| `tests/functional/live_matrix.cpp:294` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:319` | D | charged after the entry was found and marked receipted; bad status fails separately |
+| `tests/functional/live_matrix.cpp:322` | D | charged on ACKED status only |
+| `tests/functional/live_matrix.cpp:326` | D | counts LOSS status itself |
+| `tests/functional/live_matrix.cpp:383` | D | charged after rocketnet_live_check verified the arrival |
+| `tests/functional/live_matrix.cpp:385` | D | charged after rocketnet_live_check verified the arrival |
+| `tests/functional/live_matrix.cpp:412` | D | charged after every refusal check returned |
+| `tests/functional/live_matrix.cpp:416` | D | charged after every refusal check returned |
+| `tests/functional/live_matrix.cpp:418` | D | charged after every refusal check returned |
+| `tests/functional/live_matrix.cpp:420` | D | charged after every refusal check returned |
+| `tests/functional/live_matrix.cpp:487` | D | token refill, clamped to rate; not paying for an operation |
+| `tests/functional/live_matrix.cpp:490` | D | token refill, clamped to rate; not paying for an operation |
+| `tests/functional/live_matrix.cpp:511` | E | read-only room query; refusal counted as paced, nothing reserved |
+| `tests/functional/live_matrix.cpp:514` | D | counts the held-back send itself |
+| `tests/functional/live_matrix.cpp:534` | D | charged after start_finish returned a nonzero serial |
+| `tests/functional/live_matrix.cpp:545` | D | charged after serial and receipt slot (fatal check) both succeeded |
+| `tests/functional/live_matrix.cpp:548` | D | charged after start_finish returned a nonzero serial |
+| `tests/functional/live_matrix.cpp:549` | D | charged after start_finish returned a nonzero serial |
+| `tests/functional/live_matrix.cpp:551` | D | tokens spent only after the send succeeded |
+| `tests/functional/live_matrix.cpp:553` | D | tokens spent only after the send succeeded |
+| `tests/functional/live_matrix.cpp:726` | D | counts refusal probes made; wrong outcome already recorded as failure |
+| `tests/functional/live_matrix.cpp:768` | D | charged after a nonzero serial and receipt slot claimed |
+| `tests/functional/live_matrix.cpp:794` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:795` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:841` | D | reclassifies the just-charged failure as an edge failure |
+| `tests/functional/live_matrix.cpp:842` | D | counts the never-arrived failure itself |
+| `tests/functional/live_matrix.cpp:859` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:860` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:895` | D | local search for the closing sequence, reset each window |
+| `tests/functional/live_matrix.cpp:933` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:934` | E | drains receipts, reserves nothing |
+| `tests/functional/live_matrix.cpp:979` | D | iteration counter, not paying for an operation |
+| `tests/functional/live_matrix.cpp:1011` | D | counts the undelivered shortfall itself |
+| `tests/functional/live_matrix.cpp:1041` | D | counts the counter failure itself |
+| `tests/functional/platform_primitives.cpp:159` | D | charged after every check of the minted token passed |
+| `tests/functional/platform_primitives.cpp:235` | D | wrong count sets ok=false, which the test asserts |
+| `tests/functional/posix_hard_killed_client.cpp:383` | D | charged after payload validated |
+| `tests/functional/posix_hard_killed_client.cpp:404` | D | charged after payload validated and slot matched |
+| `tests/functional/posix_hard_killed_client.cpp:424` | D | send_packet is void; counts calls to a connected slot, which is what line 733 asserts |
+| `tests/functional/posix_hard_killed_client.cpp:427` | D | send_packet is void; a silent drop makes received != sent fail the test |
+| `tests/functional/posix_hard_killed_client.cpp:447` | D | send_packet is void; a silent drop makes received != sent fail the test |
+| `tests/functional/posix_hard_killed_client.cpp:514` | D | charged after payload validated |
+| `tests/functional/posix_hard_killed_client.cpp:528` | D | charged after payload validated and slot matched |
+| `tests/functional/posix_lifecycle_stress.cpp:609` | D | clock skip counter, not paying for an operation |
+| `tests/functional/posix_lifecycle_stress.cpp:928` | E | computes a port; the file it opens is closed on every path |
+| `tests/functional/posix_lifecycle_stress.cpp:1014` | E | call to a pure port computation, nothing held |
+| `tests/functional/posix_socket_errors.cpp:418` | D | called after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:420` | D | called after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:422` | D | called after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:424` | D | called after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:446` | D | charged after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:448` | D | charged after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:450` | D | charged after sendto checked fatally for full send |
+| `tests/functional/posix_socket_errors.cpp:1164` | E | consumes received packets, reserves nothing |
+| `tests/functional/posix_socket_errors.cpp:1180` | D | counts the duplicate itself |
+| `tests/functional/posix_socket_errors.cpp:1184` | D | charged after the packet validated and was new |
+| `tests/functional/posix_socket_errors.cpp:1203` | E | consumes received packets, reserves nothing |
+| `tests/functional/posix_socket_errors.cpp:1315` | E | consumes received packets, reserves nothing |
+| `tests/functional/posix_socket_errors.cpp:1969` | D | caller sends first; posix_send_datagram fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:1971` | D | caller sends first; posix_send_datagram fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:1973` | D | caller sends first; posix_send_datagram fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:1975` | D | caller sends first; posix_send_datagram fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:2187` | D | charged after posix_send_datagram, which fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:2188` | D | charged after posix_send_datagram, which fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:2200` | D | charged after posix_send_datagram, which fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:2204` | D | charged after posix_send_datagram, which fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:2206` | D | charged after posix_send_datagram, which fails fatally on short send |
+| `tests/functional/posix_socket_errors.cpp:2215` | D | charged after posix_send_datagram, which fails fatally on short send |
+| `tests/functional/rocketnet_functional_tests.cpp:289` | D | counts every callback by design; array write bounded at 16 |
+| `tests/functional/rocketnet_functional_tests.cpp:1114` | D | local copy mutated to forge a context, does not outlive the loop |
+| `tests/functional/rocketnet_functional_tests.cpp:1115` | D | local copy mutated to forge a context, does not outlive the loop |
+| `tests/functional/rocketnet_functional_tests.cpp:1116` | D | local copy mutated to forge a context, does not outlive the loop |
+| `tests/functional/rocketnet_functional_tests.cpp:1900` | G | test reads the misuse count into a local; no charge |
+| `tests/functional/rocketnet_functional_tests.cpp:1912` | G | test compares the misuse count; no charge |
+| `tests/functional/rocketnet_functional_tests.cpp:6767` | E | std::unordered_map capacity reserve, freed with the local map |
+| `tests/functional/rocketnet_functional_tests.cpp:6768` | E | std::unordered_map capacity reserve, freed with the local map |
+| `tests/functional/rocketnet_functional_tests.cpp:6820` | D | charged after the payload validated and sequence in range |
+| `tests/functional/rocketnet_functional_tests.cpp:6834` | D | charged after the payload validated, slot matched, sequence in range |
+| `tests/functional/rocketnet_functional_tests.cpp:8940` | E | extern declaration matched on name, no acquire |
+| `tests/functional/rocketnet_functional_tests.cpp:9969` | G | returns a list length; not a counter |
+| `tests/functional/rocketnet_functional_tests.cpp:9974` | G | list length used as a bound; not a counter |
+| `tests/functional/rocketnet_functional_tests.cpp:9975` | G | list length used as an index offset; not a counter |
+| `tests/functional/rocketnet_functional_tests.cpp:9996` | G | local loop bound |
+| `tests/functional/server_receive_backlog.cpp:163` | E | std::vector capacity reserve, freed with the local vector |
+| `tests/functional/windows_connreset.cpp:406` | D | tick sequence stamp, not paying for an operation |
+| `tests/functional/windows_connreset.cpp:428` | D | charged after payload accepted by record_payload |
+| `tests/functional/windows_connreset.cpp:452` | D | send_packet is void; a silent drop makes received < sent fail the test |
+| `tests/functional/windows_connreset.cpp:641` | D | charged only when accepted |
+| `tests/functional/windows_socket_errors.cpp:201` | D | tick sequence stamp, not paying for an operation |
+| `tests/functional/windows_socket_errors.cpp:206` | D | charged after receive_packet returned > 0 |
+| `tests/functional/windows_socket_errors.cpp:222` | D | charged per payload the server returned |
+| `tests/functional/windows_socket_errors.cpp:233` | D | tick schedule advance, not a counter |
+| `tests/functional/windows_socket_errors.cpp:444` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
+| `tests/functional/windows_socket_errors.cpp:446` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
+| `tests/functional/windows_socket_errors.cpp:448` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
+| `tests/functional/windows_socket_errors.cpp:450` | D | send is void; an unsent datagram makes the counter compare fail, not pass |
 | `sdk/rocketnet.cpp:110` | H | local string cursor; no stored state, does not outlive the call |
 | `sdk/rocketnet.cpp:401` | H | counts the refusal itself (failure counter on its own refusal path) |
 | `sdk/rocketnet.cpp:422` | A | counts the refused misuse itself; called only on refusal paths |

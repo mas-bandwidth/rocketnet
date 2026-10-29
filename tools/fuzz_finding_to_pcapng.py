@@ -10,7 +10,7 @@
 # rocketnet_fuzz with input[0] & 3 == 0 is the prefilter: one interface-0
 # IPv4/UDP frame around input[1:]. rocketnet_fuzz_message with the same
 # selector is one interface-1 message payload record, kind 3 then input[1:].
-# The finding is copied to fuzz/<corpus>/regress_<name> beside the capture.
+# The finding is copied to tests/fuzz/<corpus>/regress_<name> beside the capture.
 # Any other harness or selector is refused, as is a name outside [a-z0-9_]+
 # or an existing target: a regression capture is never overwritten.
 #
@@ -31,7 +31,7 @@ class Refusal(Exception):
 
 def _no_form(harness, selector, corpus, name):
     return ("no pcapng form for %s selector %d; keep the input as "
-            "fuzz/%s/regress_%s and file it" % (harness, selector, corpus, name))
+            "tests/fuzz/%s/regress_%s and file it" % (harness, selector, corpus, name))
 
 
 def convert(root, harness, input_path, name):
@@ -63,7 +63,7 @@ def convert(root, harness, input_path, name):
         raise Refusal(_no_form(harness, selector, "corpus", name))
 
     target = os.path.join(root, "tests", "pcapng", "regress", name + ".pcapng")
-    seed = os.path.join(root, "fuzz", corpus, "regress_" + name)
+    seed = os.path.join(root, "tests", "fuzz", corpus, "regress_" + name)
     for path in (target, seed):
         if os.path.exists(path):
             raise Refusal("refusing to overwrite existing %s" % os.path.relpath(path, root))
@@ -90,7 +90,7 @@ def selftest():
 
     with tempfile.TemporaryDirectory() as directory:
         root = directory
-        for part in ("fuzz/corpus", "fuzz/corpus_message", "tests/pcapng/regress"):
+        for part in ("tests/fuzz/corpus", "tests/fuzz/corpus_message", "tests/pcapng/regress"):
             os.makedirs(os.path.join(root, *part.split("/")), exist_ok=True)
 
         prefilter = bytes([0x00]) + b"\x05\x00\xb7\x59\x01\x00abc"
@@ -125,7 +125,7 @@ def selftest():
             f.write(bytes([0x01]) + prefilter[1:])
         _expect_refusal(lambda: convert(root, "rocketnet_fuzz", selector_one, "selector_one"),
                         "no pcapng form for rocketnet_fuzz selector 1; keep the input as "
-                        "fuzz/corpus/regress_selector_one and file it")
+                        "tests/fuzz/corpus/regress_selector_one and file it")
         _expect_refusal(lambda: convert(root, "rocketnet_fuzz", prefilter_input, "Bad-Name"),
                         "bad name")
         with open(target, "rb") as f:

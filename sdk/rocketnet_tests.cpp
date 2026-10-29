@@ -41,7 +41,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_message_object.h"
 
-// The interrupt matcher matches fixture lines. Transport creates live in functional/.
+// The interrupt matcher matches fixture lines. Transport creates live in tests/functional/.
 
 #if ROCKETNET_XDP
 #include "rocketnet_xdp_free_list.h"
@@ -80,7 +80,7 @@ extern uint64_t rocketnet_server_cookie_mac_count();
 // visit counter for testing: defined in rocketnet_ack.cpp
 extern thread_local unsigned long long g_ack_visit_count;
 
-// Sockets, select, and the raw chaff injector live in functional/.
+// Sockets, select, and the raw chaff injector live in tests/functional/.
 
 // THE SUITE RUNS SILENT. rocketnet_unit_prepare installs this sink, so every
 // line the library would have printed lands in the ring below instead of
@@ -7774,7 +7774,7 @@ void rocketnet_test_frame_sync_guard()
 // the frame-rate refusals return before any allocation or timer. A create
 // that succeeds creates the real Windows high-resolution waitable timer, so
 // the successful create, its first stats and its destroy are the functional
-// case test_frame_sync_lifecycle (functional/platform_primitives.cpp).
+// case test_frame_sync_lifecycle (tests/functional/platform_primitives.cpp).
 void rocketnet_test_frame_sync_create_refuses_invalid_rates()
 {
     rocketnet_check( rocketnet_frame_sync_create( NULL, 0.0 ) == NULL );
@@ -16073,7 +16073,7 @@ void rocketnet_unit_prepare()
     // transport pin in the environment must not reach it: the pin replaces
     // the candidate list at create and the ladder falls through to a real
     // transport. Both pins are cleared for the run, as posix_pair_create does
-    // around its creates (functional/posix_socket_errors.cpp). A case that
+    // around its creates (tests/functional/posix_socket_errors.cpp). A case that
     // tests pin handling itself sets and reads its own pins after this.
 
     rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );

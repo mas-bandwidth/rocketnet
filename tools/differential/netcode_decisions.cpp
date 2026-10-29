@@ -6,7 +6,7 @@
 
     The decision machinery (the case model, the rocketnet decider, the
     netcode 1.02 live decider and the verdict) lives in decide.h, shared with
-    the libFuzzer target fuzz/rocketnet_fuzz_differential.cpp so both run
+    the libFuzzer target tests/fuzz/rocketnet_fuzz_differential.cpp so both run
     the same deciders. This file is the fixed gate: for each case in
     cases.tsv it drives rocketnet's connect-token admission path in process
     (the token open and the server's connection request ladder, with time
@@ -109,8 +109,8 @@ static void differential_case_for_id( int case_id, struct differential_case_t * 
 
 // --- the fuzz corpus mode -----------------------------------------------------
 //
-// Each fuzz/corpus_connect_token file is read the way
-// fuzz/rocketnet_fuzz_connect_token.cpp reads it: byte 0 bit 0 picks the raw
+// Each tests/fuzz/corpus_connect_token file is read the way
+// tests/fuzz/rocketnet_fuzz_connect_token.cpp reads it: byte 0 bit 0 picks the raw
 // half (the rest of the input is the token, zero-padded to 768 bytes) or the
 // structured half (the rest is (u16 offset, xor) records over a valid
 // baseline token); byte 1, as a signed count of minutes, moves the clock

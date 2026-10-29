@@ -12,8 +12,8 @@
 #   udp_payload(data)             -> the datagram inside an interface-0 frame
 #
 #   python3 tools/pcapng.py --selftest
-#   python3 tools/pcapng.py hostile <fuzz/corpus> <out.pcapng>
-#   python3 tools/pcapng.py fragments <fuzz/corpus> <out.pcapng>
+#   python3 tools/pcapng.py hostile <tests/fuzz/corpus> <out.pcapng>
+#   python3 tools/pcapng.py fragments <tests/fuzz/corpus> <out.pcapng>
 #   python3 tools/pcapng.py summary <file.pcapng> ...
 
 import os
@@ -42,7 +42,7 @@ OPT_ENDOFOPT = 0
 OPT_COMMENT = 1
 SNAPLEN = 65535
 
-# the test endpoints (functional/channel_harness.h)
+# the test endpoints (tests/functional/channel_harness.h)
 CLIENT_ADDRESS = (198, 51, 100, 7)
 CLIENT_PORT = 56789
 SERVER_ADDRESS = (203, 0, 113, 10)
@@ -220,7 +220,7 @@ def _corpus_files(corpus, prefix):
 
 
 def build_hostile(corpus, out_path):
-    """Every fuzz/corpus/prefilter_* seed, selector byte removed, client to server on interface 0."""
+    """Every tests/fuzz/corpus/prefilter_* seed, selector byte removed, client to server on interface 0."""
     packets = []
     ts = CLOCK_START_US
     for name, data in _corpus_files(corpus, "prefilter_"):
@@ -233,8 +233,8 @@ def build_hostile(corpus, out_path):
 
 
 def build_fragments(corpus, out_path):
-    """Every fuzz/corpus/fragment_* seed's length-prefixed records (u16 little-endian length,
-    then fragment type data, as fuzz/rocketnet_fuzz.cpp reads them), each one kind-2 record
+    """Every tests/fuzz/corpus/fragment_* seed's length-prefixed records (u16 little-endian length,
+    then fragment type data, as tests/fuzz/rocketnet_fuzz.cpp reads them), each one kind-2 record
     on interface 1, received by the server, alternating between reassembly connections 0
     and 1 from the first record of each seed as the fuzz harness does."""
     packets = []

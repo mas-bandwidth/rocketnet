@@ -51,7 +51,7 @@ Then build the selected configuration and run its tests before switching again.
 
 The targets a Mac programmer uses: `bin/test` (unit suite), `bin/functional`
 (functional suite; it also runs `test_msgx`, `test_serialize` and
-`test_transport_control` as sibling executables, `functional/main.cpp`),
+`test_transport_control` as sibling executables, `tests/functional/main.cpp`),
 `bin/test_msgx` (built only on Apple, `CMakeLists.txt`, the `if(APPLE)` block
 that adds it), `bin/test_lifecycle`, `bin/test_transport`, the
 `bin/example_*` programs, `bin/soak`, `bin/soak_sim`, `bin/load` and
@@ -318,7 +318,7 @@ weather and pause rules above to the same errnos.
 
 `test_platform_batch_pump_refused_destination` is the run: a batch with a
 refused destination in the middle delivers every other packet
-(`functional/rocketnet_functional_tests.cpp`).
+(`tests/functional/rocketnet_functional_tests.cpp`).
 
 ```sh
 ./bin/functional --run test_platform_batch_pump_refused_destination
@@ -488,10 +488,10 @@ rows (`.github/workflows/ci.yml`, "Replay the fuzz corpora without
 libFuzzer"); `make` builds the four replay binaries:
 
 ```sh
-./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
-./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
-./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
-./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
+./bin/fuzz_replay_rocketnet_fuzz tests/fuzz/corpus/*
+./bin/fuzz_replay_rocketnet_fuzz_message tests/fuzz/corpus_message/*
+./bin/fuzz_replay_rocketnet_fuzz_connect_token tests/fuzz/corpus_connect_token/*
+./bin/fuzz_replay_rocketnet_fuzz_receive_structured tests/fuzz/corpus_receive_structured/*
 ```
 
 Each prints `replayed <n> inputs` and exits 0.
@@ -501,7 +501,7 @@ Each prints `replayed <n> inputs` and exits 0.
 `./bin/functional` is the per-commit functional gate on the macOS rows of
 `.github/workflows/ci.yml`. `ROCKETNET_TEST_NIGHTLY=1 ./bin/functional` adds
 the nightly tier, selected by `rocketnet_functional_test_group` in
-`functional/main.cpp` and the `SUITE_GROUP_NIGHTLY` flag in
+`tests/functional/main.cpp` and the `SUITE_GROUP_NIGHTLY` flag in
 `tests/suite_runner.h`. The nightly tier adds the portable hard-killed-client
 cases, three portable/msgx 1000-client connection combinations, and the
 remaining transport combinations for `test_posix_destroy_under_traffic_100`.

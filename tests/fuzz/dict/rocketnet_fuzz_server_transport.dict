@@ -1,0 +1,51 @@
+# Dictionary for tests/fuzz/rocketnet_fuzz_server_transport.cpp. The record framing the target
+# reads ([selector][mode][u16 length][bytes], tests/fuzz/rocketnet_fuzz_pair.h),
+# then the wire constants from tests/fuzz/rocketnet.dict, each cited from sdk/.
+
+# selectors: connected, and bit 4 for records during the handshake
+selector_connected="\x00"
+selector_handshake="\x10"
+
+# record modes (mode % 5)
+mode_raw_client="\x00"
+mode_raw_stranger="\x01"
+mode_sealed="\x02"
+mode_damage_real="\x03"
+mode_ticks="\x04"
+
+# sealed type picks, the index into rocketnet_fuzz_c2s_types: keep-alive,
+# payload, disconnect, ack, fragment, response
+sealed_keep_alive="\x00\x00"
+sealed_payload="\x01\x00"
+sealed_disconnect="\x02\x00"
+sealed_ack="\x03\x00"
+sealed_fragment="\x04\x00"
+sealed_response="\x05\x00"
+
+# lengths: empty (a quiet step), one byte, the 7-byte minimum ack block
+# (ROCKETNET_ACK_BLOCK_MIN_BYTES), and the receive ceiling (1472)
+length_zero="\x00\x00"
+length_one="\x01\x00"
+length_ack_block_min="\x07\x00"
+length_ceiling="\xc0\x05"
+
+# --- the prefilter header (sdk/rocketnet_wire.h) ---
+
+# the published test filter value, ROCKETNET_TEST_FILTER_VALUE
+packet_filter="\xb7\x59\x01\x00"
+
+# full 6-byte prefilter headers at epoch 0: type, epoch, filter value
+prefilter_request="\x00\x00\xb7\x59\x01\x00"
+prefilter_denied="\x01\x00\xb7\x59\x01\x00"
+prefilter_challenge="\x02\x00\xb7\x59\x01\x00"
+prefilter_response="\x03\x00\xb7\x59\x01\x00"
+prefilter_keep_alive="\x04\x00\xb7\x59\x01\x00"
+prefilter_payload="\x05\x00\xb7\x59\x01\x00"
+prefilter_disconnect="\x06\x00\xb7\x59\x01\x00"
+prefilter_cookie="\x07\x00\xb7\x59\x01\x00"
+prefilter_ack="\x08\x00\xb7\x59\x01\x00"
+prefilter_fragment="\x09\x00\xb7\x59\x01\x00"
+
+# the first reserved type, and a keyed epoch the unkeyed 1.0 must refuse
+type_reserved="\x0a"
+epoch_keyed="\x01"

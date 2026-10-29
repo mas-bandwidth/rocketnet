@@ -49,10 +49,10 @@ int main(int argc, char** argv) {
     }
 }
 ''')
-    sources = [str(ROOT / 'fuzz/rocketnet_fuzz.cpp'), str(replay)]
+    sources = [str(ROOT / 'tests/fuzz/rocketnet_fuzz.cpp'), str(replay)]
     baseline = work / 'baseline'
     subprocess.run(flags + sources + [str(BUILD / 'librocketnet.a')] + libs + ['-o', str(baseline)], check=True)
-    subprocess.run([str(baseline), *map(str, sorted((ROOT / 'fuzz/corpus').iterdir()))], env=env, check=True)
+    subprocess.run([str(baseline), *map(str, sorted((ROOT / 'tests/fuzz/corpus').iterdir()))], env=env, check=True)
 
     original = (ROOT / 'sdk/rocketnet_base64.cpp').read_text()
     guard = '    if ( output_length > output_size )\n        return 0;'
@@ -72,7 +72,7 @@ int main(int argc, char** argv) {
     # Supplying the complete replacement object before the static library
     # prevents its original base64 object from being extracted by the linker.
     subprocess.run(flags + sources + [str(mutant), str(BUILD / 'librocketnet.a')] + libs + ['-o', str(control)], check=True)
-    result = subprocess.run([str(control), str(ROOT / 'fuzz/corpus/base64_over_key_field')],
+    result = subprocess.run([str(control), str(ROOT / 'tests/fuzz/corpus/base64_over_key_field')],
                             env=env, capture_output=True, text=True)
     (BUILD / 'fuzz-oracle-control.log').write_text(result.stdout + result.stderr)
     if result.returncode == 0 or 'fuzz oracle failed: base64 overlong field must refuse' not in result.stderr:
@@ -91,7 +91,7 @@ int main(int argc, char** argv) {
     mutant_msg = work / 'message-length-bypass.cpp'
     mutant_msg.write_text(msg.replace(msg_guard, '''    if ( length > remaining - header )
         return ROCKETNET_MESSAGE_VIOLATION_BAD_LENGTH;'''))
-    sources_msg = [str(ROOT / 'fuzz/rocketnet_fuzz_message.cpp'), str(replay)]
+    sources_msg = [str(ROOT / 'tests/fuzz/rocketnet_fuzz_message.cpp'), str(replay)]
     control_msg = work / 'control_message'
     subprocess.run(flags + sources_msg + [str(mutant_msg), str(BUILD / 'librocketnet.a')] + libs
                    + ['-o', str(control_msg)], check=True)

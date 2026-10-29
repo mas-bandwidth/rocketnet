@@ -43,8 +43,8 @@ class TextTest(unittest.TestCase):
         self.assertEqual(check.violations_in_text("a.py", "raise argparse.ArgumentTypeError('x')"), [])
 
     def test_path_with_the_word_fails(self):
-        self.assertEqual(len(check.violations_in_path(f"functional/posix_hard_killed_{WORD}.cpp")), 1)
-        self.assertEqual(check.violations_in_path("functional/posix_hard_killed_client.cpp"), [])
+        self.assertEqual(len(check.violations_in_path(f"tests/functional/posix_hard_killed_{WORD}.cpp")), 1)
+        self.assertEqual(check.violations_in_path("tests/functional/posix_hard_killed_client.cpp"), [])
 
 
 class TreeTest(unittest.TestCase):

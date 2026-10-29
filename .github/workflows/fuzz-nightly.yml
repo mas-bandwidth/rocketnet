@@ -11,7 +11,7 @@
 # fuzzer-no-link coverage plus asan+ubsan, and each target links the harness
 # against that archive -- one parallel build instead of recompiling the whole
 # sdk per target, exactly as ci.yml's fuzz-smoke does. The targets are every
-# harness under fuzz/ (fuzz/README.md's table): the one-binary stateless
+# harness under tests/fuzz/ (tests/fuzz/README.md's table): the one-binary stateless
 # parser sweep (the smoke's own binary, run long here), the message decoder,
 # the connect token ladder and its private layouts, the stateful receive
 # path, the wire round trip, the env config overlay, and the three pair
@@ -45,24 +45,24 @@ jobs:
       fail-fast: false
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
-        # each row is a harness source under fuzz/ and the seed-corpus and
+        # each row is a harness source under tests/fuzz/ and the seed-corpus and
         # persisted-corpus directories that feed it. the stateless sweep keeps
         # its historic name (rocketnet_fuzz) and its historic seed dir
-        # (fuzz/corpus); every other target carries its own. dict is the
-        # target's own dictionary under fuzz/dict/ where it has one, else the
-        # shared wire dictionary, as oss-fuzz/build.sh picks.
+        # (tests/fuzz/corpus); every other target carries its own. dict is the
+        # target's own dictionary under tests/fuzz/dict/ where it has one, else the
+        # shared wire dictionary, as tests/oss-fuzz/build.sh picks.
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/dict/rocketnet_fuzz.dict"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/dict/rocketnet_fuzz_message.dict"}'
-          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
-          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
-          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
-          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
-          - '{"target":"rocketnet_fuzz_differential","source":"fuzz/rocketnet_fuzz_differential.cpp","seeds":"fuzz/corpus_differential","dict":"fuzz/dict/rocketnet_fuzz_differential.dict"}'
+          - '{"target":"rocketnet_fuzz","source":"tests/fuzz/rocketnet_fuzz.cpp","seeds":"tests/fuzz/corpus","dict":"tests/fuzz/dict/rocketnet_fuzz.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"tests/fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"tests/fuzz/corpus_connect_token","dict":"tests/fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"tests/fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"tests/fuzz/corpus_receive_structured","dict":"tests/fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"tests/fuzz/rocketnet_fuzz_message.cpp","seeds":"tests/fuzz/corpus_message","dict":"tests/fuzz/dict/rocketnet_fuzz_message.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz_differential","source":"tests/fuzz/rocketnet_fuzz_differential.cpp","seeds":"tests/fuzz/corpus_differential","dict":"tests/fuzz/dict/rocketnet_fuzz_differential.dict"}'
     concurrency:
       group: fuzz-nightly-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -270,7 +270,7 @@ jobs:
   # ci.yml's macOS rows use. Apple clang carries no libFuzzer runtime, so this
   # leg names the LLVM toolchain unpacked at $HOME/sdk/llvm through
   # ROCKETNET_FUZZ_CC/CXX: the same flags and the same darwin link set as
-  # fuzz/Makefile (CoreFoundation and SystemConfiguration).
+  # tests/fuzz/Makefile (CoreFoundation and SystemConfiguration).
   fuzz-macos:
     name: nightly fuzz macOS (${{ fromJSON(matrix.leg).target }})
     runs-on: [self-hosted, macOS, ARM64, rocketnet-macos]
@@ -280,16 +280,16 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/dict/rocketnet_fuzz.dict"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/dict/rocketnet_fuzz_message.dict"}'
-          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
-          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
-          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
-          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz","source":"tests/fuzz/rocketnet_fuzz.cpp","seeds":"tests/fuzz/corpus","dict":"tests/fuzz/dict/rocketnet_fuzz.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"tests/fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"tests/fuzz/corpus_connect_token","dict":"tests/fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"tests/fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"tests/fuzz/corpus_receive_structured","dict":"tests/fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"tests/fuzz/rocketnet_fuzz_message.cpp","seeds":"tests/fuzz/corpus_message","dict":"tests/fuzz/dict/rocketnet_fuzz_message.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
       group: fuzz-nightly-macos-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -429,16 +429,16 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/dict/rocketnet_fuzz.dict"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/dict/rocketnet_fuzz_message.dict"}'
-          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
-          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
-          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
-          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz","source":"tests/fuzz/rocketnet_fuzz.cpp","seeds":"tests/fuzz/corpus","dict":"tests/fuzz/dict/rocketnet_fuzz.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"tests/fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"tests/fuzz/corpus_connect_token","dict":"tests/fuzz/dict/rocketnet_fuzz_connect_token.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"tests/fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"tests/fuzz/corpus_receive_structured","dict":"tests/fuzz/dict/rocketnet_fuzz_receive_structured.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"tests/fuzz/rocketnet_fuzz_message.cpp","seeds":"tests/fuzz/corpus_message","dict":"tests/fuzz/dict/rocketnet_fuzz_message.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
       group: fuzz-nightly-windows-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true
@@ -589,16 +589,16 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
         leg:
-          - '{"target":"rocketnet_fuzz","source":"fuzz/rocketnet_fuzz.cpp","seeds":"fuzz/corpus","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_connect_token","source":"fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"fuzz/corpus_connect_token","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_receive_structured","source":"fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"fuzz/corpus_receive_structured","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_message","source":"fuzz/rocketnet_fuzz_message.cpp","seeds":"fuzz/corpus_message","dict":"fuzz/rocketnet.dict"}'
-          - '{"target":"rocketnet_fuzz_token_private","source":"fuzz/rocketnet_fuzz_token_private.cpp","seeds":"fuzz/corpus_token_private","dict":"fuzz/dict/rocketnet_fuzz_token_private.dict"}'
-          - '{"target":"rocketnet_fuzz_round_trip","source":"fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"fuzz/corpus_round_trip","dict":"fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
-          - '{"target":"rocketnet_fuzz_config","source":"fuzz/rocketnet_fuzz_config.cpp","seeds":"fuzz/corpus_config","dict":"fuzz/dict/rocketnet_fuzz_config.dict"}'
-          - '{"target":"rocketnet_fuzz_server_transport","source":"fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"fuzz/corpus_server_transport","dict":"fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_client_transport","source":"fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"fuzz/corpus_client_transport","dict":"fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
-          - '{"target":"rocketnet_fuzz_session","source":"fuzz/rocketnet_fuzz_session.cpp","seeds":"fuzz/corpus_session","dict":"fuzz/dict/rocketnet_fuzz_session.dict"}'
+          - '{"target":"rocketnet_fuzz","source":"tests/fuzz/rocketnet_fuzz.cpp","seeds":"tests/fuzz/corpus","dict":"tests/fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_connect_token","source":"tests/fuzz/rocketnet_fuzz_connect_token.cpp","seeds":"tests/fuzz/corpus_connect_token","dict":"tests/fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_receive_structured","source":"tests/fuzz/rocketnet_fuzz_receive_structured.cpp","seeds":"tests/fuzz/corpus_receive_structured","dict":"tests/fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_message","source":"tests/fuzz/rocketnet_fuzz_message.cpp","seeds":"tests/fuzz/corpus_message","dict":"tests/fuzz/rocketnet.dict"}'
+          - '{"target":"rocketnet_fuzz_token_private","source":"tests/fuzz/rocketnet_fuzz_token_private.cpp","seeds":"tests/fuzz/corpus_token_private","dict":"tests/fuzz/dict/rocketnet_fuzz_token_private.dict"}'
+          - '{"target":"rocketnet_fuzz_round_trip","source":"tests/fuzz/rocketnet_fuzz_round_trip.cpp","seeds":"tests/fuzz/corpus_round_trip","dict":"tests/fuzz/dict/rocketnet_fuzz_round_trip.dict"}'
+          - '{"target":"rocketnet_fuzz_config","source":"tests/fuzz/rocketnet_fuzz_config.cpp","seeds":"tests/fuzz/corpus_config","dict":"tests/fuzz/dict/rocketnet_fuzz_config.dict"}'
+          - '{"target":"rocketnet_fuzz_server_transport","source":"tests/fuzz/rocketnet_fuzz_server_transport.cpp","seeds":"tests/fuzz/corpus_server_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_server_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_client_transport","source":"tests/fuzz/rocketnet_fuzz_client_transport.cpp","seeds":"tests/fuzz/corpus_client_transport","dict":"tests/fuzz/dict/rocketnet_fuzz_client_transport.dict"}'
+          - '{"target":"rocketnet_fuzz_session","source":"tests/fuzz/rocketnet_fuzz_session.cpp","seeds":"tests/fuzz/corpus_session","dict":"tests/fuzz/dict/rocketnet_fuzz_session.dict"}'
     concurrency:
       group: fuzz-nightly-msan-${{ matrix.ref }}-${{ fromJSON(matrix.leg).target }}
       cancel-in-progress: true

@@ -1,7 +1,19 @@
 # tests/
 
-Test-only vendored dependencies. Nothing here ships in the sdk; the sdk
-directory remains the complete drop-in set.
+Tests, fixtures, workload harnesses and test-only vendored dependencies.
+Nothing here ships in the sdk; the sdk directory remains the complete drop-in
+set. Commands below run from the repository root unless stated otherwise.
+
+| Directory | Purpose |
+| --- | --- |
+| `functional/` | Functional tests and platform/transport integration cases |
+| `fuzz/` | Fuzz harnesses, dictionaries and committed seed corpora |
+| `oss-fuzz/` | Prepared OSS-Fuzz build integration; not submitted |
+| `client_server/` | Client/server workload programs |
+| `load/`, `soak/` | Load and soak workloads |
+| `pcapng/` | Packet captures and regression fixtures |
+
+## Vendored test dependencies
 
 - `serialize.h` — mas-bandwidth/serialize 1.15, vendored so the serialize
   read of rocketnet.h (the C++ stream surface) is compiled and exercised by
@@ -33,8 +45,8 @@ the path it is given, through a temporary file renamed over it:
 then rebuild, and `test_vectors_regenerate_byte_identical` checks the new copy.
 
 The corpus-consistency cases walk directories that grow as findings land
-(`pcapng/` with `pcapng/regress/`, and `fuzz/corpus/`), so they are functional
-cases in `functional/corpus_consistency.cpp`, rows of
+(`pcapng/` with `pcapng/regress/`, and `tests/fuzz/corpus/`), so they are functional
+cases in `tests/functional/corpus_consistency.cpp`, rows of
 `rocketnet_functional_tests[]`: `test_pcapng_corpus_replay`,
 `test_pcapng_corpus_witness_unread_packet_goes_red`,
 `test_pcapng_corpus_covers_control_packet_types` and
@@ -68,7 +80,7 @@ Shared-library export cases are functional because they load a separately
 built library through the OS loader: `test_api_polish_dev_token_string`,
 `test_dev_connect_token_timeout_is_the_named_constant`, and
 `test_dev_token_minting_absent_in_release`. They are registered in
-`functional/rocketnet_functional_tests.cpp` and run by `./bin/functional`,
+`tests/functional/rocketnet_functional_tests.cpp` and run by `./bin/functional`,
 not `./bin/test`.
 
 Functional cases run in parallel, one job per core (`ROCKETNET_TEST_JOBS` to
@@ -88,7 +100,7 @@ The process thread-count cases `test_server_stats_creates_no_thread` and
 `test_public_step_driven_client_connects_without_a_thread` read the process's
 OS thread count from `/proc/self/task`, so they are functional cases in
 `./bin/functional`, not unit cases. Their bodies are in
-`functional/process_thread_counts.cpp`. On platforms without that file the
+`tests/functional/process_thread_counts.cpp`. On platforms without that file the
 count is -1 and the thread assertion pins nothing, so it is never unit logic.
 
 ## Peak memory per case

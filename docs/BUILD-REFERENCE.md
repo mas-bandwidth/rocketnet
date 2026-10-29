@@ -102,7 +102,7 @@ is separate from the library's main-call latency/performance qualification.
 sibling binaries, runs in parallel, one job per core (`ROCKETNET_TEST_JOBS`
 to change it), so the per-commit run fits its two minutes. A case that cannot
 share the host is fixed, or moved to the nightly tier
-(`ROCKETNET_TEST_NIGHTLY=1`, functional/main.cpp), never run alone per commit.
+(`ROCKETNET_TEST_NIGHTLY=1`, tests/functional/main.cpp), never run alone per commit.
 
 The functional suite enforces peak-resident-set bounds. Its
 `test_unit_case_memory` sibling row runs the complete unit binary in enforcement
@@ -200,7 +200,7 @@ named functional, never as a unit step.
 
 Unit cases feed SDK environment parsing through the in-memory source compiled
 only under `ROCKETNET_DEV`; they never read or mutate the process
-environment. `functional/environment_wiring.cpp` sets and restores real
+environment. `tests/functional/environment_wiring.cpp` sets and restores real
 variables and pins the SDK wiring, precedence, and refusal paths.
 
 | Binary | Tier | Why | Where it runs |
@@ -210,7 +210,7 @@ variables and pins the SDK wiring, precedence, and refusal paths.
 | `test_sodium` | unit | known-answer vectors | CI `Sodium known answers` |
 | `fuzz_replay_*` | unit | corpus replay, no init (the `fuzz_replay_${harness}` targets in CMakeLists.txt) | CI `Replay the fuzz corpora without libFuzzer` |
 | `functional` | functional | real sockets, transports and shared-library exports | CI `Run functional suite` |
-| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, functional/main.cpp) |
+| `test_serialize` | functional | sleep-wait loops (test_serialize.cpp) | `./bin/functional` (the `execs` tables in `main`, tests/functional/main.cpp) |
 | `test_transport_control` | functional | creates a server transport on a loopback socket and reads `rocketnet_time()` (test_transport_control.cpp) | `./bin/functional` |
 | `test_xdp` | functional | the AF_XDP transport | `./bin/functional` on Linux |
 | `test_xdp_filter` | functional | loads the XDP program with BPF_PROG_TEST_RUN; root | `nightly-soak.yml` (`tools/run_xdp_filter_guest.sh`) and by hand |
@@ -228,19 +228,19 @@ libraries through the OS loader: `test_api_polish_dev_token_string`,
 `test_dev_token_minting_absent_in_release`. They run from `./bin/functional`,
 not `./bin/test`.
 
-The channel cases in `./bin/functional` (`functional/channel_*.cpp`) run on
-`rocketnet_channel_harness_t` (functional/channel_harness.h): the in-memory
+The channel cases in `./bin/functional` (`tests/functional/channel_*.cpp`) run on
+`rocketnet_channel_harness_t` (tests/functional/channel_harness.h): the in-memory
 simulator and the test clock, with no socket and no sleep.
 
 The corpus-consistency cases in `./bin/functional`
-(functional/corpus_consistency.cpp: `test_pcapng_corpus_replay`,
+(tests/functional/corpus_consistency.cpp: `test_pcapng_corpus_replay`,
 `test_pcapng_corpus_witness_unread_packet_goes_red`,
 `test_pcapng_corpus_covers_control_packet_types` and
 `test_fuzz_prefilter_seed_names_match_outcomes`) read `tests/pcapng/`,
-`tests/pcapng/regress/` and `fuzz/corpus/` at run time, directories that grow
+`tests/pcapng/regress/` and `tests/fuzz/corpus/` at run time, directories that grow
 as findings land, so they are functional cases, never unit ones.
 
-The two process thread-count cases live in `functional/process_thread_counts.cpp`
+The two process thread-count cases live in `tests/functional/process_thread_counts.cpp`
 and count the process's threads from `/proc/self/task`, which Linux has and
 the other platforms do not: off Linux the count reads -1 and the case pins
 nothing, so neither case is unit logic.
@@ -449,7 +449,7 @@ Apple clang ships no libFuzzer runtime, so `-fsanitize=fuzzer` fails there with
 `libclang_rt.fuzzer_osx.a not found`. Fuzz on a Mac with an LLVM toolchain that
 carries it; the official LLVM macOS ARM64 release unpacked at
 `$HOME/sdk/llvm` is one. Name that compiler once in `ROCKETNET_FUZZ_CC` and
-`ROCKETNET_FUZZ_CXX` and both the library build and `fuzz/Makefile` pick it
+`ROCKETNET_FUZZ_CXX` and both the library build and `tests/fuzz/Makefile` pick it
 up. Apple silicon (arm64) is the supported macOS host.
 
 ```
@@ -464,12 +464,12 @@ cmake -B build -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 cmake --build build --target rocketnet_dev --parallel 4
 
-make -C fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
+make -C tests/fuzz ROCKETNET_FUZZ_CXX="$ROCKETNET_FUZZ_CXX"
 ```
 
 That builds `rocketnet_fuzz`, `rocketnet_fuzz_message`,
 `rocketnet_fuzz_connect_token` and `rocketnet_fuzz_receive_structured` in
-`fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
+`tests/fuzz/`, each linked with `-fsanitize=fuzzer,address,undefined` and the same
 `-ffp-contract=off` floor as the library. On macOS the link adds
 `-framework CoreFoundation -framework SystemConfiguration`, which the platform
 layer's interface lookup uses, as `CMakeLists.txt` does. Run one for fifteen
@@ -480,14 +480,14 @@ whatever the product does.
 
 ```
 mkdir -p corpus/rocketnet_fuzz
-ASAN_OPTIONS=detect_leaks=0 ./fuzz/rocketnet_fuzz corpus/rocketnet_fuzz fuzz/corpus \
-  -dict=fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
+ASAN_OPTIONS=detect_leaks=0 ./tests/fuzz/rocketnet_fuzz corpus/rocketnet_fuzz tests/fuzz/corpus \
+  -dict=tests/fuzz/rocketnet.dict -max_total_time=900 -print_final_stats=1
 ```
 
 The other three take `corpus/rocketnet_fuzz_message` with
-`fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
-`fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
-with `fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
+`tests/fuzz/corpus_message`, `corpus/rocketnet_fuzz_connect_token` with
+`tests/fuzz/corpus_connect_token`, and `corpus/rocketnet_fuzz_receive_structured`
+with `tests/fuzz/corpus_receive_structured`. A reproducer libFuzzer writes
 (`crash-*`, `oom-*`, `timeout-*`, `leak-*`) names the bug; a minimized input
 belongs in the target's seed corpus as `regress_<name>` together with its
 pcapng capture, which `tools/check_fuzz_regressions.py` enforces. The nightly
@@ -500,9 +500,9 @@ committed corpora: build `fuzz_replay_rocketnet_fuzz`,
 `fuzz_replay_rocketnet_fuzz_message`,
 `fuzz_replay_rocketnet_fuzz_connect_token` and
 `fuzz_replay_rocketnet_fuzz_receive_structured` and run each against its
-`fuzz/corpus*` inputs, which executes every committed file exactly once. The
+`tests/fuzz/corpus*` inputs, which executes every committed file exactly once. The
 `ROCKETNET_FUZZ_CC`/`ROCKETNET_FUZZ_CXX` variable mechanism is not Apple
 silicon specific: building the instrumented library with LLVM clang and
-running `make -C fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
+running `make -C tests/fuzz ROCKETNET_FUZZ_CXX=...` produces the four harnesses with
 `-fsanitize=fuzzer,address,undefined` on any host that carries a libFuzzer
 runtime.

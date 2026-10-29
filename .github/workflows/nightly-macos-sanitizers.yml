@@ -118,7 +118,7 @@ jobs:
           MallocStackLogging=1 "$bin" > "$logs/suite.log" 2>&1; rc=$?
           echo "SUITE $bin exit $rc"
           [ "$rc" = 0 ] || { tail -40 "$logs/suite.log"; exit 1; }
-          # the functional suite runs one case at a time (functional/main.cpp), the unit suite in parallel
+          # the functional suite runs one case at a time (tests/functional/main.cpp), the unit suite in parallel
           case "$bin" in *functional) jobs=1; run="--run" ;; *) jobs=4; run="" ;; esac
           grep -E '^test_[a-z0-9_]+$' "$logs/suite.log" | sort -u > "$logs/names.txt"
           # a case past the suite's own 120 s case limit plus a minute is killed with its process

@@ -48,7 +48,7 @@ RETIRED_SWITCHES = (
 )
 
 # Where a retired switch would be read or defined.
-SWITCH_SCAN_DIRS = ("sdk", "tests", "functional", "fuzz", "examples", "proofs", "oss-fuzz", ".github", "cmake")
+SWITCH_SCAN_DIRS = ("sdk", "tests", "examples", "proofs", ".github", "cmake")
 SWITCH_SCAN_FILES = ("CMakeLists.txt", "Makefile", "tests/client_server/client.c", "tests/client_server/server.c", "tests/soak/soak.c", "tests/load/load.c")
 SWITCH_SCAN_SUFFIXES = (".h", ".hpp", ".c", ".cpp", ".inc", ".txt", ".cmake", ".yml", ".yaml", ".sh", ".py", ".sexp", "Makefile")
 

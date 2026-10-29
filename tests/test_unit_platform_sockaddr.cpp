@@ -86,7 +86,7 @@ static void test_platform_sockaddr_in_round_trips_address()
 }
 
 // Pins the same conversion for the loopback sender shape the Linux mmsg batch
-// round trip compares (functional/rocketnet_functional_tests.cpp
+// round trip compares (tests/functional/rocketnet_functional_tests.cpp
 // test_client_io_linux_mmsg_batch_round_trip): 127.0.0.1 plus a nonzero port whose
 // bytes are not symmetric. The mmsg fill and read helpers
 // (rocketnet_platform_mmsg_fill_sockaddr and

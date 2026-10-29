@@ -1073,7 +1073,7 @@ static void test_message_config_sent_map_holds_a_window_burst()
 }
 #endif // #if ROCKETNET_DEV
 
-// The fuzz seed f8 0d 00 30 (fuzz/corpus_config/regress_config_f80d0030)
+// The fuzz seed f8 0d 00 30 (tests/fuzz/corpus_config/regress_config_f80d0030)
 // applies "0" to message_resend_delay_max_ms (range 10..60000, zero is not
 // "use the default"). The harness expects validation to refuse it exactly as
 // it refuses any out-of-range INT; this pins that the library does, by setting

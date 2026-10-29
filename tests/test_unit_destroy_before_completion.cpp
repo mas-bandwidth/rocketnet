@@ -17,7 +17,7 @@
 // destroy completes because the loopback stop is always complete. The
 // threaded path, where an early destroy normally keeps the object and a
 // second destroy after completion frees it, is covered by
-// functional/destroy_early_keep.cpp.
+// tests/functional/destroy_early_keep.cpp.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"

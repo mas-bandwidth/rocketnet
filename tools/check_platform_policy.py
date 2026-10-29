@@ -14,39 +14,39 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DOCUMENT = ROOT / "docs" / "PLATFORMS.md"
 
-FUNCTIONAL = ROOT / "functional"
+FUNCTIONAL = ROOT / "tests" / "functional"
 FUNCTIONAL_SUFFIXES = (".cpp", ".h", ".inc")
 
 # A string literal naming a wildcard address, with or without a port: "0.0.0.0",
 # "::", "[::]", "0.0.0.0:40000", "[::]:0".
 WILDCARD = re.compile(r'"(?:0\.0\.0\.0|::|\[::\])(?::\d+)?"')
 
-# Every wildcard literal functional/ may hold, keyed by file and stripped line,
+# Every wildcard literal tests/functional/ may hold, keyed by file and stripped line,
 # with the reason it stays. A wildcard bind on macOS is subject to the
 # application firewall, so a case that only needs loopback binds the loopback
 # address of its family (127.0.0.1 or ::1) with port 0 instead. A line here
 # that no longer occurs in the file fails the check as well, so the list
 # never outlives the code.
 WILDCARD_ALLOWED = {
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'rocketnet_address_parse( &refused_address, "0.0.0.0" );        // port 0: the kernel refuses it at send'):
         "a send destination, not a bind: the refused entry of the batch",
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_sized( NULL, "[::]", &server_config, sizeof( server_config ) );'):
         "dual-stack transport case: an ipv4 client of the ipv6 wildcard",
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'rocketnet_check( rocketnet_address_parse( &bind_address, "[::]:0" ) );'):
         "rio dual-stack case (Windows): ipv4 and ipv6 clients of the ipv6 wildcard",
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'rocketnet_test_server_gso_wire_exchange( "test_gso_transport_server_wire_dual_stack", "[::]", "127.0.0.1", "127.0.0.1", 0, 1 );'):
         "gso dual-stack case (Linux): an ipv4 client of the ipv6 wildcard",
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'rocketnet_test_server_uring_wire_exchange( "[::]", "127.0.0.1", "127.0.0.1", 1 );'):
         "io_uring dual-stack case (Linux): an ipv4 client of the ipv6 wildcard",
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'void rocketnet_test_msgx_client_transport_wire_dual_stack() { msgx_client_wire( "[::]", "127.0.0.1" ); }'):
         "msgx dual-stack case (macOS): an ipv4 client of the ipv6 wildcard",
-    ("functional/rocketnet_functional_tests.cpp",
+    ("tests/functional/rocketnet_functional_tests.cpp",
      'void rocketnet_test_iocp_client_transport_wire_dual_stack() { iocp_client_wire( "[::]", "127.0.0.1" ); }'):
         "iocp dual-stack case (Windows): an ipv4 client of the ipv6 wildcard",
 }
@@ -262,9 +262,9 @@ def check_row(row, workflow_cache):
 
 
 def check_wildcard_binds(root=ROOT, allowed=None):
-    """Return the failures for wildcard address literals in functional/.
+    """Return the failures for wildcard address literals in tests/functional/.
 
-    Every line of functional/ holding a WILDCARD literal must be a key of
+    Every line of tests/functional/ holding a WILDCARD literal must be a key of
     WILDCARD_ALLOWED, at most as many times as the list names it, and every
     listed line must still occur. The allowed set defaults to WILDCARD_ALLOWED;
     only the self-check passes another.
@@ -273,7 +273,7 @@ def check_wildcard_binds(root=ROOT, allowed=None):
         allowed = WILDCARD_ALLOWED
     found = Counter()
     where = {}
-    directory = root / "functional"
+    directory = root / "tests" / "functional"
     for path in sorted(directory.iterdir()):
         if path.suffix not in FUNCTIONAL_SUFFIXES or not path.is_file():
             continue
@@ -289,7 +289,7 @@ def check_wildcard_binds(root=ROOT, allowed=None):
         if key not in allowed or count > 1:
             for number in where[key][0 if key not in allowed else 1:]:
                 failures.append(
-                    f"{key[0]}:{number}: wildcard address in functional/ is not on "
+                    f"{key[0]}:{number}: wildcard address in tests/functional/ is not on "
                     f"the listed set; bind 127.0.0.1 or ::1 with port 0, or list "
                     f"it in WILDCARD_ALLOWED with its reason: {key[1]}"
                 )
@@ -308,7 +308,7 @@ def self_check(check=check_wildcard_binds):
     """
     import tempfile
 
-    name = "functional/case.cpp"
+    name = "tests/functional/case.cpp"
     listed_line = 'void listed_case() { wire( "[::]", "127.0.0.1" ); }'
     unlisted_line = 'rocketnet_check( rocketnet_address_parse( &bind_address, "0.0.0.0:40000" ) );'
     allowed = {(name, listed_line): "listed for the self-check"}
@@ -321,7 +321,7 @@ def self_check(check=check_wildcard_binds):
     problems = []
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
-        (root / "functional").mkdir()
+        (root / "tests" / "functional").mkdir(parents=True)
         # The clean tree must pass, or the cases below prove nothing.
         (root / name).write_text(listed_line + "\n", encoding="utf-8")
         clean = check(root=root, allowed=allowed)
@@ -380,7 +380,7 @@ def main():
     print(
         f"check_platform_policy: {supported} supported, {nightly} nightly, "
         f"{unsupported} unsupported row(s) match their named workflows; "
-        f"{len(WILDCARD_ALLOWED)} listed wildcard line(s) in functional/"
+        f"{len(WILDCARD_ALLOWED)} listed wildcard line(s) in tests/functional/"
     )
     return 0
 

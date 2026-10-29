@@ -12,7 +12,7 @@
 // (docs/CLIENT-IO.md, RNClientIo) with the batch callbacks that reach that
 // pump, and the auto choice on macOS is msgx. No transport is created, no
 // socket is opened and no clock is read: the pin-to-pump reads of a live
-// socket and the wire are functional cases (functional/rocketnet_functional_tests.cpp,
+// socket and the wire are functional cases (tests/functional/rocketnet_functional_tests.cpp,
 // test_msgx_client_pin_selects_batch_pump and the cases beside it). The file
 // builds empty on every other platform.
 

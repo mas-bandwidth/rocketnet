@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.15)
 # Checks the one build path that does not go through CMakeLists.txt.
 #
 # OSS-Fuzz builds the sdk, the vendored sodium and the fuzz targets through
-# oss-fuzz/build.sh with its own $CFLAGS/$CXXFLAGS. Those flags never carry
+# tests/oss-fuzz/build.sh with its own $CFLAGS/$CXXFLAGS. Those flags never carry
 # -ffp-contract=off, and GCC's default is -ffp-contract=fast (clang's default
 # =on still fuses within an expression), so without an explicit flag the fuzzed
 # build contracts float arithmetic and diverges bit-wise from every CMake
@@ -35,14 +35,14 @@ foreach(line IN LISTS build_lines)
 endforeach()
 
 if(compile_lines EQUAL 0)
-    list(APPEND failures "no $CC or $CXX compile line found in oss-fuzz/build.sh")
+    list(APPEND failures "no $CC or $CXX compile line found in tests/oss-fuzz/build.sh")
 endif()
 
 if(failures)
     foreach(failure IN LISTS failures)
-        message(SEND_ERROR "oss-fuzz/build.sh compile line lacks -ffp-contract=off: ${failure}")
+        message(SEND_ERROR "tests/oss-fuzz/build.sh compile line lacks -ffp-contract=off: ${failure}")
     endforeach()
-    message(FATAL_ERROR "oss-fuzz/build.sh does not build with -ffp-contract=off")
+    message(FATAL_ERROR "tests/oss-fuzz/build.sh does not build with -ffp-contract=off")
 endif()
 
-message(STATUS "oss-fuzz/build.sh builds every compile line (${compile_lines}) with -ffp-contract=off")
+message(STATUS "tests/oss-fuzz/build.sh builds every compile line (${compile_lines}) with -ffp-contract=off")

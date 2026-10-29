@@ -20,7 +20,7 @@
 // before anything is sent or received, so the kernel drops datagrams from
 // any other source; a refused connect refuses the transport. The fake
 // client driver (tests/fake_client_driver.h) stands in for the socket here;
-// functional/platform_primitives.cpp checks the real socket over loopback.
+// tests/functional/platform_primitives.cpp checks the real socket over loopback.
 // Time is an argument; the clock starts at 1000.0 and nothing here sleeps,
 // opens a socket or reads a clock.
 

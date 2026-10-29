@@ -4,7 +4,7 @@
   "cases": [
     {
       "name": "prefilter-too-short",
-      "source": "fuzz/corpus/prefilter_too_short",
+      "source": "tests/fuzz/corpus/prefilter_too_short",
       "operation": "truncate",
       "argument": 5,
       "expected_delta": 1,
@@ -25,7 +25,7 @@
     },
     {
       "name": "prefilter-too-large",
-      "source": "fuzz/corpus/prefilter_too_large",
+      "source": "tests/fuzz/corpus/prefilter_too_large",
       "operation": "oversize",
       "argument": 1453,
       "expected_delta": 1,
@@ -67,7 +67,7 @@
     },
     {
       "name": "wrong-filter-value",
-      "source": "fuzz/corpus/prefilter_pcap_hostile_prefilter_1df577ed2292",
+      "source": "tests/fuzz/corpus/prefilter_pcap_hostile_prefilter_1df577ed2292",
       "operation": "wrong_filter",
       "argument": 128,
       "expected_delta": 1,
@@ -109,7 +109,7 @@
     },
     {
       "name": "session-replay",
-      "source": "fuzz/corpus/prefilter_payload",
+      "source": "tests/fuzz/corpus/prefilter_payload",
       "operation": "replay",
       "argument": 2,
       "expected_delta": 2,
@@ -130,7 +130,7 @@
     },
     {
       "name": "bad-session-tag",
-      "source": "fuzz/corpus/prefilter_payload_full",
+      "source": "tests/fuzz/corpus/prefilter_payload_full",
       "operation": "bad_tag",
       "argument": 1,
       "expected_delta": 1,

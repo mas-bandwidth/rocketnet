@@ -18,11 +18,11 @@ Flags, exactly as `.github/workflows/fuzz-nightly.yml` `fuzz-macos`:
   -fno-sanitize-recover=all -fno-omit-frame-pointer`.
 - Each target: `clang++ -g -O1 -std=c++17 -ffp-contract=off -DROCKETNET_DEV=1
   -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
-  -fno-omit-frame-pointer -Isodium -Isdk fuzz/<target>.cpp
+  -fno-omit-frame-pointer -Isodium -Isdk tests/fuzz/<target>.cpp
   build-fuzz/librocketnet_dev.a -lpthread -framework CoreFoundation -framework
   SystemConfiguration`.
 - Run: `ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1`
-  `<target> <corpus> <seeds> -dict=fuzz/dict/<target>.dict -max_total_time=900
+  `<target> <corpus> <seeds> -dict=tests/fuzz/dict/<target>.dict -max_total_time=900
   -print_final_stats=1 -rss_limit_mb=4096 -timeout=25`. The corpus directory
   started empty and the checked-in seed corpus was the second argument, as in
   the nightly. Leak detection is off for the reason in the workflow comment

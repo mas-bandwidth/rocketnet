@@ -9,8 +9,8 @@ and `sdk/rocketnet_server_iocp.h`; `sdk/rocketnet_server_rio_windows.cpp`,
 `sdk/rocketnet_server_transport.cpp` and `sdk/rocketnet_client_transport.cpp`, and the
 Windows operation tables, receive-drop hook and memory plan in `sdk/rocketnet_driver_builtin.cpp`
 that select and drive the transports; the tests `tests/test_iocp.cpp`,
-`tests/test_unit_windows_coalesced_cmsg.cpp`, `functional/windows_connreset.cpp` and
-`functional/windows_socket_errors.cpp`; checked against `standard/TRANSPORT.md`,
+`tests/test_unit_windows_coalesced_cmsg.cpp`, `tests/functional/windows_connreset.cpp` and
+`tests/functional/windows_socket_errors.cpp`; checked against `standard/TRANSPORT.md`,
 `standard/MESSAGES.md`, `sdk/rocketnet.h` and the code's own comments. Method: for each
 candidate, the call sequence or wire input that reaches it was written down first; a candidate
 with no reachable path is graded risk or quality, never bug. Nothing was run on Windows: a
@@ -35,7 +35,7 @@ one-sentence defect, a one-sentence concrete failure or cost, and the smallest f
 ### 3. bug — `sdk/rocketnet_driver_builtin.cpp:1275`
 
 - Defect: `rocketnet_server_transport_io_receive_drops` reports the transport's own size drops only for the Linux `gso` and `io_uring` tables and returns false on Windows, while the IOCP transport drops oversize, failed and zero-byte receives into its private `ROCKETNET_IOCP_RECEIVE_DROPPED` and the RIO transport drops oversize and below-minimum datagrams into its private `ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE` (`sdk/rocketnet_server_rio_windows.cpp:860`), contradicting the comment at `sdk/rocketnet_server_transport.cpp:3373` that one oversize datagram reads `PREFILTER_TOO_LARGE` on every transport.
-- Failure or cost: An oversize datagram from the wire, or on RIO a runt below `ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES`, moves no counter that `rocketnet_server_transport_counters` returns on `iocp` or `rio`, while the same datagram reads `PREFILTER_TOO_LARGE` or `PREFILTER_TOO_SHORT` on `portable`, `gso` and `io_uring`; the functional case reaches into the transports' private counters through a test-only accessor to see them (`functional/windows_socket_errors.cpp:302`). Class: data dropped with no counter.
+- Failure or cost: An oversize datagram from the wire, or on RIO a runt below `ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES`, moves no counter that `rocketnet_server_transport_counters` returns on `iocp` or `rio`, while the same datagram reads `PREFILTER_TOO_LARGE` or `PREFILTER_TOO_SHORT` on `portable`, `gso` and `io_uring`; the functional case reaches into the transports' private counters through a test-only accessor to see them (`tests/functional/windows_socket_errors.cpp:302`). Class: data dropped with no counter.
 - Smallest fix: Add `iocp_receive_drops` and `rio_receive_drops` that split their size drops into too-short and too-large totals, and match their operation tables in `rocketnet_server_transport_io_receive_drops` under a Windows branch.
 
 ### 4. risk — `sdk/rocketnet_server_iocp_windows.cpp:684`
@@ -59,7 +59,7 @@ one-sentence defect, a one-sentence concrete failure or cost, and the smallest f
 ### 7. quality — `sdk/rocketnet_server_rio_windows.cpp:42`
 
 - Defect: `rocketnet_rio_leaked_regions` is declared, commented as "regions destroy could not drain and so leaked", and read through `rocketnet_server_rio_leaked_regions`, but nothing ever increments it, and its own header comment (`sdk/rocketnet_server_rio.h:98`) calls it historical.
-- Failure or cost: `tests/test_iocp.cpp:1064` and five functional cases (`functional/rocketnet_functional_tests.cpp:4185` and after) assert the counter unchanged, checks that pass whatever destroy does and read as leak coverage that does not exist.
+- Failure or cost: `tests/test_iocp.cpp:1064` and five functional cases (`tests/functional/rocketnet_functional_tests.cpp:4185` and after) assert the counter unchanged, checks that pass whatever destroy does and read as leak coverage that does not exist.
 - Smallest fix: Delete the counter, its accessor and the checks, or replace the checks with an allocation or handle count taken around create and destroy.
 
 ### 8. quality — `sdk/rocketnet_server_rio_windows.cpp:665`

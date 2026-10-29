@@ -40,7 +40,7 @@
 #                           345-454s on the fleet's 16-core runner hosts.
 #
 #   macos / Release         the macOS functional suite's nightly tier
-#   functional nightly      (ROCKETNET_TEST_NIGHTLY=1, functional/main.cpp):
+#   functional nightly      (ROCKETNET_TEST_NIGHTLY=1, tests/functional/main.cpp):
 #   tier                    the four hard-killed client cells on the portable
 #                           server, each of which waits out the real 10 s
 #                           token timeout, and three of the four transport
@@ -123,7 +123,7 @@ jobs:
   # THE MACOS FUNCTIONAL NIGHTLY TIER: the whole Release functional suite with
   # ROCKETNET_TEST_NIGHTLY=1 on the fleet's darwin runner (the same host
   # ci.yml's macOS rows use), which adds the cases moved off the per-commit
-  # path (functional/main.cpp, rocketnet_functional_test_group). Every case
+  # path (tests/functional/main.cpp, rocketnet_functional_test_group). Every case
   # keeps every assertion; the tier exists because those cells wait out real
   # protocol timeouts or repeat a transport pair a per-commit case keeps.
   # Measured times: docs/MACOS.md.
@@ -266,7 +266,7 @@ jobs:
   # 13's tsan runtime). On the fleet's 16-core runner hosts the leg took
   # 345-454s, past ci.yml's 3-minute law, so it runs here with a real budget.
   # The live message matrix case runs alone in the functional suite (its own
-  # suite group, functional/main.cpp): its 50s tsan wall-clock bound measures
+  # suite group, tests/functional/main.cpp): its 50s tsan wall-clock bound measures
   # the case, about 35s alone on a Linux x64 gcc bench, and not the rest of the suite.
 
   tsan-threaded:
