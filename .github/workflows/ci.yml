@@ -988,7 +988,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [a, b]
+        leg: [a, b, c]
     steps:
 
       - uses: actions/checkout@v4
@@ -1013,8 +1013,8 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Start combined unit and functional timing (development leg)
-        if: matrix.leg == 'a'
+      - name: Start combined unit and functional timing (development legs)
+        if: matrix.leg != 'b'
         shell: bash
         run: *start_unit_functional_timing
 
@@ -1025,6 +1025,7 @@ jobs:
         run: python tools/check_public_header.py --build build --config Release
 
       - name: Replay the fuzz corpora without libFuzzer
+        if: matrix.leg != 'c'
         shell: bash
         run: |
           # the ten harnesses build in one parallel build and replay at once;
@@ -1053,6 +1054,14 @@ jobs:
         run: |
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
+
+      # Leg (c), 2026-10-29: the functional suite is back on every commit, its
+      # cases in parallel (functional/main.cpp), the slowest RIO and IOCP x1000
+      # cycles in the nightly tier. The note below is its history.
+      - name: Run functional suite (parallel)
+        if: matrix.leg == 'c'
+        shell: bash
+        run: ./bin/Release/functional.exe
 
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full

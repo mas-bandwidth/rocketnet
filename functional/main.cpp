@@ -99,6 +99,14 @@ static const char * const rocketnet_functional_nightly_cases[] = {
     "test_posix_connect_disconnect_1000_portable_*",
     "test_posix_connect_disconnect_1000_msgx_portable",
 #endif // #if defined( __APPLE__ )
+#if defined( _WIN32 )
+    // the RIO and IOCP x1000 server cycles, 16-45 s each on the Windows bench
+    // (captain, 2026-10-29); the portable x1000 cycles stay on every commit
+    "test_rio_transport_windows_server_restart_1000",
+    "test_rio_transport_windows_server_create_destroy_1000",
+    "test_iocp_transport_windows_server_restart_1000",
+    "test_iocp_transport_windows_server_create_destroy_1000",
+#endif // #if defined( _WIN32 )
     NULL,
 };
 
