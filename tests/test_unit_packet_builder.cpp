@@ -470,7 +470,7 @@ static void test_message_record_valid_refuses_each_shape()
 
 struct reference_scheduler_t
 {
-    uint64_t level_clock[ROCKETNET_PACKET_BUILDER_LEVELS];
+    uint64_t level_clock[4];                                   // two levels, or the four before step 10
     uint64_t clock_base;
     uint32_t round_robin;
     uint32_t num_channels;
@@ -479,21 +479,34 @@ struct reference_scheduler_t
     uint64_t visits;                                            // the items the picker looked at, the quadratic cost
 };
 
-static const uint64_t reference_stride[ROCKETNET_PACKET_BUILDER_LEVELS] = { 1, 14 };
-static const uint64_t reference_seed[ROCKETNET_PACKET_BUILDER_LEVELS] = { 0, 10 };
+// reference_four_levels selects the scheduler before step 10, the oracle that
+// the two-level builder takes the same items in the same order: IMMEDIATE 0
+// to LOW 3 with their strides and seeds, CONFIG at IMMEDIATE and every other
+// item at MEDIUM, the only two levels production reached.
 
-// an item's own level: 0 for a control record (CONFIG), 1 for every other
+static bool reference_four_levels = false;
+
+static const uint64_t reference_stride_two[2] = { 1, 14 };
+static const uint64_t reference_seed_two[2] = { 0, 10 };
+static const uint64_t reference_stride_four[4] = { 1, 5, 14, 35 };
+static const uint64_t reference_seed_four[4] = { 0, 3, 10, 27 };
+
+static int reference_levels() { return reference_four_levels ? 4 : 2; }
+static uint64_t reference_stride( int level ) { return reference_four_levels ? reference_stride_four[level] : reference_stride_two[level]; }
+static uint64_t reference_seed( int level ) { return reference_four_levels ? reference_seed_four[level] : reference_seed_two[level]; }
+
+// an item's own level: 0 for a control record (CONFIG), else 1 (MEDIUM's 2 before step 10)
 
 static int reference_level( const struct rn_packet_item_t * item )
 {
-    return item->control ? 0 : 1;
+    return item->control ? 0 : ( reference_four_levels ? 2 : 1 );
 }
 
 static void reference_reset_clocks( struct reference_scheduler_t * scheduler )
 {
-    for ( int p = 0; p < ROCKETNET_PACKET_BUILDER_LEVELS; p++ )
+    for ( int p = 0; p < reference_levels(); p++ )
     {
-        scheduler->level_clock[p] = reference_seed[p];
+        scheduler->level_clock[p] = reference_seed( p );
     }
     scheduler->clock_base = 0;
 }
@@ -569,7 +582,7 @@ static void reference_take_level( struct reference_scheduler_t * scheduler, int 
 {
     const uint64_t clock = reference_effective_clock( scheduler, level );
     scheduler->clock_base = clock;
-    scheduler->level_clock[level] = clock + reference_stride[level];
+    scheduler->level_clock[level] = clock + reference_stride( level );
 }
 
 // BASE's rn_packet_builder_write with no budget (the budget's answers are the
@@ -724,14 +737,16 @@ static void plan_fill( int num_items, uint32_t channels )
 // the same frames byte for byte, the same items taken, the same clocks and
 // round robin after every write, write after write until the plan drains.
 
-static void test_packet_builder_matches_reference_order()
+static void packet_builder_reference_order( bool four_levels, uint32_t seed )
 {
+    reference_four_levels = four_levels;
+
     rn_arena_t * arena = rn_arena_create( NULL, NULL, 1, &builder_counters );
     rocketnet_unit_check( arena != NULL );
 
     rn_region_t * region = rn_arena_region( arena, 0 );
 
-    plan_random_state = 0x2545F491u;
+    plan_random_state = seed;
 
     uint8_t * builder_frames[PLAN_PAYLOADS];
     uint8_t * reference_frames[PLAN_PAYLOADS];
@@ -789,10 +804,12 @@ static void test_packet_builder_matches_reference_order()
             {
                 rocketnet_unit_check( plan_builder_items[i].taken == plan_reference_items[i].taken );
             }
-            for ( int l = 0; l < ROCKETNET_PACKET_BUILDER_LEVELS; l++ )
-            {
-                rocketnet_unit_check( builder.level_clock[l] == reference.level_clock[l] );
-            }
+            // the builder's level 1 is the old MEDIUM, level 2; HIGH and LOW
+            // are never offered, so their clocks stay at their seeds
+            rocketnet_unit_check( builder.level_clock[0] == reference.level_clock[0] );
+            rocketnet_unit_check( builder.level_clock[1] == reference.level_clock[four_levels ? 2 : 1] );
+            if ( four_levels )
+                rocketnet_unit_check( reference.level_clock[1] == 3 && reference.level_clock[3] == 27 );
             rocketnet_unit_check( builder.clock_base == reference.clock_base );
             rocketnet_unit_check( builder.round_robin == reference.round_robin );
 
@@ -815,6 +832,24 @@ static void test_packet_builder_matches_reference_order()
     }
 
     rn_arena_destroy( arena );
+    reference_four_levels = false;
+}
+
+static void test_packet_builder_matches_reference_order()
+{
+    packet_builder_reference_order( false, 0x2545F491u );
+}
+
+// The two-level builder against the four-level scheduler it replaced (step
+// 10), over random plans: every class, channels at and past the modulus,
+// control records anywhere in a channel (CONFIG resent behind other channel-0
+// resends), multi-packet calls whose clocks persist between calls, and items
+// replaced between calls. The same items in the same order, byte for byte.
+static void test_packet_builder_matches_the_four_level_scheduler()
+{
+    static const uint32_t seeds[4] = { 0x2545F491u, 0x9E3779B9u, 0x00C0FFEEu, 0x13579BDFu };
+    for ( int i = 0; i < 4; i++ )
+        packet_builder_reference_order( true, seeds[i] );
 }
 
 // the builder's plan cost is linear: one item scan, six stable radix touches,
@@ -1008,6 +1043,7 @@ REGISTER_UNIT_TEST( test_builder_obeys_budget_and_class_order );
 REGISTER_UNIT_TEST( test_packet_builder_no_allocation_after_create );
 REGISTER_UNIT_TEST( test_message_record_valid_refuses_each_shape );
 REGISTER_UNIT_TEST( test_packet_builder_matches_reference_order );
+REGISTER_UNIT_TEST( test_packet_builder_matches_the_four_level_scheduler );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_packet_builder_operations_bounded );
 #endif // #if ROCKETNET_DEV
