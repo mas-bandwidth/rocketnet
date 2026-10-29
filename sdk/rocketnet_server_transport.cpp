@@ -1906,7 +1906,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         if ( status )
             *status = ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION;
         rocketnet_error( "development keys in a production build (ROCKETNET_DEV=0); refusing to start" );
-        rocketnet_free( context, server_transport );
+        rocketnet_server_transport_abort_create( server_transport );
         return NULL;
 #endif // #if ROCKETNET_DEV
     }

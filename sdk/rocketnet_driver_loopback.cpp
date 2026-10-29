@@ -706,23 +706,25 @@ static int loopback_client_receive( void * transport, rocketnet_address_t * from
     rocketnet_loopback_endpoint_t * ep = (rocketnet_loopback_endpoint_t *) transport;
     rocketnet_platform_mutex_guard( &ep->hub->mutex );
 
-    if ( ep->count == 0 )
-        return 0;
-
-    rocketnet_loopback_packet_t * packet = &ep->packets[ep->head & ( ep->capacity - 1 )];
-    if ( packet->bytes > capacity )
+    while ( ep->count > 0 )
     {
-        ++ep->dropped;
-        loopback_queue_pop( ep );        // proofs/tla/LoopbackQueue.tla Drop
-        return 0;
+        rocketnet_loopback_packet_t * packet = &ep->packets[ep->head & ( ep->capacity - 1 )];
+        if ( packet->bytes > capacity )
+        {
+            ++ep->dropped;
+            loopback_queue_pop( ep );    // proofs/tla/LoopbackQueue.tla Drop
+            continue;
+        }
+
+        *from = packet->from;
+        const int bytes = packet->bytes;
+        memcpy( data, packet->data, (size_t) bytes );
+        loopback_queue_pop( ep );        // proofs/tla/LoopbackQueue.tla Receive
+
+        return bytes;
     }
 
-    *from = packet->from;
-    const int bytes = packet->bytes;
-    memcpy( data, packet->data, (size_t) bytes );
-    loopback_queue_pop( ep );            // proofs/tla/LoopbackQueue.tla Receive
-
-    return bytes;
+    return 0;
 }
 
 static const rocketnet_server_transport_io_operations_t loopback_server_operations = {
