@@ -52,6 +52,9 @@ MCRNRingBrokenIdleFloor.cfg	MCRNRing.tla	invariant	IdleAdmitsAnyMessage	check	rn
 MCRNSendSpans.cfg	MCRNSendSpans.tla	pass	-	check	rnsendspans	required	-
 MCRNSendSpansBrokenFloorAtNewest.cfg	MCRNSendSpans.tla	invariant	LiveSpansDisjoint	check	rnsendspans	required	-
 MCRNSendSpansBrokenNoPadding.cfg	MCRNSendSpans.tla	invariant	SpanInsideRing	check	rnsendspans	required	-
+MCRNIndexRing.cfg	MCRNIndexRing.tla	pass	-	ignore-terminal	rnindexring	required	-
+MCRNIndexRingBrokenStaleBySlot.cfg	MCRNIndexRing.tla	invariant	LiveIsOrder	ignore-terminal	rnindexring	required	-
+MCRNIndexRingBrokenSmallRing.cfg	MCRNIndexRing.tla	invariant	Bounded	ignore-terminal	rnindexring	required	-
 MCRNWindow.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowSafety.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowBrokenBlockUPrime.cfg	MCRNWindow.tla	invariant	NoSlotCollision	check	rnwindow	required	-
