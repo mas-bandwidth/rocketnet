@@ -721,8 +721,12 @@ inline void suite_print_report( const std::vector<suite_result> & results )
             ran.push_back( results[i] );
     std::sort( ran.begin(), ran.end(), []( const suite_result & a, const suite_result & b )
                { return a.seconds > b.seconds; } );
+    // ROCKETNET_TEST_REPORT=all lists every case, the per-commit budget's input
+    char report[16] = { 0 };
+    rocketnet_test_getenv( "ROCKETNET_TEST_REPORT", report, sizeof( report ) );
+    const size_t listed = std::strcmp( report, "all" ) == 0 ? ran.size() : 10;
     printf( "\nslowest cases:\n" );
-    for ( size_t i = 0; i < ran.size() && i < 10; i++ )
+    for ( size_t i = 0; i < ran.size() && i < listed; i++ )
     {
         printf( "  %8.3fs  %s\n", ran[i].seconds, ran[i].name.c_str() );
     }
