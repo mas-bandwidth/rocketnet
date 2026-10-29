@@ -154,6 +154,112 @@ jobs:
           ROCKETNET_TEST_REPORT: "1"
         run: ./bin/functional
 
+      - name: Functional suite, portable rung pinned by env
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: ./bin/functional
+
+      - name: Production functional suite, portable rung pinned by env
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: ./bin/functional_production
+
+  # THE LINUX AND WINDOWS FUNCTIONAL NIGHTLY TIERS: the same tier on the other
+  # two operating systems (Glenn 2026-10-29: "If anything doesn't fit into
+  # functional, it becomes nightly test"). A case that does not fit the
+  # per-commit budget runs here with every assertion intact; the per-commit
+  # suite keeps one representative of each family.
+
+  linux-functional-nightly:
+    name: linux / Release functional nightly tier
+    runs-on: [self-hosted, Linux, X64, fleet]
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-linux-functional-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Build (Release, through the Makefile)
+        run: make -j8
+
+      # serial: the Linux tier holds the XDP cases, which share the host's XDP
+      # state and cannot run beside other cases
+      - name: Functional suite, nightly tier (serial)
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_REPORT: "1"
+          ROCKETNET_TEST_JOBS: "1"
+        run: ./bin/functional
+
+      - name: Functional suite, portable rung pinned by env
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: ./bin/functional
+
+      - name: Production functional suite, portable rung pinned by env
+        timeout-minutes: 20
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: ./bin/functional_production
+
+  windows-functional-nightly:
+    name: windows / Release functional nightly tier
+    runs-on: [self-hosted, Windows, X64, rocketnet-windows]
+    timeout-minutes: 40
+    strategy:
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+    concurrency:
+      group: nightly-windows-functional-${{ matrix.ref }}
+      cancel-in-progress: true
+    steps:
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Configure
+        run: cmake -B build -A x64
+
+      - name: Build (Release)
+        run: cmake --build build --config Release --target functional functional_production --parallel
+
+      - name: Functional suite, nightly tier
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_TEST_REPORT: "1"
+        run: ./bin/Release/functional.exe
+
+      - name: Production functional suite, portable rung pinned by env
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ROCKETNET_TEST_NIGHTLY: "1"
+          ROCKETNET_SERVER_TRANSPORT: portable
+          ROCKETNET_CLIENT_TRANSPORT: portable
+        run: ./bin/Release/functional_production.exe
+
   # THE THREADED TRANSPORTS UNDER TSAN, lifted from ci.yml's tsan job on
   # 2026-10-22 step for step (its comment there is the doctrine: a real race
   # stops the world, halt_on_error=1, no suppressions file; setarch -R for gcc

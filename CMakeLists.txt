@@ -23,7 +23,10 @@ if(NOT ROCKETNET_VERSION_NUMERIC STREQUAL PROJECT_VERSION)
         "does not match project VERSION ${PROJECT_VERSION}")
 endif()
 if(MSVC)
-    add_compile_options(/utf-8)
+    # /MP compiles a project's sources in parallel; without it MSVC compiles
+    # one file at a time inside each project, and the Windows CI build took
+    # 121-154 s of its 3-minute bound
+    add_compile_options(/utf-8 /MP)
 endif()
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)

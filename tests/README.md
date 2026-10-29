@@ -71,7 +71,9 @@ built library through the OS loader: `test_api_polish_dev_token_string`,
 `functional/rocketnet_functional_tests.cpp` and run by `./bin/functional`,
 not `./bin/test`.
 
-Functional cases run one at a time, even with `ROCKETNET_TEST_JOBS` set.
+Functional cases run in parallel, one job per core (`ROCKETNET_TEST_JOBS` to
+change it); a case that cannot share the host is fixed or moved to the
+nightly tier (`ROCKETNET_TEST_NIGHTLY=1`).
 Use generous completion deadlines to catch hangs; do not assert wall-clock
 latency or receive-gap thresholds. Unit tests use deterministic inputs and
 simulated time for protocol deadlines, never host scheduling speed. See

@@ -357,22 +357,25 @@ jobs:
 
       - name: Replay the fuzz corpora without libFuzzer
         if: runner.os == 'macOS'
+        shell: bash
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
-            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
-            cmake --build build --target "fuzz_replay_${harness}" --parallel 2
+          # the ten harnesses build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          targets=""
+          for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
+          cmake --build build --target $targets --parallel
+          pids=""
+          for harness in $harnesses; do
+            corpus="fuzz/corpus${harness#rocketnet_fuzz}"
+            "./bin/fuzz_replay_$harness" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
+            pids="$pids $!:$harness"
           done
-          ./bin/fuzz_replay_rocketnet_fuzz fuzz/corpus/*
-          ./bin/fuzz_replay_rocketnet_fuzz_message fuzz/corpus_message/*
-          ./bin/fuzz_replay_rocketnet_fuzz_connect_token fuzz/corpus_connect_token/*
-          ./bin/fuzz_replay_rocketnet_fuzz_receive_structured fuzz/corpus_receive_structured/*
-          ./bin/fuzz_replay_rocketnet_fuzz_token_private fuzz/corpus_token_private/*
-          ./bin/fuzz_replay_rocketnet_fuzz_round_trip fuzz/corpus_round_trip/*
-          ./bin/fuzz_replay_rocketnet_fuzz_config fuzz/corpus_config/*
-          ./bin/fuzz_replay_rocketnet_fuzz_server_transport fuzz/corpus_server_transport/*
-          ./bin/fuzz_replay_rocketnet_fuzz_client_transport fuzz/corpus_client_transport/*
-          ./bin/fuzz_replay_rocketnet_fuzz_session fuzz/corpus_session/*
+          failed=0
+          for entry in $pids; do
+            if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
+          done
+          exit $failed
 
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: contains(matrix.leg, 'b')
@@ -419,20 +422,16 @@ jobs:
             exit 1
           fi
 
+      # The pinned pass per commit proves the pin is honoured; the whole
+      # suite under the portable pin runs in the nightly tier (nightly.yml),
+      # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
         if: contains(matrix.leg, 'b')
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -euo pipefail
-          ./bin/functional | tee functional-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-pinned.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-pinned.log; then
-            echo "io_uring functional rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+        run: ./bin/functional --run test_transport_env_pin_is_honoured
 
       # functional_production links the production (ROCKETNET_DEV=OFF)
       # library, so it exists only on the Release rows; it runs the same
@@ -454,14 +453,7 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -euo pipefail
-          ./bin/functional_production | tee functional-production-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
-          if [ "$RUNNER_OS" = "Linux" ] && grep -E '^SKIPPED .*: (rocketnet_server_uring_available|rocketnet_test_posix_io_uring_offered)$' functional-production-pinned.log; then
-            echo "io_uring functional_production rows skipped on a Linux runner" >&2
-            exit 1
-          fi
+        run: ./bin/functional_production --run test_transport_env_pin_is_honoured
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
@@ -996,7 +988,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [a, b]
+        leg: [a, b, c]
     steps:
 
       - uses: actions/checkout@v4
@@ -1021,8 +1013,8 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Start combined unit and functional timing (development leg)
-        if: matrix.leg == 'a'
+      - name: Start combined unit and functional timing (development legs)
+        if: matrix.leg != 'b'
         shell: bash
         run: *start_unit_functional_timing
 
@@ -1033,23 +1025,26 @@ jobs:
         run: python tools/check_public_header.py --build build --config Release
 
       - name: Replay the fuzz corpora without libFuzzer
+        if: matrix.leg != 'c'
         shell: bash
         run: |
-          for harness in rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured \
-            rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config \
-            rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session; do
-            cmake --build build --config Release --target "fuzz_replay_${harness}" --parallel 2
+          # the ten harnesses build in one parallel build and replay at once;
+          # each replay's exit status is checked
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          targets=""
+          for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
+          cmake --build build --config Release --target $targets --parallel
+          pids=""
+          for harness in $harnesses; do
+            corpus="fuzz/corpus${harness#rocketnet_fuzz}"
+            "./bin/Release/fuzz_replay_$harness.exe" "$corpus"/* > "fuzz-replay-$harness.log" 2>&1 &
+            pids="$pids $!:$harness"
           done
-          ./bin/Release/fuzz_replay_rocketnet_fuzz.exe fuzz/corpus/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_message.exe fuzz/corpus_message/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_connect_token.exe fuzz/corpus_connect_token/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_receive_structured.exe fuzz/corpus_receive_structured/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_token_private.exe fuzz/corpus_token_private/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_round_trip.exe fuzz/corpus_round_trip/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_config.exe fuzz/corpus_config/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_server_transport.exe fuzz/corpus_server_transport/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_client_transport.exe fuzz/corpus_client_transport/*
-          ./bin/Release/fuzz_replay_rocketnet_fuzz_session.exe fuzz/corpus_session/*
+          failed=0
+          for entry in $pids; do
+            if ! wait "${entry%%:*}"; then echo "fuzz replay failed: ${entry#*:}"; cat "fuzz-replay-${entry#*:}.log"; failed=1; fi
+          done
+          exit $failed
 
       # ---- leg (a): the suite as the runner executes it ----
 
@@ -1059,6 +1054,14 @@ jobs:
         run: |
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
+
+      # Leg (c), 2026-10-29: the functional suite is back on every commit, its
+      # cases in parallel (functional/main.cpp), the slowest RIO and IOCP x1000
+      # cycles in the nightly tier. The note below is its history.
+      - name: Run functional suite (parallel)
+        if: matrix.leg == 'c'
+        shell: bash
+        run: ./bin/Release/functional.exe
 
       # THE WINDOWS FUNCTIONAL SUITE IS NIGHTLY (2026-10-24). Per-commit
       # Windows runs the build and the unit suite (test.exe) only; the full
@@ -1134,10 +1137,7 @@ jobs:
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
-        run: |
-          set -euo pipefail
-          ./bin/Release/functional_production.exe | tee functional-production-pinned.log
-          grep -qx 'test_transport_env_pin_is_honoured' functional-production-pinned.log
+        run: ./bin/Release/functional_production.exe --run test_transport_env_pin_is_honoured
 
       # THE TRANSPORT FAMILY MATRIX: every transport this OS builds, pinned by
       # env, on IPv4, on IPv6 and with an IPv4 client of an IPv6 wildcard
