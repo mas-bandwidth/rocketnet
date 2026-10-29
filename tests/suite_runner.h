@@ -502,11 +502,6 @@ inline int suite_job_count()
         }
     }
 
-    if ( jobs > 8 )
-    {
-        jobs = 8;
-    }
-
     return (int) jobs;
 }
 
