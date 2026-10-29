@@ -319,12 +319,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES <= ROCKETNET_MA
 
 ROCKETNET_STATIC_ASSERT( ( ( ROCKETNET_CONNECT_TOKEN_BYTES + 2 ) / 3 ) * 4 + 1 == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES, "ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES is the base64 of the token" );
 
-// The key and token makers the public header does not carry: production
-// minting and key generation belong to the game's backend; the SDK's own tests
-// and tools use these. Not exported.
-enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
+// The key and token makers the public header does not carry. The public
+// generators and rocketnet_create_connect_token are in sdk/rocketnet.h; these
+// are the seeded backend keypair (deterministic keys for the SDK's tests,
+// benches and vectors; no public use needs determinism) and the binary token
+// writer under rocketnet_create_connect_token. Not exported.
 enum rocketnet_status_t rocketnet_generate_backend_keypair_from_seed( const uint8_t * seed, uint8_t * public_key, uint8_t * secret_key );
-enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
 enum rocketnet_status_t rocketnet_write_production_connect_token( const uint8_t * backend_secret_key,
                                                                   const uint8_t * server_public_key,
                                                                   uint64_t protocol_id,

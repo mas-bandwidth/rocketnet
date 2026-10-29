@@ -45,7 +45,7 @@
 #include <time.h>
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 #define LIVE_MATRIX_DIRECTIONS              2
 #define LIVE_MATRIX_MODES                   8

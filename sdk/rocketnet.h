@@ -159,6 +159,11 @@
 
 #define ROCKETNET_SERVER_PUBLIC_KEY_BYTES                   32
 
+/// Backend signing secret-key bytes: the Ed25519 secret, whose last
+/// ROCKETNET_BACKEND_PUBLIC_KEY_BYTES are the public key.
+
+#define ROCKETNET_BACKEND_SECRET_KEY_BYTES                  64
+
 /// Server secret-key bytes: the X25519 secret key in the server config's
 /// server_secret_key.
 
@@ -229,9 +234,9 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_PLATFORM_INIT_FAILED = -4,
 
     /// The crypto library failed. Init returns it when the library did not
-    /// start, and the library stays uninitialized. Server create and
-    /// rocketnet_create_dev_connect_token return it when a key or token could
-    /// not be made; nothing is created. Retrying will not help unless the
+    /// start, and the library stays uninitialized. Server create, the key
+    /// generators and the connect token makers return it when a key or token
+    /// could not be made; nothing is created. Retrying will not help unless the
     /// cause is corrected.
 
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED = -5,
@@ -268,9 +273,10 @@ enum rocketnet_status_t
 
     ROCKETNET_STATUS_INVALID_PROTOCOL_ID = -11,
 
-    /// Start refused. A production build (ROCKETNET_DEV=0) was given the
-    /// published development backend key, or the published development server
-    /// key in server_secret_key. Supply production keys.
+    /// Start or rocketnet_create_connect_token refused. A production build
+    /// (ROCKETNET_DEV=0) was given the published development backend key,
+    /// or the published development server key in server_secret_key or a
+    /// token config's server_public_key. Supply production keys.
 
     ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION = -12,
 
@@ -1405,6 +1411,17 @@ struct rocketnet_client_config_t
     /// environment form.
 
     bool step_driven;
+
+    /// ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS is the Unix time, in seconds,
+    /// at zero of the time the caller passes to rocketnet_client_update. The connect
+    /// token's create and expire checks read this epoch plus that time, in
+    /// whole seconds, and never read the wall clock, so pausing the caller's
+    /// clock (a breakpoint during the handshake, a debug clock) pauses token
+    /// expiry. 0 reads the wall clock once, at connect, and takes the epoch as that
+    /// Unix time less the caller's time. Production builds may set it.
+    /// Default is 0.
+
+    uint64_t token_epoch_unix_seconds;
 };
 
 /// The server config starts without a backend public key or protocol id.
@@ -1640,6 +1657,17 @@ struct rocketnet_server_config_t
     /// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION. It has no environment form.
 
     uint8_t server_secret_key[ROCKETNET_SERVER_SECRET_KEY_BYTES];
+
+    /// ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS is the Unix time, in seconds,
+    /// at zero of the time the caller passes to rocketnet_server_update. The connect
+    /// token's create and expire checks read this epoch plus that time, in
+    /// whole seconds, and never read the wall clock, so pausing the caller's
+    /// clock (a breakpoint during the handshake, a debug clock) pauses token
+    /// expiry. 0 reads the wall clock once, at the first update after start,
+    /// and takes the epoch as that Unix time less the caller's time. Production builds may set it.
+    /// Default is 0.
+
+    uint64_t token_epoch_unix_seconds;
 };
 
 /// Messages
@@ -1705,6 +1733,177 @@ struct rocketnet_receipt_t
 /// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
 /// Production tokens come from your backend. Development tokens come from
 /// rocketnet_create_dev_connect_token.
+
+/// Keys and token minting
+
+/// rocketnet_generate_backend_keypair, rocketnet_generate_server_keypair and
+/// rocketnet_create_connect_token mint keys and production tokens in process.
+/// They are for ephemeral keys: singleplayer and listen servers, debug tools,
+/// test and build tools, and a title's own backend written in C or C++. They
+/// are available in production builds. Never compile a real backend secret
+/// key into a shipped client: anyone holding it can mint tokens every server
+/// of the title accepts (KEYS.md).
+
+/// Generates a backend signing keypair (Ed25519). The server config's
+/// backend_public_key takes the public key; the secret key signs tokens and
+/// stays with whatever mints them.
+///
+/// Needs no client, server or library state. Thread: any thread; it touches
+/// only its arguments.
+///
+/// @param public_key Receives ROCKETNET_BACKEND_PUBLIC_KEY_BYTES.
+/// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
+/// when done.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
+
+/// Generates a server keypair (X25519): the kind a server object makes for
+/// itself at create. A token is sealed to the server's public key, which
+/// rocketnet_server_public_key reads from a running server.
+///
+/// Needs no client, server or library state. Thread: any thread; it touches
+/// only its arguments.
+///
+/// @param public_key Receives ROCKETNET_SERVER_PUBLIC_KEY_BYTES.
+/// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
+/// when done.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
+
+/// The inputs of one connect token. Initialize it with
+/// rocketnet_connect_token_default_config, then set the fields. No field has
+/// an environment form: minting reads only this struct. config_bytes follows
+/// the config rules above (Config).
+
+struct rocketnet_connect_token_config_t
+{
+    /// The size of the caller's struct. Set by
+    /// rocketnet_connect_token_default_config. Zero is refused.
+
+    size_t config_bytes;
+
+    /// The backend secret key from rocketnet_generate_backend_keypair. The
+    /// server must hold the matching backend public key. A production build
+    /// refuses the published development key. The config holds a copy of the
+    /// secret: wipe it when done. Default is all zeros.
+
+    uint8_t backend_secret_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];
+
+    /// The server's IPv4 address as "a.b.c.d:port", or NULL. Pass the address
+    /// rocketnet_server_ipv4_address returns. Default is NULL.
+
+    const char * server_address_ipv4;
+
+    /// The server's IPv6 address as "[v6]:port", or NULL. Pass the address
+    /// rocketnet_server_ipv6_address returns. At least one address is
+    /// required. Default is NULL.
+
+    const char * server_address_ipv6;
+
+    /// The server's public key, from rocketnet_server_public_key. Default is
+    /// all zeros.
+
+    uint8_t server_public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+
+    /// The client's id, carried to the server. Default is 0.
+
+    uint64_t client_id;
+
+    /// The title's protocol id. Must be nonzero and match the server.
+    /// Default is 0, which is refused: set it.
+
+    uint64_t protocol_id;
+
+    /// User data carried to the server. Default is all zeros.
+
+    uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
+
+    /// The token lifetime in seconds from unix_timestamp. Must be positive.
+    /// Default is 30.
+
+    int expire_seconds;
+
+    /// The longest silence the connection allows, in seconds. Must be
+    /// positive. Default is 10.
+
+    int timeout_seconds;
+
+    /// The token's creation time in Unix seconds. Minting reads no clock:
+    /// this field is the only time, so a debug clock can drive it. Pair it
+    /// with the server's token_epoch_unix_seconds to mint tokens on a game
+    /// clock. Default is 0.
+
+    uint64_t unix_timestamp;
+};
+
+/// Fills defaults within config_bytes and leaves config_bytes unchanged.
+/// Returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED if the size is too small.
+/// Use rocketnet_connect_token_default_config to initialize a config.
+///
+/// Needs no client and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to fill. Its config_bytes must already be set.
+/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
+/// config, or ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED when config_bytes is
+/// smaller than the config_bytes field itself or ends inside a field.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_connect_token_default_config_internal( struct rocketnet_connect_token_config_t * config );
+
+/// Initializes every config field to its default and sets config_bytes.
+/// Returns ROCKETNET_STATUS_OK on success.
+///
+/// Needs no client and no library state. Thread: any thread, one config at a
+/// time.
+///
+/// @param config The config to initialize.
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL config.
+
+static inline enum rocketnet_status_t rocketnet_connect_token_default_config( struct rocketnet_connect_token_config_t * config )
+{
+    if ( config )
+        config->config_bytes = sizeof( *config );
+
+    return rocketnet_connect_token_default_config_internal( config );
+}
+
+/// Writes a production connect token for rocketnet_client_connect: signed
+/// with the config's backend secret key and sealed to its server public key.
+/// The output buffer must hold ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES. It
+/// allocates nothing and reads no clock.
+///
+/// For in-process minting with ephemeral keys: singleplayer, debug tools,
+/// tools, and a title's own C or C++ backend. Never compile a real backend
+/// secret key into a shipped client.
+///
+/// Returns ROCKETNET_STATUS_OK on success. A NULL argument, no address,
+/// a non-positive expire_seconds or timeout_seconds, a zero protocol_id, or an
+/// expiry past the range of a Unix time returns
+/// ROCKETNET_STATUS_INVALID_ARGUMENT, as rocketnet_create_dev_connect_token
+/// does. An address that
+/// does not parse, is overlong, is of the other family, or has port 0 returns
+/// ROCKETNET_STATUS_INVALID_ADDRESS. In a production build, the published
+/// development backend or server key returns
+/// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION. A crypto failure returns
+/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED. A config_bytes that is too small
+/// returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED. Failure leaves the
+/// output unchanged.
+///
+/// Needs no client, server or library state. Thread: any thread; it touches
+/// only its arguments.
+///
+/// @param config The token's inputs, filled by
+/// rocketnet_connect_token_default_config and then set.
+/// @param connect_token Receives the NUL-terminated token string. Holds
+/// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
+/// @return ROCKETNET_STATUS_OK, or one of the failures above.
+
+ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_connect_token( const struct rocketnet_connect_token_config_t * config, char * connect_token );
 
 /// Client
 

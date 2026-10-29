@@ -5,7 +5,7 @@
     errors, plain and with ROCKETNET_SHARED and ROCKETNET_DEV defined;
 (b) every #include names only stdint.h, stddef.h or stdbool.h;
 (c) every function and data declaration carries ROCKETNET_EXPORT and sits
-    inside the one extern "C" block, and no inline (the two default_config
+    inside the one extern "C" block, and no inline (the three default_config
     inlines excepted, in their one exact form), static, default argument,
     overload, namespace, class, template, operator or reference appears;
 (d) a fresh empty directory holding only rocketnet.h and the prebuilt
@@ -33,7 +33,7 @@ from check_dll_consumer import msvc_environment, msvc_tool
 ROOT = Path(__file__).resolve().parent.parent
 HEADER = ROOT / "sdk" / "rocketnet.h"
 ALLOWED_INCLUDES = {"stdint.h", "stddef.h", "stdbool.h"}
-ALLOWED_INLINES = ("rocketnet_client_default_config", "rocketnet_server_default_config")
+ALLOWED_INLINES = ("rocketnet_client_default_config", "rocketnet_server_default_config", "rocketnet_connect_token_default_config")
 ALLOWED_LIGHT_CONFIG_INLINES = (
     ("rocketnet_client_light_config", "rocketnet_client_config_t", "rocketnet_client_light_config_internal"),
     ("rocketnet_server_light_config", "rocketnet_server_config_t", "rocketnet_server_light_config_internal"),

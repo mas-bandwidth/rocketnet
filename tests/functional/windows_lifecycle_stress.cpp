@@ -77,7 +77,7 @@
 #include "../process_resources.h"
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 static void windows_lifecycle_check_line( bool condition, const char * expression, int line )
 {
@@ -404,7 +404,7 @@ static rocketnet_client_transport_t * windows_client_create( const windows_cell_
     rocketnet_server_transport_dev_config( &server_config );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 );
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, 1000.0 );
 
     if ( server_public_key )
     {

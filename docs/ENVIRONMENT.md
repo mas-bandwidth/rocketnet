@@ -18,8 +18,8 @@ the public config structs:
 | --- | --- |
 | `ROCKETNET_SERVER_IPV4_ADDRESS` | Overrides the `ipv4_address` argument of `rocketnet_server_create`, read at create. Form `a.b.c.d:port`. |
 | `ROCKETNET_SERVER_IPV6_ADDRESS` | Overrides the `ipv6_address` argument of `rocketnet_server_create`, read at create. Form `[v6]:port`. |
-| `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` | Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock. |
-| `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock. |
+| `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock once, at connect. |
+| `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock once, at the first update after start. |
 | `ROCKETNET_CLIENT_STEP_DRIVEN` | Development libraries only: 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. Production libraries do not recognize this variable. |
 | `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` | Development only: outgoing client loss, 0 .. 100; 0 is off. |
 | `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` | Development only: outgoing server loss, 0 .. 100; 0 is off. |

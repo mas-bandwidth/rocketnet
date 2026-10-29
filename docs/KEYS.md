@@ -36,8 +36,9 @@ cmake --build build --target keygen
 ./bin/keygen
 ```
 
-`keygen` calls `rocketnet_generate_backend_keypair` (libsodium's
-`crypto_sign_keypair`) and prints a fresh keypair twice: as base64, and as C
+`keygen` calls `rocketnet_generate_backend_keypair` (public in
+[sdk/rocketnet.h](../sdk/rocketnet.h); libsodium's `crypto_sign_keypair`
+underneath) and prints a fresh keypair twice: as base64, and as C
 byte arrays.
 
 ```
@@ -130,16 +131,40 @@ Ship only a production build, with a backend keypair from `keygen`.
 
 ## Writing production tokens
 
-The backend writes production tokens. The SDK's own writer is
+The backend writes production tokens. The public header carries the SDK's
+own production minter, legal in a production build (`ROCKETNET_DEV=0`):
+
+- `rocketnet_generate_backend_keypair( public_key, secret_key )` makes an
+  Ed25519 backend keypair (`ROCKETNET_BACKEND_PUBLIC_KEY_BYTES`, 32, and
+  `ROCKETNET_BACKEND_SECRET_KEY_BYTES`, 64).
+- `rocketnet_generate_server_keypair( public_key, secret_key )` makes an
+  X25519 keypair of the kind a server object makes for itself
+  (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES` and `ROCKETNET_SERVER_SECRET_KEY_BYTES`,
+  32 each).
+- `rocketnet_create_connect_token( &config, connect_token )` writes the token
+  string from a `struct rocketnet_connect_token_config_t`, initialized with
+  `rocketnet_connect_token_default_config`: the backend secret key, the server
+  addresses (IPv4 and/or IPv6 strings, as the development call takes them),
+  the server public key, the client id, the protocol id, the user data,
+  `expire_seconds`, `timeout_seconds` and `unix_timestamp`, the creation time.
+  It reads no clock and allocates nothing; it refuses a bad argument with the
+  existing statuses and leaves the output unchanged, and a production build
+  refuses the published development keys with
+  `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`.
+
+They are for in-process minting with ephemeral keys: singleplayer and listen
+servers, debug tools and build tools, and a title's own backend written in C or
+C++. **Never compile a real backend secret key into a shipped client**: anyone
+who extracts it mints tokens every server of the title accepts. A shipped
+client receives its token from the backend.
+
+Under the public call is the internal binary writer,
 `rocketnet_write_production_connect_token` in
-[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h). It is internal
-and not exported: the SDK's unit tests use it, and a backend written in C or
-C++ can take it as the reference. It takes the backend secret key, the
-server public key, the protocol id, one IPv4 and one IPv6 server address
-(either or both), the client id, the create and expire timestamps, the timeout
-and the user data. It draws the two token keys, seals the private block to the
-server key, signs the signed connect data with the backend key, and wipes its
-copy of the private fields.
+[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h), which the SDK's
+tests and tools also use. It draws the two token keys, seals the private block
+to the server key, signs the signed connect data with the backend key, and
+wipes its copy of the private fields. `rocketnet_create_dev_connect_token` is
+the same call over the published development backend key.
 
 [examples/backend](../examples/backend/README.md) has two backends that write the
 same token byte for byte: Go ([go/main.go](../examples/backend/go/main.go),

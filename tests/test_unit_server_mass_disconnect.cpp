@@ -174,7 +174,7 @@ static rocketnet_client_t * mass_disconnect_client_create( const mass_disconnect
     config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = 1;
     config.time_callback = mass_disconnect_fixed_clock;
-    config.game_clock_epoch = 1000;
+    config.token_epoch_unix_seconds = 1000;
 
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current(
         NULL, token, &config, 0.0, rocketnet_loopback_transport.client, NULL );

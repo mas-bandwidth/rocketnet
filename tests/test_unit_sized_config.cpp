@@ -782,7 +782,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5 && ROCKETNET_SERVER_CONFIG_BYTES_5 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );

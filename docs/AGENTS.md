@@ -93,6 +93,21 @@ Use [Sessions](SESSION.md), [Keys](KEYS.md), and [Security](SECURITY.md).
 Never put the backend signing secret in a client or game server. Reconnect
 with a fresh token after the previous I/O worker has completed.
 
+For in-process minting with ephemeral keys (singleplayer and listen servers,
+tools, a title's own C or C++ backend), `rocketnet_generate_backend_keypair`,
+`rocketnet_generate_server_keypair` and `rocketnet_create_connect_token` are
+public and legal in a production build. Fill a
+`struct rocketnet_connect_token_config_t` from
+`rocketnet_connect_token_default_config`, pass the creation time in
+`unix_timestamp` (the call reads no clock), and check the status. A production
+build refuses the published development keys
+([Keys, "Writing production tokens"](KEYS.md#writing-production-tokens)).
+
+Token time is the caller's: the token checks read `token_epoch_unix_seconds`
+plus the time passed to update. Set it on both configs to mint and check tokens
+on a game or debug clock, so a paused clock pauses expiry; 0 reads the wall
+clock once (the client at connect, the server at its first update after start).
+
 ## Errors and refusals
 
 [Troubleshooting](ERRORS-AND-LOGGING.md) distinguishes immediate status

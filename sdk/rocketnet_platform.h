@@ -102,6 +102,10 @@ int rocketnet_platform_id( void );
 // seconds since rocketnet_platform_init
 double rocketnet_platform_time( void );
 
+// the connect token clock's epoch in Unix seconds: configured when nonzero,
+// otherwise the wall clock read once now, less the caller's time
+uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time );
+
 // Windows treats non-positive and NaN as a yield; POSIX is usleep
 void rocketnet_platform_sleep( double time );
 

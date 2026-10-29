@@ -4,7 +4,6 @@
 */
 
 #include "rocketnet_connect_token.h"
-#include "rocketnet_base64.h"
 #include "rocketnet_crypto_tally.h"
 #include "rocketnet_read_write.h"
 #include "rocketnet_address.h"
@@ -489,34 +488,6 @@ enum rocketnet_status_t rocketnet_write_test_connect_token( const char * server_
                                                      connect_token, connect_token_bytes );
 }
 
-static bool rn_dev_token_address( const char * address, int family )
-{
-    if ( memchr( address, '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL )
-    {
-        rocketnet_error( "dev connect token refused: an address is %d bytes or longer", ROCKETNET_MAX_ADDRESS_STRING_BYTES );
-        return false;
-    }
-
-    struct rocketnet_address_t parsed;
-    if ( !rocketnet_address_parse( &parsed, address ) || parsed.type != family )
-    {
-        rocketnet_error( "dev connect token refused: %s is not an %s address", address, family == ROCKETNET_ADDRESS_IPV4 ? "IPv4" : "IPv6" );
-        return false;
-    }
-
-    // a token naming port 0 names no server: the client refuses it with
-    // ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO, so the maker refuses the
-    // address here instead of minting a token the client rejects
-
-    if ( parsed.port == 0 )
-    {
-        rocketnet_error( "dev connect token refused: %s has port 0", address );
-        return false;
-    }
-
-    return true;
-}
-
 enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_address_ipv4,
                                                             const char * server_address_ipv6,
                                                             const uint8_t * server_public_key,
@@ -528,61 +499,29 @@ enum rocketnet_status_t rocketnet_create_dev_connect_token( const char * server_
                                                             const uint8_t * user_data,
                                                             char * connect_token )
 {
-    // the public development token: the production writer with the published
-    // development backend key, handed out as the base64 string the client's
-    // connect takes; nothing is written on a failure
+    // the public development token: rocketnet_create_connect_token with the
+    // published development backend key
 
-    if ( !rocketnet_api_null_guard( server_public_key ) || !rocketnet_api_null_guard( connect_token ) )
+    if ( !rocketnet_api_null_guard( server_public_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
-    if ( !server_address_ipv4 && !server_address_ipv6 )
-    {
-        rocketnet_error( "dev connect token refused: both server addresses are NULL" );
+    struct rocketnet_connect_token_config_t config;
+    rocketnet_connect_token_default_config( &config );
+    memcpy( config.backend_secret_key, rocketnet_dev_backend_secret_key, sizeof( config.backend_secret_key ) );
+    config.server_address_ipv4 = server_address_ipv4;
+    config.server_address_ipv6 = server_address_ipv6;
+    memcpy( config.server_public_key, server_public_key, sizeof( config.server_public_key ) );
+    config.client_id = client_id;
+    config.protocol_id = protocol_id;
+    if ( user_data )
+        memcpy( config.user_data, user_data, sizeof( config.user_data ) );
+    config.expire_seconds = expire_seconds;
+    config.timeout_seconds = timeout_seconds;
+    config.unix_timestamp = unix_timestamp;
 
-        rocketnet_api_misuse_record();                  // at least one address is a required argument
+    const enum rocketnet_status_t status = rocketnet_create_connect_token( &config, connect_token );
 
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    }
-
-    if ( ( server_address_ipv4 && !rn_dev_token_address( server_address_ipv4, ROCKETNET_ADDRESS_IPV4 ) ) ||
-         ( server_address_ipv6 && !rn_dev_token_address( server_address_ipv6, ROCKETNET_ADDRESS_IPV6 ) ) )
-        return ROCKETNET_STATUS_INVALID_ADDRESS;
-
-    const char * server_addresses[2];
-    int num_server_addresses = 0;
-    if ( server_address_ipv4 )
-        server_addresses[num_server_addresses++] = server_address_ipv4;
-
-    if ( server_address_ipv6 )
-        server_addresses[num_server_addresses++] = server_address_ipv6;
-
-    if ( expire_seconds <= 0 || timeout_seconds <= 0 || protocol_id == 0 )
-    {
-        rocketnet_error( "dev connect token refused: expire_seconds %d, timeout_seconds %d and protocol_id must be above zero", expire_seconds, timeout_seconds );
-        return ROCKETNET_STATUS_INVALID_ARGUMENT;
-    }
-
-    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const enum rocketnet_status_t status = rocketnet_write_production_connect_token( rocketnet_dev_backend_secret_key, server_public_key,
-                                                                                     protocol_id, server_addresses, num_server_addresses,
-                                                                                     client_id, unix_timestamp, unix_timestamp + (uint64_t) expire_seconds,
-                                                                                     timeout_seconds, user_data, token, sizeof( token ) );
-    if ( status == ROCKETNET_STATUS_OK )
-    {
-        char encoded[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
-        const int length = rocketnet_base64_encode_data( token, sizeof( token ), encoded, sizeof( encoded ) );
-        rocketnet_assert( length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
-
-        if ( length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 )
-            memcpy( connect_token, encoded, sizeof( encoded ) );
-
-        sodium_memzero( encoded, sizeof( encoded ) );
-        sodium_memzero( token, sizeof( token ) );
-
-        return length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 ? ROCKETNET_STATUS_OK : ROCKETNET_STATUS_INVALID_ARGUMENT;
-    }
-
-    sodium_memzero( token, sizeof( token ) );
+    sodium_memzero( &config, sizeof( config ) );
 
     return status;
 }

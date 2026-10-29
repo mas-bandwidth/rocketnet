@@ -7913,6 +7913,10 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_sleep",
     "rocketnet_loopback_hub_create",
     "rocketnet_loopback_hub_destroy",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_connect_token_default_config_internal",
+    "rocketnet_create_connect_token",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_required_memory",
@@ -7973,6 +7977,10 @@ static const char * rocketnet_test_exports[] = {
 
 static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_loopback_hub_destroy",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_connect_token_default_config_internal",
+    "rocketnet_create_connect_token",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_connect",
@@ -8406,6 +8414,14 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_write_production_connect_token( token, token, 1, production_address, 1,
                                                                                    1, 0, 1, 10, NULL, NULL,
                                                                                    ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_connect_token_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_connect_token_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    {
+        struct rocketnet_connect_token_config_t token_config;
+        rocketnet_check( rocketnet_connect_token_default_config( &token_config ) == ROCKETNET_STATUS_OK );
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_connect_token( NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_connect_token( &token_config, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    }
 
     // the inline default_config and the exported fill it calls: a NULL config
     // is one counted misuse either way
@@ -13324,6 +13340,7 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, token_epoch_unix_seconds ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
@@ -13358,6 +13375,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshakes_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, server_secret_key ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, token_epoch_unix_seconds ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
