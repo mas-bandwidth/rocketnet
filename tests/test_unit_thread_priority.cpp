@@ -8,9 +8,11 @@
 // system and a thread handle that is never started stands in for the thread.
 // No real thread, no real time, no socket.
 //
-// The values are the flow library's (flow_platform.cpp), unchanged:
+// The values are the flow library's (flow_platform.cpp), with one change:
 //   POSIX client and server thread: pthread_setschedparam( thread, SCHED_RR,
-//     sched_get_priority_min( SCHED_RR ) ), one call.
+//     sched_get_priority_min( SCHED_RR ) ), one call, raised to the default
+//     thread priority where that is higher: 1 on Linux as before, 31 on macOS,
+//     whose minimum (15) demoted the thread below every ordinary one.
 //   Windows client and server thread: SetThreadPriority( thread,
 //     THREAD_PRIORITY_TIME_CRITICAL ), one call.
 //   Windows platform init: timeBeginPeriod( 1 ) before the timer frequency
@@ -178,8 +180,23 @@ static void priority_check_one_thread_call( struct rocketnet_platform_thread_t *
     rocketnet_unit_check( priority_fake_calls[0].kind == PRIORITY_FAKE_SET_SCHED );
     rocketnet_unit_check( priority_fake_calls[0].thread == thread );
     rocketnet_unit_check( priority_fake_calls[0].policy == SCHED_RR );
-    rocketnet_unit_check( priority_fake_calls[0].priority == sched_get_priority_min( SCHED_RR ) );
+    rocketnet_unit_check( priority_fake_calls[0].priority == rocketnet_platform_network_thread_rr_priority() );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+}
+
+// the requested SCHED_RR priority never lowers a thread: flow's minimum on
+// Linux, the default 31 on macOS, where the minimum is 15
+
+static void test_thread_priority_rr_never_below_default()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == sched_get_priority_min( SCHED_RR ) );
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    rocketnet_unit_check( sched_get_priority_min( SCHED_RR ) == 15 );
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == 31 );
+#elif ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() >= sched_get_priority_min( SCHED_RR ) );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 }
 
 static void test_thread_priority_default_is_on()
@@ -538,6 +555,7 @@ REGISTER_UNIT_TEST( test_thread_priority_windows_timer_refusal_counts_and_logs_o
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 REGISTER_UNIT_TEST( test_thread_priority_default_is_on );
+REGISTER_UNIT_TEST( test_thread_priority_rr_never_below_default );
 REGISTER_UNIT_TEST( test_thread_priority_client_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_server_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_off_makes_no_calls );
