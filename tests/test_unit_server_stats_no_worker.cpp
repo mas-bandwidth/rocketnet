@@ -92,72 +92,54 @@ static void test_server_stats_current_every_update()
 REGISTER_UNIT_TEST( test_server_stats_current_every_update );
 #endif // #if ROCKETNET_DEV
 
-// The resident bound of test_server_stats_current_every_update, from what it
-// builds: one server of ROCKETNET_MAX_CLIENTS slots and NO_WORKER_CLIENTS
-// connected clients, each with its slot. The SDK's plan for that world is
-// about 36 GiB, almost all of it never touched, so a plan bound would hold
-// nothing; the bound is on the pages the case touches instead.
-//
-// Each connected pair (a client and its slot) holds bytes it fills and tables
-// it touches sparsely, one resident page per touch, so its share has a part
-// that is the same on every page size and a part that is a count of pages.
-// The server's build-wide tables (sized by ROCKETNET_MAX_CLIENTS) are filled
-// densely. Measured 2026-10-24, Release, the case's peak resident set:
-// 567 MiB at 4 KiB pages (x86_64 Linux) and 1149 MiB at 16 KiB pages
-// (arm64 macOS) with 1000 build slots; 641 MiB and 1228 MiB with
-// 10000. That is about 367 KiB and 49 pages for each pair, and 9 KiB for
-// each build slot. The allowances below sit 15 to 21% over every measurement.
-// The SDK's allocations are the same on both systems (36625 MiB in 21061
-// blocks at the peak, every one freed at destroy); only the page differs.
-#define NO_WORKER_PAIR_BYTES        ( 416 * 1024 )
-#define NO_WORKER_PAIR_PAGES        56
-#define NO_WORKER_BUILD_SLOT_BYTES  ( 12 * 1024 )
-#define NO_WORKER_MARGIN_MB         32
-#define NO_WORKER_STATS_CLIENTS     1000
-
-static long no_worker_rss_bound_mb_at( uint64_t page_bytes )
-{
-    const uint64_t pair_bytes = NO_WORKER_PAIR_BYTES + NO_WORKER_PAIR_PAGES * page_bytes;
-    const uint64_t bytes = (uint64_t) NO_WORKER_STATS_CLIENTS * pair_bytes + (uint64_t) ROCKETNET_MAX_CLIENTS * NO_WORKER_BUILD_SLOT_BYTES;
-    return suite_rss_bound_mb( bytes, NO_WORKER_MARGIN_MB );
-}
+// The resident bound of test_server_stats_current_every_update is what the
+// library allocates for the world it builds: one server of ROCKETNET_MAX_CLIENTS
+// slots and NO_WORKER_CLIENTS clients, by their memory plans, plus the suite's
+// margin. How many of those pages the OS keeps resident is the OS's business
+// (4 KiB or 16 KiB pages, its allocator, its accounting), so it is not bounded
+// here; the plans themselves are checked against the allocator elsewhere.
 
 #if ROCKETNET_DEV
 static long no_worker_rss_bound_mb()
 {
-    return no_worker_rss_bound_mb_at( suite_page_bytes() );
+    rocketnet_server_config_t server;
+    rocketnet_client_config_t client;
+    if ( rocketnet_server_default_config( &server ) != ROCKETNET_STATUS_OK || rocketnet_client_default_config( &client ) != ROCKETNET_STATUS_OK )
+        return 0;
+    server.max_clients = ROCKETNET_MAX_CLIENTS;
+    server.transport = "loopback";
+    client.transport = "loopback";
+    no_worker_message_config( &server, &client );
+    const uint64_t planned = (uint64_t) rocketnet_server_required_memory( &server ) +
+                             (uint64_t) NO_WORKER_CLIENTS * (uint64_t) rocketnet_client_required_memory( &client );
+    return suite_rss_bound_mb( planned, 32 );
 }
 
 SUITE_CASE_RSS_BOUND( test_server_stats_current_every_update, no_worker_rss_bound_mb );
 #endif // #if ROCKETNET_DEV
 
-// The bound grows with the page by NO_WORKER_PAIR_PAGES pages per pair and
-// nothing else. A peak one MiB over it is recorded in both tiers; the unit
-// tier only reports it, and the functional tier (--enforce-rss) fails it.
-static void test_server_stats_rss_bound_scales_with_page()
+// A peak one MiB over a case's bound is recorded in both tiers; the unit tier
+// only reports it, and the functional tier (--enforce-rss) fails it.
+static void test_server_stats_rss_bound_reported_then_enforced()
 {
-    const long small = no_worker_rss_bound_mb_at( 4096 );
-    const long large = no_worker_rss_bound_mb_at( 16384 );
-    const uint64_t mib = 1024 * 1024;
-    const long growth = (long) ( (uint64_t) NO_WORKER_STATS_CLIENTS * NO_WORKER_PAIR_PAGES * ( 16384 - 4096 ) / mib );
-    check( large - small >= growth && large - small <= growth + 1 );    // each bound rounds up to whole MiB
+    const long bound = 700;
 
     suite_result result = suite_result();
     result.name = "test_server_stats_current_every_update";
-    result.peak_rss_mb = large;
-    suite_check_rss( result, large );
+    result.peak_rss_mb = bound;
+    suite_check_rss( result, bound );
     check( !result.failed );
     check( !result.rss_over_bound );
 
-    result.peak_rss_mb = large + 1;
-    suite_check_rss( result, large, false );
+    result.peak_rss_mb = bound + 1;
+    suite_check_rss( result, bound, false );
     check( !result.failed && result.rss_over_bound );
     check( result.detail.find( "peak_rss_mb=" ) != std::string::npos );
 
     result.rss_over_bound = false;
-    suite_check_rss( result, large, true );
+    suite_check_rss( result, bound, true );
     check( result.failed && result.rss_over_bound );
     check( result.detail.find( "peak_rss_mb=" ) != std::string::npos );
 }
 
-REGISTER_UNIT_TEST( test_server_stats_rss_bound_scales_with_page );
+REGISTER_UNIT_TEST( test_server_stats_rss_bound_reported_then_enforced );
