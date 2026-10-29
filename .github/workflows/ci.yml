@@ -277,8 +277,8 @@ jobs:
           set -euo pipefail
           unit_cases=(
             test_token_time_refusals_are_distinct
-            test_ordered_and_unreliable_end_to_end_in_memory
-            test_message_config_never_received_is_reliable_timeout
+            test_standard_config_record_vectors
+            test_window_ack_pipelined_reliable_timeout
             test_production_client_refuses_dev_connect_token
           )
           functional_cases=(
