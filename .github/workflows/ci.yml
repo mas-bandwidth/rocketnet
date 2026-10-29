@@ -52,8 +52,8 @@
 # replacement for the focused per-commit signal.
 #
 # Everything else that was over the line was SPLIT, not moved: tsan into two
-# parallel legs, windows Release into (a) and (b), ubuntu Release into (a) and
-# (b), and the two platform selftests out of four duplicate matrix rows into
+# parallel legs, windows Release into (a), (b) and (c), every Linux and macOS row into
+# four legs (2026-10-29), and the two platform selftests out of four duplicate matrix rows into
 # one job per OS. Splitting costs runner-minutes and buys wall time; that is
 # the trade the law asks for, and it takes nothing away from the gate.
 #
@@ -127,37 +127,34 @@ concurrency:
 
 # Every job sets timeout-minutes: 3, the per-commit law above (one to two
 # minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
-# comment names its bound; a job that runs longer fails.
+# comment names its bound, and the jobs on captain, which add the 2 minutes
+# its job-started hook may wait for a build slot; a job that runs longer fails.
 jobs:
 
-  # THE ubuntu-24.04 / Release ROW IS SPLIT IN TWO (2026-09-13); every other
-  # row is untouched and runs every step, as before.
+  # EVERY ROW IS FOUR PARALLEL JOBS (2026-10-29). One job per row ran its
+  # steps one after another though they share nothing: Linux Debug spent 141 s
+  # over unit 30, ambient 26, functional 47, SDK consumers 17, contract 9,
+  # family matrix 7 and memory plans 4 (main, run 40890503823). Glenn: "Move
+  # anything that is not under 120s limit to nightly and/or release checks",
+  # and serial only when it must be. Each row is now four jobs on four runners,
+  # each building and then running one leg, each timed from its build:
   #
-  # That row was the last non-windows leg over the two-minute law: 122s on run
-  # 34780374187, being a 49s floor (13s apt, 35s `make`) and 70s of checks
-  # behind it. Its cost is NOT one indivisible check -- the two largest are
-  # `check_package.py` at 17s and the driver contract at 15s, and neither
-  # depends on the other -- so it halves cleanly by measured duration:
+  #   unit        sodium, the unit suite (under strace on Linux), the purity
+  #               and ambient config checks
+  #   functional  the functional suites (auto ladder, portable pin, and the
+  #               production library's on Release), the family matrix, the
+  #               lifecycle binary
+  #   checks      the read-only gates and audits, the native transport
+  #               contract, memory plans, the fuzz corpus replay on macOS
+  #   builds      the extra builds and consumers: without XDP, without server
+  #               libraries, the history budget, SDK install and relocation,
+  #               the public header, C and C++ callers, the examples
   #
-  #   (a)  33s  install and relocate the SDK (17s), native driver contract and
-  #             external backend (15s), the library boundary, memory plans,
-  #             the serialization surface, XDP staging and the archive check
-  #   (b)  37s  the suite on the auto ladder (7s) and on the pinned portable
-  #             rung (7s), ambient config isolation (7s), the history budget
-  #             (9s), sodium parity (3s), the embedded XDP compile (3s), the
-  #             committed sodium pair, sodium known answers, the provisioning
-  #             selftest
-  #
-  # `leg: ab` means "run both groups", which is every row but this one, so the
-  # macos rows and the ubuntu Debug row keep running the whole list exactly as
-  # they did. The step conditions are `contains(matrix.leg, 'a')` and
-  # `contains(matrix.leg, 'b')`, which is why 'ab' matches both.
-  #
-  # Both legs still run the full build: `make` for Release is the front door
-  # BUILDING.md sends a consumer through, and a front door nothing opens rots.
+  # A step's condition names its leg (`matrix.leg == 'unit'`). A leg that
+  # cannot fit the window moves to the nightly tier, not to a slower job.
 
   build-and-test:
-    name: ${{ matrix.os }} / ${{ matrix.build_type }}${{ matrix.leg != 'ab' && format(' ({0})', matrix.leg) || '' }}
+    name: ${{ matrix.os }} / ${{ matrix.build_type }} / ${{ matrix.leg }}
     # Linux rows run on the fleet's organization runners (labels self-hosted,Linux,X64,fleet: Linux x64 gcc
     # hosts), provisioned by the fleet's provisioning repository (group_vars ci_apt_packages), which is why the
     # self-hosted apt step is skipped. They ran on [self-hosted,Linux,X64,rocketnet] until 2026-10-13, a label only
@@ -177,12 +174,22 @@ jobs:
           # development library (ON); Release rows build the production library
           # (OFF), so every OS runs the suite both ways and the production
           # boundary checks read a production library.
-          - { os: ubuntu-24.04, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: a,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          - { os: ubuntu-24.04, build_type: Release, leg: b,  dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
-          # macOS Apple silicon on the fleet's darwin runner (macOS arm64 clang, label rocketnet-macos)
-          - { os: macos-15, build_type: Debug,   leg: ab, dev: 'ON',  runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
-          - { os: macos-15, build_type: Release, leg: ab, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: ubuntu-24.04, build_type: Debug, leg: unit, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Debug, leg: functional, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Debug, leg: checks, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Debug, leg: builds, dev: 'ON', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: unit, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: functional, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: checks, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: ubuntu-24.04, build_type: Release, leg: builds, dev: 'OFF', runner: '["self-hosted","Linux","X64","fleet"]' }
+          - { os: macos-15, build_type: Debug, leg: unit, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Debug, leg: functional, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Debug, leg: checks, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Debug, leg: builds, dev: 'ON', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: unit, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: functional, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: checks, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
+          - { os: macos-15, build_type: Release, leg: builds, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
       - uses: actions/checkout@v4
@@ -190,11 +197,11 @@ jobs:
       # One SDK source list for the library and every vendoring application;
       # first, so a later red step cannot skip it.
       - name: Every SDK source is in cmake/RocketnetSources.cmake
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'checks'
         run: python3 tools/check_sdk_sources.py
 
       - name: Check header guards across all tracked headers
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'checks'
         run: python3 tools/check_header_guards.py
 
       - name: Check the fleet's build dependencies are present
@@ -248,14 +255,10 @@ jobs:
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
           cmake --build build --parallel
 
-      # A rapid signal through the existing binaries, not a substitute for
-      # the full suites below.  Each exact-name case runs once per selected
-      # build, in this order, with no retry: set -e preserves the first
-      # nonzero result and its Actions step log.  Linux Release (a) is a real
-      # DEV=0 build and does not run the full suites, so every selected name
-      # executes exactly once without adding a job or runner.
-      - name: Start combined unit and functional timing (lean row)
-        if: runner.os == 'Linux' && matrix.leg == 'a'
+      # Each job's window is everything after its build, one leg of the row
+      # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
+      # nightly and/or release checks"; the legs run in parallel).
+      - name: Start the job's timing (everything after the build)
         shell: bash
         run: &start_unit_functional_timing |
           set -euo pipefail
@@ -270,56 +273,14 @@ jobs:
           fi
           printf '%s %s %s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$timing_start_ns" > "$timing_receipt"
 
-      - name: Lean shipped-behavior signal (no retries)
-        if: runner.os == 'Linux' && matrix.leg == 'a'
-        shell: bash
-        run: |
-          set -euo pipefail
-          unit_cases=(
-            test_token_time_refusals_are_distinct
-            test_standard_config_record_vectors
-            test_window_ack_pipelined_reliable_timeout
-            test_production_client_refuses_dev_connect_token
-          )
-          functional_cases=(
-            test_session_reconnect_isolation_portable
-            test_transport_ring_exhaustion
-          )
-          unit_registered="$(./bin/test --list)"
-          for case in "${unit_cases[@]}"; do
-            if ! grep -Fxq "$case" <<< "$unit_registered"; then
-              echo "LEAN unregistered unit case: $case" >&2
-              exit 1
-            fi
-          done
-          functional_registered="$(ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable ./bin/functional --list)"
-          for case in "${functional_cases[@]}"; do
-            if ! grep -Fxq "$case" <<< "$functional_registered"; then
-              echo "LEAN unregistered functional case: $case" >&2
-              exit 1
-            fi
-          done
-          for case in "${unit_cases[@]}"; do
-            echo "LEAN unit $case"
-            ./bin/test --run "$case"
-          done
-          for case in "${functional_cases[@]}"; do
-            echo "LEAN functional $case"
-            ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
-              ./bin/functional --run "$case"
-            echo "LEAN functional_production $case"
-            ROCKETNET_SERVER_TRANSPORT=portable ROCKETNET_CLIENT_TRANSPORT=portable \
-              ./bin/functional_production --run "$case"
-          done
-
       - name: Check the floating-point floor on every compiler invocation
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: |
           bash tools/check_fp_contract.sh
           cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
       - name: Check every child make has a bounded -j
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: bash tools/check_make_jobs.sh
 
       # tools/check_client_server_words.py exits 1 when a tracked file's path
@@ -328,7 +289,7 @@ jobs:
       # hold the red controls. It reads files only, so one leg per Linux row
       # runs it.
       - name: Check client/server words
-        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: |
           python3 tools/test_check_client_server_words.py
           python3 tools/check_client_server_words.py
@@ -341,7 +302,7 @@ jobs:
       # as rows of the "External ABI traversal sites" table of
       # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
       - name: Check no owned linked lists
-        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: |
           python3 tools/check_no_owned_linked_lists.py --self-test
           python3 tools/check_no_owned_linked_lists.py
@@ -356,31 +317,26 @@ jobs:
       # granting, so a silent fall cannot hollow this leg out. The second
       # functional run pins the portable floor by env.
 
-      - name: Start combined unit and functional timing (full-suite rows)
-        if: contains(matrix.leg, 'b')
-        shell: bash
-        run: *start_unit_functional_timing
-
       - name: Sodium known answers
-        if: contains(matrix.leg, 'b')
+        if: matrix.leg == 'unit'
         run: ./bin/test_sodium
 
       # The committed sodium pair from its SHA-256 pinned inputs, byte for
-      # byte, on the Linux Release (b) leg and the macOS Release leg; the
+      # byte, on the Linux and macOS Release unit legs; the
       # Windows (b) leg runs the same step (sodium/README.md, "Reproducing
       # the vendored inputs").
       - name: Reproduce the committed sodium pair
-        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: matrix.build_type == 'Release' && matrix.leg == 'unit'
         run: python3 tools/generate_sodium.py --inputs build/vendor-inputs --fetch --check
 
       - name: Sodium parity against the independent system library
-        if: matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: matrix.build_type == 'Release' && matrix.leg == 'unit'
         run: |
           cmake --build build --target rocketnet_sodium_oracle --parallel
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
       - name: Replay the fuzz corpora without libFuzzer
-        if: runner.os == 'macOS'
+        if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
         shell: bash
         run: |
           # the ten harnesses build in one parallel build and replay at once;
@@ -403,7 +359,7 @@ jobs:
 
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
-        if: runner.os != 'Linux' && contains(matrix.leg, 'b')
+        if: runner.os != 'Linux' && matrix.leg == 'unit'
         run: ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
@@ -411,18 +367,18 @@ jobs:
       # (tools/check_unit_no_sockets.sh). The suite's output and verdict print
       # as in the plain run.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
-        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        if: runner.os == 'Linux' && matrix.leg == 'unit'
         run: bash tools/check_unit_no_sockets.sh ./bin/test
 
       # The unit suite reads no real time, sleep, thread or resolver: the
       # check fails, naming file and line, on any such call in the unit
       # sources (tools/check_unit_purity.py).
       - name: Unit suite uses no real time, sleep, thread or resolver
-        if: contains(matrix.leg, 'b')
+        if: matrix.leg == 'unit'
         run: python3 tools/check_unit_purity.py .
 
       - name: Ambient config isolation and passing output
-        if: contains(matrix.leg, 'b')
+        if: matrix.leg == 'unit'
         run: python3 tools/check_test_environment.py ./bin/test ${{ matrix.dev == 'OFF' && '--production' || '' }}
 
       # The io_uring cases need RLIMIT_MEMLOCK for every runner of this user
@@ -430,7 +386,7 @@ jobs:
       # on this kernel and PASS or FAIL before the suite runs
       # (tools/check_memlock.sh, docs/LINUX.md section 8).
       - name: Locked-memory limit covers the io_uring cases
-        if: runner.os == 'Linux' && contains(matrix.leg, 'b')
+        if: runner.os == 'Linux' && matrix.leg == 'functional'
         run: bash tools/check_memlock.sh
 
       # This run includes test_unit_case_memory, the row that enforces the unit
@@ -438,7 +394,7 @@ jobs:
       # io_uring is a documented host requirement on Linux (docs/LINUX.md):
       # a full-suite run that skips an io_uring row fails here, naming it.
       - name: Run functional suite (auto ladder — the fall, on Linux; RSS enforced)
-        if: contains(matrix.leg, 'b')
+        if: matrix.leg == 'functional'
         shell: bash
         run: |
           set -euo pipefail
@@ -452,7 +408,7 @@ jobs:
       # suite under the portable pin runs in the nightly tier (nightly.yml),
       # which every case too slow for this budget joins (Glenn 2026-10-29).
       - name: Run functional suite (portable rung pinned by env)
-        if: contains(matrix.leg, 'b')
+        if: matrix.leg == 'functional'
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -463,7 +419,7 @@ jobs:
       # library, so it exists only on the Release rows; it runs the same
       # auto ladder and the same pinned-portable pass as the DEV suite.
       - name: Run functional_production suite (auto ladder, production library)
-        if: contains(matrix.leg, 'b') && matrix.build_type == 'Release'
+        if: matrix.leg == 'functional' && matrix.build_type == 'Release'
         shell: bash
         run: |
           set -euo pipefail
@@ -474,7 +430,7 @@ jobs:
           fi
 
       - name: Run functional_production suite (portable rung pinned by env)
-        if: contains(matrix.leg, 'b') && matrix.build_type == 'Release'
+        if: matrix.leg == 'functional' && matrix.build_type == 'Release'
         shell: bash
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
@@ -501,7 +457,7 @@ jobs:
       # automatic order on the wire (gso on Linux, msgx on macOS, iocp on
       # Windows; TRANSPORTS.md "Client transports").
       - name: Transport family matrix (every transport on IPv4, IPv6 and dual stack)
-        if: contains(matrix.leg, 'b')
+        if: matrix.leg == 'functional'
         timeout-minutes: 3
         shell: bash
         env:
@@ -602,18 +558,18 @@ jobs:
           exit "$failed"
 
       - name: "Functional: lifecycle binary"
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'functional'
         env:
           ROCKETNET_SERVER_TRANSPORT: portable
           ROCKETNET_CLIENT_TRANSPORT: portable
         run: ./bin/test_lifecycle
 
       - name: Check test scaffolding boundary (red controls)
-        if: runner.os == 'Linux' && matrix.dev == 'OFF'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' && matrix.dev == 'OFF' )
         run: python3 tools/check_test_scaffolding_boundary.py --red-controls
 
       - name: Check production library boundary
-        if: contains(matrix.leg, 'a') && matrix.dev == 'OFF'
+        if: matrix.leg == 'checks' && matrix.dev == 'OFF'
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_exports.py bin/librocketnet.dylib build/librocketnet.a
@@ -627,7 +583,7 @@ jobs:
       # imported, no writable+executable segment) and INFO for CET, then one verdict
       # line. It reads the Release library the Makefile built (well under a second).
       - name: Check release hardening
-        if: contains(matrix.leg, 'a') && matrix.build_type == 'Release'
+        if: matrix.leg == 'checks' && matrix.build_type == 'Release'
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
             python3 tools/check_hardening.py bin/librocketnet.dylib
@@ -636,7 +592,7 @@ jobs:
           fi
 
       - name: Check every driver row has transport matrix cells
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/check_transport_matrix.py
 
       # tools/check_platform_policy.py exits 1 when a docs/PLATFORMS.md row
@@ -645,37 +601,37 @@ jobs:
       # check_wildcard_binds :185). It reads files only, so one leg per Linux
       # row runs it.
       - name: Check the platform policy and functional/ wildcard binds
-        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: python3 tools/check_platform_policy.py
 
       # The static source-audit binary reads the repository's own source,
       # header and doc files (no socket, no thread, no network), so one Linux
       # leg runs it beside the client/server-words check.
       - name: Run the source audit
-        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: ./bin/source_audit
 
       - name: Check export source gate
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_exports.py
 
       - name: Test the hardening checker's verdicts
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_check_hardening.py
 
       - name: Test the MSan gate's verdicts
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_run_msan.py
 
       - name: Test the Application Verifier runner's image name
-        if: runner.os == 'Linux'
+        if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/test_appverif_run.py
 
       # rocketnet.h alone: plain C99/C11/C++11, standard includes only, one
       # extern "C" block, and a C and a C++ client and server built from only
       # the header and the prebuilt static library (seconds)
       - name: Check the public header is clean and self-contained
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: python3 tools/check_public_header.py --build build
 
       # The library is callable from a C and a C++ program through rocketnet.h
@@ -683,15 +639,15 @@ jobs:
       # production shared library exports only the reviewed list (so the
       # development token minting symbol stays out of it).
       - name: Check the library is callable from C and C++ through rocketnet.h
-        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        if: (runner.os == 'Linux' || runner.os == 'macOS') && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: python3 tools/check_dll_consumer.py --build build
 
       - name: Check the examples against the house rules
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && contains(matrix.leg, 'a')
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: python3 tools/check_examples.py
 
       - name: Check larger history budget and reject undersized history
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
           cmake --build build-history --target test_lifecycle --parallel
@@ -707,7 +663,7 @@ jobs:
       # libxdp link, and a transport list naming xdp refuses it with
       # TRANSPORT_NOT_BUILT; the default build keeps all of it.
       - name: Build without XDP; XDP is compiled out and a pin of it refuses
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           python3 tools/test_check_xdp_compiled_out.py
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
@@ -730,7 +686,7 @@ jobs:
       # check_package.py --client asserts the installed RocketNetConfig and
       # then builds and runs a C client against both installed libraries.
       - name: Build Linux client without server libraries; package requires none of them
-        if: runner.os == 'Linux' && matrix.build_type == 'Release' && (contains(matrix.leg, 'b'))
+        if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           cmake -S . -B build-no-server-libs -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_IO_URING=OFF \
             -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_TESTS=OFF \
@@ -746,21 +702,21 @@ jobs:
           python3 tools/check_package.py build-no-server-libs --config Release --client
 
       - name: Install and relocate the SDK; run C/C++ static/shared consumers
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'builds'
         run: python3 tools/check_package.py build --config ${{ matrix.build_type }} --embedded
 
       - name: Memory plans echo the allocator observation on macOS
-        if: runner.os == 'macOS' && contains(matrix.leg, 'a')
+        if: runner.os == 'macOS' && matrix.leg == 'checks'
         run: |
           ./bin/transport_memory 1 1416 1 portable 1 || true
           ./bin/transport_memory 1 1416 1 msgx 1 || true
 
       - name: Memory plans against allocator observations
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'checks'
         run: python3 tools/check_memory.py ./bin/transport_memory
 
       - name: "Functional: native driver contract and external backend"
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'checks'
         run: |
           ./bin/test_transport
           python3 tools/check_driver_extension.py build --config ${{ matrix.build_type }}
@@ -814,11 +770,11 @@ jobs:
       # Linux: the embedded server_xdp.o is reproducible and equals a fresh
       # compile of the current sources; elsewhere: the listed inputs exist.
       - name: Embedded XDP object is reproducible and current
-        if: contains(matrix.leg, 'a')
+        if: matrix.leg == 'checks'
         run: python3 tools/check_xdp_archive.py
 
       - name: The build compiled and embedded the XDP program
-        if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: test -s build/generated/server_xdp.o
 
       # the provisioning script's selftest: the awk IRQ matcher held to the
@@ -832,7 +788,7 @@ jobs:
       # only a private temp dir it creates and removes.
 
       - name: Provisioning script selftest
-        if: runner.os == 'Linux' && (contains(matrix.leg, 'b'))
+        if: runner.os == 'Linux' && matrix.leg == 'checks'
         run: bash scripts/rocketnet-provision selftest
 
   # sdk/rocketnet_server_socket_linux.cpp:1807 initializes UMEM ring sizes.
@@ -986,7 +942,11 @@ jobs:
     # the fleet's native Windows runner (Windows x64 MSVC: Windows 11, VS 18 Community MSVC, CMake 4, Git Bash, Python 3.9;
     # label rocketnet-windows), never a hosted image
     runs-on: [self-hosted, Windows, X64, rocketnet-windows]
-    timeout-minutes: 3
+    # captain's job-started hook waits up to 2 minutes for one of its three
+    # shared build slots on a check-in run (Glenn 2026-10-24: --slots 3), inside
+    # "Set up runner" (73 s on run 40890503823): the limit is that wait plus
+    # the 3-minute law. The test window inside stays timed against 120 s.
+    timeout-minutes: 5
     strategy:
       fail-fast: false
       matrix:
@@ -1242,7 +1202,8 @@ jobs:
     name: happy path / ${{ matrix.os }}
     # every OS on the fleet: Linux on the fleet pool, macOS on rocketnet-macos, Windows on rocketnet-windows
     runs-on: ${{ fromJSON(matrix.runner) }}
-    timeout-minutes: 3
+    # the Windows row waits for a captain build slot first (build-and-test-windows)
+    timeout-minutes: ${{ matrix.os == 'windows' && 5 || 3 }}
     strategy:
       fail-fast: false
       matrix:
