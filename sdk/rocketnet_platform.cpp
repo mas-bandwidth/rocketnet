@@ -2435,7 +2435,8 @@ bool rocketnet_platform_wake_wait( rocketnet_platform_wake_t * wake, bool readab
     if ( fds[0].revents & POLLIN )
     {
         // an eventfd read takes its whole 8-byte counter; a pipe read takes
-        // up to 64 pending one-byte sets
+        // up to 64 pending one-byte sets, so more sets than that before a
+        // wait wake the next wait too (spurious, never lost)
         uint8_t buffer[64];
         const ssize_t bytes = read( wake->read_fd, buffer, sizeof( buffer ) );
 #if defined( __linux__ )
