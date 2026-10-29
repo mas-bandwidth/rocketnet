@@ -3437,9 +3437,11 @@ void rocketnet_platform_sleep( double time )
         }
     }
 
-    timeBeginPeriod( 1 );
+    // the 1 ms timer period, when the priority calls are enabled, is the
+    // process's from rocketnet_platform_init; the fallback makes no timer
+    // period call of its own
+
     Sleep( (DWORD) plan.fallback_milliseconds );
-    timeEndPeriod( 1 );
 }
 
 void rocketnet_platform_thread_wait( double time )
