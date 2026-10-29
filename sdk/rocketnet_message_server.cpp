@@ -1557,65 +1557,6 @@ int rn_message_object_connected( const struct rn_message_object_t * object, int 
 //                     the server transport's link
 // ---------------------------------------------------------------
 
-static void rn_server_link_update( void * transport, double time )
-{
-    rocketnet_server_transport_update( (rocketnet_server_transport_t *) transport, time );
-}
-
-static int rn_server_link_payloads( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
-{
-    return rocketnet_server_transport_payloads( (rocketnet_server_transport_t *) transport, client_index, payload_data, payload_bytes );
-}
-
-static int rn_server_link_acked( void * transport, const int ** client_index, const uint64_t ** packet_ids )
-{
-    return rocketnet_server_transport_acked_packets( (rocketnet_server_transport_t *) transport, client_index, packet_ids );
-}
-
-static int rn_server_link_max_payload_bytes( void * transport )
-{
-    return rocketnet_server_transport_max_payload_bytes( (rocketnet_server_transport_t *) transport );
-}
-
-static uint8_t * rn_server_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
-{
-    return rocketnet_server_transport_start_packet( (rocketnet_server_transport_t *) transport, client_index, request_bytes, context );
-}
-
-static int rn_server_link_finish_packet( void * transport, rocketnet_packet_context_t * context, int payload_bytes )
-{
-    return rocketnet_server_transport_finish_packet( (rocketnet_server_transport_t *) transport, context, payload_bytes );
-}
-
-static void rn_server_link_abort_packet( void * transport, rocketnet_packet_context_t * context )
-{
-    rocketnet_server_transport_abort_packet( (rocketnet_server_transport_t *) transport, context );
-}
-
-static void rn_server_link_send_packets( void * transport )
-{
-    rocketnet_server_transport_send_packets( (rocketnet_server_transport_t *) transport );
-}
-
-static int rn_server_link_send_connected_count( void * transport )
-{
-    return rocketnet_server_transport_num_connected_clients( (rocketnet_server_transport_t *) transport );
-}
-
-static int rn_server_link_send_capacity_available( void * transport )
-{
-    return rocketnet_server_transport_send_capacity_available( (const rocketnet_server_transport_t *) transport );
-}
-
-static uint64_t rn_server_link_connection( void * transport, int client_index )
-{
-    // P9a: the transport's id of the connection in the slot, 0 while it is free;
-    // a reconnect into the slot has a new id even with the same client id and
-    // inside one update, so Observe resets the slot for it
-
-    return rocketnet_server_transport_client_connection_id( (rocketnet_server_transport_t *) transport, client_index );
-}
-
 static uint64_t rn_server_link_payload_connection( void * transport, int k )
 {
     // P9b: the connection each batch entry was received for, parallel to the
@@ -1633,63 +1574,36 @@ static uint64_t rn_server_link_acked_connection( void * transport, int k )
     return connection_id && k >= 0 && k < count ? connection_id[k] : 0;
 }
 
-static void rn_server_link_disconnect( void * transport, int client_index )
-{
-    rocketnet_server_transport_disconnect_client( (rocketnet_server_transport_t *) transport, client_index );
-}
-
-static int rn_server_link_state( void * transport )
-{
-    return rocketnet_server_transport_state( (rocketnet_server_transport_t *) transport );
-}
-
-static void rn_server_link_stop( void * transport )
-{
-    rocketnet_server_transport_stop( (rocketnet_server_transport_t *) transport );
-}
-
-static bool rn_server_link_stopped( const void * transport )
-{
-    return rocketnet_server_transport_stopped( (const rocketnet_server_transport_t *) transport );
-}
-
-static void rn_server_link_destroy( void * transport )
-{
-    rocketnet_server_transport_destroy( (rocketnet_server_transport_t *) transport );
-}
-
-static void rn_server_link_accept_payload( void * transport, int k )
-{
-    rocketnet_server_transport_accept_payload( (rocketnet_server_transport_t *) transport, k );
-}
-
 void rn_message_server_link( struct rn_message_link_t * link, struct rocketnet_server_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
-    link->update = rn_server_link_update;
-    link->payloads = rn_server_link_payloads;
-    link->accept_payload = rn_server_link_accept_payload;
+    link->update = RN_LINK_FORWARD( rocketnet_server_transport_update )::call;
+    link->payloads = RN_LINK_FORWARD( rocketnet_server_transport_payloads )::call;
+    link->accept_payload = RN_LINK_FORWARD( rocketnet_server_transport_accept_payload )::call;
 
     if ( transport )
         rocketnet_server_transport_defer_payload_acks( transport );
 
-    link->acked = rn_server_link_acked;
+    link->acked = RN_LINK_FORWARD( rocketnet_server_transport_acked_packets )::call;
     link->payload_connection = rn_server_link_payload_connection;
     link->acked_connection = rn_server_link_acked_connection;
-    link->max_payload_bytes = rn_server_link_max_payload_bytes;
-    link->start_packet = rn_server_link_start_packet;
-    link->finish_packet = rn_server_link_finish_packet;
-    link->abort_packet = rn_server_link_abort_packet;
-    link->send_packets = rn_server_link_send_packets;
-    link->send_capacity_available = rn_server_link_send_capacity_available;
-    link->send_connected_count = rn_server_link_send_connected_count;
-    link->connection = rn_server_link_connection;
-    link->disconnect = rn_server_link_disconnect;
-    link->state = rn_server_link_state;
-    link->stop = rn_server_link_stop;
-    link->stopped = rn_server_link_stopped;
-    link->destroy = rn_server_link_destroy;
+    link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_server_transport_max_payload_bytes )::call;
+    link->start_packet = RN_LINK_FORWARD( rocketnet_server_transport_start_packet )::call;
+    link->finish_packet = RN_LINK_FORWARD( rocketnet_server_transport_finish_packet )::call;
+    link->abort_packet = RN_LINK_FORWARD( rocketnet_server_transport_abort_packet )::call;
+    link->send_packets = RN_LINK_FORWARD( rocketnet_server_transport_send_packets )::call;
+    link->send_capacity_available = RN_LINK_FORWARD( rocketnet_server_transport_send_capacity_available )::call;
+    link->send_connected_count = RN_LINK_FORWARD( rocketnet_server_transport_num_connected_clients )::call;
+    // P9a: the transport's id of the connection in the slot, 0 while it is
+    // free; a reconnect into the slot has a new id even with the same client id
+    // and inside one update, so Observe resets the slot for it
+    link->connection = RN_LINK_FORWARD( rocketnet_server_transport_client_connection_id )::call;
+    link->disconnect = RN_LINK_FORWARD( rocketnet_server_transport_disconnect_client )::call;
+    link->state = RN_LINK_FORWARD( rocketnet_server_transport_state )::call;
+    link->stop = RN_LINK_FORWARD( rocketnet_server_transport_stop )::call;
+    link->stopped = RN_LINK_FORWARD( rocketnet_server_transport_stopped )::call_const;
+    link->destroy = RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call;
 }
 
 // ---------------------------------------------------------------
@@ -1820,14 +1734,14 @@ struct rocketnet_server_transport_t * rocketnet_message_server_transport( struct
 {
     if ( !rocketnet_api_null_guard( server ) )
         return NULL;
-    return server->object.link.destroy == rn_server_link_destroy ? (rocketnet_server_transport_t *) server->object.link.transport : NULL;
+    return server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call ? (rocketnet_server_transport_t *) server->object.link.transport : NULL;
 }
 
 int rocketnet_message_server_update( struct rocketnet_message_server_t * server, double time )
 {
     if ( !rocketnet_api_null_guard( server ) )
         return ROCKETNET_UPDATE_OK;
-    if ( server->object.link.destroy == rn_server_link_destroy )
+    if ( server->object.link.destroy == RN_LINK_FORWARD( rocketnet_server_transport_destroy )::call )
         rocketnet_server_transport_begin_message_update( (rocketnet_server_transport_t *) server->object.link.transport );
     return rn_message_object_update( &server->object, time );
 }

@@ -21,11 +21,6 @@
 //                     the client transport's link
 // ---------------------------------------------------------------
 
-static void rn_client_link_update( void * transport, double time )
-{
-    rocketnet_client_transport_update( (rocketnet_client_transport_t *) transport, time );
-}
-
 static int rn_client_link_payloads( void * transport, const int ** client_index, uint8_t * const ** payload_data, const int ** payload_bytes )
 {
     *client_index = NULL;
@@ -38,30 +33,10 @@ static int rn_client_link_acked( void * transport, const int ** client_index, co
     return rocketnet_client_transport_acked_packets( (rocketnet_client_transport_t *) transport, packet_ids );
 }
 
-static int rn_client_link_max_payload_bytes( void * transport )
-{
-    return rocketnet_client_transport_max_payload_bytes( (rocketnet_client_transport_t *) transport );
-}
-
 static uint8_t * rn_client_link_start_packet( void * transport, int client_index, int request_bytes, rocketnet_packet_context_t * context )
 {
     (void) client_index;
     return rocketnet_client_transport_start_packet( (rocketnet_client_transport_t *) transport, request_bytes, context );
-}
-
-static int rn_client_link_finish_packet( void * transport, rocketnet_packet_context_t * context, int payload_bytes )
-{
-    return rocketnet_client_transport_finish_packet( (rocketnet_client_transport_t *) transport, context, payload_bytes );
-}
-
-static void rn_client_link_abort_packet( void * transport, rocketnet_packet_context_t * context )
-{
-    rocketnet_client_transport_abort_packet( (rocketnet_client_transport_t *) transport, context );
-}
-
-static void rn_client_link_send_packets( void * transport )
-{
-    rocketnet_client_transport_send_packets( (rocketnet_client_transport_t *) transport );
 }
 
 static uint64_t rn_client_link_connection( void * transport, int client_index )
@@ -86,11 +61,6 @@ static void rn_client_link_disconnect( void * transport, int client_index )
     rocketnet_client_transport_disconnect( (rocketnet_client_transport_t *) transport );
 }
 
-static int rn_client_link_state( void * transport )
-{
-    return rocketnet_client_transport_state( (rocketnet_client_transport_t *) transport );
-}
-
 static int rn_client_link_end_reason( void * transport )
 {
     // a client transport runs one connection attempt (its create connects,
@@ -106,33 +76,13 @@ static int rn_client_link_end_reason( void * transport )
     return ROCKETNET_DISCONNECT_REASON_NONE;
 }
 
-static void rn_client_link_stop( void * transport )
-{
-    rocketnet_client_transport_stop( (rocketnet_client_transport_t *) transport );
-}
-
-static bool rn_client_link_stopped( const void * transport )
-{
-    return rocketnet_client_transport_stopped( (const rocketnet_client_transport_t *) transport );
-}
-
-static void rn_client_link_destroy( void * transport )
-{
-    rocketnet_client_transport_destroy( (rocketnet_client_transport_t *) transport );
-}
-
-static void rn_client_link_accept_payload( void * transport, int k )
-{
-    rocketnet_client_transport_accept_payload( (rocketnet_client_transport_t *) transport, k );
-}
-
 void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_client_transport_t * transport )
 {
     memset( link, 0, sizeof( *link ) );
     link->transport = transport;
-    link->update = rn_client_link_update;
+    link->update = RN_LINK_FORWARD( rocketnet_client_transport_update )::call;
     link->payloads = rn_client_link_payloads;
-    link->accept_payload = rn_client_link_accept_payload;
+    link->accept_payload = RN_LINK_FORWARD( rocketnet_client_transport_accept_payload )::call;
 
     if ( transport )
         rocketnet_client_transport_defer_payload_acks( transport );
@@ -140,18 +90,18 @@ void rn_message_client_link( struct rn_message_link_t * link, struct rocketnet_c
     link->acked = rn_client_link_acked;
     link->payload_connection = rn_client_link_entry_connection;
     link->acked_connection = rn_client_link_entry_connection;
-    link->max_payload_bytes = rn_client_link_max_payload_bytes;
+    link->max_payload_bytes = RN_LINK_FORWARD( rocketnet_client_transport_max_payload_bytes )::call;
     link->start_packet = rn_client_link_start_packet;
-    link->finish_packet = rn_client_link_finish_packet;
-    link->abort_packet = rn_client_link_abort_packet;
-    link->send_packets = rn_client_link_send_packets;
+    link->finish_packet = RN_LINK_FORWARD( rocketnet_client_transport_finish_packet )::call;
+    link->abort_packet = RN_LINK_FORWARD( rocketnet_client_transport_abort_packet )::call;
+    link->send_packets = RN_LINK_FORWARD( rocketnet_client_transport_send_packets )::call;
     link->connection = rn_client_link_connection;
     link->disconnect = rn_client_link_disconnect;
-    link->state = rn_client_link_state;
+    link->state = RN_LINK_FORWARD( rocketnet_client_transport_state )::call;
     link->end_reason = rn_client_link_end_reason;
-    link->stop = rn_client_link_stop;
-    link->stopped = rn_client_link_stopped;
-    link->destroy = rn_client_link_destroy;
+    link->stop = RN_LINK_FORWARD( rocketnet_client_transport_stop )::call;
+    link->stopped = RN_LINK_FORWARD( rocketnet_client_transport_stopped )::call_const;
+    link->destroy = RN_LINK_FORWARD( rocketnet_client_transport_destroy )::call;
     link->clock_from_first_update = 1;
 }
 
@@ -279,7 +229,7 @@ struct rocketnet_client_transport_t * rocketnet_message_client_transport( struct
 {
     if ( !rocketnet_api_null_guard( client ) )
         return NULL;
-    return client->object.link.destroy == rn_client_link_destroy ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
+    return client->object.link.destroy == RN_LINK_FORWARD( rocketnet_client_transport_destroy )::call ? (rocketnet_client_transport_t *) client->object.link.transport : NULL;
 }
 
 #if ROCKETNET_DEV
