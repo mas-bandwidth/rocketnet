@@ -127,20 +127,21 @@ static bool rn_resend_fifo_index_ok( rn_window_ack_t * ack, uint32_t index )
     return false;
 }
 
-static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
+// Returns false when a link was out of range and nothing was changed.
+static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_link_t * fifo = ack->region->resend_fifo;
     if ( !rn_resend_fifo_index_ok( ack, slot ) || slot == RN_RESEND_NONE )
-        return;
+        return false;
     rn_resend_link_t * entry = &fifo[slot];
     if ( !rn_resend_entry_linked( entry ) )
-        return;
+        return true;
 
     const bool chunk = rn_resend_entry_is_chunk( entry );
     const uint32_t prev = rn_resend_index( entry->prev );
     const uint32_t next = rn_resend_index( entry->next );
     if ( !rn_resend_fifo_index_ok( ack, prev ) || !rn_resend_fifo_index_ok( ack, next ) )
-        return;
+        return false;
     uint32_t * head = chunk ? &ack->chunk_head : &ack->resend_head;
     uint32_t * tail = chunk ? &ack->chunk_tail : &ack->resend_tail;
 
@@ -160,6 +161,7 @@ static void rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 
     rocketnet_assert( ack->resend_count > 0 );
     ack->resend_count--;
+    return true;
 }
 
 // proofs/tla/RNChannelQueues.tla Resend, Ack and StaleAck. Names the link with the live descriptor's generation.
@@ -211,7 +213,8 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
     if ( !rn_resend_fifo_index_ok( ack, slot ) || slot == RN_RESEND_NONE || !rn_resend_fifo_index_ok( ack, after ) )
         return;
 
-    rn_resend_fifo_unlink( ack, slot );
+    if ( !rn_resend_fifo_unlink( ack, slot ) )
+        return;
 
     rn_resend_link_t * fifo = ack->region->resend_fifo;
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
