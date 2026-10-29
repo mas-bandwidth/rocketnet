@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The unit suite opens no socket (the owner's rule: unit tests use no sockets,
 # no network and no outside services). Runs the unit binary under
-# strace -f -e trace=socket,execve and exits nonzero, naming the first opener
+# strace --seccomp-bpf -f -e trace=socket,execve and exits nonzero, naming the first opener
 # (the case that ran it, read from the worker's execve, and the socket call),
 # when any process of the suite calls socket(). execve is traced only to name
 # the case. A failing suite fails the check too, and the suite's own output
@@ -26,8 +26,10 @@ trace=$(mktemp)
 trap 'rm -f -- "$trace"' EXIT
 
 suite=0
-# the suite prints as it does unwrapped: on Linux this is the plain run
-strace -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" || suite=$?
+# Filter in the kernel: ordinary -e filtering still stops at every unrelated
+# syscall under ptrace. That multiplied the 1000-client Debug case's cost
+# under CI load. -f retains fork/exec tracing, including child socket openers.
+strace --seccomp-bpf -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" || suite=$?
 
 if [ ! -s "$trace" ]; then
     echo "check_unit_no_sockets: strace wrote no trace for $binary"

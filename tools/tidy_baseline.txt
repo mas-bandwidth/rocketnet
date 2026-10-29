@@ -245,7 +245,6 @@ clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	c62a0d98ec56
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	cac7670e58363293
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	d947275bbf7bb977
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-misplaced-widening-cast	e340ff4e1924ab31
-clang-tidy	sdk/rocketnet_tests.cpp	bugprone-suspicious-memory-comparison,cert-exp42-c,cert-flp37-c	d2c9a4b5b8cc116b
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-switch-missing-default-case	e532b6a4ab72720c
 clang-tidy	sdk/rocketnet_tests.cpp	bugprone-switch-missing-default-case	f343d0c210ce8da1
 clang-tidy	sdk/rocketnet_tests.cpp	cert-err33-c	0284a097daa06578

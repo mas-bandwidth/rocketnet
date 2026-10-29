@@ -1406,7 +1406,11 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     // addresses from ROCKETNET_SERVER_IPV4_ADDRESS and
     // ROCKETNET_SERVER_IPV6_ADDRESS.
 
-    if ( config->public_address[0] != '\0' )
+    // The resolved string must outlive this frame: when the field displaces
+    // the parameter, out names out->config's copy, never effective_config's.
+
+    const bool public_address_from_config = config->public_address[0] != '\0';
+    if ( public_address_from_config )
     {
         rocketnet_info( "server config public_address %s displaces the create parameter %s", config->public_address, public_address_string );
         public_address_string = config->public_address;
@@ -1575,7 +1579,7 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     }
 
     out->config = effective_config;
-    out->public_address_string = effective_config.public_address[0] != '\0' ? out->config.public_address : public_address_string;
+    out->public_address_string = public_address_from_config ? out->config.public_address : public_address_string;
     out->public_address = public_address;
     out->second_address = second_address;
     out->bind_address = bind_address;
@@ -1848,7 +1852,6 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         return NULL;
 
     config = &resolved.config;
-    public_address_string = resolved.public_address_string;
     rocketnet_address_t public_address = resolved.public_address;   // a port 0 takes the granted bind port below
     rocketnet_address_t second_address = resolved.second_address;
     rocketnet_address_t bind_address = resolved.bind_address;          // the granted open writes the bound port

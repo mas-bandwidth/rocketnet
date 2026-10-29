@@ -11,15 +11,20 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
-`ROCKETNET_VERSION_PATCH`. For this preview, the full label is
-`"v1.0.0-preview-4"` and the integers are `1.0.0`. The development branch uses
+`ROCKETNET_VERSION_PATCH`. Main targets the next preview: the full label is
+`"v1.0.0-preview-5"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
+
+Preview-5 is an unreleased candidate. Its version records the standard
+corrections and CI repairs since preview-4; advancing the label does not tag
+or publish a release. Preview-4 remains the latest published release until
+the release procedure below is completed.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-4` and
-derives `RocketNet_VERSION_PRERELEASE` as `preview-4`. A final release has
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-5` and
+derives `RocketNet_VERSION_PRERELEASE` as `preview-5`. A final release has
 an empty prerelease string. There is no separate public prerelease macro.
 
 The `version-consistency` job in
