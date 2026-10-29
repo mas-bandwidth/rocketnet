@@ -111,6 +111,44 @@ class CheckerFixture(unittest.TestCase):
         self.assertEqual(code, 0, report)
         self.assertIn("GAPS (tier none): 1", report)
 
+    def test_review_is_explicit_and_requires_a_disposition(self):
+        root = self.build([
+            ["t1", "a receiver MUST drop a packet below its floor", "-",
+             "sdk/code.cpp:fixture_below_floor_check", "docs/audits/review.md:floor", "review"],
+        ])
+        os.makedirs(os.path.join(root, "docs", "audits"))
+        path = os.path.join(root, "docs", "audits", "review.md")
+        with open(path, "w") as handle:
+            handle.write('<a id="floor"></a>\nSource review with limits.\n')
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 0, report)
+        self.assertIn("SOURCE REVIEWS (not executable proof): 1", report)
+        with open(path, "w") as handle:
+            handle.write("The disposition was removed.\n")
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1, report)
+        self.assertIn("does not resolve", report)
+
+    def test_review_cannot_silently_relabel_a_unit_test(self):
+        root = self.build([
+            ["t1", "a receiver MUST drop a packet below its floor", "-",
+             "sdk/code.cpp:fixture_below_floor_check", "sdk/tests.cpp:test_below_floor", "review"],
+        ])
+        code, report = check_witnesses.run(root)
+        self.assertEqual(code, 1, report)
+        self.assertIn("named docs/audits Markdown disposition", report)
+
+    def test_deferred_mode_requires_a_boundary_witness_and_is_counted(self):
+        row = ["t1", "a receiver MUST drop a packet below its floor", "-",
+               "sdk/code.cpp:fixture_below_floor_check", "sdk/tests.cpp:test_below_floor", "deferred"]
+        code, report = check_witnesses.run(self.build([row]))
+        self.assertEqual(code, 0, report)
+        self.assertIn("DEFERRED MODES (not implemented): 1", report)
+        row[4] = "-"
+        code, report = check_witnesses.run(self.build([row]))
+        self.assertEqual(code, 1, report)
+        self.assertIn("names no test", report)
+
     def test_renamed_section_anchor_fails(self):
         root = self.build([
             ["t9", "a receiver MUST drop a packet below its floor",

@@ -91,6 +91,13 @@ Behavioral checks alone do not establish constant-time execution, and checking
 that a secret is absent from returned state does not establish erasure of its
 local working buffer. Those coverage claims need their own disposition.
 
+## Follow-up
+
+[The witness follow-up](WITNESS-REVIEW-20261029.md) records the later integration
+of Emma's tests, live stack-wipe observation, corrected complexity claims, and
+separate source-review and deferred-mode dispositions. The counts above describe
+this original review, before that follow-up.
+
 ## Remaining confidence limits
 
 The witness ledger is a partial inventory. A resolvable test name does not
