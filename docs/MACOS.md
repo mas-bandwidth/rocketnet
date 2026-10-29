@@ -239,9 +239,16 @@ On macOS the platform layer builds the kqueue wake (`sdk/rocketnet_platform.h`,
 an `EVFILT_USER` trigger (`sdk/rocketnet_platform.cpp`, the kqueue wake). The
 thread is a plain `pthread_create` with default attributes
 (`rocketnet_platform_thread_create`). Right after the create, the creating
-thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { sched_get_priority_min( SCHED_RR ) } )`
+thread makes one call on it: `pthread_setschedparam( thread, SCHED_RR, { 47 } )`
 (`rocketnet_platform_client_thread_priority` in `sdk/rocketnet_platform.cpp`,
-through `rocketnet_platform_network_thread_priority`).
+through `rocketnet_platform_network_thread_priority`). The priority is
+`rocketnet_platform_network_thread_rr_priority`: on macOS
+`sched_get_priority_max( SCHED_RR )`, 47, the band of user-interactive threads,
+above the default 31 of every ordinary thread, which is what Linux's SCHED_RR
+minimum gives there. The macOS minimum, 15, demoted the client I/O thread:
+under CPU contention its sends and receives stalled for hundreds of
+milliseconds while the game thread ran (`test_posix_send_to_closed_port` on a
+loaded runner).
 That is the only thing the library sets on the macOS client network thread: no QoS
 class (`thread_function_shim` in `sdk/rocketnet_platform.cpp` calls the thread
 function and nothing else), no `THREAD_TIME_CONSTRAINT_POLICY`, no pinning, and

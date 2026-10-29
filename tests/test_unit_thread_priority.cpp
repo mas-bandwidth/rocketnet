@@ -8,9 +8,11 @@
 // system and a thread handle that is never started stands in for the thread.
 // No real thread, no real time, no socket.
 //
-// The values are the flow library's (flow_platform.cpp), unchanged:
+// The values are the flow library's (flow_platform.cpp), with one change:
 //   POSIX client and server thread: pthread_setschedparam( thread, SCHED_RR,
-//     sched_get_priority_min( SCHED_RR ) ), one call.
+//     sched_get_priority_min( SCHED_RR ) ), one call, on Linux as before; on
+//     macOS sched_get_priority_max( SCHED_RR ) (47), since its minimum (15)
+//     demoted the thread below every ordinary one (31).
 //   Windows client and server thread: SetThreadPriority( thread,
 //     THREAD_PRIORITY_TIME_CRITICAL ), one call.
 //   Windows platform init: timeBeginPeriod( 1 ) before the timer frequency
@@ -178,8 +180,24 @@ static void priority_check_one_thread_call( struct rocketnet_platform_thread_t *
     rocketnet_unit_check( priority_fake_calls[0].kind == PRIORITY_FAKE_SET_SCHED );
     rocketnet_unit_check( priority_fake_calls[0].thread == thread );
     rocketnet_unit_check( priority_fake_calls[0].policy == SCHED_RR );
-    rocketnet_unit_check( priority_fake_calls[0].priority == sched_get_priority_min( SCHED_RR ) );
+    rocketnet_unit_check( priority_fake_calls[0].priority == rocketnet_platform_network_thread_rr_priority() );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+}
+
+// the requested SCHED_RR priority is above every ordinary thread: flow's
+// minimum on Linux, the maximum (47) on macOS, where the minimum is 15 and an
+// ordinary thread 31
+
+static void test_thread_priority_rr_above_ordinary_threads()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == sched_get_priority_min( SCHED_RR ) );
+#elif ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    rocketnet_unit_check( sched_get_priority_min( SCHED_RR ) == 15 );
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() == 47 );
+#elif ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_unit_check( rocketnet_platform_network_thread_rr_priority() >= sched_get_priority_min( SCHED_RR ) );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 }
 
 static void test_thread_priority_default_is_on()
@@ -538,6 +556,7 @@ REGISTER_UNIT_TEST( test_thread_priority_windows_timer_refusal_counts_and_logs_o
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 REGISTER_UNIT_TEST( test_thread_priority_default_is_on );
+REGISTER_UNIT_TEST( test_thread_priority_rr_above_ordinary_threads );
 REGISTER_UNIT_TEST( test_thread_priority_client_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_server_requests_space_values );
 REGISTER_UNIT_TEST( test_thread_priority_off_makes_no_calls );

@@ -314,7 +314,7 @@ uint64_t rocketnet_platform_thread_priority_refusals()
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // POSIX: the one call, pthread_setschedparam( thread, SCHED_RR,
-// sched_get_priority_min( SCHED_RR ) ), on the created thread
+// rocketnet_platform_network_thread_rr_priority() ), on the created thread
 static int rocketnet_platform_real_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
 {
     struct sched_param param;
@@ -389,13 +389,41 @@ const rocketnet_platform_priority_calls_t * rocketnet_platform_priority_calls_re
 }
 #endif // #if ROCKETNET_DEV
 
+// The network threads run above every ordinary thread. On Linux the SCHED_RR
+// minimum (1) already does: ordinary threads are SCHED_OTHER at 0. On macOS
+// the SCHED_RR range is 15 to 47 and an ordinary thread sits at 31, so the
+// minimum demoted the client I/O thread and under CPU contention its sends and
+// receives stalled for hundreds of milliseconds; there the maximum (47, the
+// band of user-interactive threads) is the same intent. Elsewhere the minimum,
+// raised to a default thread's priority where that is higher.
+
+int rocketnet_platform_network_thread_rr_priority()
+{
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    return sched_get_priority_max( SCHED_RR );
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+    int priority = sched_get_priority_min( SCHED_RR );
+
+    pthread_attr_t attr;
+    if ( pthread_attr_init( &attr ) == 0 )
+    {
+        struct sched_param param;
+        if ( pthread_attr_getschedparam( &attr, &param ) == 0 && param.sched_priority > priority )
+            priority = param.sched_priority;
+        pthread_attr_destroy( &attr );
+    }
+
+    return priority;
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+}
+
 static void rocketnet_platform_network_thread_priority( rocketnet_platform_thread_t * thread )
 {
     rocketnet_assert( thread );
 
     if ( !rocketnet_platform_thread_priority_enabled() )
         return;
-    const int priority = sched_get_priority_min( SCHED_RR );
+    const int priority = rocketnet_platform_network_thread_rr_priority();
     const int result = ROCKETNET_PLATFORM_PRIORITY_CALL( set_sched )( thread, SCHED_RR, priority );
     if ( result != 0 )
     {
@@ -2671,8 +2699,9 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 }
 
 // IMPORTANT: adjust the client and server network thread priority here. Both
-// set SCHED_RR at sched_get_priority_min( SCHED_RR ) and nothing else, as flow
-// does. No macOS server transport calls the server hook.
+// set SCHED_RR at rocketnet_platform_network_thread_rr_priority() and nothing
+// else: flow's sched_get_priority_min( SCHED_RR ), never below the default.
+// No macOS server transport calls the server hook.
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )
 {
