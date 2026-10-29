@@ -1624,8 +1624,11 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
     return newly_acked;
 }
 
-// The reference recompute: the endpoint and a standalone history use the same
-// calculations, which the running aggregates must equal at every step.
+#if ROCKETNET_DEV
+
+// The reference recompute, the running aggregates' oracle (development
+// builds only): the endpoint and a standalone history use the same
+// calculations, which the aggregates must equal at every step.
 // Typed array views keep their native strides and require no scratch copy.
 // sent_written and received_written guard both kinds of ring: an
 // unwritten record is empty without reading its cold bytes. A fully initialized
@@ -1833,8 +1836,6 @@ static void rocketnet_ack_compute_stats( uint64_t highest_sent, uint64_t highest
     }
 }
 
-#if ROCKETNET_DEV
-
 void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * history,
                                           rocketnet_ack_stats_result_t * result,
                                           const uint64_t * sent_written, const uint64_t * received_written,
@@ -1847,8 +1848,6 @@ void rocketnet_ack_stats_history_compute( const rocketnet_ack_stats_history_t * 
                                  &result->sent_kbps, &result->received_kbps, &result->acked_kbps, validity );
 }
 
-#endif // #if ROCKETNET_DEV
-
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint )
 {
     rocketnet_assert( endpoint );
@@ -1858,6 +1857,8 @@ void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endp
                                  &endpoint->rtt, &endpoint->jitter, &endpoint->packet_loss,
                                  &endpoint->bandwidth_sent_kbps, &endpoint->bandwidth_received_kbps, &endpoint->bandwidth_acked_kbps );
 }
+
+#endif // #if ROCKETNET_DEV
 
 // -----------------------------------------
 //                    the server's acks

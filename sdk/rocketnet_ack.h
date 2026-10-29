@@ -454,7 +454,13 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
                                           uint64_t * unknown_sequence_counter,
                                           uint64_t * batch_full_counter );
 
-// The per-connection statistics recompute, the reference's shape: rtt
+// The portable popcount: the fallback used when no builtin is available, kept
+// callable so the suite can exercise it on every host.
+int rocketnet_ack_popcount64_portable( uint64_t value );
+
+#if ROCKETNET_DEV
+// The per-connection statistics recompute, the running aggregates' oracle
+// (development builds only), the reference's shape: rtt
 // is the minimum over positive rtt history, jitter their mean deviation from it,
 // packet loss the unacked fraction of the sent window's older half -- the
 // newest half-window is excluded even during warmup; no eligible sends
@@ -462,12 +468,6 @@ int rocketnet_ack_endpoint_process_block( struct rocketnet_ack_endpoint_t * endp
 // bandwidth numbers retain their original cohorts, including during warmup.
 
 void rocketnet_ack_endpoint_update_stats( struct rocketnet_ack_endpoint_t * endpoint );
-
-// The portable popcount: the fallback used when no builtin is available, kept
-// callable so the suite can exercise it on every host.
-int rocketnet_ack_popcount64_portable( uint64_t value );
-
-#if ROCKETNET_DEV
 
 // The six-field result of the reference recompute over a standalone history.
 // The function never mutates the history.
