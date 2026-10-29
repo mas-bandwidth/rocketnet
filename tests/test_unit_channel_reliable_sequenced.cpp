@@ -93,6 +93,55 @@ static void test_shares_the_watermark_with_code_1()
 
 REGISTER_UNIT_TEST( test_shares_the_watermark_with_code_1 );
 
+// The u24 sequencing wraps: from a watermark six short of 2^24, newer states
+// across the wrap are delivered, a state from before the wrap is stale, a
+// skipped one arriving late is stale, and a code-4 record after the wrap
+// shares the same watermark. The comparisons are half-range on 24 bits
+// (rocketnet_channel_sequenced.cpp), so the wrap is newer, never behind.
+static void test_sequencing_crosses_the_u24_wrap()
+{
+    rs_node_t receiver;
+    rs_init( &receiver );
+
+    const uint32_t mask = ROCKETNET_MESSAGE_U24_MASK;
+    receiver.region->channel_receive[0].sequenced_watermark = 0xFFFFFA;
+
+    const uint8_t data = 7;
+    rn_delivery_t out;
+
+    for ( uint32_t s = 0xFFFFFA; s != 3; s = ( s + 1 ) & mask )
+    {
+        rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, s, &data );
+        check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+        check( receiver.region->channel_receive[0].sequenced_watermark == ( ( s + 1 ) & mask ) );
+    }
+
+    // a state from before the wrap is behind, not 2^24 - 2 ahead
+
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0xFFFFFE, &data );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+
+    // newest wins: 5 skips 3 and 4, and 4 arriving after it is stale
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 5, &data );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 4, &data );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_STALE );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 6 );
+
+    // a code-4 record after the wrap shares the watermark
+
+    record = rs_record( ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED, 0, 0, 6, &data );
+    uint32_t slot;
+    check( rn_window_receive_accept( &receiver.ordered.receive, &record, &slot ) == RN_WINDOW_RECEIVE_ACCEPT );
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_DELIVERED );
+    check( receiver.region->channel_receive[0].sequenced_watermark == 7 );
+
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_sequencing_crosses_the_u24_wrap );
+
 static void test_reliable_sequenced_c_api_start_finish()
 {
     rn_message_link_t link = {};

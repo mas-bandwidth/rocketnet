@@ -278,6 +278,8 @@ static bool rn_sent_index_find( const rn_region_t * region, uint64_t packet_id, 
     return false;
 }
 
+// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index
 static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint32_t entry_index )
 {
     rocketnet_assert( packet_id != 0 );
@@ -301,6 +303,10 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
     rocketnet_assert( false && "sent_index 2P table exhausted" );
 }
 
+// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// moves back each entry whose home is not cyclically in (hole, scan], and the
+// final hole clears last; the scan ends only on a cell already empty, so the
+// index is sized at twice its capacity
 static void rn_sent_index_remove_at( rn_region_t * region, uint32_t slot )
 {
     const uint32_t cap = region->sent_index_entries;

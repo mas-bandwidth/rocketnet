@@ -296,6 +296,8 @@ int rocketnet_client_slots_find( const struct rocketnet_client_slots_t * slots, 
 
 // tla/RNDestroyWipe.tla Add: copies the mapping's user data into the slot as the slot becomes live.
 
+// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index
 int rocketnet_client_slots_assign( struct rocketnet_client_slots_t * slots,
                                    uint64_t client_id,
                                    int mapping_index,
@@ -450,6 +452,10 @@ void rocketnet_client_slots_confirm( struct rocketnet_client_slots_t * slots, in
 // leaves no tombstones for repeated churn to accumulate. num_buckets need not
 // be a power of two, so wrap is explicit rather than a bit mask.
 
+// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// moves back each entry whose home is not cyclically in (hole, scan], and the
+// final hole clears last; the scan ends only on a cell already empty, so the
+// index is sized at twice its capacity
 static void rocketnet_client_slots_erase_index( struct rocketnet_client_slots_t * slots, int hole )
 {
     int * entries = rocketnet_client_slot_index_entries( slots );

@@ -210,6 +210,8 @@ static int rn_token_table_find( const struct rocketnet_token_table_t * table,
     return position >= 0 ? table->index[position] : -1;
 }
 
+// tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
+// empty one, wrapping at the end of the index
 static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int slot )
 {
     const int start = rn_token_index_start( table, table->identifier[slot] );
@@ -235,6 +237,9 @@ static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int s
 // searchable and leaves no tombstone. The index holds at most capacity
 // entries in twice that many cells, so an empty cell always stops the scan.
 // The scan does not count as a lookup probe.
+// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast FALSE): the hole
+// clears first, then the scan moves back each entry whose home is not
+// cyclically in (hole, scan]; EraseBound: it examines at most capacity cells
 static void rn_token_index_remove( struct rocketnet_token_table_t * table, int slot )
 {
     const int position = rn_token_index_position( table, table->identifier[slot] );
@@ -369,6 +374,8 @@ static bool rn_token_order_stale( const struct rocketnet_token_table_t * table, 
 }
 
 // tla/RNIndexRing.tla PopStale: the oldest live claim, -1 when none; tombstones at the head are dropped
+// the oldest live claim, -1 when none: tombstones at the head are dropped
+// (tla/RNIndexRingArray.tla PopStale: the head moves modulo the ring)
 static int rn_token_order_oldest( const struct rocketnet_token_table_t * table )
 {
     while ( table->order_count > 0 && rn_token_order_stale( table, table->order_head ) )
@@ -383,11 +390,17 @@ static int rn_token_order_oldest( const struct rocketnet_token_table_t * table )
 
 // tla/RNIndexRing.tla Insert and Reinsert: a claimed slot's newest ticket joins the
 // ring's tail; a reinserted slot's earlier entry becomes a tombstone
+// tla/RNIndexRingArray.tla Insert and Reinsert append at (head + count) %
+// capacity; a full ring compacts in place first, CompactStep per entry read
+// and CompactDone when the pass ends
 static void rn_token_order_push( struct rocketnet_token_table_t * table, int slot )
 {
     if ( table->order_count == table->order_capacity )
     {
-        // at most capacity entries are live, so the pass frees at least half
+        // at most capacity entries are live, so the pass frees at least half.
+        // Survivors close up from the head, each written at its own logical
+        // position: that is never ahead of the entry being read, so a wrapped
+        // ring's unread entries are never overwritten.
         int kept = 0;
         for ( int i = 0; i < table->order_count; ++i )
         {
@@ -395,11 +408,11 @@ static void rn_token_order_push( struct rocketnet_token_table_t * table, int slo
             const int position = ( table->order_head + i ) % table->order_capacity;
             if ( rn_token_order_stale( table, position ) )
                 continue;
-            table->order_slot[kept] = table->order_slot[position];
-            table->order_ticket[kept] = table->order_ticket[position];
+            const int to = ( table->order_head + kept ) % table->order_capacity;
+            table->order_slot[to] = table->order_slot[position];
+            table->order_ticket[to] = table->order_ticket[position];
             ++kept;
         }
-        table->order_head = 0;
         table->order_count = kept;
     }
 
@@ -572,6 +585,7 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
 
     // tla/RNIndexRing.tla Release: the slot's ticket clears, so its ring
     // entry is a tombstone; the ring itself is not touched
+    // tla/RNIndexRingArray.tla Release: the ticket clears; the ring is untouched
 
     rn_token_slot_retire( table, slot );
     table->claim_deadline[slot] = 0.0;
