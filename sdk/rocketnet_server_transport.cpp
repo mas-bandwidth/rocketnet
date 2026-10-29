@@ -1305,36 +1305,32 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved
     return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes );
 }
 
-static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
-                                                                                         const char * public_address_string,
-                                                                                         const struct rocketnet_server_transport_config_t * config,
-                                                                                         double time, int * status,
-                                                                                         const uint64_t * resolved_memory_budget )
+// The inputs a server create starts from, resolved before anything is
+// allocated or opened: the layered config (DEFAULT < STRUCT < ENV) validated,
+// the served addresses and the bind they share, the parsed transport ladder,
+// and which candidates the operator memory budget refuses.
+
+struct rocketnet_server_transport_resolved_t
 {
-    // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
-    // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
-    // release (S1).
-    if ( !rocketnet_api_null_guard( public_address_string ) )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-        rocketnet_error( "server transport create: public_address_string is NULL" );
-        return NULL;
-    }
+    struct rocketnet_server_transport_config_t config;
+    const char * public_address_string;
+    rocketnet_address_t public_address;
+    rocketnet_address_t second_address;
+    rocketnet_address_t bind_address;
+    int serves_both;
+    int max_clients;
+    struct rocketnet_transport_ladder_t ladder;
+    bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
+};
 
-    // the lifecycle state is read once here, before any allocation or socket;
-    // a create before rocketnet_init is refused, logged and counted
-
-    if ( !rocketnet_library_initialized() )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
-        rocketnet_error( "rocketnet_server_transport_create: rocketnet_init must be called first" );
-        rocketnet_api_misuse_record();
-        return NULL;
-    }
-
+static bool rocketnet_server_transport_resolve( const char * public_address_string,
+                                                const struct rocketnet_server_transport_config_t * config,
+                                                const uint64_t * resolved_memory_budget,
+                                                struct rocketnet_server_transport_resolved_t * out,
+                                                int * status )
+{
     rocketnet_assert( public_address_string );
+    rocketnet_assert( out );
 
     // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is
     // the default shape; the caller's struct is the middle layer; the
@@ -1358,28 +1354,28 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
-        return NULL;
+        return false;
     }
 
     if ( !rocketnet_config_validate( "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-        return NULL;
+        return false;
     }
 
     if ( !rocketnet_config_validate_public_link_simulator( "server", &effective_config, config_fields, num_config_fields, rocketnet_public_link_simulator_development() ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-        return NULL;
+        return false;
     }
 
     if ( rocketnet_config_packet_filter_refused( "server", effective_config.packet_filter ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
-        return NULL;
+        return false;
     }
 
     config = &effective_config;
@@ -1397,7 +1393,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         if ( status )
             *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
         rocketnet_error( "server config refused: the reassembly cross-field allocation exceeds the operator memory budget" );
-        return NULL;
+        return false;
     }
 
     // the config's public_address, when set, displaces the create call's
@@ -1426,7 +1422,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         if ( status )
             *status = ROCKETNET_STATUS_MISSING_KEYS;
         rocketnet_error( "server config has no keys: fill rocketnet_server_transport_dev_config() for development, or supply production keys" );
-        return NULL;
+        return false;
     }
 
     // Refuse protocol_id 0 with production keys: only development keys may use protocol_id 0
@@ -1436,7 +1432,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_PROTOCOL_ID;
         rocketnet_error( "protocol_id 0 is not permitted with production keys: use dev config or a non-zero protocol_id" );
-        return NULL;
+        return false;
     }
 
     // the transport candidate list parses before anything allocates: a typo
@@ -1450,7 +1446,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     {
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
-        return NULL;
+        return false;
     }
 
     rocketnet_info( "server transport public address is %s", public_address_string );
@@ -1461,7 +1457,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_ADDRESS;
         rocketnet_error( "could not parse public address" );
-        return NULL;
+        return false;
     }
 
     // ServedFamilies is one address, or both when second_public_address names
@@ -1481,7 +1477,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             if ( status )
                 *status = ROCKETNET_STATUS_INVALID_ADDRESS;
             rocketnet_error( "server second_public_address does not parse" );
-            return NULL;
+            return false;
         }
 
         if ( second_address.type == public_address.type )
@@ -1489,7 +1485,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             if ( status )
                 *status = ROCKETNET_STATUS_INVALID_ADDRESS;
             rocketnet_error( "server second_public_address is the same family as the public address" );
-            return NULL;
+            return false;
         }
 
         if ( second_address.port != public_address.port )
@@ -1497,7 +1493,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             if ( status )
                 *status = ROCKETNET_STATUS_INVALID_ADDRESS;
             rocketnet_error( "server second_public_address is on a different port from the public address" );
-            return NULL;
+            return false;
         }
 
         serves_both = 1;
@@ -1534,7 +1530,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
-        return NULL;
+        return false;
     }
 
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
@@ -1573,8 +1569,289 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
             *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
         rocketnet_error( "server transport ladder exhausted: every candidate's memory plan exceeds the %llu byte operator budget",
                          (unsigned long long) memory_budget );
+        return false;
+    }
+
+    out->config = effective_config;
+    out->public_address_string = effective_config.public_address[0] != '\0' ? out->config.public_address : public_address_string;
+    out->public_address = public_address;
+    out->second_address = second_address;
+    out->bind_address = bind_address;
+    out->serves_both = serves_both;
+    out->max_clients = max_clients;
+    out->ladder = ladder;
+    memcpy( out->budget_refused, budget_refused, sizeof( out->budget_refused ) );
+
+    return true;
+}
+
+// THE LADDER (#106): opens the resolved candidates in order until one grants,
+// into server_transport->io. Returns the granted transport, with bind_address
+// holding what it bound; -1 when none granted, with *status saying why (an
+// open that ran out of memory ends the ladder rather than falling).
+
+static int rocketnet_server_transport_open_ladder( struct rocketnet_server_transport_t * server_transport, void * context,
+                                                   const struct rocketnet_server_transport_resolved_t * resolved,
+                                                   rocketnet_address_t * bind_address, int * status )
+{
+    const struct rocketnet_server_transport_config_t * config = &resolved->config;
+    const char * public_address_string = resolved->public_address_string;
+    const rocketnet_address_t * public_address = &resolved->public_address;
+    const struct rocketnet_transport_ladder_t * ladder = &resolved->ladder;
+    const bool * budget_refused = resolved->budget_refused;
+
+    // candidates tried left to right, first grant wins.
+    // an operator who wrote the list owns the list -- nothing is appended
+    // -- and a one-element list is a pin that refuses rather than falls.
+    // each refusal logs loudly; the exhausted list fails naming what was
+    // skipped for platform and what refused for grant.
+
+    int granted_transport = -1;
+
+    char refused_names[128];
+    refused_names[0] = '\0';
+
+    bool refused_seen[ROCKETNET_NUM_TRANSPORTS];
+    memset( refused_seen, 0, sizeof( refused_seen ) );
+
+    // #109: WHICH rungs the port-zero rule refused, so an exhausted ladder
+    // can restate the rule at the level the failure itself is reported.
+    // The names are collected rather than a bare flag because a mixed list
+    // -- say "xdp,gso" where gso refused for its own queue geometry --
+    // would make "no transport here can discover a port" a lie about gso. The
+    // error names the rungs the rule actually refused, and nothing else.
+
+    char port_zero_refused_names[128];
+    port_zero_refused_names[0] = '\0';
+
+    bool port_zero_refused_seen[ROCKETNET_NUM_TRANSPORTS];
+    memset( port_zero_refused_seen, 0, sizeof( port_zero_refused_seen ) );
+
+    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
+    // TRANSPORT_NOT_BUILT are the start status when every open refused for
+    // that reason.
+
+    int open_refusals = 0;
+    int families_unsupported_refusals = 0;
+    int not_built_refusals = 0;
+
+    for ( int i = 0; i < ladder->num_candidates && granted_transport < 0; i++ )
+    {
+        const int candidate = ladder->candidates[i];
+
+        // a candidate whose memory plan the operator budget refused was logged
+        // and refused in the plan loop above; record it for the exhausted
+        // summary and fall to the next candidate, never opening it
+
+        if ( budget_refused[candidate] )
+        {
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
+            {
+                refused_seen[candidate] = true;
+
+                const size_t used = strlen( refused_names );
+                snprintf( refused_names + used, sizeof( refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
+            }
+
+            continue;
+        }
+
+        // #109: a port-zero public address asks the KERNEL for an
+        // ephemeral port, and the adoption below reads the granted port
+        // back out of bind_address -- so the address is only meaningful on
+        // a rung whose create discovers what it bound and hands it back.
+        // The xdp rung does not: it takes an address STRING, binds the
+        // port it is given, and leaves bind_address.port at zero, so the
+        // adoption adopts zero and the transport silently advertises port
+        // 0 -- tokens minted from rocketnet_server_transport_port() name
+        // port 0, the cookie gate never matches, and nothing says why.
+        //
+        // This is asked of EVERY candidate rather than patched into the
+        // one rung that fails it today, because #110 made create a loop
+        // and the question is a property of each transport's bind
+        // (rocketnet_transport_discovers_bound_port). It is a rung refusal
+        // like any other: "auto" falls past xdp to a rung that discovers,
+        // and only a PIN on a non-discovering rung refuses the create --
+        // loudly, naming the rule, the way the pin law already works.
+
+        if ( public_address->port == 0 && !rocketnet_transport_discovers_bound_port( candidate ) )
+        {
+            // named once however many times the operator listed it: the
+            // ladder parse does not deduplicate, and "xdp, xdp" in an
+            // error reads as a bug in the error rather than a repeat in
+            // the list.
+            //
+            // keyed on the transport ID, not on a substring search of the
+            // accumulated names. The hazard runs in the direction that is
+            // easy to get backwards: strstr( "gso", "gso2" ) is NULL, so a
+            // NEW longer name is not swallowed by a shorter accumulated
+            // one -- but strstr( "gso2", "gso" ) FINDS, so an accumulated
+            // longer name silently swallows a later legitimate shorter
+            // one. No two names collide today; an id key cannot collide
+            // whatever anyone adds.
+
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !port_zero_refused_seen[candidate] )
+            {
+                port_zero_refused_seen[candidate] = true;
+
+                const size_t used = strlen( port_zero_refused_names );
+                snprintf( port_zero_refused_names + used, sizeof( port_zero_refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
+            }
+
+            rocketnet_warn( "server transport %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s transport binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a transport that discovers one in the list",
+                            rocketnet_transport_name( candidate ), rocketnet_transport_name( candidate ) );
+        }
+        else
+        {
+            const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( candidate );
+            int transport_status = ROCKETNET_STATUS_OK;
+            const rocketnet_server_transport_io_config_t transport_config = { rocketnet_transport_name( candidate ), config, public_address_string, &transport_status };
+            if ( rocketnet_server_transport_io_open( definition && definition->backend ? definition->backend->server : NULL, context,
+                                                     &transport_config, bind_address, &server_transport->io ) )
+                granted_transport = candidate;
+
+            // a rung that failed for want of memory is not a refusal: the
+            // create ends with OUT_OF_MEMORY and never falls to the next
+            // candidate. Every transport reports it through transport_status
+            // (rocketnet_server_transport_io_config_t.status, sdk/rocketnet_driver.h);
+            // any other failed open is a refusal and falls
+
+            if ( granted_transport < 0 && transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
+            {
+                rocketnet_error( "server transport create: the %s transport could not allocate its endpoint", rocketnet_transport_name( candidate ) );
+                if ( status )
+                    *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
+                return -1;
+            }
+
+            if ( granted_transport < 0 )
+            {
+                open_refusals++;
+                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED )
+                    families_unsupported_refusals++;
+                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT )
+                    not_built_refusals++;
+            }
+        }
+
+        if ( granted_transport < 0 )
+        {
+            rocketnet_warn( "server transport %s refused%s", rocketnet_transport_name( candidate ),
+                            i + 1 < ladder->num_candidates ? ". trying the next candidate" : "" );
+
+            // deduped on the same rule as the port-zero list below it: a
+            // repeated name in the operator's list is a repeat in the
+            // list, not two refusals worth reading, and two adjacent
+            // summary lines disagreeing about that reads as a bug in one
+            // of them
+
+            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
+            {
+                refused_seen[candidate] = true;
+
+                const size_t used = strlen( refused_names );
+                snprintf( refused_names + used, sizeof( refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
+            }
+        }
+    }
+
+    if ( granted_transport < 0 )
+    {
+        char skipped_names[128];
+        skipped_names[0] = '\0';
+
+        for ( int i = 0; i < ladder->num_skipped; i++ )
+        {
+            const size_t used = strlen( skipped_names );
+            snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder->skipped[i] ) );
+        }
+
+        rocketnet_error( "server transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
+                         refused_names[0] != '\0' ? refused_names : "(none)",
+                         skipped_names[0] != '\0' ? skipped_names : "(none)" );
+
+        // #109 asked for an error naming the rule, and the per-rung warn
+        // above is not that: a deployed binary and the test suite run at
+        // the ERROR level, where a warn is invisible. So
+        // the rule is restated HERE, at the level the failure itself is
+        // reported -- on the fall it stays a warn, because a fall is not a
+        // failure and an error line would be a lie about the outcome.
+
+        if ( port_zero_refused_names[0] != '\0' )
+        {
+            // the remedy does NOT point at the per-rung warns: this error
+            // exists precisely because the reader is at ERROR level, where
+            // those warns are invisible. it has to stand alone.
+
+            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a transport that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
+                             port_zero_refused_names, rocketnet_transport_discovering_names() );
+        }
+
+        if ( status )
+        {
+            if ( port_zero_refused_names[0] != '\0' )
+                *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
+            else if ( open_refusals > 0 && families_unsupported_refusals == open_refusals )
+                *status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
+            else if ( open_refusals > 0 && not_built_refusals == open_refusals )
+                *status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
+            else
+                *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
+        }
+
+        return -1;
+    }
+
+    if ( refused_names[0] != '\0' )
+    {
+        rocketnet_info( "server transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
+    }
+
+    return granted_transport;
+}
+
+static struct rocketnet_server_transport_t * rocketnet_server_transport_create_internal( void * context,
+                                                                                         const char * public_address_string,
+                                                                                         const struct rocketnet_server_transport_config_t * config,
+                                                                                         double time, int * status,
+                                                                                         const uint64_t * resolved_memory_budget )
+{
+    // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
+    // argument is a logged INVALID_ARGUMENT and a NULL return in debug and
+    // release (S1).
+    if ( !rocketnet_api_null_guard( public_address_string ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+        rocketnet_error( "server transport create: public_address_string is NULL" );
         return NULL;
     }
+
+    // the lifecycle state is read once here, before any allocation or socket;
+    // a create before rocketnet_init is refused, logged and counted
+
+    if ( !rocketnet_library_initialized() )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
+        rocketnet_error( "rocketnet_server_transport_create: rocketnet_init must be called first" );
+        rocketnet_api_misuse_record();
+        return NULL;
+    }
+
+    rocketnet_assert( public_address_string );
+
+    struct rocketnet_server_transport_resolved_t resolved;
+    if ( !rocketnet_server_transport_resolve( public_address_string, config, resolved_memory_budget, &resolved, status ) )
+        return NULL;
+
+    config = &resolved.config;
+    public_address_string = resolved.public_address_string;
+    rocketnet_address_t public_address = resolved.public_address;   // a port 0 takes the granted bind port below
+    rocketnet_address_t second_address = resolved.second_address;
+    rocketnet_address_t bind_address = resolved.bind_address;          // the granted open writes the bound port
+    const int serves_both = resolved.serves_both;
+    const int max_clients = resolved.max_clients;
 
     struct rocketnet_server_transport_t * server_transport = (struct rocketnet_server_transport_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_transport_t ) );
     if ( !server_transport )
@@ -1629,216 +1906,14 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
 #endif // #if ROCKETNET_DEV
     }
 
-    // THE LADDER (#106): candidates tried left to right, first grant wins.
-    // an operator who wrote the list owns the list -- nothing is appended
-    // -- and a one-element list is a pin that refuses rather than falls.
-    // each refusal logs loudly; the exhausted list fails naming what was
-    // skipped for platform and what refused for grant.
-
-    int granted_transport = -1;
-
-    char refused_names[128];
-    refused_names[0] = '\0';
-
-    bool refused_seen[ROCKETNET_NUM_TRANSPORTS];
-    memset( refused_seen, 0, sizeof( refused_seen ) );
-
-    // #109: WHICH rungs the port-zero rule refused, so an exhausted ladder
-    // can restate the rule at the level the failure itself is reported.
-    // The names are collected rather than a bare flag because a mixed list
-    // -- say "xdp,gso" where gso refused for its own queue geometry --
-    // would make "no transport here can discover a port" a lie about gso. The
-    // error names the rungs the rule actually refused, and nothing else.
-
-    char port_zero_refused_names[128];
-    port_zero_refused_names[0] = '\0';
-
-    bool port_zero_refused_seen[ROCKETNET_NUM_TRANSPORTS];
-    memset( port_zero_refused_seen, 0, sizeof( port_zero_refused_seen ) );
-
-    // Opens only, not port-zero skips. TRANSPORT_FAMILIES_UNSUPPORTED and
-    // TRANSPORT_NOT_BUILT are the start status when every open refused for
-    // that reason.
-
-    int open_refusals = 0;
-    int families_unsupported_refusals = 0;
-    int not_built_refusals = 0;
-
-    for ( int i = 0; i < ladder.num_candidates && granted_transport < 0; i++ )
-    {
-        const int candidate = ladder.candidates[i];
-
-        // a candidate whose memory plan the operator budget refused was logged
-        // and refused in the plan loop above; record it for the exhausted
-        // summary and fall to the next candidate, never opening it
-
-        if ( budget_refused[candidate] )
-        {
-            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
-            {
-                refused_seen[candidate] = true;
-
-                const size_t used = strlen( refused_names );
-                snprintf( refused_names + used, sizeof( refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
-            }
-
-            continue;
-        }
-
-        // #109: a port-zero public address asks the KERNEL for an
-        // ephemeral port, and the adoption below reads the granted port
-        // back out of bind_address -- so the address is only meaningful on
-        // a rung whose create discovers what it bound and hands it back.
-        // The xdp rung does not: it takes an address STRING, binds the
-        // port it is given, and leaves bind_address.port at zero, so the
-        // adoption adopts zero and the transport silently advertises port
-        // 0 -- tokens minted from rocketnet_server_transport_port() name
-        // port 0, the cookie gate never matches, and nothing says why.
-        //
-        // This is asked of EVERY candidate rather than patched into the
-        // one rung that fails it today, because #110 made create a loop
-        // and the question is a property of each transport's bind
-        // (rocketnet_transport_discovers_bound_port). It is a rung refusal
-        // like any other: "auto" falls past xdp to a rung that discovers,
-        // and only a PIN on a non-discovering rung refuses the create --
-        // loudly, naming the rule, the way the pin law already works.
-
-        if ( public_address.port == 0 && !rocketnet_transport_discovers_bound_port( candidate ) )
-        {
-            // named once however many times the operator listed it: the
-            // ladder parse does not deduplicate, and "xdp, xdp" in an
-            // error reads as a bug in the error rather than a repeat in
-            // the list.
-            //
-            // keyed on the transport ID, not on a substring search of the
-            // accumulated names. The hazard runs in the direction that is
-            // easy to get backwards: strstr( "gso", "gso2" ) is NULL, so a
-            // NEW longer name is not swallowed by a shorter accumulated
-            // one -- but strstr( "gso2", "gso" ) FINDS, so an accumulated
-            // longer name silently swallows a later legitimate shorter
-            // one. No two names collide today; an id key cannot collide
-            // whatever anyone adds.
-
-            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !port_zero_refused_seen[candidate] )
-            {
-                port_zero_refused_seen[candidate] = true;
-
-                const size_t used = strlen( port_zero_refused_names );
-                snprintf( port_zero_refused_names + used, sizeof( port_zero_refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
-            }
-
-            rocketnet_warn( "server transport %s refused: a port-zero public address asks the kernel for an ephemeral port, and the %s transport binds the port it is given and discovers nothing -- it would advertise port 0. give this server a real port, or leave a transport that discovers one in the list",
-                            rocketnet_transport_name( candidate ), rocketnet_transport_name( candidate ) );
-        }
-        else
-        {
-            const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( candidate );
-            int transport_status = ROCKETNET_STATUS_OK;
-            const rocketnet_server_transport_io_config_t transport_config = { rocketnet_transport_name( candidate ), config, public_address_string, &transport_status };
-            if ( rocketnet_server_transport_io_open( definition && definition->backend ? definition->backend->server : NULL, context,
-                                                     &transport_config, &bind_address, &server_transport->io ) )
-                granted_transport = candidate;
-
-            // a rung that failed for want of memory is not a refusal: the
-            // create ends with OUT_OF_MEMORY and never falls to the next
-            // candidate. Every transport reports it through transport_status
-            // (rocketnet_server_transport_io_config_t.status, sdk/rocketnet_driver.h);
-            // any other failed open is a refusal and falls
-
-            if ( granted_transport < 0 && transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
-            {
-                rocketnet_error( "server transport create: the %s transport could not allocate its endpoint", rocketnet_transport_name( candidate ) );
-                if ( status )
-                    *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-                rocketnet_server_transport_abort_create( server_transport );
-                return NULL;
-            }
-
-            if ( granted_transport < 0 )
-            {
-                open_refusals++;
-                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED )
-                    families_unsupported_refusals++;
-                if ( transport_status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT )
-                    not_built_refusals++;
-            }
-        }
-
-        if ( granted_transport < 0 )
-        {
-            rocketnet_warn( "server transport %s refused%s", rocketnet_transport_name( candidate ),
-                            i + 1 < ladder.num_candidates ? ". trying the next candidate" : "" );
-
-            // deduped on the same rule as the port-zero list below it: a
-            // repeated name in the operator's list is a repeat in the
-            // list, not two refusals worth reading, and two adjacent
-            // summary lines disagreeing about that reads as a bug in one
-            // of them
-
-            if ( candidate >= 0 && candidate < ROCKETNET_NUM_TRANSPORTS && !refused_seen[candidate] )
-            {
-                refused_seen[candidate] = true;
-
-                const size_t used = strlen( refused_names );
-                snprintf( refused_names + used, sizeof( refused_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( candidate ) );
-            }
-        }
-    }
-
+    const int granted_transport = rocketnet_server_transport_open_ladder( server_transport, context, &resolved, &bind_address, status );
     if ( granted_transport < 0 )
     {
-        char skipped_names[128];
-        skipped_names[0] = '\0';
-
-        for ( int i = 0; i < ladder.num_skipped; i++ )
-        {
-            const size_t used = strlen( skipped_names );
-            snprintf( skipped_names + used, sizeof( skipped_names ) - used, "%s%s", used > 0 ? ", " : "", rocketnet_transport_name( ladder.skipped[i] ) );
-        }
-
-        rocketnet_error( "server transport ladder exhausted with no grant. refused: %s. skipped for platform: %s",
-                         refused_names[0] != '\0' ? refused_names : "(none)",
-                         skipped_names[0] != '\0' ? skipped_names : "(none)" );
-
-        // #109 asked for an error naming the rule, and the per-rung warn
-        // above is not that: a deployed binary and the test suite run at
-        // the ERROR level, where a warn is invisible. So
-        // the rule is restated HERE, at the level the failure itself is
-        // reported -- on the fall it stays a warn, because a fall is not a
-        // failure and an error line would be a lie about the outcome.
-
-        if ( port_zero_refused_names[0] != '\0' )
-        {
-            // the remedy does NOT point at the per-rung warns: this error
-            // exists precisely because the reader is at ERROR level, where
-            // those warns are invisible. it has to stand alone.
-
-            rocketnet_error( "the public address carries port zero, which asks the kernel for an ephemeral port: %s cannot discover the port it was granted and hand it back, so this server would advertise port 0. give this server a real port, or list a transport that discovers a granted port (%s). raise the log level to WARN to see why each candidate refused",
-                             port_zero_refused_names, rocketnet_transport_discovering_names() );
-        }
-
-        if ( status )
-        {
-            if ( port_zero_refused_names[0] != '\0' )
-                *status = ROCKETNET_STATUS_TRANSPORT_PORT_ZERO_UNSUPPORTED;
-            else if ( open_refusals > 0 && families_unsupported_refusals == open_refusals )
-                *status = ROCKETNET_STATUS_TRANSPORT_FAMILIES_UNSUPPORTED;
-            else if ( open_refusals > 0 && not_built_refusals == open_refusals )
-                *status = ROCKETNET_STATUS_TRANSPORT_NOT_BUILT;
-            else
-                *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
-        }
-
         rocketnet_server_transport_abort_create( server_transport );
         return NULL;
     }
 
     server_transport->transport = granted_transport;
-
-    if ( refused_names[0] != '\0' )
-    {
-        rocketnet_info( "server transport ladder granted %s after refusals: %s", rocketnet_transport_name( granted_transport ), refused_names );
-    }
 
     // the started line names the granted tier -- performance claims attach
     // to what this says, never to what was requested
@@ -3300,13 +3375,6 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
-// tla/RNDriverSendStaging.tla SendPackets
-// the staged transports whose flush can leave work behind for a later call
-static bool rocketnet_server_transport_reflushes( int transport )
-{
-    return transport == ROCKETNET_TRANSPORT_XDP || transport == ROCKETNET_TRANSPORT_GSO || transport == ROCKETNET_TRANSPORT_IO_URING;
-}
-
 // tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
@@ -3341,7 +3409,9 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         // send boundary retries that work rather than the next update. Each
         // native flush is non-blocking: a try-publish or a bounded reap.
 
-        if ( rocketnet_server_transport_reflushes( server_transport->transport ) ||
+        // tla/RNDriverSendStaging.tla SendPackets
+
+        if ( rocketnet_server_transport_io_has( server_transport->io, ROCKETNET_TRANSPORT_REFLUSHES ) ||
              server_transport->send_staged != server_transport->send_flushed )
         {
             server_transport->send_flushed = server_transport->send_staged;
@@ -3927,7 +3997,7 @@ static void rocketnet_server_transport_test_count_flush( void * context )
     ++*(int *) context;
 }
 
-int rocketnet_server_transport_test_reflush( int transport_kind )
+int rocketnet_server_transport_test_reflush_flags( unsigned int flags )
 {
     void * storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_transport_t ) );
     if ( !storage )
@@ -3943,11 +4013,10 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
 
     int flushes = 0;
     rocketnet_server_transport_io_operations_t operations = {};
-    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.flags = flags;
     operations.flush = rocketnet_server_transport_test_count_flush;
     transport->io.operations = &operations;
     transport->io.instance = &flushes;
-    transport->transport = transport_kind;
     transport->send_staged = 1;
     rocketnet_server_transport_send_packets( transport );
     rocketnet_server_transport_send_packets( transport );
@@ -3958,13 +4027,17 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
     return flushes;
 }
 
-// a build without XDP defines no xdp symbol (tools/check_xdp_compiled_out.py)
-#if ROCKETNET_XDP
-int rocketnet_server_transport_test_xdp_reflush()
+// the same two sends with a transport's declared flags: -2 when the
+// transport is not built on this platform
+
+int rocketnet_server_transport_test_reflush( int transport_kind )
 {
-    return rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP );
+    const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( transport_kind );
+    if ( !definition || !definition->backend || !definition->backend->server )
+        return -2;
+
+    return rocketnet_server_transport_test_reflush_flags( definition->backend->server->flags );
 }
-#endif // #if ROCKETNET_XDP
 
 // A staged send must close the simulator's partial reverse window at the
 // end of the frame, just as the portable send path does.
@@ -3986,7 +4059,7 @@ int rocketnet_server_transport_test_staged_simulator_flush()
     {
         int flushes = 0;
         rocketnet_server_transport_io_operations_t operations = {};
-        operations.flags = ROCKETNET_TRANSPORT_STAGED;
+        operations.flags = ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_REFLUSHES;   // XDP's declared flush capability
         operations.flush = rocketnet_server_transport_test_count_flush;
         transport->io.operations = &operations;
         transport->io.instance = &flushes;

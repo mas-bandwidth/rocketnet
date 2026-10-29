@@ -1622,7 +1622,7 @@ static void gso_receive_drops( void * transport, uint64_t * too_short, uint64_t 
 }
 
 static const rocketnet_server_transport_io_operations_t gso_operations = {
-    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
+    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL
@@ -1670,7 +1670,7 @@ static void io_uring_receive_drops( void * transport, uint64_t * too_short, uint
 }
 
 static const rocketnet_server_transport_io_operations_t io_uring_operations = {
-    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
+    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
     NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL
@@ -1742,7 +1742,7 @@ static uint64_t xdp_send_failures( void * transport )
 }
 
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
-    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS,
+    ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
     xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL
