@@ -62,15 +62,34 @@ static const rn_unreliable_entry_t * rn_unreliable_entry( const rn_endpoint_t * 
     return &region->unreliable_ring[( endpoint->unreliable_ring_head + position ) % region->unreliable_ring_entries];
 }
 
-// the first live entry at or after *position (from the head), RN_DESCRIPTOR_NONE past the end
-static uint32_t rn_unreliable_scan( const rn_endpoint_t * endpoint, uint32_t * position )
+// A walk over the entries from the head as it stood when the walk began:
+// removals during the walk turn entries into tombstones and may move the
+// head past them, but no entry moves, and nothing is pushed mid-walk.
+
+struct rn_unreliable_walk_t
 {
-    while ( *position < endpoint->unreliable_ring_used )
+    uint32_t base;
+    uint32_t span;
+    uint32_t step;
+};
+
+static void rn_unreliable_walk_begin( const rn_endpoint_t * endpoint, rn_unreliable_walk_t * walk )
+{
+    walk->base = endpoint->unreliable_ring_head;
+    walk->span = endpoint->unreliable_ring_used;
+    walk->step = 0;
+}
+
+// the next live descriptor of the walk, RN_DESCRIPTOR_NONE at its end
+static uint32_t rn_unreliable_walk_next( const rn_endpoint_t * endpoint, rn_unreliable_walk_t * walk )
+{
+    const rn_region_t * region = endpoint->region;
+    while ( walk->step < walk->span )
     {
-        const rn_unreliable_entry_t * entry = rn_unreliable_entry( endpoint, *position );
-        if ( rn_unreliable_entry_live( endpoint->region, entry ) )
+        const rn_unreliable_entry_t * entry = &region->unreliable_ring[( walk->base + walk->step ) % region->unreliable_ring_entries];
+        walk->step++;
+        if ( rn_unreliable_entry_live( region, entry ) )
             return entry->descriptor;
-        ( *position )++;
     }
 
     return RN_DESCRIPTOR_NONE;
@@ -495,7 +514,6 @@ uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_
 
         descriptor->bytes = (uint32_t) bytes;
         descriptor->serial = serial;
-        // tla/RNChannelQueues.tla EnqueueUnreliable: the newest ticket, the FIFO's tail
         rn_descriptor_enqueue_stamp( region, descriptor );
 
         if ( endpoint->pending_type == ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED )
@@ -1145,24 +1163,20 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     return 0;
 }
 
-static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors, uint32_t * generations, uint32_t * epochs )
+static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors, uint32_t * generations )
 {
     // the unreliable records, packed several to a packet: the items from the
     // queue head, up to a large sequenced record (sent alone, after these)
 
     rn_region_t * region = endpoint->region;
     int count = 0;
-    uint32_t position = 0;
+    rn_unreliable_walk_t walk;
+    rn_unreliable_walk_begin( endpoint, &walk );
     uint32_t d;
-    while ( ( d = rn_unreliable_scan( endpoint, &position ) ) != RN_DESCRIPTOR_NONE && count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS )
+    while ( count < ROCKETNET_PACKET_BUILDER_MAX_RECORDS && ( d = rn_unreliable_walk_next( endpoint, &walk ) ) != RN_DESCRIPTOR_NONE )
     {
         const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        position++;
 
-        // tla/RNChannelQueues.tla StaleEpoch and Expire: an entry of an earlier
-        // epoch is never written, and the rest keep their order
-        if ( descriptor->queue_epoch != region->schedule_epoch )
-            continue;
 
         if ( rn_endpoint_large_sequenced( endpoint, descriptor ) )
             break; // send the preceding small records first
@@ -1181,7 +1195,6 @@ static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_ite
 
         descriptors[count] = d;
         generations[count] = descriptor->generation;
-        epochs[count] = descriptor->queue_epoch;
         count++;
     }
 
@@ -1227,8 +1240,7 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
             rn_packet_item_t items[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
             uint32_t descriptors[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
             uint32_t generations[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            uint32_t epochs[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            const int count = rn_endpoint_unreliable_items( endpoint, items, descriptors, generations, epochs );
+            const int count = rn_endpoint_unreliable_items( endpoint, items, descriptors, generations );
 
             const int packets = rn_packet_builder_write( &endpoint->unreliable_builder, items, count, &payload, 1 );
             if ( packets == 0 )
@@ -1265,7 +1277,6 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
 
             uint32_t taken_index[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
             uint32_t taken_generation[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
-            uint32_t taken_epoch[ROCKETNET_PACKET_BUILDER_MAX_RECORDS];
             int taken_count = 0;
             for ( int i = 0; i < count; i++ )
             {
@@ -1274,22 +1285,19 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
 
                 taken_index[taken_count] = descriptors[i];
                 taken_generation[taken_count] = generations[i];
-                taken_epoch[taken_count] = epochs[i];
                 taken_count++;
             }
 
-            uint32_t position = 0;
+            rn_unreliable_walk_t walk;
+            rn_unreliable_walk_begin( endpoint, &walk );
             int taken = 0;
             uint32_t d;
-            while ( taken < taken_count && ( d = rn_unreliable_scan( endpoint, &position ) ) != RN_DESCRIPTOR_NONE )
+            while ( taken < taken_count && ( d = rn_unreliable_walk_next( endpoint, &walk ) ) != RN_DESCRIPTOR_NONE )
             {
                 const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-                position++;
 
                 const bool match = d == taken_index[taken] &&
                                    descriptor->generation == taken_generation[taken] &&
-                                   descriptor->queue_epoch == taken_epoch[taken] &&
-                                   descriptor->queue_epoch == region->schedule_epoch &&
                                    rn_descriptor_schedule_live( descriptor );
                 if ( match )
                 {

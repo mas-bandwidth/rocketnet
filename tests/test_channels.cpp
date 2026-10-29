@@ -1982,37 +1982,28 @@ static void rn_soak_reset( rn_soak_side_t * side )
     side->receipt_count = 0;
 }
 
-// The soak's own copy of layer 6's flat FIFO: live descriptors of one channel
-// ordered by enqueue_ticket over the flat descriptor array. A descriptor at
-// or past the lazy pool's watermark was never taken, so its bytes are not
-// state (tla/RNLazyPool.tla): the scan stops there, as layer 6's does.
+// The soak's own copy of layer 6's reliable FIFO: descriptors of one channel
+// linked through queue_next, appended at the tail and popped at the head.
 
-static void rn_soak_queue_sync( rn_region_t * region, uint32_t channel_index )
+static void rn_soak_queue_append( rn_region_t * region, uint32_t channel_index, uint32_t d )
 {
     rn_channel_send_t * channel = &region->channel_send[channel_index];
-    channel->queue_head = RN_DESCRIPTOR_NONE;
-    channel->queue_tail = RN_DESCRIPTOR_NONE;
+    region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
+    if ( channel->queue_tail != RN_DESCRIPTOR_NONE )
+        region->send_descriptors[channel->queue_tail].queue_next = d;
+    else
+        channel->queue_head = d;
+    channel->queue_tail = d;
+}
 
-    uint32_t head_ticket = 0, tail_ticket = 0;
-
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
-    {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_descriptor_schedule_live( descriptor ) || descriptor->channel != channel_index )
-            continue;
-
-        if ( channel->queue_head == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < head_ticket )
-        {
-            channel->queue_head = d;
-            head_ticket = descriptor->enqueue_ticket;
-        }
-
-        if ( channel->queue_tail == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket > tail_ticket )
-        {
-            channel->queue_tail = d;
-            tail_ticket = descriptor->enqueue_ticket;
-        }
-    }
+static void rn_soak_queue_pop( rn_region_t * region, uint32_t channel_index )
+{
+    rn_channel_send_t * channel = &region->channel_send[channel_index];
+    const uint32_t d = channel->queue_head;
+    channel->queue_head = region->send_descriptors[d].queue_next;
+    region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
+    if ( channel->queue_head == RN_DESCRIPTOR_NONE )
+        channel->queue_tail = RN_DESCRIPTOR_NONE;
 }
 
 static void rn_soak_send( rn_soak_side_t * side )
@@ -2087,11 +2078,11 @@ static void rn_soak_send( rn_soak_side_t * side )
 
         check( offset == (uint32_t) bytes );
 
-        // queue it on its channel's flat FIFO (layer 6's ticket sequence)
+        // queue it on its channel's reliable FIFO (layer 6's links)
 
         rn_channel_send_t * channel = &region->channel_send[descriptor->channel];
         rn_descriptor_enqueue_stamp( region, descriptor );
-        rn_soak_queue_sync( region, descriptor->channel );
+        rn_soak_queue_append( region, descriptor->channel, (uint32_t) ( descriptor - region->send_descriptors ) );
         channel->queued[descriptor->priority]++;
         descriptor->ordering = channel->ordered_write++;
         channel->sequenced_write = 0;
@@ -2129,7 +2120,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
 
             descriptor->enqueue_ticket = 0;
             descriptor->schedule_flags = 0;
-            rn_soak_queue_sync( region, c );
+            rn_soak_queue_pop( region, c );
             channel->queued[descriptor->priority]--;
             descriptor->first_number = side->next_number;
             descriptor->fragments = (uint16_t) fragments;

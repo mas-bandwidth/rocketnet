@@ -996,65 +996,40 @@ static uint32_t rn_channel_live_count( const rn_channel_send_t * send )
     return (uint32_t) send->queued[0] + send->queued[1] + send->queued[2] + send->queued[3];
 }
 
-// The channel FIFO is the flat send_descriptors array ordered by
-// enqueue_ticket (tla/RNChannelQueues.tla's sequence): the head is the live
-// reliable descriptor of this channel with the smallest ticket, and the next
-// entry is the smallest ticket after a given one. No descriptor points at
-// another descriptor.
+// A channel's reliable FIFO links its queued descriptors by index through
+// queue_next: append at the tail, CONFIG at the head once per connection, and
+// numbering pops the head, all O(1). Nothing leaves from the middle: a
+// cancel frees the pending descriptor before it is queued, and a reset clears
+// every queue.
 
-static bool rn_channel_queue_member( const rn_send_descriptor_t * descriptor, uint32_t channel )
-{
-    return descriptor->in_use && descriptor->channel == channel &&
-           descriptor->reliability >= ROCKETNET_CHANNEL_TYPE_RELIABLE &&
-           descriptor->reliability <= ROCKETNET_CHANNEL_TYPE_RELIABLE_SEQUENCED &&
-           rn_descriptor_schedule_live( descriptor );
-}
-
-static uint32_t rn_channel_queue_next_live( const rn_region_t * region, uint32_t channel, uint32_t after_ticket )
-{
-    uint32_t best = RN_DESCRIPTOR_NONE;
-    uint32_t best_ticket = 0;
-
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
-    {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_channel_queue_member( descriptor, channel ) || !rn_descriptor_schedule_live( descriptor ) )
-            continue;
-        if ( descriptor->enqueue_ticket <= after_ticket )
-            continue;
-
-        if ( best == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket < best_ticket )
-        {
-            best = d;
-            best_ticket = descriptor->enqueue_ticket;
-        }
-    }
-
-    return best;
-}
-
-static void rn_channel_queue_sync( rn_region_t * region, uint32_t channel )
+static void rn_channel_queue_append( rn_region_t * region, uint32_t channel, uint32_t d )
 {
     rn_channel_send_t * send = region->channel_send + channel;
-    send->queue_head = rn_channel_queue_next_live( region, channel, 0 );
+    region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
+    if ( send->queue_tail != RN_DESCRIPTOR_NONE )
+        region->send_descriptors[send->queue_tail].queue_next = d;
+    else
+        send->queue_head = d;
+    send->queue_tail = d;
+}
 
-    uint32_t tail = RN_DESCRIPTOR_NONE;
-    uint32_t tail_ticket = 0;
+static void rn_channel_queue_push_front( rn_region_t * region, uint32_t channel, uint32_t d )
+{
+    rn_channel_send_t * send = region->channel_send + channel;
+    region->send_descriptors[d].queue_next = send->queue_head;
+    send->queue_head = d;
+    if ( send->queue_tail == RN_DESCRIPTOR_NONE )
+        send->queue_tail = d;
+}
 
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
-    {
-        const rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_channel_queue_member( descriptor, channel ) || !rn_descriptor_schedule_live( descriptor ) )
-            continue;
-
-        if ( tail == RN_DESCRIPTOR_NONE || descriptor->enqueue_ticket > tail_ticket )
-        {
-            tail = d;
-            tail_ticket = descriptor->enqueue_ticket;
-        }
-    }
-
-    send->queue_tail = tail;
+static void rn_channel_queue_pop( rn_region_t * region, uint32_t channel )
+{
+    rn_channel_send_t * send = region->channel_send + channel;
+    const uint32_t d = send->queue_head;
+    send->queue_head = region->send_descriptors[d].queue_next;
+    region->send_descriptors[d].queue_next = RN_DESCRIPTOR_NONE;
+    if ( send->queue_head == RN_DESCRIPTOR_NONE )
+        send->queue_tail = RN_DESCRIPTOR_NONE;
 }
 
 static uint32_t rn_channel_head_generation( const rn_channels_t * channels, uint32_t channel )
@@ -1141,59 +1116,6 @@ static bool rn_ready_remove_named( rn_channels_t * channels, uint32_t channel, u
 static void rn_ready_push_front( rn_channels_t * channels, uint32_t channel )
 {
     rn_ready_link( channels, channel, true );
-}
-
-// Rebuild one channel's flat FIFO. Live descriptors keep
-// their ticket order and receive a fresh increasing ticket range, so a CONFIG
-// spliced at the head holds the smallest ticket. One pass over this channel's
-// entries, never per emitted record. Restamping parks each live descriptor
-// under a sentinel channel while it is processed, so a fresh ticket (issued
-// ahead of every live one) is never selected again in the same pass.
-
-static void rn_channel_compact_one( rn_channels_t * channels, uint32_t channel )
-{
-    rn_region_t * region = channels->region;
-    rn_channel_send_t * send = region->channel_send + channel;
-    const uint16_t parked_channel = 0xFFFFu;
-    rocketnet_assert( channel < parked_channel );
-
-    for ( uint32_t d = 0; d < region->descriptors_fresh; d++ )
-    {
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        if ( !rn_channel_queue_member( descriptor, channel ) )
-            continue;
-
-        channels->schedule_work++;
-    }
-
-    uint32_t after = 0;
-    uint32_t d;
-    while ( ( d = rn_channel_queue_next_live( region, channel, after ) ) != RN_DESCRIPTOR_NONE )
-    {
-        rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
-        after = descriptor->enqueue_ticket;
-        descriptor->channel = parked_channel;
-        rn_descriptor_enqueue_stamp( region, descriptor );
-    }
-
-    for ( uint32_t parked = 0; parked < region->descriptors_fresh; parked++ )
-    {
-        if ( region->send_descriptors[parked].channel == parked_channel )
-            region->send_descriptors[parked].channel = (uint16_t) channel;
-    }
-
-    rn_channel_queue_sync( region, channel );
-
-    if ( rn_channel_live_count( send ) == 0 && ( send->ready_ticket != 0 || channels->ready_head == channel ) )
-    {
-        if ( send->ready_ticket == 0 )
-        {
-            send->ready_ticket = 1;
-            send->ready_generation = 0;
-        }
-
-        rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
-    }
 }
 
 // tla/RNChannel.tla RefuseSend
@@ -1303,7 +1225,7 @@ bool rn_channels_finish( struct rn_channels_t * channels, uint32_t bytes )
     const bool was_empty = rn_channel_live_count( send ) == 0;
     send->queued[descriptor->priority]++;
 
-    rn_channel_queue_sync( region, channel );
+    rn_channel_queue_append( region, channel, d );
 
     if ( was_empty )
         rn_ready_push( channels, channel );
@@ -1379,18 +1301,15 @@ bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct roc
     descriptor->priority = ROCKETNET_PRIORITY_IMMEDIATE;
     descriptor->ordering = 0;
 
-    // the head of channel 0's FIFO, and channel 0 at the head of the turns.
-    // Rebase this channel only, once: CONFIG receives the smallest ticket
-    // and the messages already queued keep their order behind it.
+    // the head of channel 0's FIFO, and channel 0 at the head of the turns:
+    // the messages already queued keep their order behind it
 
     rn_channel_send_t * send = region->channel_send;
 
-    descriptor->schedule_flags = (uint16_t) RN_SCHEDULE_QUEUED;
-    descriptor->enqueue_ticket = 1;
-    descriptor->queue_epoch = region->schedule_epoch;
+    rn_descriptor_enqueue_stamp( region, descriptor );
     send->queued[descriptor->priority]++;
 
-    rn_channel_compact_one( channels, 0 );
+    rn_channel_queue_push_front( region, 0, d );
 
     if ( send->ready_ticket != 0 )
         rn_ready_remove_named( channels, 0, send->ready_ticket, send->ready_generation );
@@ -1680,7 +1599,8 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         rn_channel_send_t * send = region->channel_send + channel;
         if ( send->queue_head == RN_DESCRIPTOR_NONE )
         {
-            rn_channel_compact_one( channels, channel );
+            // a ready channel with nothing queued leaves the turns
+            rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
             continue;
         }
 
@@ -1712,14 +1632,14 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
         if ( !rn_ready_remove_named( channels, channel, ready_ticket, ready_generation ) && send->ready_ticket != 0 )
             rn_ready_remove_named( channels, channel, send->ready_ticket, send->ready_generation );
 
-        // dequeue: the descriptor leaves the flat FIFO by clearing its ticket
+        // dequeue: the descriptor leaves its channel's FIFO
 
         if ( region->send_descriptors[d].priority < 4 && send->queued[region->send_descriptors[d].priority] > 0 )
             send->queued[region->send_descriptors[d].priority]--;
 
+        rn_channel_queue_pop( region, channel );
         region->send_descriptors[d].enqueue_ticket = 0;
         region->send_descriptors[d].schedule_flags = 0;
-        rn_channel_queue_sync( region, channel );
 
         // channels take turns: this one rejoins the back if it has more
 
