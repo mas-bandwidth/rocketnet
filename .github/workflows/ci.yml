@@ -322,6 +322,30 @@ jobs:
         if: runner.os == 'Linux'
         run: bash tools/check_make_jobs.sh
 
+      # tools/check_client_server_words.py exits 1 when a tracked file's path
+      # or text names a client-to-client party outside its listed exceptions
+      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
+      # hold the red controls. It reads files only, so one leg per Linux row
+      # runs it.
+      - name: Check client/server words
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: |
+          python3 tools/test_check_client_server_words.py
+          python3 tools/check_client_server_words.py
+
+      # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
+      # pointer-linked or index-linked list: it lexes every tracked C/C++
+      # source outside sodium/ and refuses a self-pointer member, a cursor
+      # replaced by a field read through itself, or a field store followed by
+      # the cursor move that makes it a chain. OS enumeration walks pass only
+      # as rows of the "External ABI traversal sites" table of
+      # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
+      - name: Check no owned linked lists
+        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
+        run: |
+          python3 tools/check_no_owned_linked_lists.py --self-test
+          python3 tools/check_no_owned_linked_lists.py
+
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
       # state machines and the in-memory simulator, parallel, 120s kill. ./bin/functional is the driver matrix. On this unprivileged
@@ -377,14 +401,16 @@ jobs:
           done
           exit $failed
 
+      # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
-        if: contains(matrix.leg, 'b')
+        if: runner.os != 'Linux' && contains(matrix.leg, 'b')
         run: ./bin/test
 
       # The unit suite opens no socket: ./bin/test runs under strace and the
       # check fails, naming the first opener, on any socket() call
-      # (tools/check_unit_no_sockets.sh).
-      - name: Unit suite opens no socket
+      # (tools/check_unit_no_sockets.sh). The suite's output and verdict print
+      # as in the plain run.
+      - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
         if: runner.os == 'Linux' && contains(matrix.leg, 'b')
         run: bash tools/check_unit_no_sockets.sh ./bin/test
 
@@ -622,36 +648,12 @@ jobs:
         if: runner.os == 'Linux' && contains(matrix.leg, 'a')
         run: python3 tools/check_platform_policy.py
 
-      # tools/check_client_server_words.py exits 1 when a tracked file's path
-      # or text names a client-to-client party outside its listed exceptions
-      # (FILES_ALLOWED, SPANS_ALLOWED): rocketnet is client/server. Its tests
-      # hold the red controls. It reads files only, so one leg per Linux row
-      # runs it.
-      - name: Check client/server words
-        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
-        run: |
-          python3 tools/test_check_client_server_words.py
-          python3 tools/check_client_server_words.py
-
       # The static source-audit binary reads the repository's own source,
       # header and doc files (no socket, no thread, no network), so one Linux
       # leg runs it beside the client/server-words check.
       - name: Run the source audit
         if: runner.os == 'Linux' && contains(matrix.leg, 'a')
         run: ./bin/source_audit
-
-      # tools/check_no_owned_linked_lists.py exits 1 when RocketNet owns a
-      # pointer-linked or index-linked list: it lexes every tracked C/C++
-      # source outside sodium/ and refuses a self-pointer member, a cursor
-      # replaced by a field read through itself, or a field store followed by
-      # the cursor move that makes it a chain. OS enumeration walks pass only
-      # as rows of the "External ABI traversal sites" table of
-      # docs/SEQUENCE-BUFFERS.md. --self-test holds the red and green controls.
-      - name: Check no owned linked lists
-        if: runner.os == 'Linux' && contains(matrix.leg, 'a')
-        run: |
-          python3 tools/check_no_owned_linked_lists.py --self-test
-          python3 tools/check_no_owned_linked_lists.py
 
       - name: Check export source gate
         if: runner.os == 'Linux'

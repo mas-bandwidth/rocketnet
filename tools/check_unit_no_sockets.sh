@@ -4,7 +4,8 @@
 # strace -f -e trace=socket,execve and exits nonzero, naming the first opener
 # (the case that ran it, read from the worker's execve, and the socket call),
 # when any process of the suite calls socket(). execve is traced only to name
-# the case. A failing suite fails the check too.
+# the case. A failing suite fails the check too, and the suite's own output
+# prints, so on Linux CI this run is the plain unit run as well.
 #
 # usage: tools/check_unit_no_sockets.sh [binary]   (default ./bin/test)
 
@@ -25,7 +26,8 @@ trace=$(mktemp)
 trap 'rm -f -- "$trace"' EXIT
 
 suite=0
-strace -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" >/dev/null 2>&1 || suite=$?
+# the suite prints as it does unwrapped: on Linux this is the plain run
+strace -f -qq -s 256 -e trace=socket,execve -o "$trace" "$binary" || suite=$?
 
 if [ ! -s "$trace" ]; then
     echo "check_unit_no_sockets: strace wrote no trace for $binary"

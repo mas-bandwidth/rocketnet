@@ -48,6 +48,7 @@
 
 #if defined( __APPLE__ )
 #include <mach-o/dyld.h>
+#include <sys/sysctl.h>
 #endif // #if defined( __APPLE__ )
 
 #if defined( _WIN32 )
@@ -484,12 +485,105 @@ inline bool suite_file_exists( const std::string & path )
 #endif // #if defined( _WIN32 )
 }
 
+// The memory the suite's cases may use at once, in bytes, or 0 when unknown.
+// On Linux it is the tightest memory.high or memory.max of this process's
+// cgroup and its parents (a CI runner service is capped there: 10 GiB high
+// and 12 GiB max on space, 2026-10-29), else MemAvailable; on macOS the
+// physical memory; on Windows the available physical memory.
+
+#if defined( __linux__ )
+inline uint64_t suite_cgroup_limit_bytes( const std::string & path )
+{
+    uint64_t limit = 0;
+    for ( const char * name : { "memory.high", "memory.max" } )
+    {
+        FILE * file = fopen( ( path + "/" + name ).c_str(), "r" );
+        if ( !file )
+            continue;
+        unsigned long long value = 0;
+        if ( fscanf( file, "%llu", &value ) == 1 && value > 0 && ( limit == 0 || value < limit ) )
+            limit = (uint64_t) value; // "max" reads no number: no limit
+        fclose( file );
+    }
+    return limit;
+}
+#endif // #if defined( __linux__ )
+
+inline uint64_t suite_memory_budget_bytes()
+{
+#if defined( __linux__ )
+    uint64_t budget = 0;
+    FILE * file = fopen( "/proc/self/cgroup", "r" );
+    if ( file )
+    {
+        char line[4096];
+        while ( fgets( line, sizeof( line ), file ) )
+        {
+            if ( strncmp( line, "0::", 3 ) != 0 )
+                continue; // cgroup v2 only
+            std::string path = "/sys/fs/cgroup" + std::string( line + 3 );
+            while ( !path.empty() && ( path.back() == '\n' || path.back() == '/' ) )
+                path.pop_back();
+            for ( ; path.size() > strlen( "/sys/fs/cgroup" ); path.erase( path.rfind( '/' ) ) )
+            {
+                const uint64_t limit = suite_cgroup_limit_bytes( path );
+                if ( limit > 0 && ( budget == 0 || limit < budget ) )
+                    budget = limit;
+            }
+        }
+        fclose( file );
+    }
+    if ( budget > 0 )
+        return budget;
+
+    file = fopen( "/proc/meminfo", "r" );
+    if ( file )
+    {
+        char line[256];
+        unsigned long long kib = 0;
+        while ( fgets( line, sizeof( line ), file ) )
+            if ( sscanf( line, "MemAvailable: %llu kB", &kib ) == 1 )
+                break;
+        fclose( file );
+        return (uint64_t) kib * 1024;
+    }
+    return 0;
+#elif defined( __APPLE__ )
+    uint64_t bytes = 0;
+    size_t size = sizeof( bytes );
+    return sysctlbyname( "hw.memsize", &bytes, &size, NULL, 0 ) == 0 ? bytes : 0;
+#elif defined( _WIN32 )
+    MEMORYSTATUSEX status;
+    status.dwLength = sizeof( status );
+    return GlobalMemoryStatusEx( &status ) ? (uint64_t) status.ullAvailPhys : 0;
+#else
+    return 0;
+#endif // #if defined( __linux__ )
+}
+
+// The memory one job is planned at. The heaviest unit cases peak at 2.5 GiB
+// (the 1000-client disconnect and mass-join cases) and most at a few MiB.
+// Measured on space under a 10 GiB high / 12 GiB max cgroup, the Debug unit
+// suite ran 48 s at 4 jobs, 36 s at 6, 44 s at 8 and 78 s at 12 (2026-10-29):
+// past 6 the cgroup reclaims. 1.6 GiB a job gives 6 there and 11 under the
+// rocketnet runners' 18 GiB.
+#define SUITE_JOB_MEMORY_BYTES ( 1638ull * 1024 * 1024 )
+
+// One job per core, as many as the memory budget holds;
+// ROCKETNET_TEST_JOBS sets the count outright.
 inline int suite_job_count()
 {
     unsigned jobs = std::thread::hardware_concurrency();
     if ( jobs == 0 )
     {
         jobs = 1;
+    }
+
+    const uint64_t budget = suite_memory_budget_bytes();
+    if ( budget > 0 )
+    {
+        const uint64_t fit = budget / SUITE_JOB_MEMORY_BYTES;
+        jobs = (unsigned) ( std::min )( (uint64_t) jobs, ( std::max )( fit, (uint64_t) 1 ) );
     }
 
     char env[256];
@@ -500,11 +594,6 @@ inline int suite_job_count()
         {
             jobs = (unsigned) requested;
         }
-    }
-
-    if ( jobs > 8 )
-    {
-        jobs = 8;
     }
 
     return (int) jobs;

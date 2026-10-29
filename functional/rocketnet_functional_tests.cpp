@@ -6216,7 +6216,14 @@ void rocketnet_test_server_transport_io_pin_xdp()
         rocketnet_server_socket_forbid_commit();
 
         rocketnet_check( natural_server == NULL );
+        // a production build cannot lift the barrier (allow is DEV only), so
+        // there the barrier's refusal is the one named; the pre-flight's own
+        // answer is checked directly below
+#if ROCKETNET_DEV
         rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+#else
+        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
+#endif // #if ROCKETNET_DEV
         rocketnet_check( strstr( rocketnet_test_captured_log, "refused: xdp" ) != NULL );
     }
 
@@ -6346,7 +6353,14 @@ void rocketnet_test_server_transport_io_ladder_fall()
         rocketnet_check( natural_server );
         rocketnet_check( strcmp( rocketnet_server_transport_io_name( natural_server ), "gso" ) == 0 );
         rocketnet_check( rocketnet_server_transport_port( natural_server ) != 0 );
+        // a production build cannot lift the barrier (allow is DEV only), so
+        // there the barrier's refusal is the one named; the pre-flight's own
+        // answer is checked directly below
+#if ROCKETNET_DEV
         rocketnet_check( strstr( rocketnet_test_captured_log, "xdp pre-flight failed: this machine is not provisioned for the XDP data plane" ) != NULL );
+#else
+        rocketnet_check( strstr( rocketnet_test_captured_log, "xdp create refused: this process forbids committing an XDP data plane" ) != NULL );
+#endif // #if ROCKETNET_DEV
         rocketnet_check( strstr( rocketnet_test_captured_log, "server transport ladder granted gso after refusals: xdp" ) != NULL );
         rocketnet_test_xdp_server_destroy( natural_server );
     }
