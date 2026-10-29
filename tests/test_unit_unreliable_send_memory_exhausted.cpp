@@ -86,7 +86,7 @@ static void run_unreliable_exhaust_case( enum rocketnet_reliability_t probe_reli
     rocketnet_client_t * clients[2];
     for ( int i = 0; i < 2; i++ )
     {
-        struct rocketnet_client_test_config_t client_config;
+        struct rocketnet_client_config_t client_config;
         check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
         client_config.transport = "loopback";
         client_config.loopback_hub = rocketnet_test_loopback_hub();

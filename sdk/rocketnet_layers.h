@@ -31,6 +31,8 @@ extern "C"
 #define ROCKETNET_CLIENT_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, loopback_hub ) + sizeof( void * ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_2 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, handshakes_per_update ) + sizeof( int ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, loopback_hub ) + sizeof( void * ), sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, step_driven ) + sizeof( bool ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, server_secret_key ) + ROCKETNET_SERVER_SECRET_KEY_BYTES, sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and unfragmented payload limits.
 /// Internal; fragments retain their separate, unrounded stride bound.

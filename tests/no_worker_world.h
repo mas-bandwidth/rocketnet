@@ -111,7 +111,7 @@ static void no_worker_clients_create( no_worker_world_t * world, int num_clients
 
     for ( int i = 0; i < num_clients; i++ )
     {
-        rocketnet_client_test_config_t config;
+        rocketnet_client_config_t config;
         check( rocketnet_client_default_config( &config ) == ROCKETNET_STATUS_OK );
         config.transport = "loopback";
         config.loopback_hub = rocketnet_test_loopback_hub();

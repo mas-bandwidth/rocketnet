@@ -186,7 +186,7 @@ static void test_client_mutex_create_failed_reached()
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     reached_token( server, &identity, token );
 
-    rocketnet_client_test_config_t config;
+    rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.loopback_hub = rocketnet_test_loopback_hub();
@@ -265,7 +265,7 @@ static void test_client_connect_thread_create_failed_reached()
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     reached_token( server, &identity, token );
 
-    rocketnet_client_test_config_t config;
+    rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.loopback_hub = rocketnet_test_loopback_hub();
@@ -332,7 +332,7 @@ static enum rocketnet_client_state_t reached_handshake_stall( enum rocketnet_cli
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     reached_token( server, &identity, token );
 
-    rocketnet_client_test_config_t config;
+    rocketnet_client_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
     config.loopback_hub = rocketnet_test_loopback_hub();

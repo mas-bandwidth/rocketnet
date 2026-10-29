@@ -782,7 +782,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
     check( defaults.disconnect_packets_per_update == ROCKETNET_DEFAULT_SERVER_DISCONNECT_PACKETS_PER_UPDATE );
     check( defaults.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     check( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2 );
-    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 == sizeof( defaults ) );
+    check( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3 && ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4 && ROCKETNET_SERVER_CONFIG_BYTES_4 == sizeof( defaults ) );
 
     struct rocketnet_server_config_t old_caller;
     memset( &old_caller, 0xCD, sizeof( old_caller ) );
@@ -953,7 +953,7 @@ static void public_config_server( struct rocketnet_server_config_t * config, con
     config->loopback_hub = rocketnet_test_loopback_hub();
 }
 
-static void public_config_client( struct rocketnet_client_test_config_t * config )
+static void public_config_client( struct rocketnet_client_config_t * config )
 {
     check( rocketnet_client_default_config( config ) == ROCKETNET_STATUS_OK );
 
@@ -1006,7 +1006,7 @@ static bool public_config_pair_connects( int server_loss_percent )
     char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
     public_config_token( server, &identity, token );
 
-    struct rocketnet_client_test_config_t client_config;
+    struct rocketnet_client_config_t client_config;
     public_config_client( &client_config );
     create_status = ROCKETNET_STATUS_OK;
     struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );

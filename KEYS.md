@@ -70,10 +70,16 @@ which tokens the server accepts, so it comes from the deployment, not from the
 client.
 
 **Each server object makes its own X25519 keypair.** `rocketnet_server_create`
-generates it; there is no config field or environment variable that supplies
-it. Read the public key with `rocketnet_server_public_key`
-(`ROCKETNET_SERVER_PUBLIC_KEY_BYTES`, 32), while running or stopped. The secret
-key never leaves the server object, and `rocketnet_server_destroy` wipes it.
+generates it when the config's `server_secret_key` is all zeros, the default.
+A backend that seals tokens to a fixed server public key, or separate processes
+that must agree on one, supply the secret key instead in `server_secret_key`
+(`ROCKETNET_SERVER_SECRET_KEY_BYTES`, 32): create copies it and derives the
+public key. It has no environment variable. Read the public key with
+`rocketnet_server_public_key` (`ROCKETNET_SERVER_PUBLIC_KEY_BYTES`, 32), while
+running or stopped. Wipe the caller's copy of a supplied secret once create
+returns; the server's copy never leaves the server object, and
+`rocketnet_server_destroy` wipes it. A production build refuses the published
+development server key at start with `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`.
 After `rocketnet_server_start`, read the served addresses with
 `rocketnet_server_ipv4_address` and `rocketnet_server_ipv6_address`, and
 register the addresses and the public key with the backend over an

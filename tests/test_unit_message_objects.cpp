@@ -4277,7 +4277,7 @@ static void test_same_client_id_reconnect_in_one_update_resets_the_slot()
 
     for ( int i = 0; i < 2; i++ )
     {
-        rocketnet_client_test_config_t client_config;
+        rocketnet_client_config_t client_config;
         rocketnet_client_default_config( &client_config );
         client_config.transport = "loopback";
         client_config.loopback_hub = rocketnet_test_loopback_hub();

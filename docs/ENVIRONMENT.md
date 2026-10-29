@@ -39,9 +39,9 @@ the public config structs:
 The `ROCKETNET_DEV_` network simulator variables exist in a development
 library only and are read at create; in code, the same settings are
 `rocketnet_client_network_simulator` and `rocketnet_server_network_simulator`.
-Development tests, tools and benches may set the step-driven client and the
-receive stamp clock in code through the private `sdk/rocketnet_testing.h`
-header. Neither setting is a public API; production client I/O remains
+In code, the step-driven client and the receive stamp clock are the public
+client config's `step_driven` and `time_callback`, development builds only; a
+production build refuses either at create, and production client I/O remains
 worker-owned.
 
 Process-wide and platform-specific controls:

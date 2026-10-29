@@ -288,7 +288,7 @@ static void test_public_message_limit_unreliable_up_to_max_message_bytes()
     check( server != NULL );
     check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_client_test_config_t client_config;
+    rocketnet_client_config_t client_config;
     rocketnet_client_default_config( &client_config );
     client_config.transport = "loopback";
     client_config.loopback_hub = rocketnet_test_loopback_hub();

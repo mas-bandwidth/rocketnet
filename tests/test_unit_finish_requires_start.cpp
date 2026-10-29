@@ -118,7 +118,7 @@ static void finish_world_create( finish_world_t * world, int max_clients, int nu
     world->num_clients = num_clients;
     for ( int i = 0; i < num_clients; i++ )
     {
-        rocketnet_client_test_config_t client_config;
+        rocketnet_client_config_t client_config;
         rocketnet_client_default_config( &client_config );
         client_config.transport = "loopback";
         client_config.loopback_hub = world->hub;

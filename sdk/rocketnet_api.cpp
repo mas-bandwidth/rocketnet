@@ -267,7 +267,7 @@ static bool rn_transport_env( const char * side, void * transport, const struct 
 
 static bool rn_client_split( const struct rocketnet_client_config_t * config, bool read_env,
                              struct rocketnet_client_transport_config_t * transport, struct rocketnet_message_config_t * message, uint32_t * kbps, enum rocketnet_status_t * failure = NULL,
-                             const struct rocketnet_client_testing_t * testing = NULL, uint64_t * memory_budget = NULL )
+                             uint64_t * memory_budget = NULL )
 {
     struct rocketnet_client_config_t defaults;
 
@@ -293,13 +293,23 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
     transport->state_change_callback = config->state_change_callback;
     transport->loopback_hub = config->loopback_hub;
 
-    if ( testing )
-    {
-        transport->time_callback = testing->time_callback;
+    // the step-driven client and its receive stamp clock are development
+    // only: a production build refuses either one set (sdk/rocketnet.h)
+
 #if ROCKETNET_DEV
-        transport->step_driven = testing->step_driven ? 1 : 0;
-#endif // #if ROCKETNET_DEV
+    transport->time_callback = config->time_callback;
+    transport->step_driven = config->step_driven ? 1 : 0;
+#else // !ROCKETNET_DEV
+    if ( config->step_driven || config->time_callback )
+    {
+        rocketnet_error( "client config refused: step_driven and time_callback are development only; a production build (ROCKETNET_DEV=0) takes neither" );
+
+        if ( failure )
+            *failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+
+        return false;
     }
+#endif // #if ROCKETNET_DEV
 
     if ( memory_budget )
         *memory_budget = 0;
@@ -372,6 +382,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->max_clients = config->max_clients;
     memcpy( transport->packet_filter, config->packet_filter, sizeof( transport->packet_filter ) );
     memcpy( transport->backend_public_key, config->backend_public_key, sizeof( transport->backend_public_key ) );
+    memcpy( transport->server_secret_key, config->server_secret_key, sizeof( transport->server_secret_key ) );
     transport->num_xdp_queues = config->num_xdp_queues;
     transport->num_os_cpus = config->num_os_cpus;
     transport->max_fragmented_messages = config->max_fragmented_messages;
@@ -642,6 +653,9 @@ static constexpr size_t rn_client_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, reliable_message_timeout_ms ),
     ROCKETNET_CLIENT_CONFIG_BYTES_1,
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, loopback_hub ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, time_callback ),
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, step_driven ),
+    ROCKETNET_CLIENT_CONFIG_BYTES_3,
 };
 static_assert( rn_client_config_field_ends[sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_client_config_t ), "client config field ends" );
 
@@ -676,6 +690,7 @@ static constexpr size_t rn_server_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, disconnect_packets_per_update ),
     ROCKETNET_SERVER_CONFIG_BYTES_2,
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, loopback_hub ),
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, server_secret_key ),
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
 
@@ -901,7 +916,7 @@ size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t 
 // tla/ClientSession.tla Create: a fresh object, DISCONNECTED, with no token
 // and no connection, its resolved config and one memory block.
 
-static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
+static struct rocketnet_client_t * rn_client_create_current( void * context, const struct rocketnet_client_config_t * config, void * memory, size_t memory_bytes, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -927,7 +942,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     uint32_t kbps = 0;
     uint64_t memory_budget = 0;
     enum rocketnet_status_t failure = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
-    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure, testing, &memory_budget ) )
+    if ( !rn_client_split( config, true, &transport, &message, &kbps, &failure, &memory_budget ) )
     {
         if ( status )
             *status = failure;
@@ -1005,7 +1020,7 @@ static struct rocketnet_client_t * rn_client_create_current( void * context, con
     return client;
 }
 
-static struct rocketnet_client_t * rn_client_create( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
+struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status )
 {
     if ( status )
         *status = ROCKETNET_STATUS_OK;
@@ -1021,20 +1036,8 @@ static struct rocketnet_client_t * rn_client_create( void * context, const struc
         return NULL;
     }
 
-    return rn_client_create_current( context, read, testing, NULL, 0, status );
+    return rn_client_create_current( context, read, NULL, 0, status );
 }
-
-struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status )
-{
-    return rn_client_create( context, config, NULL, status );
-}
-
-#if ROCKETNET_DEV
-struct rocketnet_client_t * rocketnet_client_create_testing( void * context, const struct rocketnet_client_config_t * config, const struct rocketnet_client_testing_t * testing, enum rocketnet_status_t * status )
-{
-    return rn_client_create( context, config, testing, status );
-}
-#endif // #if ROCKETNET_DEV
 
 static void rn_client_connection_counts( struct rocketnet_message_client_t * message_client, uint64_t counts[RN_CLIENT_COUNT], struct rocketnet_client_transport_stats_t * transport_stats );
 
@@ -2236,11 +2239,16 @@ static struct rocketnet_server_t * rn_server_create_current( void * context, con
         }
     }
 
-    // the server's own X25519 keypair, fresh for this object: the game reads
-    // the public key (rocketnet_server_public_key) and registers it with its
-    // backend; destroy wipes the block, the secret with it
+    // the server's X25519 keypair: the config's server_secret_key with its
+    // public key derived, or, when that is all zeros (the default), a fresh
+    // pair for this object. The game reads the public key
+    // (rocketnet_server_public_key) and registers it with its backend; start
+    // refuses the published development key in a production build; destroy
+    // wipes the secret
 
-    if ( rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key ) != ROCKETNET_STATUS_OK )
+    if ( sodium_is_zero( transport.server_secret_key, sizeof( transport.server_secret_key ) )
+             ? rocketnet_generate_server_keypair( transport.server_public_key, transport.server_secret_key ) != ROCKETNET_STATUS_OK
+             : crypto_scalarmult_base( transport.server_public_key, transport.server_secret_key ) != 0 )
     {
         sodium_memzero( &transport, sizeof( transport ) );
 
