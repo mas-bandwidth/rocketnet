@@ -26,6 +26,9 @@
 // io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
 // host whose ladder grants fewer transports reports less; the check is at
 // most.
+// PR #625 (2026-10-29): the per-slot transport end reason adds 4 bytes a slot;
+// measured +4087 bytes on the macOS DEV server at 1000 slots, so every server
+// figure below is raised by 4096.
 #if defined( _WIN32 )
 // Windows adds, on the server, over the figures before them: the TX banks
 // sized at 16 packets per client (3 banks x 15,000 more packets x 1500 bytes
@@ -42,10 +45,10 @@
 // link 12W, descriptor 72 bytes): DEV ON client was 22967743, now 22971807;
 // DEV ON server was 1603276694, now 1607276560.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607276560 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971807 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596895498 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596899594 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
 #endif // #if ROCKETNET_DEV
 #elif defined( __APPLE__ )
@@ -64,10 +67,10 @@
 // link 12W): client was 22746605, now 22754581. At 0e32e225 (descriptor
 // 72 bytes, span links) server was 1603277086, now 1607276904; client unchanged.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607276904 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607281000 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22754581 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584810072 )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1584814168 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 21960801 )
 #endif // #if ROCKETNET_DEV
 #else
@@ -82,10 +85,10 @@
 // The non-dev figures below were not re-measured: this file is not linked
 // when ROCKETNET_DEV=OFF.
 #if ROCKETNET_DEV
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247578126ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3247582222ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22904141 )
 #else
-#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225111302ULL )
+#define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 3225115398ULL )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22110441 )
 #endif // #if ROCKETNET_DEV
 #endif // #if defined( _WIN32 )
