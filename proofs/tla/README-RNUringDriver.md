@@ -210,32 +210,34 @@ as in `proofs/tla/README.md`:
 
 ```sh
 for i in 0 1 2 3 4 5 6 7; do
-  "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
+  "$job/tlacheck" run --root proofs --jar "$jar" --java "$java" \
     --group rnuringdriver --shards 8 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
-"$job/tlacheck" merge --root . --keep proofs/tla/RUNS.tsv \
+"$job/tlacheck" merge --root proofs --keep proofs/tla/RUNS.tsv \
   --out "$job/RUNS.tsv" "$job"/rnuringdriver-*/RUNS.tsv
 ```
 
-Outcomes measured on a 16-cpu linux-amd64 bench (Java 21.0.12.1, the pinned
-JAR, 2026-10-24, the records in `RUNS.tsv`):
+`$java` is an absolute path to the java binary, and `--root` is `proofs`, the
+directory that holds `tla/`; `--root .` finds no models.
+
+Outcomes measured on a 32-cpu linux-amd64 bench (Java 21.0.12.1, the pinned
+JAR, 2026-10-29, the records in `RUNS.tsv`):
 
 | Case | Expected | Exit | Generated | Distinct | Seconds |
 |---|---|---:|---:|---:|---:|
-| `MCRNUringDriver.cfg` | pass (6 invariants, 3 properties) | 0 | 628770 | 164469 | 100.7 |
-| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 248 | 138 | 0.7 |
-| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 112 | 67 | 0.8 |
-| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1013 | 474 | 0.8 |
-| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 550575 | 146081 | 17.8 |
-| `MCRNUringDriverBrokenFreeRunAtSubmit.cfg` | `NoReuseWhileKernelOwned` | 12 | 509 | 257 | 0.7 |
-| `MCRNUringDriverBrokenUnboundedFill.cfg` | `FillWithinRoom` | 12 | - | - | - |
+| `MCRNUringDriver.cfg` | pass (6 invariants, 3 properties) | 0 | 354622 | 90725 | 59.5 |
+| `MCRNUringDriverBrokenResetBeforeReap.cfg` | `NoReuseWhileKernelOwned` | 12 | 350 | 194 | 0.8 |
+| `MCRNUringDriverBrokenOneBank.cfg` | `ExposedStable` | 12 | 154 | 91 | 0.9 |
+| `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1492 | 688 | 0.9 |
+| `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 311298 | 81053 | 12.2 |
+| `MCRNUringDriverBrokenFreeRunAtSubmit.cfg` | `NoReuseWhileKernelOwned` | 12 | 743 | 369 | 0.7 |
+| `MCRNUringDriverBrokenReturnBeforeSplit.cfg` | `BufferReturnedAfterCopy` | 12 | 561 | 283 | 0.7 |
+| `MCRNUringDriverBrokenUnboundedFill.cfg` | `FillWithinRoom` | 12 | 157 | 93 | 0.7 |
 
-The control's 100.7 s is inside the 110 s record budget, with little margin:
-send runs took it from 159168 distinct states (84.7 s, 2026-10-20) to 164469,
-and the run is slower on a loaded or slower bench (171 s on a 64-cpu bench
-under load, 123 s on an 8-cpu one). Before the re-arm rule (two liveness
-properties, weak fairness on `Submit`) it measured 53.7 s.
+The control runs well inside the 110 s record budget; a loaded or slower bench
+takes longer (an earlier model took 171 s on a 64-cpu bench under load and 123 s
+on an 8-cpu one).
 
 ## Counterexamples, checked by hand against THE DESIGN
 
