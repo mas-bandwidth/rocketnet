@@ -1964,7 +1964,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                     rn_blaster_application_message( payload, options.plan.payload_bytes, client,
                                                     ++session.application_sequence, options.plan.seed );
                     if ( rn_endpoint_send( &session.endpoint, payload, (int) options.plan.payload_bytes,
-                                           ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 )
+                                           ROCKETNET_RELIABILITY_UNRELIABLE, 0, 0 ) != 0 )
                     {
                         results.application_queued_bytes += options.plan.payload_bytes;
                         (void) rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
@@ -1997,7 +1997,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                 rn_blaster_application_message( baseline, options.plan.payload_bytes, 0,
                                                 ++session.application_sequence, options.plan.seed );
                 if ( rn_endpoint_send( &session.endpoint, baseline, (int) options.plan.payload_bytes,
-                                       ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0 &&
+                                       ROCKETNET_RELIABILITY_UNRELIABLE, 0, 0 ) != 0 &&
                      rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
                                                  &results, &case_valid, &case_valid_bytes, &robustness_wait_ack ) )
                 {
@@ -2021,7 +2021,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                     rn_blaster_application_message( probe, options.plan.payload_bytes, 0,
                                                     ++session.application_sequence, options.plan.seed );
                     if ( rn_endpoint_send( &session.endpoint, probe, (int) options.plan.payload_bytes,
-                                           ROCKETNET_RELIABILITY_UNRELIABLE, ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) == 0 ||
+                                           ROCKETNET_RELIABILITY_UNRELIABLE, 0, 0 ) == 0 ||
                          !rn_blaster_endpoint_prepare( &session, now, &fresh_valid, &fresh_valid_bytes,
                                                        &unsent_packet_id ) )
                     {
@@ -2046,7 +2046,7 @@ static int rn_blaster_execute( const rn_blaster_options_t & options, const rn_bl
                                                 ++session.application_sequence, options.plan.seed );
                 const bool recovery_queued = rn_endpoint_send( &session.endpoint, recovery_payload,
                                                                (int) options.plan.payload_bytes, ROCKETNET_RELIABILITY_UNRELIABLE,
-                                                               ROCKETNET_PRIORITY_MEDIUM, 0, 0 ) != 0;
+                                                               0, 0 ) != 0;
                 const bool recovery_sent = recovery_queued &&
                                            rn_blaster_endpoint_packet( &xsk, &session, now, server, source_mac, next_hop_mac,
                                                                        &results, &case_valid, &case_valid_bytes, &robustness_wait_ack );
