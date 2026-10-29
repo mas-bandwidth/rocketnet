@@ -368,7 +368,9 @@ jobs:
       # as in the plain run.
       - name: Run unit tests under strace (RSS telemetry, deterministic verdict, opens no socket)
         if: runner.os == 'Linux' && matrix.leg == 'unit'
-        run: bash tools/check_unit_no_sockets.sh ./bin/test
+        run: |
+          bash tools/test_check_unit_no_sockets.sh
+          bash tools/check_unit_no_sockets.sh ./bin/test
 
       # The unit suite reads no real time, sleep, thread or resolver: the
       # check fails, naming file and line, on any such call in the unit
