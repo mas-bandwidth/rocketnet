@@ -608,9 +608,10 @@ The last pass before v1.0.0: the library shrunk to the size and readability of n
 | Reproducible vendored sources | ✅ | ❌ | ❌ |
 | An integrating application vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
 | Supported-platform policy | ❌ | — | — |
+| v1.0.0-preview-4 release candidate: shipping label, release notes and qualification record | ❌ | ❌ | ❌ |
 | v1.0.0-preview-3 release candidate: shipping label, release notes and qualification record | ✅ | ✅ | ✅ |
 | Security disclosure and release process | ✅ | — | — |
 | Independent review of the connection layer repair diff, received | ❌ | — | — |
-| complete | 43% | 25% | 25% |
+| complete | 38% | 20% | 20% |
 
 [Source data](docs/roadmap.sexp)

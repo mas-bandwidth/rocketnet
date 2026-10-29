@@ -99,16 +99,17 @@ available; production server auto selection prefers native transports. Follow [B
 
 ## Preview status
 
-The [preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) describe changes
-from preview-2, the required migration steps and the known limits. Preview-3
+The [preview-4 notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md) describe changes
+from preview-3, the required migration steps and the known limits. Preview-4
 release testing is recorded in
-[docs/QUALIFICATION-v1.0.0-preview-3.md](docs/QUALIFICATION-v1.0.0-preview-3.md),
+[docs/QUALIFICATION-v1.0.0-preview-4.md](docs/QUALIFICATION-v1.0.0-preview-4.md),
 which also lists the gates still owed when the tag is cut. The
+[preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) and
+[qualification record](docs/QUALIFICATION-v1.0.0-preview-3.md), and the
 [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) and
-[preview-2 qualification record](docs/QUALIFICATION-v1.0.0-preview-2.md) keep
-their original scope. The API remains provisional. Large-server memory use and
-some transport qualification still need attention; see the
-[roadmap](ROADMAP.md).
+[qualification record](docs/QUALIFICATION-v1.0.0-preview-2.md), keep their
+original scope. Large-server memory use and some transport qualification still
+need attention; see the [roadmap](ROADMAP.md).
 
 ## What the tests establish
 
@@ -121,7 +122,8 @@ A passing unit suite is not a throughput or player-count measurement.
 ## Documentation
 
 - [docs/GETTING-STARTED.md](docs/GETTING-STARTED.md) — start here: from a fresh checkout to a dedicated server and a client exchanging messages, and the order to read the rest.
-- [v1.0.0-preview-3 release notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) — migration from preview-2, wire changes and known limits.
+- [v1.0.0-preview-4 release notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md) — migration from preview-3 and known limits.
+- [v1.0.0-preview-3 release notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) — migration from preview-2, wire changes and known limits; the previous preview.
 - [v1.0.0-preview-2 release notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) — migration from preview-1, changes and remaining limits; the previous preview.
 - [v1.0.0-preview-1 release notes](docs/RELEASE-NOTES-v1.0.0-preview-1.md) — the first preview.
 
