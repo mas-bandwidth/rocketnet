@@ -44,7 +44,12 @@ enum rocketnet_server_transport_io_flags_t
     // a finished frame cannot be withdrawn; unfinished reservations can.
     ROCKETNET_TRANSPORT_FINISH_FINAL = 1 << 2,
 
-    ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS = 1 << 3
+    ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS = 1 << 3,
+
+    // applies to staged transports. A flush can leave work behind for a later
+    // call (a retained producer, sends waiting for completions), so every send
+    // boundary flushes again, with or without a new commit.
+    ROCKETNET_TRANSPORT_REFLUSHES = 1 << 4
 };
 
 // status: where a failed open reports why, for server and client alike

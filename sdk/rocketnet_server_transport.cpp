@@ -3300,13 +3300,6 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
-// tla/RNDriverSendStaging.tla SendPackets
-// the staged transports whose flush can leave work behind for a later call
-static bool rocketnet_server_transport_reflushes( int transport )
-{
-    return transport == ROCKETNET_TRANSPORT_XDP || transport == ROCKETNET_TRANSPORT_GSO || transport == ROCKETNET_TRANSPORT_IO_URING;
-}
-
 // tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
@@ -3341,7 +3334,9 @@ static void rocketnet_server_transport_send_packets_impl( struct rocketnet_serve
         // send boundary retries that work rather than the next update. Each
         // native flush is non-blocking: a try-publish or a bounded reap.
 
-        if ( rocketnet_server_transport_reflushes( server_transport->transport ) ||
+        // tla/RNDriverSendStaging.tla SendPackets
+
+        if ( rocketnet_server_transport_io_has( server_transport->io, ROCKETNET_TRANSPORT_REFLUSHES ) ||
              server_transport->send_staged != server_transport->send_flushed )
         {
             server_transport->send_flushed = server_transport->send_staged;
@@ -3927,7 +3922,7 @@ static void rocketnet_server_transport_test_count_flush( void * context )
     ++*(int *) context;
 }
 
-int rocketnet_server_transport_test_reflush( int transport_kind )
+int rocketnet_server_transport_test_reflush_flags( unsigned int flags )
 {
     void * storage = rocketnet_malloc( NULL, sizeof( rocketnet_server_transport_t ) );
     if ( !storage )
@@ -3943,11 +3938,10 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
 
     int flushes = 0;
     rocketnet_server_transport_io_operations_t operations = {};
-    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.flags = flags;
     operations.flush = rocketnet_server_transport_test_count_flush;
     transport->io.operations = &operations;
     transport->io.instance = &flushes;
-    transport->transport = transport_kind;
     transport->send_staged = 1;
     rocketnet_server_transport_send_packets( transport );
     rocketnet_server_transport_send_packets( transport );
@@ -3958,13 +3952,17 @@ int rocketnet_server_transport_test_reflush( int transport_kind )
     return flushes;
 }
 
-// a build without XDP defines no xdp symbol (tools/check_xdp_compiled_out.py)
-#if ROCKETNET_XDP
-int rocketnet_server_transport_test_xdp_reflush()
+// the same two sends with a transport's declared flags: -2 when the
+// transport is not built on this platform
+
+int rocketnet_server_transport_test_reflush( int transport_kind )
 {
-    return rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP );
+    const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( transport_kind );
+    if ( !definition || !definition->backend || !definition->backend->server )
+        return -2;
+
+    return rocketnet_server_transport_test_reflush_flags( definition->backend->server->flags );
 }
-#endif // #if ROCKETNET_XDP
 
 // A staged send must close the simulator's partial reverse window at the
 // end of the frame, just as the portable send path does.

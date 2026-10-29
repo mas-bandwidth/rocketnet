@@ -45,43 +45,49 @@ REGISTER_UNIT_TEST( test_xdp_transport_send_staging_retains_producer );
 
 #if ROCKETNET_DEV
 
-#if ROCKETNET_XDP
-// The fixture calls the actual transport send_packets with a fake staged
-// backend. After the first call the staged and flushed counters agree.
-int rocketnet_server_transport_test_xdp_reflush();
-static void test_xdp_transport_send_staging_reflushes_without_commit()
-{
-    rocketnet_unit_check( rocketnet_server_transport_test_xdp_reflush() == 2 );
-}
-
-REGISTER_UNIT_TEST( test_xdp_transport_send_staging_reflushes_without_commit );
-#endif // #if ROCKETNET_XDP
-
-// gso retains its producer on a contended or full handoff and io_uring keeps
-// its index while sends wait for CQEs: the next send boundary retries both,
-// with no new commit, as it does for XDP. A synchronous staged transport
-// (iocp here) flushes only for a new commit.
+// The fixture calls the actual transport send_packets twice with a fake
+// staged backend carrying the given flags, after one commit: a transport that
+// declares ROCKETNET_TRANSPORT_REFLUSHES flushes at both boundaries, any other
+// staged transport only for the commit.
+int rocketnet_server_transport_test_reflush_flags( unsigned int flags );
 int rocketnet_server_transport_test_reflush( int transport_kind );
-static void test_gso_transport_send_packets_reflushes_without_commit()
+
+static void test_staged_transport_reflush_follows_the_flag()
 {
-    rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_GSO ) == 2 );
+    rocketnet_unit_check( rocketnet_server_transport_test_reflush_flags( ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_REFLUSHES ) == 2 );
+    rocketnet_unit_check( rocketnet_server_transport_test_reflush_flags( ROCKETNET_TRANSPORT_STAGED ) == 1 );
 }
 
-REGISTER_UNIT_TEST( test_gso_transport_send_packets_reflushes_without_commit );
+REGISTER_UNIT_TEST( test_staged_transport_reflush_follows_the_flag );
 
-static void test_io_uring_transport_send_packets_reflushes_without_commit()
+// XDP may retain its producer generation, gso retains its producer on a
+// contended or full handoff and io_uring keeps its index while sends wait for
+// CQEs: each declares the flag, so the next send boundary retries that work
+// with no new commit. A synchronous staged transport (iocp) does not.
+
+#if defined( __linux__ )
+static void test_linux_staged_transports_declare_reflush()
 {
+#if ROCKETNET_XDP
+    rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP ) == 2 );
+#endif // #if ROCKETNET_XDP
+    rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_GSO ) == 2 );
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_IO_URING ) == 2 );
 }
 
-REGISTER_UNIT_TEST( test_io_uring_transport_send_packets_reflushes_without_commit );
+REGISTER_UNIT_TEST( test_linux_staged_transports_declare_reflush );
+#endif // #if defined( __linux__ )
 
-static void test_staged_transport_send_packets_flushes_once_per_commit()
+#if defined( _WIN32 )
+static void test_windows_staged_transports_flush_once_per_commit()
 {
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_IOCP ) == 1 );
+    rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_RIO ) == 1 );
 }
 
-REGISTER_UNIT_TEST( test_staged_transport_send_packets_flushes_once_per_commit );
+REGISTER_UNIT_TEST( test_windows_staged_transports_flush_once_per_commit );
+#endif // #if defined( _WIN32 )
+
 
 int rocketnet_server_transport_test_staged_simulator_flush();
 static void test_xdp_transport_send_packets_flushes_simulator_window()
