@@ -36,6 +36,7 @@ struct fake_iocp_port_t
     int dequeues;
     double last_timeout;
     int wakes_posted;
+    int wake_posts_refused;             // the next this many post_wake calls fail
     bool closed;
     int aborts_per_dequeue;             // after close: aborts released per dequeue (-1: all at once)
     int aborts_held;                    // aborts closesocket owes, not yet queued
@@ -123,11 +124,17 @@ static int fake_iocp_dequeue( void * context, rocketnet_client_iocp_completion_t
     return count;
 }
 
-static void fake_iocp_post_wake( void * context )
+static bool fake_iocp_post_wake( void * context )
 {
     rocketnet_unit_check( context == &fake_iocp );
+    if ( fake_iocp.wake_posts_refused > 0 )
+    {
+        fake_iocp.wake_posts_refused--;
+        return false;
+    }
     fake_iocp.wakes_posted++;
     fake_iocp_queue( ROCKETNET_CLIENT_IOCP_COMPLETION_WAKE, -1, false, 0, NULL );
+    return true;
 }
 
 static void fake_iocp_close( void * context )
@@ -365,4 +372,27 @@ static void test_client_iocp_destroy_drains_posted_receives()
 
 REGISTER_UNIT_TEST( test_client_iocp_receive_completes_into_slots );
 REGISTER_UNIT_TEST( test_client_iocp_wake_is_a_posted_completion );
+
+// a refused wake post leaves nothing on the port: the next wake posts again
+// instead of every later wake being swallowed
+
+static void test_client_iocp_wake_reposts_after_a_refused_post()
+{
+    test_iocp_create();
+
+    fake_iocp.wake_posts_refused = 1;
+    rocketnet_client_iocp_wake( &test_iocp );
+    rocketnet_unit_check( fake_iocp.wakes_posted == 0 );
+    rocketnet_unit_check( fake_iocp.num_queued == 0 );
+
+    rocketnet_client_iocp_wake( &test_iocp );
+    rocketnet_unit_check( fake_iocp.wakes_posted == 1 );
+    rocketnet_unit_check( fake_iocp.num_queued == 1 );
+    rocketnet_unit_check( rocketnet_client_iocp_wait( &test_iocp, false, 0.5 ) );
+
+    fake_iocp.aborts_per_dequeue = -1;
+    rocketnet_unit_check( rocketnet_client_iocp_close( &test_iocp, 1, 1.0 ) );
+}
+
+REGISTER_UNIT_TEST( test_client_iocp_wake_reposts_after_a_refused_post );
 REGISTER_UNIT_TEST( test_client_iocp_destroy_drains_posted_receives );

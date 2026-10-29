@@ -82,13 +82,14 @@ struct rocketnet_client_iocp_completion_t
 //                 no I/O started and no completion will come
 //   dequeue       dequeues up to max_completions, waiting up to
 //                 timeout_seconds for the first (zero: does not wait)
-//   post_wake     posts one wake completion; any thread
+//   post_wake     posts one wake completion; any thread; false: nothing
+//                 posted, so the next wake posts again
 //   close         closes the socket: every posted receive then completes
 struct rocketnet_client_iocp_port_t
 {
     bool ( *post_receive )( void * context, int receive, uint8_t * buffer, int buffer_bytes );
     int ( *dequeue )( void * context, rocketnet_client_iocp_completion_t * completions, int max_completions, double timeout_seconds );
-    void ( *post_wake )( void * context );
+    bool ( *post_wake )( void * context );
     void ( *close )( void * context );
 };
 
