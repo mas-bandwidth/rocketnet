@@ -56,7 +56,7 @@ sequenceDiagram
 A valid signature authorizes the token. The cookie checks return reachability
 before expensive handshake work. The challenge and response establish the
 connection keys and slot. An application send begins work; it does not imply
-that the peer has received or delivered anything.
+that the receiver has received or delivered anything.
 
 ## Distinctions that matter
 
