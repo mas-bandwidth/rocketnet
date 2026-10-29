@@ -520,6 +520,7 @@ static void test_endpoint_send_order_is_pinned()
     rocketnet_message_config_t config;
     ep_config( &config );
 
+    uint64_t traces[3];
     for ( int i = 0; i < 3; i++ )
     {
         ep_side_t * a = new ep_side_t();
@@ -532,13 +533,16 @@ static void test_endpoint_send_order_is_pinned()
         check( steps < EP_MAX_STEPS );
 
         printf( "    send order seed %llu: steps %d trace 0x%016llx\n", (unsigned long long) seeds[i], steps, (unsigned long long) stats.trace );
-        check( stats.trace == pinned[i] );
+        traces[i] = stats.trace;
 
         ep_side_destroy( a );
         ep_side_destroy( b );
         delete a;
         delete b;
     }
+
+    for ( int i = 0; i < 3; i++ )
+        check( traces[i] == pinned[i] );
 }
 
 // ---------------------------------------------------------------------------
