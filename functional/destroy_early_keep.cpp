@@ -212,6 +212,40 @@ static double destroy_now( const destroy_pair_t * pair )
     return 1000.0 + ( rocketnet_time() - pair->wall_start );
 }
 
+static void destroy_server_teardown( destroy_pair_t * pair )
+{
+    rocketnet_server_stop( pair->server );
+    const double start = rocketnet_time();
+    while ( !rocketnet_server_stopped( pair->server ) && rocketnet_time() - start < 5.0 )
+    {
+        rocketnet_server_update( pair->server, destroy_now( pair ) );
+        rocketnet_server_send_packets( pair->server );
+        rocketnet_sleep( 0.001 );
+    }
+    check( rocketnet_server_stopped( pair->server ) );
+    rocketnet_server_destroy( pair->server );
+}
+
+static void destroy_client_teardown( destroy_pair_t * pair )
+{
+    rocketnet_client_disconnect( pair->client );
+    const double start = rocketnet_time();
+    while ( !rocketnet_client_disconnected( pair->client ) && rocketnet_time() - start < 5.0 )
+    {
+        rocketnet_client_update( pair->client, destroy_now( pair ) );
+        rocketnet_client_send_packets( pair->client );
+        rocketnet_sleep( 0.001 );
+    }
+    check( rocketnet_client_disconnected( pair->client ) );
+    rocketnet_client_destroy( pair->client );
+}
+
+// Whether a worker exits within destroy's bounded updates is the scheduler's
+// call: a destroy that sees it exit frees the handle (one error line), which is
+// correct but not the keep path under test, so the pair is torn down and the
+// case tries again, at most this many times.
+static const int DESTROY_KEEP_ATTEMPTS = 20;
+
 static void destroy_begin_counted( destroy_allocator_t * state, int * before )
 {
     rocketnet_assert_function( destroy_assert_recorder );
@@ -247,12 +281,20 @@ void test_client_destroy_early_threaded_keeps_then_frees()
     destroy_begin_counted( &state, &before );
 
     destroy_pair_t pair;
-    destroy_pair_create( &pair, &state );
-
-    const uint64_t misuse = rocketnet_api_misuse_count();
-    destroy_error_lines = 0;
-    rocketnet_client_destroy( pair.client );
-    check( destroy_error_lines == 2 );
+    uint64_t misuse = 0;
+    for ( int attempt = 0;; attempt++ )
+    {
+        check( attempt < DESTROY_KEEP_ATTEMPTS );
+        destroy_pair_create( &pair, &state );
+        misuse = rocketnet_api_misuse_count();
+        destroy_error_lines = 0;
+        rocketnet_client_destroy( pair.client );
+        if ( destroy_error_lines == 2 )
+            break;
+        check( destroy_error_lines == 1 );
+        destroy_server_teardown( &pair );
+        check( state.live == before );
+    }
     check( strstr( destroy_last_error, "rocketnet_client_destroy" ) != NULL );
     check( strstr( destroy_last_error, "kept, not freed" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
@@ -274,16 +316,7 @@ void test_client_destroy_early_threaded_keeps_then_frees()
     check( destroy_error_lines == 0 );
     check( rocketnet_api_misuse_count() == misuse + 1 );
 
-    rocketnet_server_stop( pair.server );
-    const double stop_start = rocketnet_time();
-    while ( !rocketnet_server_stopped( pair.server ) && rocketnet_time() - stop_start < 5.0 )
-    {
-        rocketnet_server_update( pair.server, destroy_now( &pair ) );
-        rocketnet_server_send_packets( pair.server );
-        rocketnet_sleep( 0.001 );
-    }
-    check( rocketnet_server_stopped( pair.server ) );
-    rocketnet_server_destroy( pair.server );
+    destroy_server_teardown( &pair );
     check( state.live == before );
 
     destroy_end_counted( &state );
@@ -300,12 +333,20 @@ void test_server_destroy_early_threaded_keeps_then_frees()
     destroy_begin_counted( &state, &before );
 
     destroy_pair_t pair;
-    destroy_pair_create( &pair, &state );
-
-    const uint64_t misuse = rocketnet_api_misuse_count();
-    destroy_error_lines = 0;
-    rocketnet_server_destroy( pair.server );
-    check( destroy_error_lines == 2 );
+    uint64_t misuse = 0;
+    for ( int attempt = 0;; attempt++ )
+    {
+        check( attempt < DESTROY_KEEP_ATTEMPTS );
+        destroy_pair_create( &pair, &state );
+        misuse = rocketnet_api_misuse_count();
+        destroy_error_lines = 0;
+        rocketnet_server_destroy( pair.server );
+        if ( destroy_error_lines == 2 )
+            break;
+        check( destroy_error_lines == 1 );
+        destroy_client_teardown( &pair );
+        check( state.live == before );
+    }
     check( strstr( destroy_last_error, "rocketnet_server_destroy" ) != NULL );
     check( strstr( destroy_last_error, "kept, not freed" ) != NULL );
     check( rocketnet_api_misuse_count() == misuse + 1 );
@@ -326,16 +367,7 @@ void test_server_destroy_early_threaded_keeps_then_frees()
     check( destroy_error_lines == 0 );
     check( rocketnet_api_misuse_count() == misuse + 1 );
 
-    rocketnet_client_disconnect( pair.client );
-    const double disc_start = rocketnet_time();
-    while ( !rocketnet_client_disconnected( pair.client ) && rocketnet_time() - disc_start < 5.0 )
-    {
-        rocketnet_client_update( pair.client, destroy_now( &pair ) );
-        rocketnet_client_send_packets( pair.client );
-        rocketnet_sleep( 0.001 );
-    }
-    check( rocketnet_client_disconnected( pair.client ) );
-    rocketnet_client_destroy( pair.client );
+    destroy_client_teardown( &pair );
     check( state.live == before );
 
     destroy_end_counted( &state );
