@@ -77,14 +77,6 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 
-// one receive bank holds a whole process batch, so the swap never drops
-// below the process arrays
-
-#define ROCKETNET_URING_BANK_SIZE              ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
-
-ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGET,
-                         "receive budget twice send: one send reap fits the receive bank" );
-
 // completions taken per peek
 
 #define ROCKETNET_URING_CQE_BATCH                                          256
@@ -92,11 +84,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGE
 // Only private synchronous create-failure cleanup waits for kernel ownership.
 #define ROCKETNET_URING_ABORT_CREATE_WAIT_SECONDS 0.001
 
-// the most packets one segmented send carries, and the most bytes: the gso
-// transport's bounds (the kernel's UDP_MAX_SEGMENTS, the 16-bit UDP payload)
+// the most packets and bytes one segmented send carries: the gso transport's
+// bounds (the kernel's UDP_MAX_SEGMENTS, the 16-bit UDP payload)
 
-#define ROCKETNET_URING_MAX_SEGMENTS                    ROCKETNET_GSO_MAX_SEGMENTS
 #define ROCKETNET_URING_MAX_SUPER_BYTES                 ROCKETNET_GSO_MAX_SUPER_BYTES
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_SEGMENTS == ROCKETNET_GSO_MAX_SEGMENTS, "one coalesced receive is the gso transport's segment bound" );
 
 // one receive buffer holds the multishot header, the name area, the UDP_GRO
 // control area and the largest coalesced receive (the 16-bit UDP payload)

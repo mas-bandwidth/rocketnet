@@ -92,6 +92,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );
 
+// one receive bank holds a whole process batch, so the swap never drops
+// below the process arrays; a reap stops short of the last
+// ROCKETNET_URING_MAX_SEGMENTS slots, the most datagrams one coalesced
+// receive carries (the kernel's UDP_MAX_SEGMENTS, the gso transport's bound)
+
+#define ROCKETNET_URING_BANK_SIZE               ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
+#define ROCKETNET_URING_MAX_SEGMENTS                                        64
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGET,
+                         "receive budget twice send: one send reap fits the receive bank" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE > ROCKETNET_URING_MAX_SEGMENTS,
+                         "the receive bank holds more than one coalesced receive" );
+
 // counters, readable any time from the main thread; indexes into the array
 // rocketnet_server_uring_counters fills
 

@@ -609,7 +609,7 @@ static void test_sequenced_behind_a_full_ordered_backlog_is_held()
     for ( int update = 0; update < 4096 && delivered < W + 1; update++ )
     {
         rs_packet_t packet;
-        if ( rs_write( &sender, now, &packet, 1, 91 + update ) != 1 )
+        if ( rs_write( &sender, now, &packet, 1, (uint64_t) ( 91 + update ) ) != 1 )
             break;
         check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
         delivered += (uint32_t) receiver.ordered.channels.deliveries;
