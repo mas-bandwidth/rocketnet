@@ -595,6 +595,14 @@ static void posix_weather_send_valid( struct posix_pair_t * pair, bool at_server
     }
 }
 
+// a resent valid datagram that had already arrived: the payload of the last
+// one seen, not the next one wanted
+
+static bool posix_weather_repeat( int valid_seen, const uint8_t * payload, int payload_bytes )
+{
+    return valid_seen > 0 && !posix_valid_matches( valid_seen, payload, payload_bytes ) && posix_valid_matches( valid_seen - 1, payload, payload_bytes );
+}
+
 static void posix_weather_cell( int ipv6, int at_server, const char * server_transport_io, const char * client_transport_io,
                                 const char * server_pump, const char * client_pump )
 {
@@ -703,6 +711,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
                     int payload_bytes = 0;
                     uint8_t * payload = rocketnet_server_transport_payload( pair.server, i, &client_index, &payload_bytes );
                     posix_check( client_index == pair.client_index );
+                    if ( posix_weather_repeat( valid_seen, payload, payload_bytes ) )
+                        continue;
                     posix_check( valid_seen < valid_sent );
                     posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
                     valid_seen++;
@@ -715,7 +725,8 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
                 {
                     int payload_bytes = 0;
                     uint8_t * payload = rocketnet_client_transport_payload( pair.client, i, &payload_bytes );
-
+                    if ( posix_weather_repeat( valid_seen, payload, payload_bytes ) )
+                        continue;
                     posix_check( valid_seen < valid_sent );
                     posix_check( posix_valid_matches( valid_seen, payload, payload_bytes ) );
                     valid_seen++;
@@ -729,7 +740,10 @@ static void posix_weather_cell( int ipv6, int at_server, const char * server_tra
 
             // a valid send the OS refused (OpenBSD, when the client cell's
             // storm shares the library's server socket) was dropped and
-            // counted by the library: it is sent again, as an application would
+            // counted by the library: it is sent again, as an application would.
+            // A refusal of the storm on that socket also moves the count, so
+            // the resend may repeat a valid datagram that arrived; receivers
+            // skip that repeat (posix_weather_repeat)
 
             const uint64_t refused_now = rocketnet_platform_socket_send_failures( valid_socket );
             if ( refused_now != refused && valid_seen < valid_sent )

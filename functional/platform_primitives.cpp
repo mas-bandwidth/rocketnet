@@ -582,10 +582,12 @@ void rocketnet_test_frame_sync_dropped_stats()
 
     // Phase A: baseline normal cadence, 12 frames (~48ms of wall time)
 
+    const auto baseline_start = std::chrono::steady_clock::now();
     for ( int i = 0; i < 12; i++ )
     {
         rocketnet_frame_sync_wait( frame_sync );
     }
+    const double periods_of_baseline = std::chrono::duration<double, std::nano>( std::chrono::steady_clock::now() - baseline_start ).count() / (double) period_ns;
 
     struct rocketnet_frame_sync_stats_t stats;
     rocketnet_frame_sync_stats( frame_sync, &stats );
@@ -594,9 +596,10 @@ void rocketnet_test_frame_sync_dropped_stats()
     const uint64_t baseline_drops = stats.dropped_frames;
 
     // how many baseline frames the host's scheduler misses is the OS's (a
-    // VM or a loaded host misses more): the baseline is not bounded, only
-    // carried into the checks below, which judge the library's count
-    // against independently measured elapsed time
+    // VM or a loaded host misses more), so the baseline has no fixed bound;
+    // the library still may not count more missed intervals than elapsed
+
+    rocketnet_check( (double) baseline_drops < periods_of_baseline + 3.0 );    // not overcounting
 
     // Phase B: bounded expensive frame work spanning several periods.
     // Busy work until at least 10 periods have elapsed, measured
@@ -644,17 +647,20 @@ void rocketnet_test_frame_sync_dropped_stats()
     // Phase C: recovery at normal cadence. The total stays cumulative
     // (a reset would clear it), the frame count advances by exactly the
     // waits run, and lateness stays coherent. How many recovery waits the
-    // host scheduler makes late is the OS, not the library, so it is not
-    // bounded here.
+    // host scheduler makes late is the OS, so only overcounting against the
+    // measured elapsed time is bounded here.
 
+    const auto recovery_start = std::chrono::steady_clock::now();
     for ( int i = 0; i < 12; i++ )
     {
         rocketnet_frame_sync_wait( frame_sync );
     }
+    const double periods_of_recovery = std::chrono::duration<double, std::nano>( std::chrono::steady_clock::now() - recovery_start ).count() / (double) period_ns;
 
     rocketnet_frame_sync_stats( frame_sync, &stats );
     rocketnet_check( stats.frame == 25 );                                   // 12 + 1 + 12 waits
     rocketnet_check( stats.dropped_frames >= after_work_drops );             // cumulative, never reset
+    rocketnet_check( (double) ( stats.dropped_frames - after_work_drops ) < periods_of_recovery + 3.0 );   // not overcounting
     rocketnet_check( stats.wakeup_error_seconds >= 0.0 );                   // lateness coherent
 
     printf( "    frame sync dropped stats: period_ns %llu, work_elapsed_ns %llu, baseline %llu, work_drops %llu, final %llu\n",
