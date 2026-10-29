@@ -40,7 +40,7 @@ jobs:
       matrix:
         ref: [main, sprint/rocketnet-proof]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
           persist-credentials: false
@@ -68,7 +68,7 @@ jobs:
       matrix:
         ref: [main, sprint/rocketnet-proof]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
           persist-credentials: false
@@ -124,7 +124,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
           persist-credentials: false

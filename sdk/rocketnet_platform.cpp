@@ -972,7 +972,13 @@ int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 #endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
+#if defined( __GLIBC__ ) && defined( _GNU_SOURCE )
+    // secure_getenv returns NULL in a setuid/setgid process: configuration
+    // never comes from an environment an unprivileged caller controls.
+    const char * value = secure_getenv( var );
+#else
     const char * value = getenv( var );
+#endif
     if ( !value )
         return 0;
     const size_t length = strlen( value );

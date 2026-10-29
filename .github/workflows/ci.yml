@@ -129,6 +129,9 @@ concurrency:
 # minutes) with a minute of headroom, except xdp-libxdp-1-4, whose own
 # comment names its bound, and the jobs on captain, which add the 2 minutes
 # its job-started hook may wait for a build slot; a job that runs longer fails.
+permissions:
+  contents: read
+
 jobs:
 
   # EVERY ROW IS FOUR PARALLEL JOBS (2026-10-29). One job per row ran its
@@ -192,7 +195,7 @@ jobs:
           - { os: macos-15, build_type: Release, leg: builds, dev: 'OFF', runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # One SDK source list for the library and every vendoring application;
       # first, so a later red step cannot skip it.
@@ -804,7 +807,7 @@ jobs:
     # measurement names a smaller one.
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
       - name: Build the XDP functional cell (Debug)
         shell: bash
         run: |
@@ -956,7 +959,7 @@ jobs:
         leg: [a, b, c]
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check committed XDP fallback source on Windows
         if: matrix.leg == 'a'
@@ -1216,7 +1219,7 @@ jobs:
           - { os: windows, runner: '["self-hosted","Windows","X64","rocketnet-windows"]' }
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1331,7 +1334,7 @@ jobs:
       DOTNET_NOLOGO: 1
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's toolchain is on PATH
         shell: bash
@@ -1424,7 +1427,7 @@ jobs:
         leg: [unit suite, unit suite portable, functional suite]
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1555,7 +1558,7 @@ jobs:
     timeout-minutes: 3
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1667,7 +1670,7 @@ jobs:
 
       - name: Upload crash reproducers
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: fuzz-smoke-crashes
           path: |
@@ -1690,7 +1693,7 @@ jobs:
     timeout-minutes: 3
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -1786,7 +1789,7 @@ jobs:
 
       - name: Upload crash reproducers
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: fuzz-smoke-ndebug-crashes
           path: |
@@ -1858,7 +1861,7 @@ jobs:
         build_type: [Debug, Release]
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the s390x cross toolchain, libraries, and qemu are present
         shell: bash
@@ -1979,7 +1982,7 @@ jobs:
     timeout-minutes: 3
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # The standard in standard/ (RN-1, RN-2, RN-R): its outline against
       # standard/STYLE.md, every pinned constant against the compiler, every
@@ -2064,7 +2067,7 @@ jobs:
         leg: [loopback soak]
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2144,7 +2147,7 @@ jobs:
       SODIUM_PREFIX: ${{ github.workspace }}/sodium-pin
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2167,7 +2170,7 @@ jobs:
 
       - name: Restore the pinned sodium prefix
         id: sodium-cache
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
         with:
           path: ${{ env.SODIUM_PREFIX }}
           key: sodium-pin-${{ env.SODIUM_VERSION }}-${{ runner.os }}
@@ -2281,7 +2284,7 @@ jobs:
           - { os: macos-15, runner: '["self-hosted","macOS","ARM64","rocketnet-macos"]' }
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2378,7 +2381,7 @@ jobs:
     timeout-minutes: 3
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
@@ -2430,7 +2433,7 @@ jobs:
     timeout-minutes: 3
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Test the frame-budget checker's verdicts
         shell: bash
@@ -2497,7 +2500,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
       - name: Check clang-format 18 is present
@@ -2517,7 +2520,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           persist-credentials: false
       - name: Every runs-on selects the fleet

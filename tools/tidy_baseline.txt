@@ -101,7 +101,6 @@ clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	f661354e38935ed9
 clang-tidy	sdk/rocketnet_network_simulator.cpp	cert-err33-c	fa84c3f1d6aadb3d
 clang-tidy	sdk/rocketnet_platform.cpp	cert-err33-c	b6e019295a45cb0d
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	5338b9d4292643b1
-clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	575453c0ab0edd9b
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	604cf34623db7e62
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	77d63a3376ae6759
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	8af97ad9db62aab6

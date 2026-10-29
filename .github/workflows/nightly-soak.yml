@@ -18,6 +18,9 @@ on:
     - cron: "0 9 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   soak:
     strategy:
@@ -31,7 +34,7 @@ jobs:
     timeout-minutes: 90
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -228,7 +231,7 @@ jobs:
 
       - name: Upload XDP filter guest artifacts
         if: always() && runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: xdp-filter-guest-${{ steps.refslug.outputs.slug }}
           path: build/xdp-filter-guest
@@ -244,7 +247,7 @@ jobs:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -294,7 +297,7 @@ jobs:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -336,7 +339,7 @@ jobs:
 
       - name: Upload the per-transport soak logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: soak-per-transport-logs-${{ steps.refslug.outputs.slug }}
           path: build/soak-per-transport
@@ -351,7 +354,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -447,7 +450,7 @@ jobs:
 
       - name: Upload macOS per-transport soak logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: soak-macos-per-transport-logs-${{ strategy.job-index }}
           path: build/soak-macos-per-transport
@@ -467,7 +470,7 @@ jobs:
       matrix:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -588,7 +591,7 @@ jobs:
 
       - name: Upload Windows soak logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: soak-windows-logs-${{ strategy.job-index }}
           path: build/soak-windows
@@ -631,7 +634,7 @@ jobs:
         ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           ref: ${{ matrix.ref }}
 
@@ -695,7 +698,7 @@ jobs:
 
       - name: Upload the soak log
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: sanitized-soak-log-${{ steps.refslug.outputs.slug }}
           path: soak_sim.log
@@ -713,7 +716,7 @@ jobs:
     timeout-minutes: 3
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Test the frame-budget checker's verdicts
         shell: bash

@@ -64,7 +64,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       # rocketnet's version lives in one header and in two branches of it:
       # the shipping version and the development version, selected by
@@ -153,7 +153,7 @@ jobs:
     runs-on: [self-hosted, Linux, X64, fleet]
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
         with:
           fetch-depth: 0          # tags and full history: the whole job is a comparison against the newest tag
 

@@ -25,6 +25,9 @@ on:
     - cron: "0 10 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   max-clients:
     name: max-clients 10000 (${{ matrix.compiler }}, DEV ${{ matrix.dev }})
@@ -37,7 +40,7 @@ jobs:
     timeout-minutes: 90
     steps:
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
 
       - name: Check the fleet's build dependencies are present
         shell: bash
