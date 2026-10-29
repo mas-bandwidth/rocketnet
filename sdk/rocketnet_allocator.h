@@ -343,11 +343,15 @@ uint32_t rn_send_store_chunks_needed( int bytes );
 
 void rn_send_store_init( rn_send_store_t * store, uint8_t * memory, uint64_t bytes );
 
-// 1 when rn_send_store_alloc of `bytes` would take its chunks now: the one
-// test the allocation itself makes (tla/RNSendStore.tla Alloc's guard); pure
-bool rn_send_store_fits( const rn_send_store_t * store, int bytes );
+// true when `bytes` can be taken now, with the first chunk of the run the
+// take would use: the one test the allocation makes (tla/RNSendStore.tla
+// Alloc's guard); pure
+bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_first );
 
-uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // the first chunk's handle, or RN_CHUNK_NONE
+// takes the run rn_send_store_find returned, unchanged since: the first chunk's handle
+uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first );
+
+uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes );     // find then take: the first chunk's handle, or RN_CHUNK_NONE
 
 bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle );     // false: not an allocated block's head, nothing changed
 
@@ -610,7 +614,7 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 #define RN_SEND_FIT_QUEUE_FULL      3   // no free send descriptor: the allocation exhausts the region
 #define RN_SEND_FIT_STORE_FULL      4   // no chunks, or no span placement: the allocation exhausts the region
 
-int rn_region_send_fit_store( const rn_region_t * region, int bytes );
+int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first );
 int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * out_start );
 
 // A start message's room: a store chunk up to one block stride, a span above

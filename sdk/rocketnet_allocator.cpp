@@ -380,9 +380,9 @@ static bool rn_store_find_run( const rn_store_class_t * cls, uint32_t needed, ui
     return false;
 }
 
-bool rn_send_store_fits( const rn_send_store_t * store, int bytes )
+bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * out_first )
 {
-    rocketnet_assert( store );
+    rocketnet_assert( store && out_first );
 
     if ( bytes <= 0 )
         return false;
@@ -390,27 +390,28 @@ bool rn_send_store_fits( const rn_send_store_t * store, int bytes )
     // the smallest class that fits, and only that class, holds the block whole:
     // one contiguous run of its chunks, all or none
 
-    uint32_t first = 0;
-    return rn_store_find_run( &store->classes[rn_send_store_class_for( bytes )], rn_send_store_chunks_needed( bytes ), &first );
+    return rn_store_find_run( &store->classes[rn_send_store_class_for( bytes )], rn_send_store_chunks_needed( bytes ), out_first );
 }
 
     // tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
-    rocketnet_assert( store );
+    // all or none (CHANNELS section 4): a block the class cannot hold whole in one contiguous run takes nothing
 
-    if ( bytes <= 0 )
+    uint32_t first = 0;
+    if ( !rn_send_store_find( store, bytes, &first ) )
         return RN_CHUNK_NONE;
+
+    return rn_send_store_take( store, bytes, first );
+}
+
+uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first )
+{
+    rocketnet_assert( store && bytes > 0 );
 
     const int c = rn_send_store_class_for( bytes );
     const uint32_t needed = rn_send_store_chunks_needed( bytes );
     rn_store_class_t * cls = &store->classes[c];
-
-    // all or none (CHANNELS section 4): a block the class cannot hold whole in one contiguous run takes nothing
-
-    uint32_t first = 0;
-    if ( !rn_store_find_run( cls, needed, &first ) )
-        return RN_CHUNK_NONE;
 
     // tla/RNLazyPool.tla Take: the run's chunks are taken together; a
     // multi-chunk block's chunks share the take's generation tag, a single
@@ -904,7 +905,7 @@ static void rn_region_descriptor_release( rn_region_t * region, uint32_t d )
     region->descriptors_free++;
 }
 
-int rn_region_send_fit_store( const rn_region_t * region, int bytes )
+int rn_region_send_fit_store( const rn_region_t * region, int bytes, uint32_t * out_first )
 {
     // tla/RNConnectionMemory.tla, Use's guard: the decision rn_region_send_alloc acts on, read alone by the room query
 
@@ -924,8 +925,12 @@ int rn_region_send_fit_store( const rn_region_t * region, int bytes )
     if ( region->descriptors_free == 0 )
         return RN_SEND_FIT_QUEUE_FULL;
 
-    if ( !rn_send_store_fits( &region->store, bytes ) )
+    uint32_t first = 0;
+    if ( !rn_send_store_find( &region->store, bytes, &first ) )
         return RN_SEND_FIT_STORE_FULL;
+
+    if ( out_first )
+        *out_first = first;
 
     return RN_SEND_FIT_OK;
 }
@@ -969,15 +974,15 @@ uint32_t rn_region_send_alloc( rn_region_t * region, int bytes )
 
     rocketnet_assert( region );
 
-    const int fit = rn_region_send_fit_store( region, bytes );
+    uint32_t first = 0;
+    const int fit = rn_region_send_fit_store( region, bytes, &first );
     if ( fit != RN_SEND_FIT_OK )
     {
         rn_region_send_refuse( region, fit );
         return RN_DESCRIPTOR_NONE;
     }
 
-    const uint32_t chunk = rn_send_store_alloc( &region->store, bytes );
-    rocketnet_assert( chunk != RN_CHUNK_NONE );                 // the decision found its chunks
+    const uint32_t chunk = rn_send_store_take( &region->store, bytes, first );   // the run the decision found: one scan
 
     const uint32_t d = rn_region_descriptor_take( region );
     rn_send_descriptor_t * descriptor = &region->send_descriptors[d];
@@ -1164,7 +1169,7 @@ int rn_region_send_fit_span( const rn_region_t * region, int bytes, uint32_t * o
 
 int rn_region_send_fit( const rn_region_t * region, int bytes )
 {
-    return rn_region_send_is_span( bytes ) ? rn_region_send_fit_span( region, bytes, NULL ) : rn_region_send_fit_store( region, bytes );
+    return rn_region_send_is_span( bytes ) ? rn_region_send_fit_span( region, bytes, NULL ) : rn_region_send_fit_store( region, bytes, NULL );
 }
 
 uint32_t rn_region_send_take( rn_region_t * region, int bytes )
