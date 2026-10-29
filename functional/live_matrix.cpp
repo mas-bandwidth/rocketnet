@@ -1366,10 +1366,14 @@ void live_message_matrix_loopback()
     live_matrix_check( m->failures == 0 );
     rocketnet_client_transport_disconnect( rocketnet_message_client_transport( m->client ) );
     {
+        // the disconnect burst is deferred when the I/O thread is still
+        // sending the other ring (tla/RNClientIo.tla Defer) and leaves with
+        // the client's next hand-off, so the client is updated too
+
         const double start = rocketnet_platform_time();
         while ( rocketnet_message_server_client_connected( m->server, 0 ) && rocketnet_platform_time() - start < 2.0 )
         {
-            live_matrix_check( rocketnet_message_server_update( m->server, live_matrix_now( m ) ) == ROCKETNET_UPDATE_OK );
+            live_matrix_pump( m );
             rocketnet_platform_sleep( 0.0005 );
         }
 
