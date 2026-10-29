@@ -1644,8 +1644,13 @@ inline int suite_main( int argc, char ** argv,
 
         if ( !running.empty() )
         {
-            HANDLE handles[8];
-            const size_t n = running.size();
+            // one child per core may be running; the wait takes at most
+            // MAXIMUM_WAIT_OBJECTS of them, and the poll below sees the rest
+
+            HANDLE handles[MAXIMUM_WAIT_OBJECTS];
+            size_t n = running.size();
+            if ( n > MAXIMUM_WAIT_OBJECTS )
+                n = MAXIMUM_WAIT_OBJECTS;
             for ( size_t i = 0; i < n; i++ )
             {
                 handles[i] = running[i].process;
