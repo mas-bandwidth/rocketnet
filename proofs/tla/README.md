@@ -170,8 +170,8 @@ Their original historical PASS rows remain unchanged in
 `RUNS-HISTORY.tsv`; a timeout in that measurement does not refute those
 older completed runs or complete a new proof. Model constants and
 checked properties were not reduced. The present inventory is
-`CASES.tsv` itself: `docs/testing.sexp` names each group with the
-required and bench counts `CASES.tsv` gives it.
+[`CASES.tsv`](CASES.tsv) itself; [`RUNS.tsv`](RUNS.tsv) records each current
+result. [Testing](../../docs/TESTING.md) explains the evidence boundaries.
 
 | Case | Historical outcome | Initial current outcome | Disposition |
 |---|---|---|---|

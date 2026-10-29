@@ -233,4 +233,4 @@ See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
 
 The [qualification index](QUALIFICATION-v1.0.0-preview-3.md) records the
 tested head and every gate, including those still owed at tag time. The
-[roadmap](ROADMAP.md) carries the remaining work.
+[testing guide](TESTING.md) explains the current evidence sources and limits.

@@ -71,8 +71,7 @@ scope and gaps in the recorded evidence.
 
 Recorded 1000-client runs are workload-specific evidence. They do not promise
 that any 1000-player game meets its latency or memory budget. The
-[capacity guide](docs/MEMORY.md#qualification-and-scale) explains their limits;
-the [roadmap](docs/ROADMAP.md) records remaining work.
+[capacity guide](docs/MEMORY.md#qualification-and-scale) explains their limits.
 
 ## What the tests establish
 

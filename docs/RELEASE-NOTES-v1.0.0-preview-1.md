@@ -75,11 +75,10 @@ includes hardening, longer testing and performance work.
   to connect before its deadline. The failure remains a known issue even
   when a repeat run passes.
 - Protocol refusal paths, token-claim behavior and low-rate reliable-message
-  timeouts still have follow-up work recorded in the roadmap.
+  timeouts had outstanding follow-up work at this release.
 
-The [Known issues table](ROADMAP.md#known-issues-addressed-in-the-final-deliverable)
-records the individual issues and the planned fixes. Consult it before
-choosing a deployment configuration.
+These are historical release limits. Consult [Testing](TESTING.md) for the
+current evidence sources before choosing a deployment configuration.
 
 ## Getting started
 

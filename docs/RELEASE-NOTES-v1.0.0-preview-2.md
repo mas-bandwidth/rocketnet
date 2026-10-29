@@ -200,7 +200,7 @@ See [BUILDING.md](BUILDING.md), [TRANSPORTS.md](TRANSPORTS.md) and
   manual Debug/toolchain/examples/soak/frame-budget coverage, and the remaining macOS and Windows LAN rows are deferred. io_uring suite-concurrency and runner memlock provisioning work is also deferred. Earlier passes and
   failures retain their original commit and scope.
 
-The [testing tables](TESTING.md), [qualification index](QUALIFICATION-v1.0.0-preview-2.md), and [roadmap](ROADMAP.md) record the tested heads and preview-3 work.
+The [qualification index](QUALIFICATION-v1.0.0-preview-2.md) records this release's tested heads. [Testing](TESTING.md) explains the current evidence sources.
 
 ## Deferred to preview-3
 

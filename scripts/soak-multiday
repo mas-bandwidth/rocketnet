@@ -2,8 +2,7 @@
 #
 # The multi-day soak: one connection, unbounded, past 2^32 packets each way so
 # the wire's 32-bit sequence field wraps on a live connection
-# (standard/TRANSPORT.md t4; docs/roadmap.sexp "Multi-day soaks past 2^32
-# packets on one connection"). Run it on one held bench and leave it.
+# (standard/TRANSPORT.md t4). Run it on one held bench and leave it.
 #
 #   bash scripts/soak-multiday [--rate R] [--assert-every S] [--summary-every S]
 #                              [--log-dir DIR] [--rotate-bytes B] [--keep-logs N]
