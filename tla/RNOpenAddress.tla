@@ -6,7 +6,7 @@
 (* rocketnet_encryption_map_erase_index, sdk/rocketnet_token_tables.cpp,   *)
 (* sdk/rocketnet_client_slots.cpp rocketnet_client_slots_erase_index,      *)
 (* sdk/rocketnet_channel.cpp rn_held_erase, sdk/rocketnet_window_ack.cpp   *)
-(* rn_sent_index).  The keys are the network's: a peer chooses addresses, *)
+(* rn_sent_index).  The keys are the network's: the sender chooses addresses,*)
 (* tokens and (channel, ordering), so it chooses the clusters.             *)
 (*                                                                         *)
 (* home is chosen once, at Init, from every map of keys to cells: TLC      *)
