@@ -21,7 +21,7 @@ static int module_received = 0;
 LOOPBACK_HUB_MODULE_EXPORT int loopback_hub_client_module_start( struct rocketnet_loopback_hub_t * hub, const char * address, const uint8_t * public_key );
 LOOPBACK_HUB_MODULE_EXPORT int loopback_hub_client_module_update( double time );
 LOOPBACK_HUB_MODULE_EXPORT enum rocketnet_status_t loopback_hub_client_module_destroy_hub( struct rocketnet_loopback_hub_t * hub );
-LOOPBACK_HUB_MODULE_EXPORT int loopback_hub_client_module_stop( void );
+LOOPBACK_HUB_MODULE_EXPORT int loopback_hub_client_module_stop( double time );
 
 int loopback_hub_client_module_start( struct rocketnet_loopback_hub_t * hub, const char * address, const uint8_t * public_key )
 {
@@ -94,7 +94,7 @@ enum rocketnet_status_t loopback_hub_client_module_destroy_hub( struct rocketnet
     return rocketnet_loopback_hub_destroy( hub );
 }
 
-int loopback_hub_client_module_stop( void )
+int loopback_hub_client_module_stop( double time )
 {
     if ( module_client )
     {
@@ -106,7 +106,8 @@ int loopback_hub_client_module_stop( void )
             if ( rocketnet_time() >= deadline )
                 return 0;           // keep the client: its worker still owns it
 
-            rocketnet_client_update( module_client, 1000.0 );
+            time += 1.0 / 60.0;
+            rocketnet_client_update( module_client, time );
             rocketnet_sleep( 0.001 );
         }
 

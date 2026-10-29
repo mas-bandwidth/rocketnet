@@ -18,6 +18,7 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
+#include "loopback_hub.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 #include "../sdk/rocketnet.h"
@@ -241,6 +242,7 @@ static rocketnet_server_t * contract_server_create( contract_identity_t * identi
     config.max_clients = 2;
     memcpy( config.backend_public_key, identity->backend_public, sizeof( config.backend_public_key ) );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &config, NULL );
     check( server != NULL );
 
@@ -254,6 +256,7 @@ static rocketnet_client_t * contract_client_create()
     rocketnet_client_test_config_t config;
     rocketnet_client_default_config( &config );
     config.transport = "loopback";
+    config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = true;
     config.time_callback = contract_clock;
     config.state_change_callback = contract_state_change;

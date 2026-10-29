@@ -141,7 +141,7 @@ void test_loopback_hub_two_shared_objects()
 
     // the client first, then the server, which destroys the hub and terms
 
-    rocketnet_check( client_stop() == 1 );
+    rocketnet_check( client_stop( time ) == 1 );
     rocketnet_check( server_stop() == 1 );
 
     rocketnet_check( loopback_hub_module_close( client_module ) );
