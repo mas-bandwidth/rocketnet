@@ -8,8 +8,8 @@ Companion documents: RN-2 (`MESSAGES.md`), the message layer; RN-R
 Abstract. RN-1 specifies a secure client/server connection protocol over UDP:
 a connect token minted by a backend, an address-validated handshake, sealed
 packets with per-connection keys, replay protection, acknowledgement and
-fragmentation. An implementation built from RN-1 alone interoperates with any
-other conforming implementation.
+fragmentation. Its byte layouts and state rules define the shared contract
+for independently implemented clients, servers and backends.
 
 <a id="t1"></a>
 ## t1. Introduction, scope, terminology and conventions
@@ -179,8 +179,9 @@ of both configurations:
 1. Every field MUST have an environment variable that overrides it, named
    `ROCKETNET_SERVER_` or `ROCKETNET_CLIENT_` followed by the field name in
    upper case (the server field `max_clients` is `ROCKETNET_SERVER_MAX_CLIENTS`).
-   The only fields exempt are fields that hold a callback or a pointer, and
-   each exempt field MUST be stated as exempt where it is declared.
+   Fields that hold a callback or a pointer, the server's `server_secret_key`,
+   and the configuration's `config_bytes` size marker are exempt. Each exempt
+   field MUST be stated as exempt where it is declared.
 2. Precedence is default, then configuration struct, then environment: a
    value from the environment replaces a value from the struct, which
    replaces the default.
@@ -192,8 +193,8 @@ of both configurations:
    create, naming the variable, when a value does not parse. An empty value
    is treated as an unset variable, with one log line.
 4. An endpoint MUST log each environment override at create, naming the
-   variable and the value it displaced. A field that holds secret material
-   MUST be logged, and refused, with its value redacted.
+   variable and the value it displaced. In override logs and refusal
+   diagnostics, an endpoint MUST redact values that hold secret material.
 5. An endpoint MUST refuse to create, with an error naming the field, when any
    field holds a value outside its valid range, from the struct or from the
    environment alike. It MUST NOT clamp or otherwise correct a value.
@@ -216,6 +217,7 @@ field's default.
 | server max_clients limit | `1000` | integer | none: a limit of this revision | |
 | server packet_filter | `none` | bytes[4] | `ROCKETNET_SERVER_PACKET_FILTER` | 4 bytes; unset, the unkeyed filter value of [t5 Prefilter header](#t5) |
 | server backend_public_key | `none` | bytes[32] | `ROCKETNET_SERVER_BACKEND_PUBLIC_KEY` | an Ed25519 public key |
+| server server_secret_key | `none` | bytes[32] | none: exempt secret configuration | all zero selects a generated keypair; otherwise an application-supplied X25519 secret key |
 | server max_fragmented_messages | `8` | integer | `ROCKETNET_SERVER_MAX_FRAGMENTED_MESSAGES` | 0 (the default), or 1 to the fragments per payload maximum row of [t3 Constants and registries](#t3) |
 | server transport | `"auto"` | string | `ROCKETNET_SERVER_TRANSPORT` | [t2.4 Transport selection](#t2.4) |
 | server ipv4_address and ipv6_address, create arguments | none | string | `ROCKETNET_SERVER_IPV4_ADDRESS` and `ROCKETNET_SERVER_IPV6_ADDRESS` | an address and port of that family, or NULL; not both NULL |
@@ -227,8 +229,11 @@ field's default.
 | fragmented payload maximum | `361728` | bytes | none: a limit of this revision | |
 | reassembled payload maximum | `16384` | bytes | none: a limit of this revision; no config field sets it | |
 
-The server's X25519 keypair has no configuration field and no environment
-variable. The server generates it at create.
+The server's X25519 keypair is fixed at create. When `server_secret_key` is
+all zero, the server MUST generate a fresh keypair. Otherwise it MUST copy
+the supplied secret and derive the corresponding public key. There is no
+environment variable for this field. The server MUST erase its owned copy
+when it is destroyed; the application remains responsible for its own copy.
 
 An implementation MAY add fields of its own (for example a count of kernel
 queues for one transport); each one keeps rules 1 to 5.
@@ -774,6 +779,7 @@ Everything the server checks is gathered into one fixed buffer of the `signed co
 | address flag IPv6 | `0x02` | bit | bit 1: an IPv6 address is present |
 | address flags both | `0x03` | bit | both address families are present |
 
+<a id="t6.3"></a>
 ### t6.3. Connect token format
 
 The full token is handed to the client over the secure channel. The client splits it into its parts without parsing any length:
@@ -802,6 +808,7 @@ The full token is handed to the client over the secure channel. The client split
 | server to client key | 672 | 32 | bytes[32] | the clear session key, for the client | any |
 | zero pad | 704 | 64 | zero[64] | zero | zero |
 
+<a id="t6.4"></a>
 ### t6.4. Verification and refusal order
 
 A server MUST check a token in this order and MUST stop at the first failure and refuse the request:
@@ -1056,8 +1063,8 @@ Rules:
    of [t3 Constants and registries](#t3). A server MUST NOT reuse a session
    nonce across mappings.
 4. Each endpoint MUST use one X25519 keypair for the attempt: the client MUST
-   generate a fresh keypair for every attempt, and the server MUST generate one
-   for every mapping or take the current keypair of a bounded rotation window.
+   generate a fresh keypair for every attempt, and the server MUST generate a
+   fresh keypair for every mapping.
    The client MUST send its ephemeral public key in the clear in the connection
    request. The server MUST send its ephemeral public key inside the sealed
    connection challenge. Both keys are X25519 public keys of
@@ -1086,8 +1093,11 @@ Rules:
    reject a signature
    whose S component is not reduced modulo the group order, MUST reject an R
    component or public key that is not a canonical encoding or is of small
-   order, MUST reject a public key that does not decode to a curve point, and
-   MUST NOT accept two distinct signature byte strings for one message.
+   order, and MUST reject a public key that does not decode to a curve point.
+   A verifier MUST test the signature equation as well as these encoding
+   checks. These checks do not establish that only one valid signature exists
+   for a message. A server MUST identify a token by its signed connect data,
+   as [t6 Connect token](#t6) specifies, rather than by its signature bytes.
 10. Both endpoints MUST erase the shared secret as soon as the four keys are
     derived, MUST erase an ephemeral secret key when no handshake that needs it
     remains, and MUST erase the four keys and the token keys when the attempt
@@ -1244,12 +1254,27 @@ input: key derivation label = "RKTNSESC"
 00
 ```
 
+A signature verification vector uses a synthetic signed buffer, not a complete
+admissible connect token. It reports five one-byte booleans: acceptance
+of signature 1, acceptance of signature 2, acceptance of signature 1 after
+flipping bit 0 of message byte 0, acceptance of signature 1 after adding the
+Ed25519 group order to S, and equality of token identifiers after changing
+only the appended signature. A result of `01` is true; `00` is false.
+
+```vector t7.signature-verification
+input: signed data is 576 bytes; byte i is i modulo 256, starting at i = 0
+public key: 03a107bff3ce10be1d70dd18e74bc09967e4d6309ba50d5f1ddc8664125531b8
+signature 1: 5ebb1841a19d7dc4f15bfc4d1129ca25e0b89592e7707191046dc3b9c0d55468febcf49e12a5cb474f05c82607820f87591ca54e13d9d6bbeb288beccdd1e404
+signature 2: c1feb7cd2979a67e446dce907b856166f65c876623531d5e51ae737beea27912dba084da7f6ff698e0001e75f846b23a7c54eb9a84fdaa3213477d318cd6a505
+01 01 00 00 01
+```
+
 <a id="t8"></a>
 ## t8. Packet formats
 
 Every packet begins with the 6-byte prefilter header of [t5 Prefilter header](#t5): the packet type at offset 0, the filter epoch at offset 1, and the filter value at offsets 2 to 5. A sender MUST set the packet type byte to one of the ten types below. A receiver MUST drop a packet whose type is 10 or above.
 
-A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the send budget. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
+A sender MUST emit a packet of the size its type and fields give, and MUST NOT emit a packet larger than the maximum packet size. A receiver MUST drop a packet whose size is below its type's minimum or above the receive ceiling before it examines any field inside the packet ([t10 Receive processing](#t10)).
 
 Types 0 (connection request) and 7 (connection cookie) are not sealed. Types 1 to 6, 8 and 9 are sealed: after the prefilter header and the 4-byte sequence, their bytes are the sealed data of [t9 Packet protection](#t9). Types 1 and 2 place the 8-byte session nonce in the clear between the sequence and the sealed data. The session types 4, 5, 6, 8 and 9 open their sealed plaintext with the ack block of [t15 Acknowledgement](#t15), and the type data follows it.
 
@@ -1452,8 +1477,8 @@ The payload packet is a session packet. Its sealed plaintext is the ack block fo
 | filter value | 2 | 4 | bytes[4] | the value of [t5 Prefilter header](#t5) | any |
 | sequence | 6 | 4 | u32 | the sender's session sequence | nonzero |
 | ack block | 10 | 7 to 1027 | bytes[n] | the ack block of [t15 Acknowledgement](#t15), sealed | a well-formed block |
-| payload data | 10 plus the ack block size | 1 to the smaller of the payload capacity and the send budget less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
-| AEAD tag | 16 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
+| payload data | 10 plus the ack block size | 1 to the smaller of the payload capacity and the maximum packet size less 26 and the ack block size | bytes[n] | one payload of the message layer | at least 1 byte |
+| AEAD tag | 10 plus the ack block size and the payload size | 16 | bytes[16] | the tag over the ack block and the payload | any |
 
 <a id="t8.7"></a>
 ### t8.7. Connection disconnect packet (type 6)
@@ -1582,7 +1607,7 @@ The fragment packet is a session packet. Its sealed plaintext is the ack block, 
 | payload id | 10 plus the ack block size | 4 | u32 | the fragmented payload's identifier | nonzero |
 | fragment index | 14 plus the ack block size | 1 | u8 | this fragment's index | below the fragment count |
 | fragment count minus one | 15 plus the ack block size | 1 | u8 | the fragment count less one | 1 to 255 |
-| fragment data | 16 plus the ack block size | 1 to the send budget less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
+| fragment data | 16 plus the ack block size | 1 to the maximum packet size less 32 and the ack block size | bytes[n] | this fragment's bytes | at least 1 byte |
 | AEAD tag | 16 plus the ack block size and the fragment size | 16 | bytes[16] | the tag over the ack block, the header and the fragment data | any |
 
 <a id="t8.11"></a>
@@ -1603,7 +1628,7 @@ The wire size of each type is the sum of its fields. The handshake types have a 
 | connection ack packet minimum wire size | `33` | bytes | 6 + 4 + 7 + 16 |
 | connection fragment packet minimum wire size | `40` | bytes | 6 + 4 + 7 + 6 + 1 + 16 |
 
-A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than its send budget. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
+A session packet MUST NOT exceed the receive ceiling, and a sender MUST NOT emit one larger than the maximum packet size. The unfragmented payload capacity, the receive payload maximum and the fragment stride are rows of [t3 Constants and registries](#t3).
 
 <a id="t8.12"></a>
 ### t8.12. Vectors
@@ -1786,8 +1811,8 @@ ad c5 bd df c7 8f aa 2a 94 fb 2b 78
 <a id="t9"></a>
 ## t9. Packet protection
 
-Every sealed packet carries its per-packet data and its tag encrypted and
-authenticated with ChaCha20-Poly1305 (IETF) under one key of the connection.
+Every sealed packet carries encrypted per-packet data followed by the
+authentication tag of ChaCha20-Poly1305 (IETF), under one key of the connection.
 The associated data binds the version, the application protocol id, the
 packet type and the connection salt, and, for the two handshake types that
 carry the ephemeral exchange, the client's ephemeral public key. It never
@@ -2181,7 +2206,7 @@ types, and the response padding are:
 | maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
 
 A session packet's total wire size is its minimum or larger, up to the
-receive ceiling, which equals the send budget. After the ack block, a
+receive ceiling, which equals the maximum packet size. After the ack block, a
 connection payload packet MUST hold at least one byte and MUST NOT exceed
 the received payload maximum of [t3 Constants and registries](#t3). A
 receiver MUST refuse a payload outside that range as the type's
@@ -2738,8 +2763,8 @@ list is ignored in that state.
 | mapping | handshake deadline reached | never refreshed | remove mapping, count | no mapping |
 | mapping | idle deadline reached | no matching request inside the deadline | remove mapping, count | no mapping |
 | connected | request | any | ignore, count | connected |
-| connected | session packet | any | refresh idle | connected |
-| connected | disconnect | any | reset slot, remove mapping | no mapping |
+| connected | session packet | accepted under the receive checks | refresh idle | connected |
+| connected | disconnect | accepted under the receive checks | reset slot, remove mapping | no mapping |
 | connected | idle timeout | any | reset slot, remove mapping | no mapping |
 
 ```vector t12.cookie
@@ -3107,18 +3132,20 @@ in the kernel. The prefilter never advances the mark.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| fresh | sequence received | none | open; set the bit; high-water mark = sequence | tracking |
+| fresh | sequence received | open succeeds | set the bit; high-water mark = sequence | tracking |
 | tracking | sequence received | high-water mark at least one depth and sequence at or below high-water mark minus depth | refuse; no change | tracking |
-| tracking | sequence received | received bit set | refuse; no change | tracking |
-| tracking | sequence received | received bit clear and sequence at or below high-water mark | set the bit; no change to the high-water mark | tracking |
-| tracking | sequence received | sequence above high-water mark | clear the skipped bits, the whole ring when the jump is at least one depth; set the bit; high-water mark = sequence | tracking |
+| tracking | sequence received | sequence at or below high-water mark and received bit set | refuse; no change | tracking |
+| tracking | sequence received | within the window, received bit clear and sequence at or below high-water mark; open succeeds | set the bit; no change to the high-water mark | tracking |
+| tracking | sequence received | sequence above high-water mark; open succeeds | clear the skipped bits, the whole ring when the jump is at least one depth; set the bit; high-water mark = sequence | tracking |
 | any | open fails | none | no mark; count one integrity failure | unchanged |
 
 A replay vector's bytes are the window depth as a 4-byte little-endian
 unsigned integer, the final high-water mark as an 8-byte little-endian
 unsigned integer, then one byte per probe in input order: `01` when the probe
 is accepted, `00` when it is refused. A probe is accepted when its sequence is
-not behind the high-water mark and its received bit is clear.
+ahead of the high-water mark, or when it is within the retained window and its
+received bit is clear. A probe does not open a packet or mark its sequence;
+it tests replay eligibility only.
 
 ```vector t14.in-window-duplicate
 input: from an empty window, mark sequences 1000 and 1010 received
@@ -3224,7 +3251,7 @@ marked as specified by [t14 Replay protection](#t14).
 
 | Name | Value | Unit | Meaning |
 |---|---:|---|---|
-| range count maximum | 255 | entries | Maximum number of gap-and-received-range entries in one block |
+| range count maximum | `255` | entries | Maximum number of gap-and-received-range entries in one block |
 
 <a id="t15.3"></a>
 ### t15.3. Building and processing
@@ -3579,9 +3606,10 @@ an input ([t1.4 Conventions](#t1.4)).
    elapsed since the mapping was created. The deadline is fixed at creation and
    is not refreshed.
 4. A server MUST discard a half-open mapping when the half-open idle deadline
-   has elapsed since the last matching connection request from its address,
-   unless the handshake deadline elapses first. A connection request whose
-   connection salt matches the mapping refreshes the idle deadline.
+   has elapsed since the last matching connection request or authenticated
+   connection response for that mapping, unless the handshake deadline elapses
+   first. A request whose connection salt matches the mapping, or a response
+   that opens under its handshake key, refreshes the idle deadline.
 5. A client MUST NOT begin an attempt with a token whose expire timestamp is
    not later than its current time, and MUST send no packet for it. In
    requesting cookie (1), sending connection request (2) and sending connection
@@ -3590,7 +3618,7 @@ an input ([t1.4 Conventions](#t1.4)).
    timestamp, has elapsed on the client's clock since the attempt began. The
    check does not apply in connected (4).
 6. An endpoint MUST end an established connection when the connection timeout
-   has elapsed with no packet received from the remote endpoint. The connection timeout is
+   has elapsed with no accepted authenticated packet from the remote endpoint. The connection timeout is
    the timeout seconds field of the connect token
    ([t6 Connect token](#t6)); a token whose timeout is zero or negative is
    refused at both ends, so every connection times out
@@ -3604,26 +3632,20 @@ an input ([t1.4 Conventions](#t1.4)).
 9. An endpoint MUST send an acknowledgement block on its next update when
    ack debt is nonzero, using a standalone ack if no other session packet
    carries it, and MUST NOT wait for a packet threshold or keep-alive cadence.
-10. A reliable-message sender MUST retransmit an unacknowledged message only
-    when its adaptive resend delay expires. Before any RTT
-    sample, the resend delay is 2 seconds by default. For the first RTT sample, the
-    sender MUST set both its smoothed RTT and deviation to that sample. For
-    each later sample, deviation MUST move 5 percent toward the absolute
-    difference between the prior smoothed RTT and the sample, then smoothed
-    RTT MUST move 5 percent toward the sample.
-    The resend delay is 2 * smoothed_RTT + 4 * deviation + 30 ms, capped by the
-    configured maximum (2 seconds by default) and raised to the configured
-    minimum (0 by default). A nonzero minimum is an implementation option.
-    The sender MUST NOT back off the resend delay after retransmission.
-11. A server SHOULD enforce the handshake work budget after the cookie of a
-    connection request validates and before any asymmetric operation. When it
-    does, a request past the budget MUST be refused with no reply and counted
-    as a refusal, and the budget MUST be reset at the start of each update.
+10. Message retransmission belongs to RN-2. An endpoint implementing RN-2
+    MUST apply [RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9).
+    RN-1 alone does not retransmit application payloads.
+11. A server MUST enforce the handshake work budget after the cookie of a
+    connection request validates and before any asymmetric operation. A request
+    past the budget MUST be refused with no reply and counted as a refusal.
+    The budget MUST be reset at the start of each update.
 12. A server MUST apply the failed-signature budget before the signature
     verification. This budget MUST identify a source by its host address,
-    excluding its port. A request from a source that has already
-    failed in the current failed-signature window MUST be refused before the
-    verification runs and counted as a refusal. The budget MUST NOT refuse a
+    excluding its port. Once the failed-signature budget is spent, a request
+    from a source that has already failed in the current failed-signature window
+    MUST be refused before verification and counted as a refusal. While that
+    budget remains, the source's earlier failure MUST NOT by itself refuse
+    another verification attempt. The budget MUST NOT refuse a
     request from a source with no recorded failure in the window, even when
     the budget is spent and the server can record no further sources; the
     verifications such requests cost are bounded by the handshake work budget
@@ -4108,9 +4130,9 @@ the property the row it carries.
 | Packet replay refused | per-phase, per-direction sequence window; the sequence is the nonce |
 | Token reuse from another address refused | used-token history keyed on a hash of the signed data |
 | An on-path replay of a first request cannot hold a token past its mapping | the request claim is released with its half-open mapping; the claim window is min(handshake deadline, half-open idle deadline), and a refused client retries from its own address within its token timeout |
-| A key or nonce never outlives one connection | keys derived per connection from a fresh salt and a fresh session nonce |
+| Working keys are scoped to one connection | keys derived per connection from a fresh salt and a fresh session nonce; teardown erases the keys |
 | No response larger than what provoked it | the amplification table, re-checked whenever any size changes |
-| Recorded traffic stays closed after any later compromise | ephemeral X25519 exchange; secrets erased at derivation |
+| Recorded session traffic resists later compromise of long-term keys | ephemeral X25519 exchange; ephemeral and shared secrets erased after derivation, and session keys erased at teardown |
 | A compromised server mints nothing | servers hold no signing key |
 
 <a id="t19.1"></a>
@@ -4224,9 +4246,9 @@ role and the revision of RN-1 it meets.
 A conforming implementation MUST publish, and check itself against, fixed
 known-answer vectors covering: a connect token built from fixed keys, the four
 derived per-connection keys, one sealed packet of each type with its exact
-associated data bytes, and one cookie MAC. Self-consistency proves an
-implementation agrees with itself; only known-answer vectors prove that two
-implementations agree with each other.
+associated data bytes, and one cookie MAC. Matching known-answer vectors
+establishes agreement on those cases. It does not establish agreement on
+every state transition, malformed input, resource limit or packet schedule.
 
 A negative test of a receive check MUST assert two counters: the reason counter,
 and the packet type's received counter. The reason alone does not show that a
@@ -4238,9 +4260,9 @@ the counter list and the test list MUST be the same list.
 <a id="ta"></a>
 ## ta. Appendix A: test vectors
 
-The index of the vectors of RN-1 by section is printed by
-`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
-in the sections.
+The vectors of RN-1 appear in their defining sections. Each vector has a
+unique section-qualified identifier, declared inputs and expected output bytes.
+The vector identifier stays with the case when surrounding prose changes.
 
 <a id="tb"></a>
 ## tb. Appendix B: changes from netcode 1.02

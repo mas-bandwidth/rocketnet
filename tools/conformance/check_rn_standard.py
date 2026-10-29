@@ -12,7 +12,10 @@ standard/STYLE.md. It reads nothing else of the source tree but the pin files
 checks, and fails with one line per fault naming the section id:
 
   outline     every document's section headings are the outline's, in order,
-              each with its anchor; RN-R adds 'rh Revision history'
+              each with its anchor; subsection anchors also exist and their
+              ids are unique; RN-R adds 'rh Revision history'
+  layouts     RN-1 packet field offsets are contiguous, including symbolic
+              acknowledgement, payload and fragment lengths
   pins        every pin row's sdk expression, compiled through the real
               headers in one generated translation unit, equals the pin
               file's value and the value cell of the document row it names;
@@ -186,6 +189,7 @@ class Document:
         self.text = read(path)
         self.lines = self.text.split("\n")
         self.sections = []       # top-level, in order
+        self.headings = []       # every heading, including repeated subsection ids
         self.anchors = {}        # id -> Section (top-level and subsections)
         self.fences = []         # (section id, info, [body lines], line number)
         self._parse()
@@ -225,6 +229,7 @@ class Document:
                 level, ident, heading = len(match.group(1)), match.group(2), match.group(3)
                 section = Section(ident, heading, level, number)
                 section.anchored = pending_anchor == ident
+                self.headings.append(section)
                 pending_anchor = None
                 self.anchors[ident] = section
                 if level == 2:
@@ -281,6 +286,20 @@ def check_outline(docs, outline, faults, only):
             if len(matches) > 1:
                 faults.append((ident, "%s:%d section %s appears %d times; outline sections appear exactly once"
                                % (doc.name, matches[1].line, ident, len(matches))))
+        seen_subsections = set()
+        for section in doc.headings:
+            if section.level == 2:
+                continue
+            owner = section.id.split(".")[0]
+            if only and only not in (owner, section.id):
+                continue
+            if not section.anchored:
+                faults.append((owner, '%s:%d subsection has no <a id="%s"></a> line above it'
+                               % (doc.name, section.line, section.id)))
+            if section.id in seen_subsections:
+                faults.append((owner, "%s:%d subsection %s appears more than once"
+                               % (doc.name, section.line, section.id)))
+            seen_subsections.add(section.id)
         if not only:
             known = {i for i, _ in expected}
             for section in doc.sections:
@@ -291,6 +310,65 @@ def check_outline(docs, outline, faults, only):
 
 # ---------------------------------------------------------------------------
 # pins
+
+
+def packet_offset(value):
+    """A linear byte offset: constant, ACK size, payload size, fragment size.
+
+    Parse only the field table's small additive notation, never evaluate code.
+    """
+    variables = {"ack block size": 1, "payload size": 2, "fragment size": 3}
+    result = [0, 0, 0, 0]
+    for term in re.split(r"\s+(?:plus|and)\s+|\s*\+\s*", value.strip().strip("`")):
+        term = re.sub(r"^the\s+", "", term)
+        if re.fullmatch(r"\d+", term):
+            result[0] += int(term)
+        elif term in variables:
+            result[variables[term]] += 1
+        else:
+            raise ValueError("unknown packet-offset term %r" % term)
+    return tuple(result)
+
+
+def check_packet_layouts(docs, faults, only):
+    """Check contiguous RN-1 packet fields, including variable-size bodies."""
+    if only and only != "t8":
+        return
+    doc = docs["RN-1"]
+    variable_sizes = {"ack block": "ack block size", "payload data": "payload size",
+                      "fragment data": "fragment size"}
+    wanted = {"t8.%d" % n for n in range(1, 11)}
+    section = None
+    in_table = False
+    expected = (0, 0, 0, 0)
+    for number, line in enumerate(doc.lines, 1):
+        heading = HEADING_RE.match(line)
+        if heading:
+            section = heading.group(2)
+            in_table = False
+        if section not in wanted:
+            continue
+        if not line.startswith("|"):
+            in_table = False
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells[:3] == ["Name", "Offset", "Size"]:
+            in_table = True
+            expected = (0, 0, 0, 0)
+            continue
+        if not in_table or set("".join(cells)) <= set("-: "):
+            continue
+        try:
+            if len(cells) != 6:
+                raise ValueError("packet field row needs six cells")
+            actual = packet_offset(cells[1])
+            size = packet_offset(variable_sizes.get(cells[0], cells[2]))
+            if actual != expected:
+                faults.append(("t8", "%s:%d %s field %s offset %s does not follow the previous field (expected %s)"
+                               % (doc.name, number, section, cells[0], actual, expected)))
+            expected = tuple(a + b for a, b in zip(actual, size))
+        except ValueError as error:
+            faults.append(("t8", "%s:%d %s" % (doc.name, number, error)))
 
 
 def parse_value(text):
@@ -767,11 +845,14 @@ def check_language(docs, faults, only):
                     elif match and not section.pending:
                         faults.append((section.id, "%s informative text uses the key word %r" % (where, match.group(1))))
                     continue
+                # Inline code may contain a field named "required", but it
+                # must not hide an implementation citation from the standard.
+                citations = LINK_RE.sub(" ", line)
                 for pattern, what in ((LOWER_RE, "lower-case requirement word"),
                                       (PATH_RE, "file citation"),
                                       (TLA_RE, "model citation"),
                                       (TEST_RE, "test citation")):
-                    match = pattern.search(plain)
+                    match = pattern.search(plain if pattern is LOWER_RE else citations)
                     if match:
                         faults.append((section.id, "%s %s %r in normative text" % (where, what, match.group(0))))
 
@@ -801,6 +882,7 @@ def main():
             print("%s %s" % (only, "pending" if section is None or section.pending else "written"))
 
         check_outline(docs, outline, faults, only)
+        check_packet_layouts(docs, faults, only)
         pins, includes, unpinned_rows = read_pins(faults)
         pin_count = check_pins(docs, pins, includes, unpinned_rows, faults, only)
         vectors = document_vectors(docs, faults)

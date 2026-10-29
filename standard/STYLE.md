@@ -57,7 +57,8 @@ renumbered once published.
 The outline below is the one source of the section list. The checker reads
 it from this file and fails when a document's headings differ from it in
 text, id or order. Adding, removing or renaming a section is an edit here
-first.
+first. The checker also rejects a subsection with a missing or mismatched
+explicit anchor, or a repeated subsection id.
 
 <!-- outline:begin -->
 | Id | Heading | Document |
@@ -174,6 +175,12 @@ only when the section has one:
    `i32` (little-endian two's complement), `bytes[n]` and `zero[n]` (bytes
    that a sender sets to zero and a receiver checks). Offsets and sizes are
    decimal bytes.
+
+   RN-1 packet tables use additive offsets: a byte count, optionally followed
+   by `plus the ack block size`, `and the payload size`, or `and the fragment
+   size`. The checker verifies that each field begins at the end of the
+   previous field, including those variable lengths. It does not establish
+   that every field's semantic range is correct.
 3. **State table**, where the section has states:
 
    | State | Event | Guard | Action | Next state |
@@ -194,11 +201,14 @@ unique across the three documents. Inside the fence, input lines come first,
 one per input, as `name: value`; then the bytes, lower-case hex, 16 bytes to a
 row separated by single spaces, the last row 1 to 16 bytes:
 
-    ```vector t3.token-identifier input: the 576 signed connect data bytes of the frozen connect token f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61 ```
+    ```vector t3.token-identifier
+    input: the 576 signed connect data bytes of the frozen connect token
+    f5 20 da 9d 95 fd 07 22 56 b4 7d 75 5f 81 0f 61
+    ```
 
 A vector sits in the section that defines what it encodes. Each document's
-Appendix A is an index of its vector ids by section; it is printed on demand by
-`--print-index` and is not committed.
+Appendix A explains its vector identifiers. The tooling prints an index on
+demand with `--print-index`; that generated index is not committed.
 
 Every vector has a twin in a test file `test_unit_standard_<topic>.cpp` under
 `tests/`:
@@ -211,6 +221,12 @@ calls `rn_standard_vectors_walk`. The test regenerates the bytes from the inputs
 through the implementation and compares them (`test_unit_standard.h`). The
 checker fails a vector present in a document and in no test file, a twin in
 a test file and in no document, and any byte that differs between the two.
+
+The checker compares the document and fixture; it does not run the C++ vector
+generator. Execute the corresponding tests before reporting runtime agreement.
+A boundary vector distinguishes format capacity from sender policy whenever
+those limits differ. A verification vector states whether its inputs represent
+an admissible protocol object or only exercise one cryptographic operation.
 
 ## 10. Constants, configuration fields and pins
 

@@ -160,9 +160,36 @@ A payload ends with one form byte. A sender MUST write exactly one form byte, an
 | SINGLE | `0x00` | exactly one UNRELIABLE message |
 | RECORDS | `0x01` | one or more records |
 
-A sender MAY use SINGLE only for a message whose reliability is UNRELIABLE and whose length is at most the row `SINGLE message limit`. The message starts at payload offset 0 and the form byte follows it. A receiver MUST deliver a SINGLE payload as one UNRELIABLE message on channel 0.
+A sender MAY use SINGLE only for a message whose reliability is UNRELIABLE
+and whose length is at most the row `UNRELIABLE record limit`. The row
+`SINGLE message limit` is the format's data capacity, not an exception to
+the sender's promotion rule. The message starts at payload offset 0 and the
+form byte follows it. A receiver MUST deliver a valid SINGLE payload as one
+UNRELIABLE message on channel 0, subject to
+[m4 Receiver checks](#m4) and
+[m6 Delivery: unreliable codes 0 and 1](#m6).
 
-A fitting unreliable message is written in place in the packet buffer, with no copy between the message layer and the connection layer. A message is fitting when its reliability is UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT and its data, record header and form byte fit in one payload. A sender MUST aggregate fitting messages into back-to-back records of a shared RECORDS payload when room remains. Start reserves the declared maximum after the committed prefix; finish commits only the actual length, and abort leaves the prefix unchanged. Neither operation moves committed payloads. Seal the payload when the next reservation cannot fit, a receipt-reference bound is reached, or send_packets or update closes the build. A sender MAY use SINGLE for an otherwise fitting plain UNRELIABLE message that cannot fit with a record header. A sender MUST write a fitting message in place, except that it MAY copy one into a shared RECORDS payload when the connection layer gives no packet buffer large enough for it, when messages queued before it would otherwise be overtaken by it, when the send budget cannot pay it, or when the update's packet allowance is spent; a sender counts each such message once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both forms alike.
+A fitting unreliable message is written in place in the packet buffer, with
+no copy between the message layer and the connection layer. A message is
+fitting when its reliability is UNRELIABLE, UNRELIABLE_SEQUENCED or
+UNRELIABLE_WITH_ACK_RECEIPT, it does not require promotion, and its data,
+record header and form byte fit in one payload.
+
+A sender MUST aggregate fitting messages into back-to-back records of a
+shared RECORDS payload when room remains. Start reserves the declared maximum
+after the committed prefix; finish commits only the actual length, and abort
+leaves the prefix unchanged. Neither operation moves committed payloads.
+Seal the payload when the next reservation cannot fit, a receipt-reference
+bound is reached, or send_packets or update closes the build.
+
+A sender MAY use SINGLE for an unpromoted plain UNRELIABLE message when
+the available packet buffer can hold its data and form byte but cannot also
+hold its record header. A sender MUST write a fitting message in place,
+except that it MAY copy one into a shared RECORDS payload when the connection
+layer gives no packet buffer large enough for it, when messages queued before
+it would otherwise be overtaken by it, when the send budget cannot pay it, or
+when the update's packet allowance is spent. A sender counts each such message
+once in `MESSAGE_UNRELIABLE_IN_PLACE_FALLBACK`. A receiver reads both forms alike.
 
 A sender MUST encode every other message as one or more records in a RECORDS payload. The records MUST be written back to back, with no padding, and MUST fill the body exactly. An unreliable message that exceeds its one-record limit MUST be sent under its reliable twin as the promotion rule states; it MUST NOT be fragmented and MUST NOT be split across payloads.
 
@@ -180,7 +207,7 @@ The one-record limit of a reliability is the largest message that reliability se
 | RELIABLE_SEQUENCED | 4 | the row `RELIABLE_SEQUENCED record limit` | sent as a block |
 | UNRELIABLE_WITH_ACK_RECEIPT | 5 | the row `UNRELIABLE record limit`, in wire code 0 | sent as RELIABLE (code 2) and keeps its ACKED receipt |
 
-When the connection layer's payload capacity is below the row `maximum payload size`, the UNRELIABLE_SEQUENCED one-record limit is that capacity less the record's header and the form byte. A sender MUST send a message at or below its one-record limit as exactly one record. A sender MUST send a reliable message above that limit as a block of consecutive fragments of the row `block stride` bytes; only the last fragment MAY be shorter, and every fragment MUST carry at least 1 byte.
+When the connection layer's payload capacity is below the row `maximum payload size`, the UNRELIABLE_SEQUENCED one-record limit is that capacity less the record's header and the form byte. A sender MUST send a message at or below its one-record limit without fragmentation: as SINGLE when permitted by [m2 Payload forms and sender size rules](#m2), otherwise as exactly one record. A sender MUST send a reliable message above that limit as a block of consecutive fragments of the row `block stride` bytes; only the last fragment MAY be shorter, and every fragment MUST carry at least 1 byte.
 
 A sender MUST promote an UNRELIABLE, UNRELIABLE_SEQUENCED or UNRELIABLE_WITH_ACK_RECEIPT message above its one-record limit to its reliable twin: code 0 to code 2, code 1 to code 4, and code 5 to its reliable receipt twin (reliability 6, wire code 2) with the ACKED receipt kept. The receiver observes the twin's wire code. The sender MUST count each promotion once per send in `MESSAGE_PROMOTED_UNRELIABLE`, `MESSAGE_PROMOTED_UNRELIABLE_SEQUENCED` or `MESSAGE_PROMOTED_UNRELIABLE_WITH_ACK_RECEIPT`, according to the reliability the application chose.
 
@@ -212,6 +239,11 @@ A sender MUST refuse a message above the configured maximum message size. For UN
 | code RELIABLE_SEQUENCED | `4` | | wire code of RELIABLE_SEQUENCED |
 
 ### Vectors
+
+These vectors exercise the encoding capacities. The SINGLE limit vector is
+a format boundary, not a sender-policy exception: an application message
+above the unreliable record limit is promoted under
+[m2.1 One-record limits and promotion](#m2.1).
 
 ```vector m2.single-limit
 03 0a 11 18 1f 26 2d 34 3b 42 49 50 57 5e 65 6c
@@ -1615,8 +1647,12 @@ The flags byte carries the code in bits 0 to 2, BLOCK in bit 3, WIDE in bit 4, C
 | ordering | after the present fields before it | 3 | u24 | code 1, 3 or 4 | 0 to 16777215 |
 | channel | after the present fields before it | 1 or 2 | u8 or u16 | code 1, 3 or 4 | 0 to 255, or 0 to 65535 when WIDE |
 | fragment | after the present fields before it | 2 | u16 | BLOCK set | 0 to fragments |
-| fragments | after the present fields before it | 2 | u16 | BLOCK set | 1 to 65535 |
+| fragments | after the present fields before it | 2 | u16 | BLOCK set | 1 to 65535; the fragment count minus one |
 | data | after the present fields before it | length | bytes[length] | always | any bytes |
+
+For a block with k fragments, the sender MUST encode `fragments = k - 1`.
+The receiver MUST decode `k = fragments + 1` before using a fragment count.
+The `fragment` field is a zero-based index from 0 through `k - 1`, inclusive.
 
 The ring field is the absolute position of the record's first data byte in the receive ring, measured in 16-byte units and reduced modulo the ring size in those units:
 
@@ -1678,7 +1714,8 @@ payload, MUST hand no record of it to the application, and MUST increment the
 counter that the check names. Checks 1 to 9 run over the whole payload before
 any record of it is handed up, except check 7's block-descriptor agreement,
 which runs when the record is applied. Checks 10 to 12 run as each record is
-applied.
+applied. Block completion also checks the reconstructed message length under
+[m8 Blocks](#m8).
 A duplicate is not a violation: the receiver MUST count it as
 `MESSAGE_DUPLICATE` and MUST NOT refuse the payload for it.
 
@@ -1715,9 +1752,8 @@ The constants this section names are:
  6. An application record MUST carry a code present in the receiver's enabled
     mask. A CONTROL record is exempt. Counter: `MESSAGE_TYPE_NOT_ENABLED`.
  7. In the whole-payload scan, a block record MUST satisfy all of: its
-    fragment count is at least 1; its fragment index is at most its fragment
-    count; its fragment count plus one is at most W; its fragment count plus
-    one, times `message fragment bytes`, is at most the maximum message size
+    decoded fragment count k is at least 2; its fragment index is less than k;
+    k is at most W; k times `message fragment bytes` is at most the maximum message size
     plus `message fragment bytes` minus 1; every fragment but the last is
     exactly `message fragment bytes` long; the last is at most `message fragment bytes` long. Counter: `MESSAGE_BAD_BLOCK`. When the
     record is applied, a block record's ring base, the ring less the fragment
@@ -1731,8 +1767,9 @@ The constants this section names are:
     it could belong to. Counter: `MESSAGE_BAD_RING`.
 9. A reliable or CONTROL record MUST NOT lie in a payload longer than
    `payload capacity`. A record's length, and a SINGLE payload's message
-   length, MUST be at most the receiver's maximum message size; check 7 holds a
-   block to the same limit. A SINGLE payload takes checks 1, 6 and this one.
+   length, MUST be at most the receiver's maximum message size. Check 7 bounds
+   a block's fragment count; [m8 Blocks](#m8) checks its exact completed length.
+   A SINGLE payload takes checks 1, 6 and this one.
    Counter: `MESSAGE_BAD_SIZE`.
 10. A reliable record MUST have a number less than W ahead of the receiver's
      next number. Counter: `MESSAGE_NUMBER_OUTSIDE_WINDOW`. A record whose
@@ -2053,6 +2090,7 @@ make the reconstruction unambiguous.
    holdable span inside `B`. A receiver MUST police both claims as the checks
    of [m4 Receiver checks](#m4) describe.
 
+<a id="m5.2"></a>
 ### m5.2. Receiver reconstruction and window check
 
 For each reliable record, in wire order, the receiver reconstructs the 64-bit
@@ -2085,6 +2123,7 @@ n     = R + delta
    delivery. The receiver MUST NOT report the message to the application a
    second time.
 
+<a id="m5.3"></a>
 ### m5.3. Precondition on the connection layer
 
 10. The reconstruction is unambiguous only while both of these hold. The
@@ -2096,6 +2135,7 @@ n     = R + delta
     `half range`. A receiver MUST refuse a stale copy as a duplicate under
     rule 8.1 rather than read it as a fresh number.
 
+<a id="m5.4"></a>
 ### m5.4. Constants and configuration
 
 | Name | Value | Unit | Meaning |
@@ -2117,6 +2157,7 @@ n     = R + delta
 | block fragments maximum | `911` | records | the largest block that the largest message makes |
 | stale copy bound | `7668421` | numbers | the most a stale copy can lie behind `R` |
 
+<a id="m5.5"></a>
 ### m5.5. Vectors
 
 The bytes of a reconstruction vector are one outcome byte followed, for an
@@ -2263,6 +2304,7 @@ This section starts after the receive window of
 number. A duplicate number is dropped by the window and counted as a
 duplicate; it is never delivered and is not a violation.
 
+<a id="m7.1"></a>
 ### m7.1. Code 2, RELIABLE
 
 1. A receiver MUST deliver a code 2 record exactly once, when its number is
@@ -2272,6 +2314,7 @@ duplicate; it is never delivered and is not a violation.
 3. A code 2 record whose number is outside the window, or whose slot is held
    by another live number, is a violation.
 
+<a id="m7.2"></a>
 ### m7.2. Code 3, RELIABLE_ORDERED
 
 1. A receiver MUST deliver a code 3 record on a channel only when the
@@ -2297,6 +2340,7 @@ duplicate; it is never delivered and is not a violation.
 7. A held record MUST be delivered exactly once, in ascending ordering order
    on its channel, and only by the drain or by being in turn.
 
+<a id="m7.3"></a>
 ### m7.3. Code 4, RELIABLE_SEQUENCED
 
 1. A code 4 record carries an ordering index and a sequencing index. The
@@ -2323,6 +2367,7 @@ duplicate; it is never delivered and is not a violation.
    watermark, then continue with the held ordered records. An ordered
    delivery sets the sequencing watermark to zero.
 
+<a id="m7.4"></a>
 ### m7.4. Outcomes
 
 Every change this section makes to a record is visible to the application or
@@ -2365,6 +2410,7 @@ delivery entries. The trace is the steps of the input records in order.
 | `held` | `2` | the record is held for a later ordering index or epoch |
 | `stale` | `3` | the record is dropped as stale or superseded |
 
+<a id="m7.5"></a>
 ### m7.5. Vectors
 
 The traces below fix the receiver's configuration at one channel, window
@@ -2452,20 +2498,28 @@ delivered whole. Each fragment is one record ([m3 Record format](#m3)).
    plus the span exceeds B ([m4 Receiver checks](#m4)). A receiver that has
    not seen the last fragment MUST use 16 bytes as the last fragment's rounded
    length for that check, the shortest block the fragment could belong to.
-5. **Receive, completion and delivery.** A receiver MUST copy each fragment's
-   data to ring + fragment × F, by index and not by arrival. When all k
-   fragments have arrived, a receiver MUST deliver the block exactly once and
-   whole, at its one ordering slot, as fragments 0 to k − 1 in order. A
+5. **Receive, completion and delivery.** Let `base_bytes` be the block's
+   base position within the receive ring, in bytes. A receiver MUST copy each
+   fragment's data to `base_bytes + fragment × F`, by index and not by arrival.
+   This destination equals 16 times that fragment's ring field; the fragment
+   offset MUST NOT be added to the fragment's ring field a second time.
+   When all k fragments have arrived, the receiver MUST compute the exact
+   message length as `(k - 1) × F + last_fragment_length`. If it exceeds the
+   configured maximum message size, the receiver MUST refuse the block with
+   `MESSAGE_BAD_BLOCK` and MUST NOT deliver it. Otherwise a receiver MUST
+   deliver the block exactly once and whole, at its one ordering slot,
+   as fragments 0 to k − 1 in order. A
    receiver MUST NOT deliver an incomplete block. A receiver MUST count a
    duplicate fragment once. A receiver MUST refuse a fragment whose fragment
    count, first number or base disagrees with the block's first fragment.
 
 | State | Event | Guard | Action | Next state |
 |---|---|---|---|---|
-| collecting | a fragment arrives | no block state exists, or its count, first number and base agree | copy the fragment to ring + fragment × F and count it | collecting |
+| collecting | a fragment arrives | no block state exists, or its count, first number and base agree | copy the fragment to base_bytes + fragment × F and count it | collecting |
 | collecting | a fragment arrives | a block state exists and the count, first number or base disagrees | refuse the payload as a violation | connection ends |
 | collecting | a duplicate fragment arrives | its number was already counted | count it once and change nothing | collecting |
-| collecting | the last missing fragment arrives | every fragment of the block has arrived | deliver the block whole at its ordering slot | complete |
+| collecting | the last missing fragment arrives | every fragment has arrived and the exact message length exceeds the configured maximum | refuse with MESSAGE_BAD_BLOCK | connection ends |
+| collecting | the last missing fragment arrives | every fragment has arrived and the exact message length is within the configured maximum | deliver the block whole at its ordering slot | complete |
 | complete | any | | ignore the event | complete |
 
 An event a state does not list is ignored in that state.
@@ -2670,6 +2724,7 @@ f0 f1 f2 f3 f4 f5 f6 f7 f8 f9 fa fb fc fd fe ff
 <a id="m9"></a>
 ## m9. Acknowledgement mapping, resend and send budget
 
+<a id="m9.1"></a>
 ### m9.1. Acknowledgement mapping
 
 The connection layer reports which of a sender's packets the receiver
@@ -2700,6 +2755,7 @@ round-trip sample equal to the time between the send and the acknowledgement.
 A number that was already acknowledged MUST NOT be acknowledged or sampled a
 second time.
 
+<a id="m9.2"></a>
 ### m9.2. Round-trip estimate and resend delay
 
 The sender MUST estimate the round-trip time as follows. On the first
@@ -2708,41 +2764,52 @@ sample. On every later sample, the deviation MUST move 5 percent toward
 the absolute difference between the prior smoothed RTT and the new sample;
 the smoothed RTT MUST then move 5 percent toward the new sample. The resend delay is
 
-    clamp( 2 x srtt + 4 x deviation + 30 ms, message_resend_delay_min_ms, message_resend_delay_max_ms )
+    minimum_seconds = message_resend_delay_min_ms / 1000
+    maximum_seconds = message_resend_delay_max_ms / 1000
+    resend_delay_seconds = clamp( 2 × srtt + 4 × deviation + 0.030,
+                                  minimum_seconds, maximum_seconds )
 
-where srtt and deviation are in seconds. The timeout MUST be 2 seconds before
-the first sample by default. The minimum defaults to 0, which applies no floor;
+The values srtt and deviation, the converted clamp bounds and the result are
+in seconds. Division by 1000 is real-valued, not integer division.
+Before the first sample, the resend delay MUST be
+`message_resend_delay_initial_ms / 1000` seconds, whose default is 2 seconds.
+The minimum defaults to 0, which applies no floor;
 a caller may configure a nonzero minimum. The maximum
-defaults to 2 seconds. The timeout MUST
-NOT back off after a resend: every pass uses the same function of the
+defaults to 2 seconds. The resend delay MUST NOT back off after a resend:
+every pass uses the same function of the
 estimates, so a record that is never acknowledged is resent at that delay
 until the reliable timeout ends the connection.
 
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
-| message_resend_delay_initial_ms | 2000 | ms | the timeout before the first round-trip sample |
-| message_resend_delay_min_ms | 0 | ms | optional floor for the sampled resend delay; zero disables it |
-| message_resend_delay_max_ms | 2000 | ms | the configured largest timeout |
-| reliable_message_timeout_ms | 10000 | ms | how long the oldest unacknowledged number may stand |
-| min_resend_attempts | 4 | count | the sends that fit before the reliable timeout |
+| message_resend_delay_initial_ms | `2000` | ms | the resend delay before the first round-trip sample |
+| message_resend_delay_min_ms | `0` | ms | optional floor for the sampled resend delay; zero disables it |
+| message_resend_delay_max_ms | `2000` | ms | the configured largest resend delay |
+| reliable_message_timeout_ms | `10000` | ms | how long the oldest unacknowledged number may stand |
+| min_resend_attempts | `4` | count | the sends that fit before the reliable timeout |
 
+<a id="m9.3"></a>
 ### m9.3. Resend classes and the reliable timeout
 
 A sender MUST keep two resend queues. A single-packet reliable record is in the
 small-record queue; a fragment of a block is in the chunk queue. A number MUST
 be in at most one queue.
 
-The resend delay of a single-packet record MUST be resend_delay. The resend delay of
-a chunk MUST be min( resend_delay, reliable_message_timeout_ms / min_resend_attempts ). A sender MUST resend a due number
+The resend delay of a single-packet record MUST be `resend_delay_seconds`.
+The resend delay of a chunk MUST be
+`min(resend_delay_seconds, (reliable_message_timeout_ms / 1000) / min_resend_attempts)`
+seconds, with real-valued division. A sender MUST resend a due number
 at the first update whose time is at least the number's last send plus its
 resend delay, and MUST NOT resend it before then. A resend MUST use a fresh
 connection layer sequence and MUST move the number to the tail of its queue.
 
 The sender MUST end the connection with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
 when the oldest unacknowledged reliable number has stood unacknowledged for
-reliable_message_timeout_ms or more, measured from its first send. A connection that
+`reliable_message_timeout_ms / 1000` seconds or more, measured from its first
+send. This lifetime limit is distinct from the delay between resends. A connection that
 ends with ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT MUST stop resending.
 
+<a id="m9.4"></a>
 ### m9.4. Send budget
 
 Every connection MUST send at most its send budget, a rate in kilobits per
@@ -2798,6 +2865,7 @@ depth. The budget change is visible when the setter returns success.
 | Waiting | the update ends | | | Open |
 | Any | an item is offered after a lower-priority class | | count the order refusal; a reliable item waits | Waiting |
 
+<a id="m9.5"></a>
 ### m9.5. Vectors
 
 ```vector m9.resend-trace
@@ -2845,8 +2913,7 @@ wire representation.
    outside that range. A send of reliability 0, 2, 5 or 6 is neither ordered
    nor sequenced: a message endpoint MUST ignore its channel, MUST NOT refuse
    it for its channel, and sends it with no channel field (rule 2): the channel
-   orders only the ordered and sequenced reliabilities
-   (`rn_message_object_start` in `sdk/rocketnet_message_server.cpp`).
+   orders only the ordered and sequenced reliabilities.
 2. A record with code 1, 3 or 4 MUST carry the channel field in
    [m3 Record format](#m3). Receipt types use their base codes from
    [m1.3 Reliability types](#m1.3): type 7 uses code 3 and carries a channel;
@@ -3181,6 +3248,6 @@ within the message layer of a sealed connection.
 <a id="ma"></a>
 ## ma. Appendix A: test vectors
 
-The index of the vectors of RN-2 by section is printed by
-`python3 tools/conformance/check_rn_standard.py --print-index`; the bytes are
-in the sections.
+The vectors of RN-2 appear in their defining sections. Each vector has a
+unique section-qualified identifier, declared inputs and expected output bytes.
+The vector identifier stays with the case when surrounding prose changes.
