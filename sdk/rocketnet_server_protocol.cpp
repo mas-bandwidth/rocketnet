@@ -1745,7 +1745,8 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
     return rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 }
 
-// The ack block's reference (tla/AckBlockWrap.tla ReadBlock, highestSent):
+// The ack block's reference (tla/AckBlockWrap.tla ReadBlock, highestSent;
+// proofs/tla/SessionSendSequence.tla BaselineIsHighestSealed):
 // the delivery bookkeeping's high-water mark, folded from the sequence each
 // packet actually sealed (rocketnet_ack_endpoint_record_sent_classified),
 // and the same mark the block is then applied against. The next sequence
@@ -1798,6 +1799,8 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
 
+    // proofs/tla/SessionSendSequence.tla ControlTake and ControlSeal: the
+    // sequence is taken in one fetch-add and is the one sealed below.
     const uint64_t sequence = rocketnet_session_sequence_take( &mapping->send_sequence_session );
 #if ROCKETNET_DEV
     rocketnet_dev_session_sequence_taken( sequence );
@@ -2022,6 +2025,7 @@ int rocketnet_server_protocol_maintenance_due( const struct rocketnet_server_pro
 // only shared words touched are the sequence (an atomic add) and the send
 // timestamp (an atomic store).
 
+// proofs/tla/SessionSendSequence.tla FillStart: the sequence is one atomic add.
 int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t * server,
                                              int client_index,
                                              struct rocketnet_address_t * to,
@@ -2049,6 +2053,8 @@ int rocketnet_server_protocol_start_payload( struct rocketnet_server_protocol_t 
     return 1;
 }
 
+// proofs/tla/SessionSendSequence.tla FillSeal: seals the held sequence and
+// records it sent, which folds the ack baseline.
 int rocketnet_server_protocol_seal_payload_frame( struct rocketnet_server_protocol_t * server,
                                                   int client_index,
                                                   uint64_t sequence,
@@ -2120,6 +2126,8 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     int block_bytes = rocketnet_session_ack_block_build( plaintext, payload_bytes, &mapping->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
+    // proofs/tla/SessionSendSequence.tla ControlTake and ControlSeal: the
+    // sequence is taken in one fetch-add and is the one sealed below.
     const uint64_t sequence = rocketnet_session_sequence_take( &mapping->send_sequence_session );
 #if ROCKETNET_DEV
     rocketnet_dev_session_sequence_taken( sequence );
@@ -2192,6 +2200,7 @@ uint32_t rocketnet_server_protocol_next_fragment_payload_id( struct rocketnet_se
     return (uint32_t) ( 1 + ( raw - 1 ) % 0xFFFFFFFFULL );
 }
 
+// proofs/tla/SessionSendSequence.tla FillStart: the block is one atomic add.
 int rocketnet_server_protocol_start_fragments( struct rocketnet_server_protocol_t * server, int client_index, int fragment_count, uint64_t * base_sequence )
 {
     rocketnet_assert( server );

@@ -448,3 +448,6 @@ MCLoopbackHubBrokenNoHeaderCheck.cfg	MCLoopbackHub.tla	invariant	NoForeignUse	ch
 MCLoopbackHubLayout.cfg	MCLoopbackHubLayout.tla	pass	-	check	loopbackhublayout	required	-
 MCLoopbackHubLayoutBrokenFullOffByOne.cfg	MCLoopbackHubLayout.tla	invariant	RingIsQueue	check	loopbackhublayout	required	-
 MCLoopbackHubLayoutBrokenWrapNotMultiple.cfg	MCLoopbackHubLayout.tla	invariant	RingIsQueue	check	loopbackhublayout	required	-
+MCSessionSendSequence.cfg	MCSessionSendSequence.tla	pass	-	check	sessionsendsequence	required	-
+MCSessionSendSequenceBrokenReadIncrement.cfg	MCSessionSendSequence.tla	invariant	SequencesUnique	check	sessionsendsequence	required	-
+MCSessionSendSequenceBrokenBaseline.cfg	MCSessionSendSequence.tla	invariant	BaselineIsHighestSealed	check	sessionsendsequence	required	-
