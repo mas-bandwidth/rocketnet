@@ -45,6 +45,20 @@
 //                       the transport seam
 // ---------------------------------------------------------------
 
+// rn_link_forward<F>::call is the link entry for a transport function F that
+// takes the transport first and nothing to adapt: it casts the seam's
+// pointer to F's transport type and passes the rest through. call_const is
+// the same for the entries the seam declares on a const transport.
+template <auto F>
+struct rn_link_forward;
+
+template <typename T, typename R, typename... A, R ( *F )( T *, A... )>
+struct rn_link_forward<F>
+{
+    static R call( void * transport, A... a ) { return F( (T *) transport, a... ); }
+    static R call_const( const void * transport, A... a ) { return F( (T *) transport, a... ); }
+};
+
 struct rn_message_link_t
 {
     void * transport;
