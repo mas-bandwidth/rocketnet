@@ -12602,6 +12602,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_transport_wire_bytes_per_family", test_transport_wire_bytes_per_family, NULL },
     { "test_loopback_transport_live_message_matrix", live_message_matrix_loopback, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+#if ROCKETNET_DEV
+    // These files use development-only socket seams and the resource ledger.
+    // Production omits their cases; it must not replace them with empty bodies.
     { "test_portable_transport_windows_server_drops_oversize_datagram_ipv4", windows_server_drops_oversize_datagram_portable_ipv4, NULL },
     { "test_portable_transport_windows_server_drops_oversize_datagram_ipv6", windows_server_drops_oversize_datagram_portable_ipv6, NULL },
     { "test_iocp_transport_windows_server_drops_oversize_datagram_ipv4", windows_server_drops_oversize_datagram_iocp_ipv4, NULL },
@@ -12637,20 +12640,26 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_rio_transport_windows_client_create_destroy_1000", rocketnet_test_windows_client_create_destroy_1000_rio, NULL },
     { "test_rio_transport_windows_connect_disconnect_1000", rocketnet_test_windows_connect_disconnect_1000_rio, NULL },
     { "test_rio_transport_windows_server_restart_1000", rocketnet_test_windows_server_restart_1000_rio, NULL },
+#endif // production excludes Windows socket-error and lifecycle scaffold cases
     { "test_portable_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_portable_ipv4, NULL },
     { "test_portable_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_portable_ipv6, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_iocp_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_iocp_ipv6, NULL },
+#if ROCKETNET_DEV
+    // Forcing plain IOCP requires the development-only USO/URO test seam.
     { "test_iocp_transport_windows_connreset_hard_killed_client_plain_ipv4", windows_connreset_hard_killed_client_iocp_plain_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_hard_killed_client_plain_ipv6", windows_connreset_hard_killed_client_iocp_plain_ipv6, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_rio_transport_windows_connreset_hard_killed_client_ipv4", windows_connreset_hard_killed_client_rio_ipv4, NULL },
     { "test_rio_transport_windows_connreset_hard_killed_client_ipv6", windows_connreset_hard_killed_client_rio_ipv6, NULL },
     { "test_portable_transport_windows_connreset_send_to_closed_port_ipv4", windows_connreset_send_to_closed_port_portable_ipv4, NULL },
     { "test_portable_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_portable_ipv6, NULL },
     { "test_iocp_transport_windows_connreset_send_to_closed_port_ipv4", windows_connreset_send_to_closed_port_iocp_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_iocp_ipv6, NULL },
+#if ROCKETNET_DEV
     { "test_iocp_transport_windows_connreset_send_to_closed_port_plain_ipv4", windows_connreset_send_to_closed_port_iocp_plain_ipv4, NULL },
     { "test_iocp_transport_windows_connreset_send_to_closed_port_plain_ipv6", windows_connreset_send_to_closed_port_iocp_plain_ipv6, NULL },
+#endif // #if ROCKETNET_DEV
     { "test_rio_transport_windows_connreset_send_to_closed_port_ipv4", windows_connreset_send_to_closed_port_rio_ipv4, NULL },
     { "test_rio_transport_windows_connreset_send_to_closed_port_ipv6", windows_connreset_send_to_closed_port_rio_ipv6, NULL },
     { "test_windows_client_connreset_server_gone_ipv4", windows_client_connreset_server_gone_ipv4, NULL },

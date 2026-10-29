@@ -33,6 +33,10 @@
 // The scope terminates the worker's library and initializes it with this
 // allocator, as tests/test_unit_driver_create_out_of_memory.cpp installs its
 // allocator, and at its end terminates and puts the default allocator back.
+// The test loopback hub (tests/loopback_hub.h) a case makes inside the scope
+// is a block of this allocator, so the scope releases it before each
+// terminate: the worker's release after the case would run after the term
+// that finds it still allocated, and free a mapped block with free.
 
 #pragma once
 
@@ -41,6 +45,7 @@
 
 #include "rocketnet_internal.h"
 #include "test_unit_registry.h"
+#include "loopback_hub.h"
 
 #include <stddef.h>
 #include <stdint.h>
@@ -115,6 +120,7 @@ struct msan_scale_allocator_scope_t
 #if defined( ROCKETNET_TEST_MSAN_SCALE_ALLOCATOR )
     msan_scale_allocator_scope_t()
     {
+        rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
         rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
         int status = -1;
         rocketnet_unit_check( rocketnet_init_ex( NULL, msan_scale_allocate, msan_scale_release, &status ) );
@@ -123,6 +129,7 @@ struct msan_scale_allocator_scope_t
 
     ~msan_scale_allocator_scope_t() noexcept( false ) // check() throws under the expected-fail harness
     {
+        rocketnet_unit_check( rocketnet_test_loopback_hub_release() );
         rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
         rocketnet_unit_check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
     }
