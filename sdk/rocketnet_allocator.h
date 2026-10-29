@@ -54,7 +54,7 @@ struct rn_channel_send_t                // 40 bytes (7.1): ready membership is a
 {
     uint32_t ordered_write;             // next ordering index for an ordered send
     uint32_t sequenced_write;           // next sequencing index; zeroed by every ordered send
-    uint32_t queue_head, queue_tail;    // cached first/last live descriptor of this channel's flat FIFO, ordered by enqueue_ticket over the send_descriptors array; RN_DESCRIPTOR_NONE when empty
+    uint32_t queue_head, queue_tail;    // the first and last descriptor of this channel's reliable FIFO, linked by queue_next; RN_DESCRIPTOR_NONE when empty
     uint16_t queued[4];                 // live queued count per priority (holes are not counted)
     uint32_t ready_prev, ready_next;    // the neighbouring ready channels, RN_DESCRIPTOR_NONE at the ends and when not ready
     uint32_t ready_ticket;              // 0 when this channel is not on the ready list; else its membership ticket
@@ -135,7 +135,7 @@ struct rn_send_descriptor_t             // 80 bytes: one queued or in-flight sen
     uint16_t schedule_flags;            // RN_SCHEDULE_QUEUED while this descriptor is a live queue entry
     uint8_t reserved[2];                // unused spare bytes
     uint32_t enqueue_ticket;            // 0 not queued; else the enqueue ticket (from 1)
-    uint32_t queue_epoch;               // region->schedule_epoch at enqueue; a carve makes a stale entry miss
+    uint32_t queue_next;                // the next descriptor in its channel's reliable FIFO, RN_DESCRIPTOR_NONE at the tail
     uint32_t order_slot;                // the flat live-span order array's slot at this descriptor's index: the descriptor at that order position, RN_DESCRIPTOR_NONE outside the live segment
     uint32_t generation;                // the slot's generation tag: bumped on every take, never reset by a free
     uint32_t span_start;                // RN_SEND_FLAG_SPAN: the span's byte offset in the send spans (4)
@@ -463,7 +463,7 @@ static inline uint32_t rn_region_schedule_ticket( rn_region_t * region )
 static inline void rn_descriptor_enqueue_stamp( rn_region_t * region, rn_send_descriptor_t * descriptor )
 {
     descriptor->enqueue_ticket = rn_region_schedule_ticket( region );
-    descriptor->queue_epoch = region->schedule_epoch;
+    descriptor->queue_next = RN_DESCRIPTOR_NONE;
     descriptor->schedule_flags = (uint16_t) RN_SCHEDULE_QUEUED;
 }
 
