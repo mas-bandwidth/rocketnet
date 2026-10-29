@@ -98,14 +98,19 @@ REGISTER_UNIT_TEST( test_server_stats_current_every_update );
 // margin. How many of those pages the OS keeps resident is the OS's business
 // (4 KiB or 16 KiB pages, its allocator, its accounting), so it is not bounded
 // here; the plans themselves are checked against the allocator elsewhere.
+// The bound is therefore loose (the plan is about 36 GiB, the case touches
+// under 1.3 GiB): it catches a plan that grows, not resident growth (Glenn,
+// 2026-10-28, on a NetBSD red against a page-calibrated bound).
 
 #if ROCKETNET_DEV
 static long no_worker_rss_bound_mb()
 {
     rocketnet_server_config_t server;
     rocketnet_client_config_t client;
-    if ( rocketnet_server_default_config( &server ) != ROCKETNET_STATUS_OK || rocketnet_client_default_config( &client ) != ROCKETNET_STATUS_OK )
-        return 0;
+    // a bound of 0 would turn the check off, so a config that does not build
+    // is the case's failure, never a silent pass
+    check( rocketnet_server_default_config( &server ) == ROCKETNET_STATUS_OK );
+    check( rocketnet_client_default_config( &client ) == ROCKETNET_STATUS_OK );
     server.max_clients = ROCKETNET_MAX_CLIENTS;
     server.transport = "loopback";
     client.transport = "loopback";
