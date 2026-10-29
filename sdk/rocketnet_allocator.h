@@ -216,12 +216,11 @@ struct rn_unreliable_entry_t            // 8 bytes: one unreliable queue entry (
     uint32_t ticket;                    // its enqueue ticket when pushed; a tombstone once the descriptor's ticket differs
 };
 
-struct rn_resend_link_t                 // 16 bytes: resend sequence entry, indexed number % W (6.4)
+struct rn_resend_link_t                 // 12 bytes: resend sequence entry, indexed number % W (6.4)
 {
     uint32_t prev;                      // previous slot in its sequence in bits 0..30 (0x7FFFFFFF: the head), linked flag in bit 31; 0 when not in a sequence
     uint32_t next;                      // next slot in its sequence in bits 0..30 (0x7FFFFFFF: the tail), chunk-class flag in bit 31
     uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
-    uint32_t owner_epoch;               // region->schedule_epoch when the slot was sequenced
 };
 
 // Queue scheduling (tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
@@ -416,7 +415,6 @@ struct rn_region_t
     uint32_t span_tail;                 // the byte offset the next span is placed at
     uint32_t span_first, span_last;     // the oldest and the newest live span's descriptor, RN_DESCRIPTOR_NONE when none
     uint32_t span_ticket_next;          // the next span allocation ticket; the flat span order array orders live spans, tickets mirror that order
-    uint32_t schedule_epoch;            // 1 after every carve; names this connection's queue entries
     uint32_t schedule_ticket_next;      // next enqueue ticket (from 1); 0 is never issued
     rn_sent_packet_t * sent_packets;
     rn_sent_index_t * sent_index;

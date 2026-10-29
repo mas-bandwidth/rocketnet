@@ -412,7 +412,7 @@ requirements to each configuration group:
 | Field | Symbol | Range | Default | Light | Sizing rule and tradeoff |
 | --- | --- | --- | --- | --- | --- |
 | `send_queue_messages` | `Q` | `16 .. 1048576` | `1024` | `128` | Maximum messages queued for transmission before/during send pacing (`64` bytes per descriptor plus resend-delay reserve). Increase if a frame queues many small messages before `update`. |
-| `reliable_messages_in_flight` | `W` | power of two, `64 .. 1048576` | `1024` | `256` | Sliding window of unacknowledged reliable messages (`120.125 * W` bytes plus delivered tracking). Size `W >= peak_reliable_msg_rate * RTT_sec * 2` so normal RTT never blocks reliable sends. |
+| `reliable_messages_in_flight` | `W` | power of two, `64 .. 1048576` | `1024` | `256` | Sliding window of unacknowledged reliable messages (`116.125 * W` bytes plus delivered tracking). Size `W >= peak_reliable_msg_rate * RTT_sec * 2` so normal RTT never blocks reliable sends. |
 | `packets_in_flight` | `P` | `64 .. 1048576`, and `P >= W` | `1024` | `256` | Sent-packet tracking ring (`128 * P` bytes). If `P < W`, create returns `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`. For high tick rates with unreliable traffic alongside reliable messages, set `P > W` (e.g. `2 * W`). |
 | `packets_per_update` | — | `1 .. 1024` | `256` | `4` | Maximum UDP packets emitted per connection in a single `update` call. Must cover peak per-tick packet bursts (including fragments and retransmits). |
 | `unreliable_messages_per_update` | `Du` | `1 .. 65536` | `1024` | `4` | Maximum unreliable/sequenced messages accepted and delivered per connection per `update` (`24 * (W + Du)` bytes in delivered table). Must exceed the peak unreliable messages sent or received in one frame. |
@@ -640,7 +640,7 @@ Each connection's message region is sub-allocated from a single 64-byte-aligned
 block (`sdk/rocketnet_allocator.cpp`, `docs/CHANNELS.md` section 14):
 
 ```text
-connection_bytes = 64C + 120.125W + B + 80Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR
+connection_bytes = 64C + 116.125W + B + 96Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR
 ```
 
 where `Q`, `S`, and `SR` include the resend-delay payload reserve derived from

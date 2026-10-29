@@ -35,7 +35,7 @@ static_assert( sizeof( rn_sequenced_payload_t ) == ROCKETNET_MAX_PACKET_PAYLOAD_
 static_assert( sizeof( rn_sequenced_hold_t ) + sizeof( rn_sequenced_payload_t ) == 1432, "separate hot and cold arrays retain the 1432Ru hold term (14)" );
 static_assert( sizeof( rn_sequenced_hold_t ) + sizeof( rn_sequenced_payload_t ) + 2 * sizeof( uint32_t ) == 1440, "a hold with its free-stack and delivered-list indices is the 1440Ru region term (14)" );
 static_assert( sizeof( rn_receipt_t ) == 16, "a receipt is 16 bytes (14)" );
-static_assert( sizeof( rn_resend_link_t ) == 16, "a resend FIFO link is 16 bytes (14)" );
+static_assert( sizeof( rn_resend_link_t ) == 12, "a resend FIFO link is 12 bytes (14)" );
 static_assert( sizeof( ( (rn_send_descriptor_t *) 0 )->reserved ) >= 2, "a send descriptor keeps two spare bytes (14)" );
 static_assert( sizeof( rn_store_class_t ) >= 32, "a store class header stays a small fixed record" );
 static_assert( RN_STORE_LARGE_BYTES % 16 == 0, "the block stride keeps ring placements 16-aligned (4)" );
@@ -105,7 +105,7 @@ static const char * const rn_part_formulas[RN_NUM_PARTS] = {
     "24(W+Du)",
     "1440Ru",
     "16Rq",
-    "16W",
+    "12W",
     "8*2Q",
     "SR",
 };
@@ -714,7 +714,6 @@ void rn_region_carve( rn_region_t * region )
         region->resend_fifo[n].prev = 0;
         region->resend_fifo[n].next = 0;
         region->resend_fifo[n].generation = 0;
-        region->resend_fifo[n].owner_epoch = 0;
     }
 
     memset( region->receive_descriptors, 0, sizeof( rn_receive_descriptor_t ) * region->window );
@@ -785,7 +784,6 @@ void rn_region_carve( rn_region_t * region )
     region->exhausted_reason = ROCKETNET_DISCONNECT_REASON_NONE;
     region->send_room_armed = 1;
 
-    region->schedule_epoch = 1;
     region->schedule_ticket_next = 1;
 
     region->carves++;
@@ -1971,7 +1969,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
 
     rn_text_t text = { buffer, buffer_size, 0 };
     rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
-    rn_text_append( &text, "connection_bytes = 64C + 120.125W + B + 80Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
+    rn_text_append( &text, "connection_bytes = 64C + 116.125W + B + 96Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
                     config->send_queue_messages, config->packets_in_flight, config->unreliable_messages_per_update,
