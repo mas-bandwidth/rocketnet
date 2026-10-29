@@ -580,6 +580,31 @@ static void test_client_gso_receive_splits_gro_by_stride()
 }
 REGISTER_UNIT_TEST( test_client_gso_receive_splits_gro_by_stride );
 
+// a stream of zero-length datagrams holds the drain no longer than a batch
+// of packets would: a receive call skips at most its batch of them, and the
+// next call carries on
+
+static void test_client_gso_receive_bounds_the_skipped_datagrams()
+{
+    memset( &test_socket, 0, sizeof( test_socket ) );
+    rocketnet_unit_check( rocketnet_client_gso_init( &test_gso, &fake_gso_syscalls, &test_socket, 7, true ) );
+
+    for ( int i = 0; i < 6; i++ )
+    {
+        fake_gso_queue_receive( 0, 0, 0, FAKE_GSO_CONTROL_NONE );
+    }
+    fake_gso_queue_receive( 200, 0, 30, FAKE_GSO_CONTROL_NONE );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 0 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 4 );
+
+    rocketnet_unit_check( rocketnet_client_gso_receive_batch( &test_gso, test_receive_from, test_receive_data, FAKE_GSO_RECEIVE_STRIDE, test_receive_bytes, 4 ) == 1 );
+    rocketnet_unit_check( test_socket.recvmmsg_calls == 7 );
+    check_gso_receive_slot( 0, 200, 30 );
+}
+
+REGISTER_UNIT_TEST( test_client_gso_receive_bounds_the_skipped_datagrams );
+
 static void test_client_gso_receive_gro_fault_is_counted()
 {
     memset( &test_socket, 0, sizeof( test_socket ) );
