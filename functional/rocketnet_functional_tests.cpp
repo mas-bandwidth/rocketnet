@@ -1655,7 +1655,13 @@ void rocketnet_test_client_ipv4_without_ipv6_stack()
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 
     rocketnet_check( client );
-    rocketnet_check( strstr( rocketnet_test_captured_log, "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
+
+    // the reason is logged where the client would otherwise bind dual stack;
+    // a host whose sockets are never dual stack (OpenBSD) binds ipv4 for an
+    // ipv4 server whatever ipv6 reports
+
+    if ( rocketnet_platform_client_dual_stack() )
+        rocketnet_check( strstr( rocketnet_test_captured_log, "client socket is ipv4 because ipv6 is unavailable on this host" ) != NULL );
 
     // the same connect and payload exchange as the udp loopback, over IPv4
     // while the host reports no IPv6 stack
