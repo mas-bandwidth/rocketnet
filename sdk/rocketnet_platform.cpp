@@ -1920,7 +1920,8 @@ static thread_local void ( *rocketnet_msgx_before_expiry_clear )( rocketnet_plat
 
 // tla/RNMsgxPause.tla Probe, ObserveExpired, ClearIfUnchanged and PollPaused:
 // an expired pause is cleared only if it is still the value observed, so a
-// fresh pause published by the other worker wins.
+// fresh pause published by the other worker wins. FinishProbe abstracts a
+// successful batch call after the probe: the batch path stays active.
 
 static bool rocketnet_msgx_active( rocketnet_platform_socket_t * socket )
 {
