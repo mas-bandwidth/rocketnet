@@ -39,21 +39,21 @@ The secure connect of standard/TRANSPORT.md: netcode 1.02 rebuilt on public keys
 | Expired-token refusals counted apart, one counter per cause | ✅ | ✅ | ✅ |
 | Connect-token create and expire checks can read the game clock | ✅ | ✅ | ✅ |
 | A backend keypair can be derived from a seed through rocketnet.h | ❌ | ❌ | ❌ |
-| Attack-surface reduction: a half-finished connection's client slot is checked before its session packet is decrypted | ❌ | ❌ | ❌ |
-| Attack-surface reduction: both sides refuse a connect token with timeout <= 0, and the server's dead allow_negative_timeout is deleted | ❌ | ❌ | ❌ |
-| Attack-surface reduction: the XDP filter drops IPv4-options, IPv6 extension-header and later-fragment frames to our port | ❌ | — | — |
-| Attack-surface reduction: the pending-wire table is deleted, so an unauthenticated sender holds no state | ❌ | ❌ | ❌ |
-| Attack-surface reduction: a stateless shape check (prefilter, wire type and size) runs before any per-datagram work | ❌ | ❌ | ❌ |
-| Attack-surface reduction: the token claim is written only after the signature verifies | ❌ | ❌ | ❌ |
-| Attack-surface reduction: a token created beyond the 30-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ❌ | ❌ | ❌ |
-| ROCKETNET_DEVELOPMENT is renamed ROCKETNET_DEV, default 1; a production build sets ROCKETNET_DEV=0 | ❌ | ❌ | ❌ |
-| With ROCKETNET_DEV=0, test and development code is compiled out: the network simulator, the test seams, the development config and the development server secret key | ❌ | ❌ | ❌ |
-| With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ❌ | ❌ | ❌ |
-| AGENTS.md has a Before production section: what a production build sets and refuses | ❌ | — | — |
-| The client trusts only the server: the idle timer and the RTT sample come only from the authenticated challenge, never the clear-salt cookie, and the client socket is connected | ❌ | ❌ | ❌ |
-| Portable server and client transports are available in production; native server transports remain preferred | ❌ | ❌ | ❌ |
+| Attack-surface reduction: a half-finished connection's client slot is checked before its session packet is decrypted | ✅ | ✅ | ✅ |
+| Attack-surface reduction: both sides refuse a connect token with timeout <= 0, and the server's dead allow_negative_timeout is deleted | ✅ | ✅ | ✅ |
+| Attack-surface reduction: the XDP filter drops IPv4-options, IPv6 extension-header and later-fragment frames to our port | ✅ | — | — |
+| Attack-surface reduction: the pending-wire table is deleted, so an unauthenticated sender holds no state | ✅ | ✅ | ✅ |
+| Attack-surface reduction: a stateless shape check (prefilter, wire type and size) runs before any per-datagram work | ✅ | ✅ | ✅ |
+| Attack-surface reduction: the token claim is written only after the signature verifies | ✅ | ✅ | ✅ |
+| Attack-surface reduction: a token created beyond the 30-second clock-skew allowance is refused, and the lifetime cap that has no setting is deleted | ✅ | ✅ | ✅ |
+| ROCKETNET_DEVELOPMENT is renamed ROCKETNET_DEV, default 1; a production build sets ROCKETNET_DEV=0 | ✅ | ✅ | ✅ |
+| With ROCKETNET_DEV=0, test and development code is compiled out: the network simulator, the test seams, the development config and the development server secret key | ✅ | ✅ | ✅ |
+| With ROCKETNET_DEV=0, both sides refuse the published test packet filter, and the client refuses tokens sealed with the development keys | ✅ | ✅ | ✅ |
+| AGENTS.md has a Before production section: what a production build sets and refuses | ✅ | — | — |
+| The client trusts only the server: the idle timer and the RTT sample come only from the authenticated challenge, never the clear-salt cookie, and the client socket is connected | ✅ | ✅ | ✅ |
+| Portable server and client transports are available in production; native server transports remain preferred | ✅ | ✅ | ✅ |
 | Session layer: identity auth with a backend, rolling magic, keyed filter value (later) | ❌ | ❌ | ❌ |
-| complete | 62% | 66% | 66% |
+| complete | 95% | 95% | 95% |
 
 [Source data](roadmap.sexp)
 
@@ -110,7 +110,7 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
 | Zero-copy send: start, write in place, finish or abort | ✅ | ✅ | ✅ |
-| An unreliable message that fits one packet is written in place in that packet, with no copy | ❌ | ❌ | ❌ |
+| An unreliable message that fits one packet is written in place in that packet, with no copy | ✅ | ✅ | ✅ |
 | Receive and release messages as views | ✅ | ✅ | ✅ |
 | N channels with per-record dispatch | ✅ | ✅ | ✅ |
 | Large reliable messages split into blocks and delivered whole | ✅ | ✅ | ✅ |
@@ -125,12 +125,12 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 | Hostile records and chunks refused | ✅ | ✅ | ✅ |
 | Endpoint and slots as pure machines | ✅ | ✅ | ✅ |
 | CONFIG announcement: both ends prove the same configuration | ✅ | ✅ | ✅ |
-| Message layer soaked at full configured load | ❌ | ❌ | ❌ |
+| Message layer soaked at full configured load | ✅ | ✅ | ✅ |
 | Broadcast send | ✅ | ✅ | ✅ |
 | The unreleased-message refusal is a public counter on client and server | ✅ | ✅ | ✅ |
 | The channel documentation names the counter an oversize unreliable send moves | ✅ | — | — |
 | Flows: server-side subscription groups (later) | ❌ | ❌ | ❌ |
-| complete | 86% | 85% | 85% |
+| complete | 95% | 95% | 95% |
 
 [Source data](roadmap.sexp)
 
@@ -138,7 +138,7 @@ The message layer of standard/MESSAGES.md: channels, priorities, budgets and one
 
 The server transports below the connection layer, one column each, in the order the automatic ladder ranks them: xdp, gso, io_uring and portable on Linux, msgx and portable on macOS, portable, iocp and rio on Windows. Portable server and client I/O are available in both builds. Production Windows servers rank iocp and rio ahead of portable. The per-endpoint ROCKETNET_SERVER_TRANSPORT and ROCKETNET_CLIENT_TRANSPORT select one at runtime; loopback is pin-only.
 
-AF_XDP serves IPv4 and IPv6 end to end (8a35a14): a server serves the family of its public address, and the ladder offers xdp for either. Its IPv6 cell is ❌ because no CI step runs AF_XDP end to end (it needs root and a VM guest); the msgx and iocp IPv6 cells are ❌ until the CI transport family matrix runs green on them.
+AF_XDP serves IPv4 and IPv6 end to end (8a35a14, 5558a70b): a server serves the family of its public address, and the ladder offers xdp for either.
 
 — is a transport the feature does not apply to: xdp bypasses the kernel's UDP stack, loopback is in-process, and a row that names one transport's own mechanism is — for the others.
 
@@ -146,15 +146,15 @@ Portable remains a fallback rather than a performance target. The owner enabled 
 
 | feature | xdp | msgx | gso | io_uring | portable | iocp | rio | loopback |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| Server transport | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ |
+| Server transport | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Selectable by pin at runtime | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| IPv6 and dual-stack binds | ❌ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ | ❌ |
-| Receive coalescing by the kernel (UDP_GRO on Linux, URO on Windows), split by stride | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
-| Send segmentation by the kernel (UDP GSO on Linux, USO on Windows), probed with fallback | — | ❌ | ✅ | ❌ | ❌ | ✅ | ❌ | — |
+| IPv6 and dual-stack binds | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Receive coalescing by the kernel (UDP_GRO on Linux, URO on Windows), split by stride | — | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | — |
+| Send segmentation by the kernel (UDP GSO on Linux, USO on Windows), probed with fallback | — | ❌ | ✅ | ✅ | ❌ | ✅ | ❌ | — |
 | Registered I/O (RIO) on Windows | — | — | — | — | — | — | ✅ | — |
 | The loopback transport holds max clients plus the server | — | — | — | — | — | — | — | ✅ |
 | The loopback transport allocates its queues up front, never while traffic flows | — | — | — | — | — | — | — | ✅ |
-| complete | 67% | 40% | 100% | 60% | 60% | 60% | 67% | 80% |
+| complete | 100% | 60% | 100% | 100% | 60% | 100% | 67% | 100% |
 
 [Source data](roadmap.sexp)
 
@@ -176,11 +176,11 @@ The AF_XDP server transport, the xdp column; every other column is —. Further 
 | The live stress runner: the client stress mode and the merge | ✅ | — | — | — | — | — | — | — |
 | The live stress runner: the server stress mode | ✅ | — | — | — | — | — | — | — |
 | Preview-2 live AF_XDP copy-mode correctness at 1, 10, 100, 500 and 1000 clients | ✅ | — | — | — | — | — | — | — |
-| Packet blaster and simulated-client harnesses at line rate | ❌ | — | — | — | — | — | — | — |
+| Packet blaster and simulated-client harnesses at line rate | ✅ | — | — | — | — | — | — | — |
 | Ownership and retry paths regression-validated against a recorded throughput baseline | ❌ | — | — | — | — | — | — | — |
 | Privileged syscall-failure coverage in its own lab | ❌ | — | — | — | — | — | — | — |
 | The live stress run: the XDP server against one client from every test machine (later) | ❌ | — | — | — | — | — | — | — |
-| complete | 75% | — | — | — | — | — | — | — |
+| complete | 81% | — | — | — | — | — | — | — |
 
 [Source data](roadmap.sexp)
 
@@ -193,10 +193,10 @@ One server per transport on a LAN, measured: a row per server platform, a cell p
 | LAN throughput, a Linux server | ❌ | — | ❌ | ❌ | — | — | — | — |
 | LAN throughput, a macOS server | — | ❌ | — | — | — | — | — | — |
 | LAN throughput, a Windows server | — | — | — | — | — | ❌ | ❌ | — |
-| 1000 clients over a LAN, a Linux server | ❌ | — | ❌ | ❌ | — | — | — | — |
-| 1000 clients over a LAN, a macOS server | — | ❌ | — | — | — | — | — | — |
+| 1000 clients over a LAN, a Linux server | ✅ | — | ✅ | ✅ | — | — | — | — |
+| 1000 clients over a LAN, a macOS server | — | ✅ | — | — | — | — | — | — |
 | 1000 clients over a LAN, a Windows server | — | — | — | — | — | ❌ | ❌ | — |
-| complete | 0% | 0% | 0% | 0% | — | 0% | 0% | — |
+| complete | 50% | 50% | 50% | 50% | — | 0% | 0% | — |
 
 [Source data](roadmap.sexp)
 
@@ -206,11 +206,11 @@ The simplest native transport on the client on every OS: one connected UDP socke
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Linux: the gso transport gets a client side (sendmmsg and recvmmsg) | ❌ | — | — |
-| macOS: the msgx client, ranked above portable | — | ❌ | — |
-| Windows: the iocp transport gets a client side (simpler than RIO) | — | — | ❌ |
-| portable is the client fallback on every OS, ranked last | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
+| Linux: the gso transport gets a client side (sendmmsg and recvmmsg) | ✅ | — | — |
+| macOS: the msgx client, ranked above portable | — | ✅ | — |
+| Windows: the iocp transport gets a client side (simpler than RIO) | — | — | ✅ |
+| portable is the client fallback on every OS, ranked last | ✅ | ✅ | ✅ |
+| complete | 100% | 100% | 100% |
 
 [Source data](roadmap.sexp)
 
@@ -262,21 +262,21 @@ Many channels and many connections, measured.
 | Decided design rule, 2026-10-25: server CPU and memory cost is flat at its maximum from start, whatever the number of connected clients, so capacity is predictable and nothing surprises as players connect; a change that makes server cost scale with client count is a regression | ✅ | — | — |
 | 1000-client in-process swarm with churn and garbage traffic | ✅ | ✅ | ✅ |
 | Channel count a build bound from 1 to 65536 | ✅ | ✅ | ✅ |
-| Nightly bounded soak | ✅ | ❌ | ❌ |
-| Message layer stressed at 1024 channels | ❌ | ❌ | ❌ |
-| Message layer stressed at 10k channels | ❌ | ❌ | ❌ |
-| About 1000 real connections with channels on, at game-like load | ❌ | ❌ | ❌ |
+| Nightly bounded soak | ✅ | ✅ | ✅ |
+| Message layer stressed at 1024 channels | ✅ | ✅ | ✅ |
+| Message layer stressed at 10k channels | ✅ | ✅ | ✅ |
+| About 1000 real connections with channels on, at game-like load | ✅ | ✅ | ✅ |
 | Socket-level swarm with Go orchestration against real transports | ❌ | ❌ | ❌ |
 | Multi-day soaks past 2^32 packets on one connection | ❌ | ❌ | ❌ |
 | Windows client overlapped send (WSASendTo + completion on the I/O thread) (later) | — | — | ❌ |
-| The load harness runs nightly on Linux, macOS and Windows (later) | ❌ | ❌ | ❌ |
-| LAN throughput and 1000 clients, one server per transport: the design (later) | ❌ | — | — |
-| LAN bench runner: the client load modes and the merge (later) | ❌ | ❌ | ❌ |
-| LAN bench runner: the server pinned-transport mode (later) | ❌ | ❌ | ❌ |
-| LAN bench runner: the orchestration (later) | ❌ | ❌ | ❌ |
+| The load harness runs nightly on Linux, macOS and Windows (later) | ✅ | ✅ | ✅ |
+| LAN throughput and 1000 clients, one server per transport: the design (later) | ✅ | — | — |
+| LAN bench runner: the client load modes and the merge (later) | ✅ | ✅ | ✅ |
+| LAN bench runner: the server pinned-transport mode (later) | ✅ | ✅ | ✅ |
+| LAN bench runner: the orchestration (later) | ✅ | ✅ | ✅ |
 | Profile pass 1, measurement: soak across the matrix, the raw numbers committed (later) | ❌ | ❌ | ❌ |
 | Profile pass 1, report: where the time goes, and what to cut first (later) | ❌ | ❌ | ❌ |
-| complete | 25% | 14% | 13% |
+| complete | 75% | 71% | 67% |
 
 [Source data](roadmap.sexp)
 
@@ -295,46 +295,46 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Captured pcapng corpus replayed per commit and seeding the fuzzers | ✅ | ✅ | ✅ |
 | Wycheproof vectors for ChaCha20-Poly1305, Ed25519 and X25519 | ✅ | ✅ | ✅ |
 | Happy-path end to end: the real server and client binaries as separate processes | ✅ | ✅ | ✅ |
-| Sanitizers: ASan, UBSan, TSan, MSan, LSan | ✅ | ❌ | ❌ |
+| Sanitizers: ASan, UBSan, TSan, MSan, LSan | ✅ | ✅ | ✅ |
 | The MSan gate fails on crashed tests | ✅ | — | — |
-| The staged-finish wire totals case and the MemorySanitizer check pass | ✅ | ❌ | ❌ |
+| The staged-finish wire totals case and the MemorySanitizer check pass | ✅ | ✅ | ✅ |
 | Big-endian (s390x) runs | ❌ | — | — |
 | An instruction-count gate for the client frame and the server tick, on every push | ✅ | — | — |
 | A clang-format configuration derived from the netcode style, with a format check | ✅ | — | — |
 | The per-push workflows run on the self-hosted runners, held there by a lint | ✅ | ✅ | ✅ |
-| The nightly workflows run on the self-hosted runners | ✅ | ❌ | ❌ |
+| The nightly workflows run on the self-hosted runners | ✅ | ✅ | ✅ |
 | Deterministic simulation testing: the design | ✅ | — | — |
 | Deterministic simulation: the fault injector, as a TLA+ model first | ✅ | — | — |
-| Deterministic simulation, layer 1: the seeded core, N clients and a server, one seed, exact replay | ✅ | ❌ | ❌ |
-| Deterministic simulation, layer 3: the TLA+ properties as runtime checks | ✅ | ❌ | ❌ |
-| Deterministic simulation, layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model (later) | ❌ | ❌ | ❌ |
-| Deterministic simulation, layer 4: per-push shards, the nightly campaign, and the planted-bug proof (later) | ❌ | ❌ | ❌ |
-| The simulator and reset tests catch the bugs they exist to catch (later) | ❌ | ❌ | ❌ |
-| Fuzzing everything: dual-mode libFuzzer targets that also build as plain replay programs, as in yojimbo, netcode and reliable | ❌ | ❌ | ❌ |
-| Fuzzing: the real receive loops, server (rocketnet_server_transport_update) and client, fed the corpora | ❌ | ❌ | ❌ |
-| Fuzzing: every target under the sanitizers, MSan included | ❌ | — | — |
-| Fuzzing: a dictionary and a per-type seed generator for each target | ❌ | — | — |
-| Fuzzing: targets past the AEAD, fed packets that decrypt | ❌ | ❌ | ❌ |
-| Fuzzing: stateful and scripted targets that drive a connection through its states | ❌ | ❌ | ❌ |
-| Fuzzing: round-trip invariants on every reader and writer pair | ❌ | ❌ | ❌ |
-| Fuzzing: differential targets against netcode | ❌ | ❌ | ❌ |
-| Fuzzing: a smoke run per PR and a nightly campaign on the fleet runners, with a coverage report | ❌ | ❌ | ❌ |
-| Fuzzing: OSS-Fuzz project files, prepared and not submitted | ❌ | — | — |
+| Deterministic simulation, layer 1: the seeded core, N clients and a server, one seed, exact replay | ✅ | ✅ | ✅ |
+| Deterministic simulation, layer 3: the TLA+ properties as runtime checks | ✅ | ✅ | ✅ |
+| Deterministic simulation, layer 2: the fault injectors (reorder, delay, clock skew, crash and restart), built from their model (later) | ✅ | ✅ | ✅ |
+| Deterministic simulation, layer 4: per-push shards, the nightly campaign, and the planted-bug proof (later) | ✅ | ✅ | ✅ |
+| The simulator and reset tests catch the bugs they exist to catch (later) | ✅ | ✅ | ✅ |
+| Fuzzing everything: dual-mode libFuzzer targets that also build as plain replay programs, as in yojimbo, netcode and reliable | ✅ | ✅ | ✅ |
+| Fuzzing: the real receive loops, server (rocketnet_server_transport_update) and client, fed the corpora | ✅ | ✅ | ✅ |
+| Fuzzing: every target under the sanitizers, MSan included | ✅ | — | — |
+| Fuzzing: a dictionary and a per-type seed generator for each target | ✅ | — | — |
+| Fuzzing: targets past the AEAD, fed packets that decrypt | ✅ | ✅ | ✅ |
+| Fuzzing: stateful and scripted targets that drive a connection through its states | ✅ | ✅ | ✅ |
+| Fuzzing: round-trip invariants on every reader and writer pair | ✅ | ✅ | ✅ |
+| Fuzzing: differential targets against netcode | ✅ | ✅ | ✅ |
+| Fuzzing: a smoke run per PR and a nightly campaign on the fleet runners, with a coverage report | ✅ | ✅ | ✅ |
+| Fuzzing: OSS-Fuzz project files, prepared and not submitted | ✅ | — | — |
 | CBMC proofs of bounded readers and fragment bounds | ✅ | — | — |
 | TLA+ models: connection, security, replay, channels, window, scheduler, slots, receipts | ✅ | — | — |
 | TLA+ model of transport fragments and acks | ✅ | — | — |
 | TLA+ models of blocks and the endpoint | ✅ | — | — |
-| Every modelled transition cites its module and action | ❌ | — | — |
+| Every modelled transition cites its module and action | ✅ | — | — |
 | Connection and security machines as pure modules | ❌ | ❌ | ❌ |
-| CBMC proves the ack-block reader free of out-of-bounds access up to the full packet size (later) | ❌ | — | — |
-| CBMC proves the server packet readers free of out-of-bounds access up to the full packet size (later) | ❌ | — | — |
-| CBMC proves the client packet readers free of out-of-bounds access up to the full packet size (later) | ❌ | — | — |
-| CBMC proves the sequence buffers and replay window free of out-of-bounds access (later) | ❌ | — | — |
-| ESBMC proofs: every rocketnet_assert on the proved paths is a checked property (later) | ❌ | — | — |
+| CBMC proves the ack-block reader free of out-of-bounds access up to the full packet size (later) | ✅ | — | — |
+| CBMC proves the server packet readers free of out-of-bounds access up to the full packet size (later) | ✅ | — | — |
+| CBMC proves the client packet readers free of out-of-bounds access up to the full packet size (later) | ✅ | — | — |
+| CBMC proves the sequence buffers and replay window free of out-of-bounds access (later) | ✅ | — | — |
+| ESBMC proofs: every rocketnet_assert on the proved paths is a checked property (later) | ✅ | — | — |
 | The proof tools and Frama-Clang prerequisites in place before the Frama-Clang trial (later) | ❌ | — | — |
 | Frama-Clang trial: can WP prove rocketnet_ack_block_read from the C++ source? (later) | ❌ | — | — |
-| The MSan known-findings list matches every toolchain the runners use (later) | ❌ | — | — |
-| Mutation audit finding 6: the keyed filter value is compared under AddressSanitizer against a direct eight-byte SipHash reference | ❌ | — | — |
+| The MSan known-findings list matches every toolchain the runners use (later) | ✅ | — | — |
+| Mutation audit finding 6: the keyed filter value is compared under AddressSanitizer against a direct eight-byte SipHash reference | — | — | — |
 | Mutation audit finding 7: received-bandwidth high time after receive-tail eviction matches the reference recompute | ❌ | ❌ | ❌ |
 | Mutation audit finding 8: overwriting a zero RTT sample keeps the RTT count and minimum exact | ❌ | ❌ | ❌ |
 | Mutation audit finding 9: acknowledging the packet exactly at the loss-eligible top keeps packet loss exact | ❌ | ❌ | ❌ |
@@ -354,7 +354,7 @@ How RocketNet is checked: unit tests without sockets or real time, functional te
 | Mutation audit finding 23: a reused receive descriptor starts with no fragment-block state | ❌ | ❌ | ❌ |
 | Mutation audit finding 24: duplicate and out-of-window ACKs report no newly matched ACK | ❌ | ❌ | ❌ |
 | Mutation audit finding 25: releasing the oldest number clears a stalled reliable send window, releasing another does not | ❌ | ❌ | ❌ |
-| complete | 35% | 22% | 22% |
+| complete | 66% | 56% | 56% |
 
 [Source data](roadmap.sexp)
 
@@ -364,12 +364,12 @@ Where RocketNet builds and passes. Every push runs the unit and functional suite
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Per-commit CI, Debug and Release | ✅ | ❌ | ❌ |
+| Per-commit CI, Debug and Release | ✅ | ✅ | ✅ |
 | Shared export list compared | ✅ | ✅ | ✅ |
-| Nightly soak | ✅ | ❌ | ❌ |
+| Nightly soak | ✅ | ✅ | ✅ |
 | The library is callable from a shared library and a static library, from C and C++ | ✅ | ✅ | ✅ |
-| Linux: with no BPF-capable clang, XDP is compiled out entirely and selecting it refuses cleanly; the build stays tolerant | ❌ | — | — |
-| complete | 80% | 50% | 50% |
+| Linux: with no BPF-capable clang, XDP is compiled out entirely and selecting it refuses cleanly; the build stays tolerant | ✅ | — | — |
+| complete | 100% | 100% | 100% |
 
 [Source data](roadmap.sexp)
 
@@ -382,8 +382,8 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | Connection layer C surface: rocketnet_client_transport_* and rocketnet_server_transport_* | ✅ | ✅ | ✅ |
 | Root header pure C: the client and server with their functions, the address type, nothing else | ✅ | ✅ | ✅ |
 | Message objects in C: rocketnet_message_client_* and rocketnet_message_server_* | ✅ | ✅ | ✅ |
-| A fixed server key in the public server config: server_secret_key, all zeros generates a fresh pair, the development key refused in production | ❌ | ✅ | ❌ |
-| The step-driven client and its receive stamp clock on the public client config, development builds only, refused at create in production | ❌ | ✅ | ❌ |
+| A fixed server key in the public server config: server_secret_key, all zeros generates a fresh pair, the development key refused in production | ✅ | ✅ | ✅ |
+| The step-driven client and its receive stamp clock on the public client config, development builds only, refused at create in production | ✅ | ✅ | ✅ |
 | Installable CMake package with C and C++ consumers | ✅ | ✅ | ✅ |
 | Vendored sodium, no system libsodium | ✅ | ✅ | ✅ |
 | Structured create errors and FFI-safe logging | ✅ | ✅ | ✅ |
@@ -400,9 +400,9 @@ The C surface in sdk/rocketnet.h and what a consumer needs to use it.
 | API reference comments: platform | ✅ | — | — |
 | API reference comments: reliability | ✅ | — | — |
 | USAGE.md: the client and server API, with worked usage | ✅ | — | — |
-| The public contract, the TLA+ models and the code agree: the divergences of the 2026-10-29 contract audit fixed | ❌ | ✅ | ❌ |
-| The docs job fails on any undocumented public symbol (later) | ❌ | — | — |
-| complete | 83% | 100% | 83% |
+| The public contract, the TLA+ models and the code agree: the divergences of the 2026-10-29 contract audit fixed | ✅ | ✅ | ✅ |
+| The docs job fails on any undocumented public symbol (later) | ✅ | — | — |
+| complete | 100% | 100% | 100% |
 
 [Source data](roadmap.sexp)
 
@@ -453,15 +453,15 @@ The normative standard in standard/: standard/TRANSPORT.md (the t sections) and 
 
 ## Keys and backends
 
-What a game team needs to run its own connect-token backend: its own keypairs, the guide in KEYS.md, and the example backends in Go and C# under examples/backend. The keypair, guide and backend files are in the tree; their rows stay not-done until a recorded run qualifies them.
+What a game team needs to run its own connect-token backend: its own keypairs, the guide in docs/KEYS.md, and the example backends in Go and C# under examples/backend.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production | ❌ | ❌ | ❌ |
-| Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token | ❌ | — | — |
-| Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect | ❌ | ❌ | ❌ |
-| Client example: fetches a connect token from the example backend and connects with it | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
+| Key generator: a rocketnet_keygen tool, built with the SDK, writing a fresh Ed25519 signing keypair and the token encryption key for production | ✅ | ✅ | ✅ |
+| Keys documentation: a KEYS.md guide to generating keypairs, where each key lives, rotation, and rocketnet_write_production_connect_token | ✅ | — | — |
+| Example backends in Go and C#: a minimal HTTP backend in each that authenticates a player (stub), mints a connect token with the production keys for a chosen server address, and returns it for rocketnet_client_connect | ✅ | ❌ | ❌ |
+| Client example: fetches a connect token from the example backend and connects with it | ✅ | ❌ | ❌ |
+| complete | 100% | 33% | 33% |
 
 [Source data](roadmap.sexp)
 
@@ -471,8 +471,8 @@ Correctness work that follows v1.0.0-preview-1.
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
+| TLA+ invariants NoReceiveUnlessRunning and NoAdmitUnlessRunning on the server lifecycle, plus tests that a stopping or stopped server reads no packet and admits no client | ✅ | ✅ | ✅ |
+| complete | 100% | 100% | 100% |
 
 [Source data](roadmap.sexp)
 
@@ -485,12 +485,12 @@ Current limits accepted for the preview-2 cut. These rows describe preview-2; th
 | AF_XDP copy mode with one Windows portable client passed through 500 clients, but the 1000-client start failed after eight server connections hit reliable timeouts. The same Windows client passed 1000 clients against the portable Linux server. | ❌ | — | ❌ |
 | The macOS Debug socket case reproduced a short receive while system-wide packet-drop counters surged under competing traffic. Quiet and focused repeats passed, so the correlation does not attribute the drops to RocketNet; a fix is not qualified. | — | ❌ | — |
 | The big-endian full-system run has no single all-green run yet: at 9232be69 the unit suite and the portable rung pass on s390x and the auto rung failed only test_server_port_zero_transport, whose compiled-out xdp refusal 8bbc8e41 now accepts (the case passes alone on the guest three of three); at af25b317 it passed alone three of three again. Known issue: one full-system guest run (unit, auto and portable rungs) of this head is still owed. | ❌ | — | — |
-| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. Cause: the fixed 16G virtme-ng guest is under the default profile's 16.96 GiB create-only plan, so the guest OOM-kills the load process (exit 137). | ❌ | — | — |
+| The full soak completed the portable, GSO, GSO-plain and io_uring 1000-client cells with non-timing PASS, then was killed during the AF_XDP cell. Cause: the fixed 16G virtme-ng guest is under the default profile's 16.96 GiB create-only plan, so the guest OOM-kills the load process (exit 137). | ✅ | — | — |
 | Windows manual Debug/toolchain/examples/soak/frame-budget coverage, and some macOS and Windows LAN rows were not completed before the release cut. | ❌ | ❌ | ❌ |
 | The 100-microsecond server-update p99 target is missed at larger client counts. Correctness passes are reported separately from timing failures. | ❌ | ❌ | ❌ |
 | Windows native-server LAN qualification awaits the replacement test NIC; existing Windows client evidence does not qualify the server path. | — | — | ❌ |
 | Live AF_XDP qualification used copy mode only. Zero-copy and line-rate performance are unqualified. io_uring suite-concurrency and runner memlock provisioning work is deferred. | ❌ | — | — |
-| complete | 0% | 0% | 0% |
+| complete | 17% | 0% | 0% |
 
 [Source data](roadmap.sexp)
 
@@ -500,52 +500,52 @@ Historical preview-1 planning retained for context. Some fixes listed here lande
 
 | known issue | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Zero warnings at -Wconversion and the remaining strict flags, SDK and vendored libsodium (public header already clean at -Weverything) | ❌ | ❌ | ❌ |
-| Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ❌ | ❌ | ❌ |
-| Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ❌ | ❌ | ❌ |
-| Large configurations still incur bulk memory wipes during shutdown. The 1000-client example soak can spike in memory and run out of memory on Linux. Secrets-only destroy is held for preview-3, not included in preview-2; completion polling does not remove the final synchronous cleanup cost. | ❌ | ❌ | ❌ |
-| The default configuration needs about 13.4 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The public light-client profile sizes a 1000-slot server at 955,710,336 bytes (955,710 bytes per slot) for 1000 players at 10 Hz and a client at 3,063,168 bytes. | ❌ | ❌ | ❌ |
+| Zero warnings at -Wconversion and the remaining strict flags, SDK and vendored libsodium (public header already clean at -Weverything) | ✅ | ✅ | ✅ |
+| Client connect zeroes the client's 7.6 MB transport (about 3 ms) and disconnect wipes and frees it (about 1.6 ms). The final deliverable allocates the transport once at create, resets it in place on connect, and wipes only the secrets, by their size, on disconnect. | ✅ | ✅ | ✅ |
+| Claiming and releasing a server slot re-initialises its 1.48 MB region inside the update (0.11 to 0.36 ms each), and disconnecting all of 1000 clients takes about 20 ms, plus about 130 ms in the next update. The final deliverable resets only the state a slot used. | ✅ | ✅ | ✅ |
+| Large configurations still incur bulk memory wipes during shutdown. The 1000-client example soak can spike in memory and run out of memory on Linux. Secrets-only destroy is held for preview-3, not included in preview-2; completion polling does not remove the final synchronous cleanup cost. | ✅ | ✅ | ✅ |
+| The default configuration needs about 13.4 GB for a 1000-slot server, because each client's send reserve is sized for 10 Gbps for 2 seconds. The public light-client profile sizes a 1000-slot server at 955,710,336 bytes (955,710 bytes per slot) for 1000 players at 10 Hz and a client at 3,063,168 bytes. | ✅ | ✅ | ✅ |
 | The server decrypts and seals packets on the game thread; the client already decrypts on its I/O thread. The final deliverable moves server decrypt and seal off the game thread. | ❌ | ❌ | ❌ |
-| Native Linux server I/O uses bounded handoffs so the game thread does not wait on worker I/O or bulk copies. Messages and packets become visible after the worker completes the handoff, including on the following update. Exact-head p99 qualification remains pending. | ❌ | — | — |
-| The portable server send and receive paths use bounded TX and RX workers instead of doing one game-thread system call per packet. Exact-head p99 qualification remains pending. | ❌ | ❌ | ❌ |
-| One server update may process up to 16,000 received packets, each with its own decrypt, through three copies and extra keyed hashes per packet. The final deliverable bounds receive work per update by time as well as count, and removes the extra copies and hashes. | ❌ | ❌ | ❌ |
-| The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ❌ | ❌ | ❌ |
+| Native Linux server I/O uses bounded handoffs so the game thread does not wait on worker I/O or bulk copies. Messages and packets become visible after the worker completes the handoff, including on the following update. Exact-head p99 qualification remains pending. | ✅ | — | — |
+| The portable server send and receive paths use bounded TX and RX workers instead of doing one game-thread system call per packet. Exact-head p99 qualification remains pending. | ✅ | ✅ | ✅ |
+| One server update may process up to 16,000 received packets, each with its own decrypt, through three copies and extra keyed hashes per packet. The final deliverable bounds receive work per update by time as well as count, and removes the extra copies and hashes. | ✅ | ✅ | ✅ |
+| The acknowledgement statistics sweep scans thousands of records per update. The final deliverable keeps those statistics up to date as acks arrive. | ✅ | ✅ | ✅ |
 | Every main call is meant to take under 0.1 ms in Release under load; the server API p99 does not yet meet that budget at 1000 clients. The final deliverable measures every main call at 1000 clients on each platform and holds the result in a gate. | ❌ | ❌ | ❌ |
-| Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ❌ | ❌ | ❌ |
-| Client disconnect and server stop request shutdown without waiting for workers; client disconnected and server stopped check completion without joining or freeing. Both client and server transports follow stop, stopped, destroy. Destroy asserts completion and synchronously joins and frees; a stalled worker leaves completion false and storage alive. The implementation has landed; exact-head platform qualification remains pending. | ❌ | ❌ | ❌ |
-| On macOS, a portable-transport client connecting over IPv4 to a server that serves both IPv4 and IPv6 on one port failed to connect once, intermittently: observed once in a sharded functional run, not reproduced on rerun, and test_transport_dual_stack_ipv4_client passed in the full run at b0a8a2e3. The final deliverable finds the cause and proves every family combination on macOS by repeated functional runs. | — | ❌ | — |
-| On macOS, the historical full functional suite ran past CI's 120-second limit; it passed outside CI (all 142 cases at b0a8a2e3, about 6 m 38 s). The macOS CI restructuring is held for preview-3; preview-2 qualification depends on its own exact-head receipts. | — | ❌ | — |
-| Some functional tests measure operating-system behaviour rather than RocketNet: test_macos_client_timing_default_qos, test_macos_client_timing_taskpolicy_background, the test_thread_priority_timing cases and test_thread_priority_windows_readback. The final deliverable removes them or rewrites them to test only RocketNet's own code. | ❌ | ❌ | ❌ |
-| The macOS client timing functional test carries a branch that lowers the game thread's priority, which no case uses since its last caller was removed. The final deliverable removes the branch with the cases above. | — | ❌ | — |
-| The Windows Debug, AddressSanitizer and Application Verifier runs passed before the last v1.0.0-preview-1 API changes and have not been repeated on the released API. The final deliverable repeats all three on the released API, on every Windows transport. | — | — | ❌ |
-| Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ❌ | ❌ | ❌ |
-| A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ❌ | ❌ | ❌ |
-| The memory plan reports what create needs, but not yet what connect, reconnect, start and stop need. The final deliverable extends the plan to the whole session, so one block sized from the plan alone never runs out. | ❌ | ❌ | ❌ |
-| The handshake's signature-failure budget is kept per address and port, so one host rotating its ports can force up to 1024 signature checks per update. The final deliverable keys the budget by host address and caps signature checks per update. | ❌ | ❌ | ❌ |
-| Connect-token claims are first come, first served, so an observer on the network path can copy a client's first request and hold its token until the handshake deadline. The final deliverable's security pass closes this window or bounds it and documents it. | ❌ | ❌ | ❌ |
-| A replayed connection response refreshes a slot's receive time, a token claim is not released on three refusal paths, and a forged cookie can rewind a client's handshake (bounded). The final deliverable fixes each one, with a test for each. | ❌ | ❌ | ❌ |
-| At very low send rates, time spent waiting for send budget counts toward the reliable-message timeout. The final deliverable counts only the time a message has been on the wire. | ❌ | ❌ | ❌ |
-| Sequenced blocks and small records treat an in-turn record differently. The final deliverable gives both one rule, modelled and tested. | ❌ | ❌ | ❌ |
-| Ack processing costs O(k²) per block, and the packet builder O(items²) per class pass. The final deliverable makes both linear. | ❌ | ❌ | ❌ |
-| The example soak can fail when many clients disconnect at once: the server still counts connected clients after the disconnect pass. The final deliverable fixes the disconnect path and runs the example soak green on every platform. | ❌ | ❌ | ❌ |
-| The full client I/O TLA+ model needs a configuration that fits the CI time budget. The final deliverable splits it into configurations that each finish within the budget. | ❌ | — | — |
-| The reconnect churn and UDP loopback functional cases showed rare timing failures under heavy machine load. The final deliverable makes them independent of machine load. | ❌ | ❌ | ❌ |
-| The receipt read returns how many outcomes it copied, not how many there were when the caller's buffer is too short (ring overflow is counted, in receipts_dropped). The final deliverable returns the available count. | ❌ | ❌ | ❌ |
-| Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first). | ❌ | ❌ | ❌ |
-| Backend keygen, connect-token minting and a reference server registration in Go and C#. | ❌ | ❌ | ❌ |
+| Each unreliable message is sent as its own packet; small unreliable messages are not packed together. The final deliverable packs small messages into shared packets and keeps in-place writes for large ones. | ✅ | ✅ | ✅ |
+| Client disconnect and server stop request shutdown without waiting for workers; client disconnected and server stopped check completion without joining or freeing. Both client and server transports follow stop, stopped, destroy. Destroy asserts completion and synchronously joins and frees; a stalled worker leaves completion false and storage alive. The implementation has landed; exact-head platform qualification remains pending. | ✅ | ✅ | ✅ |
+| On macOS, a portable-transport client connecting over IPv4 to a server that serves both IPv4 and IPv6 on one port failed to connect once, intermittently: observed once in a sharded functional run, not reproduced on rerun, and test_transport_dual_stack_ipv4_client passed in the full run at b0a8a2e3. The final deliverable finds the cause and proves every family combination on macOS by repeated functional runs. | — | ✅ | — |
+| On macOS, the historical full functional suite ran past CI's 120-second limit; it passed outside CI (all 142 cases at b0a8a2e3, about 6 m 38 s). The macOS CI restructuring is held for preview-3; preview-2 qualification depends on its own exact-head receipts. | — | ✅ | — |
+| Some functional tests measure operating-system behaviour rather than RocketNet: test_macos_client_timing_default_qos, test_macos_client_timing_taskpolicy_background, the test_thread_priority_timing cases and test_thread_priority_windows_readback. The final deliverable removes them or rewrites them to test only RocketNet's own code. | ✅ | ✅ | ✅ |
+| The macOS client timing functional test carries a branch that lowers the game thread's priority, which no case uses since its last caller was removed. The final deliverable removes the branch with the cases above. | — | ✅ | — |
+| The Windows Debug, AddressSanitizer and Application Verifier runs passed before the last v1.0.0-preview-1 API changes and have not been repeated on the released API. The final deliverable repeats all three on the released API, on every Windows transport. | — | — | ✅ |
+| Client connect and server start still allocate: the client's transport, socket and I/O thread at each connect, and the server's transport and its tables at each start. The final deliverable builds them at create, so nothing allocates after create. | ✅ | ✅ | ✅ |
+| A few allocations do not go through the caller's allocator: AF_XDP packet memory, io_uring rings, the RIO registered region, thread stacks, interface discovery and the C library's output buffer. The final deliverable routes them through the caller's allocator where the operating system allows, and reports the rest by size. | ✅ | ✅ | ✅ |
+| The memory plan reports what create needs, but not yet what connect, reconnect, start and stop need. The final deliverable extends the plan to the whole session, so one block sized from the plan alone never runs out. | ✅ | ✅ | ✅ |
+| The handshake's signature-failure budget is kept per address and port, so one host rotating its ports can force up to 1024 signature checks per update. The final deliverable keys the budget by host address and caps signature checks per update. | ✅ | ✅ | ✅ |
+| Connect-token claims are first come, first served, so an observer on the network path can copy a client's first request and hold its token until the handshake deadline. The final deliverable's security pass closes this window or bounds it and documents it. | ✅ | ✅ | ✅ |
+| A replayed connection response refreshes a slot's receive time, a token claim is not released on three refusal paths, and a forged cookie can rewind a client's handshake (bounded). The final deliverable fixes each one, with a test for each. | ✅ | ✅ | ✅ |
+| At very low send rates, time spent waiting for send budget counts toward the reliable-message timeout. The final deliverable counts only the time a message has been on the wire. | ✅ | ✅ | ✅ |
+| Sequenced blocks and small records treat an in-turn record differently. The final deliverable gives both one rule, modelled and tested. | ✅ | ✅ | ✅ |
+| Ack processing costs O(k²) per block, and the packet builder O(items²) per class pass. The final deliverable makes both linear. | ✅ | ✅ | ✅ |
+| The example soak can fail when many clients disconnect at once: the server still counts connected clients after the disconnect pass. The final deliverable fixes the disconnect path and runs the example soak green on every platform. | ✅ | ✅ | ✅ |
+| The full client I/O TLA+ model needs a configuration that fits the CI time budget. The final deliverable splits it into configurations that each finish within the budget. | ✅ | — | — |
+| The reconnect churn and UDP loopback functional cases showed rare timing failures under heavy machine load. The final deliverable makes them independent of machine load. | ✅ | ✅ | ✅ |
+| The receipt read returns how many outcomes it copied, not how many there were when the caller's buffer is too short (ring overflow is counted, in receipts_dropped). The final deliverable returns the available count. | ✅ | ✅ | ✅ |
+| Connect over whichever family works: send connection requests to the token's IPv4 and IPv6 addresses and keep the first that answers (TLA+ first). | ✅ | ✅ | ✅ |
+| Backend keygen, connect-token minting and a reference server registration in Go and C#. | ✅ | ✅ | ✅ |
 | The v1.0.0-preview-1 API is provisional: names, structure and doc comments in the public header may still change. The final deliverable finalizes the API after customer feedback. | ❌ | ❌ | ❌ |
-| The receive path still accepts a datagram up to 1472 bytes (a 1439-byte payload), above the 1416-byte ROCKETNET_MAX_PACKET_PAYLOAD_BYTES every sender writes; the standard test vectors depend on the larger bound. The final deliverable refuses anything above the send bound and regenerates the vectors. | ❌ | ❌ | ❌ |
-| The config field max_payload_bytes bounds the largest message, but max_message_bytes is already the name of a different field, so the rename to the message name waits. The final deliverable gives each of the two fields a name that says which limit it is. | ❌ | ❌ | ❌ |
+| The receive path still accepts a datagram up to 1472 bytes (a 1439-byte payload), above the 1416-byte ROCKETNET_MAX_PACKET_PAYLOAD_BYTES every sender writes; the standard test vectors depend on the larger bound. The final deliverable refuses anything above the send bound and regenerates the vectors. | ✅ | ✅ | ✅ |
+| The config field max_payload_bytes bounds the largest message, but max_message_bytes is already the name of a different field, so the rename to the message name waits. The final deliverable gives each of the two fields a name that says which limit it is. | ✅ | ✅ | ✅ |
 | Internal identifiers still use the old payload, ring, slot and window names that the public header no longer uses. The final deliverable renames them to the public terms in one pass. | ❌ | ❌ | ❌ |
-| The two config fields max_payload_bytes (the largest payload the transport fragments) and max_message_bytes (the largest message) are still separate; the final deliverable merges them into one max_message_bytes with one maximum, ROCKETNET_MAX_MESSAGE_BYTES, and states the max_payload_bytes limit through a define rather than the literal 305408. | ❌ | ❌ | ❌ |
-| The client and the server measure packet_loss and jitter differently: the client measures loss of the server packets it receives and the change in arrival gaps, the server measures unacknowledged sends and round-trip spread. The final deliverable gives each stat one definition on both ends. | ❌ | ❌ | ❌ |
-| The development network simulator takes effect on a client connection at the next connect, and on a server at the next start, unless that connection already runs a simulator; the final deliverable applies it at once on a live connection too. | ❌ | ❌ | ❌ |
-| The internal headers have no extern "C" blocks, so a C tool cannot include them. The final deliverable adds them where a C caller needs one. | ❌ | ❌ | ❌ |
-| Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first). | ❌ | ❌ | ❌ |
-| The *_name lookups return two forms: status names are the enum suffix ("OK") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four. | ❌ | ❌ | ❌ |
-| A Linux build with XDP off still needs the BPF and XDP development libraries. The final deliverable makes them optional when XDP is off. | ❌ | — | — |
-| The public header carries a large volume of comments, some citing internal design references; the examples are longer than they need to be; the build has many targets. The final deliverable states each rule once in the header, shortens the examples and trims the build targets. | ❌ | — | — |
-| complete | 0% | 0% | 0% |
+| The two config fields max_payload_bytes (the largest payload the transport fragments) and max_message_bytes (the largest message) are still separate; the final deliverable merges them into one max_message_bytes with one maximum, ROCKETNET_MAX_MESSAGE_BYTES, and states the max_payload_bytes limit through a define rather than the literal 305408. | ✅ | ✅ | ✅ |
+| The client and the server measure packet_loss and jitter differently: the client measures loss of the server packets it receives and the change in arrival gaps, the server measures unacknowledged sends and round-trip spread. The final deliverable gives each stat one definition on both ends. | ✅ | ✅ | ✅ |
+| The development network simulator takes effect on a client connection at the next connect, and on a server at the next start, unless that connection already runs a simulator; the final deliverable applies it at once on a live connection too. | ✅ | ✅ | ✅ |
+| The internal headers have no extern "C" blocks, so a C tool cannot include them. The final deliverable adds them where a C caller needs one. | ✅ | ✅ | ✅ |
+| Client connect from a handshake or token failure state (CONNECTION_DENIED .. CONNECT_TOKEN_EXPIRED) is refused until rocketnet_client_disconnect; the final deliverable lets connect start over from any failure state (TLA+ first). | ✅ | ✅ | ✅ |
+| The *_name lookups return two forms: status names are the enum suffix ("OK") and the client state, log level and disconnect reason names are lower-case words. The final deliverable returns the upper-case enum suffix from all four. | ✅ | ✅ | ✅ |
+| A Linux build with XDP off still needs the BPF and XDP development libraries. The final deliverable makes them optional when XDP is off. | ✅ | — | — |
+| The public header carries a large volume of comments, some citing internal design references; the examples are longer than they need to be; the build has many targets. The final deliverable states each rule once in the header, shortens the examples and trims the build targets. | ✅ | — | — |
+| complete | 90% | 90% | 89% |
 
 [Source data](roadmap.sexp)
 
@@ -557,27 +557,27 @@ Soaks, load, stress, transport matrices, fuzzing, sanitizers, nightlies and the 
 |---|:---:|:---:|:---:|
 | A thousand clients for ten minutes on every transport of every platform, over the LAN, every guarantee checked | ❌ | ❌ | ❌ |
 | Linux: every transport cell fifty times in a row with zero flakes, and the functional suite under ASan per transport | ❌ | — | — |
-| macOS: every transport cell fifty times in a row, zero flakes, nightly | — | ❌ | — |
+| macOS: every transport cell fifty times in a row, zero flakes, nightly | — | ✅ | — |
 | A thousand clients against a Windows server, on every Windows transport | — | — | ❌ |
-| Windows soaks per transport under loss, jitter and duplication, with flat handles and memory | — | — | ❌ |
-| Every Windows transport, every address family, fifty times clean | — | — | ❌ |
-| Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory | ❌ | — | — |
-| Linux: 1000 light clients on every transport | ❌ | — | — |
-| Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp | ❌ | — | — |
+| Windows soaks per transport under loss, jitter and duplication, with flat handles and memory | — | — | ✅ |
+| Every Windows transport, every address family, fifty times clean | — | — | ✅ |
+| Linux: thirty-minute soaks per transport under impairment with flat fds, threads and memory | ✅ | — | — |
+| Linux: 1000 light clients on every transport | ✅ | — | — |
+| Linux: a hard-killed client or an ICMP error never stalls portable, gso, io_uring or xdp | ✅ | — | — |
 | macOS: 1000 clients per transport, three runs each, with the fd limit and counts in the summary | — | ❌ | — |
-| macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly | — | ❌ | — |
-| Linux: the nightly soak jobs green at the branch | ❌ | — | — |
-| The fuzz targets build and run under libFuzzer on Windows | — | — | ❌ |
-| Create, destroy, connect, restart: a thousand times on Windows with nothing left behind | — | — | ❌ |
-| Windows nightlies: all jobs run, warnings gated, verifier script safe | — | — | ❌ |
+| macOS: ASan, UBSan and TSan with Apple clang, and the leaks tool, on every suite and transport, nightly | — | ✅ | — |
+| Linux: the nightly soak jobs green at the branch | ✅ | — | — |
+| The fuzz targets build and run under libFuzzer on Windows | — | — | ✅ |
+| Create, destroy, connect, restart: a thousand times on Windows with nothing left behind | — | — | ✅ |
+| Windows nightlies: all jobs run, warnings gated, verifier script safe | — | — | ✅ |
 | TLA ledger: every case finishes or says why; docs current | ✅ | — | — |
-| Server send capacity is sized from the config, never a fixed 256 | ❌ | ❌ | ❌ |
-| macOS: 1000 light clients on msgx and portable | — | ❌ | — |
-| Windows: 1000 light clients on portable, iocp and rio | — | — | ❌ |
-| macOS: the nightly soak job green at the branch | — | ❌ | — |
-| Ack receipts: LOSS only after the receipt deadline | ❌ | ❌ | ❌ |
-| The whole tree formatted with clang-format in the netcode style, the format checked in CI | ❌ | ❌ | ❌ |
-| complete | 10% | 0% | 0% |
+| Server send capacity is sized from the config, never a fixed 256 | ✅ | ✅ | ✅ |
+| macOS: 1000 light clients on msgx and portable | — | ✅ | — |
+| Windows: 1000 light clients on portable, iocp and rio | — | — | ✅ |
+| macOS: the nightly soak job green at the branch | — | ✅ | — |
+| Ack receipts: LOSS only after the receipt deadline | ✅ | ✅ | ✅ |
+| The whole tree formatted with clang-format in the netcode style, the format checked in CI | ✅ | ✅ | ✅ |
+| complete | 80% | 78% | 82% |
 
 [Source data](roadmap.sexp)
 
@@ -587,18 +587,18 @@ The last pass before v1.0.0: the library shrunk to the size and readability of n
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Each layer's job written in one sentence, and the list corrected by the owner before any code changes | ❌ | — | — |
-| Layer 1, init, allocator, logging and assertions: contracted | ❌ | ❌ | ❌ |
-| Layer 2, leaf utilities (address, hash, base64, bounded containers): contracted | ❌ | ❌ | ❌ |
-| Layer 3, platform (threads, mutexes, clocks, sockets): contracted, with far fewer preprocessor branches | ❌ | ❌ | ❌ |
-| Layer 4, transport protocol (token, cookie, handshake, keys, replay, acks, packets): contracted | ❌ | ❌ | ❌ |
-| Layer 5, message layer (reliability, ordering, fragmentation, receipts, receive queue): contracted | ❌ | ❌ | ❌ |
+| Each layer's job written in one sentence, and the list corrected by the owner before any code changes | ✅ | — | — |
+| Layer 1, init, allocator, logging and assertions: contracted | ✅ | ✅ | ✅ |
+| Layer 2, leaf utilities (address, hash, base64, bounded containers): contracted | ✅ | ✅ | ✅ |
+| Layer 3, platform (threads, mutexes, clocks, sockets): contracted, with far fewer preprocessor branches | ✅ | ✅ | ✅ |
+| Layer 4, transport protocol (token, cookie, handshake, keys, replay, acks, packets): contracted | ✅ | ✅ | ✅ |
+| Layer 5, message layer (reliability, ordering, fragmentation, receipts, receive queue): contracted | ✅ | ✅ | ✅ |
 | Layer 6, runtime transports: there is no driver; a driver is the transport. The sdk/rocketnet_driver* files and names are folded into the transports, each as small as its platform allows | ❌ | ❌ | ❌ |
 | Layer 7, public C API: contracted, with no change to rocketnet.h behaviour | ❌ | ❌ | ❌ |
 | Comments say what the code does, not why a review was satisfied | ❌ | ❌ | ❌ |
-| Tests and tools contracted alongside: library tests out of sdk/, unit cases run in layer order from layer 1 up, no case kept only for a deleted mechanism | ❌ | ❌ | ❌ |
+| Tests and tools contracted alongside: library tests out of sdk/, unit cases run in layer order from layer 1 up, no case kept only for a deleted mechanism | ✅ | ✅ | ✅ |
 | The library is readable end to end in an afternoon: sdk/ total recorded before and after | ❌ | ❌ | ❌ |
-| complete | 0% | 0% | 0% |
+| complete | 64% | 60% | 60% |
 
 [Source data](roadmap.sexp)
 
@@ -606,14 +606,14 @@ The last pass before v1.0.0: the library shrunk to the size and readability of n
 
 | feature | Linux | macOS | Windows |
 |---|:---:|:---:|:---:|
-| Release hardening flags | ❌ | ❌ | ❌ |
-| Reproducible vendored sources | ✅ | ❌ | ❌ |
-| An integrating application vendors the SDK and proves it (release gate) | ❌ | ❌ | ❌ |
-| Supported-platform policy | ❌ | — | — |
-| v1.0.0-preview-4 release candidate: shipping label, release notes and qualification record | ❌ | ❌ | ❌ |
+| Release hardening flags | ✅ | ✅ | ✅ |
+| Reproducible vendored sources | ✅ | ✅ | ✅ |
+| An integrating application vendors the SDK and proves it (release gate) | — | — | — |
+| Supported-platform policy | ✅ | — | — |
+| v1.0.0-preview-4 release candidate: shipping label, release notes and qualification record | ✅ | ✅ | ✅ |
 | v1.0.0-preview-3 release candidate: shipping label, release notes and qualification record | ✅ | ✅ | ✅ |
 | Security disclosure and release process | ✅ | — | — |
 | Independent review of the connection layer repair diff, received | ❌ | — | — |
-| complete | 38% | 20% | 20% |
+| complete | 86% | 100% | 100% |
 
 [Source data](roadmap.sexp)
