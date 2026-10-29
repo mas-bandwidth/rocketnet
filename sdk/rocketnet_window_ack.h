@@ -95,7 +95,7 @@ struct rn_window_ack_t
     uint8_t has_rtt;                // 0 before the first valid ack sample, 1 after
     uint8_t has_oldest;             // 1 while oldest_number is tracked at U
     uint16_t pad;
-    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE or ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT
+    int error;                      // ROCKETNET_DISCONNECT_REASON_NONE, _RELIABLE_TIMED_OUT, or _PROTOCOL_VIOLATION (resend link out of range)
 
     // Two resend sequences over the one flat array region->resend_fifo, one per
     // delay class (docs/CHANNELS.md 6.4 "Resend"; proofs/tla/RNResendTiming.tla
