@@ -10540,6 +10540,7 @@ void wire_totals_reset_per_connection_not_per_server()
     rocketnet_check( first != NULL );
     rocketnet_check( wire_totals_connect( first, server, &time ) );
     wire_totals_send_payloads( first, server, &time );
+    rocketnet_check( wire_totals_drain( first, server, &time ) );   // the receive threads have counted what was sent
 
     wire_totals_t first_slot, first_server;
     wire_totals_slot( server, 0, &first_slot );
