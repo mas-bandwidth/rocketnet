@@ -242,7 +242,7 @@ static int in_tree_transport( const char * nic )
     return 0;
 #else
     char cmd[256];
-    snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^transport:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
+    snprintf( cmd, sizeof cmd, "ethtool -i %s 2>/dev/null | awk '/^driver:/{d=$2} /^version:/{v=$2} END{print d, v}'", nic );
 
     FILE * f = popen( cmd, "r" );
     if ( !f )
