@@ -506,6 +506,41 @@ static void test_endpoint_back_to_back_over_lossy_array()
     delete b;
 }
 
+// The send order, pinned byte for byte: every packet both endpoints wrote and
+// every delivery, hashed in order over the lossy array, for three seeds. A
+// scheduler change that keeps the order keeps these; any other change to what
+// goes on the wire, or when, moves them. Printed so a deliberate change can
+// record its new values.
+
+static void test_endpoint_send_order_is_pinned()
+{
+    static const uint64_t seeds[3] = { 20261017, 1, 20261029 };
+    static const uint64_t pinned[3] = { 0, 0, 0 };
+
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    for ( int i = 0; i < 3; i++ )
+    {
+        ep_side_t * a = new ep_side_t();
+        ep_side_t * b = new ep_side_t();
+        ep_side_create( a, &config );
+        ep_side_create( b, &config );
+
+        ep_stats_t stats;
+        const int steps = ep_back_to_back( a, b, seeds[i], &stats );
+        check( steps < EP_MAX_STEPS );
+
+        printf( "    send order seed %llu: steps %d trace 0x%016llx\n", (unsigned long long) seeds[i], steps, (unsigned long long) stats.trace );
+        check( stats.trace == pinned[i] );
+
+        ep_side_destroy( a );
+        ep_side_destroy( b );
+        delete a;
+        delete b;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // purity: no allocator call after init, and no clock
 // ---------------------------------------------------------------------------
@@ -838,6 +873,7 @@ static void test_endpoint_reliable_continues_after_capacity_cut()
 }
 
 REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
+REGISTER_UNIT_TEST( test_endpoint_send_order_is_pinned );
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
