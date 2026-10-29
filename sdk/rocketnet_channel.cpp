@@ -154,8 +154,10 @@ static bool rn_held_insert( rn_region_t * region, uint64_t key, uint32_t number_
     return false;
 }
 
-// tla/RNOpenAddress.tla EraseStart and EraseStep: the hole clears, then the
-// scan moves back each entry whose home is not cyclically in (hole, scan]
+// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// moves back each entry whose home is not cyclically in (hole, scan], and the
+// final hole clears last; the scan ends only on a cell already empty, so the
+// index is sized at twice its capacity
 static void rn_held_erase( rn_region_t * region, uint32_t index )
 {
     const uint32_t entries = region->held_entries;

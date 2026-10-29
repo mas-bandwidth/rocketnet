@@ -237,8 +237,9 @@ static bool rn_token_index_insert( struct rocketnet_token_table_t * table, int s
 // searchable and leaves no tombstone. The index holds at most capacity
 // entries in twice that many cells, so an empty cell always stops the scan.
 // The scan does not count as a lookup probe.
-// tla/RNOpenAddress.tla EraseStart and EraseStep: the hole clears, then the
-// scan moves back each entry whose home is not cyclically in (hole, scan]
+// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast FALSE): the hole
+// clears first, then the scan moves back each entry whose home is not
+// cyclically in (hole, scan]; EraseBound: it examines at most capacity cells
 static void rn_token_index_remove( struct rocketnet_token_table_t * table, int slot )
 {
     const int position = rn_token_index_position( table, table->identifier[slot] );

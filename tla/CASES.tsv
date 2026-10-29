@@ -59,6 +59,8 @@ MCRNIndexRingArray.cfg	MCRNIndexRingArray.tla	pass	-	ignore-terminal	rnindexring
 MCRNIndexRingArrayBrokenCompactToZero.cfg	MCRNIndexRingArray.tla	invariant	LiveIsOrder	ignore-terminal	rnindexringarray	required	-
 MCRNOpenAddress.cfg	MCRNOpenAddress.tla	pass	-	check	rnopenaddress	required	-
 MCRNOpenAddressBrokenNoWrapTest.cfg	MCRNOpenAddress.tla	invariant	Findable	check	rnopenaddress	required	-
+MCRNOpenAddressClearLast.cfg	MCRNOpenAddress.tla	pass	-	check	rnopenaddress	required	-
+MCRNOpenAddressBrokenClearLastFull.cfg	MCRNOpenAddress.tla	invariant	EraseEnds	check	rnopenaddress	required	-
 MCRNWindow.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowSafety.cfg	MCRNWindow.tla	pass	-	check	rnwindow	required	-
 MCRNWindowBrokenBlockUPrime.cfg	MCRNWindow.tla	invariant	NoSlotCollision	check	rnwindow	required	-

@@ -303,8 +303,10 @@ static void rn_sent_index_insert( rn_region_t * region, uint64_t packet_id, uint
     rocketnet_assert( false && "sent_index 2P table exhausted" );
 }
 
-// tla/RNOpenAddress.tla EraseStart and EraseStep: the hole clears, then the
-// scan moves back each entry whose home is not cyclically in (hole, scan]
+// tla/RNOpenAddress.tla EraseStart and EraseStep (ClearLast TRUE): the scan
+// moves back each entry whose home is not cyclically in (hole, scan], and the
+// final hole clears last; the scan ends only on a cell already empty, so the
+// index is sized at twice its capacity
 static void rn_sent_index_remove_at( rn_region_t * region, uint32_t slot )
 {
     const uint32_t cap = region->sent_index_entries;
