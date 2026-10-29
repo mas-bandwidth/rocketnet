@@ -210,10 +210,10 @@ struct rn_receipt_t                     // 16 bytes: the receipt ring, Rq entrie
     uint32_t reserved[2];
 };
 
-struct rn_resend_link_t                 // 16 bytes: flat resend sequence entry, indexed number % W (6.4)
+struct rn_resend_link_t                 // 16 bytes: resend sequence entry, indexed number % W (6.4)
 {
-    uint32_t prev;                      // low 32 bits of this slot's flat resend sequence key; 0 with next == 0 when not in a resend sequence
-    uint32_t next;                      // high 31 bits of the sequence key in bits 0..30, chunk-class flag in bit 31; walkers order by the key, never by following this field
+    uint32_t prev;                      // previous slot in its sequence in bits 0..30 (0x7FFFFFFF: the head), linked flag in bit 31; 0 when not in a sequence
+    uint32_t next;                      // next slot in its sequence in bits 0..30 (0x7FFFFFFF: the tail), chunk-class flag in bit 31
     uint32_t generation;                // descriptor generation named by this entry; 0 is never a live name
     uint32_t owner_epoch;               // region->schedule_epoch when the slot was sequenced
 };
@@ -224,8 +224,8 @@ struct rn_resend_link_t                 // 16 bytes: flat resend sequence entry,
 // hole is a ticketless entry an interior cancel leaves in place, and compact
 // restamps the live entries of one channel in one pass over its entries once
 // holes pass the bound, or once per write pass, never per emitted record.
-// Resend capacity stays W: one slot is in at most one resend sequence, its
-// order is its flat sequence key in rn_resend_link_t, and an acked hole stays
+// Resend capacity stays W: one slot is in at most one resend sequence, linked
+// to its neighbours by slot index in rn_resend_link_t, and an acked hole stays
 // sequenced until a named removal so a resend walk still counts it.
 
 // ----------------------------------------------------------------

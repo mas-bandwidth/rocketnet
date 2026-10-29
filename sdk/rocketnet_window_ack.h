@@ -28,7 +28,7 @@
 //   - region->sent_index   : 2P entries of 16 bytes (open-addressed packet_id -> entry)
 //   - region->sent_refs    : 16P u32 entries (ring of referenced message numbers)
 //   - region->send_numbers : W entries of 32 bytes (sender per-number table)
-//   - region->resend_fifo  : W entries of 16 bytes (flat sequence key plus generation and owner epoch),
+//   - region->resend_fifo  : W entries of 16 bytes (prev/next slot links plus generation and owner epoch),
 //                            shared by the two resend sequences: a number is in at most one.
 //                            Capacity is W. An acked hole stays sequenced until a
 //                            named removal, so a walk still counts it (tla/RNChannelQueues.tla).
@@ -170,9 +170,9 @@ static inline double rn_window_ack_class_delay( const rn_window_ack_t * ack, boo
     return chunk ? rn_window_ack_chunk_resend_delay( ack ) : rn_window_ack_resend_delay( ack );
 }
 
-// The first slot of a class's flat resend sequence, or RN_RESEND_NONE, and
-// the slot after `slot` in that sequence, or RN_RESEND_NONE. Walkers order
-// the flat resend_fifo array by its sequence keys (tla/RNChannelQueues.tla).
+// The first slot of a class's resend sequence, or RN_RESEND_NONE, and
+// the slot after `slot` in that sequence, or RN_RESEND_NONE. Walkers follow
+// the resend_fifo array by its slot links (tla/RNChannelQueues.tla).
 uint32_t rn_window_ack_resend_first( const rn_window_ack_t * ack, bool chunk );
 uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uint32_t slot );
 
