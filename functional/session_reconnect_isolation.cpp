@@ -369,6 +369,10 @@ static void session_run_isolation_pair( const char * server_transport, const cha
     rocketnet_client_stats( client, &stats_after_disc1 );
     session_assert_client_metrics_reset( &stats_after_disc1 );
     session_check( rocketnet_client_receive_messages( client ) == NULL );
+
+    // the ended connection's receipts stay readable until the next update
+    // (rocketnet.h); after it none remain to cross into the next connection
+    rocketnet_client_update( client, 1000.0 + ( rocketnet_time() - wall_start ) );
     session_check( rocketnet_client_receipts( client, NULL, 0 ) == 0 );
 
     // Wait for server_a to retire slot 0 so the reconnect reuses slot 0 cleanly.
