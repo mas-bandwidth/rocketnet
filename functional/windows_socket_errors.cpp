@@ -387,24 +387,37 @@ static int windows_socket_errors_pending( windows_socket_errors_session_t * sess
     return -1;
 }
 
-// receives in flight: the fewest posted operations over a quarter second of
-// ticks, when the sends of a tick have completed
+// the posted operations of a server at rest: every receive posted and no send
+// outstanding. The server transport creates iocp with the default worker count
+// (sdk/rocketnet_driver_builtin.cpp); -1 for portable, as pending reads.
+static int windows_socket_errors_full_pending( windows_socket_errors_session_t * session )
+{
+    if ( strcmp( session->transport.transport, "iocp" ) == 0 )
+        return ROCKETNET_IOCP_DEFAULT_WORKERS * ROCKETNET_IOCP_RECEIVES_PER_WORKER;
+    if ( strcmp( session->transport.transport, "rio" ) == 0 )
+        return ROCKETNET_RIO_RECEIVES;
+
+    return -1;
+}
+
+// receives in flight: ticks until the posted operations are back at the full
+// set, for at most 10 seconds, and returns the last count read. One read races
+// the completion worker, which takes a receive off the posted count before it
+// reposts it, so the fewest of a window of reads caught that dip in one window
+// and not in another; a receive that a drop failed to repost holds the count
+// below the full set at every read.
 static int windows_socket_errors_receives_in_flight( windows_socket_errors_session_t * session )
 {
-    int fewest = windows_socket_errors_pending( session );
+    const int full = windows_socket_errors_full_pending( session );
+    int pending = windows_socket_errors_pending( session );
     const double start = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - start < 0.25 )
+    while ( pending != full && rocketnet_platform_time() - start < 10.0 )
     {
         windows_socket_errors_tick( session );
-
-        const int pending = windows_socket_errors_pending( session );
-        if ( pending < fewest )
-        {
-            fewest = pending;
-        }
+        pending = windows_socket_errors_pending( session );
     }
 
-    return fewest;
+    return pending;
 }
 
 static void windows_socket_errors_inject( windows_socket_errors_session_t * session, uint16_t port, const std::vector<windows_socket_errors_datagram_t> & datagrams )
@@ -444,10 +457,13 @@ static void windows_server_drops( const windows_socket_errors_transport_t * tran
     windows_socket_errors_inject( &session, rocketnet_server_transport_port( session.server ), datagrams );
 
     // drain: every datagram reaches its counter, and the live pair keeps
-    // exchanging
+    // exchanging; at least 0.5 s, then until both sides have received more
+    // than 30 payloads, bounded at 10 s
 
     const double drain = rocketnet_platform_time();
-    while ( rocketnet_platform_time() - drain < 0.5 )
+    while ( rocketnet_platform_time() - drain < 0.5 ||
+            ( ( session.server_received - server_received_before <= 30 || session.client_received - client_received_before <= 30 ) &&
+              rocketnet_platform_time() - drain < 10.0 ) )
     {
         windows_socket_errors_tick( &session );
     }
@@ -465,6 +481,7 @@ static void windows_server_drops( const windows_socket_errors_transport_t * tran
     // every dropped datagram is counted: no silent drop
 
     windows_socket_errors_require( counted == sent );
+    windows_socket_errors_require( in_flight_before == windows_socket_errors_full_pending( &session ) );
     windows_socket_errors_require( in_flight_after == in_flight_before );
     windows_socket_errors_require( rocketnet_client_transport_state( session.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     windows_socket_errors_require( rocketnet_server_transport_is_client_connected( session.server, session.client_index ) );

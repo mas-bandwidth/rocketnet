@@ -1158,6 +1158,11 @@ int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t 
 // after the bind), -1 when none is needed, or -2 on failure.
 
 #if defined( __APPLE__ )
+// the reservations a dual-stack bind to a kernel-chosen port takes before it
+// gives up: each one a different port, refused only when that port is already
+// bound in the IPv6 namespace
+#define ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS 16
+
 static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * address, uint16_t * bind_port )
 {
     if ( address->type != ROCKETNET_ADDRESS_IPV6 )
@@ -1296,27 +1301,54 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     // bind, and when bound to port 0 read back the port the kernel chose
 
     rocketnet_address_t bind_address = *address;
+    sockaddr_storage bind_storage;
+    int bind_result = -1;
 
 #if defined( __APPLE__ )
-    const int ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port );
+    // The port an IPv4 reservation takes from the kernel is free in the IPv4
+    // namespace only: another socket may hold it in the IPv6 namespace, and the
+    // dual-stack bind to it then fails EADDRINUSE. A kernel-chosen port that is
+    // refused so is held, and the next reservation takes another port; every
+    // reservation is closed once the bind is done.
+
+    int held[ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS];
+    int num_held = 0;
+    int ipv4_port_reservation;
+
+    while ( true )
+    {
+        bind_address.port = address->port;
+        ipv4_port_reservation = rocketnet_platform_reserve_ipv4_port( address, &bind_address.port );
+        if ( ipv4_port_reservation == -2 )
+            break;
+
+        const socklen_t bind_bytes = rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
+        bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
+        if ( bind_result >= 0 || ipv4_port_reservation < 0 || address->port != 0 || errno != EADDRINUSE ||
+             num_held == ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS - 1 )
+            break;
+
+        held[num_held++] = ipv4_port_reservation;
+    }
+
+    for ( int i = 0; i < num_held; i++ )
+        close( held[i] );
+
     if ( ipv4_port_reservation == -2 )
     {
         rocketnet_platform_socket_destroy( socket );
         return NULL;
     }
-#endif // #if defined( __APPLE__ )
 
-    sockaddr_storage bind_storage;
-    const socklen_t bind_bytes = rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
-    const int bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
-
-#if defined( __APPLE__ )
     if ( ipv4_port_reservation >= 0 )
     {
         close( ipv4_port_reservation );
         if ( bind_result >= 0 )
             address->port = bind_address.port;
     }
+#else // #if defined( __APPLE__ )
+    const socklen_t bind_bytes = rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
+    bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
 #endif // #if defined( __APPLE__ )
 
     if ( bind_result < 0 )

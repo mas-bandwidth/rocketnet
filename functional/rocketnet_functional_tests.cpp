@@ -10547,6 +10547,11 @@ void wire_totals_reset_per_connection_not_per_server()
     rocketnet_check( wire_totals_connect( first, server, &time ) );
     wire_totals_send_payloads( first, server, &time );
 
+    // the payloads' fixed pumps do not wait for the client's receive thread:
+    // read the first connection's totals once both directions agree
+
+    rocketnet_check( wire_totals_drain( first, server, &time ) );
+
     wire_totals_t first_slot, first_server;
     wire_totals_slot( server, 0, &first_slot );
     wire_totals_server( server, &first_server );

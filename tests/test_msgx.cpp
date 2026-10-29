@@ -3,8 +3,16 @@
 // pointer substitution is confined to this executable; SDK sources are unchanged.
 // The msgx seam (the pause-expiry race hook) is ROCKETNET_DEV code.
 #include "../sdk/rocketnet_platform.cpp"
+#include <float.h>
 #include <stdio.h>
 #include <stdlib.h>
+
+// An expired pause that reads no clock: the pump treats a deadline of zero or
+// below as no pause, and any positive deadline at or before now as expired.
+// The smallest positive deadline is past at every time after init, where
+// "now - 0.001" is negative, and so not a pause at all, for a run that
+// reaches the re-probe within a millisecond of init.
+#define MSGX_EXPIRED_PAUSE DBL_MIN
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "msgx check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 static rocketnet_sendmsg_x_fn real_send;
@@ -178,11 +186,11 @@ int main()
     drain( socket, address, 1 );
     CHECK( send_calls == 1 && receive_calls == 0 );
 
-    // Advance only the stored deadline, not wall clock or the production
+    // Expire only the stored deadline, not wall clock or the production
     // retry interval. The next real batch call must perform the re-probe.
 
     refuse_send = false;
-    socket->msgx_down_until = rocketnet_platform_time() - 0.001;
+    socket->msgx_down_until = MSGX_EXPIRED_PAUSE;
     rocketnet_platform_socket_send_packets( socket, sends, 1 );
     CHECK( send_calls == 2 && socket->msgx_down_until == 0.0 );
     drain( socket, address, 1 );
@@ -199,7 +207,7 @@ int main()
     CHECK( strcmp( rocketnet_platform_socket_pump( socket ), "portable" ) == 0 );
     refuse_receive = false;
     rocketnet_platform_socket_send_packets( socket, sends, 1 );
-    socket->msgx_down_until = rocketnet_platform_time() - 0.001;
+    socket->msgx_down_until = MSGX_EXPIRED_PAUSE;
     drain( socket, address, 1 );
     CHECK( receive_calls > receive_before + 1 && socket->msgx_down_until == 0.0 );
     CHECK( strcmp( rocketnet_platform_socket_pump( socket ), "msgx" ) == 0 );
