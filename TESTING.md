@@ -181,6 +181,7 @@ Source: [docs/testing.sexp](docs/testing.sexp), [tools/roadmap/render.py](tools/
 | TLA+ model check: rnring (5 required) | planned for the final deliverable |
 | TLA+ model check: rnsendspans (3 required) | planned for the final deliverable |
 | TLA+ model check: rnindexring (3 required) | planned for the final deliverable |
+| TLA+ model check: rnindexringarray (2 required) | planned for the final deliverable |
 | TLA+ model check: rnwindow (7 required) | planned for the final deliverable |
 | TLA+ model check: receiveorder (8 required) | planned for the final deliverable |
 | TLA+ model check: rndriversendstaging (3 required) | planned for the final deliverable |

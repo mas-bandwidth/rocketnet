@@ -369,6 +369,8 @@ static bool rn_token_order_stale( const struct rocketnet_token_table_t * table, 
 }
 
 // tla/RNIndexRing.tla PopStale: the oldest live claim, -1 when none; tombstones at the head are dropped
+// the oldest live claim, -1 when none: tombstones at the head are dropped
+// (tla/RNIndexRingArray.tla PopStale: the head moves modulo the ring)
 static int rn_token_order_oldest( const struct rocketnet_token_table_t * table )
 {
     while ( table->order_count > 0 && rn_token_order_stale( table, table->order_head ) )
@@ -383,6 +385,9 @@ static int rn_token_order_oldest( const struct rocketnet_token_table_t * table )
 
 // tla/RNIndexRing.tla Insert and Reinsert: a claimed slot's newest ticket joins the
 // ring's tail; a reinserted slot's earlier entry becomes a tombstone
+// tla/RNIndexRingArray.tla Insert and Reinsert append at (head + count) %
+// capacity; a full ring compacts in place first, CompactStep per entry read
+// and CompactDone when the pass ends
 static void rn_token_order_push( struct rocketnet_token_table_t * table, int slot )
 {
     if ( table->order_count == table->order_capacity )
@@ -575,6 +580,7 @@ void rocketnet_used_token_history_claim_release( struct rocketnet_used_token_his
 
     // tla/RNIndexRing.tla Release: the slot's ticket clears, so its ring
     // entry is a tombstone; the ring itself is not touched
+    // tla/RNIndexRingArray.tla Release: the ticket clears; the ring is untouched
 
     rn_token_slot_retire( table, slot );
     table->claim_deadline[slot] = 0.0;
