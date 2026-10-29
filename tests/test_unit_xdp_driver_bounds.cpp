@@ -265,6 +265,14 @@ static void test_xdp_transport_preflight_refuses_pin_targets_outside_isolated()
     rocketnet_unit_check( first_missing == 2 );
     rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-8x", 2, 7, &first_missing ) );
     rocketnet_unit_check( first_missing == 2 );
+
+    // a cpu number past int is refused, not wrapped: the largest int parses,
+    // one more does not
+
+    rocketnet_unit_check( !rocketnet_xdp_pin_targets_isolated( "2-2147483648", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == 2 );
+    rocketnet_unit_check( rocketnet_xdp_pin_targets_isolated( "2-2147483647", 2, 7, &first_missing ) );
+    rocketnet_unit_check( first_missing == -1 );
 }
 
 static void test_xdp_transport_stats_cpus_are_bounded()

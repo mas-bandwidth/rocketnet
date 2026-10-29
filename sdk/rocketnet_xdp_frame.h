@@ -576,9 +576,10 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
     int value = 0;
     while ( *p >= '0' && *p <= '9' )
     {
-        value = value * 10 + ( *p - '0' );
-        if ( value > 0x7FFFFFFF )
+        const int digit = *p - '0';
+        if ( value > ( 0x7FFFFFFF - digit ) / 10 )
             return false;
+        value = value * 10 + digit;
 
         p++;
     }
@@ -594,9 +595,10 @@ static inline bool rocketnet_xdp_cpu_list_entry( const char ** cursor, int * fir
         value = 0;
         while ( *p >= '0' && *p <= '9' )
         {
-            value = value * 10 + ( *p - '0' );
-            if ( value > 0x7FFFFFFF )
+            const int digit = *p - '0';
+            if ( value > ( 0x7FFFFFFF - digit ) / 10 )
                 return false;
+            value = value * 10 + digit;
 
             p++;
         }
