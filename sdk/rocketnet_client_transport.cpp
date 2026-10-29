@@ -1479,42 +1479,23 @@ void rocketnet_client_transport_mutate_refusal_state_for_test(
 }
 #endif // #if ROCKETNET_DEV
 
-static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
-                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
-                                                                                  const uint64_t * resolved_memory_budget )
+// The inputs a client create starts from, resolved before anything is
+// allocated or opened: the layered config (DEFAULT < STRUCT < ENV) validated,
+// the parsed transport ladder, and which candidates the operator memory
+// budget refuses.
+
+struct rocketnet_client_transport_resolved_t
 {
-#if !ROCKETNET_DEV
-    (void) step_driven_operations;
+    struct rocketnet_client_transport_config_t config;
+    struct rocketnet_transport_ladder_t ladder;
+    bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
+};
 
-    (void) step_driven_transport_context;
-#endif // #if !ROCKETNET_DEV
-    if ( status )
-        *status = ROCKETNET_STATUS_OK;
-
-    if ( !rocketnet_api_null_guard( connect_token ) )
-    {
-        if ( status )
-            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
-
-        return NULL;
-    }
-
-    // the lifecycle state is read once here, before any allocation or socket;
-    // a create before rocketnet_init is refused, logged and counted
-
-    if ( !rocketnet_library_initialized() )
-    {
-        rocketnet_error( "rocketnet_client_transport_create: rocketnet_init must be called first" );
-
-        rocketnet_api_misuse_record();
-
-        if ( status )
-            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
-
-        return NULL;
-    }
-
-    rocketnet_assert( connect_token );
+static bool rocketnet_client_transport_resolve( const struct rocketnet_client_transport_config_t * config, size_t config_bytes,
+                                                const uint64_t * resolved_memory_budget,
+                                                struct rocketnet_client_transport_resolved_t * out, int * status )
+{
+    rocketnet_assert( out );
 
     // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is
     // the development posture (the default shape); the caller's struct is
@@ -1540,7 +1521,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
 
-        return NULL;
+        return false;
     }
 
     if ( !rocketnet_config_validate( "client", &effective_config, config_fields, num_config_fields ) )
@@ -1548,7 +1529,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 
-        return NULL;
+        return false;
     }
 
     if ( !rocketnet_config_validate_public_link_simulator( "client", &effective_config, config_fields, num_config_fields, rocketnet_public_link_simulator_development() ) )
@@ -1556,7 +1537,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 
-        return NULL;
+        return false;
     }
 
     if ( rocketnet_config_packet_filter_refused( "client", effective_config.packet_filter ) )
@@ -1564,7 +1545,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION;
 
-        return NULL;
+        return false;
     }
 
     config = &effective_config;
@@ -1582,7 +1563,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
 
-        return NULL;
+        return false;
     }
 #endif // #if ROCKETNET_DEV
 
@@ -1595,7 +1576,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED;
 
-        return NULL;
+        return false;
     }
 
     // the transport candidate list parses before anything allocates: a typo fails here, loudly, listing the valid names
@@ -1609,7 +1590,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_INVALID_TRANSPORT_LIST;
 
-        return NULL;
+        return false;
     }
 
     // the operator memory budget (#155): each candidate's pre-allocation plan
@@ -1625,7 +1606,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
 
-        return NULL;
+        return false;
     }
 
     bool budget_refused[ROCKETNET_NUM_TRANSPORTS];
@@ -1667,8 +1648,60 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         if ( status )
             *status = ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED;
 
+        return false;
+    }
+
+    out->config = effective_config;
+    out->ladder = ladder;
+    memcpy( out->budget_refused, budget_refused, sizeof( out->budget_refused ) );
+
+    return true;
+}
+
+static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
+                                                                                  const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
+                                                                                  const uint64_t * resolved_memory_budget )
+{
+#if !ROCKETNET_DEV
+    (void) step_driven_operations;
+
+    (void) step_driven_transport_context;
+#endif // #if !ROCKETNET_DEV
+    if ( status )
+        *status = ROCKETNET_STATUS_OK;
+
+    if ( !rocketnet_api_null_guard( connect_token ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+
         return NULL;
     }
+
+    // the lifecycle state is read once here, before any allocation or socket;
+    // a create before rocketnet_init is refused, logged and counted
+
+    if ( !rocketnet_library_initialized() )
+    {
+        rocketnet_error( "rocketnet_client_transport_create: rocketnet_init must be called first" );
+
+        rocketnet_api_misuse_record();
+
+        if ( status )
+            *status = ROCKETNET_STATUS_NOT_INITIALIZED;
+
+        return NULL;
+    }
+
+    rocketnet_assert( connect_token );
+
+    struct rocketnet_client_transport_resolved_t resolved;
+    if ( !rocketnet_client_transport_resolve( config, config_bytes, resolved_memory_budget, &resolved, status ) )
+        return NULL;
+
+    config = &resolved.config;
+    const struct rocketnet_transport_ladder_t ladder = resolved.ladder;
+    const bool * budget_refused = resolved.budget_refused;
 
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) rocketnet_malloc( context, sizeof( rocketnet_client_transport_t ) );
     if ( !client_transport )
