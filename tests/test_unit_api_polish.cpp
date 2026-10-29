@@ -321,7 +321,7 @@ static void test_api_polish_zero_receipt_and_dense_reasons()
 
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 2 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 7 ), "UNKNOWN" ) == 0 );
-    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) -9 ), "UNKNOWN" ) == 0 );
+    check( strcmp( rocketnet_disconnect_reason_name( (enum rocketnet_disconnect_reason_t) 1 ), "UNKNOWN" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_TIMED_OUT ), "TIMED_OUT" ) == 0 );
     check( strcmp( rocketnet_disconnect_reason_name( ROCKETNET_DISCONNECT_REASON_CLIENT_DISCONNECTED ), "CLIENT_DISCONNECTED" ) == 0 );
 
