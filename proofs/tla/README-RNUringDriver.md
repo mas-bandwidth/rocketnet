@@ -46,9 +46,18 @@ contents:
   inside a call; destroy's drain reaps outside the budget, and its rounds
   are bounded in the code (`ROCKETNET_URING_DESTROY_MAX_ROUNDS`), not here.
 
-Five constants act as rule switches and carry the reversed witnesses:
-`ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap`, `RearmOnReceive` and
-`RunRetiredByCqe`. All are `TRUE` in the rule. A sixth rule switch,
+Six constants act as rule switches and carry the reversed witnesses:
+`ResetWaitsForReap`, `ReapIntoFill`, `BoundedReap`, `RearmOnReceive`,
+`RunRetiredByCqe` and `ReapWithinRoom`. All are `TRUE` in the rule.
+`Room` is how many datagrams the fill bank holds between two swaps
+(`ROCKETNET_URING_BANK_SIZE`); under `ReapWithinRoom` a receive CQE is
+reaped only while the bank has room for `Segments` more
+(`rocketnet_server_uring_reap_has_room`), otherwise it waits in the cq and
+the call ends as it does on a spent budget. It is `FALSE` only in the
+reversed witness `MCRNUringDriverBrokenUnboundedFill.cfg`, which reaps
+into a full bank as the code did before the rule, when the send reap and
+the receive reap between two swaps overfilled the bank and the rest was
+dropped. A sixth rule switch,
 `ReturnAfterLastCopy`, and the segment bound `Segments` (2) are
 definitions rather than constants, so the configurations that predate
 them check the rule unchanged; a configuration replaces one with `<-`.
@@ -105,6 +114,9 @@ Invariants:
 - `ReapWithinBudget`: `work <= Budget`, so every Reap step of a send or
   receive call ends within the call's budget, however many CQEs the kernel
   keeps posting.
+- `FillWithinRoom`: `Cardinality(fill) <= Room`, so the fill bank never
+  holds more than it has room for, whichever call reaps and however many
+  receives the kernel posts between two swaps.
 
 Liveness, under `SpecFair`:
 
@@ -189,7 +201,7 @@ call in when the re-arm lands; `ReceiveLiveness` is not affected by it.
 `ReturnAfterLastCopy`. Every case uses `Slots = 2`, `Buffers = 2`,
 `MaxSteps = 2` (two datagrams, two bank swaps), `Budget = 1` (a call reaps
 one CQE, so deferral is exercised at every call) and `Segments = 2`. The
-seven cases form group `rnuringdriver` in `CASES.tsv`. With two slots,
+eight cases form group `rnuringdriver` in `CASES.tsv`. With two slots,
 Submit can send both slots as one run or as two sends; with two segments,
 the kernel can fill both datagrams into one buffer as one coalesced receive.
 
@@ -197,9 +209,9 @@ To run them from the rocketnet checkout, with `$job`, `$jar` and `$java`
 as in `proofs/tla/README.md`:
 
 ```sh
-for i in 0 1 2 3 4 5 6; do
+for i in 0 1 2 3 4 5 6 7; do
   "$job/tlacheck" run --root . --jar "$jar" --java "$java" \
-    --group rnuringdriver --shards 7 --shard "$i" --workers 2 --timeout 110s \
+    --group rnuringdriver --shards 8 --shard "$i" --workers 2 --timeout 110s \
     --dir "$job/rnuringdriver-$i"
 done
 "$job/tlacheck" merge --root . --keep proofs/tla/RUNS.tsv \
@@ -217,6 +229,7 @@ JAR, 2026-10-24, the records in `RUNS.tsv`):
 | `MCRNUringDriverBrokenUnboundedReap.cfg` | `ReapWithinBudget` | 12 | 1013 | 474 | 0.8 |
 | `MCRNUringDriverBrokenNoRearmRetry.cfg` | `ReceiveLiveness` | 13 | 550575 | 146081 | 17.8 |
 | `MCRNUringDriverBrokenFreeRunAtSubmit.cfg` | `NoReuseWhileKernelOwned` | 12 | 509 | 257 | 0.7 |
+| `MCRNUringDriverBrokenUnboundedFill.cfg` | `FillWithinRoom` | 12 | - | - | - |
 
 The control's 100.7 s is inside the 110 s record budget, with little margin:
 send runs took it from 159168 distinct states (84.7 s, 2026-10-20) to 164469,
