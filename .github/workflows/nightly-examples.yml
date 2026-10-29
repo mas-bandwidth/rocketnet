@@ -14,6 +14,9 @@ concurrency:
   group: nightly-examples
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
 jobs:
   examples:
     name: ${{ matrix.os }}

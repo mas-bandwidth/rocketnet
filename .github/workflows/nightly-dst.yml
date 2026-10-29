@@ -40,6 +40,9 @@ on:
 env:
   DST_REFERENCE_TRACE: 510908e5051b7f68
 
+permissions:
+  contents: read
+
 jobs:
 
   dst-linux:

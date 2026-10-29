@@ -17,6 +17,9 @@ on:
     - cron: "45 9 * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   channels-stress-linux:
     runs-on: ["self-hosted", "Linux", "X64", "fleet"]
