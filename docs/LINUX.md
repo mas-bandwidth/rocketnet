@@ -521,9 +521,11 @@ What each path does with the errors it can see:
   with `EAGAIN`, `EWOULDBLOCK` or `ENOBUFS` drops the rest of the batch, and
   any other errno drops the one refused entry and continues with the next.
 - **gso**: a receive worker's `recvmmsg` returning nothing or an error ends
-  that drain (`sdk/rocketnet_server_gso_linux.cpp`); a refused
-  `sendmmsg` drops the rest of the flush and counts the packets in
-  `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resending
+  that drain (`sdk/rocketnet_server_gso_linux.cpp`); a `sendmmsg` refused
+  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` drops the
+  rest of the flush, and any other errno drops the one refused message and
+  continues with the next, as the portable batch does; dropped packets
+  count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent
   (`sdk/rocketnet_server_gso_linux.cpp`,
   `sdk/rocketnet_server_gso.h`).
 - **io_uring**: a send completion with a negative result counts in
