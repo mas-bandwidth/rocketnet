@@ -60,6 +60,11 @@ static uint32_t read_u32( const uint8_t * p )
 #define DISCONNECT_BATCH_CLIENTS 64
 #define MAX_TICKS 7200
 
+// both ends' max_message_receipts: a receipts call returns the available count,
+// which may exceed the capacity passed but never the queue's size, so a buffer
+// of the queue's size reads every outcome of an update
+#define SOAK_MAX_RECEIPTS 64
+
 // MSVC deprecates fopen, so this uses fopen_s there
 static FILE * soak_fopen( const char * path, const char * mode )
 {
@@ -686,7 +691,7 @@ int main( int argc, char ** argv )
     s_cfg.max_message_bytes = c_cfg.max_message_bytes = 2048;
     s_cfg.num_channels = c_cfg.num_channels = s_cfg.max_fragmented_messages = c_cfg.max_fragmented_messages = 2;
     s_cfg.reliable_messages_in_flight = c_cfg.reliable_messages_in_flight = s_cfg.send_queue_messages = c_cfg.send_queue_messages = 64;
-    s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_messages_per_update = c_cfg.unreliable_messages_per_update = s_cfg.max_message_receipts = c_cfg.max_message_receipts = 64;
+    s_cfg.packets_in_flight = c_cfg.packets_in_flight = s_cfg.unreliable_messages_per_update = c_cfg.unreliable_messages_per_update = s_cfg.max_message_receipts = c_cfg.max_message_receipts = SOAK_MAX_RECEIPTS;
     s_cfg.receive_message_buffer_bytes = c_cfg.receive_message_buffer_bytes = s_cfg.send_message_buffer_bytes = c_cfg.send_message_buffer_bytes = 32768;
     s_cfg.sequenced_messages_held = c_cfg.sequenced_messages_held = 8;
     s_cfg.message_resend_delay_min_ms = c_cfg.message_resend_delay_min_ms = s_cfg.message_resend_delay_initial_ms = c_cfg.message_resend_delay_initial_ms = 200;
@@ -857,10 +862,10 @@ int main( int argc, char ** argv )
                     }
                 }
 
-                struct rocketnet_receipt_t recs[16];
-                int nrec = rocketnet_client_receipts( clients[c], recs, 16 );
-                CHECK( nrec <= 16 );
-                for ( int r = 0; r < nrec && r < 16; r++ )
+                struct rocketnet_receipt_t recs[SOAK_MAX_RECEIPTS];
+                int nrec = rocketnet_client_receipts( clients[c], recs, SOAK_MAX_RECEIPTS );
+                CHECK( nrec >= 0 && nrec <= SOAK_MAX_RECEIPTS );
+                for ( int r = 0; r < nrec; r++ )
                     if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                     {
                         c2s[c].acked_events++;
@@ -948,10 +953,10 @@ int main( int argc, char ** argv )
             for ( int c = base; c < end; c++ )
             {
                 const int client_idx = rocketnet_client_index( clients[c] );
-                struct rocketnet_receipt_t recs[16];
-                int nrec = rocketnet_server_receipts( server, client_idx, recs, 16 );
-                CHECK( nrec <= 16 );
-                for ( int r = 0; r < nrec && r < 16; r++ )
+                struct rocketnet_receipt_t recs[SOAK_MAX_RECEIPTS];
+                int nrec = rocketnet_server_receipts( server, client_idx, recs, SOAK_MAX_RECEIPTS );
+                CHECK( nrec >= 0 && nrec <= SOAK_MAX_RECEIPTS );
+                for ( int r = 0; r < nrec; r++ )
                     if ( recs[r].status == ROCKETNET_RECEIPT_STATUS_ACKED )
                     {
                         s2c[c].acked_events++;
