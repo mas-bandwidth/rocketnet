@@ -1568,11 +1568,11 @@ static int rocketnet_platform_take_receive_errno_for_testing()
 
 #endif // #if ROCKETNET_DEV
 
-// One datagram, its true size returned even when only a prefix fits:
-// recvfrom's MSG_TRUNC reports it where the system supports it, and on
-// darwin, which reports only the bytes copied, a second iovec into the
-// caller's overflow area takes the tail. The transport's prefilter drops an
-// oversize datagram as PREFILTER_TOO_LARGE.
+// One datagram, its true size returned even when only a prefix fits: on
+// linux recvfrom's MSG_TRUNC reports it; darwin and the BSDs report only the
+// bytes copied, so a second iovec into the caller's overflow area takes the
+// tail. The transport's prefilter drops an oversize datagram as
+// PREFILTER_TOO_LARGE.
 
 static ssize_t rocketnet_platform_receive_one( rocketnet_platform_socket_t * socket, void * packet_data, int max_packet_size, uint8_t * overflow, size_t overflow_bytes, sockaddr_storage * from )
 {
@@ -1585,7 +1585,7 @@ static ssize_t rocketnet_platform_receive_one( rocketnet_platform_socket_t * soc
     }
 #endif // #if ROCKETNET_DEV
 
-#if defined( __APPLE__ )
+#if !defined( __linux__ )
     struct iovec iov[2];
     iov[0].iov_base = packet_data;
     iov[0].iov_len = (size_t) max_packet_size;
@@ -1599,13 +1599,13 @@ static ssize_t rocketnet_platform_receive_one( rocketnet_platform_socket_t * soc
     msg.msg_iov = iov;
     msg.msg_iovlen = 2;
     return recvmsg( socket->handle, &msg, 0 );
-#else // #if defined( __APPLE__ )
+#else // #if !defined( __linux__ )
     (void) overflow;
     (void) overflow_bytes;
     socklen_t from_length = sizeof( sockaddr_storage );
     const int flags = ( socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0 ) | MSG_TRUNC;
     return recvfrom( socket->handle, (char *) packet_data, (size_t) max_packet_size, flags, (sockaddr *) from, &from_length );
-#endif // #if defined( __APPLE__ )
+#endif // #if !defined( __linux__ )
 }
 
 // the per-packet receive behind the public call and every batch pump's
@@ -1670,11 +1670,11 @@ static int rocketnet_platform_socket_receive_packet_into( rocketnet_platform_soc
 
 int rocketnet_platform_socket_receive_packet( rocketnet_platform_socket_t * socket, rocketnet_address_t * from, void * packet_data, int max_packet_size )
 {
-#if defined( __APPLE__ )
+#if !defined( __linux__ )
     uint8_t overflow[65535];
-#else // #if defined( __APPLE__ )
+#else // #if !defined( __linux__ )
     uint8_t overflow[1];
-#endif // #if defined( __APPLE__ )
+#endif // #if !defined( __linux__ )
     int weather_remaining = ROCKETNET_PLATFORM_RECEIVE_WEATHER_SKIPS;
     return rocketnet_platform_socket_receive_packet_into( socket, from, packet_data, max_packet_size, overflow, sizeof( overflow ), &weather_remaining );
 }
