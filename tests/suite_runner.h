@@ -50,6 +50,11 @@
 #include <mach-o/dyld.h>
 #endif // #if defined( __APPLE__ )
 
+#if defined( __FreeBSD__ )
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#endif // #if defined( __FreeBSD__ )
+
 #if defined( _WIN32 )
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -426,8 +431,12 @@ inline int suite_layer_of( const std::string & name )
     return count;
 }
 
-inline std::string suite_executable_path()
+// argv0 is the fallback where the system names no executable path (OpenBSD):
+// resolved against the working directory, as the runner was started.
+
+inline std::string suite_executable_path( const char * argv0 )
 {
+    (void) argv0;
 #if defined( _WIN32 )
     std::vector<wchar_t> buf( MAX_PATH );
 
@@ -448,12 +457,23 @@ inline std::string suite_executable_path()
     if ( _NSGetExecutablePath( buf, &size ) != 0 )
         return "";
     return std::string( buf );
+#elif defined( __FreeBSD__ )
+    char buf[4096];
+    int mib[4] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
+    size_t size = sizeof( buf );
+    if ( sysctl( mib, 4, buf, &size, NULL, 0 ) != 0 )
+        return "";
+    return std::string( buf );
 #else
     char buf[4096];
     ssize_t n = readlink( "/proc/self/exe", buf, sizeof( buf ) - 1 );
-    if ( n < 0 )
+    if ( n >= 0 )
+    {
+        buf[n] = '\0';
+        return std::string( buf );
+    }
+    if ( !argv0 || !realpath( argv0, buf ) )
         return "";
-    buf[n] = '\0';
     return std::string( buf );
 #endif // #if defined( _WIN32 )
 }
@@ -1086,7 +1106,7 @@ inline int suite_main( int argc, char ** argv,
         if ( argv[i][0] == '-' )
             return suite_usage( argv );
 
-    const std::string self = suite_executable_path();
+    const std::string self = suite_executable_path( argv[0] );
     if ( self.empty() )
     {
         printf( "check failed: could not resolve this executable\n" );
@@ -1430,7 +1450,7 @@ inline int suite_main( int argc, char ** argv,
         if ( argv[i][0] == '-' )
             return suite_usage( argv );
 
-    const std::string self = suite_executable_path();
+    const std::string self = suite_executable_path( argv[0] );
     if ( self.empty() )
     {
         printf( "check failed: could not resolve this executable\n" );
