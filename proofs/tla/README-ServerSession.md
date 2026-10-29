@@ -182,7 +182,7 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCServerSession.cfg` | pass | 1,404,996 | 143,296 | 39.544 | 0 |
+| `MCServerSession.cfg` | pass | 2,144,068 | 219,232 | 83.769 | 0 |
 | `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 375,411 | 53,111 | 5.668 | 12 |
 | `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 43 | 36 | 1.069 | 12 |
 | `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 119 | 88 | 1.143 | 12 |
@@ -194,6 +194,7 @@ case, one for witnesses, 110-second cap per case):
 | `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 21 | 14 | 1.067 | 12 |
 | `MCServerSessionBrokenReceiveWhileStopping.cfg` | `NoReceiveUnlessRunning` violated | 517 | 258 | 1.207 | 12 |
 | `MCServerSessionBrokenAdmitWhileStopping.cfg` | `NoAdmitUnlessRunning` violated | 21 | 14 | 1.069 | 12 |
+| `MCServerSessionBrokenConnIdPerRun.cfg` | `ConnIdNeverRepeats` violated | 40,790 | 10,702 | 1.519 | 12 |
 
 ## Bounds
 
