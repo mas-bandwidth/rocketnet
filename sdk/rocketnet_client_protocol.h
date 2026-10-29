@@ -201,6 +201,12 @@ int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t
 
 int rocketnet_client_protocol_start_payload( struct rocketnet_client_protocol_t * client, uint64_t * sequence );
 
+// The reference an inbound ack block's 32-bit largest is reconstructed
+// against: the highest session sequence this client actually sealed and
+// recorded sent, never the next sequence less one.
+
+uint64_t rocketnet_client_protocol_highest_sent_session( struct rocketnet_client_protocol_t * client );
+
 // seals the frame's payload in place, opening the sealed plaintext with the
 // ack block, and records the sent packet in the delivery bookkeeping under
 // packet_id -- the join key surfaced when the packet is acknowledged

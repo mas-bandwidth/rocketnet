@@ -32,6 +32,7 @@
 // the soak harness consume those full definitions through this header.
 struct rocketnet_reassembly_set_t;
 struct rocketnet_encryption_map_t;
+struct rocketnet_encryption_mapping_t;
 struct rocketnet_client_slots_t;
 struct rocketnet_counters_t;
 
@@ -131,7 +132,7 @@ int rocketnet_server_protocol_end_reason( const struct rocketnet_server_protocol
 // prefilter header, from this source address. current_timestamp is unix
 // seconds for token and cookie checks; current_time is the server clock for
 // deadlines. On SEND_*, the response packet is in response_packet -- sized at
-// least ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES (64), the largest response
+// least ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES (66), the largest response
 // -- with its length in response_bytes; on IGNORED nothing is sent, ever.
 // The exact reason is counted, always, along with the arrival.
 
@@ -224,6 +225,15 @@ int rocketnet_server_write_keep_alive( struct rocketnet_server_protocol_t * serv
                                        int client_index,
                                        double current_time,
                                        uint8_t * out_packet );
+
+// The reference an inbound ack block's 32-bit largest is reconstructed
+// against: this end's highest session sequence actually sealed and recorded
+// sent on the connection, never the next sequence less one, which counts
+// sequences a fill has taken but not yet sealed.
+
+uint64_t rocketnet_server_protocol_highest_sent_session( struct rocketnet_server_protocol_t * server,
+                                                          int client_index,
+                                                          struct rocketnet_encryption_mapping_t * mapping );
 
 // The standalone ack, type 8: built when the client's ack debt -- eliciting
 // packets received since the last block this end sent -- has reached the

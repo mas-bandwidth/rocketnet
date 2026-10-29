@@ -17,6 +17,7 @@
 #include "rocketnet_client_slots.h"
 #include "rocketnet_ack.h"
 #include "rocketnet_counters.h"
+#include "rocketnet_test_seams.h"
 
 #include <sodium.h>
 #include <string.h>
@@ -790,7 +791,18 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         uint8_t server_ephemeral_public_key[ROCKETNET_KEY_BYTES];
         uint8_t server_ephemeral_secret_key[ROCKETNET_KEY_BYTES];
         ROCKETNET_CRYPTO_TALLY( keypair );
-        crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key );
+        if ( crypto_box_keypair( server_ephemeral_public_key, server_ephemeral_secret_key ) != 0 )
+        {
+            // the create path's discipline: wipe what was written and refuse
+            // the request; nothing here has touched the mapping table
+
+            sodium_memzero( server_ephemeral_secret_key, sizeof( server_ephemeral_secret_key ) );
+            sodium_memzero( server_ephemeral_public_key, sizeof( server_ephemeral_public_key ) );
+            sodium_memzero( &keys, sizeof( keys ) );
+            rocketnet_debug( "server ignored connection request. internal error" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_INTERNAL_ERROR]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
 
         if ( !rocketnet_derive_connection_keys( &keys,
                                                 private_data->client_to_server_key,
@@ -1286,7 +1298,7 @@ static int rocketnet_server_process_sealed_packet( struct rocketnet_server_proto
     // packet, and the type data behind it is never examined
 
     struct rocketnet_ack_block_t block;
-    int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, mapping->send_sequence_session - 1 );
+    int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, rocketnet_server_protocol_highest_sent_session( server, client_index, mapping ) );
     if ( block_bytes == 0 )
     {
         rocketnet_spam( "server ignored sealed packet. bad ack block" );
@@ -1669,7 +1681,11 @@ void rocketnet_server_protocol_update( struct rocketnet_server_protocol_t * serv
             // TRANSPORT.md t12 rule 14: the earlier of the idle and handshake deadlines removes the mapping.
             if ( current_time >= control->handshake_deadline )
             {
+                // the claim leaves with its mapping here too: today the two
+                // deadlines are equal and the claim has already expired, so
+                // this is a no-op, but the claim's lifetime must not depend on it
                 rocketnet_debug( "server removed encryption mapping. handshake deadline expired" );
+                rocketnet_server_release_mapping_claim( server, iterator );
                 rocketnet_encryption_map_remove_current( server->encryption_map, iterator );
                 counters[ROCKETNET_COUNTER_MAPPING_HANDSHAKE_DEADLINE_EXPIRED]++;
             }
@@ -1729,6 +1745,28 @@ static struct rocketnet_encryption_mapping_t * rocketnet_server_connected_mappin
     return rocketnet_encryption_map_entry( server->encryption_map, mapping_index );
 }
 
+// The ack block's reference (tla/AckBlockWrap.tla ReadBlock, highestSent):
+// the delivery bookkeeping's high-water mark, folded from the sequence each
+// packet actually sealed (rocketnet_ack_endpoint_record_sent_classified),
+// and the same mark the block is then applied against. The next sequence
+// less one would also count sequences a fill has taken but not sealed, so it
+// is not read here. A protocol built without the bookkeeping has nothing to
+// apply a block to and falls back to the highest sequence taken.
+
+uint64_t rocketnet_server_protocol_highest_sent_session( struct rocketnet_server_protocol_t * server,
+                                                          int client_index,
+                                                          struct rocketnet_encryption_mapping_t * mapping )
+{
+    rocketnet_assert( server );
+    rocketnet_assert( mapping );
+
+    if ( server->acks && client_index >= 0 )
+        return rocketnet_platform_atomic_load_u64( &server->acks->endpoints[client_index].highest_sequence );
+
+    const uint64_t next = rocketnet_platform_atomic_load_u64( &mapping->send_sequence_session );
+    return next > 0 ? next - 1 : 0;
+}
+
 // Builds one sealed session packet for a mapping: the sealed plaintext
 // opens with the ack block built from this connection's receive state, and
 // the per-packet type data follows it. Every session send passes through
@@ -1760,7 +1798,10 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
 
-    uint64_t sequence = mapping->send_sequence_session;
+    const uint64_t sequence = rocketnet_session_sequence_take( &mapping->send_sequence_session );
+#if ROCKETNET_DEV
+    rocketnet_dev_session_sequence_taken( sequence );
+#endif // #if ROCKETNET_DEV
 
     int bytes = rocketnet_write_sealed_packet( out_packet, packet_type,
                                                server->packet_filter, sequence,
@@ -1772,13 +1813,9 @@ static int rocketnet_server_write_session_packet( struct rocketnet_server_protoc
 
     rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
 
-    mapping->send_sequence_session++;
 
     // the sequence this packet actually carried, reported to the caller
-    // rather than left to be re-derived from the counter. re-reading
-    // send_sequence_session - 1 is only correct while nothing else can send
-    // on this mapping in between, which is a contract stated in another
-    // file; a caller that needs the sequence gets it from here.
+    // rather than re-derived from the counter, which a fill may have moved
 
     if ( out_sequence )
         *out_sequence = sequence;
@@ -2083,7 +2120,10 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     int block_bytes = rocketnet_session_ack_block_build( plaintext, payload_bytes, &mapping->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
-    uint64_t sequence = mapping->send_sequence_session;
+    const uint64_t sequence = rocketnet_session_sequence_take( &mapping->send_sequence_session );
+#if ROCKETNET_DEV
+    rocketnet_dev_session_sequence_taken( sequence );
+#endif // #if ROCKETNET_DEV
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
                                                server->packet_filter, sequence,
@@ -2093,7 +2133,6 @@ int rocketnet_server_protocol_write_payload( struct rocketnet_server_protocol_t 
     if ( bytes == 0 )
         return 0;
 
-    mapping->send_sequence_session++;
 
     if ( server->acks )
     {

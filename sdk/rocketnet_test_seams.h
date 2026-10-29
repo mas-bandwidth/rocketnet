@@ -35,6 +35,21 @@
 
 uint64_t rocketnet_dev_session_sequence_start( void );
 
+// The sequence-taken seam: every control-path session send (keep-alive,
+// standalone ack, disconnect, and the DEV write_payload) calls
+// rocketnet_dev_session_sequence_taken with the sequence it has just taken,
+// before it seals. A unit case installs a function here to run a fill-phase
+// start inside that window on one thread, the interleaving that would reuse a
+// sequence if taking it were not one atomic step. Per thread, null by
+// default, so it costs one load when unset. Defined in
+// sdk/rocketnet_encryption_map.cpp.
+
+typedef void rocketnet_dev_sequence_taken_function_t( void * context, uint64_t sequence );
+
+void rocketnet_dev_set_sequence_taken_hook( rocketnet_dev_sequence_taken_function_t * function, void * context );
+
+void rocketnet_dev_session_sequence_taken( uint64_t sequence );
+
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_TEST_SEAMS_H

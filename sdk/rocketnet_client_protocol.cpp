@@ -253,7 +253,18 @@ int rocketnet_client_protocol_connect( struct rocketnet_client_protocol_t * clie
 
     ROCKETNET_CRYPTO_TALLY( keypair );
 
-    crypto_box_keypair( client->client_ephemeral_public_key, client->client_ephemeral_secret_key );
+    if ( crypto_box_keypair( client->client_ephemeral_public_key, client->client_ephemeral_secret_key ) != 0 )
+    {
+        // the create path's discipline: wipe the attempt (token, keys and
+        // whatever the keypair wrote) and refuse it; the client stays
+        // disconnected
+
+        rocketnet_debug( "client connect failed. ephemeral keypair failed" );
+
+        rocketnet_client_connection_reset( client );
+        client->state = ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED;
+        return 0;
+    }
 
     client->send_sequence_handshake = 1;
 #if ROCKETNET_DEV
@@ -304,6 +315,18 @@ static void rocketnet_client_check_deadlines( struct rocketnet_client_protocol_t
     }
 }
 
+// The ack block's reference (tla/AckBlockWrap.tla ReadBlock, highestSent):
+// the delivery bookkeeping's high-water mark, folded from the sequence each
+// packet actually sealed, and the same mark the block is then applied
+// against -- never the next sequence less one, which would count sequences a
+// fill has taken but not sealed.
+
+uint64_t rocketnet_client_protocol_highest_sent_session( struct rocketnet_client_protocol_t * client )
+{
+    rocketnet_assert( client );
+    return rocketnet_platform_atomic_load_u64( &client->ack.highest_sequence );
+}
+
 // Builds one sealed session packet: the sealed plaintext opens with the ack
 // block built from this connection's receive state, and the per-packet type
 // data follows it. Every session send passes through here or through the
@@ -331,7 +354,10 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
     if ( type_data_bytes > 0 )
         memcpy( plaintext + block_bytes, type_data, (size_t) type_data_bytes );
 
-    uint64_t sequence = client->send_sequence_session;
+    const uint64_t sequence = rocketnet_session_sequence_take( &client->send_sequence_session );
+#if ROCKETNET_DEV
+    rocketnet_dev_session_sequence_taken( sequence );
+#endif // #if ROCKETNET_DEV
 
     int bytes = rocketnet_write_sealed_packet( out_packet, packet_type,
                                                client->packet_filter, sequence,
@@ -343,7 +369,6 @@ static int rocketnet_client_write_session_packet( struct rocketnet_client_protoc
 
     rocketnet_assert( bytes <= ROCKETNET_SEND_BUDGET );
 
-    client->send_sequence_session++;
 
     rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( &client->ack, sequence, bytes, 0, 0, 0, current_time ),
                                      &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
@@ -971,7 +996,7 @@ static int rocketnet_client_open_session( struct rocketnet_client_protocol_t * c
     // malformed block refuses the whole packet
 
     struct rocketnet_ack_block_t block;
-    const int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, client->send_sequence_session - 1 );
+    const int block_bytes = rocketnet_ack_block_read( &block, opened, opened_bytes, rocketnet_client_protocol_highest_sent_session( client ) );
     if ( block_bytes == 0 )
     {
         rocketnet_spam( "client ignored session packet. bad ack block" );
@@ -1505,7 +1530,10 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     int block_bytes = rocketnet_session_ack_block_build( plaintext, payload_bytes, &client->accepted_session );
     memcpy( plaintext + block_bytes, payload_data, (size_t) payload_bytes );
 
-    uint64_t sequence = client->send_sequence_session;
+    const uint64_t sequence = rocketnet_session_sequence_take( &client->send_sequence_session );
+#if ROCKETNET_DEV
+    rocketnet_dev_session_sequence_taken( sequence );
+#endif // #if ROCKETNET_DEV
 
     int bytes = rocketnet_write_sealed_packet( out_packet, ROCKETNET_CONNECTION_PAYLOAD_PACKET,
                                                client->packet_filter, sequence,
@@ -1515,7 +1543,6 @@ int rocketnet_client_protocol_write_payload( struct rocketnet_client_protocol_t 
     if ( bytes == 0 )
         return 0;
 
-    client->send_sequence_session++;
 
     rocketnet_ack_count_sent_result( rocketnet_ack_endpoint_record_sent_classified( &client->ack, sequence, bytes, 0, 0, 0, current_time ),
                                      &client->counters->values[ROCKETNET_COUNTER_SEND_HISTORY_LOST],
