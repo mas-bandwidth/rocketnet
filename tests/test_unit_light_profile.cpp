@@ -46,11 +46,12 @@
 // DEV ON server was 1603276694, now 1607276560.
 // Re-measured 2026-10-29 by the windows Release (a) and (c) CI legs (PR #627):
 // the client config's loopback_hub pointer and its rounding add 32 bytes to
-// the DEV ON client, which was 22971807 and is now 22971871. The DEV OFF leg
+// the DEV ON client, which was 22971807 and is now 22971871; the contract
+// audit (PR #629) adds 64 more, 22971935 by the same legs. The DEV OFF leg
 // stayed within its figure.
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971871 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971935 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596899594 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
