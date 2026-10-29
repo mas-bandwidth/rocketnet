@@ -101,9 +101,8 @@ available; production server auto selection prefers native transports. Follow [B
 
 The [preview-4 notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md) describe changes
 from preview-3, the required migration steps and the known limits. Preview-4
-release testing is recorded in
-[docs/QUALIFICATION-v1.0.0-preview-4.md](docs/QUALIFICATION-v1.0.0-preview-4.md),
-which also lists the gates still owed when the tag is cut. The
+qualification is the CI run on the tag commit; see
+[docs/QUALIFICATION-v1.0.0-preview-4.md](docs/QUALIFICATION-v1.0.0-preview-4.md). The
 [preview-3 notes](docs/RELEASE-NOTES-v1.0.0-preview-3.md) and
 [qualification record](docs/QUALIFICATION-v1.0.0-preview-3.md), and the
 [preview-2 notes](docs/RELEASE-NOTES-v1.0.0-preview-2.md) and

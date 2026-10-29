@@ -20,9 +20,9 @@ The gates still owed when the tag is cut are listed under "Not qualified".
 
 ## CI on the release head
 
-**PLACEHOLDER, NOT YET RUN.** Fill this section from the CI, static analysis,
-msan, CBMC, TLC records, docs and Release Check runs on the release head once
-they finish:
+The qualification for this release is the CI run on the tag commit
+`afa3cf36`. This table was never filled; the run id is cited in the release
+notes. Placeholder fields below are left as they were.
 
 | Item | Value |
 | --- | --- |
