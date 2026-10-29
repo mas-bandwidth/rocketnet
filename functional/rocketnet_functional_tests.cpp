@@ -12449,7 +12449,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_public_client_server_queries", rocketnet_test_public_client_server_queries, NULL },
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
     { "test_two_address_token_connects_over_ipv4", rocketnet_test_two_address_token_connects_over_ipv4, NULL },
-    { "test_family_race_frees_on_caller_thread", rocketnet_test_family_race_frees_on_caller_thread, NULL },
+    { "test_family_race_frees_on_caller_thread", rocketnet_test_family_race_frees_on_caller_thread, rocketnet_platform_client_dual_stack },
 #endif // production excludes dev-key/test-filter cases
     { "test_portable_transport_server_io_pin", rocketnet_test_server_transport_io_pin_portable, rocketnet_test_server_pin_allows_portable },
     { "test_loopback_transport_server_io_pin", rocketnet_test_server_transport_io_pin_loopback, NULL },
