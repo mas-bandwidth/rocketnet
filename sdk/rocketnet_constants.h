@@ -134,7 +134,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
                          "receive budget twice send: per-update receive budget holds at least twice the portable send batch" );
 
 // The disconnect packets one server update may seal (proofs/tla/ServerSession.tla
-// DrainDisconnectBurst, sdk/rocketnet_server_transport.cpp): a disconnect
+// SealWaiting, sdk/rocketnet_server_transport.cpp): a disconnect
 // ends its slot at once, and a burst this allowance cannot hold whole waits
 // for the following updates, so ending every client at once costs each call
 // a bounded number of seals, never the population's 10 per client.

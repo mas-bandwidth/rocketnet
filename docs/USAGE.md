@@ -682,7 +682,8 @@ Every field except `state_change_callback`, `time_callback`, `loopback_hub`,
 `server_secret_key` and `config_bytes` has an
 environment variable named `ROCKETNET_CLIENT_<FIELD>` or
 `ROCKETNET_SERVER_<FIELD>`. The table lists one row per field of both public
-structs, except `config_bytes`.
+structs, except `config_bytes` and `token_epoch_unix_seconds` (listed under
+[Operator-only environment variables](#operator-only-environment-variables)).
 
 | Field | Variable | Type | Default | A bad value |
 |---|---|---|---|---|
@@ -706,6 +707,7 @@ structs, except `config_bytes`.
 | message_resend_delay_min_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` and no larger than `message_resend_delay_max_ms` |
 | message_resend_delay_max_ms | ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` and at least `message_resend_delay_initial_ms` |
 | reliable_message_timeout_ms | ROCKETNET_CLIENT_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` and at least four times `message_resend_delay_initial_ms` (`8000` at the default) |
+| loopback_hub | none | `struct rocketnet_loopback_hub_t *` | `NULL` | no environment form; required when the transport list names loopback |
 | time_callback | none | `double (*)( void * )` | `NULL` (platform clock) | development builds only: the receive stamp clock; a production build (`ROCKETNET_DEV=0`) refuses a non-NULL value at create with `CONFIG_OUT_OF_RANGE` |
 | step_driven | ROCKETNET_CLIENT_STEP_DRIVEN (development only) | bool | `false` | development builds only: no client network thread, see "Step-driven client"; a production build refuses `true` at create with `CONFIG_OUT_OF_RANGE` |
 | protocol_id | ROCKETNET_SERVER_PROTOCOL_ID | uint64_t | `0` | a non-decimal value, or one past the type: refuses the create |
@@ -734,6 +736,9 @@ structs, except `config_bytes`.
 | message_resend_delay_min_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS | int | `0` (disabled) | refuses the create unless `0..60000` and no larger than `message_resend_delay_max_ms` |
 | message_resend_delay_max_ms | ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS | int | `2000` | refuses the create unless `10..60000` and at least `message_resend_delay_initial_ms` |
 | reliable_message_timeout_ms | ROCKETNET_SERVER_RELIABLE_MESSAGE_TIMEOUT_MS | int | `10000` | refuses the create unless `1000..600000` and at least four times `message_resend_delay_initial_ms` (`8000` at the default) |
+| disconnect_packets_per_update | ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE | int | `64` | refuses the create unless `1..1024` |
+| handshakes_per_update | ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE | int | `16` | refuses the create unless `1..1024` |
+| loopback_hub | none | `struct rocketnet_loopback_hub_t *` | `NULL` | no environment form; required when the transport list names loopback |
 | server_secret_key | none | uint8_t[32] | all zero (generate a fresh keypair) | the published development server key in a production build: refuses the start with `DEV_KEYS_IN_PRODUCTION` |
 
 ### Step-driven client
@@ -759,8 +764,10 @@ unreliable message too large for one packet is sent as its reliable twin.
 
 ### Operator-only environment variables
 
-Several variables configure global subsystem behavior without corresponding
-fields in the public configuration structs:
+Several variables configure global subsystem behavior. All but the token epoch
+have no corresponding field in the public configuration structs
+(`token_epoch_unix_seconds` is a field of both, and its variable is its
+environment form):
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
