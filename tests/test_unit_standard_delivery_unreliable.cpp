@@ -153,7 +153,7 @@ static int code0_delivery_trace( rn_delivery_trace_t * trace )
 
 // m6.code1-sequenced-trace: delivery, stale sequencing, an ahead-of-epoch hold
 // that only one message may occupy, its release by an ordered delivery, and
-// an ordering W ahead as a violation.
+// an ordering a window ahead, which is held and never refused.
 static int code1_sequenced_trace( rn_delivery_trace_t * trace )
 {
     static const uint8_t a[] = { 0x61 }, b[] = { 0x62 }, c[] = { 0x63 }, d[] = { 0x64 };
@@ -215,7 +215,7 @@ static int standard_delivery_generate( const char * id, uint8_t * out, int capac
 
 static const rn_standard_vector_t standard_delivery_table[] = {
     RN_STANDARD_VECTOR( "m6.code0-delivery-trace", "0001000003006f6e6500010000030074776f03000300" ),
-    RN_STANDARD_VECTOR( "m6.code1-sequenced-trace", "000100010100610001000101006202000100010002000002000301006f0001010065020000010001010068010000020003010070000101006902000001000101006b0500" ),
+    RN_STANDARD_VECTOR( "m6.code1-sequenced-trace", "000100010100610001000101006202000100010002000002000301006f0001010065020000010001010068010000020003010070000101006902000001000101006b0100" ),
     RN_STANDARD_VECTOR( "m6.code1-hold-full-trace", "0100040001000002000301006f000101007a" ),
 };
 

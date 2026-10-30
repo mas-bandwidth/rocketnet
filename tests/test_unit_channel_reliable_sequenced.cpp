@@ -568,6 +568,66 @@ static void test_reliable_sequenced_no_allocation_after_create()
 
 REGISTER_UNIT_TEST( test_reliable_sequenced_no_allocation_after_create );
 
+// An honest sender with a window of ordered messages queued and unsent stamps
+// an unreliable sequenced record's ordering a whole window ahead of the
+// receiver's read index (standard m6.1 rule 10). The receiver holds it, ends
+// nothing, and delivers it once the backlog has drained (rules 7 and 9).
+
+static void test_sequenced_behind_a_full_ordered_backlog_is_held()
+{
+    rs_node_t sender, receiver;
+    rs_init( &sender );
+    rs_init( &receiver );
+
+    const uint32_t W = sender.region->window;
+    for ( uint32_t i = 0; i < W; i++ )
+    {
+        uint8_t * message = rn_channels_start( &sender.ordered.channels, 0, ROCKETNET_CHANNEL_TYPE_RELIABLE_ORDERED, 1 );
+        check( message );
+        message[0] = (uint8_t) i;
+        check( rn_channels_finish( &sender.ordered.channels, 1 ) );
+    }
+
+    uint32_t ordering = 0;
+    const uint32_t sequencing = rn_channels_send_sequenced( &sender.ordered.channels, 0, &ordering );
+    check( ordering == W );
+
+    const uint8_t state = 7;
+    rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, ordering, sequencing, &state );
+    rn_delivery_t out;
+    check( rn_channels_dispatch( &receiver.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD] == 0 );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+    check( receiver.ordered.channels.error == 0 );
+    rn_ordered_end_update( &receiver.ordered );
+
+    // the backlog drains over a perfect wire: the held state is delivered
+    // right after the last ordered message
+
+    double now = 1.0;
+    uint32_t delivered = 0;
+    for ( int update = 0; update < 4096 && delivered < W + 1; update++ )
+    {
+        rs_packet_t packet;
+        if ( rs_write( &sender, now, &packet, 1, (uint64_t) ( 91 + update ) ) != 1 )
+            break;
+        check( rn_ordered_receive( &receiver.ordered, packet.data, packet.bytes ) == ROCKETNET_MESSAGE_VIOLATION_NONE );
+        delivered += (uint32_t) receiver.ordered.channels.deliveries;
+        rn_ordered_end_update( &receiver.ordered );
+        now += 0.01;
+        check( rn_ordered_acks( &sender.ordered, &packet.id, 1, now ) == 1 );
+    }
+
+    check( delivered == W + 1 );
+    check( receiver.region->channel_receive[0].held_sequenced == RN_DESCRIPTOR_NONE );
+    check( receiver.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+
+    rn_arena_destroy( sender.arena );
+    rn_arena_destroy( receiver.arena );
+}
+
+REGISTER_UNIT_TEST( test_sequenced_behind_a_full_ordered_backlog_is_held );
+
 // A refused record dispatches nothing, raises its own refusal counter by one,
 // sets the sticky protocol violation and counts it once for the channel set.
 
@@ -587,12 +647,11 @@ static void rs_check_refused( rs_node_t * node, const rocketnet_message_record_t
 }
 
 // RNChannelTypes!Dispatch: a sequenced record that names a channel the set
-// does not have, an ordering epoch at or beyond the window, a reliable number
-// the window never accepted, a ring span outside the receive ring, or a block
-// chunk of the wrong size is a wire violation (17.3 item 11). Implemented by
-// rn_channels_dispatch_sequenced and rn_sequenced_block in
-// sdk/rocketnet_channel_sequenced.cpp; each case uses a fresh node because the
-// violation is counted once per channel set.
+// does not have, a reliable number the window never accepted, a ring span
+// outside the receive ring, or a block chunk of the wrong size is a wire
+// violation (17.3 item 11). Implemented by rn_channels_dispatch_sequenced and
+// rn_sequenced_block in sdk/rocketnet_channel_sequenced.cpp; each case uses a
+// fresh node because the violation is counted once per channel set.
 
 static void test_hostile_sequenced_records_are_refused()
 {
@@ -611,14 +670,19 @@ static void test_hostile_sequenced_records_are_refused()
         rn_arena_destroy( node.arena );
     }
 
-    // (b) ORDERING_AHEAD: code 1 whose ordering is window epochs ahead
+    // (b) a code 1 record whose ordering is window epochs ahead is held,
+    // not refused: an honest sender's ordered backlog puts it there
     {
         rs_node_t node;
         rs_init( &node );
 
         rocketnet_message_record_t record = rs_record( ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED, 0, 0, 0, &payload );
         record.ordering = node.region->window;
-        rs_check_refused( &node, &record, ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD );
+        rn_delivery_t out;
+        check( rn_channels_dispatch( &node.ordered.channels, &record, &out ) == ROCKETNET_CHANNEL_DISPATCH_HELD );
+        check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_ORDERING_AHEAD] == 0 );
+        check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == 0 );
+        check( node.ordered.channels.error == 0 );
         rn_arena_destroy( node.arena );
     }
 
