@@ -253,23 +253,13 @@ static bool rocketnet_rio_address_write( const rocketnet_address_t * input, bool
         rocketnet_address_convert_ipv4_to_ipv6( &address );
     if ( ipv6 && address.type == ROCKETNET_ADDRESS_IPV6 )
     {
-        out->Ipv6.sin6_family = AF_INET6;
-        out->Ipv6.sin6_port = htons( address.port );
-
-        for ( int i = 0; i < 8; ++i )
-        {
-            out->Ipv6.sin6_addr.s6_addr[i * 2] = (uint8_t) ( address.data.ipv6[i] >> 8 );
-            out->Ipv6.sin6_addr.s6_addr[i * 2 + 1] = (uint8_t) address.data.ipv6[i];
-        }
-
+        rocketnet_platform_address_to_sockaddr_in6( &address, &out->Ipv6 );
         return true;
     }
 
     if ( !ipv6 && address.type == ROCKETNET_ADDRESS_IPV4 )
     {
-        out->Ipv4.sin_family = AF_INET;
-        out->Ipv4.sin_port = htons( address.port );
-        memcpy( &out->Ipv4.sin_addr, address.data.ipv4, 4 );
+        rocketnet_platform_address_to_sockaddr_in( &address, &out->Ipv4 );
         return true;
     }
 
@@ -281,25 +271,19 @@ static bool rocketnet_rio_address_write( const rocketnet_address_t * input, bool
 // IPv4 on the dual-stack socket, refused on any other
 static bool rocketnet_rio_address_read( const SOCKADDR_INET * in, bool dual_stack, rocketnet_address_t * address )
 {
-    memset( address, 0, sizeof( *address ) );
-
     if ( in->si_family == AF_INET )
     {
-        address->type = ROCKETNET_ADDRESS_IPV4;
-        address->port = ntohs( in->Ipv4.sin_port );
-        memcpy( address->data.ipv4, &in->Ipv4.sin_addr, 4 );
+        rocketnet_platform_sockaddr_in_to_address( &in->Ipv4, address );
         return true;
     }
 
     if ( in->si_family == AF_INET6 )
     {
-        address->type = ROCKETNET_ADDRESS_IPV6;
-        address->port = ntohs( in->Ipv6.sin6_port );
-        for ( int i = 0; i < 8; ++i )
-            address->data.ipv6[i] = (uint16_t) ( ( in->Ipv6.sin6_addr.s6_addr[i * 2] << 8 ) | in->Ipv6.sin6_addr.s6_addr[i * 2 + 1] );
+        rocketnet_platform_sockaddr_in6_to_address( &in->Ipv6, address );
         return rocketnet_address_accept_received_source( address, dual_stack );
     }
 
+    memset( address, 0, sizeof( *address ) );
     return false;
 }
 

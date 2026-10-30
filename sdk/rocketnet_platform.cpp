@@ -1050,53 +1050,8 @@ void rocketnet_platform_sleep( double time )
 
 // ---------------------------------------------------
 
-// address <-> sockaddr. Every send, bind, connect and receive converts here.
-
-static socklen_t rocketnet_platform_sockaddr_from_address( const rocketnet_address_t * address, sockaddr_storage * storage )
-{
-    memset( storage, 0, sizeof( sockaddr_storage ) );
-
-    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
-    {
-        sockaddr_in6 * socket_address = (sockaddr_in6 *) storage;
-        socket_address->sin6_family = AF_INET6;
-        for ( int i = 0; i < 8; ++i )
-            ( (uint16_t *) &socket_address->sin6_addr )[i] = rocketnet_platform_htons( address->data.ipv6[i] );
-        socket_address->sin6_port = rocketnet_platform_htons( address->port );
-        return sizeof( sockaddr_in6 );
-    }
-
-    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
-    {
-        rocketnet_platform_address_to_sockaddr_in( address, (sockaddr_in *) storage );
-        return sizeof( sockaddr_in );
-    }
-
-    return 0;
-}
-
-// the destination as this socket carries it: a dual-stack ipv6 socket sends
-// to an ipv4 address as its v4-mapped form. 0 for an address the socket
-// cannot carry.
-
-static socklen_t rocketnet_platform_socket_sockaddr( const rocketnet_platform_socket_t * socket, const rocketnet_address_t * input_to, sockaddr_storage * storage )
-{
-    rocketnet_address_t to = *input_to;
-
-    if ( socket->ipv6 )
-    {
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-            rocketnet_address_convert_ipv4_to_ipv6( &to );
-        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
-            return 0;
-    }
-    else if ( to.type != ROCKETNET_ADDRESS_IPV4 )
-    {
-        return 0;
-    }
-
-    return rocketnet_platform_sockaddr_from_address( &to, storage );
-}
+// address <-> sockaddr. Every send, bind, connect and receive converts through
+// the platform-wide functions at the end of this file.
 
 static bool rocketnet_platform_socket_dual_stack( const rocketnet_platform_socket_t * socket )
 {
@@ -1114,23 +1069,7 @@ static bool rocketnet_platform_socket_dual_stack( const rocketnet_platform_socke
 
 bool rocketnet_platform_mmsg_read_sockaddr( rocketnet_platform_socket_t * socket, const sockaddr_storage * storage, rocketnet_address_t * from )
 {
-    if ( storage->ss_family == AF_INET6 )
-    {
-        const sockaddr_in6 * addr_ipv6 = (const sockaddr_in6 *) storage;
-        from->type = ROCKETNET_ADDRESS_IPV6;
-        for ( int i = 0; i < 8; ++i )
-            from->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t *) &addr_ipv6->sin6_addr )[i] );
-        from->port = rocketnet_platform_ntohs( addr_ipv6->sin6_port );
-        return rocketnet_address_accept_received_source( from, rocketnet_platform_socket_dual_stack( socket ) );
-    }
-
-    if ( storage->ss_family == AF_INET )
-    {
-        rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) storage, from );
-        return true;
-    }
-
-    return false;
+    return rocketnet_platform_sockaddr_to_address( storage, rocketnet_platform_socket_dual_stack( socket ), from );
 }
 
 // ---------------------------------------------------
@@ -1347,7 +1286,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         if ( ipv4_port_reservation == -2 )
             break;
 
-        const socklen_t bind_bytes = rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
+        const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
         bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
         if ( bind_result >= 0 || ipv4_port_reservation < 0 || address->port != 0 || errno != EADDRINUSE ||
              num_held == ROCKETNET_PLATFORM_DUAL_STACK_BIND_ATTEMPTS - 1 )
@@ -1372,7 +1311,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
             address->port = bind_address.port;
     }
 #else // #if defined( __APPLE__ )
-    const socklen_t bind_bytes = rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
+    const socklen_t bind_bytes = (socklen_t) rocketnet_platform_sockaddr_from_address( &bind_address, &bind_storage );
     bind_result = bind( socket->handle, (sockaddr *) &bind_storage, bind_bytes );
 #endif // #if defined( __APPLE__ )
 
@@ -1518,7 +1457,7 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     rocketnet_assert( to );
 
     sockaddr_storage storage;
-    const socklen_t storage_bytes = rocketnet_platform_socket_sockaddr( socket, to, &storage );
+    const socklen_t storage_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, to, &storage );
     if ( storage_bytes == 0 )
         return false;
 
@@ -1567,7 +1506,7 @@ static void rocketnet_platform_send_one( rocketnet_platform_socket_t * socket, c
     const int call = failures == &socket->send_failures ? ROCKETNET_PLATFORM_SEND_CALL_SENDTO : ROCKETNET_PLATFORM_SEND_CALL_REPLAY;
 
     sockaddr_storage storage;
-    const socklen_t storage_bytes = rocketnet_platform_socket_sockaddr( socket, to, &storage );
+    const socklen_t storage_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, to, &storage );
     if ( storage_bytes == 0 )
     {
         rocketnet_error( "invalid address. could not send packet" );
@@ -1801,7 +1740,7 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             rocketnet_assert( send->packet_data );
             rocketnet_assert( send->packet_bytes > 0 );
 
-            const socklen_t sockaddr_bytes = rocketnet_platform_socket_sockaddr( socket, send->to, &addresses[count] );
+            const socklen_t sockaddr_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, send->to, &addresses[count] );
             if ( sockaddr_bytes == 0 )
             {
                 rocketnet_error( "invalid address. could not send packet" );
@@ -2092,7 +2031,7 @@ void rocketnet_platform_socket_send_packets( rocketnet_platform_socket_t * socke
             rocketnet_assert( send->packet_data );
             rocketnet_assert( send->packet_bytes > 0 );
 
-            const socklen_t sockaddr_bytes = rocketnet_platform_socket_sockaddr( socket, send->to, &addresses[count] );
+            const socklen_t sockaddr_bytes = (socklen_t) rocketnet_platform_sockaddr_for( socket->ipv6, send->to, &addresses[count] );
             if ( sockaddr_bytes == 0 )
             {
                 rocketnet_error( "invalid address. could not send packet" );
@@ -3662,15 +3601,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
     if ( address->type == ROCKETNET_ADDRESS_IPV6 )
     {
         sockaddr_in6 socket_address;
-        memset( &socket_address, 0, sizeof( sockaddr_in6 ) );
-        socket_address.sin6_family = AF_INET6;
-
-        for ( int i = 0; i < 8; ++i )
-        {
-            ( (uint16_t *) &socket_address.sin6_addr )[i] = rocketnet_platform_htons( address->data.ipv6[i] );
-        }
-
-        socket_address.sin6_port = rocketnet_platform_htons( address->port );
+        rocketnet_platform_address_to_sockaddr_in6( address, &socket_address );
 
         if ( bind( s->handle, (sockaddr *) &socket_address, sizeof( socket_address ) ) < 0 )
         {
@@ -3838,32 +3769,10 @@ bool rocketnet_platform_socket_connect( rocketnet_platform_socket_t * socket, co
     rocketnet_assert( socket );
     rocketnet_assert( input_to );
 
-    rocketnet_address_t to = *input_to;
     sockaddr_storage storage;
-    memset( &storage, 0, sizeof( storage ) );
-
-    int storage_bytes = 0;
-
-    if ( socket->ipv6 )
-    {
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-            rocketnet_address_convert_ipv4_to_ipv6( &to );
-        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
-            return false;
-        sockaddr_in6 * socket_address = (sockaddr_in6 *) &storage;
-        socket_address->sin6_family = AF_INET6;
-        for ( int i = 0; i < 8; i++ )
-            ( (uint16_t *) &socket_address->sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
-        socket_address->sin6_port = rocketnet_platform_htons( to.port );
-        storage_bytes = (int) sizeof( sockaddr_in6 );
-    }
-    else
-    {
-        if ( to.type != ROCKETNET_ADDRESS_IPV4 )
-            return false;
-        rocketnet_platform_address_to_sockaddr_in( &to, (sockaddr_in *) &storage );
-        storage_bytes = (int) sizeof( sockaddr_in );
-    }
+    const int storage_bytes = rocketnet_platform_sockaddr_for( socket->ipv6, input_to, &storage );
+    if ( storage_bytes == 0 )
+        return false;
 
     if ( connect( socket->handle, (const sockaddr *) &storage, storage_bytes ) == SOCKET_ERROR )
     {
@@ -3886,47 +3795,23 @@ void rocketnet_platform_socket_send_packet( rocketnet_platform_socket_t * socket
     rocketnet_assert( packet_data );
     rocketnet_assert( packet_bytes > 0 );
 
-    rocketnet_address_t to = *input_to;
+    // a dual stack ipv6 socket sends ipv4 as its v4-mapped form
 
-    if ( socket->ipv6 )
+    sockaddr_storage storage;
+    const int storage_bytes = rocketnet_platform_sockaddr_for( socket->ipv6, input_to, &storage );
+    if ( storage_bytes == 0 )
     {
-        // socket is dual stack ipv4 and ipv6
-
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            rocketnet_address_convert_ipv4_to_ipv6( &to );
-        }
-
-        sockaddr_in6 socket_address;
-        memset( &socket_address, 0, sizeof( socket_address ) );
-        socket_address.sin6_family = AF_INET6;
-
-        for ( int i = 0; i < 8; i++ )
-        {
-            ( (uint16_t *) &socket_address.sin6_addr )[i] = rocketnet_platform_htons( to.data.ipv6[i] );
-        }
-
-        socket_address.sin6_port = rocketnet_platform_htons( to.port );
-
-        int result = rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr *) ( &socket_address ), (int) sizeof( sockaddr_in6 ) );
-        if ( result == SOCKET_ERROR )
-            rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
+        rocketnet_error( "invalid address type. could not send packet" );
+        return;
     }
-    else
-    {
-        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
-        {
-            sockaddr_in socket_address;
-            rocketnet_platform_address_to_sockaddr_in( &to, &socket_address );
 
-            int result = rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr *) ( &socket_address ), (int) sizeof( sockaddr_in ) );
-            if ( result == SOCKET_ERROR )
-                rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
-        }
-        else
-        {
-            rocketnet_error( "invalid address type. could not send packet" );
-        }
+    int result = rocketnet_platform_sendto( socket, packet_data, packet_bytes, (sockaddr *) ( &storage ), storage_bytes );
+    if ( result == SOCKET_ERROR )
+    {
+        rocketnet_address_t to = *input_to;
+        if ( socket->ipv6 && to.type == ROCKETNET_ADDRESS_IPV4 )
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        rocketnet_platform_windows_send_failed( socket, &to, WSAGetLastError() );
     }
 }
 
@@ -4027,30 +3912,14 @@ receive_again:
         break;
     }
 
-    if ( sockaddr_from.ss_family == AF_INET6 )
-    {
-        sockaddr_in6 * addr_ipv6 = (sockaddr_in6 *) &sockaddr_from;
-        from->type = ROCKETNET_ADDRESS_IPV6;
-
-        for ( int i = 0; i < 8; ++i )
-        {
-            from->data.ipv6[i] = rocketnet_platform_ntohs( ( (uint16_t *) &addr_ipv6->sin6_addr )[i] );
-        }
-
-        from->port = rocketnet_platform_ntohs( addr_ipv6->sin6_port );
-
-        if ( !rocketnet_address_accept_received_source( from, dual_stack ) )
-            goto receive_again;
-    }
-    else if ( sockaddr_from.ss_family == AF_INET )
-    {
-        rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) &sockaddr_from, from );
-    }
-    else
+    if ( sockaddr_from.ss_family != AF_INET6 && sockaddr_from.ss_family != AF_INET )
     {
         rocketnet_assert( 0 );
         return -1;
     }
+
+    if ( !rocketnet_platform_sockaddr_to_address( &sockaddr_from, dual_stack, from ) )
+        goto receive_again;
 
     rocketnet_assert( result >= 0 );
 
@@ -4329,15 +4198,7 @@ bool rocketnet_platform_hostname_resolve( const char * hostname, const char * po
         {
             if ( result->ai_addr->sa_family == AF_INET6 )
             {
-                sockaddr_in6 * addr_ipv6 = (sockaddr_in6 *) ( result->ai_addr );
-                address->type = ROCKETNET_ADDRESS_IPV6;
-
-                for ( int i = 0; i < 8; ++i )
-                {
-                    address->data.ipv6[i] = rocketnet_platform_ntohs( ( (uint16_t *) &addr_ipv6->sin6_addr )[i] );
-                }
-
-                address->port = rocketnet_platform_ntohs( addr_ipv6->sin6_port );
+                rocketnet_platform_sockaddr_in6_to_address( (const sockaddr_in6 *) ( result->ai_addr ), address );
                 freeaddrinfo( result );
                 return true;
             }
@@ -4454,6 +4315,86 @@ void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, s
     address->type = ROCKETNET_ADDRESS_IPV4;
     memcpy( address->data.ipv4, &in->sin_addr, 4 );
     address->port = rocketnet_platform_ntohs( in->sin_port );
+}
+
+void rocketnet_platform_address_to_sockaddr_in6( const struct rocketnet_address_t * address, struct sockaddr_in6 * out )
+{
+    rocketnet_assert( address );
+    rocketnet_assert( address->type == ROCKETNET_ADDRESS_IPV6 );
+    rocketnet_assert( out );
+
+    memset( out, 0, sizeof( struct sockaddr_in6 ) );
+    out->sin6_family = AF_INET6;
+    for ( int i = 0; i < 8; ++i )
+        ( (uint16_t *) &out->sin6_addr )[i] = rocketnet_platform_htons( address->data.ipv6[i] );
+    out->sin6_port = rocketnet_platform_htons( address->port );
+}
+
+void rocketnet_platform_sockaddr_in6_to_address( const struct sockaddr_in6 * in, struct rocketnet_address_t * address )
+{
+    rocketnet_assert( in );
+    rocketnet_assert( address );
+
+    memset( address, 0, sizeof( struct rocketnet_address_t ) );
+    address->type = ROCKETNET_ADDRESS_IPV6;
+    for ( int i = 0; i < 8; ++i )
+        address->data.ipv6[i] = rocketnet_platform_ntohs( ( (const uint16_t *) &in->sin6_addr )[i] );
+    address->port = rocketnet_platform_ntohs( in->sin6_port );
+}
+
+int rocketnet_platform_sockaddr_from_address( const struct rocketnet_address_t * address, struct sockaddr_storage * storage )
+{
+    memset( storage, 0, sizeof( sockaddr_storage ) );
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV6 )
+    {
+        rocketnet_platform_address_to_sockaddr_in6( address, (sockaddr_in6 *) storage );
+        return (int) sizeof( sockaddr_in6 );
+    }
+
+    if ( address->type == ROCKETNET_ADDRESS_IPV4 )
+    {
+        rocketnet_platform_address_to_sockaddr_in( address, (sockaddr_in *) storage );
+        return (int) sizeof( sockaddr_in );
+    }
+
+    return 0;
+}
+
+int rocketnet_platform_sockaddr_for( bool ipv6, const struct rocketnet_address_t * input_to, struct sockaddr_storage * storage )
+{
+    rocketnet_address_t to = *input_to;
+
+    if ( ipv6 )
+    {
+        if ( to.type == ROCKETNET_ADDRESS_IPV4 )
+            rocketnet_address_convert_ipv4_to_ipv6( &to );
+        if ( to.type != ROCKETNET_ADDRESS_IPV6 )
+            return 0;
+    }
+    else if ( to.type != ROCKETNET_ADDRESS_IPV4 )
+    {
+        return 0;
+    }
+
+    return rocketnet_platform_sockaddr_from_address( &to, storage );
+}
+
+bool rocketnet_platform_sockaddr_to_address( const struct sockaddr_storage * storage, bool dual_stack, struct rocketnet_address_t * address )
+{
+    if ( storage->ss_family == AF_INET6 )
+    {
+        rocketnet_platform_sockaddr_in6_to_address( (const sockaddr_in6 *) storage, address );
+        return rocketnet_address_accept_received_source( address, dual_stack );
+    }
+
+    if ( storage->ss_family == AF_INET )
+    {
+        rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) storage, address );
+        return true;
+    }
+
+    return false;
 }
 
 // ----------------------------------------------------------------

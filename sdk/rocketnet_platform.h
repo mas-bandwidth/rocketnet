@@ -80,6 +80,8 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result );
 
 struct rocketnet_address_t;
 struct sockaddr_in;
+struct sockaddr_in6;
+struct sockaddr_storage;
 
 typedef void ( *rocketnet_platform_thread_func_t )( void * );
 
@@ -150,6 +152,25 @@ void rocketnet_platform_address_to_sockaddr_in( const struct rocketnet_address_t
 
 // the address bytes stay in network order; the port is converted to host order
 void rocketnet_platform_sockaddr_in_to_address( const struct sockaddr_in * in, struct rocketnet_address_t * address );
+
+// the IPv6 pair: eight host-order words become sixteen network-order bytes,
+// the port is converted; the destination is zeroed first.
+void rocketnet_platform_address_to_sockaddr_in6( const struct rocketnet_address_t * address, struct sockaddr_in6 * out );
+void rocketnet_platform_sockaddr_in6_to_address( const struct sockaddr_in6 * in, struct rocketnet_address_t * address );
+
+// An address as the sockaddr of its own family, written into zeroed
+// storage. Returns the sockaddr's byte count, 0 for an address that is
+// neither IPv4 nor IPv6.
+int rocketnet_platform_sockaddr_from_address( const struct rocketnet_address_t * address, struct sockaddr_storage * storage );
+
+// A destination as the socket's family carries it: a dual-stack IPv6 socket
+// sends IPv4 as its v4-mapped form, an IPv4 socket carries IPv4 only.
+// Returns the byte count, 0 for an address the socket cannot carry.
+int rocketnet_platform_sockaddr_for( bool ipv6, const struct rocketnet_address_t * to, struct sockaddr_storage * storage );
+
+// A received source: false for a family the transport does not speak, or a
+// source the socket must drop (rocketnet_address_accept_received_source).
+bool rocketnet_platform_sockaddr_to_address( const struct sockaddr_storage * storage, bool dual_stack, struct rocketnet_address_t * address );
 
 // address_out is written only on success
 bool rocketnet_platform_inet_pton4( const char * address_string, uint32_t * address_out );
@@ -646,7 +667,6 @@ struct rocketnet_platform_socket_t
 #endif // #if defined( __APPLE__ )
 };
 
-struct sockaddr_storage;
 bool rocketnet_platform_mmsg_read_sockaddr( struct rocketnet_platform_socket_t * socket, const struct sockaddr_storage * storage, struct rocketnet_address_t * from );
 
 struct rocketnet_platform_thread_t
