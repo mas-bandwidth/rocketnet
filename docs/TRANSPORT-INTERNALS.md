@@ -230,7 +230,7 @@ frame. Join them before update, receive, flush, stop or destroy. Flush is called
 for staged work; the backend retains ownership until it can safely reuse
 that storage. XDP retries a flush on each `send_packets` call, including when
 no new commit advances the transport counter. With two staging buffers,
-`rocketnet_send_handoff_t::publish` queues at most one and keeps the other
+`rocketnet_xdp_buffer_exchange_t::publish` queues at most one and keeps the other
 for producers until the worker retires the queued generation. The next flush
 publishes the retained work. `RNDriverSendStaging.Publish`, `WorkerRetire`
 and `RetryFlushPublishes` model this rule. Packet-slot capacity is still

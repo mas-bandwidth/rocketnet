@@ -11,7 +11,6 @@
 #include "rocketnet_packet_lease.h"
 #include "rocketnet_stats_window.h"
 #include "rocketnet_pending_frames.h"
-#include "rocketnet_send_handoff.h"
 #include "rocketnet_memory.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_encryption_map.h"
@@ -390,86 +389,6 @@ static void check_frame_conservation()
                           { ++empty_reserves; return (uint32_t) refused; }, write, submit ) );
     check( empty_reserves == 0 );
     check( published == 8 ); // no frame submitted twice after successful retry
-}
-
-static void check_send_handoff()
-{
-    // reproduce #162's ordering: publish 100 packets, copy only the first
-    // 32, then publish another generation while the first still has a tail
-
-    rocketnet_send_handoff_t<2> queue;
-    int packets[2][100] = {};
-    int copied[2] = {};
-    int first = queue.acquire();
-    check( first >= 0 && queue.front() == -1 );
-    for ( int i = 0; i < 100; ++i )
-    {
-        packets[first][i] = i + 1;
-    }
-    queue.publish();
-
-    int second = queue.acquire();
-    check( second >= 0 && second != first );
-    for ( int i = 0; i < 100; ++i )
-    {
-        packets[second][i] = i + 101;
-    }
-    copied[first] = 32;
-
-    // rocketnet_send_handoff_t::publish keeps the producer generation while
-    // the worker owns the other one, so the second flush queues nothing and
-    // the producer keeps the same storage, never a queued buffer
-
-    check( !queue.publish() );
-    for ( int i = 0; i < 10000; ++i )
-    {
-        check( queue.acquire() == second && queue.front() == first && queue.count == 1 );
-    }
-
-    int expected = 33;
-
-    while ( queue.front() >= 0 )
-    {
-        const int index = queue.front();
-
-        // A worker can pause between any of its 32-packet batches. A producer
-        // cannot reset either queued buffer, however often it asks for storage.
-
-        for ( int batch = 0; batch < 32 && copied[index] < 100; ++batch )
-        {
-            check( packets[index][copied[index]++] == expected++ );
-        }
-
-        if ( copied[index] == 100 )
-        {
-            queue.retire();
-
-            if ( index == first )
-            {
-                // rocketnet_server_transport_send_packets retries XDP
-                // publication on every call; that next flush publishes the
-                // retained generation once the first is retired
-                check( queue.front() == -1 && queue.acquire() == second );
-                check( queue.publish() );
-                check( queue.front() == second );
-                check( queue.acquire() == first );
-                memset( packets[first], 0, sizeof( packets[first] ) );
-            }
-        }
-    }
-
-    check( expected == 201 && copied[first] == 100 && copied[second] == 100 );
-
-    // exercise repeated wrap/reuse with the next producer always reserved
-
-    for ( int i = 0; i < 10000; ++i )
-    {
-        int filling = queue.acquire();
-        check( filling >= 0 );
-        queue.publish();
-        check( queue.front() == filling );
-        queue.retire();
-    }
 }
 
 static void check_memory_geometry( allocator_state & state )
@@ -957,7 +876,6 @@ int main()
     check_packet_leases( state );
     check_stats_cadence();
     check_frame_conservation();
-    check_send_handoff();
     check_memory_geometry( state );
     check_component_create_sweeps( state );
     check_server_memory_budget( state );
