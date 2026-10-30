@@ -162,6 +162,13 @@ int rocketnet_encryption_map_num_mappings( const struct rocketnet_encryption_map
 // remove. The unit suite pins the receive path's cost per packet with it.
 uint64_t rocketnet_encryption_map_test_hashes( const struct rocketnet_encryption_map_t * map );
 
+// A slot index with the generation it was handed out under.
+struct rocketnet_encryption_map_handle_t
+{
+    uint64_t index;
+    uint64_t generation;
+};
+
 // Deterministic probe accounting and handle access for the DEV-only
 // collision/stale-generation oracles. Probes are counted at the actual index
 // cell inspection. The home slot exposes no key material; it lets a test
@@ -171,9 +178,9 @@ uint64_t rocketnet_encryption_map_test_probe_bound( const struct rocketnet_encry
 int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t * map,
                                         const struct rocketnet_address_t * address );
 bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map_t * map, int index,
-                                           struct rn_sequence_buffer_handle_t * handle );
+                                           struct rocketnet_encryption_map_handle_t * handle );
 bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_map_t * map,
-                                                  const struct rn_sequence_buffer_handle_t * handle );
+                                                  const struct rocketnet_encryption_map_handle_t * handle );
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_ENCRYPTION_MAP_H
