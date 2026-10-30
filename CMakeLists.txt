@@ -700,10 +700,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         set(ROCKETNET_TEST_CHANNELS_SOURCE)
     endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
-    # Keep the reusable internal sequence-buffer contract visible to build
-    # generators as a first-class dependency; its registered unit translation
-    # unit also includes it standalone at the strict warning floor.
-    target_sources(test PRIVATE sdk/rocketnet_sequence_buffer.h)
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
         target_compile_definitions(test PRIVATE ROCKETNET_IO_URING=1)

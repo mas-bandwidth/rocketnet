@@ -1328,7 +1328,7 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
     const int index = rocketnet_encryption_map_add( map, &first, 100.0 );
     check( index == 0 );
 
-    rn_sequence_buffer_handle_t stale;
+    rocketnet_encryption_map_handle_t stale;
     check( rocketnet_encryption_map_test_handle( map, index, &stale ) );
 
     rocketnet_encryption_mapping_t * old_mapping = rocketnet_encryption_map_entry( map, index );
@@ -1343,14 +1343,10 @@ static void test_encryption_map_stale_generation_reset_and_secret_ownership()
 
     check( rocketnet_encryption_map_add( map, &second, 200.0 ) == index );
 
-    rn_sequence_buffer_handle_t current;
+    rocketnet_encryption_map_handle_t current;
     check( rocketnet_encryption_map_test_handle( map, index, &current ) );
-    check( current.identity == stale.identity );
+    check( current.index == stale.index );
     check( current.generation > stale.generation );
-    check( current.owner_epoch > stale.owner_epoch );
-    check( current.ticket > stale.ticket );
-    check( current.owner_epoch == current.generation );
-    check( current.ticket == current.generation );
 
     rocketnet_encryption_mapping_t * new_mapping = rocketnet_encryption_map_entry( map, index );
     memset( &new_mapping->keys, 0xD4, sizeof( new_mapping->keys ) );
