@@ -716,6 +716,24 @@ void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_tran
     rocketnet_assert( server_transport );
     server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
 }
+
+// The unit seam for a staged transport without a staged socket: exchanges the
+// io the server sends through with the one given, so a test can fake the
+// staging callbacks on a server that connected over loopback. Called again
+// with the returned pair it puts the real io back; the caller does that
+// before destroy.
+void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
+                                                  const struct rocketnet_server_transport_io_operations_t ** operations,
+                                                  void ** instance )
+{
+    rocketnet_assert( server_transport && operations && instance );
+    const struct rocketnet_server_transport_io_operations_t * saved_operations = server_transport->io.operations;
+    void * saved_instance = server_transport->io.instance;
+    server_transport->io.operations = *operations;
+    server_transport->io.instance = *instance;
+    *operations = saved_operations;
+    *instance = saved_instance;
+}
 #endif // #if ROCKETNET_DEV
 
 // Returns the number of sends the link took and marks each one in accepted[],
@@ -899,6 +917,26 @@ static uint8_t * rocketnet_server_reserve_send_frame( struct rocketnet_server_tr
     return frame->data;
 }
 
+// The commit choice of a staged frame, written once: when the link simulator
+// is active it takes the datagram and the staging slot goes back (the frame's
+// data is cleared, so a later withdrawal does not return it twice); else the
+// staging finishes the frame. Returns true when the datagram left, and a
+// datagram is counted sent only then.
+static bool rocketnet_server_commit_staged( struct rocketnet_server_transport_t * server_transport,
+                                            const rocketnet_address_t * to, uint64_t packet_id,
+                                            uint8_t ** data, int wire_bytes )
+{
+    if ( rocketnet_server_link_active( server_transport ) )
+    {
+        const bool sent = rocketnet_server_link_send( server_transport, to, *data + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
+        rocketnet_server_transport_io_abort_packet( server_transport, packet_id, *data );
+        *data = NULL;
+        return sent;
+    }
+    rocketnet_server_transport_io_finish_packet( server_transport, packet_id, *data, wire_bytes );
+    return true;
+}
+
 // proofs/tla/RNDriverSendStaging.tla Commit
 static void rocketnet_server_commit_send_frame( struct rocketnet_server_transport_t * server_transport,
                                                 struct rocketnet_server_frame_t * frame,
@@ -918,19 +956,9 @@ static void rocketnet_server_commit_send_frame( struct rocketnet_server_transpor
 
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        bool sent = true;
-
-        if ( rocketnet_server_link_active( server_transport ) )
-        {
-            sent = rocketnet_server_link_send( server_transport, &frame->to,
-                                               frame->data + ROCKETNET_FRAME_WIRE_OFFSET, packet_bytes );
-            rocketnet_server_transport_io_abort_packet( server_transport, frame->packet_id, frame->data );
-        }
-        else
-            rocketnet_server_transport_io_finish_packet( server_transport, frame->packet_id, frame->data, packet_bytes );
         // a datagram is counted sent only once the link took it
 
-        if ( sent )
+        if ( rocketnet_server_commit_staged( server_transport, &frame->to, frame->packet_id, &frame->data, packet_bytes ) )
             rocketnet_server_charge_send_frame( server_transport, frame->client_index, &frame->to, packet_bytes );
         return;
     }
@@ -3045,17 +3073,7 @@ static bool rocketnet_server_commit_fill_frame( struct rocketnet_server_transpor
         return false;
     if ( rocketnet_server_transport_staged( server_transport ) )
     {
-        if ( rocketnet_server_link_active( server_transport ) )
-        {
-            const bool sent = rocketnet_server_link_send( server_transport, &frame->to,
-                                                          frame->data + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
-            rocketnet_server_transport_io_abort_packet( server_transport, frame->socket_packet_id, frame->data );
-            frame->data = NULL;
-            return sent;
-        }
-
-        rocketnet_server_transport_io_finish_packet( server_transport, frame->socket_packet_id, frame->data, wire_bytes );
-        return true;
+        return rocketnet_server_commit_staged( server_transport, &frame->to, frame->socket_packet_id, &frame->data, wire_bytes );
     }
 
     server_transport->payload_ring.info[frame->slot].wire_bytes = wire_bytes;
@@ -3298,19 +3316,9 @@ static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_
         }
 
         const rocketnet_address_t * mapped_to = rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
-        bool sent = true;
-
-        if ( rocketnet_server_link_active( server_transport ) )
-        {
-            sent = rocketnet_server_link_send( server_transport, mapped_to,
-                                               context->frame + ROCKETNET_FRAME_WIRE_OFFSET, wire_bytes );
-            rocketnet_server_transport_io_abort_packet( server_transport, backend_id, context->frame );
-        }
-        else
-            rocketnet_server_transport_io_finish_packet( server_transport, backend_id, context->frame, wire_bytes );
         // a datagram is counted sent only once the link took it
 
-        if ( sent )
+        if ( rocketnet_server_commit_staged( server_transport, mapped_to, backend_id, &context->frame, wire_bytes ) )
             rocketnet_server_charge_staged_frame( server_transport, context->client_index,
                                                   mapped_to ? mapped_to->type : ROCKETNET_ADDRESS_NONE, wire_bytes );
     }
