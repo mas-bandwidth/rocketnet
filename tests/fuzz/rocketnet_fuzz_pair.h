@@ -10,7 +10,7 @@
 // through its receive_batch, and the step-driven client transport drains its
 // own endpoint in rocketnet_client_transport_update. No socket, no thread, no
 // clock: time is a variable the harness advances, and both ends read the
-// token clock through game_clock_epoch.
+// token clock through token_epoch_unix_seconds.
 //
 // THE WIRE SEAM. This header compiles sdk/rocketnet_server_transport.cpp into
 // the harness, as test_transport_control.cpp and test_unit_driver_loopback.cpp
@@ -290,7 +290,7 @@ static inline int rocketnet_fuzz_pair_initialize()
 #define ROCKETNET_FUZZ_MAX_MESSAGE_BYTES  16384
 
 // at time 1000.0 the token clock reads ROCKETNET_TEST_CREATE_TS
-#define ROCKETNET_FUZZ_GAME_CLOCK_EPOCH   ( ROCKETNET_TEST_CREATE_TS - 1000 )
+#define ROCKETNET_FUZZ_TOKEN_EPOCH_UNIX_SECONDS   ( ROCKETNET_TEST_CREATE_TS - 1000 )
 
 static inline void rocketnet_fuzz_message_config( struct rocketnet_message_config_t * config )
 {
@@ -630,7 +630,7 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     rocketnet_server_transport_dev_config( &server_config );
     server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
     server_config.max_clients = 1;
-    server_config.game_clock_epoch = ROCKETNET_FUZZ_GAME_CLOCK_EPOCH;
+    server_config.token_epoch_unix_seconds = ROCKETNET_FUZZ_TOKEN_EPOCH_UNIX_SECONDS;
     memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
     memcpy( server_config.server_public_key, rocketnet_dev_server_public_key, 32 );
     memcpy( server_config.server_secret_key, rocketnet_dev_server_secret_key, 32 );
@@ -670,7 +670,7 @@ static inline bool rocketnet_fuzz_pair_create( struct rocketnet_fuzz_pair_t * pa
     client_config.loopback_hub = pair->hub;
     client_config.step_driven = 1;
     client_config.time_callback = rocketnet_fuzz_client_clock;
-    client_config.game_clock_epoch = ROCKETNET_FUZZ_GAME_CLOCK_EPOCH;
+    client_config.token_epoch_unix_seconds = ROCKETNET_FUZZ_TOKEN_EPOCH_UNIX_SECONDS;
 
     pair->client = rocketnet_message_client_create( NULL, token, &client_config, &message_config, NULL, 0, 0 );
     if ( !pair->client )

@@ -5,11 +5,13 @@
 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_1 < ROCKETNET_CLIENT_CONFIG_BYTES_2, "client public config revisions must grow" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_2 < ROCKETNET_CLIENT_CONFIG_BYTES_3, "client public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_3 == sizeof( struct rocketnet_client_config_t ), "client public config revision 3 must be the whole struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_3 < ROCKETNET_CLIENT_CONFIG_BYTES_4, "client public config revisions must grow" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_CLIENT_CONFIG_BYTES_4 == sizeof( struct rocketnet_client_config_t ), "client public config revision 4 must be the whole struct" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_1 < ROCKETNET_SERVER_CONFIG_BYTES_2, "server public config revisions must grow" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_2 < ROCKETNET_SERVER_CONFIG_BYTES_3, "server public config revisions must grow" );
 ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_3 < ROCKETNET_SERVER_CONFIG_BYTES_4, "server public config revisions must grow" );
-ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_4 == sizeof( struct rocketnet_server_config_t ), "server public config revision 4 must be the whole struct" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_4 < ROCKETNET_SERVER_CONFIG_BYTES_5, "server public config revisions must grow" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_CONFIG_BYTES_5 == sizeof( struct rocketnet_server_config_t ), "server public config revision 5 must be the whole struct" );
 
 #include <sodium.h>
 #include <inttypes.h>

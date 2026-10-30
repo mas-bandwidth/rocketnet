@@ -49,7 +49,7 @@ const char * rocketnet_xdp_veth_netns_path();
 #include <string>
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 static void session_isolation_check_handler( const char * condition, const char * function, const char * file, int line )
 {

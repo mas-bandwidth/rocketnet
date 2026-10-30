@@ -1782,7 +1782,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     client_transport->time = time;
     client_transport->last_state = client_transport->protocol.state;
 
-    const uint64_t token_timestamp = test_timestamp ? test_timestamp : ( config->game_clock_epoch != 0 ? config->game_clock_epoch + (uint64_t) time : ( uint64_t )::time( NULL ) );
+    const uint64_t token_timestamp = test_timestamp ? test_timestamp : rocketnet_platform_token_epoch( config->token_epoch_unix_seconds, time ) + (uint64_t) time;
 
     if ( !rocketnet_client_protocol_connect( &client_transport->protocol, connect_token, time, token_timestamp ) )
     {

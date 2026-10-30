@@ -183,7 +183,7 @@ namespace
         rocketnet_server_transport_config_t server_config;
         rocketnet_server_transport_dev_config( &server_config );
         server_config.max_clients = 2;
-        server_config.game_clock_epoch = 1000;
+        server_config.token_epoch_unix_seconds = 1000;
         memcpy( server_config.transport, "loopback", sizeof( "loopback" ) );
         server_config.loopback_hub = hub;
         rocketnet_server_transport_t * server =
@@ -199,7 +199,7 @@ namespace
         memcpy( client_config.transport, "loopback", sizeof( "loopback" ) );
         client_config.loopback_hub = hub;
         client_config.step_driven = true;
-        client_config.game_clock_epoch = 1000;
+        client_config.token_epoch_unix_seconds = 1000;
         client_config.time_callback = sim_time_callback;
 
         rocketnet_client_transport_t * client =
@@ -318,7 +318,7 @@ namespace
         rocketnet_server_transport_config_t server_config;
         rocketnet_server_transport_dev_config( &server_config );
         server_config.max_clients = SERVER_TICK_CLIENTS;
-        server_config.game_clock_epoch = 1000;
+        server_config.token_epoch_unix_seconds = 1000;
         memcpy( server_config.transport, "loopback", sizeof( "loopback" ) );
         server_config.loopback_hub = hub;
         rocketnet_server_transport_t * server =
@@ -340,7 +340,7 @@ namespace
             memcpy( client_config.transport, "loopback", sizeof( "loopback" ) );
             client_config.loopback_hub = hub;
             client_config.step_driven = true;
-            client_config.game_clock_epoch = 1000;
+            client_config.token_epoch_unix_seconds = 1000;
             client_config.time_callback = sim_time_callback;
 
             clients[c] = rocketnet_client_transport_create_current( NULL, token, &client_config, g_sim_time );

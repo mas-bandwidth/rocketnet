@@ -239,7 +239,7 @@ int main( void )
         const int slot = rocketnet_client_index( client );
         struct rocketnet_receipt_t receipts[32];
         const int count = slot >= 0 ? rocketnet_server_receipts( server, slot, receipts, 32 ) : 0;
-        for ( int r = 0; r < count; r++ )
+        for ( int r = 0; r < count && r < 32; r++ )   // count may exceed the 32 the array holds
         {
             for ( int m = 5; m < NUM_MODES; m++ )
             {

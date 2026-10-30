@@ -15,6 +15,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 #include <atomic>
 #if ROCKETNET_DEV
 #include <map>
@@ -45,6 +46,24 @@ void rocketnet_direct_allocation_remove( uint64_t bytes )
 extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
 {
     return rocketnet_direct_allocation_total.load( std::memory_order_relaxed );
+}
+
+// The token clock's epoch. A configured epoch is used as is. Zero reads the
+// wall clock once, here, and takes the epoch as that Unix time less the
+// caller's time, so the token clock is the epoch plus the caller's time from
+// then on and advances only as the caller's clock does: a paused clock pauses
+// token expiry. The only wall-clock read on the token path.
+
+uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time )
+{
+    if ( configured != 0 )
+        return configured;
+
+    const time_t now = ::time( NULL );
+    const uint64_t wall = now > 0 ? (uint64_t) now : 0;
+    const uint64_t elapsed = time > 0.0 ? (uint64_t) time : 0;
+
+    return wall > elapsed ? wall - elapsed : 1;
 }
 
 #if ROCKETNET_DEV
@@ -3437,9 +3456,11 @@ void rocketnet_platform_sleep( double time )
         }
     }
 
-    timeBeginPeriod( 1 );
+    // the 1 ms timer period, when the priority calls are enabled, is the
+    // process's from rocketnet_platform_init; the fallback makes no timer
+    // period call of its own
+
     Sleep( (DWORD) plan.fallback_milliseconds );
-    timeEndPeriod( 1 );
 }
 
 void rocketnet_platform_thread_wait( double time )

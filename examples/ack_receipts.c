@@ -191,7 +191,8 @@ int main( void )
 
         struct rocketnet_receipt_t receipts[32];
         const int count = rocketnet_client_receipts( client, receipts, 32 );
-        for ( int r = 0; r < count; r++ )
+        // count is the receipts available and may exceed the 32 the array holds
+        for ( int r = 0; r < count && r < 32; r++ )
         {
             for ( int update = 0; update < sent; update++ )
             {

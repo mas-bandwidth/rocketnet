@@ -4,7 +4,7 @@
 */
 
 // Connect-token create and expire checks can read the game clock: with a
-// configured game_clock_epoch the token timestamp is epoch plus the caller's
+// configured token_epoch_unix_seconds the token timestamp is epoch plus the caller's
 // time, floored to whole seconds, and no wall clock is read; with the field
 // zero the check reads the wall clock as before. Time is an argument starting
 // at 1000.0; client refusals and the in-memory server protocol need no socket.
@@ -34,7 +34,7 @@
 
 #define check rocketnet_unit_check
 
-#define GAME_CLOCK_EPOCH    1700000000ULL
+#define TOKEN_EPOCH_UNIX_SECONDS    1700000000ULL
 #define GAME_CLOCK_NOW      1000.0
 #define GAME_CLOCK_LATER    1011.0
 #define TOKEN_LIFETIME      10ULL
@@ -84,7 +84,7 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
     config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
-    config.game_clock_epoch = epoch;
+    config.token_epoch_unix_seconds = epoch;
 
     int status = 0;
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, time, &status );
@@ -163,7 +163,7 @@ static int token_time_game_server_request( struct token_time_game_server_t * t, 
 
 static void test_token_time_game_clock_admits_a_fixed_token()
 {
-    const uint64_t create = GAME_CLOCK_EPOCH + 1000;
+    const uint64_t create = TOKEN_EPOCH_UNIX_SECONDS + 1000;
     const uint64_t expire = create + TOKEN_LIFETIME;
 
     check( ROCKETNET_CLIENT_TRANSPORT_CONFIG_BYTES_1_ORIGINAL == offsetof( struct rocketnet_client_transport_config_t, time_callback ) + sizeof( void * ) );
@@ -180,11 +180,11 @@ static void test_token_time_game_clock_admits_a_fixed_token()
         check( read.max_fragmented_messages == 5 );
         check( read.state_change_callback == NULL );
         check( read.time_callback == NULL );
-        check( read.game_clock_epoch == 0 );
+        check( read.token_epoch_unix_seconds == 0 );
     }
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, create, expire, GAME_CLOCK_EPOCH + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
+    check( token_time_game_server_request( &t, create, expire, TOKEN_EPOCH_UNIX_SECONDS + 1000 ) == ROCKETNET_SERVER_PROCESS_SEND_COOKIE );
 
     token_time_game_server_teardown( &t );
 
@@ -195,14 +195,14 @@ static void test_token_time_game_clock_admits_a_fixed_token()
 
 static void test_token_time_game_clock_refuses_after_expire()
 {
-    const uint64_t create = GAME_CLOCK_EPOCH + 1000;
+    const uint64_t create = TOKEN_EPOCH_UNIX_SECONDS + 1000;
     const uint64_t expire = create + TOKEN_LIFETIME;
 
-    check( token_time_game_client_create( create, expire, GAME_CLOCK_EPOCH, GAME_CLOCK_LATER ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+    check( token_time_game_client_create( create, expire, TOKEN_EPOCH_UNIX_SECONDS, GAME_CLOCK_LATER ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
 
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, create, expire, GAME_CLOCK_EPOCH + 1011 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( token_time_game_server_request( &t, create, expire, TOKEN_EPOCH_UNIX_SECONDS + 1011 ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
 
     token_time_game_server_teardown( &t );
@@ -219,7 +219,7 @@ static void test_token_time_game_clock_off_reads_the_wall_clock()
 
     struct token_time_game_server_t t;
     token_time_game_server_setup( &t );
-    check( token_time_game_server_request( &t, 1000, 1010, GAME_CLOCK_EPOCH + 2000000000ULL ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+    check( token_time_game_server_request( &t, 1000, 1010, TOKEN_EPOCH_UNIX_SECONDS + 2000000000ULL ) == ROCKETNET_SERVER_PROCESS_IGNORED );
     check( t.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_EXPIRED] == 1 );
 
     token_time_game_server_teardown( &t );

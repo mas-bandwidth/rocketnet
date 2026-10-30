@@ -110,11 +110,15 @@ time, and keep it finite and non-decreasing.
 
 The frame and update loops (`rocketnet_client_update`, `rocketnet_server_update`)
 take the caller's monotonic time and read no clock of their own on those paths,
-so the game owns simulation time and a test can hold it still. Token expiry normally uses the host wall clock. With the documented
-`ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` or `ROCKETNET_SERVER_GAME_CLOCK_EPOCH`
-override, token time is the configured Unix epoch plus caller time instead;
-see [Environment](ENVIRONMENT.md). Keep the token issuer and endpoints
-in the same time domain.
+so the game owns simulation time and a test can hold it still. Token time is
+the caller's too: the token create and expire checks read
+`token_epoch_unix_seconds` (config field, or
+`ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` /
+`ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) plus the time passed to update,
+so a paused caller clock pauses token expiry. An epoch of 0 reads the host wall
+clock once (the client at connect, the server at its first update after start)
+as the epoch; see [Environment](ENVIRONMENT.md). Keep the token issuer and
+endpoints in the same time domain.
 
 ## Frame loop
 
@@ -760,7 +764,7 @@ fields in the public configuration structs:
 
 | Variable | Type | Default | Description |
 |---|---|---|---|
-| `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` / `ROCKETNET_SERVER_GAME_CLOCK_EPOCH` | uint64, unix seconds | `0` (wall clock) | Sets `game_clock_epoch`, the unix time at the game clock's zero, for the connect-token expiry check; `0` reads the host wall clock. |
+| `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` / `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | uint64, unix seconds | `0` (wall clock, read once) | Sets `token_epoch_unix_seconds`, the unix time at the game clock's zero, for the connect-token create and expire checks, which read the epoch plus the caller's time; `0` reads the host wall clock once (client connect, server first update) as the epoch. |
 | `ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH` / `ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH` | int, `2..1000000` | `0` (off) | Development only: drop every Nth outgoing datagram. |
 | `ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW` / `ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW` | int, `2..64` | `0` (off) | Development only: reverse each window of W outgoing datagrams. |
 | `ROCKETNET_SERVER_MEMORY_BUDGET_BYTES` | uint64 | `0` (unlimited) | Read at `rocketnet_server_create`. Enforces an upper bound on server transport memory plans; over-budget candidates are skipped, and `rocketnet_server_start` (which creates the transport) fails with `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED` only when no candidate fits. |

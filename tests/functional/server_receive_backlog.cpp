@@ -20,7 +20,7 @@
 #include <vector>
 
 // tests/functional/harness.inc: the token stamp from the clock that judges it
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 #include "../../sdk/rocketnet_config.h"
 #include "../loopback_hub.h"
@@ -31,7 +31,7 @@ uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double
 #include <unistd.h>
 #endif // #if defined( _WIN32 )
 
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 static void server_receive_backlog_check( bool condition, const char * expression, int line )
 {
@@ -160,7 +160,7 @@ void rocketnet_test_server_async_delivery_with_max_clients()
     // Token validity uses the same synthetic clock at both endpoints. The
     // token helper takes creation time, not a distant expiration timestamp.
 
-    server_config.game_clock_epoch = 1700000000ULL;
+    server_config.token_epoch_unix_seconds = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     rocketnet_test_loopback_hub_clients( max_clients );
     server_config.loopback_hub = rocketnet_test_loopback_hub();
@@ -175,7 +175,7 @@ void rocketnet_test_server_async_delivery_with_max_clients()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
-    client_config.game_clock_epoch = server_config.game_clock_epoch;
+    client_config.token_epoch_unix_seconds = server_config.token_epoch_unix_seconds;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.loopback_hub = rocketnet_test_loopback_hub();
 
@@ -184,7 +184,7 @@ void rocketnet_test_server_async_delivery_with_max_clients()
     for ( int i = 0; i < max_clients; ++i )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        server_receive_backlog_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        server_receive_backlog_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_current( NULL, token, &client_config, time );
         server_receive_backlog_require( client != NULL );

@@ -292,6 +292,7 @@ static bool rn_client_split( const struct rocketnet_client_config_t * config, bo
 
     transport->state_change_callback = config->state_change_callback;
     transport->loopback_hub = config->loopback_hub;
+    transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
 
     // the step-driven client and its receive stamp clock are development
     // only: a production build refuses either one set (sdk/rocketnet.h)
@@ -391,6 +392,7 @@ static bool rn_server_split( const struct rocketnet_server_config_t * config, bo
     transport->disconnect_packets_per_update = config->disconnect_packets_per_update;
     transport->handshakes_per_update = config->handshakes_per_update;
     transport->loopback_hub = config->loopback_hub;
+    transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
     if ( read_env && !rn_dev_simulator_env( "server", transport ) )
     {
         if ( failure )
@@ -619,6 +621,7 @@ static void rn_client_default_config_current( struct rocketnet_client_config_t *
     config->max_fragmented_messages = transport.max_fragmented_messages;
     config->transport = NULL;
     config->state_change_callback = transport.state_change_callback;
+    config->token_epoch_unix_seconds = transport.token_epoch_unix_seconds;
     config->send_kbps = ROCKETNET_DEFAULT_CLIENT_TO_SERVER_KBPS;
 
     struct rocketnet_message_config_t message;
@@ -664,6 +667,7 @@ static constexpr size_t rn_client_config_field_ends[] = {
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, time_callback ),
     RN_PUBLIC_FIELD_END( rocketnet_client_config_t, step_driven ),
     ROCKETNET_CLIENT_CONFIG_BYTES_3,
+    RN_PUBLIC_FIELD_END( rocketnet_client_config_t, token_epoch_unix_seconds ),
 };
 static_assert( rn_client_config_field_ends[sizeof( rn_client_config_field_ends ) / sizeof( rn_client_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_client_config_t ), "client config field ends" );
 
@@ -699,8 +703,25 @@ static constexpr size_t rn_server_config_field_ends[] = {
     ROCKETNET_SERVER_CONFIG_BYTES_2,
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, loopback_hub ),
     RN_PUBLIC_FIELD_END( rocketnet_server_config_t, server_secret_key ),
+    ROCKETNET_SERVER_CONFIG_BYTES_4,
+    RN_PUBLIC_FIELD_END( rocketnet_server_config_t, token_epoch_unix_seconds ),
 };
 static_assert( rn_server_config_field_ends[sizeof( rn_server_config_field_ends ) / sizeof( rn_server_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_server_config_t ), "server config field ends" );
+
+static constexpr size_t rn_connect_token_config_field_ends[] = {
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, config_bytes ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, backend_secret_key ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, server_address_ipv4 ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, server_address_ipv6 ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, server_public_key ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, client_id ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, protocol_id ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, user_data ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, expire_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, timeout_seconds ),
+    RN_PUBLIC_FIELD_END( rocketnet_connect_token_config_t, unix_timestamp ),
+};
+static_assert( rn_connect_token_config_field_ends[sizeof( rn_connect_token_config_field_ends ) / sizeof( rn_connect_token_config_field_ends[0] ) - 1] == sizeof( struct rocketnet_connect_token_config_t ), "connect token config field ends" );
 
 #undef RN_PUBLIC_FIELD_END
 
@@ -758,6 +779,156 @@ enum rocketnet_status_t rocketnet_client_default_config_internal( struct rocketn
     rn_public_config_copy( config, &defaults, use );
 
     return ROCKETNET_STATUS_OK;
+}
+
+// the connect token config (sdk/rocketnet.h): zero keys, addresses and ids,
+// the recommended lifetime and the development token's timeout
+
+static void rn_connect_token_default_config_current( struct rocketnet_connect_token_config_t * config )
+{
+    memset( config, 0, sizeof( *config ) );
+    config->config_bytes = sizeof( *config );
+    config->expire_seconds = ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS;
+    config->timeout_seconds = ROCKETNET_DEV_CONNECT_TOKEN_TIMEOUT_SECONDS;
+}
+
+enum rocketnet_status_t rocketnet_connect_token_default_config_internal( struct rocketnet_connect_token_config_t * config )
+{
+    if ( !rocketnet_api_null_guard( config ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+    size_t use = 0;
+    const enum rocketnet_status_t status = rn_public_config_bytes( "connect_token", config->config_bytes, sizeof( struct rocketnet_connect_token_config_t ), rn_connect_token_config_field_ends, sizeof( rn_connect_token_config_field_ends ) / sizeof( rn_connect_token_config_field_ends[0] ), &use );
+    if ( status != ROCKETNET_STATUS_OK )
+        return status;
+
+    struct rocketnet_connect_token_config_t defaults;
+    rn_connect_token_default_config_current( &defaults );
+
+    rn_public_config_copy( config, &defaults, use );
+
+    return ROCKETNET_STATUS_OK;
+}
+
+// one server address of a token: within ROCKETNET_MAX_ADDRESS_STRING_BYTES,
+// of the named family, and not port 0, which names no server (the client
+// refuses such a token with ROCKETNET_STATUS_CONNECT_TOKEN_PORT_ZERO)
+
+static bool rn_connect_token_address( const char * address, int family )
+{
+    if ( memchr( address, '\0', ROCKETNET_MAX_ADDRESS_STRING_BYTES ) == NULL )
+    {
+        rocketnet_error( "connect token refused: an address is %d bytes or longer", ROCKETNET_MAX_ADDRESS_STRING_BYTES );
+        return false;
+    }
+
+    struct rocketnet_address_t parsed;
+    if ( !rocketnet_address_parse( &parsed, address ) || parsed.type != family )
+    {
+        rocketnet_error( "connect token refused: %s is not an %s address", address, family == ROCKETNET_ADDRESS_IPV4 ? "IPv4" : "IPv6" );
+        return false;
+    }
+
+    if ( parsed.port == 0 )
+    {
+        rocketnet_error( "connect token refused: %s has port 0", address );
+        return false;
+    }
+
+    return true;
+}
+
+enum rocketnet_status_t rocketnet_create_connect_token( const struct rocketnet_connect_token_config_t * config, char * connect_token )
+{
+    // the production writer over the caller's keys, handed out as the base64
+    // string the client's connect takes. It reads no clock and allocates
+    // nothing; nothing is written on a failure
+
+    if ( !rocketnet_api_null_guard( config ) || !rocketnet_api_null_guard( connect_token ) )
+        return ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+    size_t use = 0;
+    const enum rocketnet_status_t bytes_status = rn_public_config_bytes( "connect_token", config->config_bytes, sizeof( struct rocketnet_connect_token_config_t ), rn_connect_token_config_field_ends, sizeof( rn_connect_token_config_field_ends ) / sizeof( rn_connect_token_config_field_ends[0] ), &use );
+    if ( bytes_status != ROCKETNET_STATUS_OK )
+        return bytes_status;
+
+    struct rocketnet_connect_token_config_t resolved;
+    rn_connect_token_default_config_current( &resolved );
+    rn_public_config_copy( &resolved, config, use );
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+
+    if ( !resolved.server_address_ipv4 && !resolved.server_address_ipv6 )
+    {
+        rocketnet_error( "connect token refused: both server addresses are NULL" );
+
+        rocketnet_api_misuse_record();                  // at least one address is a required argument
+
+        status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+    else if ( ( resolved.server_address_ipv4 && !rn_connect_token_address( resolved.server_address_ipv4, ROCKETNET_ADDRESS_IPV4 ) ) ||
+              ( resolved.server_address_ipv6 && !rn_connect_token_address( resolved.server_address_ipv6, ROCKETNET_ADDRESS_IPV6 ) ) )
+    {
+        status = ROCKETNET_STATUS_INVALID_ADDRESS;
+    }
+    else if ( resolved.expire_seconds <= 0 || resolved.timeout_seconds <= 0 || resolved.protocol_id == 0 )
+    {
+        rocketnet_error( "connect token refused: expire_seconds %d, timeout_seconds %d and protocol_id must be above zero", resolved.expire_seconds, resolved.timeout_seconds );
+        status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+    else if ( resolved.unix_timestamp > UINT64_MAX - (uint64_t) resolved.expire_seconds )
+    {
+        rocketnet_error( "connect token refused: unix_timestamp plus expire_seconds is past the range of a Unix time" );
+        status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    }
+#if !ROCKETNET_DEV
+    // a production build refuses the published development keys, as server
+    // start does (rocketnet_server_transport_create): the Ed25519 secret's
+    // second half is its public key
+
+    else if ( memcmp( resolved.backend_secret_key + ROCKETNET_BACKEND_SECRET_KEY_BYTES - ROCKETNET_BACKEND_PUBLIC_KEY_BYTES, rocketnet_dev_backend_public_key, ROCKETNET_BACKEND_PUBLIC_KEY_BYTES ) == 0 ||
+              memcmp( resolved.server_public_key, rocketnet_dev_server_public_key, ROCKETNET_SERVER_PUBLIC_KEY_BYTES ) == 0 )
+    {
+        rocketnet_error( "connect token refused: development keys in a production build (ROCKETNET_DEV=0)" );
+        status = ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION;
+    }
+#endif // #if !ROCKETNET_DEV
+
+    if ( status == ROCKETNET_STATUS_OK )
+    {
+        const char * server_addresses[2];
+        int num_server_addresses = 0;
+        if ( resolved.server_address_ipv4 )
+            server_addresses[num_server_addresses++] = resolved.server_address_ipv4;
+
+        if ( resolved.server_address_ipv6 )
+            server_addresses[num_server_addresses++] = resolved.server_address_ipv6;
+
+        uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+        status = rocketnet_write_production_connect_token( resolved.backend_secret_key, resolved.server_public_key,
+                                                           resolved.protocol_id, server_addresses, num_server_addresses,
+                                                           resolved.client_id, resolved.unix_timestamp, resolved.unix_timestamp + (uint64_t) resolved.expire_seconds,
+                                                           resolved.timeout_seconds, resolved.user_data, token, sizeof( token ) );
+        if ( status == ROCKETNET_STATUS_OK )
+        {
+            char encoded[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+            const int length = rocketnet_base64_encode_data( token, sizeof( token ), encoded, sizeof( encoded ) );
+            rocketnet_assert( length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+
+            if ( length == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 )
+                memcpy( connect_token, encoded, sizeof( encoded ) );
+            else
+                status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+
+            sodium_memzero( encoded, sizeof( encoded ) );
+        }
+
+        sodium_memzero( token, sizeof( token ) );
+    }
+
+    sodium_memzero( &resolved, sizeof( resolved ) );
+
+    return status;
 }
 
 // the light-client profile (sdk/rocketnet.h): the defaults, then the light
@@ -1873,6 +2044,7 @@ static void rn_server_config_from_transport_current( struct rocketnet_server_con
     config->disconnect_packets_per_update = transport->disconnect_packets_per_update;
     config->handshakes_per_update = transport->handshakes_per_update;
     config->loopback_hub = transport->loopback_hub;
+    config->token_epoch_unix_seconds = transport->token_epoch_unix_seconds;
     config->transport = NULL;
     config->per_client_send_kbps = ROCKETNET_DEFAULT_SERVER_TO_CLIENT_KBPS;
 

@@ -115,7 +115,7 @@ static int lease_world_create( lease_world_t * world, uint8_t seed_tag )
     rocketnet_server_transport_default_config_current( &server_config );
     server_config.protocol_id = LEASE_TEST_PROTOCOL;
     server_config.max_clients = 2;
-    server_config.game_clock_epoch = LEASE_TEST_EPOCH;
+    server_config.token_epoch_unix_seconds = LEASE_TEST_EPOCH;
     memset( server_config.packet_filter, 0x5A, sizeof( server_config.packet_filter ) );
     memcpy( server_config.backend_public_key, world->backend_public, sizeof( server_config.backend_public_key ) );
     memcpy( server_config.server_public_key, world->server_public, sizeof( server_config.server_public_key ) );

@@ -7913,6 +7913,10 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_sleep",
     "rocketnet_loopback_hub_create",
     "rocketnet_loopback_hub_destroy",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_connect_token_default_config_internal",
+    "rocketnet_create_connect_token",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_required_memory",
@@ -7973,6 +7977,10 @@ static const char * rocketnet_test_exports[] = {
 
 static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_loopback_hub_destroy",
+    "rocketnet_generate_backend_keypair",
+    "rocketnet_generate_server_keypair",
+    "rocketnet_connect_token_default_config_internal",
+    "rocketnet_create_connect_token",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_connect",
@@ -8406,6 +8414,14 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_write_production_connect_token( token, token, 1, production_address, 1,
                                                                                    1, 0, 1, 10, NULL, NULL,
                                                                                    ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_connect_token_default_config_internal( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_connect_token_default_config( NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    {
+        struct rocketnet_connect_token_config_t token_config;
+        rocketnet_check( rocketnet_connect_token_default_config( &token_config ) == ROCKETNET_STATUS_OK );
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_connect_token( NULL, token_string ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+        RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_create_connect_token( &token_config, NULL ) == ROCKETNET_STATUS_INVALID_ARGUMENT ) );
+    }
 
     // the inline default_config and the exported fill it calls: a NULL config
     // is one counted misuse either way
@@ -13324,6 +13340,7 @@ static const struct rn_test_config_field_t rn_test_client_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, time_callback ),
     RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, step_driven ),
+    RN_TEST_CONFIG_FIELD( rocketnet_client_config_t, token_epoch_unix_seconds ),
 };
 
 static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
@@ -13358,6 +13375,7 @@ static const struct rn_test_config_field_t rn_test_server_config_fields[] = {
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, handshakes_per_update ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, loopback_hub ),
     RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, server_secret_key ),
+    RN_TEST_CONFIG_FIELD( rocketnet_server_config_t, token_epoch_unix_seconds ),
 };
 
 #undef RN_TEST_CONFIG_FIELD
@@ -14566,32 +14584,6 @@ void rocketnet_test_xdp_interrupt_matcher()
         " 34:  0  0  IR-PCI-MSI 1048580-edge      mlx5_comp0@pci:0000:03:00.0\n", "ens1f0" ) );
 }
 
-// Verify that the XDP program returns XDP_DROP when bpf_redirect_map
-// fails (e.g., empty xskmap), and REDIRECTED is only incremented on success.
-void rocketnet_test_xdp_empty_map_drops()
-{
-    // This test validates the fix for the security audit finding where:
-    // - bpf_redirect_map return value was ignored
-    // - REDIRECTED was counted before checking success
-    // - XDP_REDIRECT was always returned regardless of redirect success
-    //
-    // The fix ensures:
-    // - bpf_redirect_map return value is checked
-    // - REDIRECTED is only incremented on success (ret == 0)
-    // - XDP_DROP is returned when redirect fails
-
-    // The fix is verified by code review and structural test:
-    // 1. bpf_redirect_map return value is captured
-    // 2. REDIRECTED counter only incremented when ret == 0
-    // 3. XDP_DROP returned when ret != 0
-
-    // In functional testing, when the xskmap is empty (no AF_XDP sockets
-    // bound), bpf_redirect_map returns non-zero and the program now
-    // correctly returns XDP_DROP instead of always returning XDP_REDIRECT.
-
-    rocketnet_check( ROCKETNET_SERVER_XDP_COUNTER_REDIRECTED == 0 );
-}
-
 #endif // #if ROCKETNET_XDP
 
 #if ROCKETNET_DEV
@@ -14781,20 +14773,6 @@ void rocketnet_test_log_level_refuses_out_of_range()
 
     rocketnet_log_level( saved_level );
 }
-
-#if ROCKETNET_XDP
-// verify XDP umem config frame_size matches the expected constant
-void rocketnet_test_umem_config_frame_size_explicit()
-{
-    struct xsk_umem_config config;
-    memset( &config, 0, sizeof( config ) );
-
-    config.frame_size = ROCKETNET_XDP_FRAME_SIZE;
-    config.frame_headroom = 0;
-
-    rocketnet_check( config.frame_size == ROCKETNET_XDP_FRAME_SIZE );
-}
-#endif // #if ROCKETNET_XDP
 
 #if ROCKETNET_DEV
 // The suite isolates config overrides, while preserving the transport's
@@ -16044,18 +16022,12 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
     { "test_server_port_zero_needs_a_discovering_transport", rocketnet_test_server_port_zero_needs_a_discovering_transport },
 #if ROCKETNET_XDP
     { "test_xdp_transport_interrupt_matcher", rocketnet_test_xdp_interrupt_matcher },
-    { "test_xdp_transport_empty_map_drops", rocketnet_test_xdp_empty_map_drops },
 #endif // #if ROCKETNET_XDP
 #if ROCKETNET_DEV
     { "test_config_override_logging", rocketnet_test_config_override_logging },
 #endif // #if ROCKETNET_DEV
     { "test_server_host_memory_estimate_bounds_the_plan", rocketnet_test_server_host_memory_estimate_bounds_the_plan },
     { "test_log_level_refuses_out_of_range", rocketnet_test_log_level_refuses_out_of_range },
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-#if ROCKETNET_XDP
-    { "test_umem_config_frame_size_explicit", rocketnet_test_umem_config_frame_size_explicit },
-#endif // #if ROCKETNET_XDP
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 };
 
 #if ROCKETNET_DEV

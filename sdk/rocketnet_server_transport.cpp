@@ -273,7 +273,7 @@ struct rocketnet_server_transport_t
     double raw_time;                                    // the caller's clock, last seen, beside the clamped one
     double time_offset;                                 // the backwards offset, exactly 0.0 until the first step
     uint64_t test_timestamp;                            // unit-only Unix time; zero reads the wall clock
-    uint64_t game_clock_epoch;                          // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    uint64_t token_epoch_unix_seconds;                  // unix seconds at the game clock's zero for the token check; 0 until the first update resolves it from the wall clock
     uint64_t frame;                                     // advanced once per update; identifies initialized stats buckets
 
     // the fragmentation shape from the config, and the send arena for
@@ -1873,7 +1873,9 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     server_transport->time = time;
     server_transport->raw_time = time;                  // the seed is the clock's origin, not a step
     server_transport->time_offset = 0.0;
-    server_transport->game_clock_epoch = config->game_clock_epoch;
+    // the token clock's epoch: configured, or 0 until the first update reads
+    // the wall clock once (rocketnet_server_transport_update)
+    server_transport->token_epoch_unix_seconds = config->token_epoch_unix_seconds;
     rocketnet_server_link_drain( server_transport );
 
     // the fragmentation shape: zero means the defaults; the table already
@@ -2492,10 +2494,18 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     rocketnet_server_update_stats( server_transport, time );
 
     const double current_time = time;
+    // the token clock is the epoch plus the caller's time, in whole seconds. An
+    // epoch of zero is resolved here, once, from the wall clock less the
+    // caller's time; nothing reads the wall clock again, so a paused caller
+    // clock pauses token expiry
+
+    if ( server_transport->token_epoch_unix_seconds == 0 )
+        server_transport->token_epoch_unix_seconds = rocketnet_platform_token_epoch( 0, current_time );
+
 #if ROCKETNET_DEV
-    const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : ( server_transport->game_clock_epoch != 0 ? server_transport->game_clock_epoch + (uint64_t) current_time : ( uint64_t )::time( NULL ) );
+    const uint64_t current_timestamp = server_transport->test_timestamp ? server_transport->test_timestamp : server_transport->token_epoch_unix_seconds + (uint64_t) current_time;
 #else // #if ROCKETNET_DEV
-    const uint64_t current_timestamp = server_transport->game_clock_epoch != 0 ? server_transport->game_clock_epoch + (uint64_t) current_time : ( uint64_t )::time( NULL );
+    const uint64_t current_timestamp = server_transport->token_epoch_unix_seconds + (uint64_t) current_time;
 #endif // #if ROCKETNET_DEV
 
     server_transport->payloads.num_payloads = 0;
