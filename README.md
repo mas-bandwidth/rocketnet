@@ -55,7 +55,7 @@ alone does not provide a production backend.
 
 ## Preview status
 
-RocketNet is a preview. Read the [preview-4 release notes](docs/RELEASE-NOTES-v1.0.0-preview-4.md)
+RocketNet is a preview. Read the [preview-5 release notes](docs/RELEASE-NOTES-v1.0.0-preview-5.md)
 for migration requirements and [qualification index](docs/TESTING.md) for the
 scope and gaps in the recorded evidence.
 
