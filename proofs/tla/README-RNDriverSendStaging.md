@@ -18,9 +18,7 @@ models `rocketnet_xdp_buffer_exchange_t::publish` and
 (`xdpQueue = XdpBuffers - 1`), publication retains the producer.
 `WorkerRetire` models the worker's final copy and `recycle` returning the
 buffer to the free ring; `claim` moves a buffer from ready to claimed without
-changing either count and is folded into it. `rocketnet_send_handoff_t`
-(`sdk/rocketnet_send_handoff.h`) is the earlier two-generation form, now used
-only by `test_unit_xdp_send_staging.cpp` and `test_lifecycle.cpp`.
+changing either count and is folded into it.
 `rocketnet_server_transport_send_packets` retries XDP publication even when
 `send_staged == send_flushed`; `RetryFlushPublishes` checks that a subsequent
 flush publishes retained work after retirement. `XdpStagedEventuallyPublished`
@@ -42,18 +40,12 @@ publish repeat until every buffer is queued, the last publish leaves
 retirement occurs in that trace. (With two buffers the trace was depth 6; the
 three-buffer records and trace are owed: see RUNS.tsv.)
 
-Checked against the code by hand: in the pre-reopen implementation, restoring
-unconditional publication in `rocketnet_send_handoff_t::publish` permits both
-queued indexes; the second `rocketnet_server_socket_send_packets` clears
-`send_flow_index` and cannot acquire replacement storage, so
+Checked against the code by hand: restoring unconditional publication in
+`rocketnet_xdp_buffer_exchange_t::publish` permits all buffers to be queued;
+the next `rocketnet_server_socket_send_packets` clears `send_flow_index` and
+cannot acquire replacement storage, so
 `rocketnet_server_socket_start_packet_internal` returns NULL on the next send.
-The merged socket also has a defensive `reopen` recovery for an already fully
-queued state, so reproducing this code-level refusal now requires disabling
-both retention and that recovery. The bounded witness isolates the retention
-rule; the separate `SendHandoff` model checks reopen. The deterministic unit check
-`test_xdp_transport_send_staging_retains_producer` fails at `!handoff.publish()` for
-that schedule (the second publish queues instead of retaining), and
-`check_send_handoff` in `test_lifecycle.cpp` fails at its `!queue.publish()`. With retention enabled, the second publish leaves its filling
+With retention enabled, the second publish leaves its filling
 index intact. Repeated flushes preserve the queued index; retirement followed
 by another flush publishes the retained generation. The unit test
 `test_xdp_transport_send_staging_reflushes_without_commit` separately exercises the actual

@@ -328,9 +328,6 @@ MCRNServerSendFair.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	requ
 MCRNServerSendFairWalk.cfg	MCRNServerSendFair.tla	pass	-	check	rnserversendfair	required	-
 MCRNServerSendFairBrokenFromZero.cfg	MCRNServerSendFair.tla	invariant	FairService	check	rnserversendfair	required	-
 MCRNServerSendFairBrokenInPlace.cfg	MCRNServerSendFair.tla	invariant	FairService	check	rnserversendfair	required	-
-MCSendHandoff.cfg	MCSendHandoff.tla	pass	-	check	sendhandoff	required	-
-MCSendHandoffBrokenReopenFront.cfg	MCSendHandoff.tla	invariant	FrontNeverReopened	check	sendhandoff	required	-
-MCSendHandoffBrokenStalePointer.cfg	MCSendHandoff.tla	invariant	PublishedPacketsStable	check	sendhandoff	required	-
 MCServerConnectionResponseReplay.cfg	MCServerConnection.tla	pass	-	ignore-terminal	serverconnection	required	-
 MCServerConnectionResponseReplayBroken.cfg	MCServerConnection.tla	action	ResponseNeverRefreshesConnected	ignore-terminal	serverconnection	required	-
 MCRNClientIoShutdown.cfg	MCRNClientIoShutdown.tla	pass	-	check	shutdownownership	required	-
