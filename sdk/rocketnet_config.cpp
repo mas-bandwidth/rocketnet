@@ -197,7 +197,7 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 
 int rocketnet_message_validate_config( const struct rocketnet_message_config_t * config )
 {
-    // the message config's validation (docs/CHANNELS.md 14): the table's ranges,
+    // the message config's validation (docs/LOAD.md Table 3): the table's ranges,
     // then the cross rules, each refusal a log line naming the rule. Refuses,
     // never clamps. Allocation-free, safe before init: the sizing functions an
     // application calls before connecting run it.

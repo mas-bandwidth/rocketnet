@@ -14,11 +14,11 @@
 
 #include <sodium.h>
 
-// Layer 1, the region: docs/CHANNELS.md section 4, sized by section 14, the
+// Layer 1, the region: proofs/tla/RNConnectionMemory.tla, sized per docs/LOAD.md Table 3, the
 // send store checked by the section 4 tests.
 
 // ----------------------------------------------------------------
-//          the entry sizes, pinned to section 14's figures
+//          the entry sizes, pinned to docs/LOAD.md Table 3's figures
 // ----------------------------------------------------------------
 
 static_assert( sizeof( rn_channel_send_t ) == 40, "channel send state is 40 bytes (14)" );
@@ -222,7 +222,7 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 //                          the send store
 // ----------------------------------------------------------------
 
-// A chunk's meta (CHANNELS section 4), one u32 per chunk in the class's meta
+// A chunk's meta (proofs/tla/RNSendStore.tla), one u32 per chunk in the class's meta
 // array: a live bit, a block-head bit, the slot's generation tag (bumped on
 // every take of the chunk; one shared tag for a multi-chunk block's take) and
 // a 20-bit count field -- the physical run length at a block's head chunk,
@@ -398,7 +398,7 @@ bool rn_send_store_find( const rn_send_store_t * store, int bytes, uint32_t * ou
     // proofs/tla/RNSendStore.tla Alloc
 uint32_t rn_send_store_alloc( rn_send_store_t * store, int bytes )
 {
-    // all or none (CHANNELS section 4): a block the class cannot hold whole in one contiguous run takes nothing
+    // all or none (proofs/tla/RNSendStore.tla): a block the class cannot hold whole in one contiguous run takes nothing
 
     uint32_t first = 0;
     if ( !rn_send_store_find( store, bytes, &first ) )
@@ -483,7 +483,7 @@ bool rn_send_store_free_checked( rn_send_store_t * store, uint32_t handle )
     if ( i >= cls->fresh )                  // never taken: its meta is unwritten, and it is not held
         return false;
 
-    // only a block's head, still allocated, frees (CHANNELS section 4):
+    // only a block's head, still allocated, frees (proofs/tla/RNSendStore.tla):
     // a second free of the same block finds the live bit already cleared and refuses
 
     if ( ( cls->meta[i] & ( RN_META_LIVE | RN_META_HEAD ) ) != ( RN_META_LIVE | RN_META_HEAD ) )

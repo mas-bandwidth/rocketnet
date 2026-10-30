@@ -5,7 +5,7 @@
 
 // RNChannelTypes!Dispatch for code 0 over a link that duplicates half of its
 // packets. A plain UNRELIABLE record takes no number and has no window check
-// of its own (docs/CHANNELS.md 7.2), so its at-most-once delivery rests on
+// of its own (standard/MESSAGES.md m7.4), so its at-most-once delivery rests on
 // the transport replay window alone. This case asserts the property where a
 // user sees it, at the channel delivery, and that the duplicates really rode
 // the wire so the case cannot pass on a link that never duplicated.

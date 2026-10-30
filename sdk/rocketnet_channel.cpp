@@ -9,7 +9,7 @@
 
 #include "rocketnet_platform.h"
 
-// Layer 4's dispatch (docs/CHANNELS.md 7). The spec is proofs/tla/RNChannel.tla; each
+// Layer 4's dispatch (standard/MESSAGES.md m6, m7). The spec is proofs/tla/RNChannel.tla; each
 // function names the action it implements. Nothing here allocates, locks or
 // reads a clock (owner rules R2 and R7). Channel and ready queues name a
 // descriptor generation and the region's schedule epoch (proofs/tla/RNChannelQueues.tla).
@@ -55,7 +55,7 @@ bool rn_block_shape_valid( const rn_channels_t * channels, const struct rocketne
     return true;
 }
 
-// The delivery table (CHANNELS.md 10.1): every delivery of the update, this
+// The delivery table (proofs/tla/RNEndpoint.tla): every delivery of the update, this
 // record's or one released from a hold, appended in order. The caller checked
 // there is room.
 
@@ -774,7 +774,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
     return ROCKETNET_CHANNEL_DISPATCH_HELD;
 }
 
-// A block's anchor (CHANNELS.md 8, "No start packet"): any chunk opens the
+// A block's anchor (standard/MESSAGES.md m8, "No start packet"): any chunk opens the
 // block's state on its own. The first one seen is the anchor: its descriptor
 // holds the count, the chunks in, and the block's first number, and the held
 // index finds it by key. Every later chunk must agree with it on the count,
@@ -870,7 +870,7 @@ void rn_channels_block_settle( rn_channels_t * channels, uint32_t held, rn_recei
     }
 }
 
-// A chunk of a large message (CHANNELS.md 8): placed by index, counted, and the
+// A chunk of a large message (standard/MESSAGES.md m8): placed by index, counted, and the
 // whole message dispatched as one only when every chunk is in. proofs/tla/RNBlocks.tla:
 // RNBlocks!Receive (the anchor by b = n - index, the copy to ring + index * F)
 // and RNBlocks!Deliver (complete at its turn: one view, one ordering slot).
@@ -1325,7 +1325,7 @@ bool rn_channels_cancel( struct rn_channels_t * channels )
 }
 
 // ---------------------------------------------------------------
-//        CONFIG, the one announcement (CHANNELS.md 10.3, 13.4)
+//        CONFIG, the one announcement (standard/MESSAGES.md m11)
 // ---------------------------------------------------------------
 
 // proofs/tla/RNEndpoint.tla Reset: relQ = <<CONFIG>>, so CONFIG is the first record

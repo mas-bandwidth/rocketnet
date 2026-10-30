@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// Layer 4's dispatch, unit tier (docs/CHANNELS.md 7; proofs/tla/RNChannel.tla). No
+// Layer 4's dispatch, unit tier (standard/MESSAGES.md m6, m7; proofs/tla/RNChannel.tla). No
 // sockets, no threads, no wall clock: time is an argument.
 
 #include <stdio.h>
@@ -291,7 +291,7 @@ static void test_ack_feed_marks_only_carried_numbers()
     rn_window_ack_init( &ack, &send, region, NULL );
 
     // the carried numbers are assigned through the send window at first write
-    // (docs/CHANNELS.md 6.2, RNWindow!NumberRecord), as the builder's numbered
+    // (standard/MESSAGES.md m5.1, RNWindow!NumberRecord), as the builder's numbered
     // send does: layer 3 commits only numbers the window owns
 
     uint64_t numbered[3];

@@ -5,7 +5,7 @@
 
 // Per-connection message memory and the kick on exhaustion
 // (proofs/tla/RNConnectionMemory.tla, proofs/tla/README-RNConnectionMemory.md,
-// docs/CHANNELS.md 4). A server's regions are carved from one block at
+// proofs/tla/RNConnectionMemory.tla). A server's regions are carved from one block at
 // create, one per client slot; a client's one region is the same arena with
 // one slot. Exhaustion is a sticky region state with the reason
 // MESSAGE_MEMORY_EXHAUSTED, and the kick decision is a pure function of the

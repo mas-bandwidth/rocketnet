@@ -12,8 +12,8 @@
 #include "rocketnet_constants.h"
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
-// RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
-// section 6.4; TLA+ actions WritePacket, WriteOldest, ReceiveAck and
+// RTT estimation, resend delay, failed-send recovery, and reliable timeout (standard/MESSAGES.md
+// m9; TLA+ actions WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // proofs/tla/RNWindow.tla).
 //
@@ -55,7 +55,7 @@ rn_ack_cost_t rn_window_ack_cost_read();
 // the fields nor the code). For each delay class (0: single-packet records,
 // 1: chunks of a block) it holds the extremes of the gap between a number's
 // send and its next resend, as measured where rn_window_ack_commit sets
-// last_send, against the class delay in force (docs/CHANNELS.md 6.4 "Resend";
+// last_send, against the class delay in force (standard/MESSAGES.md m9.3;
 // proofs/tla/RNResendTiming.tla Walk). The walk resends a number at the first update
 // whose delay has passed since its last send, so for every resend
 //
@@ -98,7 +98,7 @@ struct rn_window_ack_t
     int error;                      // ROCKETNET_DISCONNECT_REASON_NONE, _RELIABLE_TIMED_OUT, or _PROTOCOL_VIOLATION (resend link out of range)
 
     // Two resend sequences over the one flat array region->resend_fifo, one per
-    // delay class (docs/CHANNELS.md 6.4 "Resend"; proofs/tla/RNResendTiming.tla
+    // delay class (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla
     // SmallNeverHeldByChunk): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
     // is ordered by its entries' sequence keys and walked from its head while due.
@@ -147,7 +147,7 @@ static inline double rn_window_ack_resend_delay( const rn_window_ack_t * ack )
 
 // The resend delay of a chunk of a block uses the same adaptive resend delay,
 // so a large block on a long path is not sent again before its acks can
-// return (docs/CHANNELS.md 6.4 "Resend"; proofs/tla/RNResendTiming.tla Delay("c")).
+// return (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla Delay("c")).
 // It is capped at reliable_timeout / ROCKETNET_MESSAGE_MIN_RESEND_ATTEMPTS
 // (ChunkCap) so the attempts rule holds for chunks under any accepted
 // resend_delay_max; at defaults the 2 s resend delay stays below the 2.5 s chunk cap.
@@ -159,8 +159,8 @@ static inline double rn_window_ack_chunk_resend_delay( const rn_window_ack_t * a
 }
 
 // Whether the number in send_numbers slot `slot_index` is a chunk of a block:
-// its send descriptor is in use with more than one fragment (docs/CHANNELS.md
-// 8). It picks the number's resend FIFO and delay.
+// its send descriptor is in use with more than one fragment (standard/MESSAGES.md
+// m8). It picks the number's resend FIFO and delay.
 bool rn_window_ack_slot_is_chunk( const rn_window_ack_t * ack, uint32_t slot_index );
 
 // The delay of the FIFO a slot is in: rn_window_ack_chunk_resend_delay for a
@@ -183,12 +183,12 @@ uint32_t rn_window_ack_resend_next( const rn_window_ack_t * ack, bool chunk, uin
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index );
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator over a
-// carved region and an initialized sender window (docs/CHANNELS.md 6.4;
+// carved region and an initialized sender window (standard/MESSAGES.md m9;
 // proofs/tla/RNWindow.tla Init). NULL config uses rocketnet_message_default_config.
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config );
 
 // Commits a sent packet carrying `count` reliable message numbers (1 <= count <= 16P)
-// under `packet_id` at time `now` (docs/CHANNELS.md 6.4 "On send" and "Eviction";
+// under `packet_id` at time `now` (standard/MESSAGES.md m9.1;
 // proofs/tla/RNWindow.tla WritePacket and WriteOldest).
 // Updates each number's last_send = now (and first_send = now on its first send),
 // links or moves each number to the tail of the resend FIFO, evicts the oldest
@@ -212,7 +212,7 @@ void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial );
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity );
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; proofs/tla/RNWindow.tla ReceiveAck,
+// (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNResendTiming.tla Sample).
 // Looks up `packet_id` in sent_index in O(1). If absent (an ack of a keep-alive
 // or pure-unreliable packet, a duplicate ack, or an ack arriving after eviction),
@@ -226,18 +226,18 @@ int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_recei
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now );
 
 // Processes a batch of `count` acked transport sequence numbers at time `now`
-// (docs/CHANNELS.md 6.4 "On ack"). Returns the number of sent-packet entries matched.
+// (standard/MESSAGES.md m9.1). Returns the number of sent-packet entries matched.
 uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_ids, uint32_t count, double now );
 
 // Recovers reliable numbers from a packet that finish_packet refused
-// (docs/CHANNELS.md 6.4 "Failed send"). The packet is not entered in the sent
+// (standard/MESSAGES.md m9.1). The packet is not entered in the sent
 // map; its reliable numbers keep their assigned numbers and ring offsets, are
 // marked due now, and go to the head of the resend FIFO so the next update
 // resends them first.
 void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * numbers, uint32_t count, double now );
 
-// Checks the per-connection reliable timeout before resending (docs/CHANNELS.md
-// 6.4 "Giving up"). If U < next and the oldest unacked number at U has
+// Checks the per-connection reliable timeout before resending (standard/MESSAGES.md
+// m9.3). If U < next and the oldest unacked number at U has
 // now - first_send >= reliable_timeout, sets ack->error to
 // ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT and returns 1. Otherwise returns
 // whether ack->error is already set.
