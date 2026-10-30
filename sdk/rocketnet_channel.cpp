@@ -74,13 +74,20 @@ static rn_delivery_t * rn_channels_append_delivery( rn_channels_t * channels )
 // an update (6.3 step 4). A table that is full anyway is the region failing its
 // own bound, so the connection is exhausted rather than a message dropped (R5).
 
+bool rn_channels_delivery_room( rn_channels_t * channels )
+{
+    if ( channels->deliveries < channels->delivery_capacity )
+        return true;
+
+    rn_region_exhaust( channels->region );
+
+    return false;
+}
+
 static rn_delivery_t * rn_channels_reliable_delivery( rn_channels_t * channels )
 {
-    if ( channels->deliveries >= channels->delivery_capacity )
-    {
-        rn_region_exhaust( channels->region );
+    if ( !rn_channels_delivery_room( channels ) )
         return NULL;
-    }
 
     return rn_channels_append_delivery( channels );
 }
@@ -627,11 +634,8 @@ void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel )
             break;
         }
 
-        if ( channels->deliveries >= channels->delivery_capacity )
-        {
-            rn_region_exhaust( region );                        // rn_channels_reliable_delivery's refusal, before the entry leaves
+        if ( !rn_channels_delivery_room( channels ) )           // rn_channels_reliable_delivery's refusal, before the entry leaves
             break;
-        }
 
         const uint32_t slot = region->held_index[held].number & ( region->window - 1 );
         if ( !rn_held_erase( region, held ) )
@@ -965,11 +969,8 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     // RNBlocks!Deliver (DeliveredEqualsSent, NoPartialDelivery,
     // OneOrderingSlotPerBlock).
 
-    if ( channels->deliveries >= channels->delivery_capacity )
-    {
-        rn_region_exhaust( region );                            // rn_channels_reliable_delivery's refusal, before the entry leaves
+    if ( !rn_channels_delivery_room( channels ) )               // rn_channels_reliable_delivery's refusal, before the entry leaves
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
 
     if ( !rn_held_erase( region, held ) )
     {
