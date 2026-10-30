@@ -96,37 +96,40 @@ had claimed it and not yet stored active. Three results:
    `InsertCompletes` with only thread 1 scheduled. A raised-priority spinner
    can no longer starve a preempted writer.
 
-## A second finding: `retired` races with a reused entry
+## `retired` and the reused entry
 
-`retired` reads an old entry's fields after loading its state and never
-rereads the state. A concurrent `insert` that claims that same entry (it is of
-an earlier epoch, so `insert` may reuse it) writes the fields at the same time.
+`retired` reads an old entry's fields after loading its state. A concurrent
+`insert` that claims that same entry (it is of an earlier epoch, so `insert`
+may reuse it) writes the fields at the same time. Before the fix `retired`
+never reread the state:
 
-- `MCRNPacketLeaseRetiredRace.cfg` fails `NoRacyRead`: the reader loads state
+- `MCRNPacketLeaseBrokenRetiredRace.cfg` fails `NoRacyRead`: the reader loads state
   active of epoch 1, the inserter claims the entry for epoch 2, and the reader
   then reads the fields.
-- `MCRNPacketLeaseRetiredTorn.cfg` fails `NoWrongSuccess`. The trace: a lease
+- `MCRNPacketLeaseBrokenRetiredTorn.cfg` fails `NoWrongSuccess`. The trace: a lease
   (frame 1, ticket 1, value 1) is published in epoch 1 and reset. A thread
   inserts frame 1 with value 2: it claims the entry and writes only the value.
   Another thread calls `retired` with a copy of ticket 1 whose value was
   changed to 2: the frame, ticket and value now read as equal, and `retired`
   returns true for a context that is not the lease it was.
 - `MCRNPacketLeaseRetired.cfg` (rereading the state and discarding a rewritten
-  entry) passes every invariant.
+  entry) passes every invariant. The code now does this in the seqlock reader
+  shape: read the fields, an acquire fence, then a relaxed load of the state,
+  compared with the first. The field read may still overlap a writer's store;
+  the fence makes discarding it safe, the standard seqlock trade.
 
 `retired` is reached only after `take` refused, which is caller misuse (a
-finish after a reset, or a modified context), so the effect is a wrong
-classification of a misuse and a formal data race, not a wrong take. The model
-does not change the code.
+finish after a reset, or a modified context), so the old effect was a wrong
+classification of a misuse, not a wrong take.
 
 ## Cases and the checks against the code
 
 | Config | Expected | What it shows |
 |---|---|---|
 | `MCRNPacketLease.cfg` | pass | The code's rule without `retired`, two threads (thread 1 makes two calls, thread 2 one), a four-entry table, all frames colliding, two resets, `resolve` skipping an entry being written: every invariant. |
-| `MCRNPacketLeaseRetired.cfg` | pass | `retired` with the state reread after the fields (`RetiredValidates`). |
-| `MCRNPacketLeaseRetiredRace.cfg` | `NoRacyRead` | The code's `retired`: finding above. |
-| `MCRNPacketLeaseRetiredTorn.cfg` | `NoWrongSuccess` | The code's `retired`: finding above. |
+| `MCRNPacketLeaseRetired.cfg` | pass | The code's `retired`: the state reread after the fields (`RetiredValidates`). |
+| `MCRNPacketLeaseBrokenRetiredRace.cfg` | `NoRacyRead` | `retired` without the reread: the race above. |
+| `MCRNPacketLeaseBrokenRetiredTorn.cfg` | `NoWrongSuccess` | `retired` without the reread: the race above. |
 | `MCRNPacketLeaseBrokenSpinPausedWriter.cfg` | `ResolveCompletes` | `OnWriting = {"spin"}`, valid callers, thread 2 paused: the former code. |
 | `MCRNPacketLeaseInsertWaitFree.cfg` | pass | `insert` completes with only thread 1 scheduled. |
 | `MCRNPacketLeaseSkipWriting.cfg` | pass | The code: resolve and insert complete with only thread 1 scheduled. |

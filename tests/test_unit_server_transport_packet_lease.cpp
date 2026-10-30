@@ -366,3 +366,43 @@ static void test_packet_lease_resolve_skips_writing_entry()
     check( trusted.frame == frames && trusted.payload_capacity == 64 );
 }
 REGISTER_UNIT_TEST( test_packet_lease_resolve_skips_writing_entry );
+
+// bug: retired rereads the state after reading the fields and drops a rewritten entry
+// (proofs/tla/RNPacketLease.tla TCmp, MCRNPacketLeaseRetired.cfg; the race is
+// MCRNPacketLeaseBrokenRetiredRace.cfg and the torn answer MCRNPacketLeaseBrokenRetiredTorn.cfg). The race
+// itself is an interleaving inside one call, which a single thread cannot reach, so the model
+// case and its reversed witnesses are the proof of the fix. This test pins the outcomes a
+// single thread can reach: an unconsumed lease is retired by the reset, and the entry once an
+// insert has claimed it (state writing of the new epoch, one field changed) answers false for
+// the old copy and for a copy changed to match. Not a fail-before test: the old code also
+// answers false here, because it sees the new epoch on its first load. No threads, no real time.
+static void test_packet_lease_retired_rewritten_entry()
+{
+    rocketnet_packet_leases_t<8> leases{};
+    uint8_t frame[128]{};
+    rocketnet_packet_context_t context{};
+    context.frame = frame;
+    context.packet_id = 77;
+    context.sequence = 100;
+    context.client_index = 2;
+    context.payload_index = 32;
+    context.payload_capacity = 64;
+
+    check( leases.insert( context ) );
+
+    rocketnet_packet_context_t original = context;
+    check( !leases.retired( original ) );
+
+    leases.reset();
+    check( leases.retired( original ) );
+
+    const size_t home = decltype( leases )::hash( frame );
+    leases.entries[home].state.store( ( leases.epoch << 2 ) | 1, std::memory_order_release );
+    leases.entries[home].context.sequence = 7;
+
+    rocketnet_packet_context_t changed = original;
+    changed.sequence = 7;
+    check( !leases.retired( original ) );
+    check( !leases.retired( changed ) );
+}
+REGISTER_UNIT_TEST( test_packet_lease_retired_rewritten_entry );
