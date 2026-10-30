@@ -1356,12 +1356,6 @@ static const rocketnet_server_transport_io_operations_t portable_server_operatio
     NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send
 };
 
-static const rocketnet_server_transport_io_operations_t msgx_server_operations = {
-    ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
-    NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
-    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send
-};
-
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 // the portable client on a platform with the client I/O wake: an eight-callback
 // table over the socket and its wake, so the transport runs the I/O thread of
@@ -1557,7 +1551,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
 extern const rocketnet_transport_backend_t rocketnet_portable_transport = { &portable_server_operations, &portable_client_operations };
-extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &msgx_server_operations, &portable_client_operations };
+extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portable_server_operations, &portable_client_operations };
 
 #define ROCKETNET_STAGED_ADAPTER( name, type, prefix ) \
     static uint8_t * name##_start( void * transport, const rocketnet_address_t * to, uint64_t * id ) \
