@@ -286,6 +286,9 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
 // region exists, so it checks the same bounds apart.
 bool rn_block_shape_valid( const struct rn_channels_t * channels, const struct rocketnet_message_record_t * record, int64_t * out_base_units );
 
+// True when the delivery table has room for one more; a full table exhausts the region and the caller returns.
+bool rn_channels_delivery_room( struct rn_channels_t * channels );
+
 // The receiver's descriptor of a record's number: NULL when the slot is live
 // under a different number (check 10, SLOT_COLLISION); fills a not-live slot
 // from the record so dispatch stands alone.
