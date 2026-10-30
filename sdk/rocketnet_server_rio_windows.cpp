@@ -381,17 +381,18 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     int injected = 0;
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_RECEIVE_POST, &injected ) )
         return false;
+    int use_real_receive = 1;
 #if ROCKETNET_DEV
     if ( rocketnet_rio_test_functions )
     {
+        use_real_receive = 0;
         if ( !rocketnet_rio_test_functions->receive( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
                                                      (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
             return false;
     }
-    else
 #endif
-        if ( !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
-                                     (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
+    if ( use_real_receive && !rio->rio.RIOReceiveEx( rio->request_queue, &data, 1, NULL, &address, NULL, NULL, 0,
+                                                     (PVOID) (uintptr_t) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) slice ) ) )
     {
         // a post refused with an ICMP report of an earlier send is counted
         // with the reset statuses; a refused re-post waits on the retry list in
