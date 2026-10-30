@@ -1,15 +1,16 @@
 # RNUringDriver: the io_uring server driver
 
 `RNUringDriver.tla` models the io_uring server driver
-(`sdk/rocketnet_server_uring_linux.cpp`) **before the code exists**. It
-follows THE DESIGN of card `rocketnet-io-uring-driver-core`. Once that card
-lands, the driver cites this module, and the `io-uring-driver` row in
-`COVERAGE.tsv` moves from `owed` to `current`.
+(`sdk/rocketnet_server_uring_linux.cpp`). The driver names the model's
+actions in its comments, and the `io-uring-driver` row in `COVERAGE.tsv`
+tracks the coverage. The code receives on one socket per queue, each with its
+own multishot RECVMSG and provided buffer ring; the model abstracts those to
+one multishot and one buffer ring.
 
 ## The abstraction
 
 The driver owns one io_uring, and only the main thread uses it. The model
-keeps the three state machines of the design and abstracts away the
+keeps the three state machines of the code and abstracts away the
 contents:
 
 - **Send slots.** Each slot is in one of four states: `Free`, `Reserved`,
