@@ -606,9 +606,13 @@ uint32_t rn_region_send_alloc_span( rn_region_t * region, int bytes );
 // The one decision a send's room is taken by. rn_region_send_alloc and
 // rn_region_send_alloc_span act on it, and the public room query
 // (rocketnet_client_can_send_message, rocketnet_server_can_send_message)
-// reads it, so the query and the send never disagree. Pure, allocation-free,
-// O(1). Checked in the allocation's order: the size, then the sticky
-// exhaustion, then a free descriptor, then the chunks or the span.
+// reads it, so the query and the send never disagree. Pure and
+// allocation-free. Checked in the allocation's order: the size, then the sticky
+// exhaustion, then a free descriptor, then the chunks or the span. The first
+// three checks are O(1), and so is the span placement of
+// rn_region_send_fit_span; rn_region_send_fit_store is not: it scans the chosen
+// class's meta array for a free run (rn_send_store_find), O(chunks in the
+// class) in the worst case.
 #define RN_SEND_FIT_OK              0   // room: the allocation takes it
 #define RN_SEND_FIT_REFUSED         1   // bytes outside the pool's range: the caller's refusal, not exhaustion
 #define RN_SEND_FIT_EXHAUSTED       2   // the region is already exhausted (sticky until reset)
