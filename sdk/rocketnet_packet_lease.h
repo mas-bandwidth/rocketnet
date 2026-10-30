@@ -164,11 +164,16 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     bool retired( const rocketnet_packet_context_t & supplied ) const
     {
         // proofs/tla/RNPacketLease.tla StartRetired and TLoad: scan from the frame's hash for
-        // an entry of an earlier epoch still active. TCmp reads that entry's fields after
-        // the state load without rereading the state, so a concurrent insert that reuses
-        // the entry races with the read: MCRNPacketLeaseRetiredRace.cfg and
-        // MCRNPacketLeaseRetiredTorn.cfg. Rereading the state and discarding a rewritten
-        // entry closes it: MCRNPacketLeaseRetired.cfg.
+        // an entry of an earlier epoch still active. TCmp reads that entry's fields, and a
+        // concurrent insert may claim and rewrite the same entry (it is of an earlier
+        // epoch): the read can overlap that writer's stores. The seqlock reader shape makes
+        // the overlap safe to discard: read the fields, an acquire fence, then load the
+        // state again relaxed; a changed state means the entry was rewritten, so the
+        // fields are dropped and the probe continues. Without it a rewritten entry could be
+        // read as torn and accepted for a changed copy (MCRNPacketLeaseBrokenRetiredRace.cfg and
+        // MCRNPacketLeaseBrokenRetiredTorn.cfg); with it MCRNPacketLeaseRetired.cfg holds every
+        // invariant. This path is reached only after take refused, which is caller misuse,
+        // so the old effect was a misclassified misuse, not a wrong take.
 
         if ( !epoch || !supplied.frame || !supplied.packet_id )
             return false;
@@ -186,9 +191,15 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
                 continue;
 
             const auto & owned = entry.context;
-            if ( owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
-                 owned.sequence == supplied.sequence && owned.client_index == supplied.client_index &&
-                 owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity )
+            const bool match = owned.frame == supplied.frame && owned.packet_id == supplied.packet_id &&
+                               owned.sequence == supplied.sequence && owned.client_index == supplied.client_index &&
+                               owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity;
+
+            std::atomic_thread_fence( std::memory_order_acquire );
+            if ( entry.state.load( std::memory_order_relaxed ) != state )
+                continue;
+
+            if ( match )
                 return true;
         }
 
