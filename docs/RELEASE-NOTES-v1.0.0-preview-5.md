@@ -157,8 +157,9 @@ unchanged. The standard ([TRANSPORT.md](../standard/TRANSPORT.md),
 [MESSAGES.md](../standard/MESSAGES.md)) was corrected in this release, and some
 corrections change what a receiver does:
 
-- **Reliable-sequenced records.** A reliable-sequenced record any distance
-  ahead of the read index is held and never refused, because a sender's ordered
+- **Sequenced records.** A sequenced record (unreliable-sequenced, code 1, or
+  reliable-sequenced, code 4) any distance ahead of the read index is held and
+  never refused, because a sender's ordered
   backlog legitimately puts it ahead. Previously a record a window or more ahead
   was refused as a violation, which ended the connection of a sender that was
   behaving correctly. Rules 7 and 9 of
