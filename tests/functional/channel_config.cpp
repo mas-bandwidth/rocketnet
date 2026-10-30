@@ -2,7 +2,7 @@
     RocketNet. Copyright 2026 Más Bandwidth LLC.
     Licensed under the GNU Affero General Public License v3.0
 
-    Functional checks for the CONFIG announcement (docs/CHANNELS.md 10.3) over
+    Functional checks for the CONFIG announcement (standard/MESSAGES.md m11) over
     the channel harness: two objects whose wire configuration differs refuse
     each other with CONFIG_MISMATCH, and two equal objects recover from the
     first CONFIG packet each way being lost, verify, and exchange reliable
@@ -68,7 +68,7 @@ static void rocketnet_config_print_failure( const char * name, rocketnet_channel
     fflush( stdout );
 }
 
-// RNEndpoint OnPayload's CONFIG half (docs/CHANNELS.md 10.3): each endpoint
+// RNEndpoint OnPayload's CONFIG half (standard/MESSAGES.md m11): each endpoint
 // compares the remote endpoint's CONFIG body field by field with its own and ends the
 // connection with CONFIG_MISMATCH on the first difference. The server object
 // is given a different num_channels before its reset announces its CONFIG, so
@@ -161,7 +161,7 @@ void config_mismatch_over_loopback()
     rocketnet_channel_harness_destroy( &h );
 }
 
-// RNEndpoint ConfigReliable (docs/CHANNELS.md 10.3): CONFIG is reliable
+// RNEndpoint ConfigReliable (standard/MESSAGES.md m11): CONFIG is reliable
 // number 0 and is resent until acknowledged. Holding every payload packet
 // while the transport connects drops the first CONFIG each way; once the wire
 // passes again the resends must verify both ends, which then exchange 32

@@ -6,7 +6,7 @@
 #include "rocketnet_window_receive.h"
 #include "rocketnet_platform.h"
 
-// CHANNELS 6.5 (R8), RNWindow Accept: one duplicate record, one owner's
+// standard/MESSAGES.md m5.2 (R8), RNWindow Accept: one duplicate record, one owner's
 // counter. Regions can share that owner across connection threads (16.1).
 static int rn_window_duplicate( rn_window_receive_t * receive )
 {
@@ -17,7 +17,7 @@ static int rn_window_duplicate( rn_window_receive_t * receive )
     return RN_WINDOW_RECEIVE_DUPLICATE;
 }
 
-// CHANNELS 6.1 and R4, RNWindow Init: the region is carved by layer 1 at
+// standard/MESSAGES.md m5, RNWindow Init: the region is carved by layer 1 at
 // connect; this module owns only R and its pointer into those fixed tables.
 // proofs/tla/RNWindow.tla Init
 void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region, uint64_t first_number )
@@ -30,7 +30,7 @@ void rn_window_receive_init( rn_window_receive_t * receive, rn_region_t * region
     receive->violation = ROCKETNET_MESSAGE_VIOLATION_NONE;
 }
 
-// CHANNELS 6.5, 13.3 check 10 and 13.5; RNWindow Recon and Accept. The
+// standard/MESSAGES.md m5.2 and m4; RNWindow Recon and Accept. The
 // caller applies records in wire order and stops a payload on VIOLATION (R6).
 // proofs/tla/RNWindow.tla OpenPacket
 int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_message_record_t * record, uint32_t * slot )
@@ -91,7 +91,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
     *word |= bit;
     *slot = index;
 
-    // CHANNELS R7, RNWindow Advance: inspect only bits R actually passes.
+    // RNWindow Advance: inspect only bits R actually passes.
     // Clearing one frees that ring position for the number W above it, while
     // the live descriptor remains protected until release(number).
 
@@ -111,7 +111,7 @@ int rn_window_receive_accept( rn_window_receive_t * receive, const rocketnet_mes
 }
 
 #if ROCKETNET_DEV
-// CHANNELS 6.1/6.3, RNWindow EndUpdate and held release: only the exact live
+// standard/MESSAGES.md m5, m5.4, RNWindow EndUpdate and held release: only the exact live
 // number may free its slot; R and received history never move backwards.
 // proofs/tla/RNWindow.tla EndUpdate
 void rn_window_receive_release( rn_window_receive_t * receive, uint64_t number )

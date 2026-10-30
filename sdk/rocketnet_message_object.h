@@ -18,13 +18,13 @@
 #include "rocketnet_send_budget.h"
 #include "rocketnet_slots.h"
 
-// layers 7 and 8 of the message layer (docs/CHANNELS.md 10 and 11), condensed
+// layers 7 and 8 of the message layer (standard/MESSAGES.md m11), condensed
 // to what the C API in sdk/rocketnet.h needs: the client and the server message
 // objects over the transports. proofs/tla/RNSlots.tla is the spec of the object's
 // update, release and slot rules; proofs/tla/RNConnectionMemory.tla of exhaustion and
 // reuse; each function in sdk/rocketnet_message_client.cpp and
 // sdk/rocketnet_message_server.cpp names the action it implements (R7). Each
-// connection's own message state is its endpoint (layer 7, CHANNELS.md 10.1,
+// connection's own message state is its endpoint (layer 7, proofs/tla/RNEndpoint.tla,
 // sdk/rocketnet_endpoint.h), which the object calls for everything per
 // connection; the object keeps the transport link, the slots and the update
 // order.
@@ -172,7 +172,7 @@ struct rn_message_connection_hot_t
 
 static_assert( sizeof( rn_message_connection_hot_t ) <= 32, "message hot slot must stay compact" );
 
-// the cold connection owns the endpoint (CHANNELS.md 10.1), its channels,
+// the cold connection owns the endpoint (proofs/tla/RNEndpoint.tla), its channels,
 // budget, queued sends and write pass. The pointer binds its hot slot for
 // receive/release helpers that only have a connection address.
 
@@ -222,7 +222,7 @@ struct rn_message_object_t
     rn_arena_t * arena;
     rn_message_connection_t * connections;      // cold endpoints, indexed like hot_connections
     rn_message_connection_hot_t * hot_connections;
-    struct rn_slots_t slots;                    // the slots machine (CHANNELS.md 10.2)
+    struct rn_slots_t slots;                    // the slots machine (proofs/tla/RNSlots.tla)
     int32_t default_kbps;                       // a new connection's send budget; 0 or lower uncapped
     uint32_t unreliable_limit;                  // the largest UNRELIABLE message: one record in one packet
     double time;                                // the last update's time

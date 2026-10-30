@@ -15,7 +15,7 @@
 #include <stddef.h>
 #include <float.h>
 
-// Layer 1 of the message layer: the region (docs/CHANNELS.md 4, sized by 14).
+// Layer 1 of the message layer: the region (proofs/tla/RNConnectionMemory.tla, sized per docs/LOAD.md Table 3).
 //
 // One fixed region per connection: per server slot, and the client's one.
 // An arena is the one block an object holds from create, with its regions
@@ -25,7 +25,7 @@
 // table reset, every free list threaded -- in its own memory, allocating
 // nothing. Every queue, window, buffer and block the channel layers need is
 // a typed carve-out of the region, sized from the connection's config by
-// section 14's formula.
+// docs/LOAD.md Table 3's formula.
 //
 // Exhaustion is a counted refusal (MESSAGE_SEND_STORE_FULL,
 // MESSAGE_SEND_QUEUE_FULL), never growth, and it ends the connection: the
@@ -43,7 +43,7 @@
 //                          the entry types
 // ----------------------------------------------------------------
 
-// Each is pinned to section 14's working figure by a static assert in
+// Each is pinned to docs/LOAD.md Table 3's working figure by a static assert in
 // rocketnet_allocator.cpp, so the formula and the code cannot drift.
 
 #define RN_DESCRIPTOR_NONE      0xFFFFFFFFu
@@ -147,7 +147,7 @@ struct rn_send_descriptor_t             // 72 bytes: one queued or in-flight sen
 #define RN_SEND_FLAG_SPAN       0x01    // the message lives in one contiguous span of the send spans, not in store chunks
 #define RN_SEND_FLAG_RECEIPT_PROMOTED 0x02 // a large public type 5 uses reliable wire code 2 and receives one ACKED outcome
 #define RN_SEND_FLAG_RECEIPT_RELIABLE 0x04 // public type 6 or 7 uses reliable wire code 2 or 3 and receives one ACKED outcome
-#define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, docs/CHANNELS.md 10.3): code 2 with CONTROL set, never an application message
+#define RN_SEND_FLAG_CONTROL    0x08    // a layer control record (CONFIG, standard/MESSAGES.md m11): code 2 with CONTROL set, never an application message
 
 #define RN_SCHEDULE_QUEUED      0x0001u
 
@@ -271,7 +271,7 @@ struct rn_region_layout_t
 {
     uint64_t offset[RN_NUM_PARTS];      // from the region base, each 64-aligned
     uint64_t bytes[RN_NUM_PARTS];       // the formula's term, exactly
-    uint64_t formula_bytes;             // the sum of the terms: section 14's figure
+    uint64_t formula_bytes;             // the sum of the terms: docs/LOAD.md Table 3's figure
     uint64_t region_bytes;              // the exact region: the formula plus each part's alignment padding
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
 };
@@ -300,7 +300,7 @@ const struct rocketnet_config_field_t * rocketnet_message_config_fields( int * n
 // so its chunks are addressed by arithmetic on the head, never by a stored
 // reference to another chunk, and no byte outside S is spent on them. The
 // live and head bits make a double free a refusal, never a corrupted pool
-// (CHANNELS section 4). Freeing a block is O(its run length): it scans only
+// (proofs/tla/RNSendStore.tla). Freeing a block is O(its run length): it scans only
 // the block's own run, never a numeric gap. Free chunks are found by a scan
 // of the meta array's live bits from the class's scan cursor, so no free
 // chain is stored either.

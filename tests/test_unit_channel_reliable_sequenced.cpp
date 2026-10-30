@@ -158,7 +158,7 @@ static void test_reliable_sequenced_c_api_start_finish()
         memcpy( data, "rs!", 3 );
         check( rocketnet_message_client_finish( client, 3 ) != 0 );
 
-        const uint32_t d = object->connections[0].region->channel_send[0].queue_tail;    // the head is the connection's CONFIG (CHANNELS.md 10.3)
+        const uint32_t d = object->connections[0].region->channel_send[0].queue_tail;    // the head is the connection's CONFIG (standard/MESSAGES.md m11)
         check( d != RN_DESCRIPTOR_NONE );
         check( object->connections[0].region->send_descriptors[d].reliability == ROCKETNET_RELIABILITY_RELIABLE_SEQUENCED );
     }

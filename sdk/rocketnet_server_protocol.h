@@ -82,7 +82,7 @@ struct rocketnet_server_protocol_t
     struct rocketnet_counters_t * counters;
     struct rocketnet_signature_verify_budget_t signature_verify_budget;   // per-source failed-verify budget, before the verify
 
-    // the connection ids (docs/CHANNELS.md P9a, P9b). connection_ids holds one
+    // the connection ids (standard/MESSAGES.md m1.4 rule 5). connection_ids holds one
     // per client slot: nonzero and unique over the server's life while the
     // slot is held (a counter from 1, taken when the slot is assigned), 0
     // while it is free. acked_connection_ids parallels acks->acked_client_index

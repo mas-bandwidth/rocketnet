@@ -11,7 +11,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_message.h"
 
-// The pure sender numbering half of docs/CHANNELS.md 6.2. The per-number
+// The pure sender numbering half of standard/MESSAGES.md m5.1. The per-number
 // table belongs to the connection's region; this state reads no clock, owns
 // no socket, and allocates nothing (R4). A caller invokes first_write only
 // when it is about to put the record in a packet, never at send_message.
