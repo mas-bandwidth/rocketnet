@@ -30,7 +30,6 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_driver.h"
 #include "rocketnet_hash.h"
-#include "rocketnet_send_handoff.h"
 
 #include <ifaddrs.h>
 #include <bpf/bpf.h>
@@ -2305,8 +2304,8 @@ uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t
     return rocketnet_server_socket_start_packet_internal( server_socket, *packet_id, queue, to, destination_mac );
 }
 
-// proofs/tla/SendHandoff.tla Finish: writes the byte count of the packet slot start_packet staged in the filling buffer
-// proofs/tla/SendHandoff.tla StaleFinish: refuses a packet pointer outside the filling buffer (one from before the last flip) instead of rewriting a published packet
+// proofs/tla/RNDriverSendStaging.tla XdpStart: finish writes the byte count of the packet slot start_packet staged in the producer buffer
+// proofs/tla/RNDriverSendStaging.tla Publish: a pointer outside the producer buffer (one from before the last flip) is refused instead of rewriting a published packet
 
 void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * server_socket, uint64_t packet_id, uint8_t * packet_data, int packet_bytes )
 {
