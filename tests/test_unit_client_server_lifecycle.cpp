@@ -1225,8 +1225,12 @@ static void test_server_start_stop_start_again()
             break;
     }
 
-    check( rocketnet_client_state( world.clients[0] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
-    check( rocketnet_client_state( world.clients[1] ) <= ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    // stop flushed the disconnect packets before the transport stopped: both
+    // clients read the server's disconnect within a second of caller time,
+    // far inside the token timeout, never a timeout
+
+    check( rocketnet_client_state( world.clients[0] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
+    check( rocketnet_client_state( world.clients[1] ) == ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED );
 
     // a stopped server's update and send are plain no-ops, not misuse
 
@@ -4313,6 +4317,147 @@ static void test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_del
     check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 REGISTER_UNIT_TEST( test_integrated_slot_reuse_memory_pressure_disconnect_budget_and_delayed_ack );
+
+// rocketnet_server_client_connection_id: nonzero while a slot holds a
+// connection, 0 when it is free, distinct across slots, and never the same
+// for two connections of one server (proofs/tla/ServerSession.tla
+// ConnIdLiveAndDistinct, ConnIdNeverRepeats).
+
+static void test_server_connection_id_tracks_each_connection()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 2, 2 );
+    rocketnet_server_t * server = world.server;
+
+    check( rocketnet_server_client_connection_id( server, 0 ) == 0 );
+    check( rocketnet_server_client_connection_id( server, 1 ) == 0 );
+
+    const uint64_t before = rocketnet_api_misuse_count();
+    check( rocketnet_server_client_connection_id( server, -1 ) == 0 );
+    check( rocketnet_api_misuse_count() == before + 1 );
+    check( rocketnet_server_client_connection_id( server, 2 ) == 0 );
+    check( rocketnet_api_misuse_count() == before + 2 );
+
+    lifecycle_connect( &world, 0, 0x4101 );
+    lifecycle_connect( &world, 1, 0x4102 );
+    const int index_a = rocketnet_client_index( world.clients[0] );
+    const int index_b = rocketnet_client_index( world.clients[1] );
+    check( index_a != index_b );
+    const uint64_t id_a = rocketnet_server_client_connection_id( server, index_a );
+    const uint64_t id_b = rocketnet_server_client_connection_id( server, index_b );
+    check( id_a != 0 );
+    check( id_b != 0 );
+    check( id_a != id_b );
+
+    // the id holds still across updates while the connection lives
+
+    lifecycle_pump( &world );
+    check( rocketnet_server_client_connection_id( server, index_a ) == id_a );
+
+    // freed, the slot reads 0; reconnected into it, a new id
+
+    lifecycle_disconnect( &world, 0 );
+    check( rocketnet_server_client_connection_id( server, index_a ) == 0 );
+    lifecycle_connect( &world, 0, 0x4103 );
+    const int index_c = rocketnet_client_index( world.clients[0] );
+    const uint64_t id_c = rocketnet_server_client_connection_id( server, index_c );
+    check( id_c != 0 );
+    check( id_c != id_a );
+    check( id_c != id_b );
+
+    // a stopped server's slots read 0, and the next run continues the count:
+    // the transport numbers each run from 1, the public id never repeats
+
+    rocketnet_server_stop( server );
+    rn_test_server_wait_stopped( server );
+    check( rocketnet_server_client_connection_id( server, index_c ) == 0 );
+    check( rocketnet_server_client_connection_id( server, index_b ) == 0 );
+
+    check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < world.num_clients; i++ )
+    {
+        rocketnet_client_disconnect( world.clients[i] );
+        rn_test_client_wait_disconnected( world.clients[i] );
+    }
+    lifecycle_connect( &world, 0, 0x4104 );
+    const uint64_t id_d = rocketnet_server_client_connection_id( server, rocketnet_client_index( world.clients[0] ) );
+    check( id_d != 0 );
+    check( id_d != id_a && id_d != id_b && id_d != id_c );
+    check( id_d > id_c );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_connection_id_tracks_each_connection );
+
+// The case rocketnet_server_client_connected cannot see: one server update
+// ends the connection in a slot and admits another into it. The slot reads
+// connected before and after; the connection id changes.
+//
+// One slot. B takes its challenge while the slot is free and holds its
+// response; A then connects into the slot. A's disconnect and B's response
+// reach the server together, A's first, so one update frees the slot and
+// gives it to B.
+
+static void test_server_connection_id_changes_on_reconnect_within_one_update()
+{
+    lifecycle_world_t world;
+    lifecycle_world_create( &world, 1, 2 );
+    rocketnet_server_t * server = world.server;
+    rocketnet_client_t * client_a = world.clients[0];
+    rocketnet_client_t * client_b = world.clients[1];
+
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    lifecycle_token( server, rocketnet_server_port( server ), &world.identity, 0x5202, 300, token );
+    check( rn_test_client_connect_after_completion( client_b, token ) == ROCKETNET_STATUS_OK );
+    for ( int i = 0; i < 400; i++ )
+    {
+        lifecycle_now = world.time;
+        rocketnet_client_update( client_b, world.time );
+        if ( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE )
+            break;
+        rocketnet_client_send_packets( client_b );
+        rocketnet_server_update( server, world.time );
+        rocketnet_server_send_packets( server );
+        world.time += 0.01;
+    }
+    check( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    check( rocketnet_server_client_connected( server, 0 ) == 0 );
+
+    // B sits out while A connects
+
+    world.clients[1] = NULL;
+    lifecycle_connect( &world, 0, 0x5201 );
+    world.clients[1] = client_b;
+    check( rocketnet_client_index( client_a ) == 0 );
+    const uint64_t id_a = rocketnet_server_client_connection_id( server, 0 );
+    check( id_a != 0 );
+    check( rocketnet_server_client_id( server, 0 ) == 0x5201 );
+
+    rocketnet_client_disconnect( client_a );
+    rn_test_client_wait_disconnected( client_a );
+    lifecycle_now = world.time;
+    rocketnet_client_update( client_b, world.time );
+    check( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_SENDING_CONNECTION_RESPONSE );
+    rocketnet_client_send_packets( client_b );
+
+    check( rocketnet_server_client_connected( server, 0 ) != 0 );
+    rocketnet_server_update( server, world.time );
+    check( rocketnet_server_client_connected( server, 0 ) != 0 );
+    check( rocketnet_server_client_id( server, 0 ) == 0x5202 );
+    const uint64_t id_b = rocketnet_server_client_connection_id( server, 0 );
+    check( id_b != 0 );
+    check( id_b != id_a );
+
+    rocketnet_server_send_packets( server );
+    world.time += 0.01;
+    for ( int i = 0; i < 400 && rocketnet_client_state( client_b ) != ROCKETNET_CLIENT_STATE_CONNECTED; i++ )
+        lifecycle_pump( &world );
+    check( rocketnet_client_state( client_b ) == ROCKETNET_CLIENT_STATE_CONNECTED );
+    check( rocketnet_server_client_connection_id( server, 0 ) == id_b );
+
+    lifecycle_world_destroy( &world );
+}
+REGISTER_UNIT_TEST( test_server_connection_id_changes_on_reconnect_within_one_update );
 #endif // #if ROCKETNET_DEV
 
 #if !ROCKETNET_DEV

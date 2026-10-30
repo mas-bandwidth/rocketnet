@@ -8,6 +8,9 @@ set(ROCKETNET_TRANSPORT_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/backend.cpp" CACHE 
 add_subdirectory("${ROCKETNET_SOURCE_PATH}" rocketnet)
 add_executable(transport_extension main.cpp)
 target_link_libraries(transport_extension PRIVATE rocketnet_dev)
+# A native transport extension is built against the internal transport seam,
+# which RocketNet::rocketnet does not expose: name sdk/ explicitly.
+target_include_directories(transport_extension PRIVATE "${ROCKETNET_SOURCE_PATH}/sdk")
 enable_testing()
 add_test(NAME external_transport_transport_exchange COMMAND transport_extension)
 set_tests_properties(external_transport_transport_exchange PROPERTIES TIMEOUT 30 ENVIRONMENT "ROCKETNET_SERVER_TRANSPORT=external_test;ROCKETNET_CLIENT_TRANSPORT=external_test")

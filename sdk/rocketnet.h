@@ -1905,6 +1905,36 @@ static inline enum rocketnet_status_t rocketnet_connect_token_default_config( st
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_create_connect_token( const struct rocketnet_connect_token_config_t * config, char * connect_token );
 
+/// Message sizing
+
+/// Returns the largest message, in bytes, that the reliability sends as one
+/// record in a single datagram: an unreliable message at or below it is written in
+/// place and never promoted to its reliable twin; a reliable message at or
+/// below it is never split into fragments. A larger message is still legal up
+/// to the configured max_message_bytes; it is promoted or fragmented.
+///
+/// The values are the one-record limits of the message standard:
+/// 1411 for UNRELIABLE and UNRELIABLE_WITH_ACK_RECEIPT
+/// (ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES); for UNRELIABLE_SEQUENCED 1405,
+/// or 1404 on a channel of 256 or more; 1408 for RELIABLE and
+/// RELIABLE_WITH_ACK_RECEIPT; 1401 for RELIABLE_ORDERED and
+/// RELIABLE_ORDERED_WITH_ACK_RECEIPT; for RELIABLE_SEQUENCED 1399, or 1398 on
+/// a channel of 256 or more. Every one is at most
+/// ROCKETNET_MAX_PACKET_PAYLOAD_BYTES. Size a per-packet game message against
+/// the value for the mode and channel it is sent on.
+///
+/// A pure function: it reads and changes no state, counts nothing and works
+/// before init. Thread: any thread.
+///
+/// @param reliability The reliability mode the message is sent with.
+/// @param channel The channel it is sent on, 0 to ROCKETNET_MAX_CHANNELS - 1.
+/// The channel matters only to the sequenced modes; it is checked for every
+/// mode.
+/// @return The limit in bytes, or 0 for an unknown reliability or a channel
+/// out of range.
+
+ROCKETNET_EXPORT int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t reliability, int channel );
+
 /// Client
 
 /// Each connection starts fresh.
@@ -2008,6 +2038,41 @@ ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet
 
 #define ROCKETNET_DEV_BACKEND_PUBLIC_KEY { 0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
                                            0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
+
+/// The published development backend secret key, the Ed25519 secret of
+/// ROCKETNET_DEV_BACKEND_PUBLIC_KEY (its last 32 bytes are that public key).
+/// Initialize a uint8_t[ROCKETNET_BACKEND_SECRET_KEY_BYTES] with it and pass
+/// it as backend_secret_key to rocketnet_create_connect_token to mint the
+/// tokens rocketnet_create_dev_connect_token mints, from your own backend code.
+///
+/// It is printed in the standard, so a token signed with it proves nothing.
+/// A production build compiles it out and refuses it.
+
+#define ROCKETNET_DEV_BACKEND_SECRET_KEY { 0x75, 0x29, 0x02, 0x15, 0xe1, 0xff, 0x4d, 0xf2, 0x09, 0x92, 0x57, 0x8a, 0x22, 0x3c, 0x7c, 0xd4, \
+                                           0x63, 0xb9, 0xa2, 0x7c, 0xf8, 0x3a, 0xa7, 0x1c, 0x7a, 0x16, 0x93, 0x1c, 0x01, 0x9b, 0x7c, 0x30, \
+                                           0xb0, 0xab, 0x03, 0xb3, 0xe2, 0x6e, 0xf1, 0x7c, 0x72, 0xe3, 0xbd, 0x99, 0x29, 0xa5, 0xb4, 0xbf, \
+                                           0x48, 0xbd, 0xba, 0x50, 0x57, 0x3f, 0x1b, 0x8d, 0x08, 0x4a, 0x08, 0xd8, 0x58, 0xbd, 0x24, 0x2c }
+
+/// The published development server public key: the X25519 public key of
+/// ROCKETNET_DEV_SERVER_SECRET_KEY. A backend under test that seals tokens
+/// to a fixed key passes it as server_public_key.
+
+#define ROCKETNET_DEV_SERVER_PUBLIC_KEY { 0x3d, 0x24, 0x90, 0x88, 0x9d, 0x37, 0x4c, 0x29, 0x6f, 0xab, 0x1d, 0x57, 0x70, 0xcb, 0x71, 0x47, \
+                                          0x6a, 0x06, 0xf7, 0x4e, 0xf2, 0xf2, 0x54, 0x0c, 0xf2, 0x21, 0x5f, 0x76, 0x14, 0xf4, 0x80, 0x1c }
+
+/// The published development server secret key. Copy it into the server
+/// config's server_secret_key for a server whose public key is
+/// ROCKETNET_DEV_SERVER_PUBLIC_KEY, so a backend under test can seal tokens
+/// to a key known before the server starts.
+///
+/// It is printed in the standard, so anyone can open a token sealed to it. A
+/// production build compiles it out, refuses it at server start with
+/// ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION, and refuses a token sealed to its
+/// public half at client connect with
+/// ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION.
+
+#define ROCKETNET_DEV_SERVER_SECRET_KEY { 0x6f, 0xfb, 0x8f, 0x73, 0x37, 0xec, 0x37, 0x76, 0x97, 0xf5, 0x68, 0xde, 0x31, 0x18, 0xd8, 0x39, \
+                                          0x59, 0x56, 0x0b, 0x25, 0x92, 0x8d, 0x22, 0x70, 0x7b, 0xa2, 0x29, 0x75, 0x89, 0xd0, 0x8b, 0x97 }
 
 /// Writes a development token for rocketnet_client_connect.
 /// The output buffer must hold ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
@@ -2633,6 +2698,16 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 /// Does not wait for workers. Poll rocketnet_server_stopped before restart or
 /// destroy. Repeated requests do nothing.
 ///
+/// Stop is the whole shutdown flush; there is no separate disconnect or send
+/// step to call first. In this one call every connected client's slot is
+/// ended, its redundant disconnect packets (a fixed number per client) are
+/// sealed and handed to the transport, and only then is the transport told
+/// to stop, so they go out before the workers exit. Messages queued
+/// and not yet sent are dropped. A client that receives one of them
+/// moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses every
+/// copy times out under its token's timeout. The work is bounded by
+/// max_clients and never waits on the network.
+///
 /// Needs a running server; stopped or stopping it does nothing. Running is
 /// false as soon as it returns. Thread: not thread-safe; the caller owns the
 /// server one thread at a time.
@@ -2817,6 +2892,29 @@ ROCKETNET_EXPORT bool rocketnet_server_client_connected( const struct rocketnet_
 /// @return The client ID, or 0.
 
 ROCKETNET_EXPORT uint64_t rocketnet_server_client_id( const struct rocketnet_server_t * server, int client_index );
+
+/// Returns the id of the connection that holds the slot: nonzero while a
+/// client is connected in it, and 0 when the slot is free or the server is
+/// stopped.
+///
+/// Every connection gets a new id, unique for the server's lifetime: a client
+/// that disconnects and reconnects into the same slot, even within one
+/// update, reads a different id, and no id repeats across slots, stops and
+/// starts. The ids are a 64-bit count from 1 and never wrap in practice.
+///
+/// Compare the id per slot after each update to detect a disconnect plus a
+/// reconnect within one update, which polling rocketnet_server_client_connected
+/// misses, and to reset your per-connection state when it changes.
+///
+/// Callable running or stopped, any time between updates. Thread: not
+/// thread-safe; the caller owns the server one thread at a time.
+///
+/// @param server The server. NULL counts as API misuse and returns 0.
+/// @param client_index The slot, 0 to max_clients - 1. Any other index logs
+/// an error, counts as API misuse and returns 0.
+/// @return The connection id, or 0.
+
+ROCKETNET_EXPORT uint64_t rocketnet_server_client_connection_id( const struct rocketnet_server_t * server, int client_index );
 
 /// Copies the user data from the slot's connect token into user_data.
 ///

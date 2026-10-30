@@ -112,6 +112,20 @@ client connect with no backend: initialize `backend_public_key` from
 and `rocketnet_server_public_key` to `rocketnet_create_dev_connect_token`. A
 server started with a development key logs a warning on every start.
 
+All four published development keys are public macros in a development
+build, so a backend under test (in C, or in another language that copies the
+bytes) needs no internal header:
+
+| Macro | Bytes | What it is |
+|---|---|---|
+| `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` | `ROCKETNET_BACKEND_PUBLIC_KEY_BYTES` (32) | the server config's `backend_public_key` |
+| `ROCKETNET_DEV_BACKEND_SECRET_KEY` | `ROCKETNET_BACKEND_SECRET_KEY_BYTES` (64) | the token config's `backend_secret_key`; its last 32 bytes are the public key |
+| `ROCKETNET_DEV_SERVER_PUBLIC_KEY` | `ROCKETNET_SERVER_PUBLIC_KEY_BYTES` (32) | the token config's `server_public_key` for a server given the secret below |
+| `ROCKETNET_DEV_SERVER_SECRET_KEY` | `ROCKETNET_SERVER_SECRET_KEY_BYTES` (32) | the server config's `server_secret_key` |
+
+With the development server pair a backend can seal tokens before the server
+starts, as with a production fixed server key.
+
 The development backend key is published in the standard: its public half is
 `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` ([standard/TRANSPORT.md, t19.2](../standard/TRANSPORT.md#t19.2)),
 so anyone can mint a token a server accepts. A server that accepts the
@@ -120,7 +134,7 @@ development backend key accepts tokens from anyone.
 A production build (`ROCKETNET_DEV=0`, CMake `-DROCKETNET_DEV=OFF`;
 [BUILDING.md, "Production builds"](BUILDING.md#production-builds)):
 
-- compiles out `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` and
+- compiles out the four `ROCKETNET_DEV_*_KEY` macros and
   `rocketnet_create_dev_connect_token`;
 - refuses the published development backend key at start, with
   `ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION`;
@@ -171,8 +185,8 @@ same token byte for byte: Go ([go/main.go](../examples/backend/go/main.go),
 `generateConnectToken`) and C#
 ([csharp/Backend/ConnectToken.cs](../examples/backend/csharp/Backend/ConnectToken.cs),
 `ConnectToken.Generate`). Both are checked against the known answers in
-[tests/connect_token_vectors.json](../tests/connect_token_vectors.json). That file
-is written only by `./bin/connect_token_vectors tests/connect_token_vectors.json`
+[standard/vectors/connect_token_v1.json](../standard/vectors/connect_token_v1.json). That file
+is written only by `./bin/connect_token_vectors standard/vectors/connect_token_v1.json`
 ([tools/connect_token_vectors/main.cpp](../tools/connect_token_vectors/main.cpp)),
 from the fixed test keys and inputs; the unit suite compiles the committed copy
 into `./bin/test` and checks it byte for byte against the same generator

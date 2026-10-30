@@ -24,6 +24,9 @@ backend service. Capacity and timing claims require the workload-specific
 Follow [Building](BUILDING.md) for platform prerequisites, library targets,
 and installed or embedded CMake usage. `Release` and `ROCKETNET_DEV` are
 independent settings. Compile consumers against the matching public header.
+From source, `add_subdirectory(rocketnet)` and link `RocketNet::rocketnet`;
+do not copy RocketNet's build. Its public include directory holds only
+`rocketnet.h`, so an internal header does not compile in your code.
 
 ## Before production
 
@@ -127,6 +130,9 @@ then the examples for the features you use. Check eventual connection, message
 delivery, and shutdown within bounded deadlines. A single update or fixed sleep
 does not establish asynchronous completion. [Testing](TESTING.md) distinguishes
 this functional evidence from performance and platform qualification.
+Check for misuse from the public API: `api_misuses` in the client and server
+stats counts every API misuse in the process; read it before and after a test
+frame and assert it did not move.
 
 ### Reviewing implementation changes
 
@@ -143,6 +149,9 @@ Preserve wraparound, sparse occupancy, stale-generation, and lifetime checks.
 - Finishing a refused start: finish only a live reservation.
 - Sending before queueing: make send the last frame step.
 - Treating DISCONNECTED as worker completion: poll the completion query.
+- Polling `rocketnet_server_client_connected` alone: a disconnect and reconnect
+  inside one update keeps it true; compare `rocketnet_server_client_connection_id`
+  per slot after each update, and reset per-connection state when it changes.
 - Assuming a design goal or an older green run qualifies a new deployment.
 
 ## Zero-copy messages
@@ -152,6 +161,8 @@ messages are built in a transport packet; reliable or queued messages retain
 storage for later transmission. [Sending](USAGE.md#sending-messages) defines
 fallback, promotion, lifetime, and memory-exhaustion behavior. Do not depend on
 which storage path a particular reservation takes.
+`rocketnet_max_unfragmented_message_bytes( reliability, channel )` returns each
+mode's one-packet limit; size per-packet game messages against it.
 
 ### Why RocketNet works this way
 

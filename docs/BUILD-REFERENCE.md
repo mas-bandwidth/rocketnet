@@ -70,7 +70,7 @@ and starts no thread; CI runs it on a Linux leg beside
 
 `./bin/test` does not open a socket and does not start a transport. It drives the
 state machines and the in-memory network simulator, and reads and writes no
-file: the known-answer fixtures it checks (`tests/connect_token_vectors.json`
+file: the known-answer fixtures it checks (`standard/vectors/connect_token_v1.json`
 and `tests/wycheproof/*_test.json`) are compiled into it at build time by
 `cmake/EmbedTestFixtures.cmake`, so editing one rebuilds it. The vectors file is
 regenerated only by the tool `./bin/connect_token_vectors <path>`
