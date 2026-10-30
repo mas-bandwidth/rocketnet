@@ -13,8 +13,8 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_packet_batch.h"
 
-// The GSO transport (#97): the best non-root path Linux has, per the
-// #81 measurements -- an SO_REUSEPORT socket group with one worker thread
+// The GSO transport: the best non-root path Linux has, per the
+// measurements -- an SO_REUSEPORT socket group with one worker thread
 // per socket, the kernel's 4-tuple flow hash sharding RECEIVES across them
 // with zero shared state between queues, recvmmsg/sendmmsg batching on both
 // sides, UDP_SEGMENT (GSO) on send and UDP_GRO on receive so a batch
@@ -28,7 +28,7 @@
 // and the probe results are readable so a deployment knows which tier it got.
 // This transport never needs a capability or a privilege.
 //
-// Honest framing, per the #81 doctrine: this is the solid middle tier for
+// Honest framing: this is the solid middle tier for
 // hosts without XDP -- it recovers the syscall amortization and the
 // single-traversal segmentation, not the skb-allocation avoidance. The
 // the highest-scale claims belong to the XDP transport that earns them.

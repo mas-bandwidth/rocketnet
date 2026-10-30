@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// THE BIG-ENDIAN WIRE CHECK (#111's big-endian leg).
+// THE BIG-ENDIAN WIRE CHECK, the big-endian leg of the wire fuzz.
 //
 // Every byte-order-sensitive surface rocketnet has, driven end to end, with
 // NO SOCKETS ANYWHERE. That constraint is the whole design of this file and
@@ -12,17 +12,17 @@
 // UDP_SEGMENT burst is not segmented, and the portable rung's receive loop
 // stalls -- so a suite run there would be reporting on qemu. What this file
 // touches is arithmetic and memory, which qemu reproduces exactly, on real
-// s390x instructions against real big-endian memory. #129 owns the rest:
+// s390x instructions against real big-endian memory. The rest is
 // the full suite on real big-endian hardware.
 //
 // What it covers, and the defect each part was written against:
 //
-//   the endian helpers      #112: rocketnet_endian_fix(uint64_t*) swapped
+//   the endian helpers      rocketnet_endian_fix(uint64_t*) swapped
 //                           the POINTER. Uncalled by the sdk and by the
 //                           suite, so a no-op on every machine we own.
-//   address parsing         #125: inet_pton's network-order result read by
+//   address parsing         inet_pton's network-order result read by
 //                           host arithmetic, reversing every address.
-//   the byte-order helpers  #127: ntohs/htons swapping unconditionally.
+//   the byte-order helpers  ntohs/htons swapping unconditionally.
 //   the wire read/write     the standard's little-endian encoding, by shift
 //                           and mask, which must be identical on both hosts.
 //   the sealed packet       construction and opening, in memory: the
@@ -113,7 +113,7 @@ static void check_endian_helpers()
     CHECK( swap64 == 0x8877665544332211ULL );
 
     // and the platform's network-order helpers are the IDENTITY here,
-    // because network order is host order on this machine (#127)
+    // because network order is host order on this machine
 
     CHECK( rocketnet_platform_htons( 0x1234 ) == 0x1234 );
     CHECK( rocketnet_platform_ntohs( 0x1234 ) == 0x1234 );
@@ -168,7 +168,7 @@ static void check_addresses()
 {
     struct rocketnet_address_t address;
 
-    // #125: the octets, in the order they were written
+    // the octets, in the order they were written
 
     CHECK( rocketnet_address_parse( &address, "107.77.207.77" ) );
     CHECK( address.type == ROCKETNET_ADDRESS_IPV4 );
@@ -188,7 +188,7 @@ static void check_addresses()
     char buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     CHECK( strcmp( rocketnet_address_to_string( &address, buffer ), "127.0.0.1:40000" ) == 0 );
 
-    // #127: the ipv6 groups are host-order uint16 after the parse
+    // the ipv6 groups are host-order uint16 after the parse
 
     CHECK( rocketnet_address_parse( &address, "[fe80::1]:50000" ) );
     CHECK( address.type == ROCKETNET_ADDRESS_IPV6 );

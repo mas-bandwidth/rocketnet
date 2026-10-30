@@ -1493,7 +1493,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
 {
     rocketnet_assert( out );
 
-    // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is
+    // the config layering: DEFAULT < STRUCT < ENV. NULL config is
     // the development posture (the default shape); the caller's struct is
     // the middle layer; the environment overlays both through the config
     // table, every override logged loudly with the value it displaced.
@@ -1589,7 +1589,7 @@ static bool rocketnet_client_transport_resolve( const struct rocketnet_client_tr
         return false;
     }
 
-    // the operator memory budget (#155): each candidate's pre-allocation plan
+    // the operator memory budget: each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
     // plan exceeds it is refused exactly as a refusing transport is -- logged with
     // the plan and the budget, and skipped so the ladder falls to the next
@@ -1896,7 +1896,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
-    // THE LADDER (#106), the client's short form: candidates tried left to
+    // THE LADDER, the client's short form: candidates tried left to
     // right, first grant wins, a one-element list is a pin that refuses
     // rather than falls, and the exhausted list fails loudly naming what
     // was skipped for platform and what refused for grant.

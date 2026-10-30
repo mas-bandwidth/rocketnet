@@ -134,7 +134,7 @@ int rocketnet_client_transport_secret_spans_for_test( size_t * offsets, size_t *
 #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_MAC
 #endif // #if TARGET_OS_IPHONE
 #elif defined( __FreeBSD__ ) || defined( __OpenBSD__ ) || defined( __NetBSD__ )
-    // the BSDs verified per #81 ("Free, open. Net."): one platform bucket,
+    // the BSDs verified ("Free, open. Net."): one platform bucket,
     // pure POSIX, portable transport only -- the linux bucket keeps netlink,
     // GSO and XDP, none of which exist here
 #define ROCKETNET_PLATFORM ROCKETNET_PLATFORM_BSD
@@ -351,7 +351,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_RECEIVE_PAYLOAD_BYTES == ROCKETNET_MAX_PACKET
 //                  transport config tables
 // -----------------------------------------
 
-// the per-transport config system (#106). Each transport's config is
+// the per-transport config system. Each transport's config is
 // declared ONCE, in a table below: field name, type, default, valid range.
 // Everything else derives from the table mechanically -- the struct field,
 // the environment variable name (ROCKETNET_ prefix plus the endpoint and

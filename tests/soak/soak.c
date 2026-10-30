@@ -1032,7 +1032,7 @@ int main( int argc, char ** argv )
     client_config.simulated_loss_percent = soak_client_link.loss_percent;
     client_config.simulated_duplicate_percent = soak_client_link.duplicate_percent;
 
-    // Bind port zero and adopt what the kernel grants, the #107 shape. A soak
+    // Bind port zero and adopt what the kernel grants, the port-zero shape. A soak
     // is the worst place for a fixed port: it is the one binary the estate
     // runs for DAYS, so it is the one most likely to still hold the port when
     // the next run starts, and CI runs it nightly beside whatever else is on

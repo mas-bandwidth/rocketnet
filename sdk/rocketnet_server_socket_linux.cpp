@@ -424,7 +424,7 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     memset( mac_address, 0, 6 );
     *found = false;
 
-    // a parameter override under the #106 loud-override law: not a config
+    // a parameter override under the loud-override law: not a config
     // table field (it overrides a discovered value, not a declared one),
     // but it reads through the platform wrapper, logs what it displaces
     // (the address discovery it preempts), and STRICT-PARSES like every
@@ -767,7 +767,7 @@ static bool rocketnet_server_socket_cmdline_has_token( const char * cmdline, con
     return false;
 }
 
-// THE PRE-FLIGHT (#106): non-mutating, checking the two-tier condition
+// THE PRE-FLIGHT: non-mutating, checking the two-tier condition
 // list in scripts/rocketnet-provision's header -- the single documented
 // source this check, that script and BUILDING.md all derive from. Every
 // unmet condition names the knob, the wanted value, and the script;
@@ -1309,7 +1309,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    // the queue and cpu counts, and since the #110 review the public
+    // the queue and cpu counts, and since the review the public
     // address too, arrive from the transport config table (with loud
     // override logging and deprecated aliases handled there) -- no env is
     // read here, so the address the pre-flight verified is the address
@@ -1376,7 +1376,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         serves_both = 1;
     }
 
-    // VERIFY, then bind (#106): the non-mutating pre-flight refuses unless
+    // VERIFY, then bind: the non-mutating pre-flight refuses unless
     // the machine is provisioned -- provisioning itself lives in
     // scripts/rocketnet-provision, run deliberately by the operator, and
     // nothing below this point changes machine state. everything from here
@@ -1565,7 +1565,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     if ( !serves_both )
         rocketnet_xdp_reply_macs_reset( &server_socket->reply_macs, server_socket->gateway_known ? server_socket->gateway_ethernet_address : NULL );
 
-    // STATE IDENTITY (re-derived twice on the #110 gate): the identity
+    // STATE IDENTITY (re-derived twice at review): the identity
     // input contains NOTHING process-derived -- a random 64-bit token
     // names the root, because pid+sequence fails deterministically in
     // containers (pid 1 always, the sequence resetting every restart).
