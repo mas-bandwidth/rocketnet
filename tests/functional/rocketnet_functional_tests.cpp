@@ -2581,7 +2581,7 @@ void rocketnet_test_receive_drops_oversize_datagram()
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 }
 
-// the batch pump seam (#100): every platform serves it -- portable loops
+// the batch pump seam: every platform serves it -- portable loops
 // underneath on most, darwin's batched syscalls when the runtime probe
 // admits them -- and these tests pin the seam contract itself, so they run
 // identically over either implementation. packets are verified by content
@@ -2733,7 +2733,7 @@ void rocketnet_test_platform_batch_pump_degraded()
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-// zero-length chaff injection (#100's review): a zero-length datagram is
+// zero-length chaff injection: a zero-length datagram is
 // legal UDP, and before this round the portable path treated one as
 // "socket drained" -- byte-less chaff capped every drain at one packet, a
 // standing DoS lever. both pumps now share skip-and-continue semantics,
@@ -2961,7 +2961,7 @@ static void rocketnet_test_pump_chaff_exchange( const char * requested_pump = NU
     rocketnet_platform_socket_destroy( socket );
 }
 
-// a refused destination mid-batch (#100's review, the blocker): xnu can
+// a refused destination mid-batch (a blocker found at review): xnu can
 // deliver a prefix of a sendmsg_x batch and still return -1 with no
 // count, so the send path's law is one bounded per-packet finish of the
 // chunk. this pins the survivable half of that law on the real kernel: a
@@ -3666,7 +3666,7 @@ void rocketnet_test_transport_fragmentation()
 
 // the transport-level ipv6 loopback: the same out-of-the-box connect and
 // payload exchange as the udp loopback test, on [::1] -- ipv6 listen is
-// REQUIRED of every server transport (#97: the gamelift gateway speaks ipv6 to
+// REQUIRED of every server transport (the gamelift gateway speaks ipv6 to
 // servers), so this runs on every platform and every transport the suite
 // builds against, with zero transport ifdefs.
 
@@ -4765,7 +4765,7 @@ void rocketnet_test_config_precedence()
 // named grant, and pass real payloads both ways through it -- the matrix
 // doctrine's runtime form. the pin rides the struct, so ROCKETNET_SERVER_TRANSPORT
 // is cleared for the duration (env would win, by design). port zero per
-// the #107 law: the kernel grants the port and the token is minted for
+// the port-zero law: the kernel grants the port and the token is minted for
 // what was granted, so no other process on the box can race this test.
 
 // whether a whole-suite pin (pin_name) leaves this selection check
@@ -6407,7 +6407,7 @@ void rocketnet_test_server_transport_io_pin_msgx()
 // memory plan, not the suite-wide bound: the per-slot ACK history and the
 // transport's owned receive buffers are allocated up front by design. The rungs that can grant a port-zero address
 // are the auto-order transports that are not pin-only and that discover
-// their bound port (the #109 rule refuses the rest before create); the
+// their bound port (the port-zero rule refuses the rest before create); the
 // ladder fall's "xdp,gso,portable" is a subset of them. The bound is the
 // largest of their plans plus 32 MiB for the process, as the other
 // full-capacity cases state.
@@ -6453,8 +6453,8 @@ void rocketnet_test_transport_all_skipped_uses_auto()
     // a list whose every name is a platform- or endpoint-skip names no
     // transport for this endpoint at all -- a fleet-wide line read by an
     // endpoint it was not addressing -- so the endpoint falls to its own
-    // auto order, loudly, instead of bricking (#110 review, ruled inside
-    // the #106 ignore rule). a typo is still a typo: loud parse failure,
+    // auto order, loudly, instead of bricking (ruled on review, inside
+    // the ignore rule). a typo is still a typo: loud parse failure,
     // no create. refusal-exhausted lists still fail loudly -- the xdp pin
     // test proves that side.
 
@@ -6577,7 +6577,7 @@ void rocketnet_test_client_transport_io()
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// The GSO transport's own tests (#97), linux only, run on every linux build
+// The GSO transport's own tests, linux only, run on every linux build
 // whatever transport the transport compiled against -- the transport module is
 // always built, so its probe, its wire paths, its degraded tiers and its
 // overflow behaviour are covered even when the transport above it is

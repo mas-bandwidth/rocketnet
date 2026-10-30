@@ -739,7 +739,7 @@ static void test_server_repeats_keep_alive_while_idle()
 // ---------------------------------------------------------------------------
 // KeepAliveClock, the code's behaviour (ClientConnection.tla). the reversed
 // witness KeepAliveClock = "anysend" paces the keep-alive off the last send of
-// anything, so a payload stream suppresses the repair keep-alive (the #90
+// anything, so a payload stream suppresses the repair keep-alive (the stranding
 // regression). here a payload while the client is still unacknowledged does
 // not restamp the keep-alive clock, and the keep-alive is still due on it.
 // ---------------------------------------------------------------------------

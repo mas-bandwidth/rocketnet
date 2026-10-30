@@ -27,7 +27,7 @@
 // OCCUPIED SLOT INDEX that is due and addressed to the caller, and send()
 // takes the LOWEST FREE SLOT INDEX. That is not delivery-time order and not
 // FIFO; it is what the array walk this file was built around produced, and
-// every soak and functional test has run against it. #99 replaced the walk
+// every soak and functional test has run against it. The walk was later replaced
 // with an index over the same slots in the same order -- the cost changed,
 // the delivered sequence did not -- and the audit below is what holds that
 // claim up.

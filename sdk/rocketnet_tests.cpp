@@ -91,8 +91,7 @@ extern thread_local unsigned long long g_ack_visit_count;
 // Nothing true is lost, which is the point: a failing check dumps the ring
 // before the check line, so the cause of an unexpected refusal is printed
 // exactly when it matters and never otherwise -- a create that returns
-// NULL still explains itself, which is what the port-collision flake of
-// #107 needed. RUN_TEST clears the ring, so a dump belongs to the failing
+// NULL still explains itself, which is what the port-collision flake needed. RUN_TEST clears the ring, so a dump belongs to the failing
 // test alone.
 //
 // ROCKETNET_TEST_VERBOSE leaves the log live instead: no sink is
@@ -320,7 +319,7 @@ void rocketnet_test_endian()
 
 #endif // #if ROCKETNET_LITTLE_ENDIAN
 
-    // rocketnet_endian_fix, called for the first time by anything (#112).
+    // rocketnet_endian_fix, called for the first time by anything.
     // The header's public helper converts between host order and the
     // standard's little-endian wire order in place, and is a no-op on a
     // little-endian host. Nothing in the sdk called it and nothing in this
@@ -485,7 +484,7 @@ void rocketnet_test_base64()
         }
     }
 
-    // the strict decoder (#110 review, both readers independently): invalid
+    // the strict decoder (both readers independently): invalid
     // characters, high-bit bytes, misplaced or excessive padding, and
     // impossible lengths all refuse whole -- for the config system's key
     // fields a corrupted value must never silently become a wrong key, and
@@ -5486,7 +5485,7 @@ void rocketnet_test_client_keep_alive_invalid_index_has_no_effect()
 
 void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
 {
-    // #90, the stranding case, driven end to end on a punched wire: the
+    // The stranding case, driven end to end on a punched wire: the
     // establishment keep-alive -- the only packet that carries the client
     // index, and the only one that moves the client out of _sending
     // connection response_ -- is lost, while the server application sends
@@ -5632,7 +5631,7 @@ void rocketnet_test_keep_alive_unestablished_under_payload_traffic()
 
 void rocketnet_test_keep_alive_pacing_survives_early_ack()
 {
-    // The second half of #90, found by a cold reader refuting the first fix.
+    // The second half of the stranding case, found by a cold reader refuting the first fix.
     //
     // That fix flipped the suppression regime on the confirmed flag, and
     // justified it with "a client sends nothing sealed before _connected_".
@@ -5642,7 +5641,7 @@ void rocketnet_test_keep_alive_pacing_survives_early_ack()
     // being delivered payloads and accruing debt. A client that obeys that
     // SHOULD seals a type 8 from state 3, confirms its own slot, and the
     // server switches to traffic-suppressed pacing before the client has
-    // ever learned its index -- #90 again, with no packet loss needed after
+    // ever learned its index -- the stranding case again, with no packet loss needed after
     // the establishment keep-alive.
     //
     // This test builds that type 8 exactly as a conformant client would --
@@ -13057,7 +13056,7 @@ void rocketnet_test_send_arena()
 }
 
 // ----------------------------------------------------------------
-//        the config table and the transport ladder (#106)
+//        the config table and the transport ladder
 // ----------------------------------------------------------------
 
 // Each case restores the in-memory table state it found, so cases remain
@@ -14492,7 +14491,7 @@ void rocketnet_test_portable_server_release_gate()
     rocketnet_check( ladder.num_candidates == 1 && ladder.candidates[0] == ROCKETNET_TRANSPORT_PORTABLE );
 }
 
-// #109: a port-zero public address asks the KERNEL for a port, so it only
+// A port-zero public address asks the KERNEL for a port, so it only
 // means anything to a transport that discovers what it was granted and hands
 // it back. the portable and msgx rungs discover through the platform
 // socket's bind_address parameter, the gso rung through its own; the xdp
@@ -14501,7 +14500,7 @@ void rocketnet_test_portable_server_release_gate()
 // from rocketnet_server_transport_port() would name port 0, the cookie gate
 // would never match, and nothing would say why.
 //
-// the question is per TRANSPORT, not per build: #110 made create a loop over
+// the question is per TRANSPORT, not per build: create is a loop over
 // candidates, so the rule asks every candidate the same question at the
 // top of that loop and a rung that cannot discover refuses a port-zero
 // address the way every other rung refusal works -- the ladder falls to a
@@ -14512,7 +14511,7 @@ void rocketnet_test_portable_server_release_gate()
 // The defect itself -- a GRANTED xdp socket advertising port 0 -- is not
 // reachable here at any privilege: the suite installs the commit barrier
 // structurally, so the committing xdp create never runs under a test. That
-// half is a documented manual reproduction on #109, not an assertion.
+// half is a documented manual reproduction, not an assertion.
 
 void rocketnet_test_server_port_zero_needs_a_discovering_transport()
 {

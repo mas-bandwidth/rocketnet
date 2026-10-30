@@ -1,4 +1,4 @@
-# rocketnet fuzz targets (#124's discovery half), built against the development
+# rocketnet fuzz targets (the discovery half), built against the development
 # library. Two of the three targets mint a connect token with the published
 # development backend secret key (rocketnet_dev_backend_secret_key), which is
 # compiled out of the release library, so they must link the development

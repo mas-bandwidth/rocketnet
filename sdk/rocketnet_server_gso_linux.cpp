@@ -9,7 +9,7 @@
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 
-// The GSO transport (#97). See rocketnet_server_gso.h for the shape
+// The GSO transport. See rocketnet_server_gso.h for the shape
 // and the framing; this file is the machinery.
 //
 // The receive side is the XDP transport's pattern on portable primitives: one
@@ -944,7 +944,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     if ( num_queues <= 0 )
         num_queues = ROCKETNET_GSO_DEFAULT_QUEUES;
 
-    // refuse, never clamp (#106's validation law): a queue count past this
+    // refuse, never clamp (the validation law): a queue count past this
     // transport's geometry is a configuration error named here, not a silently
     // different server
 
@@ -1010,7 +1010,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->features |= ROCKETNET_SERVER_GSO_FEATURE_REUSEPORT;
 
     // the runtime probes, each a real setsockopt against a real socket in
-    // the group -- the #81 probe's checks as the transport's own selection
+    // the group -- the probe's checks as the transport's own selection
     // inputs. failure is a tier, not an error.
 
     if ( ( flags & ROCKETNET_SERVER_GSO_DISABLE_SEGMENT ) == 0 )

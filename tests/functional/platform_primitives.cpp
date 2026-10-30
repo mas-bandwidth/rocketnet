@@ -86,7 +86,7 @@ void rocketnet_test_frame_sync_wait()
 {
     // paced for real, briefly: 25 frames at 250hz is ~100ms of wall time.
     // the assertion is pacing and accounting, never precision -- precision
-    // was the issue #56 measurement campaign's job, and CI runners are noisy.
+    // was the measurement campaign's job, and CI runners are noisy.
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS && ROCKETNET_DEV
     rocketnet_lifecycle_track_begin();

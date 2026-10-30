@@ -247,7 +247,7 @@ int rocketnet_server_protocol_write_ack_if_due( struct rocketnet_server_protocol
                                                 uint8_t * out_packet );
 
 // The paced form, and which clock it reads turns on whether this client has
-// ACKNOWLEDGED a keep-alive (#90):
+// ACKNOWLEDGED a keep-alive:
 //
 //   until it has -- paced off the last keep-alive sent to it, and ordinary
 //   traffic MUST NOT suppress it. The keep-alive carries the client index and
