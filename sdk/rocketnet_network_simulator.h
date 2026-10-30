@@ -176,6 +176,21 @@ void rocketnet_network_simulator_test_index_stats( const struct rocketnet_networ
 
 void rocketnet_network_simulator_test_reset_index_stats( struct rocketnet_network_simulator_t * simulator );
 
+// The simulator's live setting: the caller hands a new setting over as a
+// config record under the simulator's own tiny mutex, and the thread that
+// owns the simulator takes it before its next send.
+// proofs/tla/MCLinkReconfigure.tla models the change: the setting in force at
+// the send holds the packet, and the change itself removes nothing that was
+// already in flight (LiveSettingHolds).
+
+struct rocketnet_platform_mutex_t;
+
+bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
+void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
+bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
+uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
+bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
+
 #else // #if ROCKETNET_DEV
 
 // A production library has no network simulator: the transports' link
@@ -191,6 +206,10 @@ static inline bool rocketnet_network_simulator_patterns_active( const struct roc
 static inline void rocketnet_network_simulator_flush_window( struct rocketnet_network_simulator_t * ) {}
 static inline void rocketnet_network_simulator_send( struct rocketnet_network_simulator_t *, const struct rocketnet_address_t *, const struct rocketnet_address_t *, const uint8_t *, int, double ) {}
 static inline int rocketnet_network_simulator_receive_any( struct rocketnet_network_simulator_t *, double, struct rocketnet_address_t *, struct rocketnet_address_t *, uint8_t * ) { return 0; }
+static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t *, struct rocketnet_platform_mutex_t * ) { return false; }
+static inline bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * ) { return false; }
+static inline uint64_t rocketnet_network_simulator_memory_bytes( int, int ) { return 0; }
+static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * ) { return false; }
 
 #endif // #if ROCKETNET_DEV
 
