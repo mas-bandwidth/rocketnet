@@ -116,7 +116,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             // proofs/tla/RNPacketLease.tla RLoad (OnWriting = "skip"): an entry in the writing
             // phase belongs to an insert that has not returned, so it is never the lease a
             // supplied context names. Continue the probe past it: waiting for its writer
-            // is unbounded when that writer is preempted (MCRNPacketLeaseSpinPausedWriter.cfg,
+            // is unbounded when that writer is preempted (MCRNPacketLeaseBrokenSpinPausedWriter.cfg,
             // the reversed witness), and the skip waits on no thread
             // (MCRNPacketLeaseSkipWriting.cfg). Reading its fields would be a data race:
             // MCRNPacketLeaseBrokenReadWhileWriting.cfg.
