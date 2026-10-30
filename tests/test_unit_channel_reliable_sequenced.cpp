@@ -647,11 +647,11 @@ static void rs_check_refused( rs_node_t * node, const rocketnet_message_record_t
 }
 
 // RNChannelTypes!Dispatch: a sequenced record that names a channel the set
-// does not have, a reliable number the window never accepted, a ring span outside the receive ring, or a block
-// chunk of the wrong size is a wire violation (17.3 item 11). Implemented by
-// rn_channels_dispatch_sequenced and rn_sequenced_block in
-// sdk/rocketnet_channel_sequenced.cpp; each case uses a fresh node because the
-// violation is counted once per channel set.
+// does not have, a reliable number the window never accepted, a ring span
+// outside the receive ring, or a block chunk of the wrong size is a wire
+// violation (17.3 item 11). Implemented by rn_channels_dispatch_sequenced and
+// rn_sequenced_block in sdk/rocketnet_channel_sequenced.cpp; each case uses a
+// fresh node because the violation is counted once per channel set.
 
 static void test_hostile_sequenced_records_are_refused()
 {
