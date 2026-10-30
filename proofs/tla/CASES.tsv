@@ -494,3 +494,6 @@ MCRNPacketLeaseBrokenReadWhileWriting.cfg	MCRNPacketLease.tla	invariant	NoRacyRe
 MCRNPacketLeaseBrokenNoEpochBump.cfg	MCRNPacketLease.tla	invariant	NoWrongSuccess	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenEpochUnlimited.cfg	MCRNPacketLease.tla	invariant	PublishedIntact	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenUsedOffByOne.cfg	MCRNPacketLease.tla	invariant	ProbeBound	check	rnpacketlease	required	-
+MCRNAllocatorInstall.cfg	MCRNAllocatorInstall.tla	pass	-	check	allocatorinstall	required	-
+MCRNAllocatorInstallBrokenNoSentinel.cfg	MCRNAllocatorInstall.tla	invariant	InstallOnlyWhenIdle	check	allocatorinstall	required	-
+MCRNAllocatorInstallBrokenNoSentinelRelease.cfg	MCRNAllocatorInstall.tla	invariant	ReleasedThroughItsPair	check	allocatorinstall	required	-
