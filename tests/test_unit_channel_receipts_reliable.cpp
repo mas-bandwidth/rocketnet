@@ -131,7 +131,7 @@ static void reliable_fixture_create( reliable_receipt_fixture_t * f, int type, i
         *allocations_after_create = reliable_receipt_allocations;
     }
     rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
-    rocketnet_message_client_send_packets( f->client );                            // the connection's CONFIG goes first and is acked (CHANNELS.md 10.3)
+    rocketnet_message_client_send_packets( f->client );                            // the connection's CONFIG goes first and is acked (standard/MESSAGES.md m11)
     f->transport.ack_packet = f->transport.sent_packets[0];
     rocketnet_unit_check( rocketnet_message_client_update( f->client, 1.0 ) == ROCKETNET_UPDATE_OK );
     f->transport.sent_count = 0;

@@ -591,7 +591,7 @@ static void test_staged_lease_table_full()
 
 static void test_entries_carry_connection_id( bool staged )
 {
-    // docs/CHANNELS.md P9a, P9b: the transport's own batches carry each
+    // standard/MESSAGES.md m1.4 rule 5: the transport's own batches carry each
     // entry's connection id beside its client index. Two slots hold
     // connection ids 1 and 2; the server sends each client three packets
     // through the public send path, then each client's sealed payload,

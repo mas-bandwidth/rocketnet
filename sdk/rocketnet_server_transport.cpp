@@ -2021,7 +2021,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
     protocol->client_slots = rocketnet_client_slots_create( context, max_clients );
     protocol->acks = rocketnet_server_acks_create( context, max_clients );
 
-    // the connection ids (docs/CHANNELS.md P9a, P9b): one per slot, 0 while
+    // the connection ids (standard/MESSAGES.md m1.4 rule 5): one per slot, 0 while
     // free, and one per acked batch entry, sized as the acked batch is; and
     // one end reason per slot, NONE until a connection in it ends
 
@@ -2717,7 +2717,7 @@ int rocketnet_server_transport_payloads( struct rocketnet_server_transport_t * s
     return server_transport->payloads.num_payloads;
 }
 
-// docs/CHANNELS.md P9b: the connection id of each payload entry, parallel to
+// standard/MESSAGES.md m1.4 rule 5: the connection id of each payload entry, parallel to
 // the client index array above
 
 int rocketnet_server_transport_payload_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id )
@@ -3770,7 +3770,7 @@ bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transp
     return true;
 }
 
-// docs/CHANNELS.md P9a: the connection that holds the slot now
+// standard/MESSAGES.md m1.4 rule 5: the connection that holds the slot now
 
 uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
@@ -3887,7 +3887,7 @@ int rocketnet_server_transport_acked_packets( struct rocketnet_server_transport_
     return acks->num_acked;
 }
 
-// docs/CHANNELS.md P9b: the connection id of each acked packet id, parallel
+// standard/MESSAGES.md m1.4 rule 5: the connection id of each acked packet id, parallel
 // to the client index array above
 
 int rocketnet_server_transport_acked_connection_ids( struct rocketnet_server_transport_t * server_transport, const uint64_t ** connection_id )

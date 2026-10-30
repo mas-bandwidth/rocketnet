@@ -14900,7 +14900,7 @@ void rocketnet_test_suite_environment()
 
 void rocketnet_test_server_transport_entries_carry_connection_id()
 {
-    // docs/CHANNELS.md P9a, P9b: a slot released and reassigned
+    // standard/MESSAGES.md m1.4 rule 5: a slot released and reassigned
     // inside one update. Client A holds slot 0; A's payload, whose ack block
     // acknowledges three server packets, then A's disconnect, then client B
     // connecting into the freed slot 0, then B's payload -- with no batch
@@ -15128,7 +15128,7 @@ void rocketnet_test_server_transport_entries_carry_connection_id()
 
 void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
-    // P2 (docs/CHANNELS.md section 2): for an unfragmented payload (type 5),
+    // P2 (standard/MESSAGES.md m1.4): for an unfragmented payload (type 5),
     // an acked packet id means the payload was in exactly one delivered
     // batch at the receiver. Both directions over the in-memory network
     // simulator with loss, duplication and reordering, ten thousand packets
@@ -15336,7 +15336,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
 void rocketnet_test_transport_reply_opens_a_later_update()
 {
-    // P6 (docs/CHANNELS.md section 2): if the other side of the connection sends anything in reply
+    // P6 (standard/MESSAGES.md m1.4): if the other side of the connection sends anything in reply
     // to a packet this end opened in update j, this end opens the reply in
     // update j+1 or later. A fixed receive batch per update is what makes
     // the claim: update j's batch is closed before any packet that update

@@ -11,7 +11,7 @@
 #include "rocketnet_allocator.h"
 #include "rocketnet_message.h"
 
-// CHANNELS 6.1, 6.5: one pure receiver state over the connection's region.
+// standard/MESSAGES.md m5, m5.2: one pure receiver state over the connection's region.
 struct rn_window_receive_t
 {
     rn_region_t * region;

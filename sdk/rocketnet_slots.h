@@ -8,7 +8,7 @@
 #ifndef ROCKETNET_SDK_ROCKETNET_SLOTS_H
 #define ROCKETNET_SDK_ROCKETNET_SLOTS_H
 
-// The slots machine (CHANNELS.md 10.2, proofs/tla/RNSlots.tla Observe and Admit).
+// The slots machine (proofs/tla/RNSlots.tla Observe and Admit).
 // It holds the connection each slot is bound to and the per-update changed
 // bit; observe reports the slot's CONNECTED (RESET) and DISCONNECTED (DROP)
 // events, and admit says whether a batch entry belongs to the slot's current
@@ -44,7 +44,7 @@ void rn_slots_init( struct rn_slots_t * slots, int max_clients );
 // RNSlots Observe: reads one slot's connection id after the transport's
 // update. Every call refreshes the slot's per-update changed bit, which the
 // server uses to withhold that slot until each batch entry carries its
-// connection's id (CHANNELS.md 11.5).
+// connection's id (standard/MESSAGES.md m1.4 rule 5).
 int rn_slots_observe( struct rn_slots_t * slots, int slot, uint64_t connection_id );
 
 // RNSlots Admit: the slot index alone never decides. APPLY only when the slot

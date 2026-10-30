@@ -37,7 +37,7 @@ static int rocketnet_server_test_take_writer_fault( struct rocketnet_server_prot
 }
 #endif // #if ROCKETNET_DEV
 
-// the connection ids, docs/CHANNELS.md P9a: a slot takes the next id from the
+// the connection ids, standard/MESSAGES.md m1.4 rule 5: a slot takes the next id from the
 // server-wide counter when it is assigned and drops to 0 when it is released
 
 uint64_t rocketnet_server_protocol_connection_id( const struct rocketnet_server_protocol_t * server, int client_index )

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The message record fuzz harness (docs/CHANNELS.md layer 2). It drives the
+// The message record fuzz harness (standard/MESSAGES.md m3, m4). It drives the
 // decoder of sdk/rocketnet_message.cpp -- the first code above the transport
 // that reads bytes the remote endpoint wrote -- and checks the layer's promises as an
 // oracle, not just its survival:
