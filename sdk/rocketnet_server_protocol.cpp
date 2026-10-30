@@ -1948,53 +1948,6 @@ int rocketnet_server_protocol_write_keep_alive_if_due( struct rocketnet_server_p
     if ( !mapping )
         return 0;
 
-    // Which clock the suppression reads is the whole of this rule, and it
-    // turns on one question: HAS THIS CLIENT ACKNOWLEDGED A KEEP-ALIVE?
-    // Not whether it received one -- the server cannot know that -- but
-    // whether it has said so.
-    //
-    // UNTIL IT HAS, generation runs off the keep-alive's own clock and
-    // ordinary traffic does not suppress it: reading last_send_time here let
-    // a continuous payload stream starve establishment forever. The
-    // keep-alive is the only packet carrying the client index, and a client
-    // that lacks its index cannot re-provoke one, so this is the one repair
-    // that must not be suppressible.
-    //
-    // ONCE IT HAS, the client has claimed to hold its index and be
-    // connected. If the claim is true nothing is waiting on a keep-alive,
-    // and ordinary traffic is the keep-alive -- last_send_time, as before.
-    // What happens when it is false is the second failure direction below.
-    //
-    // THE SIGNAL IS THE ACK, and it is a CLAIM rather than a proof. A
-    // keep-alive carries the client index, and processing a keep-alive is
-    // the client's ONLY transition to _connected_, so a client that
-    // acknowledges one is claiming to have received the packet that would
-    // have connected it. The server cannot verify the claim -- an ack block
-    // is the client's statement about its own receive state -- and does not
-    // need to; see below.
-    //
-    // WHY THIS TEST AND NOT THE CONFIRMED FLAG: the defect class is "a
-    // client that has not established is starved of the packet that would
-    // establish it", so the test must not be satisfiable by a client that is
-    // behaving correctly but has not established. The confirmed flag was: it
-    // is set by ANY sealed packet, and _Acks_ invites a client in _sending
-    // connection response_ to send a standalone ack, so a CONFORMANT client
-    // confirmed itself before it had its index and stranded itself. This
-    // test is of course satisfied by every client that acknowledges a
-    // keep-alive -- that IS the design. The restriction that matters is
-    // AMONG CLIENTS THAT HAVE NOT ESTABLISHED: there it is satisfiable only
-    // by one naming a sequence it never opened, which _Acks_ forbids when
-    // building a block. So no correct client trips it BEFORE it holds its
-    // index, which is what the confirmed flag could not promise.
-    //
-    // BOTH FAILURE DIRECTIONS. Lost or delayed acks leave the latch unset
-    // and unsuppressed keep-alives continue -- more, never fewer, bounded by
-    // the send rate. An over-claiming client satisfies the test without its
-    // index and strands ITSELF: the block rides inside a packet sealed under
-    // that connection's own session keys and applies only to that slot, so
-    // it cannot be produced by anyone else for it and no other client's
-    // pacing is affected.
-
     // Without ack bookkeeping the helper uses the unsuppressed clock.
 
     if ( !rocketnet_server_keep_alive_due( server, mapping, client_index, current_time ) )

@@ -1118,7 +1118,7 @@ static int rn_endpoint_plan_large_sequenced( rn_endpoint_t * endpoint )
 int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 {
     // proofs/tla/RNEndpoint.tla WritePacket, the plan (9.3, RNChannel WritePacket
-    // with RNSendBudget Send, Wait and Drop): ordered progress and
+    // with RNSendBudget Send and Drop): ordered progress and
     // retransmits first, one packet at a time so a frame is started only for
     // a packet that is written, then unreliable records under the
     // connection's budget (R6) and shared per-update packet allowance.
