@@ -59,8 +59,6 @@ static void test_unit_transport_pins_ignored()
 
     rocketnet_unit_prepare();
 
-    rocketnet_public_link_simulator_test_development( 1 );
-
     pins_ignored_clock = 1000.0;
 
     const uint64_t protocol_id = 0x70696e73ULL;
@@ -123,7 +121,6 @@ static void test_unit_transport_pins_ignored()
 
     rn_test_client_transport_stop_and_destroy( client );
     rn_test_server_transport_stop_and_destroy( server );
-    rocketnet_public_link_simulator_test_development( 0 );
 
     if ( had_server )
         pins_set( "ROCKETNET_SERVER_TRANSPORT", saved_server );

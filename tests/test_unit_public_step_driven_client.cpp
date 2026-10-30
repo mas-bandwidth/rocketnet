@@ -259,7 +259,6 @@ REGISTER_UNIT_TEST( test_public_step_driven_client_env_selects_the_mode );
 
 static void test_public_step_driven_client_loss_100_drops_everything()
 {
-    rocketnet_public_link_simulator_test_development( 1 );
 
     public_step_identity_t identity;
     public_step_identity( &identity );
@@ -301,7 +300,6 @@ static void test_public_step_driven_client_loss_100_drops_everything()
 
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 
 REGISTER_UNIT_TEST( test_public_step_driven_client_loss_100_drops_everything );
