@@ -26,6 +26,13 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 static const int PORTABLE_TX_BANKS = 3;
 static const int PORTABLE_RX_BANKS = 3;
 
+// the TX handoff is modelled with these fields and this arithmetic in
+// proofs/tla/RNPortableTx.tla (README-RNPortableTx.md): the free and ready
+// queues are arrays of PORTABLE_TX_BANKS entries with a head and a count, the
+// tail position is ( head + count ) % PORTABLE_TX_BANKS, and the banks' arrays
+// lie end to end in one allocation, so a write one past a bank's capacity
+// lands in the next bank (portable_tx_storage_create).
+
 static int portable_tx_capacity( const rocketnet_server_transport_config_t * config )
 {
     // a TX bank holds ROCKETNET_SEND_PACKETS_PER_CLIENT packets per configured
@@ -246,6 +253,7 @@ static bool portable_tx_publish( portable_server_t * server )
     // the only shared ownership transition. No copy, allocation or socket call
     // occurs with the mutex held. A failed try retains the main-owned producer
     // and records why in publish_refusal.
+    // proofs/tla/RNPortableTx.tla MPubEmpty: an empty producer needs no exchange.
 
     if ( server->bank[server->producer].count == 0 )
         return true;
@@ -260,8 +268,16 @@ static bool portable_tx_publish( portable_server_t * server )
         return false;
 #endif // #if ROCKETNET_DEV
 
+    // proofs/tla/RNPortableTx.tla MPubTry and MPubBusy: main only ever tries the
+    // mutex; a held mutex ends the publish and the producer stays with main.
+
     if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) )
         return false;
+
+    // proofs/tla/RNPortableTx.tla MPubSwap: under the mutex an empty free queue
+    // refuses; otherwise the producer joins the ready queue at
+    // ( ready_head + ready_count ) % PORTABLE_TX_BANKS and the oldest free bank
+    // becomes the producer (HeadMod and TailMod in the model are these moduli).
 
     if ( server->free_count == 0 )
     {
@@ -279,6 +295,9 @@ static bool portable_tx_publish( portable_server_t * server )
 
     rocketnet_platform_mutex_release( &server->mutex );
 
+    // proofs/tla/RNPortableTx.tla MPubAfter: after the release the new producer's
+    // count is cleared and the worker is signalled (MCRNPortableTxBrokenNoWake.cfg).
+
     server->bank[server->producer].count = 0;
     rocketnet_platform_wake_set( server->wake );
 
@@ -291,7 +310,13 @@ static void portable_tx_worker( void * arg )
     portable_server_t * server = (portable_server_t *) arg;
     for ( ;; )
     {
+        // proofs/tla/RNPortableTx.tla WTop: the worker's acquire blocks; main's never does.
+
         rocketnet_platform_mutex_acquire( &server->mutex );
+
+        // proofs/tla/RNPortableTx.tla WTake: under the mutex the oldest ready bank is
+        // taken, or empty is observed together with quit. A quit read after the
+        // release is the race MCRNPortableTxBrokenQuitAfterUnlock.cfg reproduces.
 
         int index = -1;
         bool exit_empty = false;
@@ -315,6 +340,8 @@ static void portable_tx_worker( void * arg )
 
             // empty and quit were observed together under the handoff lock.
             // A stop publication after an earlier empty observation must win.
+            // proofs/tla/RNPortableTx.tla WEmpty: exit on empty and quit, else WWait:
+            // wait on the wake, which a publish signals.
 
             if ( exit_empty )
                 break;
@@ -331,11 +358,17 @@ static void portable_tx_worker( void * arg )
         else
 #endif // #if ROCKETNET_DEV
         {
+            // proofs/tla/RNPortableTx.tla WSend: the bank in flight is read outside the mutex.
+
             for ( int i = 0; i < bank->count; ++i )
                 bank->sends[i] = { &bank->to[i], bank->data[i], bank->bytes[i] };
 
             rocketnet_platform_socket_send_packets( server->socket, bank->sends, bank->count );
         }
+
+        // proofs/tla/RNPortableTx.tla WSendDone, WRetLock and WRetSwap: the count is
+        // zeroed before the bank rejoins the free queue at
+        // ( free_head + free_count ) % PORTABLE_TX_BANKS under the mutex.
 
         bank->count = 0;
         rocketnet_platform_mutex_acquire( &server->mutex );
@@ -681,6 +714,11 @@ static bool synchronous_stopped( void * ) { return true; }
 
 static void portable_send( void * transport, const rocketnet_platform_send_t * packets, int count )
 {
+    // proofs/tla/RNPortableTx.tla MCall and MPut: a call copies each packet to the slot at
+    // the producer's count. A full producer (count == tx_capacity; the test one
+    // late is MCRNPortableTxBrokenFullOffByOne.cfg) is published first, and
+    // MReturn: a refused publish drops the rest of the call's batch.
+
     portable_server_t * server = (portable_server_t *) transport;
     for ( int i = 0; i < count; ++i )
     {
@@ -713,6 +751,9 @@ static void portable_send( void * transport, const rocketnet_platform_send_t * p
         bank->count++;
     }
 
+    // proofs/tla/RNPortableTx.tla MPutEnd: the call ends with one publish try; a failed try
+    // leaves the batch in the producer for the next retry.
+
     portable_tx_publish( server );
 }
 
@@ -723,7 +764,7 @@ static int portable_receive( void * transport, rocketnet_address_t * from, uint8
     // count is spent or no consumer is left; a stopping server returns nothing.
 
     portable_server_t * server = (portable_server_t *) transport;
-    portable_tx_publish( server ); // retry a deferred batch even on an idle update
+    portable_tx_publish( server ); // retry a deferred batch even on an idle update (proofs/tla/RNPortableTx.tla MRecv)
 
     if ( count <= 0 || stride <= 0 || server->stopping.load( std::memory_order_acquire ) )
         return 0;
@@ -772,6 +813,7 @@ static void portable_stop( void * transport )
 
     // the worker never reads the main-owned unpublished producer. If the
     // final try cannot publish it, account and drop it before completion.
+    // proofs/tla/RNPortableTx.tla MStop and MReturn: stopping, then the final publish or drop.
 
     if ( !portable_tx_publish( server ) )
     {
@@ -780,7 +822,9 @@ static void portable_stop( void * transport )
     }
 
     // publish or drop the main-owned bank before allowing an empty-ready
-    // worker to exit. Releasing quit before publication would lose this batch.
+    // worker to exit. Releasing quit before publication would lose this batch
+    // (proofs/tla/RNPortableTx.tla MStopQuit then MStopWake, and
+    // MCRNPortableTxBrokenQuitFirst.cfg for the reverse order).
 
     server->quit.store( true, std::memory_order_release );
     rocketnet_platform_wake_set( server->wake );
@@ -791,8 +835,8 @@ static void portable_stop( void * transport )
 
 static bool portable_stopped( void * transport )
 {
-    // proofs/tla/RNPortableRx.tla MPollStopped: main polls between frames, and nothing
-    // changes until the workers have exited.
+    // proofs/tla/RNPortableRx.tla MPollStopped and proofs/tla/RNPortableTx.tla MPollStopped:
+    // main polls between frames, and nothing changes until the workers have exited.
 
     portable_server_t * server = (portable_server_t *) transport;
     return server->exited.load( std::memory_order_acquire ) && server->rx_exited.load( std::memory_order_acquire );

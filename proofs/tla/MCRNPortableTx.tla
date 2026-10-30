@@ -1,0 +1,23 @@
+---------------------------- MODULE MCRNPortableTx ----------------------------
+(***************************************************************************)
+(* The small instance of RNPortableTx.  MCRNPortableTx.cfg is the rule    *)
+(* with the code's three banks; MCRNPortableTxFourBanks.cfg the same with *)
+(* four.  Each reversed witness changes one rule switch and must fail:    *)
+(*   MCRNPortableTxBrokenFullOffByOne.cfg     (FullSlack)                 *)
+(*                                             ExactSend                  *)
+(*   MCRNPortableTxBrokenWrapTail.cfg         (TailMod)                   *)
+(*                                             ExclusiveOwnership         *)
+(*   MCRNPortableTxBrokenNoWrap.cfg           (HeadMod, TailMod)          *)
+(*                                             InBounds                   *)
+(*   MCRNPortableTxBrokenQuitAfterUnlock.cfg  (QuitUnderLock)             *)
+(*                                             ExitSentAll                *)
+(*   MCRNPortableTxBrokenQuitFirst.cfg        (PublishBeforeQuit)         *)
+(*                                             ExitSentAll                *)
+(*   MCRNPortableTxBrokenNoRetryOnIdle.cfg    (RetryOnIdle)               *)
+(*                                             EveryAcceptedSent          *)
+(*   MCRNPortableTxBrokenNoWake.cfg           (WakeOnPublish)             *)
+(*                                             EveryAcceptedSent          *)
+(* README-RNPortableTx.md gives each trace and its check against the code. *)
+(***************************************************************************)
+EXTENDS RNPortableTx
+=============================================================================
