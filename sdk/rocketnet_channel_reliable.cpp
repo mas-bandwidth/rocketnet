@@ -103,11 +103,8 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    if ( channels->deliveries >= channels->delivery_capacity )
-    {
-        rn_region_exhaust( region );
+    if ( !rn_channels_delivery_room( channels ) )
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
 
     rn_channels_block_settle( channels, held, anchor, first_slot, count, total, (uint32_t) base_units, false );
 
@@ -157,11 +154,8 @@ int rn_channels_dispatch_reliable( struct rn_channels_t * channels, const struct
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
-    if ( channels->deliveries >= channels->delivery_capacity )
-    {
-        rn_region_exhaust( region );
+    if ( !rn_channels_delivery_room( channels ) )
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
-    }
 
     rn_delivery_t * delivery = &region->deliveries[channels->deliveries++];
     delivery->data = record->data;
