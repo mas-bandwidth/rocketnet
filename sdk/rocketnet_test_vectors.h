@@ -471,7 +471,7 @@ static const uint8_t rocketnet_test_fragment_header[6] =
 
 // Connect token vector inputs, outside Appendix A: the fixed ephemeral X25519
 // secrets the test-only rocketnet_write_connect_token_deterministic seals with
-// for tests/connect_token_vectors.json (test_unit_connect_token_vectors.cpp).
+// for standard/vectors/connect_token_v1.json (test_unit_connect_token_vectors.cpp).
 // A real token's sealed box always draws a fresh ephemeral key.
 
 static const uint8_t rocketnet_test_token_vector_ephemeral_secret[4][32] =

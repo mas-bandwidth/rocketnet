@@ -204,7 +204,7 @@ The one-record limit of a reliability is the largest message that reliability se
 | UNRELIABLE_SEQUENCED | 1 | the row `UNRELIABLE_SEQUENCED record limit`, or the WIDE row on a channel of 256 or more | sent as RELIABLE_SEQUENCED (code 4) |
 | RELIABLE | 2 | the row `RELIABLE record limit` | sent as a block |
 | RELIABLE_ORDERED | 3 | the row `RELIABLE_ORDERED record limit` | sent as a block |
-| RELIABLE_SEQUENCED | 4 | the row `RELIABLE_SEQUENCED record limit` | sent as a block |
+| RELIABLE_SEQUENCED | 4 | the row `RELIABLE_SEQUENCED record limit`, or the WIDE row on a channel of 256 or more | sent as a block |
 | UNRELIABLE_WITH_ACK_RECEIPT | 5 | the row `UNRELIABLE record limit`, in wire code 0 | sent as RELIABLE (code 2) and keeps its ACKED receipt |
 
 When the connection layer's payload capacity is below the row `maximum payload size`, the UNRELIABLE_SEQUENCED one-record limit is that capacity less the record's header and the form byte. A sender MUST send a message at or below its one-record limit without fragmentation: as SINGLE when permitted by [m2 Payload forms and sender size rules](#m2), otherwise as exactly one record. A sender MUST send a reliable message above that limit as a block of consecutive fragments of the row `block stride` bytes; only the last fragment MAY be shorter, and every fragment MUST carry at least 1 byte.
@@ -231,7 +231,8 @@ A sender MUST refuse a message above the configured maximum message size. For UN
 | UNRELIABLE_SEQUENCED record limit, WIDE | `1404` | bytes | one-record limit on a channel of 256 or more |
 | RELIABLE record limit | `1408` | bytes | one-record limit of RELIABLE |
 | RELIABLE_ORDERED record limit | `1401` | bytes | one-record limit of RELIABLE_ORDERED |
-| RELIABLE_SEQUENCED record limit | `1399` | bytes | one-record limit of RELIABLE_SEQUENCED |
+| RELIABLE_SEQUENCED record limit | `1399` | bytes | one-record limit of RELIABLE_SEQUENCED on a channel below 256 |
+| RELIABLE_SEQUENCED record limit, WIDE | `1398` | bytes | one-record limit of RELIABLE_SEQUENCED on a channel of 256 or more |
 | code UNRELIABLE | `0` | | wire code of UNRELIABLE |
 | code UNRELIABLE_SEQUENCED | `1` | | wire code of UNRELIABLE_SEQUENCED |
 | code RELIABLE | `2` | | wire code of RELIABLE |

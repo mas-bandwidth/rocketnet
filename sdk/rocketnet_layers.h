@@ -1319,6 +1319,12 @@ bool rocketnet_server_transport_client_user_data( struct rocketnet_server_transp
  */
 uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_server_transport_t * server_transport, int client_index );
 
+// the connection ids this transport has handed out: its ids are 1 .. this
+// count. The public server adds the counts of its earlier runs to each id,
+// so an id never repeats across a stop and a start (proofs/tla/ServerSession.tla
+// Start). A NULL server_transport is a counted no-op that returns 0
+uint64_t rocketnet_server_transport_connections_assigned( struct rocketnet_server_transport_t * server_transport );
+
 // why the slot's last connection ended at the transport, a
 // ROCKETNET_DISCONNECT_REASON_*: TIMED_OUT, CLIENT_DISCONNECTED,
 // SERVER_DISCONNECTED, or NONE (no connection ended since the slot was last

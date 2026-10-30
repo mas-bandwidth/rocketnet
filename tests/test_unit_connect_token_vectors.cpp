@@ -4,7 +4,7 @@
 */
 
 // test_unit_connect_token_vectors.cpp -- byte-stable 768-byte connect token
-// vectors in tests/connect_token_vectors.json, the known answers another
+// vectors in standard/vectors/connect_token_v1.json, the known answers another
 // implementation of the backend's minting (a Go backend first) is checked
 // against byte for byte.
 //
@@ -14,7 +14,7 @@
 // at build time (cmake/EmbedTestFixtures.cmake) and read from memory: no case
 // reads or writes a file, reads a clock or opens a socket. The file is
 // regenerated only by running the tool, ./bin/connect_token_vectors
-// tests/connect_token_vectors.json.
+// standard/vectors/connect_token_v1.json.
 
 #include "test_unit_registry.h"
 
@@ -86,7 +86,7 @@ static uint64_t ctv_unhex_uint( const std::string & text, int count )
     return value;
 }
 
-// the committed tests/connect_token_vectors.json, compiled into this binary
+// the committed standard/vectors/connect_token_v1.json, compiled into this binary
 // at build time (cmake/EmbedTestFixtures.cmake); 1 when it is there
 
 static int ctv_read_embedded( std::string & out )
@@ -94,7 +94,7 @@ static int ctv_read_embedded( std::string & out )
     out.clear();
 
     size_t bytes = 0;
-    const unsigned char * data = rocketnet_test_fixture( "tests/connect_token_vectors.json", &bytes );
+    const unsigned char * data = rocketnet_test_fixture( "standard/vectors/connect_token_v1.json", &bytes );
     if ( !data )
         return 0;
     out.assign( reinterpret_cast<const char *>( data ), bytes );

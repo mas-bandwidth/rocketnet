@@ -247,6 +247,11 @@ The reliability is one of `ROCKETNET_RELIABILITY_UNRELIABLE`,
 or `ROCKETNET_RELIABILITY_RELIABLE_ORDERED_WITH_ACK_RECEIPT`. Plain UNRELIABLE is one packet up to `ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` (1,411 bytes);
 above 1,411 bytes it promotes to its reliable twin (`ROCKETNET_RELIABILITY_RELIABLE`),
 which fragments across packets transparently up to `max_message_bytes`.
+`rocketnet_max_unfragmented_message_bytes( reliability, channel )` returns the
+one-packet limit of every mode (the one-record limits of
+[standard/MESSAGES.md, m2.1](../standard/MESSAGES.md#m2.1)); it is a pure function,
+so size a per-packet game message against it, or against
+`ROCKETNET_MAX_UNRELIABLE_MESSAGE_BYTES` at compile time for UNRELIABLE.
 
 The channel is the ordering channel. RELIABLE_ORDERED,
 RELIABLE_ORDERED_WITH_ACK_RECEIPT and the two SEQUENCED types are ordered or
@@ -472,7 +477,11 @@ out-parameter. Either address may be NULL, but not both. It returns a stopped se
 with `ROCKETNET_STATUS_OK`, or NULL with the specific refusal status, and binds
 nothing. `rocketnet_server_start` binds the
 transport and accepts clients; `rocketnet_server_stop` disconnects every
-client and requests transport shutdown. `rocketnet_server_stopped` reports
+client and requests transport shutdown. Stop is the whole shutdown flush: it
+seals each connected client's disconnect packets and hands them to the
+transport before telling the transport to stop, so a client reads
+`ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED` rather than timing out; there is
+no separate disconnect-all or send call to make first. `rocketnet_server_stopped` reports
 completion without waiting. Until it is true, start is refused; afterward start
 can finalize the old run and activate a new transport. Clients are identified by an `int` index,
 `0 .. max_clients - 1`, the slot each connection takes.
@@ -523,6 +532,12 @@ client's connect token, `rocketnet_server_num_connected_clients` counts them, an
 `rocketnet_server_disconnect_client` ends one deliberately. The user data is
 readable from connect until the slot is released; release wipes it, and a slot
 without a connected client reads zeros and returns false.
+`rocketnet_server_client_connection_id` names the connection in a slot: a
+nonzero id, unique for the server's lifetime across slots, stops and starts,
+and 0 when the slot is free. One update can end a slot's connection and admit
+another into it, so `rocketnet_server_client_connected` reads true before and
+after; compare each slot's connection id after every update to see that change
+and reset per-connection state.
 `rocketnet_server_disconnect_reason` reports how a slot's last connection
 ended. The reason is an `enum rocketnet_disconnect_reason_t`, named by
 `rocketnet_disconnect_reason_name`: `ROCKETNET_DISCONNECT_REASON_SERVER_DISCONNECTED`

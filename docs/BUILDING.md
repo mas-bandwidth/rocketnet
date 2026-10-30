@@ -173,6 +173,33 @@ shared libraries are enabled. Examples, tests and tools default off when embedde
 and the parent's `BUILD_SHARED_LIBS` does not change the static target. Explicit
 `ROCKETNET_BUILD_*` options override those defaults.
 
+`add_subdirectory` is the supported way for a game or framework to build
+RocketNet from source. Do not copy RocketNet's build: the platform detection
+(XDP and its BPF program with clang and xxd, io_uring through liburing, the
+Windows and macOS transports, the macOS universal slices) stays inside
+RocketNet's own CMake, and linking the target carries everything it needs:
+
+```cmake
+add_subdirectory(path/to/rocketnet rocketnet)
+target_link_libraries(game_server PRIVATE RocketNet::rocketnet)
+```
+
+```c
+#include "rocketnet.h"      /* the whole public API; the only header a consumer sees */
+```
+
+Every library target's public include directory holds `rocketnet.h` alone (a
+copy made at configure time in the build tree; the install interface is the
+installed include directory, which holds the same one file). `sdk/` and its
+internal headers are private to the library, so `#include "rocketnet_internal.h"`
+or any other internal header fails to compile in a consumer. The definitions a
+consumer must share with the library, `ROCKETNET_DEV` and
+`ROCKETNET_MAX_CLIENTS`, arrive through the target. The `--embedded` pass of
+`tools/check_package.py` (in CI on every OS) builds `tools/package_consumer`
+this way, checks that no target's include interface names `sdk/`, and its
+`internal_header_refused` test requires a program that includes
+`rocketnet_internal.h` through `RocketNet::rocketnet` to fail to build.
+
 By default, a top-level or embedded configure builds all four library variants:
 primary static (`rocketnet` / `RocketNet::rocketnet`), primary shared
 (`rocketnet_shared` / `RocketNet::rocketnet_shared`), build-tree development
@@ -201,7 +228,7 @@ at configure time: `-DROCKETNET_BUILD_TESTS=ON` requires both
 
 An SDK installed from a production build (`-DROCKETNET_DEV=OFF`) has no
 development token minting by design. `rocketnet_create_dev_connect_token` and
-`ROCKETNET_DEV_BACKEND_PUBLIC_KEY` are declared only with
+the `ROCKETNET_DEV_*_KEY` macros are declared only with
 `ROCKETNET_DEV=1`; defining that macro while linking a production
 library does not provide the development function. For a first loopback try, embed the
 checkout and link both the server and the client to the development library,

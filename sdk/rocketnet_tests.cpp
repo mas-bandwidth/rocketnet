@@ -7917,6 +7917,7 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_generate_server_keypair",
     "rocketnet_connect_token_default_config_internal",
     "rocketnet_create_connect_token",
+    "rocketnet_max_unfragmented_message_bytes",
     "rocketnet_client_default_config_internal",
     "rocketnet_client_light_config_internal",
     "rocketnet_client_required_memory",
@@ -7959,6 +7960,7 @@ static const char * rocketnet_test_exports[] = {
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
     "rocketnet_server_client_id",
+    "rocketnet_server_client_connection_id",
     "rocketnet_server_client_user_data",
     "rocketnet_server_disconnect_client",
     "rocketnet_server_disconnect_all_clients",
@@ -8019,6 +8021,7 @@ static const char * rocketnet_test_public_null_case_exports[] = {
     "rocketnet_server_num_connected_clients",
     "rocketnet_server_client_connected",
     "rocketnet_server_client_id",
+    "rocketnet_server_client_connection_id",
     "rocketnet_server_client_user_data",
     "rocketnet_server_disconnect_client",
     "rocketnet_server_disconnect_all_clients",
@@ -8048,6 +8051,7 @@ static const char * rocketnet_test_public_null_exempt_exports[] = {
     "rocketnet_time",
     "rocketnet_sleep",
     "rocketnet_loopback_hub_create",
+    "rocketnet_max_unfragmented_message_bytes",
     "rocketnet_client_required_memory",
     "rocketnet_client_create",
     "rocketnet_client_state_name",
@@ -8153,6 +8157,7 @@ static const char * rocketnet_test_layer_exports[] = {
     "rocketnet_server_transport_client_id",
     "rocketnet_server_transport_client_user_data",
     "rocketnet_server_transport_client_connection_id",
+    "rocketnet_server_transport_connections_assigned",
     "rocketnet_server_transport_client_end_reason",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
@@ -8289,6 +8294,7 @@ static const char * rocketnet_test_layer_null_case_exports[] = {
     "rocketnet_server_transport_client_id",
     "rocketnet_server_transport_client_user_data",
     "rocketnet_server_transport_client_connection_id",
+    "rocketnet_server_transport_connections_assigned",
     "rocketnet_server_transport_client_end_reason",
     "rocketnet_server_transport_counters",
     "rocketnet_server_transport_max_payload_bytes",
@@ -8488,6 +8494,7 @@ void rocketnet_test_public_api_null()
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_num_connected_clients( NULL ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connected( NULL, 0 ) == 0 ) );
     RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_id( NULL, 0 ) == 0 ) );
+    RN_TEST_ONE_MISUSE( rocketnet_check( rocketnet_server_client_connection_id( NULL, 0 ) == 0 ) );
     {
         uint8_t user_data[ROCKETNET_CONNECT_TOKEN_USER_DATA_BYTES];
         memset( user_data, 0xA5, sizeof( user_data ) );
@@ -8748,6 +8755,10 @@ void rocketnet_test_public_api_null_is_a_counted_no_op()
 
     before = rocketnet_api_misuse_count();
     rocketnet_check( rocketnet_server_transport_client_connection_id( NULL, 0 ) == 0 );
+    rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
+
+    before = rocketnet_api_misuse_count();
+    rocketnet_check( rocketnet_server_transport_connections_assigned( NULL ) == 0 );
     rocketnet_check( rocketnet_api_misuse_count() == before + 1 );
 
     before = rocketnet_api_misuse_count();

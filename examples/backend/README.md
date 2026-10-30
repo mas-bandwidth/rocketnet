@@ -437,7 +437,7 @@ mismatched requests and sends an explicit denial only when all slots are full:
 
 The backend unit suites use no sockets and no wall-clock sleeps (`create_timestamp`
 is passed explicitly). They reproduce every deterministic vector in
-[`tests/connect_token_vectors.json`](../../tests/connect_token_vectors.json)
+[`standard/vectors/connect_token_v1.json`](../../standard/vectors/connect_token_v1.json)
 byte-for-byte, verify IPv4/IPv6 address encoding, open freshly minted tokens the
 way a server does, and exercise configuration, registration, and match refusal
 logic at the function level. The HTTP handlers return `204`, `400`, and `413`

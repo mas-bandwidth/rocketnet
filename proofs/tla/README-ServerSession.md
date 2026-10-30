@@ -135,6 +135,8 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 | `DisconnectAllIsAtomic` | invariant | after a `DisconnectAll` step no slot is CONNECTED, every slot it found CONNECTED is FREE with reason SERVER_DISCONNECTED, and every slot it found in HANDSHAKE still holds that HANDSHAKE and session |
 | `ReasonKeptWithinRun` | invariant | a slot's reason equals the one its last ended connection of this run set until its next client is established, where it is NONE; it is NONE after a stop and at each start (the ghost `lastEnd` is cleared by `Stop` and `Start` whatever the defect) |
 | `ResetTouchesOnlyItsSlot` | invariant | `Reset(i)` leaves every slot `j # i` unchanged |
+| `ConnIdNeverRepeats` | invariant | the public connection id (`rocketnet_server_client_connection_id`) never repeats in the server object's lifetime: the transport numbers each run's connections from 1, and the public id adds every earlier run's count, folded in at the next start |
+| `ConnIdLiveAndDistinct` | invariant | a CONNECTED slot reads a nonzero id, and two CONNECTED slots never read the same one; a slot that is not CONNECTED reads 0 |
 | `TokenAdmitsOnce` | invariant | a token admits one connection per run: the history is kept across slot resets and fresh at each start |
 | `HandshakeResolves` | liveness | under weak fairness of the response, the denial and the timers, a slot in HANDSHAKE leaves it |
 
@@ -151,6 +153,7 @@ reset `Clean`: `EndSlot` applies it through `Reset(i)`, and `Stop` applies it to
 | `MCServerSessionSendBeforeConnected.cfg` | `Defect = "sendbeforeconnected"`: `ServerSend(i)` also runs for a slot that is not CONNECTED | `NoSendUnlessConnected`, exit 12 | 4 states: create, start, a send to a free slot: every slot `FREE`, `queuedIn = {"FREE"}`. In the code that is `rocketnet_server_start_message` to an index below max_clients with no client, which the message layer drops (`ServerDropSend`) |
 | `MCServerSessionBrokenReasonAcrossRestart.cfg` | `Defect = "reasonacrossrestart"`, `MaxStarts = 2`: stop writes SERVER_STOPPED into each occupied slot and keeps a free slot's reason, and start keeps every reason (the rule this model held before it followed the code) | `ReasonKeptWithinRun`, exit 12 | create, start, session 1 opens a mapping into slot 1, stop: `state = "STOPPING"`, `slot[1].reason = "SERVER_STOPPED"`, `lastEnd[1] = "NONE"`. In the code the reason is NONE once stop has cleared the running block (`sdk/rocketnet_api.cpp:1685`) |
 | `MCServerSessionBrokenReceiveWhileStopping.cfg` | `Defect = "receivewhilestopping"`: Read runs while STOPPING | `NoReceiveUnlessRunning`, exit 12 | a datagram is read while `state = "STOPPING"`, so `readIn` holds STOPPING. The code returns before receive (`sdk/rocketnet_server_transport.cpp:2388`) |
+| `MCServerSessionBrokenConnIdPerRun.cfg` | `Defect = "connidperrun"`, `MaxStarts = 2`: the public id is the per-run transport id alone, with no base for earlier runs | `ConnIdNeverRepeats`, exit 12 | create, start, a session establishes with id 1, stop, start, the next session establishes with id 1 again. In the code `rn_server_finish_stop` adds the old run's `rocketnet_server_transport_connections_assigned` to `connection_id_base` (`sdk/rocketnet_api.cpp`); `test_server_connection_id_tracks_each_connection` fails the same way with the base removed |
 | `MCServerSessionBrokenAdmitWhileStopping.cfg` | `Defect = "admitwhilestopping"`: ClientConnects runs while STOPPING | `NoAdmitUnlessRunning`, exit 12 | a mapping opens while `state = "STOPPING"`, so `admitIn` holds STOPPING. Admission is inside the receive the transport skips while not RUNNING |
 
 The DisconnectAllLeavesClient trace, step by step against `sdk/rocketnet_api.cpp:1253-1265`:
@@ -179,7 +182,7 @@ case, one for witnesses, 110-second cap per case):
 
 | cfg | Result | Generated | Distinct | Seconds | Exit |
 |---|---|---:|---:|---:|---:|
-| `MCServerSession.cfg` | pass | 1,404,996 | 143,296 | 39.544 | 0 |
+| `MCServerSession.cfg` | pass | 2,144,068 | 219,232 | 83.769 | 0 |
 | `MCServerSessionUnresetSlot.cfg` | `SlotReuseObservesNothing` violated | 375,411 | 53,111 | 5.668 | 12 |
 | `MCServerSessionStopLeavesClient.cfg` | `NoClientWhileStopped` violated | 43 | 36 | 1.069 | 12 |
 | `MCServerSessionDisconnectAllLeavesClient.cfg` | `DisconnectAllIsAtomic` violated | 119 | 88 | 1.143 | 12 |
@@ -191,6 +194,7 @@ case, one for witnesses, 110-second cap per case):
 | `MCServerSessionBrokenReasonAcrossRestart.cfg` | `ReasonKeptWithinRun` violated | 21 | 14 | 1.067 | 12 |
 | `MCServerSessionBrokenReceiveWhileStopping.cfg` | `NoReceiveUnlessRunning` violated | 517 | 258 | 1.207 | 12 |
 | `MCServerSessionBrokenAdmitWhileStopping.cfg` | `NoAdmitUnlessRunning` violated | 21 | 14 | 1.069 | 12 |
+| `MCServerSessionBrokenConnIdPerRun.cfg` | `ConnIdNeverRepeats` violated | 40,790 | 10,702 | 1.519 | 12 |
 
 ## Bounds
 
@@ -201,9 +205,10 @@ case, one for witnesses, 110-second cap per case):
   81 seconds on the bench) but do not fit the cap with the liveness properties.
 - The witnesses: `SlotCount = 2`, `MaxSessions = 2`, `MaxTokens = 2`, `MaxCreates = 1`,
   `SPECIFICATION Spec`. `MaxStarts = 1`, except `MCServerSessionReadmitAfterStart.cfg`,
-  `MCServerSessionBrokenReasonAcrossRestart.cfg`, `MCServerSessionBrokenReceiveWhileStopping.cfg`
-  and `MCServerSessionBrokenAdmitWhileStopping.cfg`, which use `MaxStarts = 2` (a stop and a
-  later start, or a read or an admit while STOPPING after a start).
+  `MCServerSessionBrokenReasonAcrossRestart.cfg`, `MCServerSessionBrokenReceiveWhileStopping.cfg`,
+  `MCServerSessionBrokenAdmitWhileStopping.cfg` and `MCServerSessionBrokenConnIdPerRun.cfg`, which
+  use `MaxStarts = 2` (a stop and a later start, or a read or an admit while STOPPING after a
+  start).
 - Deadlock is not checked (`ignore-terminal`): a run ends when sessions, starts and creates are
   spent.
 - The link is a set of session tags (at most one packet per session in flight). The handshake

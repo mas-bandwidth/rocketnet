@@ -3813,6 +3813,14 @@ uint64_t rocketnet_server_transport_client_connection_id( struct rocketnet_serve
     return rocketnet_server_protocol_connection_id( &server_transport->protocol, client_index );
 }
 
+uint64_t rocketnet_server_transport_connections_assigned( struct rocketnet_server_transport_t * server_transport )
+{
+    if ( !rocketnet_api_null_guard( server_transport ) )
+        return 0;
+    rocketnet_assert( server_transport );
+    return server_transport->protocol.next_connection_id;
+}
+
 int rocketnet_server_transport_client_end_reason( struct rocketnet_server_transport_t * server_transport, int client_index )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

@@ -66,7 +66,7 @@ ASSUME Defect \in {"none", "unresetslot", "stopleavesclient", "touchesotherslot"
                    "resetclearshistory", "sendbeforeconnected", "destroysilent",
                    "reasonacrossrestart", "disconnectallleavesclient",
                    "receivewhilestopping", "admitwhilestopping",
-                   "disconnectallunbounded"}
+                   "disconnectallunbounded", "connidperrun"}
 
 \* The burst is one packet at the model's scale. SealsPerUpdate and the
 \* finite DisconnectQueueCapacity are checked constants, standing for the
@@ -152,7 +152,21 @@ env == <<link, nextSess, home, tokOf, starts, creates>>
 ghosts == <<estTokens, doubleTok, observed, crossDelivered, collateral, silentEnd, startFrom, queuedIn,
             priorTokens, readmitted>>
 
-NoKept == [used |-> {}, lifetime |-> 0, keys |-> 0, config |-> 0]
+\* The public connection id (rocketnet_server_client_connection_id,
+\* sdk/rocketnet_api.cpp): the transport numbers each connection of a run
+\* 1, 2, 3 ... as the slot is assigned at Establish
+\* (rocketnet_server_connection_id_assigned, sdk/rocketnet_server_protocol.cpp),
+\* and each start builds a new transport whose count starts again at 0. The
+\* public id adds cidBase, the connections of every earlier run of this
+\* object, folded in when the old run is finalized at the next Start
+\* (rn_server_finish_stop), so an id never repeats for the server's
+\* lifetime. cidRun is the run's count, cid[i] the id slot i was given (read
+\* as 0 unless CONNECTED), issued and repeat the ghosts of every id handed
+\* out. The defect "connidperrun" keeps cidBase at 0: the per-run transport
+\* id alone, which repeats after a restart.
+NoCid == [i \in Slots |-> 0]
+NoKept == [used |-> {}, lifetime |-> 0, keys |-> 0, config |-> 0,
+           cidBase |-> 0, cidRun |-> 0, cid |-> NoCid, issued |-> {}, repeat |-> FALSE]
 
 Init ==
     /\ state = "NONE" /\ slot = FreshSlots /\ kept = NoKept
@@ -189,7 +203,7 @@ EndSlot(v, i, why, sendDisc) ==
 Create ==
     /\ state = "NONE" /\ creates < MaxCreates
     /\ state' = "STOPPED" /\ slot' = FreshSlots
-    /\ kept' = [used |-> {}, lifetime |-> 0, keys |-> 1, config |-> 1]
+    /\ kept' = [NoKept EXCEPT !.keys = 1, !.config = 1]
     /\ creates' = creates + 1 /\ starts' = 0
     /\ lastEnd' = [i \in Slots |-> "NONE"] /\ established' = 0 /\ estTokens' = {}
     /\ priorTokens' = {}
@@ -231,7 +245,9 @@ Start ==
     /\ state = "STOPPED" /\ starts < MaxStarts
     /\ state' = "RUNNING" /\ starts' = starts + 1
     /\ startFrom' = startFrom \cup {state}
-    /\ kept' = [kept EXCEPT !.used = {}]
+    /\ kept' = [kept EXCEPT !.used = {},
+                            !.cidBase = IF Defect = "connidperrun" THEN 0 ELSE @ + kept.cidRun,
+                            !.cidRun = 0]
     /\ estTokens' = {} /\ priorTokens' = priorTokens \cup estTokens
     /\ slot' = IF Defect = "reasonacrossrestart" THEN slot
               ELSE [i \in Slots |-> [slot[i] EXCEPT !.reason = "NONE"]]
@@ -364,7 +380,11 @@ Establish(i) ==
            t == tokOf[s]
        IN /\ t \notin kept.used
           /\ slot' = [slot EXCEPT ![i].st = "CONNECTED", ![i].reason = "NONE"]
-          /\ kept' = [kept EXCEPT !.used = @ \cup {t}, !.lifetime = @ + 1]
+          /\ LET id == kept.cidBase + kept.cidRun + 1
+             IN kept' = [kept EXCEPT !.used = @ \cup {t}, !.lifetime = @ + 1,
+                                     !.cidRun = @ + 1, !.cid[i] = id,
+                                     !.issued = @ \cup {id},
+                                     !.repeat = @ \/ id \in kept.issued]
           /\ established' = established + 1
           /\ estTokens' = estTokens \cup {t}
           /\ doubleTok' = (doubleTok \/ t \in estTokens)
@@ -573,7 +593,9 @@ TypeOK ==
     /\ state \in ServerStates
     /\ allBefore \subseteq [slot : Slots, st : SlotStates, sess : Tags]
     /\ slot \in [Slots -> [st : SlotStates, sess : Tags, rec : [Fields -> Tags], reason : Reasons]]
-    /\ kept \in [used : SUBSET Tokens, lifetime : 0..MaxSessions, keys : 0..1, config : 0..1]
+    /\ kept \in [used : SUBSET Tokens, lifetime : 0..MaxSessions, keys : 0..1, config : 0..1,
+                cidBase : 0..MaxSessions, cidRun : 0..MaxSessions, cid : [Slots -> 0..MaxSessions],
+                issued : SUBSET (1..MaxSessions), repeat : BOOLEAN]
     /\ link \subseteq Sessions /\ held \subseteq Sessions /\ nextSess \in 1..MaxSessions + 1
     /\ home \in [Sessions -> 0..SlotCount] /\ tokOf \in [Sessions -> 0..MaxTokens]
     /\ starts \in 0..MaxStarts /\ creates \in 0..MaxCreates
@@ -596,6 +618,18 @@ SlotOwnsItsSession == \A i \in Slots :
     /\ slot[i].st # "FREE" => home[slot[i].sess] = i
 
 StartOnlyFromStopped == startFrom \subseteq {"STOPPED"}
+
+\* The public connection id: what rocketnet_server_client_connection_id reads.
+PublicCid(i) == IF slot[i].st = "CONNECTED" THEN kept.cid[i] ELSE 0
+
+\* No id is handed out twice in the server object's lifetime, across slot
+\* reuse, stops and starts; a connected slot reads a nonzero id, and two
+\* connected slots never read the same one.
+ConnIdNeverRepeats == ~kept.repeat
+ConnIdLiveAndDistinct ==
+    /\ \A i \in Slots : slot[i].st = "CONNECTED" => PublicCid(i) # 0
+    /\ \A i, j \in Slots : i # j /\ slot[i].st = "CONNECTED" /\ slot[j].st = "CONNECTED"
+                           => PublicCid(i) # PublicCid(j)
 
 NoSendUnlessConnected ==
     /\ queuedIn \subseteq {"CONNECTED"}
