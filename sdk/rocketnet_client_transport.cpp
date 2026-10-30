@@ -1156,6 +1156,35 @@ void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 }
 #endif // #if ROCKETNET_DEV
 
+// The client network thread's create and release. The memory plan seam stands in
+// a bare allocation of the thread record for the thread, so it opens no thread.
+
+static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * context, rocketnet_platform_thread_func_t function, void * argument )
+{
+#if ROCKETNET_DEV
+    if ( rocketnet_client_memory_plan_seam_enabled )
+        return (rocketnet_platform_thread_t *) rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
+#endif // #if ROCKETNET_DEV
+
+    return rocketnet_platform_thread_create( context, function, argument );
+}
+
+static void rocketnet_client_thread_release( void * context, rocketnet_platform_thread_t * thread )
+{
+#if ROCKETNET_DEV
+    if ( rocketnet_client_memory_plan_seam_enabled )
+    {
+        rocketnet_free( context, thread );
+        return;
+    }
+#else
+    (void) context;
+#endif // #if ROCKETNET_DEV
+
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+}
+
 static bool rocketnet_client_transport_memory_plan( const rocketnet_client_transport_config_t * config,
                                                     const char * transport, rocketnet_client_memory_plan_t & plan )
 {
@@ -2005,9 +2034,10 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             client_transport->io.operations = &seam_transport_ops;
             client_transport->io.instance = seam_client;
             granted_transport = candidate;
+            continue;
         }
-        else
 #endif // #if ROCKETNET_DEV
+
         {
             const rocketnet_transport_definition_t * definition = rocketnet_transport_definition( candidate );
             int transport_status = ROCKETNET_STATUS_OK;
@@ -2102,12 +2132,13 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // no socket and races nothing.
 
     const uint8_t token_flags = client_transport->protocol.signed_fields.address_flags;
-    if (
+    bool race_ipv4 = client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 &&
+                     ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 && ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0;
 #if ROCKETNET_DEV
-        !rocketnet_client_memory_plan_seam_enabled &&
+    if ( rocketnet_client_memory_plan_seam_enabled )
+        race_ipv4 = false;
 #endif // #if ROCKETNET_DEV
-        client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 &&
-        ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 && ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0 )
+    if ( race_ipv4 )
     {
         struct rocketnet_signed_connect_data_t ipv4_only = client_transport->protocol.signed_fields;
         ipv4_only.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
@@ -2374,15 +2405,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             return client_transport;
 #endif // #if ROCKETNET_DEV
 
-#if ROCKETNET_DEV
-        if ( rocketnet_client_memory_plan_seam_enabled )
-        {
-            void * thread_mem = rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
-            client_transport->thread = (rocketnet_platform_thread_t *) thread_mem;
-        }
-        else
-#endif // #if ROCKETNET_DEV
-            client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
+        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
     }
 #if ROCKETNET_DEV
     else if ( client_transport->step_driven )
@@ -2390,15 +2413,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 #endif // #if ROCKETNET_DEV
     else
     {
-#if ROCKETNET_DEV
-        if ( rocketnet_client_memory_plan_seam_enabled )
-        {
-            void * thread_mem = rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
-            client_transport->thread = (rocketnet_platform_thread_t *) thread_mem;
-        }
-        else
-#endif // #if ROCKETNET_DEV
-            client_transport->thread = rocketnet_platform_thread_create( context, rocketnet_client_thread_function, client_transport );
+        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_thread_function, client_transport );
     }
 
     if ( !client_transport->thread )
@@ -2416,9 +2431,11 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
     // the client network thread (the I/O thread or the legacy thread) takes the client thread priority from this thread, right after its create
 
 #if ROCKETNET_DEV
-    if ( !rocketnet_client_memory_plan_seam_enabled )
+    if ( rocketnet_client_memory_plan_seam_enabled )
+        return client_transport;
 #endif // #if ROCKETNET_DEV
-        rocketnet_platform_client_thread_priority( client_transport->thread );
+
+    rocketnet_platform_client_thread_priority( client_transport->thread );
 
     return client_transport;
 }
@@ -2490,11 +2507,12 @@ void rocketnet_client_transport_stop( rocketnet_client_transport_t * client_tran
     {
         client_transport->quit.store( true, std::memory_order_release );
 
-        if ( ( !client_transport->thread && !client_transport->link_simulator && !client_transport->stop_burst_pending.load( std::memory_order_acquire ) )
+        bool stopped_now = !client_transport->thread && !client_transport->link_simulator && !client_transport->stop_burst_pending.load( std::memory_order_acquire );
 #if ROCKETNET_DEV
-             || rocketnet_client_memory_plan_seam_enabled
+        if ( rocketnet_client_memory_plan_seam_enabled )
+            stopped_now = true;
 #endif // #if ROCKETNET_DEV
-        )
+        if ( stopped_now )
             client_transport->stopped.store( true, std::memory_order_release );
     }
 }
@@ -2589,17 +2607,7 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
         return;
 
     if ( client_transport->thread )
-    {
-#if ROCKETNET_DEV
-        if ( rocketnet_client_memory_plan_seam_enabled )
-            rocketnet_free( client_transport->context, client_transport->thread );
-        else
-#endif // #if ROCKETNET_DEV
-        {
-            rocketnet_platform_thread_join( client_transport->thread );
-            rocketnet_platform_thread_destroy( client_transport->thread );
-        }
-    }
+        rocketnet_client_thread_release( client_transport->context, client_transport->thread );
 
     rocketnet_client_transport_io_close( &client_transport->io );
 
