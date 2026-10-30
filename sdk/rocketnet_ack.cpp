@@ -1273,18 +1273,6 @@ void rocketnet_ack_endpoint_record_received( struct rocketnet_ack_endpoint_t * e
 // rocketnet_ack.h), so a window of at most N slots is a contiguous run of
 // words, possibly wrapping at the ring boundary.
 
-static inline int rn_clz64( uint64_t v )
-{
-#if defined( _MSC_VER )
-    unsigned long idx;
-    _BitScanReverse64( &idx, v );
-
-    return 63 - (int) idx;
-#else
-    return __builtin_clzll( v );
-#endif // #if defined( _MSC_VER )
-}
-
 // the portable popcount: a branch-free bit sum that needs no instruction
 // set extension, used where the compiler offers no popcount builtin and the
 // target is not x64 (MSVC for ARM64 has no __popcnt64)
@@ -1365,7 +1353,7 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
 
         while ( word )
         {
-            int bit = 63 - rn_clz64( word );
+            int bit = 63 - rocketnet_platform_clz64( word );
             word &= ~( 1ull << bit );
 
             uint64_t seq = seq_at_a + ( w * 64 + (uint32_t) bit ) - a;
