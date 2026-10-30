@@ -59,49 +59,42 @@ every reset is done.
 - `NoRacyRead`: no thread reads an entry's fields while another thread may be
   writing them.
 - `SpinBounded` (liveness): a thread that is spinning stops spinning, when
-  every thread is scheduled.
+  every thread is scheduled (vacuous for the code now that it does not spin).
 - `ResolveCompletes` and `InsertCompletes` (liveness): thread 1's call
   completes, whatever the other threads do. `SpecSolo` schedules thread 1 only;
   thread 2 may stop between any two steps, the way a preempted thread does.
 
-## What bounds the spin
+## What bounded the spin, and the fix
 
-`resolve` waits (`while ( ( state & 3 ) == 1 )`) on an entry whose writer has
-claimed it and not yet stored active. Three results:
+`resolve` used to wait (`while ( ( state & 3 ) == 1 )`) on an entry whose writer
+had claimed it and not yet stored active. Three results:
 
-1. **The wait is bounded by the writer's steps, not by the table.** The
+1. **The wait was bounded by the writer's steps, not by the table.** The
    writer's window between the claim and the release store is four field
-   writes and one store, with no lock, loop, allocation or call that waits
-   (`SpinBounded` passes in `MCRNPacketLease.cfg` when every thread is
-   scheduled). The spinner holds nothing the writer needs, so there is no
-   deadlock.
-2. **It is unbounded if the writer is paused.**
-   `MCRNPacketLeaseSpinPausedWriter.cfg` fails `ResolveCompletes` with valid
-   callers only (`ValidCallers = TRUE`), no stale context and no misuse. The
+   writes and one store, with nothing that waits, and the spinner holds nothing
+   the writer needs, so there was no deadlock.
+2. **It was unbounded if the writer was paused.**
+   `MCRNPacketLeaseBrokenSpinPausedWriter.cfg` (`OnWriting = {"spin"}`, the
+   reversed witness) fails `ResolveCompletes` with valid callers only. The
    trace:
    - thread 2 starts an insert, takes entry 0 by compare-and-swap (state
      writing), writes all four fields, and stops before the release store;
-   - thread 1 inserts its own lease, `ILoad` finds entry 0 of the current
+   - thread 1 inserts its own lease: `ILoad` finds entry 0 of the current
      epoch and skips it, and the lease publishes at entry 1;
    - thread 1 resolves its own lease: the probe from the hash reaches entry 0
      first, finds it writing, and spins until thread 2 runs again.
 
-   Checked against the code: `insert` claims the first entry not of the current
-   epoch, and `resolve` starts at the same hash, so any resolve whose chain
-   passes an entry mid-insert waits for that insert. The collision needs two
-   frames in one probe chain, which a table at up to half load has.
    `insert` itself waits on no thread: `MCRNPacketLeaseInsertWaitFree.cfg`
    passes `InsertCompletes` with thread 2 free to stop anywhere.
-3. **The wait is not needed.** The entry a resolve wants is never in phase 1:
+3. **The wait was not needed.** The entry a resolve wants is never in phase 1:
    the supplied context's ticket comes from an `insert` that has returned, so
    its entry is active or consumed, and it stays so for the epoch. An entry in
-   phase 1 on the way is some other lease's. `OnWriting = "skip"`
-   continues the probe past an entry in phase 1.
+   phase 1 on the way is some other lease's. The code now continues the probe
+   past it (`OnWriting = {"skip"}`): `MCRNPacketLease.cfg` passes every
+   invariant with changed and stale copies, and
    `MCRNPacketLeaseSkipWriting.cfg` passes `ResolveCompletes` and
-   `InsertCompletes` with only thread 1 scheduled, and
-   `MCRNPacketLeaseSkipWritingSafe.cfg` passes every invariant with changed
-   copies and stale copies. Skipping is therefore a candidate change that makes
-   `resolve` wait-free in the table size. The model does not change the code.
+   `InsertCompletes` with only thread 1 scheduled. A raised-priority spinner
+   can no longer starve a preempted writer.
 
 ## A second finding: `retired` races with a reused entry
 
@@ -130,17 +123,16 @@ does not change the code.
 
 | Config | Expected | What it shows |
 |---|---|---|
-| `MCRNPacketLease.cfg` | pass | The code's rule without `retired`, two threads, a four-entry table, all frames colliding, two resets: every invariant and `SpinBounded`, every thread scheduled. |
+| `MCRNPacketLease.cfg` | pass | The code's rule without `retired`, two threads (thread 1 makes two calls, thread 2 one), a four-entry table, all frames colliding, two resets, `resolve` skipping an entry being written: every invariant. |
 | `MCRNPacketLeaseRetired.cfg` | pass | `retired` with the state reread after the fields (`RetiredValidates`). |
 | `MCRNPacketLeaseRetiredRace.cfg` | `NoRacyRead` | The code's `retired`: finding above. |
 | `MCRNPacketLeaseRetiredTorn.cfg` | `NoWrongSuccess` | The code's `retired`: finding above. |
-| `MCRNPacketLeaseSpinPausedWriter.cfg` | `ResolveCompletes` | The code's spin, valid callers, thread 2 paused: finding above. |
+| `MCRNPacketLeaseBrokenSpinPausedWriter.cfg` | `ResolveCompletes` | `OnWriting = {"spin"}`, valid callers, thread 2 paused: the former code. |
 | `MCRNPacketLeaseInsertWaitFree.cfg` | pass | `insert` completes with only thread 1 scheduled. |
-| `MCRNPacketLeaseSkipWriting.cfg` | pass | `OnWriting = "skip"`: resolve and insert complete with only thread 1 scheduled. |
-| `MCRNPacketLeaseSkipWritingSafe.cfg` | pass | `OnWriting = "skip"`: every invariant. |
+| `MCRNPacketLeaseSkipWriting.cfg` | pass | The code: resolve and insert complete with only thread 1 scheduled. |
 | `MCRNPacketLeaseBrokenNoCas.cfg` | `PublishedIntact` | `UseCas = FALSE` |
 | `MCRNPacketLeaseBrokenConsumeNoCas.cfg` | `TakeOnce` | `ConsumeCas = FALSE` |
-| `MCRNPacketLeaseBrokenReadWhileWriting.cfg` | `NoRacyRead` | `OnWriting = "read"` |
+| `MCRNPacketLeaseBrokenReadWhileWriting.cfg` | `NoRacyRead` | `OnWriting = {"read"}` |
 | `MCRNPacketLeaseBrokenNoEpochBump.cfg` | `NoWrongSuccess` | `BumpEpoch = FALSE` |
 | `MCRNPacketLeaseBrokenEpochUnlimited.cfg` | `PublishedIntact` | `EpochLimited = FALSE` |
 | `MCRNPacketLeaseBrokenUsedOffByOne.cfg` | `ProbeBound` | `UsedLimit = 3` |
