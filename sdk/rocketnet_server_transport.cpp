@@ -624,39 +624,6 @@ static void rocketnet_server_transport_io_send_packets( rocketnet_server_transpo
     transport->io.operations->flush( transport->io.instance );
 }
 
-// The link simulator's live setting (sdk/rocketnet_network_simulator.cpp):
-// the caller hands a new setting over as a config record under the
-// simulator's own tiny mutex, and the thread that owns the simulator takes it
-// before its next send.  proofs/tla/MCLinkReconfigure.tla models the change: the
-// setting in force at the send holds the packet, and the change itself
-// removes nothing that was already in flight (LiveSettingHolds).  A production library has no simulator at all, so the
-// stubs below stand in for the development build's functions there.
-#if ROCKETNET_DEV
-extern bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex );
-extern void rocketnet_network_simulator_reconfigure( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex, double latency, double jitter, float loss_percent, float duplicate_percent );
-extern bool rocketnet_network_simulator_created_active( const struct rocketnet_network_simulator_t * simulator );
-extern uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window );
-extern bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator );
-#else
-static inline bool rocketnet_network_simulator_holds_any( struct rocketnet_network_simulator_t * simulator )
-{
-    (void) simulator;
-    return false;
-}
-static inline bool rocketnet_network_simulator_take_setting( struct rocketnet_network_simulator_t * simulator, struct rocketnet_platform_mutex_t * mutex )
-{
-    (void) simulator;
-    (void) mutex;
-    return false;
-}
-static inline uint64_t rocketnet_network_simulator_memory_bytes( int capacity, int reverse_window )
-{
-    (void) capacity;
-    (void) reverse_window;
-    return 0;
-}
-#endif // #if ROCKETNET_DEV
-
 // The link simulator is active when the setting in force changes the packets:
 // any loss, latency, jitter or duplicate, or either pattern.  With all of
 // them zero it is a pass-through that neither adds latency nor copies, and
