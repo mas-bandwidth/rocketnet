@@ -215,7 +215,7 @@ static void test_sized_config_accepts_every_known_size()
     rocketnet_assert_function( saved_assert );
 }
 
-// R6 (docs/CHANNELS.md 11.5) at the ABI boundary (docs/ABI-EVOLUTION.md 4):
+// R6 (standard/MESSAGES.md m9.4) at the ABI boundary (docs/ABI-EVOLUTION.md 4):
 // a revision-1 caller's struct ends at reliable_message_timeout_ms, so reading it
 // yields the two send budget fields at their defaults, never the bytes past
 // the caller's prefix.

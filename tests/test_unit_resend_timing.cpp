@@ -406,7 +406,7 @@ static void test_message_config_abi_size_is_unchanged()
 REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
-// The chunks of a block wait the resend delay alone (docs/CHANNELS.md 6.4 "Resend";
+// The chunks of a block wait the resend delay alone (standard/MESSAGES.md m9.3;
 // proofs/tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
 // witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
 // every version of layer 3 has (the walk's output and resend_count), so they

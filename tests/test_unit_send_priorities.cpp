@@ -4,7 +4,7 @@
 */
 
 // Layer 6's scheduler, unit tier: the four send priorities inside the
-// budget's class order (docs/CHANNELS.md 9.2, proofs/tla/RNScheduler.tla). No
+// budget's class order (standard/MESSAGES.md m10, proofs/tla/RNScheduler.tla). No
 // sockets, no threads, no wall clock.
 //
 // Every case writes packets that hold one record each, so the order of the

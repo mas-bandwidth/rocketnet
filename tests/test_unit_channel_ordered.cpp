@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// RELIABLE_ORDERED, code 3, end to end (docs/CHANNELS.md 6 to 9;
+// RELIABLE_ORDERED, code 3, end to end (standard/MESSAGES.md m5, m9;
 // proofs/tla/RNChannel.tla): small messages packed and resent until a transport packet
 // ack covers them, large messages cut into chunks that travel one to a packet
 // and are placed in the receiver's ring by index, one ordering sequence for
@@ -1837,7 +1837,7 @@ static uint64_t cm_calls()
 
 static void test_ordered_no_allocation_after_create()
 {
-    // the defaults are admissible, and a connection's region at them is this many bytes (CHANNELS.md 14)
+    // the defaults are admissible, and a connection's region at them is this many bytes (docs/LOAD.md Table 3)
 
     rocketnet_message_config_t defaults;
     rocketnet_message_default_config( &defaults );

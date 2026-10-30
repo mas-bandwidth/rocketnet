@@ -612,7 +612,7 @@
     /** @brief ROCKETNET_COUNTER_CLIENT_COOKIE_WRONG_SIZE: Counts client cookie packets with a wire size that does not match the packet type. Unit: occurrences. Class: refusal; family: CLIENT_COOKIE_RECEIVED. */ \
     X( CLIENT_COOKIE_WRONG_SIZE, REFUSAL, CLIENT_COOKIE_RECEIVED ) \
 \
-    /* the message layer's region (docs/CHANNELS.md 4): a send refused because */ \
+    /* the message layer's region (proofs/tla/RNConnectionMemory.tla): a send refused because */ \
     /* the connection's send store had no chunk of the class it needs (or, for */ \
     /* a block, not every chunk it needs), and a send refused because every */ \
     /* send descriptor was in use. Exhaustion is a counted refusal, never */ \
@@ -638,7 +638,7 @@
     /** @brief ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT: Counts cookie-validated requests refused before signature verification because the source exceeded its failure budget. Unit: occurrences. Class: refusal; family: CONNECTION_REQUEST_RECEIVED. */ \
     X( CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT, REFUSAL, CONNECTION_REQUEST_RECEIVED ) \
 \
-    /* the UNRELIABLE path (docs/CHANNELS.md 5, 6.3, 6.4, 9.3, 11.2): a code-0 */ \
+    /* the UNRELIABLE path (standard/MESSAGES.md m3, m5.4, m9, m2): a code-0 */ \
     /* record dropped on receive because the per-update unreliable delivery */ \
     /* budget Du was full (section 6.3 step 4), and a code-0 message dropped on */ \
     /* send: because finish_packet refused the packet that carried it (section */ \
@@ -655,12 +655,12 @@
     /* or packet. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_DUPLICATE: Counts reliable message numbers received more than once (a k-chunk duplicate counts k). Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_DUPLICATE, PATH_LOSS, NONE ) \
-    /* Numbering met either the count or ring bound (CHANNELS 6.2). Count */ \
+    /* Numbering met either the count or ring bound (standard/MESSAGES.md m5.1). Count */ \
     /* once per stall, even when the scheduler retries the same head. */ \
     /** @brief ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL: Counts reliable send numbering stalls because the sender's own send window is full (its message count bound or its ring byte bound); counted once per stall, not per retry. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_WINDOW_STALL, REFUSAL, NONE ) \
 \
-    /* Layer 3 sent-packet map and resend FIFO (docs/CHANNELS.md 6.4, 15.1): */ \
+    /* Layer 3 sent-packet map and resend FIFO (standard/MESSAGES.md m9; proofs/tla/RNSentMap.tla): */ \
     /* a sent-packet ring entry evicted to make room for a new packet (its */ \
     /* referenced numbers stay in the resend FIFO), and a reliable record */ \
     /* resent on the resend delay. appended: indices are the contract. */ \
@@ -670,7 +670,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_RESENT: Counts reliable records resent after their resend delay. Unit: occurrences. Class: path_loss; family: none. */ \
     X( MESSAGE_RESENT, PATH_LOSS, NONE ) \
 \
-    /* a connection's message memory (its region, docs/CHANNELS.md 4) was */ \
+    /* a connection's message memory (its region, proofs/tla/RNConnectionMemory.tla) was */ \
     /* exhausted: an operation found no room, the region took its sticky */ \
     /* exhausted state, and the connection is disconnected with the reason */ \
     /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED (proofs/tla/RNConnectionMemory.tla, */ \
@@ -681,7 +681,7 @@
     /** @brief ROCKETNET_COUNTER_MESSAGE_MEMORY_EXHAUSTED: Counts the exhaustion of a connection's message memory region once, plus each send refused while the region stays exhausted; an exhausted connection is then disconnected. Unit: occurrences. Class: refusal; family: none. */ \
     X( MESSAGE_MEMORY_EXHAUSTED, REFUSAL, NONE ) \
 \
-    /* Layer 4's dispatch (docs/CHANNELS.md 7.2, 7.3, 7.4, 7.5): a send refused */ \
+    /* Layer 4's dispatch (standard/MESSAGES.md m7.4, m4): a send refused */ \
     /* because its reliability is outside the enabled mask, a receive of an */ \
     /* application record whose code the mask does not admit, an unreliable */ \
     /* record dropped because the send budget could not pay the packet that */ \
@@ -730,7 +730,7 @@
     /** @brief ROCKETNET_COUNTER_SEND_HISTORY_LOST: Counts send records confirmed lost by the acknowledgement window. Unit: occurrences. Class: path_loss; family: none. */ \
     X( SEND_HISTORY_LOST, PATH_LOSS, NONE ) \
 \
-    /* RELIABLE_ORDERED's receive path (docs/CHANNELS.md 7.2, 8): each is a */ \
+    /* RELIABLE_ORDERED's receive path (standard/MESSAGES.md m7.4, m8): each is a */ \
     /* wire violation, counted once per record, and each ends the */ \
     /* connection with ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION. A record */ \
     /* whose channel is at or past this end's count; a block fragment whose */ \

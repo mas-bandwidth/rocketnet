@@ -289,7 +289,7 @@ REGISTER_UNIT_TEST( test_create_reports_status_invalid_address );
 // ---- the sent-packet map against the window ---------------------------------
 
 // A packets_in_flight below reliable_messages_in_flight is refused at create
-// with CONFIG_OUT_OF_RANGE, client and server (docs/CHANNELS.md 14,
+// with CONFIG_OUT_OF_RANGE, client and server (docs/LOAD.md Table 3,
 // standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla, the reversed witness
 // MCRNSentMapBrokenSmallMap.cfg): one entry short of the window is refused,
 // and a map equal to the window creates. Red before the rule: both create.

@@ -3,9 +3,9 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// the server message object (docs/CHANNELS.md 11.1) and the object core it
+// the server message object and the object core it
 // shares with the client: the client is the same object with one connection
-// (11.3), so the core lives here and sdk/rocketnet_message_client.cpp adds the
+// so the core lives here and sdk/rocketnet_message_client.cpp adds the
 // client's link and C API.
 //
 // The spec is proofs/tla/RNSlots.tla (the update, slot observation, admission, kick,
@@ -209,7 +209,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
         config = &defaults;
     }
 
-    // R6 (docs/CHANNELS.md 11.5): a create argument of 0 takes the message
+    // R6 (standard/MESSAGES.md m9.4): a create argument of 0 takes the message
     // config's field; a positive value overrides it for this create; 0 or
     // lower in the config field itself disables that direction's budget.
     // The environment is not read here: the public creates resolve the
@@ -328,7 +328,7 @@ struct rn_message_object_t * rn_message_object_create( void * context, const str
             rocketnet_client_connection_reset( object );
     }
 
-    // CHANNELS 11.3: the client's one connection is bound at create, because
+    // The client's one connection is bound at create, because
     // the client transport hands it payloads from before CONNECTED is
     // reported, and it is never bound again. Its CONFIG control record is
     // announced here and waits in the queue for CONNECTED (RN-2 m11); an
@@ -577,7 +577,7 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
     // bound in this update keeps its own first entries. A link with no tag
     // function presents the slot's binding, or no tag (0, which no connection
     // carries) when Observe bound or dropped the slot in this update, which
-    // discards it (CHANNELS 10.2, 11.5).
+    // discards it (proofs/tla/RNSlots.tla).
 
     const int index = client_index ? client_index[k] : 0;
     if ( index < 0 || index >= object->num_connections )
@@ -1682,7 +1682,7 @@ static struct rocketnet_message_server_t * rn_message_server_create( void * cont
     if ( !rocketnet_api_null_guard( address ) )
         return NULL;
 
-    // R6 (docs/CHANNELS.md 11.5): 0 takes server_send_kbps from the message
+    // R6 (standard/MESSAGES.md m9.4): 0 takes server_send_kbps from the message
     // config; a positive value overrides it for every slot this create makes.
     // The create argument is uint32_t, so refuse above the maximum before
     // narrowing: a value in [2^31, 2^32) must not wrap negative and become

@@ -527,9 +527,9 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 ROCKETNET_STATIC_ASSERT( ROCKETNET_MESSAGE_SINGLE_BYTES >= 1400, "a 1400-byte game packet is one SINGLE message, zero copy, unfragmented" );
 
 // the message config table, one declaration deriving struct, defaults and
-// validation, as the transports' tables (docs/CHANNELS.md 12). Fields marked
+// validation, as the transports' tables. Fields marked
 // WIRE must be identical on both ends; CONFIG verifies them (layer 7).
-// Validation applies the ranges here and the cross rules of section 14, and
+// Validation applies the ranges here and the cross rules of docs/LOAD.md Table 3, and
 // refuses, never clamps. The public env pass reads every row but the two
 // budget rows under the endpoint's prefix (rn_apply_message_and_budget_env);
 // the budget's one variable is the endpoint's budget field,

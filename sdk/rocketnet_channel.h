@@ -21,14 +21,14 @@
 #include "rocketnet_window_send.h"
 
 // Layer 4 of the message layer: the per-channel state and the dispatch
-// (docs/CHANNELS.md 7). proofs/tla/RNChannel.tla is the spec; each function below
+// (standard/MESSAGES.md m6, m7). proofs/tla/RNChannel.tla is the spec; each function below
 // names the action it implements (owner rule R7).
 //
 // The state lives in the connection's region (layer 1): C rn_channel_send_t
 // and C rn_channel_receive_t carved by rn_region_carve, so nothing here
 // allocates (R2). The four counters and their coupling are present from
 // the first version and run even though no sequenced type is enabled
-// (CHANNELS.md 7.1, RNChannel's OrderedTraceUnchangedBySequenced).
+// (standard/MESSAGES.md m7.3, RNChannel's OrderedTraceUnchangedBySequenced).
 //
 // A record's dispatch is a switch over all eight types. The enabled mask of
 // 7.5 admits a type; a disabled type is refused on send
@@ -40,7 +40,7 @@
 //   sdk/rocketnet_channel_sequenced.cpp   codes 1 and 4
 //   sdk/rocketnet_channel_receipts.cpp    codes 5, 6 and 7
 
-// the eight application types (docs/CHANNELS.md 7.5, 17.1): the five wire
+// the eight application types (standard/MESSAGES.md m4, m1.3): the five wire
 // codes, then the three receipt variants, which travel as 0, 2 and 3.
 
 #define ROCKETNET_CHANNEL_TYPE_UNRELIABLE                       0
@@ -61,7 +61,7 @@
 
 #define ROCKETNET_CHANNEL_RECEIPT_BASE( type )                  ( (type) < 5 ? (type) : ( (type) == 5 ? 0 : (type) - 4 ) )
 
-// what a dispatch did with one record (docs/CHANNELS.md 7.2)
+// what a dispatch did with one record (standard/MESSAGES.md m7.4)
 
 // The receive deferred its whole payload: a reliable record could not reserve
 // its deliveries, so the payload ends part-way and its acknowledgement is
@@ -229,7 +229,7 @@ int rn_channels_dispatch( struct rn_channels_t * channels, const struct rocketne
 //     the sender chose, indexed by (channel, ordering) in the held index, and
 //     kept live; returns HELD.
 //   ordering behind: a violation (MESSAGE_ORDERING_BEHIND).
-//   a block fragment (CHANNELS.md 8): copied to ring + index * F, counted in the
+//   a block fragment (standard/MESSAGES.md m8): copied to ring + index * F, counted in the
 //     block's state, found through the held index; the whole block is one
 //     message once every fragment is in, delivered in place from the ring, never
 //     before. A count or index that disagrees with the first fragment seen, a
@@ -252,7 +252,7 @@ int rn_channels_dispatch_ordered( struct rn_channels_t * channels, const struct 
 
 void rn_channels_drain( struct rn_channels_t * channels, uint32_t channel );
 
-// A block's chunk, for codes 2 and 3 (CHANNELS.md 8): the first chunk seen
+// A block's chunk, for codes 2 and 3 (standard/MESSAGES.md m8): the first chunk seen
 // anchors the block in the held index under (key_channel, key_index); every
 // chunk after it must agree with the anchor on its count, first number and
 // base, or it is MESSAGE_BAD_BLOCK. The chunk is copied to ring + index * F and
@@ -354,7 +354,7 @@ uint32_t rn_channels_feed_acks( struct rn_window_ack_t * ack, const uint64_t * p
 void rn_channels_end_update( struct rn_channels_t * channels );
 
 // ---------------------------------------------------------------
-//        the ordered path of one connection, ends to end (CHANNELS 6.4 to 9.3)
+//        the ordered path of one connection, ends to end (standard/MESSAGES.md m9, m2)
 // ---------------------------------------------------------------
 
 #define ROCKETNET_ORDERED_MAX_ITEMS     96      // the items one write call plans
@@ -382,7 +382,7 @@ struct rn_ordered_t
     struct rocketnet_send_budget_t * budget;        // R6, or NULL
     struct rocketnet_message_limits_t limits;       // what layer 2's reader checks a payload against
 
-    // CONFIG (docs/CHANNELS.md 10.3, 13.4; proofs/tla/RNEndpoint.tla)
+    // CONFIG (standard/MESSAGES.md m11; proofs/tla/RNEndpoint.tla)
     struct rocketnet_message_config_body_t config;  // this end's CONFIG body, set by rn_ordered_announce_config
     int config_announced;                           // this end's CONFIG is queued (RNEndpoint Reset)
     int config_received;                            // the remote endpoint's CONFIG was taken and equals this end's (RNEndpoint remoteCfg # NoCfg)
@@ -430,7 +430,7 @@ uint32_t rn_ordered_acks( struct rn_ordered_t * ordered, const uint64_t * packet
 
 int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, int bytes );
 
-// proofs/tla/RNEndpoint.tla Reset, the CONFIG half (CHANNELS.md 10.3): queues this
+// proofs/tla/RNEndpoint.tla Reset, the CONFIG half (standard/MESSAGES.md m11): queues this
 // end's one CONFIG control record, code 2 with CONTROL set and the 28-byte
 // body of 13.4 written from `config` (NULL: the defaults) and the enabled
 // mask, at the head of IMMEDIATE on channel 0, so it takes the connection's
@@ -441,7 +441,7 @@ int rn_ordered_receive( struct rn_ordered_t * ordered, const uint8_t * payload, 
 
 bool rn_ordered_announce_config( struct rn_ordered_t * ordered, const struct rocketnet_message_config_t * config );
 
-// proofs/tla/RNEndpoint.tla OnPayload with ConfigCompare (CHANNELS.md 10.3, 13.4):
+// proofs/tla/RNEndpoint.tla OnPayload with ConfigCompare (standard/MESSAGES.md m11):
 // the remote endpoint's CONFIG record, already accepted by layer 3, read and compared
 // field by field with this end's body. Equal: config_received is set. A
 // different field, or a version this end does not know, logs one error line

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// the client message object (docs/CHANNELS.md 11.3): the object core of
+// the client message object: the object core of
 // sdk/rocketnet_message_server.cpp with one connection, over a
 // rocketnet_client_transport_t. Its one connection is bound at create and never
 // bound again; when its region is exhausted the client disconnects itself with
@@ -170,7 +170,7 @@ static struct rocketnet_message_client_t * rn_message_client_create( void * cont
     if ( !rocketnet_api_null_guard( connect_token ) )
         return NULL;
 
-    // R6 (docs/CHANNELS.md 11.5): 0 takes client_send_kbps from the message
+    // R6 (standard/MESSAGES.md m9.4): 0 takes client_send_kbps from the message
     // config; a positive value overrides it for this create. The create
     // argument is uint32_t, so refuse above the maximum before narrowing:
     // a value in [2^31, 2^32) must not wrap negative and become uncapped.

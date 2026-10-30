@@ -12,23 +12,22 @@
 #include <stddef.h>
 #include "rocketnet_internal.h"
 
-// layer 2 of the message layer (docs/CHANNELS.md section 5): message records
+// layer 2 of the message layer (standard/MESSAGES.md m3): message records
 // inside one transport payload, and the zero-copy single-message form. The
 // wire is STANDARD.md _Messages_, to the byte; this file is its codec and the
 // receiver's checks 1 to 9 and 12, in the standard's order. It is pure: no
 // state survives a call, nothing is allocated, and nothing reads a clock.
-// Reliability, ordering and the window are the layers above (CHANNELS.md 6
-// to 8); this layer hands them each record whole, with its fields as the wire
+// Reliability, ordering and the window are the layers above (standard/MESSAGES.md m5, m7, m9); this layer hands them each record whole, with its fields as the wire
 // carries them (24-bit numbers unreconstructed).
 //
 // The form byte is the payload's LAST byte, so a SINGLE message starts at
 // payload offset 0 -- the transport's 16-aligned frame + payload_index -- and
-// is written and read in place with no copy (CHANNELS.md 5, 11.2).
+// is written and read in place with no copy (standard/MESSAGES.md m3, m2).
 
 #define ROCKETNET_MESSAGE_FORM_SINGLE                       0x00
 #define ROCKETNET_MESSAGE_FORM_RECORDS                      0x01
 
-// the record's wire code: the reliability as it travels (CHANNELS.md L2.1).
+// the record's wire code: the reliability as it travels (standard/MESSAGES.md m1.3).
 // the receipt variants 5, 6 and 7 are sent as 0, 2 and 3; 5 to 7 on the wire
 // are violations.
 
@@ -60,7 +59,7 @@
 
 #define ROCKETNET_MESSAGE_U24_MASK                          0xFFFFFF
 
-// the CONFIG control record (STANDARD.md _Messages_, CHANNELS.md 13.4)
+// the CONFIG control record (STANDARD.md _Messages_, standard/MESSAGES.md m11)
 
 #define ROCKETNET_MESSAGE_CONTROL_CONFIG                    1
 #define ROCKETNET_MESSAGE_CONFIG_VERSION                    1
@@ -131,7 +130,7 @@ int rocketnet_message_record_valid( const struct rocketnet_message_record_t * re
 // a RECORDS payload, built in place in the caller's buffer (a transport frame
 // at payload_index). capacity counts every byte the payload may take,
 // including the trailing form byte. add copies the record's data after its
-// header: the one copy from the send store into the frame (CHANNELS.md R5).
+// header: the one copy from the send store into the frame.
 
 struct rocketnet_message_writer_t
 {
@@ -148,7 +147,7 @@ void rocketnet_message_writer_begin( struct rocketnet_message_writer_t * writer,
 int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * writer );
 
 // appends one valid record. Returns 1, or 0 when it does not fit, leaving the
-// payload unchanged: a record is never split (CHANNELS.md 9.3).
+// payload unchanged: a record is never split (standard/MESSAGES.md m2).
 
 int rocketnet_message_writer_add( struct rocketnet_message_writer_t * writer, const struct rocketnet_message_record_t * record );
 
