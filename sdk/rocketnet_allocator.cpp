@@ -1867,7 +1867,7 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
         num_connections = 0;
 
     rn_text_t text = { buffer, buffer_size, 0 };
-    rn_text_append( &text, "message connection sizing (docs/CHANNELS.md section 14)\n" );
+    rn_text_append( &text, "message connection sizing (docs/LOAD.md Table 3)\n" );
     rn_text_append( &text, "connection_bytes = 64C + 116.125W + B + 88Q + S + 128P + 24(W + Du) + 1440Ru + 16Rq + SR, Q/S/SR include maximum resend-delay payload reserve (typical pool payloads 128/512/1024 bytes)\n" );
     rn_text_append( &text, "C=%d W=%d B=%d S=%d Q=%d P=%d Du=%d Ru=%d Rq=%d\n",
                     config->num_channels, config->reliable_messages_in_flight, config->receive_message_buffer_bytes, config->send_message_buffer_bytes,
