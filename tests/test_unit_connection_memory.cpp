@@ -876,6 +876,42 @@ static void test_generation_tagged_slots_and_lifo_stack()
 }
 #endif // #if ROCKETNET_DEV
 
+// A free run that straddles the scan cursor is found: chunks {0,1,2,8} free
+// with the cursor at 1 holds a run of 3 starting before the cursor
+// (proofs/tla/RNSendStore.tla RefuseOnlyWhenNoRun).
+
+static void test_store_find_run_straddling_the_cursor()
+{
+    std::vector<uint8_t> memory( 64 * 1024 );
+    rn_send_store_t store;
+    rn_send_store_init( &store, memory.data(), memory.size() );
+
+    rn_store_class_t * cls = &store.classes[RN_STORE_LARGE];
+    const uint32_t n = cls->num_chunks;
+    check( n >= 9 );
+
+    std::vector<uint32_t> handles;
+    for ( uint32_t i = 0; i < n; i++ )
+    {
+        const uint32_t h = rn_send_store_alloc( &store, RN_STORE_LARGE_BYTES );
+        check( h != RN_CHUNK_NONE );
+        handles.push_back( h );
+    }
+
+    check( rn_send_store_free_checked( &store, handles[0] ) );
+    check( rn_send_store_free_checked( &store, handles[1] ) );
+    check( rn_send_store_free_checked( &store, handles[2] ) );
+    check( rn_send_store_free_checked( &store, handles[8] ) );
+
+    cls->free_head = 1;
+
+    uint32_t first = RN_CHUNK_NONE;
+    check( rn_send_store_find( &store, 3 * RN_STORE_LARGE_BYTES, &first ) );
+    check( first == 0 );
+    check( rn_send_store_alloc( &store, 3 * RN_STORE_LARGE_BYTES ) != RN_CHUNK_NONE );
+    check( !rn_send_store_find( &store, 3 * RN_STORE_LARGE_BYTES, &first ) );
+}
+
 // Live spans are linked in allocation order: the oldest live span pins the
 // reclaim floor while interior spans churn, holes are never overwritten, and
 // the floor advances only when the oldest span is freed.
@@ -984,6 +1020,7 @@ REGISTER_UNIT_TEST( test_exhausted_region_refuses_sends_until_reset );
 REGISTER_UNIT_TEST( test_receive_without_room_exhausts_the_region );
 REGISTER_UNIT_TEST( test_exhausted_region_refuses_spans );
 REGISTER_UNIT_TEST( test_span_granted_after_reset );
+REGISTER_UNIT_TEST( test_store_find_run_straddling_the_cursor );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
 #endif // #if ROCKETNET_DEV
