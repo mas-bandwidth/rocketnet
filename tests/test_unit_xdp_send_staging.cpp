@@ -1,5 +1,6 @@
 /* RocketNet. Copyright 2026 Más Bandwidth LLC. Licensed under AGPL-3.0. */
 #include "../sdk/rocketnet_driver.h"
+#include "../sdk/rocketnet_server_socket.h"
 #include "test_unit_registry.h"
 
 // the AF_XDP code is Linux only, so its tests are built there only
