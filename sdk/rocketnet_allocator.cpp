@@ -341,7 +341,9 @@ static bool rn_store_chunk_is_free( const rn_store_class_t * cls, uint32_t i )
 
 // the first contiguous run of `needed` free chunks, examined from the scan
 // cursor and then from the start; the cursor never starts a run inside the
-// never-taken area, whose run begins at the watermark itself
+// never-taken area, whose run begins at the watermark itself. The second pass
+// runs on past the cursor far enough to finish a run that began before it
+// (proofs/tla/RNSendStore.tla RefuseOnlyWhenNoRun)
 
 static bool rn_store_find_run( const rn_store_class_t * cls, uint32_t needed, uint32_t * out_first )
 {
@@ -353,7 +355,7 @@ static bool rn_store_find_run( const rn_store_class_t * cls, uint32_t needed, ui
     for ( uint32_t pass = 0; pass < 2; pass++ )
     {
         const uint32_t begin = pass == 0 ? cursor : 0;
-        const uint32_t end = pass == 0 ? cls->num_chunks : cursor;
+        const uint32_t end = pass == 0 ? cls->num_chunks : ( cursor + needed - 1 < cls->num_chunks ? cursor + needed - 1 : cls->num_chunks );
         uint32_t run_start = 0;
         uint32_t run_length = 0;
 
