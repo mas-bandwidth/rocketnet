@@ -286,26 +286,11 @@ static bool rocketnet_client_iocp_address_read( const sockaddr_storage * storage
 {
     memset( address, 0, sizeof( *address ) );
 
-    if ( storage->ss_family == AF_INET && bytes >= (int) sizeof( sockaddr_in ) )
-    {
-        rocketnet_platform_sockaddr_in_to_address( (const sockaddr_in *) storage, address );
-        return true;
-    }
+    if ( ( storage->ss_family == AF_INET && bytes < (int) sizeof( sockaddr_in ) ) ||
+         ( storage->ss_family == AF_INET6 && bytes < (int) sizeof( sockaddr_in6 ) ) )
+        return false;
 
-    if ( storage->ss_family == AF_INET6 && bytes >= (int) sizeof( sockaddr_in6 ) )
-    {
-        const sockaddr_in6 * from = (const sockaddr_in6 *) storage;
-
-        address->type = ROCKETNET_ADDRESS_IPV6;
-        address->port = ntohs( from->sin6_port );
-
-        for ( int i = 0; i < 8; ++i )
-            address->data.ipv6[i] = (uint16_t) ( ( from->sin6_addr.s6_addr[i * 2] << 8 ) | from->sin6_addr.s6_addr[i * 2 + 1] );
-
-        return rocketnet_address_accept_received_source( address, dual_stack );
-    }
-
-    return false;
+    return rocketnet_platform_sockaddr_to_address( storage, dual_stack, address );
 }
 
 static bool rocketnet_client_iocp_win32_post_receive( void * context, int receive, uint8_t * buffer, int buffer_bytes )
