@@ -49,7 +49,9 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 // tests. Returns false when the buffer cannot hold the derived name.
 // only a unit case calls it.
 
+#if ROCKETNET_DEV
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size );
+#endif // #if ROCKETNET_DEV
 
 // the public configs' send budget fields (sdk/rocketnet_api.cpp), one int
 // each: send_kbps for the client, per_client_send_kbps for the server. with
