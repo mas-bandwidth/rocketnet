@@ -779,7 +779,6 @@ static void test_transport_disconnect_preserves_simulator_loss()
 #if ROCKETNET_DEV
     destroy_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
-    rocketnet_public_link_simulator_test_development( 1 );
 
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -803,7 +802,6 @@ static void test_transport_disconnect_preserves_simulator_loss()
     check( rocketnet_server_client_connected( server, slot ) );
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 REGISTER_UNIT_TEST( test_transport_disconnect_preserves_simulator_loss );
 
@@ -819,7 +817,6 @@ static void test_client_disconnect_sends_burst_staged_in_link_simulator()
     destroy_disconnect_env_guard_t env_guard;
 #endif // #if ROCKETNET_DEV
     rocketnet_quiet( 1 );
-    rocketnet_public_link_simulator_test_development( 1 );
 
     destroy_disconnect_keys_t keys;
     destroy_disconnect_make_keys( &keys );
@@ -854,6 +851,5 @@ static void test_client_disconnect_sends_burst_staged_in_link_simulator()
         rn_test_server_stop_and_destroy( server );
     }
 
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 REGISTER_UNIT_TEST( test_client_disconnect_sends_burst_staged_in_link_simulator );

@@ -170,10 +170,6 @@ bool rocketnet_config_validate_public_link_simulator( const char * transport_nam
 
 bool rocketnet_public_link_simulator_development( void );
 
-#if ROCKETNET_DEV
-void rocketnet_public_link_simulator_test_development( int enabled );
-#endif // #if ROCKETNET_DEV
-
 // The development values: the published test packet filter
 // (ROCKETNET_TEST_FILTER_VALUE) and a connect token sealed to the published
 // development server key. A production library (ROCKETNET_DEV=0) refuses them:

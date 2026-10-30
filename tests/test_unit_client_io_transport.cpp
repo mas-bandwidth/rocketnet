@@ -395,7 +395,6 @@ REGISTER_UNIT_TEST( test_client_io_update_exposes_published_batch );
 
 static void test_client_simulator_stop_defers_backend_send()
 {
-    rocketnet_public_link_simulator_test_development( 1 );
 
     auto * fake = new rocketnet_fake_client_transport_io_t();
     client_io_transport_clock_t clock = { 1000.0, 0 };
@@ -431,7 +430,6 @@ static void test_client_simulator_stop_defers_backend_send()
     rocketnet_client_transport_destroy( transport );
     check( fake->destroy_calls == 1 );
     delete fake;
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 REGISTER_UNIT_TEST( test_client_simulator_stop_defers_backend_send );
 
