@@ -4,22 +4,14 @@
 */
 
 #include "rocketnet_base64.h"
-#include "rocketnet_connect_token.h"     /* rocketnet_generate_backend_keypair: internal, an SDK tool */
-
-#include <sodium.h>
+#include "rocketnet.h"                  /* rocketnet_generate_backend_keypair */
 
 #include <stdio.h>
 
 int main()
 {
-    if ( sodium_init() < 0 )
-    {
-        fprintf( stderr, "error: failed to initialize sodium\n" );
-        return 1;
-    }
-
     uint8_t public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    uint8_t private_key[crypto_sign_SECRETKEYBYTES];     /* the Ed25519 signing secret, 64 bytes */
+    uint8_t private_key[ROCKETNET_BACKEND_SECRET_KEY_BYTES];     /* the Ed25519 signing secret */
     if ( rocketnet_generate_backend_keypair( public_key, private_key ) != ROCKETNET_STATUS_OK )
     {
         fprintf( stderr, "error: failed to generate backend keypair\n" );

@@ -74,10 +74,11 @@ and attackers holding valid tokens are answered by the backend, not by this
 layer. Those sections are the authority; this file does not restate their
 reasoning.
 
-The connect-token create and expire checks read the application's clock: by
-default the wall clock. With `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` or
-`ROCKETNET_SERVER_GAME_CLOCK_EPOCH` set, it is that epoch plus the time the
-caller passes. The application already supplies the clock every other
+The connect-token create and expire checks read the application's clock: the
+epoch `token_epoch_unix_seconds` (or `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS`
+and `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) plus the time the caller
+passes. An epoch of 0 reads the wall clock once, at client connect and at the
+server's first update after start, as the epoch; no check reads it again. The application already supplies the clock every other
 deadline reads, so the token clock has the same trust; the expire check stays
 and only its clock source changes.
 

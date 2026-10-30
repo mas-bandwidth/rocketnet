@@ -88,8 +88,8 @@ status code and the accompanying `ERROR` log line:
      string is rejected before an attempt starts and preserves the prior state.
    - **Action**: never re-submit the same invalid or expired token. Request a
      fresh connect token from the backend and verify that client and server
-     wall clocks (or `ROCKETNET_CLIENT_GAME_CLOCK_EPOCH` and
-     `ROCKETNET_SERVER_GAME_CLOCK_EPOCH`) are synchronized.
+     wall clocks (or `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` and
+     `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS`) are synchronized.
 3. **Transport ladder and host capability failures (`INVALID_TRANSPORT_LIST`, `TRANSPORT_NOT_BUILT`, `TRANSPORT_FAMILIES_UNSUPPORTED`, `TRANSPORT_LADDER_EXHAUSTED`)**:
    - `INVALID_TRANSPORT_LIST`: `config.transport` (or
      `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty

@@ -18,7 +18,7 @@ Both regions initialize the runtime identically before `rocketnet_init(NULL, NUL
   hash-table seed so open-addressing probe lengths and cryptographic paths are
   identical across runs.
 - The simulated clock starts at `1000.0` and advances by a fixed `dt = 0.01`
-  per step. Both client and server configure `game_clock_epoch = 1000`, and
+  per step. Both client and server configure `token_epoch_unix_seconds = 1000`, and
   every client configures `time_callback` to read the simulated clock and
   `step_driven = true` so all I/O steps execute synchronously on the caller
   thread.

@@ -173,7 +173,7 @@ static rocketnet_client_t * destroy_disconnect_client_create( const destroy_disc
     config.loopback_hub = rocketnet_test_loopback_hub();
     config.step_driven = io_core ? 1 : 0;
     config.time_callback = destroy_disconnect_fixed_clock;
-    config.game_clock_epoch = 1000;
+    config.token_epoch_unix_seconds = 1000;
     config.simulated_latency_ms = simulator ? 1 : 0;
 
     rocketnet_client_transport_t * transport = rocketnet_client_transport_create_step_driven_current(

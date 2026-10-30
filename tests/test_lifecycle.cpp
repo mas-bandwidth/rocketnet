@@ -770,7 +770,7 @@ static void check_game_clock_client_create( allocator_state & state )
     rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
-    config.game_clock_epoch = epoch;
+    config.token_epoch_unix_seconds = epoch;
 
     rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex( &state, token, &config, 1000.0, NULL );
     check( client != NULL );

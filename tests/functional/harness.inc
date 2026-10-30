@@ -149,15 +149,15 @@ static int unsetenv( const char * name ) { return _putenv_s( name, "" ); }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
 // The unix timestamp a functional case stamps on a connect token, from the
-// clock that judges the token. The server transport reads game_clock_epoch
+// clock that judges the token. The server transport reads token_epoch_unix_seconds
 // plus its update time when the epoch is set, else the wall clock
 // (sdk/rocketnet_server_transport.cpp:1711), and the client transport reads
 // its own config's epoch the same way (sdk/rocketnet_client_transport.cpp:762).
 // A case passes the epoch it configures and the time it drives the server
 // with; an epoch of zero returns the wall clock both ends then read.
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time )
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time )
 {
-    return game_clock_epoch != 0 ? game_clock_epoch + (uint64_t) time : ( uint64_t )::time( NULL );
+    return token_epoch_unix_seconds != 0 ? token_epoch_unix_seconds + (uint64_t) time : ( uint64_t )::time( NULL );
 }
 
 #define ROCKETNET_FUNCTIONAL_LOG_RING_LINES 32

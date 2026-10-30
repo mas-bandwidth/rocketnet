@@ -324,10 +324,10 @@ static std::vector<std::string> env_names_set_candidates()
 
     // internal transport rows the passes read through the same tables
 
-    env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "1000" );
-    set.push_back( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" );
-    env_names_setenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH", "1000" );
-    set.push_back( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" );
+    env_names_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", "1000" );
+    set.push_back( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" );
+    env_names_setenv( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS", "1000" );
+    set.push_back( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "0" );
     set.push_back( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
     env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "0" );
@@ -587,8 +587,8 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_LATENCY_MS" ) );
     check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_JITTER_MS" ) );
     check( env_names_contains( documented, "ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT" ) );
-    check( env_names_contains( documented, "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" ) );
-    check( env_names_contains( documented, "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" ) );
+    check( env_names_contains( documented, "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" ) );
+    check( env_names_contains( documented, "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( documented, "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" ) );

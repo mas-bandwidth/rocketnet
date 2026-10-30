@@ -74,7 +74,7 @@ static int port_zero_client_transport_create( uint8_t flags, uint16_t ipv4_port,
     rocketnet_fake_client_transport_io_t * fake = new rocketnet_fake_client_transport_io_t();
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config( &config );
-    config.game_clock_epoch = 1000;
+    config.token_epoch_unix_seconds = 1000;
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
 
     int status = -1;

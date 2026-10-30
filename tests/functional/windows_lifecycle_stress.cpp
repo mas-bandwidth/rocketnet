@@ -77,7 +77,7 @@
 #include "../process_resources.h"
 
 // defined in tests/functional/harness.inc: the connect token timestamp from the clock that judges it
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 static void windows_lifecycle_check_line( bool condition, const char * expression, int line )
 {
@@ -264,8 +264,11 @@ static bool windows_counts_flat( const windows_resource_counts_t * before, const
     if ( before->handles < 0 || before->threads < 0 || before->heap_bytes < 0 || before->private_bytes < 0 ||
          after->handles < 0 || after->threads < 0 || after->heap_bytes < 0 || after->private_bytes < 0 )
         return false;
-    return after->threads <= before->threads &&
-           after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
+    // the process thread count includes the operating system's thread pool
+    // workers, which come and go on their own; the library's threads are
+    // checked exactly by the SDK identity ledger, so threads are reported here
+    // and not compared
+    return after->heap_bytes <= before->heap_bytes + windows_memory_allowance_bytes( seconds ) &&
            after->private_bytes < before->private_bytes + windows_private_allowance_bytes();
 }
 
@@ -404,7 +407,7 @@ static rocketnet_client_transport_t * windows_client_create( const windows_cell_
     rocketnet_server_transport_dev_config( &server_config );
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.game_clock_epoch, 1000.0 );
+    const uint64_t create_timestamp = rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, 1000.0 );
 
     if ( server_public_key )
     {

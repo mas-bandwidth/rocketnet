@@ -466,7 +466,7 @@ REGISTER_UNIT_TEST( test_config_env_dev_simulator_numbers_are_strict );
 
 // ---------------------------------------------------------------------------
 // (4) transport passes also exercise development, internal and operator rows:
-// SIMULATED_*, GAME_CLOCK_EPOCH, and MEMORY_BUDGET_BYTES (sdk/rocketnet_client_transport.cpp:583-586,652-653
+// SIMULATED_*, TOKEN_EPOCH_UNIX_SECONDS, and MEMORY_BUDGET_BYTES (sdk/rocketnet_client_transport.cpp:583-586,652-653
 // and sdk/rocketnet_server_transport.cpp rocketnet_config_apply_env and
 // rocketnet_config_apply_env_uint64)
 // ---------------------------------------------------------------------------
@@ -476,8 +476,8 @@ static void test_config_env_transport_passes_exercise_all_rows()
 {
     // 1. Internal & simulator rows:
 
-    env_names_setenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH", "2000" );
-    env_names_setenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH", "3000" );
+    env_names_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", "2000" );
+    env_names_setenv( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS", "3000" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "10" );
     env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "20" );
     env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "8" );
@@ -509,8 +509,8 @@ static void test_config_env_transport_passes_exercise_all_rows()
 
     env_names_capture_end( &capture );
 
-    env_names_unsetenv( "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" );
-    env_names_unsetenv( "ROCKETNET_SERVER_GAME_CLOCK_EPOCH" );
+    env_names_unsetenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" );
+    env_names_unsetenv( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS" );
     env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
     env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" );
     env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" );
@@ -523,16 +523,16 @@ static void test_config_env_transport_passes_exercise_all_rows()
     check( client_budget_ok && client_budget == 104857600 );
     check( server_budget_ok && server_budget == 209715200 );
 
-    check( client_transport.game_clock_epoch == 2000 );
+    check( client_transport.token_epoch_unix_seconds == 2000 );
     check( client_transport.simulated_drop_every_nth == 10 );
     check( client_transport.simulated_reverse_window == 8 );
 
-    check( server_transport.game_clock_epoch == 3000 );
+    check( server_transport.token_epoch_unix_seconds == 3000 );
     check( server_transport.simulated_drop_every_nth == 20 );
     check( server_transport.simulated_reverse_window == 16 );
 
     const std::vector<std::string> overrides = env_names_overrides( capture.log );
-    check( env_names_contains( overrides, "ROCKETNET_CLIENT_GAME_CLOCK_EPOCH" ) );
+    check( env_names_contains( overrides, "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" ) );
     check( env_names_contains( overrides, "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" ) );

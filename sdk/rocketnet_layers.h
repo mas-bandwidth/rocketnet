@@ -33,6 +33,8 @@ extern "C"
 #define ROCKETNET_SERVER_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, loopback_hub ) + sizeof( void * ), sizeof( void * ) )
 #define ROCKETNET_CLIENT_CONFIG_BYTES_3 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, step_driven ) + sizeof( bool ), sizeof( void * ) )
 #define ROCKETNET_SERVER_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, server_secret_key ) + ROCKETNET_SERVER_SECRET_KEY_BYTES, sizeof( void * ) )
+#define ROCKETNET_CLIENT_CONFIG_BYTES_4 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_client_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
+#define ROCKETNET_SERVER_CONFIG_BYTES_5 ROCKETNET_CONFIG_REVISION_BYTES( offsetof( struct rocketnet_server_config_t, token_epoch_unix_seconds ) + sizeof( uint64_t ), sizeof( void * ) )
 
 /// Receive bounds match the sender's datagram and unfragmented payload limits.
 /// Internal; fragments retain their separate, unrounded stride bound.
@@ -318,7 +320,7 @@ struct rocketnet_client_transport_config_t
     void ( *state_change_callback )( void * context, enum rocketnet_client_state_t previous_state, enum rocketnet_client_state_t current_state );
     /** @brief Optional monotonic receive timestamp clock in seconds; NULL selects the platform clock. */
     double ( *time_callback )( void * context );      // the receive stamp clock, read once at create; NULL is the platform clock
-    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    uint64_t token_epoch_unix_seconds;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     uint64_t step_driven;                           // development only: 1 runs the I/O step on the caller; production leaves this 0
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
@@ -769,7 +771,7 @@ struct rocketnet_server_transport_config_t
     int max_timeout_seconds;                        // 1 .. 3600; default 60
     /** @brief Fixed handshake deadline in seconds; 1 through 60, default 5. */
     int handshake_deadline_seconds;                 // 1 .. 60; default 5
-    uint64_t game_clock_epoch;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
+    uint64_t token_epoch_unix_seconds;                      // unix seconds at the game clock's zero for the token check; 0 reads the wall clock
     int simulated_loss_percent;                     // development only: simulated loss 0..100, 0 off
     int simulated_latency_ms;                       // development only: simulated latency ms, 0 off
     int simulated_jitter_ms;                        // development only: simulated jitter ms, 0 off

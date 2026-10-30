@@ -39,7 +39,7 @@
 #include <atomic>
 #include <vector>
 
-uint64_t rocketnet_functional_token_timestamp( uint64_t game_clock_epoch, double time );
+uint64_t rocketnet_functional_token_timestamp( uint64_t token_epoch_unix_seconds, double time );
 
 static const int server_receive_low_tick_max_clients = 1000;
 // the client count the sizing case gives the server: its request is
@@ -141,7 +141,7 @@ void rocketnet_test_server_receive_buffer_sized_from_max_clients()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = server_receive_low_tick_server_clients;
-    server_config.game_clock_epoch = 1700000000ULL;
+    server_config.token_epoch_unix_seconds = 1700000000ULL;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
 #if defined( _WIN32 ) && ROCKETNET_DEV
@@ -433,7 +433,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = max_clients;
-    server_config.game_clock_epoch = 1700000000ULL;
+    server_config.token_epoch_unix_seconds = 1700000000ULL;
     server_config.handshake_deadline_seconds = 30;
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "portable" );
 
@@ -465,7 +465,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config( &client_config );
-    client_config.game_clock_epoch = server_config.game_clock_epoch;
+    client_config.token_epoch_unix_seconds = server_config.token_epoch_unix_seconds;
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "portable" );
 
     std::vector<struct rocketnet_client_transport_t *> clients;
@@ -475,7 +475,7 @@ void rocketnet_test_server_receive_1000_clients_256kbps_10hz()
     for ( int i = 0; i < max_clients; ++i )
     {
         uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
-        server_receive_low_tick_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, rocketnet_functional_token_timestamp( server_config.game_clock_epoch, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
+        server_receive_low_tick_require( rocketnet_write_test_connect_token( server_address, (uint64_t) i + 1, rocketnet_functional_token_timestamp( server_config.token_epoch_unix_seconds, time ), token, ROCKETNET_CONNECT_TOKEN_BYTES ) == ROCKETNET_STATUS_OK );
 
         struct rocketnet_client_transport_t * client = rocketnet_client_transport_create( NULL, token, &client_config, time );
         server_receive_low_tick_require( client != NULL );
