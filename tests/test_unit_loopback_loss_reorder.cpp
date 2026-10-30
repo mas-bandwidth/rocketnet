@@ -70,8 +70,6 @@ static bool loopback_transport_pair_setup( struct loopback_transport_pair_t * pa
     pair->time = 1000.0;
     loopback_loss_reorder_clock = pair->time;
 
-    rocketnet_public_link_simulator_test_development( 1 );
-
     const uint64_t protocol_id = 0x6c6f6f706261636bULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
     uint8_t backend_secret_key[RN_TEST_BACKEND_SECRET_KEY_BYTES];
@@ -149,7 +147,6 @@ static void loopback_transport_pair_teardown( struct loopback_transport_pair_t *
 {
     rn_test_client_transport_stop_and_destroy( pair->client );
     rn_test_server_transport_stop_and_destroy( pair->server );
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 
 // ---- the fixed run, recorded at the base ------------------------------------
@@ -563,7 +560,6 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     check( rocketnet_server_transport_stopped( pair.server ) );
     rn_message_object_destroy( client );
     rn_message_object_destroy( server );
-    rocketnet_public_link_simulator_test_development( 0 );
 
     printf( "test_loopback_transport_reliable_ordered_survives_loss_and_reorder\n" );
 }

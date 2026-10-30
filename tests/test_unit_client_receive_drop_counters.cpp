@@ -469,7 +469,6 @@ static void drop_counters_run( bool batch )
 
 static void test_client_receive_counts_prefilter_drops_without_io_core()
 {
-    rocketnet_public_link_simulator_test_development( 1 );
 
     rocketnet_client_transport_io_operations_t operations = rocketnet_fake_client_operations_io;
     operations.receive = drop_counters_receive;
@@ -554,7 +553,6 @@ static void test_client_receive_counts_prefilter_drops_without_io_core()
 
     rn_test_client_transport_stop_and_destroy( transport );
     delete driver;
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 
 REGISTER_UNIT_TEST( test_client_receive_counts_prefilter_drops_without_io_core );

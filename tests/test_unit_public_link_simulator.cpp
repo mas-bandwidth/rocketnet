@@ -47,7 +47,6 @@ static bool live_link_pair_setup( struct live_link_pair_t * pair )
     memset( pair, 0, sizeof( *pair ) );
     pair->time = 1000.0;
     live_link_clock = pair->time;
-    rocketnet_public_link_simulator_test_development( 1 );
 
     const uint64_t protocol_id = 0x6c6f6f706261636bULL;
     uint8_t backend_public_key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
@@ -118,7 +117,6 @@ static void live_link_pair_teardown( struct live_link_pair_t * pair )
 {
     rn_test_client_transport_stop_and_destroy( pair->client );
     rn_test_server_transport_stop_and_destroy( pair->server );
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 
 static int live_link_server_payload_count( struct live_link_pair_t * pair )
@@ -487,7 +485,6 @@ static rocketnet_client_transport_t * public_link_simulator_client(
 
 static void test_public_link_simulator_drops_at_loss()
 {
-    rocketnet_public_link_simulator_test_development( 1 );
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
@@ -521,7 +518,6 @@ static void test_public_link_simulator_drops_at_loss()
 
 static void test_public_link_simulator_latency()
 {
-    rocketnet_public_link_simulator_test_development( 1 );
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
@@ -592,7 +588,6 @@ static void test_public_link_simulator_jitter()
 #if ROCKETNET_DEV
 static void test_public_link_simulator_duplicate()
 {
-    rocketnet_public_link_simulator_test_development( 1 );
 
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );

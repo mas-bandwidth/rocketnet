@@ -479,7 +479,6 @@ static void stress_world_create( stress_world_t * world )
     world->time = 1000.0;
     stress_now = world->time;
     rocketnet_quiet( true );
-    rocketnet_public_link_simulator_test_development( 1 );
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
@@ -535,7 +534,6 @@ static void stress_world_destroy( stress_world_t * world )
     rn_test_server_stop_and_destroy( world->server );
     stress_side_destroy( &world->client_side );
     stress_side_destroy( &world->server_side );
-    rocketnet_public_link_simulator_test_development( 0 );
 }
 
 // one round: one message on every channel, each way

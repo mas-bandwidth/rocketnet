@@ -826,15 +826,6 @@ bool rocketnet_config_validate( const char * transport_name, const void * config
     return true;
 }
 
-#if ROCKETNET_DEV
-static bool rocketnet_public_link_simulator_test_hook = false;
-
-void rocketnet_public_link_simulator_test_development( int enabled )
-{
-    rocketnet_public_link_simulator_test_hook = enabled != 0;
-}
-#endif // #if ROCKETNET_DEV
-
 bool rocketnet_public_link_simulator_development( void )
 {
     return ROCKETNET_DEV != 0;
