@@ -57,38 +57,94 @@ static void rn_sequenced_release_number( rn_channels_t * channels, uint64_t numb
         descriptor->live = 0;
 }
 
+// A descriptor a code-4 block owns: one of its fragments, so a code-4 record
+// on the block's channel with the anchor's ordering and sequencing (every
+// fragment that joins the block is checked against the anchor for both).
+
+static bool rn_sequenced_block_owns( const rn_receive_descriptor_t * anchor, const rn_receive_descriptor_t * descriptor )
+{
+    return descriptor->code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED && descriptor->channel == anchor->channel &&
+           ( ( descriptor->ordering ^ anchor->ordering ) & ROCKETNET_MESSAGE_U24_MASK ) == 0 &&
+           ( ( descriptor->sequencing ^ anchor->sequencing ) & ROCKETNET_MESSAGE_U24_MASK ) == 0;
+}
+
+// A code-4 hold's descriptor is live and is code 4 on the channel holding it;
+// anything else is a broken invariant (proofs/tla/RNHeldOwnership.tla HeldNamesLive).
+
+static bool rn_sequenced_hold_valid( const rn_region_t * region, uint32_t hold, uint32_t channel )
+{
+    if ( !rn_sequenced_reliable_hold( hold ) )
+        return true;
+
+    const uint32_t slot = hold & ~RN_SEQUENCED_RELIABLE_HOLD;
+    if ( slot >= region->window )
+        return false;
+
+    const rn_receive_descriptor_t * descriptor = &region->receive_descriptors[slot];
+    return descriptor->live && descriptor->code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED && descriptor->channel == channel;
+}
+
 // A hold is a slot (held_sequenced or block_in_turn) and the first number of
 // its code-4 span (held_sequenced_first or block_in_turn_first).
+// proofs/tla/RNHeldOwnership.tla Supersede: a block's release frees only the
+// descriptors it owns. A live descriptor of a number in the claimed span that
+// the block does not own means the sender gave one number to two records: it
+// is not released, the hold is dropped and the connection ends
+// (MESSAGE_BAD_BLOCK). Returns false then; the caller returns
+// ROCKETNET_CHANNEL_DISPATCH_NONE. The number-only release this replaces is
+// MCRNHeldOwnershipBrokenNumberOnlyRelease.cfg.
 
-static void rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
+static bool rn_sequenced_release_slot( rn_channels_t * channels, uint32_t * slot, uint32_t first_number )
 {
     const uint32_t hold = *slot;
     if ( hold == RN_DESCRIPTOR_NONE )
-        return;
+        return true;
 
     rn_region_t * region = channels->region;
+    bool owned = true;
 
     if ( rn_sequenced_reliable_hold( hold ) )
     {
-        const rn_receive_descriptor_t * descriptor = &region->receive_descriptors[hold & ~RN_SEQUENCED_RELIABLE_HOLD];
-        const uint32_t count = descriptor->block_count ? descriptor->block_count : 1;
-        for ( uint32_t i = 0; i < count; i++ )
-            rn_sequenced_release_number( channels, (uint64_t) first_number + i );
+        const rn_receive_descriptor_t * anchor = &region->receive_descriptors[hold & ~RN_SEQUENCED_RELIABLE_HOLD];
+        if ( anchor->live && anchor->code == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED )
+        {
+            const rn_receive_descriptor_t copy = *anchor;     // the walk may free the anchor itself
+            const uint32_t count = copy.block_count ? copy.block_count : 1;
+            for ( uint32_t i = 0; i < count && i < region->window; i++ )
+            {
+                const uint32_t number = ( first_number + i ) & ROCKETNET_MESSAGE_U24_MASK;
+                rn_receive_descriptor_t * descriptor = &region->receive_descriptors[number & ( region->window - 1 )];
+                if ( !descriptor->live || ( descriptor->number & ROCKETNET_MESSAGE_U24_MASK ) != number )
+                    continue;                                   // never arrived, or the slot holds another number
+
+                if ( rn_sequenced_block_owns( &copy, descriptor ) )
+                    descriptor->live = 0;
+                else
+                    owned = false;
+            }
+        }
+        else
+            owned = false;
     }
     else
         rn_sequenced_hold_return( region, hold );
 
     *slot = RN_DESCRIPTOR_NONE;
+
+    if ( !owned )
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+
+    return owned;
 }
 
-static void rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_receive_t * rx )
+static bool rn_sequenced_release_hold( rn_channels_t * channels, rn_channel_receive_t * rx )
 {
-    rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->held_sequenced_first );
+    return rn_sequenced_release_slot( channels, &rx->held_sequenced, rx->held_sequenced_first );
 }
 
-static void rn_sequenced_release_in_turn( rn_channels_t * channels, rn_channel_receive_t * rx )
+static bool rn_sequenced_release_in_turn( rn_channels_t * channels, rn_channel_receive_t * rx )
 {
-    rn_sequenced_release_slot( channels, &rx->block_in_turn, rx->block_in_turn_first );
+    return rn_sequenced_release_slot( channels, &rx->block_in_turn, rx->block_in_turn_first );
 }
 
 static void rn_sequenced_count( rn_channels_t * channels, int counter )
@@ -133,6 +189,7 @@ static rn_delivery_t * rn_sequenced_delivery( rn_channels_t * channels, uint32_t
 }
 
 // proofs/tla/RNChannelTypes.tla DispatchFragment
+// proofs/tla/RNHeldOwnership.tla Fragment and Join: the first fragment claims the span, a later one joins it
 // RNChannelTypes!DispatchFragment for a code-4 block. The first fragment to
 // arrive is the anchor; *hold names it and *first holds its first number. An
 // in-turn block collects in rx->block_in_turn, a future one in the one
@@ -263,6 +320,13 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
     const uint32_t sequencing = record->sequencing & ROCKETNET_MESSAGE_U24_MASK;
 
     const uint32_t current = rx->block_in_turn;
+    if ( current != RN_DESCRIPTOR_NONE && !rn_sequenced_hold_valid( region, current, record->channel ) )
+    {
+        rx->block_in_turn = RN_DESCRIPTOR_NONE;
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
     if ( current != RN_DESCRIPTOR_NONE )
     {
         const rn_receive_descriptor_t * held = &region->receive_descriptors[current & ~RN_SEQUENCED_RELIABLE_HOLD];
@@ -278,7 +342,8 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
                 return ROCKETNET_CHANNEL_DISPATCH_STALE;
             }
 
-            rn_sequenced_release_in_turn( channels, rx );
+            if ( !rn_sequenced_release_in_turn( channels, rx ) )
+                return ROCKETNET_CHANNEL_DISPATCH_NONE;
 
             rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
         }
@@ -290,7 +355,8 @@ static int rn_sequenced_in_turn( rn_channels_t * channels, const rocketnet_messa
         if ( reliable )
             rn_sequenced_release_number( channels, region->receive_descriptors[number_slot].number );
 
-        rn_sequenced_release_in_turn( channels, rx );  // only a continuation still names it here
+        if ( !rn_sequenced_release_in_turn( channels, rx ) )  // only a continuation still names it here
+            return ROCKETNET_CHANNEL_DISPATCH_NONE;
 
         rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
         return ROCKETNET_CHANNEL_DISPATCH_STALE;
@@ -373,6 +439,13 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
     }
 
     const uint32_t current = rx->held_sequenced;
+    if ( current != RN_DESCRIPTOR_NONE && !rn_sequenced_hold_valid( region, current, record->channel ) )
+    {
+        rx->held_sequenced = RN_DESCRIPTOR_NONE;
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
     if ( current != RN_DESCRIPTOR_NONE )
     {
         const bool held_reliable = rn_sequenced_reliable_hold( current );
@@ -394,7 +467,8 @@ int rn_channels_dispatch_sequenced( struct rn_channels_t * channels, const struc
 
         if ( !continuation )
         {
-            rn_sequenced_release_hold( channels, rx );
+            if ( !rn_sequenced_release_hold( channels, rx ) )
+                return ROCKETNET_CHANNEL_DISPATCH_NONE;
 
             rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_SUPERSEDED );
         }
@@ -455,13 +529,26 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
         return false;
 
     rn_channel_receive_t * rx = &channels->region->channel_receive[channel];
+
+    // a hold whose descriptor is not this channel's live code-4 record is a broken invariant: dropped, unread, and the connection ends
+
+    if ( !rn_sequenced_hold_valid( channels->region, rx->block_in_turn, channel ) ||
+         !rn_sequenced_hold_valid( channels->region, rx->held_sequenced, channel ) )
+    {
+        rx->block_in_turn = RN_DESCRIPTOR_NONE;
+        rx->held_sequenced = RN_DESCRIPTOR_NONE;
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION );
+        return false;
+    }
+
     if ( rx->block_in_turn != RN_DESCRIPTOR_NONE )
     {
         // RNChannelTypes!Drain: an in-turn block of an epoch now closed is stale
         const rn_receive_descriptor_t * anchor = &channels->region->receive_descriptors[rx->block_in_turn & ~RN_SEQUENCED_RELIABLE_HOLD];
         if ( ( ( anchor->ordering - rx->ordered_read ) & ROCKETNET_MESSAGE_U24_MASK ) != 0 )
         {
-            rn_sequenced_release_in_turn( channels, rx );
+            if ( !rn_sequenced_release_in_turn( channels, rx ) )
+                return false;
 
             rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
         }
@@ -481,7 +568,8 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     {
         if ( gap >= ( 1u << 23 ) )
         {
-            rn_sequenced_release_hold( channels, rx );
+            if ( !rn_sequenced_release_hold( channels, rx ) )
+                return false;
 
             rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
         }
@@ -515,7 +603,8 @@ bool rn_channels_drain_sequenced( struct rn_channels_t * channels, uint32_t chan
     {
         // standard/MESSAGES.md m7.4 (nothing is silent): the refused record is stale, so release it and count it (proofs/tla/RNChannelTypes.tla DrainStale)
         rx->held_sequenced = slot;
-        rn_sequenced_release_hold( channels, rx );
+        if ( !rn_sequenced_release_hold( channels, rx ) )
+            return false;
 
         rn_sequenced_count( channels, ROCKETNET_COUNTER_MESSAGE_SEQUENCED_STALE );
         return false;

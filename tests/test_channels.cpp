@@ -2204,7 +2204,7 @@ static void rn_soak_write_and_receive( rn_soak_side_t * side, uint64_t tick )
                 const uint64_t key = ( (uint64_t) c << 32 ) | descriptor->ordering;
                 const uint32_t held = rn_held_slot( receiver, key );
                 receiver->held_index[held].key = key;
-                receiver->held_index[held].number_slot = r;
+                receiver->held_index[held].number = r;
                 receiver->held_index[held].used = 1;
             }
 

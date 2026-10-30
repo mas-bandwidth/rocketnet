@@ -112,7 +112,7 @@ struct rn_receive_descriptor_t          // 32 bytes: the receiver's descriptors,
 struct rn_held_entry_t                  // 16 bytes: the held-ordered index, 2W open-addressed entries (6.1)
 {
     uint64_t key;                       // channel << 32 | ordering
-    uint32_t number_slot;               // the descriptor slot holding it
+    uint32_t number;                    // the low 32 bits of the held descriptor's number: its slot (number % W) and its identity
     uint32_t used;
 };
 
@@ -425,6 +425,7 @@ struct rn_region_t
     rn_sequenced_payload_t * sequenced_message_payloads;
     uint32_t * sequenced_hold_free_stack;       // free hold indices in the holds part, the top at sequenced_hold_free_count - 1
     uint32_t sequenced_hold_free_count;         // holds on the free stack: taken in O(1), never scanned for
+    uint32_t held_count;                        // held-index entries in use: at most W, one per live number (proofs/tla/RNHeldOwnership.tla HeldBound)
     uint32_t * sequenced_holds_delivered;       // delivered (used == 2) hold indices in the holds part, this update's
     uint32_t sequenced_holds_delivered_count;   // delivered holds the end-of-update pass returns, none when zero
     rn_receipt_t * receipts;
