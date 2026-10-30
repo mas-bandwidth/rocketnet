@@ -896,7 +896,7 @@ static int rn_channels_dispatch_chunk( rn_channels_t * channels, const struct ro
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
                                      rn_round16( (uint64_t) record->bytes ) ) )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
