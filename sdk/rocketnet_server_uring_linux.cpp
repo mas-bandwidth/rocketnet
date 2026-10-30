@@ -178,7 +178,9 @@ struct rocketnet_server_uring_t
     bool ipv6;
     bool ring_ready;
     bool destroying;
+#if ROCKETNET_DEV
     bool test_stall_destroy;                    // test completion remains pending until explicitly released
+#endif // #if ROCKETNET_DEV
     rocketnet_address_t bind_address;
 
     struct io_uring ring;
@@ -1489,7 +1491,12 @@ bool rocketnet_server_uring_stopped( rocketnet_server_uring_t * uring )
     rocketnet_server_uring_submit( uring );
     rocketnet_server_uring_reap_available( uring, ROCKETNET_URING_RECEIVE_BUDGET );
 
-    if ( uring->test_stall_destroy || uring->sends_pending ||
+#if ROCKETNET_DEV
+    if ( uring->test_stall_destroy )
+        return false;
+#endif // #if ROCKETNET_DEV
+
+    if ( uring->sends_pending ||
          rocketnet_server_uring_ring_sq_ready( uring ) || rocketnet_server_uring_ring_cq_ready( uring ) )
         return false;
 

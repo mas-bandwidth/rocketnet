@@ -585,6 +585,7 @@ struct rocketnet_message_client_t * rocketnet_client_message_client( struct rock
     return client ? ( client->connection ? client->connection : client->retiring ) : NULL;
 }
 
+#if ROCKETNET_DEV
 struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection )
 {
     if ( !rocketnet_api_null_guard( connection ) )
@@ -605,6 +606,7 @@ struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocke
     client->connection = connection;
     return client;
 }
+#endif // #if ROCKETNET_DEV
 
 static void rn_client_default_config_current( struct rocketnet_client_config_t * config )
 {

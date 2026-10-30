@@ -351,6 +351,7 @@ const struct rocketnet_config_field_t * rocketnet_server_transport_config_fields
 //                          the env engine
 // ----------------------------------------------------------------
 
+#if ROCKETNET_DEV
 bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int buffer_size )
 {
     // the public name of a config field's env var: ROCKETNET_<FIELD>, the row's
@@ -375,6 +376,7 @@ bool rocketnet_config_env_var_name( const char * field_name, char * buffer, int 
 
     return true;
 }
+#endif // #if ROCKETNET_DEV
 
 bool rocketnet_config_env_var_name_for( const char * transport_name, const char * field_name, char * buffer, int buffer_size )
 {

@@ -42,7 +42,9 @@
 #include <atomic>
 #include <thread>
 
+#if ROCKETNET_DEV
 extern std::atomic<unsigned long long> g_client_ack_stats_count;
+#endif // #if ROCKETNET_DEV
 
 // every transport a test ends with is balanced before it is destroyed: the
 // server's counters and each client's, RECEIVED == the sum of its outcomes.
@@ -2028,7 +2030,9 @@ void rocketnet_test_client_ack_stats_computed_on_read()
 
     // (a) client-only updates must not recompute the ack statistics
 
+#if ROCKETNET_DEV
     const unsigned long long before = g_client_ack_stats_count.load( std::memory_order_relaxed );
+#endif // #if ROCKETNET_DEV
 
     for ( int i = 0; i < 30; i++ )
     {
@@ -2036,13 +2040,17 @@ void rocketnet_test_client_ack_stats_computed_on_read()
         rocketnet_client_transport_update( client, game_time );
     }
 
+#if ROCKETNET_DEV
     rocketnet_check( g_client_ack_stats_count.load( std::memory_order_relaxed ) == before );
+#endif // #if ROCKETNET_DEV
 
     // (b) one stats read recomputes them exactly once
 
     struct rocketnet_client_transport_stats_t stats;
     rocketnet_client_transport_stats( client, &stats );
+#if ROCKETNET_DEV
     rocketnet_check( g_client_ack_stats_count.load( std::memory_order_relaxed ) == before + 1 );
+#endif // #if ROCKETNET_DEV
 
     // (c) sane rtt and zero loss on the clean loopback
 
