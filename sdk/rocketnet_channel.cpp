@@ -1064,8 +1064,8 @@ void rn_channels_end_update( struct rn_channels_t * channels )
 //                 the send API (RNChannel!Enqueue)
 // ---------------------------------------------------------------
 
-// proofs/tla/RNChannelQueues.tla Enqueue, Front, Cancel, StaleCancel, Compact,
-// ReadyJoin, Rotate and Reset. Ready membership is one ticket per channel. A push
+// proofs/tla/RNChannelQueues.tla Enqueue, Front, ReadyJoin, Rotate and Reset.
+// Ready membership is one ticket per channel. A push
 // of a channel that already holds a ticket is a no-op, so a channel cannot
 // sit on the list twice. Removing a ticket that is not the current one leaves
 // the list alone.
