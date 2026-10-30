@@ -472,3 +472,12 @@ MCRNIocpRetryStopLive.cfg	MCRNIocpRetryStop.tla	pass	-	check	rniocpretrystop	req
 MCRNIocpRetryStopBrokenStopOffByOne.cfg	MCRNIocpRetryStop.tla	invariant	PassBounded	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenClaimBeforeStop.cfg	MCRNIocpRetryStop.tla	invariant	RetryOwned	check	rniocpretrystop	required	-
 MCRNIocpRetryStopBrokenStopWrap.cfg	MCRNIocpRetryStop.tla	invariant	PassBounded	check	rniocpretrystop	required	-
+MCRNPortableTx.cfg	MCRNPortableTx.tla	pass	-	check	rnportabletx	required	-
+MCRNPortableTxFourBanks.cfg	MCRNPortableTx.tla	pass	-	check	rnportabletx	required	-
+MCRNPortableTxBrokenFullOffByOne.cfg	MCRNPortableTx.tla	invariant	ExactSend	check	rnportabletx	required	-
+MCRNPortableTxBrokenWrapTail.cfg	MCRNPortableTx.tla	invariant	ExclusiveOwnership	check	rnportabletx	required	-
+MCRNPortableTxBrokenNoWrap.cfg	MCRNPortableTx.tla	invariant	InBounds	check	rnportabletx	required	-
+MCRNPortableTxBrokenQuitAfterUnlock.cfg	MCRNPortableTx.tla	invariant	ExitSentAll	check	rnportabletx	required	-
+MCRNPortableTxBrokenQuitFirst.cfg	MCRNPortableTx.tla	invariant	ExitSentAll	check	rnportabletx	required	-
+MCRNPortableTxBrokenNoRetryOnIdle.cfg	MCRNPortableTx.tla	temporal	EveryAcceptedSent	check	rnportabletx	required	-
+MCRNPortableTxBrokenNoWake.cfg	MCRNPortableTx.tla	temporal	EveryAcceptedSent	check	rnportabletx	required	-
