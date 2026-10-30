@@ -243,6 +243,12 @@ do                                                                              
 
 bool rocketnet_library_initialized( void );
 
+#if ROCKETNET_DEV
+// the lifecycle lock takes on the calling thread, ever (sdk/rocketnet.cpp):
+// init, term and allocator installation take it; no allocation does
+uint64_t rocketnet_lifecycle_locks_for_test( void );
+#endif // #if ROCKETNET_DEV
+
 void rocketnet_api_misuse_record( void );
 
 // an exported call's NULL check: a NULL counts one misuse and asserts

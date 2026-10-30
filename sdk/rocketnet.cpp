@@ -373,6 +373,34 @@ void rocketnet_allocation_refused()
 static void ( *rocketnet_free_function )( void * context, void * p ) = rocketnet_default_free_function;
 
 static std::mutex rocketnet_lifecycle_mutex;
+
+#if ROCKETNET_DEV
+// the lifecycle lock's takes, ever, on this thread: the unit seam that shows
+// which calls take it
+static thread_local uint64_t rocketnet_lifecycle_locks_on_this_thread = 0;
+
+uint64_t rocketnet_lifecycle_locks_for_test()
+{
+    return rocketnet_lifecycle_locks_on_this_thread;
+}
+#endif // #if ROCKETNET_DEV
+
+// the lifecycle lock, held for a scope
+struct rn_lifecycle_lock_t
+{
+    rn_lifecycle_lock_t()
+    {
+        rocketnet_lifecycle_mutex.lock();
+#if ROCKETNET_DEV
+        ++rocketnet_lifecycle_locks_on_this_thread;
+#endif // #if ROCKETNET_DEV
+    }
+
+    ~rn_lifecycle_lock_t() { rocketnet_lifecycle_mutex.unlock(); }
+
+    rn_lifecycle_lock_t( const rn_lifecycle_lock_t & ) = delete;
+    rn_lifecycle_lock_t & operator=( const rn_lifecycle_lock_t & ) = delete;
+};
 static size_t rocketnet_allocations = 0; // includes allocator callbacks in flight
 static bool rocketnet_initialized = false;
 static bool rocketnet_transitioning = false;
@@ -391,7 +419,7 @@ void rocketnet_api_misuse_record()
 
 bool rocketnet_library_initialized()
 {
-    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    rn_lifecycle_lock_t lock;
     return rocketnet_initialized;
 }
 
@@ -450,7 +478,7 @@ int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t 
 
     if ( malloc_function && free_function )
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         status = rn_allocator_install_locked( malloc_function, free_function );
     }
@@ -480,7 +508,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     void ( *release )( void *, void * );
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         allocate = rocketnet_malloc_function;
         release = rocketnet_free_function;
@@ -492,7 +520,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     {
         ++rocketnet_allocation_refusals_on_this_thread;
 
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         --rocketnet_allocations;
         return NULL;
@@ -518,7 +546,7 @@ void rocketnet_free( void * context, void * p )
 
     allocation.free_function( allocation.context, allocation.base );
 
-    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    rn_lifecycle_lock_t lock;
 
     --rocketnet_allocations;
 }
@@ -653,7 +681,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     bool other_allocator = false;
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         refused = rn_allocator_install_locked( malloc_function, free_function );
         if ( refused == ROCKETNET_STATUS_OK )
@@ -705,7 +733,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         rocketnet_global_context = NULL;
 
         {
-            std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+            rn_lifecycle_lock_t lock;
 
             rocketnet_transitioning = false;
         }
@@ -727,7 +755,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     rocketnet_info( "platform is %s", rocketnet_platform_name( rocketnet_platform_id() ) );
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         rocketnet_initialized = true;
         rocketnet_transitioning = false;
@@ -750,7 +778,7 @@ int rocketnet_term_ex()
     bool live_allocations = false;
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         if ( !rocketnet_initialized || rocketnet_transitioning )
             not_initialized = true;
@@ -784,7 +812,7 @@ int rocketnet_term_ex()
 
     rocketnet_global_context = NULL;
 
-    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    rn_lifecycle_lock_t lock;
 
     rocketnet_initialized = false;
     rocketnet_transitioning = false;
