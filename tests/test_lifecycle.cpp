@@ -627,7 +627,7 @@ static void check_component_create_sweeps( allocator_state & state )
     check( state.live == baseline );
 }
 
-// The operator memory budgets (#155): the server and client tables' memory
+// The operator memory budgets: the server and client tables' memory
 // budget field is overlaid by ROCKETNET_SERVER_/CLIENT_MEMORY_BUDGET_BYTES.
 // A budget below a candidate's default plan refuses the create before any
 // allocation (the counting allocator's call count is unchanged); a budget

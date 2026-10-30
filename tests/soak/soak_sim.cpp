@@ -24,7 +24,7 @@
     ROCKETNET_SOAK_SIM_PROFILE=1  reports where the soak's wall clock went:
                                   how much of it the network simulator took
                                   (harness) against how much the protocol
-                                  objects took (product). #93 needed a perf
+                                  objects took (product). Finding that needed a perf
                                   session on a machine most of us cannot get
                                   to in order to learn that 38.6% of the soak
                                   was harness; this makes any machine able to
@@ -107,12 +107,12 @@ static volatile int quit;
 // Wrapping those would shrink what this line has to confess without removing
 // the need to confess it, and would change the number of timed regions, which
 // is what an A/B against an earlier build compares. So the contents are named
-// instead. The line is 0.476 s and flat across the #99 change (0.477 before,
+// instead. The line is 0.476 s and flat across the slot-index change (0.477 before,
 // 0.476 after), so nothing in the mix moved when the wire did.
 //
 // The point of measuring it here rather than under a profiler is that a soak
 // runs on whatever box it runs on, and "how much of this is instrument" has
-// to be answerable there. #93 needed perf on the test box to find that the
+// to be answerable there. Finding that needed perf on the test box to find that the
 // simulator held 38.6% of cycles; this answers the same question anywhere,
 // including hosts where a sampling profiler is not available at all.
 //
@@ -488,7 +488,7 @@ int main( int argc, char ** argv )
 
     // These addresses are simulated: every one of them is a key into the
     // in-memory network simulator and no socket is ever created for any of
-    // them, so the fixed ports here are not the #107 collision hazard and
+    // them, so the fixed ports here are not the port-collision hazard and
     // must NOT be converted to port zero -- the documentation ranges are
     // deliberate, and two soak_sim processes on one box share nothing.
 

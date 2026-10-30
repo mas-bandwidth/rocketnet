@@ -12,7 +12,7 @@
 #include "rocketnet_internal.h"
 #include "rocketnet_platform.h"
 
-// the frame sync primitive, built to the issue #56 measurements: an absolute
+// the frame sync primitive, built to the measured sync cost: an absolute
 // deadline per frame, the platform sleep that honors it, priority taken on
 // the waiting thread, and a capped adaptive spin guard covering the sleeper's
 // oversleep. On Windows, creation requires a high-resolution waitable timer

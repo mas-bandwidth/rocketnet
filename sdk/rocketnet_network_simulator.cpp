@@ -35,7 +35,7 @@
     a different packet sequence is a different instrument, and the numbers
     taken through it are not comparable with the numbers taken before it.
 
-    What changed (#99) is only the COST of finding that slot. receive() used
+    What changed is only the COST of finding that slot. receive() used
     to walk all `capacity` slots on every call: at soak_sim's shape that is
     a 4096-entry scan nine times per iteration, most of them finding nothing,
     and it held 38.6% of soak cycles on the test box -- harness, not product.

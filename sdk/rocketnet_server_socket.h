@@ -38,7 +38,7 @@ inline int rocketnet_xdp_send_claim( std::atomic<int> & num_packets, int limit, 
 #define ROCKETNET_SERVER_SOCKET_RUNNING    1
 #define ROCKETNET_SERVER_SOCKET_STOPPING   2
 
-// The non-mutating pre-flight (#106, ruled on the #110 review): checks the
+// The non-mutating pre-flight (ruled on review): checks the
 // machine IS provisioned for the XDP data plane and refuses by name when it
 // is not -- each unmet condition logs the knob, the wanted value, and
 // scripts/rocketnet-provision, whose header carries the authoritative
