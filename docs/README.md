@@ -46,7 +46,7 @@ message exchange → integrate a frame loop → connect a backend → qualify a 
 
 Start with [Testing and qualification](TESTING.md). The [release process](RELEASING.md#default-ci-requirements)
 uses the release commit's green CI run as qualification. The index explains
-what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.0.0-preview-4.md)
+what each test tier establishes and labels older qualification records as history. [Release notes](RELEASE-NOTES-v1.0.0-preview-5.md)
 describe migrations; [Hardening](HARDENING.md) explains the verification methods
 and their limits. A plan, model, host-shim test, or successful build is
 not interchangeable with an executed live-transport or performance result.
