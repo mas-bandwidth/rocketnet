@@ -561,39 +561,6 @@ static bool rocketnet_iocp_retire_send( rocketnet_server_iocp_t * iocp, const ro
     return retired;
 }
 
-static int rocketnet_iocp_address_write( const rocketnet_address_t * input, bool ipv6, sockaddr_storage * storage )
-{
-    rocketnet_address_t address = *input;
-    memset( storage, 0, sizeof( *storage ) );
-    if ( ipv6 && address.type == ROCKETNET_ADDRESS_IPV4 )
-        rocketnet_address_convert_ipv4_to_ipv6( &address );
-    if ( ipv6 && address.type == ROCKETNET_ADDRESS_IPV6 )
-    {
-        sockaddr_in6 * out = (sockaddr_in6 *) storage;
-        out->sin6_family = AF_INET6;
-        out->sin6_port = htons( address.port );
-
-        for ( int i = 0; i < 8; ++i )
-        {
-            out->sin6_addr.s6_addr[i * 2] = (uint8_t) ( address.data.ipv6[i] >> 8 );
-            out->sin6_addr.s6_addr[i * 2 + 1] = (uint8_t) address.data.ipv6[i];
-        }
-
-        return sizeof( sockaddr_in6 );
-    }
-
-    if ( !ipv6 && address.type == ROCKETNET_ADDRESS_IPV4 )
-    {
-        sockaddr_in * out = (sockaddr_in *) storage;
-        out->sin_family = AF_INET;
-        out->sin_port = htons( address.port );
-        memcpy( &out->sin_addr, address.data.ipv4, 4 );
-        return sizeof( sockaddr_in );
-    }
-
-    return 0;
-}
-
 // a source from its sockaddr; an IPv4-mapped IPv6 source passes the one
 // receive rule, rocketnet_address_accept_received_source: canonicalised to
 // IPv4 on the dual-stack socket, refused on any other
@@ -601,26 +568,11 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
 {
     memset( address, 0, sizeof( *address ) );
 
-    if ( storage->ss_family == AF_INET && bytes >= (int) sizeof( sockaddr_in ) )
-    {
-        const sockaddr_in * from = (const sockaddr_in *) storage;
-        address->type = ROCKETNET_ADDRESS_IPV4;
-        address->port = ntohs( from->sin_port );
-        memcpy( address->data.ipv4, &from->sin_addr, 4 );
-        return true;
-    }
+    if ( ( storage->ss_family == AF_INET && bytes < (int) sizeof( sockaddr_in ) ) ||
+         ( storage->ss_family == AF_INET6 && bytes < (int) sizeof( sockaddr_in6 ) ) )
+        return false;
 
-    if ( storage->ss_family == AF_INET6 && bytes >= (int) sizeof( sockaddr_in6 ) )
-    {
-        const sockaddr_in6 * from = (const sockaddr_in6 *) storage;
-        address->type = ROCKETNET_ADDRESS_IPV6;
-        address->port = ntohs( from->sin6_port );
-        for ( int i = 0; i < 8; ++i )
-            address->data.ipv6[i] = (uint16_t) ( ( from->sin6_addr.s6_addr[i * 2] << 8 ) | from->sin6_addr.s6_addr[i * 2 + 1] );
-        return rocketnet_address_accept_received_source( address, dual_stack );
-    }
-
-    return false;
+    return rocketnet_platform_sockaddr_to_address( storage, dual_stack, address );
 }
 
 static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op )
@@ -1142,7 +1094,7 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
     rocketnet_iocp_queue_initialize( &iocp->retry_receives );
 
     sockaddr_storage address;
-    int address_bytes = rocketnet_iocp_address_write( bind_address, iocp->ipv6, &address );
+    int address_bytes = rocketnet_platform_sockaddr_for( iocp->ipv6, bind_address, &address );
 
     // one update's inbound packets at the full client count: the iocp create
     // does not carry max_clients, so it sizes for ROCKETNET_MAX_CLIENTS (a
@@ -1358,7 +1310,7 @@ uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, co
     if ( !rocketnet_iocp_acquire_send( iocp, &ref ) )
         return NULL;
     rocketnet_iocp_operation_t * op = &iocp->sends[ref.index];
-    op->address_bytes = rocketnet_iocp_address_write( to, iocp->ipv6, &op->address );
+    op->address_bytes = rocketnet_platform_sockaddr_for( iocp->ipv6, to, &op->address );
     if ( !op->address_bytes )
     {
         rocketnet_iocp_release_send( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
