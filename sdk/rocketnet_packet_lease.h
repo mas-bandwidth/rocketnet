@@ -13,6 +13,8 @@ uint64_t rocketnet_next_packet_lease_id();
 // Contexts remain convenient caller-owned views. This table owns the metadata
 // used by finish/abort. Slots are immutable during a fill; consuming a copied
 // context succeeds once. Only the joined main thread advances the epoch.
+// The table is modelled with its own state word, probe arithmetic and epoch limit in
+// proofs/tla/RNPacketLease.tla (README-RNPacketLease.md).
 template <size_t Capacity> struct rocketnet_packet_leases_t
 {
     static_assert( ( Capacity & ( Capacity - 1 ) ) == 0, "lease table must be a power of two" );
@@ -44,8 +46,15 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
 
     bool insert( rocketnet_packet_context_t & context )
     {
+        // proofs/tla/RNPacketLease.tla StartInsert and IUsed: an attempt is counted in used
+        // and refused at Capacity / 2 (MCRNPacketLeaseBrokenUsedOffByOne.cfg is one more).
+        // The loop below waits on no other thread: it ends within Capacity probes
+        // (MCRNPacketLeaseInsertWaitFree.cfg).
+
         if ( !epoch || used.fetch_add( 1, std::memory_order_relaxed ) >= Capacity / 2 )
             return false;
+
+        // proofs/tla/RNPacketLease.tla ITicket: a ticket, then the probe from the frame's hash.
 
         const uint64_t ticket = rocketnet_next_packet_lease_id();
         if ( !ticket )
@@ -56,14 +65,24 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
         {
             auto & entry = entries[slot];
+
+            // proofs/tla/RNPacketLease.tla ILoad: an entry of the current epoch is skipped.
+
             uint64_t state = entry.state.load( std::memory_order_acquire );
             if ( ( state >> 2 ) == epoch )
                 continue;
+
+            // proofs/tla/RNPacketLease.tla ICas: the claim is a compare-and-swap; a lost race
+            // continues the probe (MCRNPacketLeaseBrokenNoCas.cfg).
 
             if ( !entry.state.compare_exchange_strong( state, writing, std::memory_order_acq_rel ) )
             {
                 continue;
             }
+
+            // proofs/tla/RNPacketLease.tla IWrite: the fields are written in any order while
+            // the state is writing, and IPublish: the release store of active publishes them.
+            // Nothing between the claim and the store waits or can fail.
 
             entry.backend_id = context.packet_id;
             context.packet_id = ticket;
@@ -78,6 +97,8 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
 
     bool resolve( const rocketnet_packet_context_t & supplied, rocketnet_packet_context_t & trusted, uint64_t & backend_id, bool consume )
     {
+        // proofs/tla/RNPacketLease.tla StartResolve: probe from the supplied frame's hash.
+
         if ( !epoch || !supplied.frame )
             return false;
 
@@ -85,12 +106,25 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
         {
             auto & entry = entries[slot];
+
+            // proofs/tla/RNPacketLease.tla RLoad: an entry of another epoch ends the chain.
+
             uint64_t state = entry.state.load( std::memory_order_acquire );
             if ( ( state >> 2 ) != epoch )
                 return false;
 
+            // proofs/tla/RNPacketLease.tla RSpinWait and RSpinDone: an entry being written is
+            // waited on until its writer stores active. The wait is unbounded if that writer
+            // is paused: MCRNPacketLeaseSpinPausedWriter.cfg. Continuing the probe past the
+            // entry instead holds every invariant and waits on no thread:
+            // MCRNPacketLeaseSkipWriting.cfg. Reading the fields without the wait is a data
+            // race: MCRNPacketLeaseBrokenReadWhileWriting.cfg.
+
             while ( ( state & 3 ) == 1 )
                 state = entry.state.load( std::memory_order_acquire );
+
+            // proofs/tla/RNPacketLease.tla RCmp: a frame or ticket mismatch continues the
+            // probe; any other field mismatch refuses.
 
             const auto & owned = entry.context;
             if ( owned.frame != supplied.frame || owned.packet_id != supplied.packet_id )
@@ -100,6 +134,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
                  owned.client_index != supplied.client_index || owned.payload_index != supplied.payload_index ||
                  owned.payload_capacity != supplied.payload_capacity )
                 return false;
+
+            // proofs/tla/RNPacketLease.tla RCommit: take swaps active to consumed, so a lease is
+            // consumed once (MCRNPacketLeaseBrokenConsumeNoCas.cfg); resolve only tests it.
 
             uint64_t active = ( epoch << 2 ) | 2;
             if ( consume ? !entry.state.compare_exchange_strong( active, ( epoch << 2 ) | 3, std::memory_order_acq_rel ) : state != active )
@@ -125,6 +162,13 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     // modified. Does not consume the entry.
     bool retired( const rocketnet_packet_context_t & supplied ) const
     {
+        // proofs/tla/RNPacketLease.tla StartRetired and TLoad: scan from the frame's hash for
+        // an entry of an earlier epoch still active. TCmp reads that entry's fields after
+        // the state load without rereading the state, so a concurrent insert that reuses
+        // the entry races with the read: MCRNPacketLeaseRetiredRace.cfg and
+        // MCRNPacketLeaseRetiredTorn.cfg. Rereading the state and discarding a rewritten
+        // entry closes it: MCRNPacketLeaseRetired.cfg.
+
         if ( !epoch || !supplied.frame || !supplied.packet_id )
             return false;
 
@@ -150,6 +194,9 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         return false;
     }
 
+    // proofs/tla/RNPacketLease.tla Reset: the joined main thread bumps the epoch, which stops at
+    // UINT64_MAX >> 2 and then is 0 so the shifted state word never wraps
+    // (MCRNPacketLeaseBrokenEpochUnlimited.cfg, MCRNPacketLeaseBrokenNoEpochBump.cfg).
     void reset()
     {
         epoch = epoch && epoch < ( UINT64_MAX >> 2 ) ? epoch + 1 : 0;
