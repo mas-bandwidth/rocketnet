@@ -48,6 +48,8 @@ enum rocketnet_iocp_operation_state_t
 // retry_receives has completion-worker producers and consumers. A successful
 // operation touches one cell, but contention may cause CAS retries: it is
 // lock-free bounded storage, not a hard constant-time claim.
+// proofs/tla/RNIocpRefQueue.tla is the layout model of the cells, sequences
+// and position counters, with the stall between a read and its CAS.
 template <size_t Capacity>
 struct rocketnet_iocp_ref_queue_t
 {
@@ -79,6 +81,9 @@ static void rocketnet_iocp_queue_initialize( rocketnet_iocp_ref_queue_t<Capacity
 template <size_t Capacity>
 static bool rocketnet_iocp_queue_push( rocketnet_iocp_ref_queue_t<Capacity> * queue, const rocketnet_iocp_ref_t & ref )
 {
+    // proofs/tla/RNIocpRefQueue.tla PushStart loads the position, PushRead
+    // reads the sequence (free, full or passed), PushClaim is the CAS and
+    // PushPublish the write and release store.
     uint64_t position = queue->enqueue.load( std::memory_order_relaxed );
     typename rocketnet_iocp_ref_queue_t<Capacity>::cell_t * cell;
 
@@ -113,6 +118,9 @@ static bool rocketnet_iocp_queue_push( rocketnet_iocp_ref_queue_t<Capacity> * qu
 template <size_t Capacity>
 static bool rocketnet_iocp_queue_pop( rocketnet_iocp_ref_queue_t<Capacity> * queue, rocketnet_iocp_ref_t * ref )
 {
+    // proofs/tla/RNIocpRefQueue.tla PopStart loads the position, PopRead
+    // reads the sequence (published, empty or passed), PopClaim is the CAS
+    // and PopTake the read and the store that frees the cell a round later.
     uint64_t position = queue->dequeue.load( std::memory_order_relaxed );
     typename rocketnet_iocp_ref_queue_t<Capacity>::cell_t * cell;
 
@@ -151,6 +159,9 @@ template <size_t Capacity>
 static bool rocketnet_iocp_queue_pop_before( rocketnet_iocp_ref_queue_t<Capacity> * queue,
                                              uint64_t stop, rocketnet_iocp_ref_t * ref )
 {
+    // proofs/tla/RNIocpRetryStop.tla PassClaim is the stop test, the
+    // published test and the CAS; PassTake reads the reference and frees
+    // the cell. PassBounded: a pass never claims at or beyond its stop.
     uint64_t position = queue->dequeue.load( std::memory_order_relaxed );
     typename rocketnet_iocp_ref_queue_t<Capacity>::cell_t * cell;
 
@@ -417,6 +428,8 @@ static rocketnet_iocp_operation_t * rocketnet_iocp_receive_from_ref( rocketnet_s
 
 static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t & ref, int state )
 {
+    // proofs/tla/RNIocpSendLease.tla ReleaseStaged and Retire: FREE, then the
+    // reference at its unchanged generation goes back on free_sends.
     rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, ref, state );
     if ( !op )
         return false;
@@ -431,6 +444,8 @@ static bool rocketnet_iocp_release_send( rocketnet_server_iocp_t * iocp, const r
 
 static bool rocketnet_iocp_acquire_send( rocketnet_server_iocp_t * iocp, rocketnet_iocp_ref_t * ref )
 {
+    // proofs/tla/RNIocpSendLease.tla Acquire is one pass of this loop; its
+    // StaleNeverNamesLease is why the GenMax refusal below must stay.
     rocketnet_iocp_ref_t free_ref;
     while ( rocketnet_iocp_queue_pop( &iocp->free_sends, &free_ref ) )
     {
@@ -473,6 +488,8 @@ static bool rocketnet_iocp_packet_ref( rocketnet_server_iocp_t * iocp, uint64_t 
 static bool rocketnet_iocp_allocate_run( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t * refs,
                                          int count, uint64_t * first_ticket )
 {
+    // proofs/tla/RNIocpRunRing.tla Allocate: the overflow guard and the check
+    // of all count slots (NoOverwrite) before any slot is written.
     rocketnet_assert( count > 1 && count <= ROCKETNET_IOCP_USO_MAX_SEGMENTS );
 
     rocketnet_platform_mutex_acquire( &iocp->run_mutex );
@@ -511,6 +528,9 @@ static bool rocketnet_iocp_take_run( rocketnet_server_iocp_t * iocp, uint64_t fi
 {
     if ( first == 0 || count < 1 || count > ROCKETNET_IOCP_USO_MAX_SEGMENTS )
         return false;
+
+    // proofs/tla/RNIocpRunRing.tla Take: a stale or repeated (first, count) is
+    // refused by the ticket compare (TakeOnlyLive).
     rocketnet_platform_mutex_acquire( &iocp->run_mutex );
 
     bool valid = true;
@@ -539,6 +559,7 @@ static bool rocketnet_iocp_take_run( rocketnet_server_iocp_t * iocp, uint64_t fi
 
 static bool rocketnet_iocp_retire_send( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t & root )
 {
+    // proofs/tla/RNIocpSendLease.tla Retire, and RNIocpRunRing.tla Take for a run.
     rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, root, ROCKETNET_IOCP_OPERATION_SEND_POSTED );
     if ( !op )
         return false;
@@ -625,6 +646,9 @@ static bool rocketnet_iocp_address_read( const sockaddr_storage * storage, int b
 
 static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketnet_iocp_operation_t * op )
 {
+    // proofs/tla/RNIocpRetryStop.tla PostStart is the stop check and the new
+    // generation, PostAccepted an accepted post and PostRefused a refused
+    // one, whose push onto retry_receives is PushClaim and PushPublish.
     // Only a completion worker or the creating thread posts a receive; no
     // publication mutex is held. A worker observing stop reissues cancellation
     // after its last potential repost:
@@ -823,6 +847,8 @@ static void rocketnet_iocp_worker( void * argument )
     for ( ;; )
     {
         // RNBufferHandoff WorkerExit sends every bank before receive cancellation.
+        // proofs/tla/RNIocpRetryStop.tla Exit: stopping and nothing pending;
+        // retries still queued are abandoned with the transport.
         if ( iocp->stopping.load( std::memory_order_acquire ) &&
              iocp->send_exited.load( std::memory_order_acquire ) )
         {
@@ -868,6 +894,8 @@ static void rocketnet_iocp_worker( void * argument )
 #endif // #if ROCKETNET_DEV
         rocketnet_iocp_receive_buffer_t * buffer = &worker->buffers[worker->fill_index];
 
+        // proofs/tla/RNIocpRetryStop.tla Complete: each receive completion is
+        // taken by this worker and reposted.
         for ( ULONG i = 0; i < count; ++i )
         {
             if ( !entries[i].lpOverlapped )
@@ -951,7 +979,8 @@ static void rocketnet_iocp_worker( void * argument )
 
         // A transient posting failure must not permanently shrink the receive
         // pool. Capture the enqueue ticket before the first pop: an immediate
-        // refusal requeues at a later ticket and cannot loop in this pass.
+        // refusal requeues at a later ticket and cannot loop in this pass
+        // (proofs/tla/RNIocpRetryStop.tla PassStart, PassBounded and RetryOwned).
 
         const uint64_t retry_stop = iocp->retry_receives.enqueue.load( std::memory_order_acquire );
 
@@ -988,6 +1017,7 @@ void rocketnet_server_iocp_stop( rocketnet_server_iocp_t * iocp )
     if ( count > ROCKETNET_IOCP_SEND_QUEUE_SIZE )
         count = ROCKETNET_IOCP_SEND_QUEUE_SIZE;
     iocp->send_banks[iocp->send_producer].count = (int) count;
+    // proofs/tla/RNIocpRetryStop.tla Stop: post_receive retires from here on.
     iocp->stopping.store( true, std::memory_order_release );
     if ( iocp->send_wake )
         rocketnet_platform_wake_set( iocp->send_wake );
@@ -1434,6 +1464,7 @@ static bool rocketnet_iocp_set_stride( rocketnet_server_iocp_t * iocp, int strid
 // The per-datagram send: one frame, one WSASendTo.
 static void rocketnet_iocp_post_send( rocketnet_server_iocp_t * iocp, const rocketnet_iocp_ref_t & ref )
 {
+    // proofs/tla/RNIocpSendLease.tla Post: the caller keeps its packet id.
     rocketnet_iocp_operation_t * op = rocketnet_iocp_send_from_ref( iocp, ref, ROCKETNET_IOCP_OPERATION_STAGED );
     if ( !op )
         return;
