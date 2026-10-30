@@ -701,6 +701,97 @@ static void test_endpoint_uncapped_large_sequenced_skips_the_bucket()
     rn_arena_destroy( arena );
 }
 
+// A large unreliable-sequenced record that the bucket cannot pay is dropped with
+// no packet written. The drop is counted, but it is not a written packet, so it
+// does not use up the per-update packet allowance.
+
+static void test_endpoint_dropped_large_sequenced_is_not_a_written_packet()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 64;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+
+    // one 200 byte packet spends part of the bucket, enough that a whole-packet record no longer fits; time does not move, so
+    // nothing refills it
+
+    uint8_t * spend = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 200, endpoint_config.max_payload_bytes );
+    check( spend != NULL );
+    if ( spend )
+    {
+        memset( spend, 0x50, 200 );
+        check( rn_endpoint_finish( &endpoint, 200, 0 ) != 0 );
+    }
+
+    rn_endpoint_begin_update( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    const int spent = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+    check( spent > 0 );
+    if ( spent > 0 )
+    {
+        rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, spent ), 1000.0 );
+    }
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
+
+    // the largest record that is not promoted: its RECORDS payload (the 10 header
+    // bytes of a code 1 record and the form byte) fills one whole packet, more
+    // than the bucket now holds. A small unreliable record follows it.
+
+    const int large_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 11;
+    uint8_t * large = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE_SEQUENCED, large_bytes, endpoint_config.max_payload_bytes );
+    check( large != NULL );
+    if ( large )
+    {
+        memset( large, 0x5a, (size_t) large_bytes );
+        check( rn_endpoint_finish( &endpoint, large_bytes, 0 ) != 0 );
+    }
+
+    uint8_t * small = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 100, endpoint_config.max_payload_bytes );
+    check( small != NULL );
+    if ( small )
+    {
+        memset( small, 0x33, 100 );
+        check( rn_endpoint_finish( &endpoint, 100, 0 ) != 0 );
+    }
+
+    check( endpoint.unreliable_count == 2 );
+
+    rn_endpoint_begin_update( &endpoint );
+
+    // the head is the large record: over budget, consumed with no packet; the
+    // call goes on to the small record
+
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_UNRELIABLE_OVER_BUDGET] == 1 );
+    check( endpoint.unreliable_count == 1 );
+    check( endpoint.packet_kind == RN_ENDPOINT_PACKET_UNRELIABLE );
+    check( endpoint.written == 0 );
+
+    const int written = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 2, 1000.0 );
+    check( written > 0 );
+    if ( written > 0 )
+    {
+        rn_endpoint_packet_sent( &endpoint, 2, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, written ), 1000.0 );
+    }
+    check( endpoint.written == 1 );
+    check( endpoint.unreliable_count == 0 );
+
+    rn_arena_destroy( arena );
+}
+
 // A transport can run out of frame capacity after one packet, without asking
 // next_packet_bytes for the zero that normally closes the write pass. New
 // updates still refill the bucket, offer reliable work first, and drop an
@@ -841,4 +932,5 @@ REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
+REGISTER_UNIT_TEST( test_endpoint_dropped_large_sequenced_is_not_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );

@@ -212,7 +212,14 @@ void rocketnet_client_iocp_wake( rocketnet_client_iocp_t * iocp )
     rocketnet_assert( iocp );
 
     if ( !iocp->wake_posted.exchange( true, std::memory_order_acq_rel ) )
-        iocp->port->post_wake( iocp->port_context );
+    {
+        // a refused post leaves no completion on the port: clear the flag so
+        // the next wake posts again instead of every later wake being
+        // swallowed for the life of the client
+
+        if ( !iocp->port->post_wake( iocp->port_context ) )
+            iocp->wake_posted.store( false, std::memory_order_release );
+    }
 }
 
 // proofs/tla/RNClientIocp.tla Close, then Dequeue until Drained: Free is the caller's,
@@ -379,11 +386,15 @@ static int rocketnet_client_iocp_win32_dequeue( void * context, rocketnet_client
     return (int) count;
 }
 
-static void rocketnet_client_iocp_win32_post_wake( void * context )
+static bool rocketnet_client_iocp_win32_post_wake( void * context )
 {
     rocketnet_client_iocp_io_t * client = (rocketnet_client_iocp_io_t *) context;
-    if ( !PostQueuedCompletionStatus( client->port, 0, ROCKETNET_CLIENT_IOCP_WAKE_KEY, NULL ) )
-        rocketnet_debug( "iocp client: wake post failed: %lu", GetLastError() );
+    if ( PostQueuedCompletionStatus( client->port, 0, ROCKETNET_CLIENT_IOCP_WAKE_KEY, NULL ) )
+        return true;
+
+    rocketnet_debug( "iocp client: wake post failed: %lu", GetLastError() );
+
+    return false;
 }
 
 // closesocket aborts every posted receive; each still completes on the port,

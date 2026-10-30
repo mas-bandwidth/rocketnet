@@ -1177,7 +1177,10 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
                 break;
             }
 
-            endpoint->written++;
+            // the head was consumed with no packet (counted): nothing was
+            // written, so the per-update packet allowance is not charged
+            // (RNChannel DropUnreliableForBudget leaves written unchanged)
+
             continue;
         }
 
