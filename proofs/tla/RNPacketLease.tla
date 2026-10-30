@@ -18,9 +18,9 @@
 (* current epoch, claims it by compare-and-swap to writing, writes the    *)
 (* backend id and the context fields in any order, and stores active.     *)
 (* resolve probes from the same hash: an entry of another epoch ends the  *)
-(* chain; an entry in phase 1 is waited on (the spin of the code) before  *)
-(* its fields are read; a frame and ticket mismatch continues the probe,  *)
-(* any other field mismatch refuses; take compare-and-swaps active to     *)
+(* chain; an entry in phase 1 is skipped, not read (the code before the  *)
+(* fix waited on it in a spin); a frame and ticket mismatch continues the *)
+(* probe, any other field mismatch refuses; take compare-and-swaps active to     *)
 (* consumed, resolve only tests that the state is active.  retired scans  *)
 (* the whole table for an entry of an earlier epoch still in phase 2 that *)
 (* equals the supplied context.                                            *)
@@ -56,8 +56,10 @@
 (*   UsedLimit       Capacity / 2 in the code.                             *)
 (*   UseCas          insert claims its entry by compare-and-swap.          *)
 (*   ConsumeCas      take consumes by compare-and-swap.                    *)
-(*   OnWriting       "spin" is the code; "skip" continues the probe past  *)
-(*                   an entry in phase 1; "read" reads its fields.         *)
+(*   OnWriting       a set of one mode: {"skip"} is the code, which      *)
+(*                   continues the probe past an entry in phase 1;         *)
+(*                   {"spin"} waits for its writer (the code before the    *)
+(*                   fix); {"read"} reads its fields.                      *)
 (*   BumpEpoch       reset advances the epoch.                             *)
 (*   EpochLimited    reset stops at EpochLimit and then refuses.           *)
 (*   ValidCallers    resolve and take are given only leases of the       *)
@@ -85,7 +87,7 @@ CONSTANTS Capacity,      \* ROCKETNET_SERVER_PACKET_LEASES-style table size, a p
 
 ASSUME Threads = {1, 2}
 ASSUME Capacity \in {2, 4, 8} /\ HashSpread \in 1..Capacity
-ASSUME OnWriting \in {"spin", "skip", "read"}
+ASSUME OnWriting \in {{"spin"}, {"skip"}, {"read"}}
 ASSUME {UseCas, ConsumeCas, BumpEpoch, EpochLimited, RetiredOn, RetiredValidates, ValidCallers} \subseteq BOOLEAN
 
 Slots == 0..Capacity - 1
@@ -267,10 +269,10 @@ RLoad(t) ==
          ELSE IF PhaseOf(st[slot[t]]) # 1
                 THEN /\ pc' = [pc EXCEPT ![t] = "r_cmp"]
                      /\ UNCHANGED <<slot, probe>>
-                ELSE IF OnWriting = "spin"
+                ELSE IF "spin" \in OnWriting
                        THEN /\ pc' = [pc EXCEPT ![t] = "r_spin"]
                             /\ UNCHANGED <<slot, probe>>
-                       ELSE IF OnWriting = "read"
+                       ELSE IF "read" \in OnWriting
                               THEN /\ pc' = [pc EXCEPT ![t] = "r_cmp"]
                                    /\ UNCHANGED <<slot, probe>>
                               ELSE IF probe[t] + 1 >= Capacity
@@ -283,12 +285,14 @@ RLoad(t) ==
 
 \* while ( ( state & 3 ) == 1 ) state = load: the entry is still being written
 RSpinWait(t) ==
+    /\ "spin" \in OnWriting
     /\ pc[t] = "r_spin"
     /\ PhaseOf(st[slot[t]]) = 1
     /\ UNCHANGED vars
 
 \* the writer's release store ended the spin
 RSpinDone(t) ==
+    /\ "spin" \in OnWriting
     /\ pc[t] = "r_spin"
     /\ PhaseOf(st[slot[t]]) # 1
     /\ seen' = [seen EXCEPT ![t] = st[slot[t]]]

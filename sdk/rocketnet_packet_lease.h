@@ -113,15 +113,16 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
             if ( ( state >> 2 ) != epoch )
                 return false;
 
-            // proofs/tla/RNPacketLease.tla RSpinWait and RSpinDone: an entry being written is
-            // waited on until its writer stores active. The wait is unbounded if that writer
-            // is paused: MCRNPacketLeaseSpinPausedWriter.cfg. Continuing the probe past the
-            // entry instead holds every invariant and waits on no thread:
-            // MCRNPacketLeaseSkipWriting.cfg. Reading the fields without the wait is a data
-            // race: MCRNPacketLeaseBrokenReadWhileWriting.cfg.
+            // proofs/tla/RNPacketLease.tla RLoad (OnWriting = "skip"): an entry in the writing
+            // phase belongs to an insert that has not returned, so it is never the lease a
+            // supplied context names. Continue the probe past it: waiting for its writer
+            // is unbounded when that writer is preempted (MCRNPacketLeaseSpinPausedWriter.cfg,
+            // the reversed witness), and the skip waits on no thread
+            // (MCRNPacketLeaseSkipWriting.cfg). Reading its fields would be a data race:
+            // MCRNPacketLeaseBrokenReadWhileWriting.cfg.
 
-            while ( ( state & 3 ) == 1 )
-                state = entry.state.load( std::memory_order_acquire );
+            if ( ( state & 3 ) == 1 )
+                continue;
 
             // proofs/tla/RNPacketLease.tla RCmp: a frame or ticket mismatch continues the
             // probe; any other field mismatch refuses.
