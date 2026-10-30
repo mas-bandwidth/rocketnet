@@ -1055,7 +1055,7 @@ bool rocketnet_transport_ladder_parse( const char * value, const int * available
     // the ignore rule exists for, so the endpoint falls to its own auto
     // order, loudly. a list with at least one applicable candidate keeps
     // full pin semantics: those candidates and only those, refusal is
-    // failure. (ruled on the #110 review, inside the #106 ignore rule.)
+    // failure. (ruled on review, inside the ignore rule.)
 
     if ( ladder->num_candidates == 0 )
     {

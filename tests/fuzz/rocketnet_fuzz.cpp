@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The wire-facing parser fuzz harness (#111). One libFuzzer binary covering
+// The wire-facing parser fuzz harness. One libFuzzer binary covering
 // the four surfaces that read bytes rocketnet did not write -- the packet
 // prefilter, the fragment header and its reassembly, base64 decoding, and
 // the config value parses -- because one binary is one compile of the sdk,

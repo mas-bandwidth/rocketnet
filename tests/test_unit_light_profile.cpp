@@ -26,7 +26,7 @@
 // io_uring and XDP built, on macOS arm64, and on Windows x64 with MSVC. A
 // host whose ladder grants fewer transports reports less; the check is at
 // most.
-// PR #625 (2026-10-29): the per-slot transport end reason adds 4 bytes a slot;
+// 2026-10-29: the per-slot transport end reason adds 4 bytes a slot;
 // measured +4087 bytes on the macOS DEV server at 1000 slots, so every server
 // figure below is raised by 4096.
 #if defined( _WIN32 )
@@ -44,10 +44,10 @@
 // Re-measured 2026-10-29 on captain at 0e32e225 (unreliable ring 16Q, resend
 // link 12W, descriptor 72 bytes): DEV ON client was 22967743, now 22971807;
 // DEV ON server was 1603276694, now 1607276560.
-// Re-measured 2026-10-29 by the windows Release (a) and (c) CI legs (PR #627):
+// Re-measured 2026-10-29 by the windows Release (a) and (c) CI legs:
 // the client config's loopback_hub pointer and its rounding add 32 bytes to
 // the DEV ON client, which was 22971807 and is now 22971871; the contract
-// audit (PR #629) adds 64 more, 22971935 by the same legs. The DEV OFF leg
+// audit adds 64 more, 22971935 by the same legs. The DEV OFF leg
 // stayed within its figure.
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
@@ -87,7 +87,7 @@
 // resend link 12W): client was 22895109, now 22904141. At 0e32e225
 // (descriptor 72 bytes, span links) server was 3243578316, now 3247578126.
 // Generation, owner epoch, enqueue ticket and hole bound 64 stayed.
-// Re-measured 2026-10-29 by the ubuntu-24.04 Debug CI leg (PR #627): the
+// Re-measured 2026-10-29 by the ubuntu-24.04 Debug CI leg: the
 // client config's loopback_hub pointer adds 8 bytes to the client, which was
 // 22904141 and is now 22904149; the server figure is unchanged.
 // The non-dev figures below were not re-measured: this file is not linked

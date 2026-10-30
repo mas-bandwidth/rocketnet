@@ -313,7 +313,7 @@ static void test_replay_window_model_trace()
 // slot gate. Both are registered as ordinary tests and pass.
 // ---------------------------------------------------------------------------
 
-// F1 (rnfix-replay-long-skip-clears-window-r2, rocketnet#189): the
+// F1 (rnfix-replay-long-skip-clears-window-r2): the
 // ClearedWords = Words rule (the CONSTANTS of proofs/tla/ReplayWindow.tla) -- an
 // advance of at
 // least the window width forgets everything, so a genuine in-range packet is

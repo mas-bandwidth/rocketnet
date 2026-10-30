@@ -192,7 +192,7 @@ int rocketnet_client_protocol_process_record( struct rocketnet_client_protocol_t
 // Builds a payload packet for the server, and stamps the send -- ordinary
 // traffic suppresses the client's own keep-alive. NOT "as on the server":
 // the server's rule splits on whether the client has acknowledged a
-// keep-alive (#90), because until then it is starving the packet that would
+// keep-alive, because until then it is starving the packet that would
 // establish the connection. The client has no such split, and needs none --
 // it sends keep-alives only from _connected_, and nothing at the far end
 // waits on one, since any sealed packet confirms the slot.

@@ -68,12 +68,12 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_PAYLOAD_SLOT_BYTES >= ROCKETNET_RECEIV
 #include <pthread.h>
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-// The transport is selected at RUNTIME (#106): one build carries
+// The transport is selected at RUNTIME: one build carries
 // every transport its platform has, and create walks the config's ordered
 // candidate list -- config->transport, overridden by ROCKETNET_SERVER_TRANSPORT --
 // left to right, first grant wins. On linux that is the runtime ladder:
 // probe XDP (privilege and NIC support), fall to the non-root GSO transport
-// (SO_REUSEPORT sharding + sendmmsg/recvmmsg + UDP GSO/GRO, per the #81
+// (SO_REUSEPORT sharding + sendmmsg/recvmmsg + UDP GSO/GRO, per the
 // measurements), floor at portable. "auto" walks the ladder; ANY explicit
 // list is exactly that list, so a one-element list is a pin -- that transport
 // or loud failure, never a silent fall that would mask a provisioning
@@ -100,7 +100,7 @@ struct rocketnet_server_send_buffer_t
 // the receive batch on the non-xdp transports: one pump call fills these, then
 // processing walks them. the stride is the receive ceiling, so any packet
 // the wire admits fits a slot; the pump moves the batch in as few syscalls
-// as the platform earned (#100) and every platform serves the same call.
+// as the platform earned and every platform serves the same call.
 // the buffer is sized to a full per-update receive budget so one update can
 // absorb everything the budget allows, draining a backlog in as few reads
 // as the endpoint can answer (see ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE).
@@ -1122,7 +1122,7 @@ uint64_t rocketnet_server_transport_required_memory( const rocketnet_server_tran
     return rocketnet_server_transport_memory_plan( config, transport, plan ) ? plan.total_bytes : 0;
 }
 
-// Whole-host estimate (TRANSPORT_READINESS.md #155): the plan plus what each
+// Whole-host estimate (TRANSPORT_READINESS.md): the plan plus what each
 // built-in transport asks of the kernel. Requests only, never grants. The sizes
 // are the ones the transports pass: the portable and msgx socket and every gso
 // queue socket set SO_SNDBUF/SO_RCVBUF to ROCKETNET_SOCKET_SEND_BUFFER_SIZE and
@@ -1301,7 +1301,7 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     rocketnet_assert( public_address_string );
     rocketnet_assert( out );
 
-    // the config layering (#106): DEFAULT < STRUCT < ENV. NULL config is
+    // the config layering: DEFAULT < STRUCT < ENV. NULL config is
     // the default shape; the caller's struct is the middle layer; the
     // environment overlays both through the config table, every override
     // logged loudly with the value it displaced. validation refuses
@@ -1491,7 +1491,7 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
             memset( bind_address.data.ipv6, 0, sizeof( bind_address.data.ipv6 ) );
     }
 
-    // the operator memory budget (#155): each candidate's pre-allocation plan
+    // the operator memory budget: each candidate's pre-allocation plan
     // is compared to the budget before any allocation, and a candidate whose
     // plan exceeds it is refused exactly as a refusing transport is -- logged with
     // the plan and the budget, and skipped so the ladder falls to the next
@@ -1558,7 +1558,7 @@ static bool rocketnet_server_transport_resolve( const char * public_address_stri
     return true;
 }
 
-// THE LADDER (#106): opens the resolved candidates in order until one grants,
+// THE LADDER: opens the resolved candidates in order until one grants,
 // into server_transport->io. Returns the granted transport, with bind_address
 // holding what it bound; -1 when none granted, with *status saying why (an
 // open that ran out of memory ends the ladder rather than falling).
@@ -1587,7 +1587,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
     bool refused_seen[ROCKETNET_NUM_TRANSPORTS];
     memset( refused_seen, 0, sizeof( refused_seen ) );
 
-    // #109: WHICH rungs the port-zero rule refused, so an exhausted ladder
+    // WHICH rungs the port-zero rule refused, so an exhausted ladder
     // can restate the rule at the level the failure itself is reported.
     // The names are collected rather than a bare flag because a mixed list
     // -- say "xdp,gso" where gso refused for its own queue geometry --
@@ -1629,7 +1629,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
             continue;
         }
 
-        // #109: a port-zero public address asks the KERNEL for an
+        // A port-zero public address asks the KERNEL for an
         // ephemeral port, and the adoption below reads the granted port
         // back out of bind_address -- so the address is only meaningful on
         // a rung whose create discovers what it bound and hands it back.
@@ -1640,7 +1640,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
         // port 0, the cookie gate never matches, and nothing says why.
         //
         // This is asked of EVERY candidate rather than patched into the
-        // one rung that fails it today, because #110 made create a loop
+        // one rung that fails it today, because create is a loop
         // and the question is a property of each transport's bind
         // (rocketnet_transport_discovers_bound_port). It is a rung refusal
         // like any other: "auto" falls past xdp to a rung that discovers,
@@ -1743,7 +1743,7 @@ static int rocketnet_server_transport_open_ladder( struct rocketnet_server_trans
                          refused_names[0] != '\0' ? refused_names : "(none)",
                          skipped_names[0] != '\0' ? skipped_names : "(none)" );
 
-        // #109 asked for an error naming the rule, and the per-rung warn
+        // An error naming the rule is wanted, and the per-rung warn
         // above is not that: a deployed binary and the test suite run at
         // the ERROR level, where a warn is invisible. So
         // the rule is restated HERE, at the level the failure itself is

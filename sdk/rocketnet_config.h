@@ -12,7 +12,7 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_test_seams.h"
 
-// The config engine (#106): the machinery behind the per-transport config
+// The config engine: the machinery behind the per-transport config
 // tables declared in rocketnet.h. Each table declares every field once;
 // this engine derives the rest at runtime from field descriptors expanded
 // from the same table -- the env var name (mechanically: ROCKETNET_ plus
@@ -193,7 +193,7 @@ bool rocketnet_config_packet_filter_refused( const char * side, const uint8_t * 
 //                        the transport ladder
 // ----------------------------------------------------------------
 
-// The runtime transport ladder (#106): the transport config value is always an
+// The runtime transport ladder: the transport config value is always an
 // ordered candidate list, tried left to right at transport create, first
 // grant wins, and a list exhausted by refusal fails loudly. "auto" (or the
 // empty string) expands to the platform's recommended order for the
@@ -208,7 +208,7 @@ bool rocketnet_config_packet_filter_refused( const char * side, const uint8_t * 
 
 const char * rocketnet_transport_name( int transport );
 
-// #109: does this transport's create discover the port the kernel granted and
+// Does this transport's create discover the port the kernel granted and
 // hand it back? a port-zero public address asks the kernel for an
 // ephemeral port, so it is only meaningful to a transport that answers yes --
 // the transport's ladder refuses a port-zero address on any rung that
