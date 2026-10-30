@@ -96,8 +96,8 @@ bool rocketnet_server_served_address( const struct rocketnet_server_t * server, 
 // message server; destroy destroys what was adopted. The adopted object has
 // no block of its own, so a connect or start after the adopted one ends
 // allocates its own, with default configs
-struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
 #if ROCKETNET_DEV
+struct rocketnet_client_t * rocketnet_client_adopt( void * context, struct rocketnet_message_client_t * connection );
 struct rocketnet_server_t * rocketnet_server_adopt( void * context, struct rocketnet_message_server_t * running );
 
 // the secret bytes of an object, as spans of its allocation (offset, bytes):
@@ -260,6 +260,7 @@ static inline bool rocketnet_api_null_guard( const void * p )
 void * rocketnet_default_malloc_function( void * context, size_t bytes );
 void rocketnet_default_free_function( void * context, void * p );
 
+#if ROCKETNET_DEV
 // internal to the SDK. The transport updates and the message object's update
 // clamp the caller's clock once per update, before any read of it, through this
 // helper: a non-finite time, or a time below the last good one, becomes the
@@ -271,6 +272,7 @@ void rocketnet_default_free_function( void * context, void * p );
 // origin. One compare per update, none per packet
 /** @brief Internal monotonic-time guard used by transport and message-object updates. @param last_good Previous accepted time in seconds. @param time Candidate time in seconds. @param clamped Optional output set true when candidate is rejected; NULL is allowed. @return Candidate time if finite and nondecreasing, otherwise last_good. Invalid time records misuse and fires the configured assertion. */
 double rocketnet_clamp_update_time( double last_good, double time, bool * clamped );
+#endif // #if ROCKETNET_DEV
 
 /**
  * @brief Advances one owner's update clock by the caller's raw step, beside

@@ -170,10 +170,12 @@ static void test_config_env_var_names_refuse_short_buffers()
 {
     char buffer[128];
 
+#if ROCKETNET_DEV
     check( !rocketnet_config_env_var_name( "max_clients", buffer, (int) strlen( "ROCKETNET_MAX_CLIENTS" ) ) );
 
     check( rocketnet_config_env_var_name( "max_clients", buffer, (int) strlen( "ROCKETNET_MAX_CLIENTS" ) + 1 ) );
     check( strcmp( buffer, "ROCKETNET_MAX_CLIENTS" ) == 0 );
+#endif // #if ROCKETNET_DEV
 
     check( !rocketnet_config_env_var_name_for( "server", "max_clients", buffer, (int) strlen( "ROCKETNET_SERVER_MAX_CLIENTS" ) ) );
 
