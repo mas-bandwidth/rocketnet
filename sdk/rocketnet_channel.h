@@ -99,7 +99,6 @@ struct rn_channels_t
     uint32_t pending_channel;
     uint32_t ready_head, ready_tail;  // cached ends of the flat ready sequence over channel_send, oldest turn first (9.1)
     uint32_t ready_ticket_next;       // next ready-sequence membership ticket, from 1; 0 is not a member
-    uint32_t schedule_work;           // queue entries visited by compact and ticket rebase; one pass, not per record
 };
 
 // Binds the dispatch to one connection's region. Allocates nothing: the

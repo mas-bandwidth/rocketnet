@@ -304,7 +304,6 @@ bool rn_channels_init( struct rn_channels_t * channels, struct rn_region_t * reg
     channels->ready_head = RN_DESCRIPTOR_NONE;
     channels->ready_tail = RN_DESCRIPTOR_NONE;
     channels->ready_ticket_next = 1;
-    channels->schedule_work = 0;
 
     return true;
 }
