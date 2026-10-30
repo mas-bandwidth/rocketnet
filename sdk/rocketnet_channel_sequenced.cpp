@@ -217,7 +217,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     if ( !rn_region_ring_span_valid( region, (uint64_t) record->ring * 16,
                                      ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) ) )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 
@@ -225,7 +225,7 @@ static int rn_sequenced_block( rn_channels_t * channels, const rocketnet_message
     const uint64_t end = base < 0 ? UINT64_MAX : (uint64_t) base * 16 + (uint64_t) ( count - 1 ) * F + ( last ? ( ( (uint64_t) record->bytes + 15 ) & ~(uint64_t) 15 ) : 16 );
     if ( base < 0 || end > region->ring_bytes )
     {
-        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 

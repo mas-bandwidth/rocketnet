@@ -91,10 +91,15 @@ static int rn_channels_dispatch_reliable_chunk( rn_channels_t * channels, const 
 
     const uint32_t total = ( count - 1 ) * F + final_chunk->bytes;
     if ( !first->live || first->number != first_number || !final_chunk->live || final_chunk->number != first_number + count - 1 ||
-         total > region->max_message_bytes ||
-         !rn_region_ring_span_valid( region, (uint64_t) base_units * 16, rn_reliable_round16( total ) ) )
+         total > region->max_message_bytes )
     {
         rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        return ROCKETNET_CHANNEL_DISPATCH_NONE;
+    }
+
+    if ( !rn_region_ring_span_valid( region, (uint64_t) base_units * 16, rn_reliable_round16( total ) ) )
+    {
+        rn_channels_count_violation( channels, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
         return ROCKETNET_CHANNEL_DISPATCH_NONE;
     }
 

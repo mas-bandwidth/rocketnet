@@ -579,9 +579,8 @@ REGISTER_UNIT_TEST( test_violation_slot_collision_is_reachable_from_the_wire );
 
 // Finding 7: the three reliable codes refuse the same malformed blocks. The
 // shared shape helper (rn_block_shape_valid) counts the shape breaches as
-// BAD_BLOCK on all three; the block-span stays BAD_RING on code 2 and 3
-// (BAD_BLOCK on code 4), and the added fragment-ring-span check is BAD_BLOCK on
-// code 3 and 4. Each record is accepted by layer 3 (its descriptor live) and
+// BAD_BLOCK on all three; a ring-span breach (the block's or the fragment's)
+// is BAD_RING on all three (m4 check 8). Each record is accepted by layer 3 (its descriptor live) and
 // dispatched.
 
 static rocketnet_message_record_t block_shape_record( int code, uint32_t fragments, uint32_t fragment, uint32_t ring, int bytes, uint32_t ordering )
@@ -648,7 +647,7 @@ static void test_block_shape_refusals_match_across_reliable_codes()
             block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
         }
 
-    // block span past the ring: BAD_RING on code 2/3, BAD_BLOCK on code 4
+    // block span past the ring: BAD_RING on all three
 
     const uint32_t span_ring = ring_bytes / 16 - F / 16;
 
@@ -656,18 +655,16 @@ static void test_block_shape_refusals_match_across_reliable_codes()
     {
         const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;
         const rocketnet_message_record_t record = block_shape_record( codes[c], 1, 0, span_ring, (int) F, ordering );
-        block_shape_refusal( &record,
-                             codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK : ROCKETNET_COUNTER_MESSAGE_BAD_RING );
+        block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
     }
 
-    // fragment ring span past the ring: BAD_BLOCK on code 3 and 4, BAD_RING on code 2
+    // fragment ring span past the ring: BAD_RING on all three
 
     for ( int c = 0; c < 3; c++ )
     {
         const uint32_t ordering = codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE_SEQUENCED ? 1u : 0u;
         const rocketnet_message_record_t record = block_shape_record( codes[c], 1, 0, ring_bytes / 16, (int) F, ordering );
-        block_shape_refusal( &record,
-                             codes[c] == ROCKETNET_MESSAGE_CODE_RELIABLE ? ROCKETNET_COUNTER_MESSAGE_BAD_RING : ROCKETNET_COUNTER_MESSAGE_BAD_BLOCK );
+        block_shape_refusal( &record, ROCKETNET_COUNTER_MESSAGE_BAD_RING );
     }
 }
 
