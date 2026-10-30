@@ -383,6 +383,19 @@ inline void rocketnet_client_io_decrypt_datagram( rocketnet_client_io_t * io, co
     *out_sequence = sequence;
 }
 
+// One received datagram becomes the next record of the buffer in hand.
+
+inline void rocketnet_client_io_fill_record( rocketnet_client_io_t * io, rocketnet_client_receive_buffer_t * buffer,
+                                             const rocketnet_address_t * from, double now, uint8_t * packet_data, size_t packet_bytes )
+{
+    const int index = buffer->num_packets++;
+    buffer->from[index] = *from;
+    buffer->receive_time[index] = now;
+    buffer->packet_data[index] = packet_data;
+    buffer->packet_bytes[index] = packet_bytes;
+    rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], packet_data, (int) packet_bytes, &buffer->verdict[index], &buffer->sequence[index] );
+}
+
 // proofs/tla/RNClientIo.tla Stop: stores quit and may mark the filling ring final, and never waits.
 // proofs/tla/RNBufferHandoff.tla MainStop: the same store ends the producer and wakes the worker.
 // A filling ring with committed slots passes to the I/O thread with the quit store, so this
@@ -707,15 +720,9 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                              packet_data + (size_t) i * ROCKETNET_FRAME_SIZE,
                              (size_t) ( packet_bytes[i] < ROCKETNET_FRAME_SIZE ? packet_bytes[i] : ROCKETNET_FRAME_SIZE ) );
 
-                const int index = buffer->num_packets;
-                buffer->from[index] = from[i];
-                buffer->receive_time[index] = now;
-                buffer->packet_data[index] = buffer->data + (size_t) ( io->fill_slots + accepted ) * ROCKETNET_FRAME_SIZE;
-                buffer->packet_bytes[index] = (size_t) packet_bytes[i];
-                rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
-                                                      (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
-
-                buffer->num_packets++;
+                rocketnet_client_io_fill_record( io, buffer, &from[i], now,
+                                                 buffer->data + (size_t) ( io->fill_slots + accepted ) * ROCKETNET_FRAME_SIZE,
+                                                 (size_t) packet_bytes[i] );
                 accepted++;
             }
 
@@ -743,15 +750,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
                 break;
             }
 
-            const int index = buffer->num_packets;
-            buffer->from[index] = from;
-            buffer->receive_time[index] = now;
-            buffer->packet_data[index] = packet_data;
-            buffer->packet_bytes[index] = (size_t) bytes;
-            rocketnet_client_io_decrypt_datagram( io, &buffer->from[index], buffer->packet_data[index],
-                                                  (int) buffer->packet_bytes[index], &buffer->verdict[index], &buffer->sequence[index] );
-
-            buffer->num_packets++;
+            rocketnet_client_io_fill_record( io, buffer, &from, now, packet_data, (size_t) bytes );
             io->fill_slots++;
             worked = true;
         }
