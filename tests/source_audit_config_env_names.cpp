@@ -197,6 +197,7 @@ static std::vector<std::string> env_names_documented( const char * relative_path
             if ( end > begin && text[end - 1] != '_' &&
 #if !ROCKETNET_DEV
                  text.substr( begin, end - begin ) != "ROCKETNET_CLIENT_STEP_DRIVEN" &&
+                 text.substr( begin, end - begin ) != "ROCKETNET_DEV_SESSION_SEQUENCE_START" &&
 #endif // #if !ROCKETNET_DEV
                  std::find( names.begin(), names.end(), text.substr( begin, end - begin ) ) == names.end() )
             {
@@ -376,6 +377,7 @@ static void env_names_add_literal_reads( std::vector<std::string> & reads )
         "sdk/rocketnet.cpp",
         "sdk/rocketnet_api.cpp",
         "sdk/rocketnet_config.cpp",
+        "sdk/rocketnet_encryption_map.cpp",
         "sdk/rocketnet_platform.cpp",
         "sdk/rocketnet_server_socket_linux.cpp"
     };
@@ -495,8 +497,10 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( documented, "ROCKETNET_CLIENT_PACKET_FILTER" ) );
 #if ROCKETNET_DEV
     check( env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
+    check( env_names_contains( documented, "ROCKETNET_DEV_SESSION_SEQUENCE_START" ) );
 #else
     check( !env_names_contains( documented, "ROCKETNET_CLIENT_STEP_DRIVEN" ) );
+    check( !env_names_contains( documented, "ROCKETNET_DEV_SESSION_SEQUENCE_START" ) );
 #endif // #if ROCKETNET_DEV
     check( env_names_contains( documented, "ROCKETNET_CLIENT_TRANSPORT" ) );
     check( env_names_contains( documented, "ROCKETNET_SERVER_PROTOCOL_ID" ) );
@@ -574,7 +578,7 @@ static void test_config_env_every_name_read_is_documented()
     check( env_names_contains( overrides, "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" ) );
     check( env_names_contains( overrides, "ROCKETNET_SERVER_TRANSPORT" ) );
-    check( documented.size() == ( ROCKETNET_DEV ? 68u : 67u ) );
+    check( documented.size() == ( ROCKETNET_DEV ? 69u : 67u ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SERVER_SECRET_KEY" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_PUBLIC_ADDRESS" ) );
     check( !env_names_contains( documented, "ROCKETNET_SERVER_SECOND_PUBLIC_ADDRESS" ) );

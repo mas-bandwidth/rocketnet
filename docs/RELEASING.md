@@ -67,9 +67,10 @@ release once a wire change is on `main`.
 ## Default CI requirements
 
 The release commit's green CI run is its qualification. Tag only a `main`
-commit whose required runs are green, and cite the run id of that commit's CI
-run in the release notes. There is no separate per-release qualification
-record. The required runs are:
+commit whose required runs are green; the qualifying run is the green CI run on
+the tagged commit, found from the commit itself, and the release notes do not
+mention it. There is no separate per-release qualification record. The
+required runs are:
 
 - **CI** ([.github/workflows/ci.yml](../.github/workflows/ci.yml)), every job:
   - `build-and-test`, named `<os> / <build_type> / <leg>`: Ubuntu 24.04 and
@@ -139,8 +140,8 @@ A pushed tag is never moved or reused.
 
 The GitHub release notes are the public record of the release. They state the
 version, summarize the user-visible changes since the previous tag, and give
-upgrade instructions where behavior changed. They cite the run id of the
-release commit's green CI run, which is the qualification. They call out any wire-affecting
+upgrade instructions where behavior changed. They do not mention CI,
+workflows or the qualification run. They call out any wire-affecting
 change explicitly and link the relevant section of
 [standard/TRANSPORT.md](../standard/TRANSPORT.md) and the compatibility impact. A security release names the advisory it fixes and
 the first fixed version, and follows the disclosure terms in

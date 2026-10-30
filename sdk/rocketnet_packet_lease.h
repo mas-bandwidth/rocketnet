@@ -161,15 +161,18 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
     // reset bumps the epoch and leaves the entry in place, so finish can tell
     // that miss from a context that was never leased, already consumed, or
     // modified. Does not consume the entry.
-    bool retired( const rocketnet_packet_context_t & supplied ) const
+    bool retired( const rocketnet_packet_context_t & supplied )
     {
         // proofs/tla/RNPacketLease.tla StartRetired and TLoad: scan from the frame's hash for
         // an entry of an earlier epoch still active. TCmp reads that entry's fields, and a
         // concurrent insert may claim and rewrite the same entry (it is of an earlier
         // epoch): the read can overlap that writer's stores. The seqlock reader shape makes
-        // the overlap safe to discard: read the fields, an acquire fence, then load the
-        // state again relaxed; a changed state means the entry was rewritten, so the
-        // fields are dropped and the probe continues. Without it a rewritten entry could be
+        // the overlap safe to discard: read the fields, then read the state again with a
+        // read-don't-modify-write (fetch_add of 0, acq_rel), whose release half keeps the
+        // field reads before it; this is Boehm's seqlock reader, which unlike an acquire
+        // fence plus a relaxed reload is supported under -fsanitize=thread. A changed state
+        // (TCmp's rewritten, st # seen) means the entry was rewritten, so the fields are
+        // dropped and the probe continues. Without it a rewritten entry could be
         // read as torn and accepted for a changed copy (MCRNPacketLeaseBrokenRetiredRace.cfg and
         // MCRNPacketLeaseBrokenRetiredTorn.cfg); with it MCRNPacketLeaseRetired.cfg holds every
         // invariant. This path is reached only after take refused, which is caller misuse,
@@ -181,7 +184,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
         size_t slot = hash( supplied.frame );
         for ( size_t probe = 0; probe < Capacity; ++probe, slot = ( slot + 1 ) & ( Capacity - 1 ) )
         {
-            const auto & entry = entries[slot];
+            auto & entry = entries[slot];
             const uint64_t state = entry.state.load( std::memory_order_acquire );
             const uint64_t entry_epoch = state >> 2;
             if ( entry_epoch == 0 )
@@ -195,8 +198,7 @@ template <size_t Capacity> struct rocketnet_packet_leases_t
                                owned.sequence == supplied.sequence && owned.client_index == supplied.client_index &&
                                owned.payload_index == supplied.payload_index && owned.payload_capacity == supplied.payload_capacity;
 
-            std::atomic_thread_fence( std::memory_order_acquire );
-            if ( entry.state.load( std::memory_order_relaxed ) != state )
+            if ( entry.state.fetch_add( 0, std::memory_order_acq_rel ) != state )
                 continue;
 
             if ( match )

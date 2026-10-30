@@ -132,9 +132,8 @@ to appease an analyzer.
 | `rocketnet_server_gso_linux.cpp` `clang-analyzer-core.CallAndMessage` `be4ea0ef46b62ff8` | Each address, message and packet-info array element is written at `num_messages` before the count is incremented; sends read only below that count. |
 | same file `clang-analyzer-core.uninitialized.Branch` `2738466355939b72` | `sendmmsg` cannot return more than the requested `vlen`, and the sent tail stays within the initialized count. |
 | `rocketnet_server_transport.cpp` `cert-err33-c` `944463e5f85baa2a` | The ignored `snprintf` return is bounded best-effort diagnostic-name collection. Truncation remains NUL-safe and changes no protocol behavior. |
-| same file `clang-analyzer-core.CallAndMessage` `63d75dab0ed93b0a` | A frame's `packet_id` is initialized exactly when the immutable backend dispatch is staged; commit checks that same staged predicate. The analyzer mixes a nonstaged reserve with a staged commit. |
-| same file/check `cc2e6d2f4e4b18ff` | Same immutable-dispatch invariant for the second commit use. |
-| same file/check `e3a4dfe675c1addc` | Same immutable-dispatch invariant for abort. |
+| same file `clang-analyzer-core.CallAndMessage` `e44c52706a1fbee5` | A frame's `packet_id` is initialized exactly when the immutable backend dispatch is staged; commit checks that same staged predicate. The analyzer mixes a nonstaged reserve with a staged commit. (The three staged commit and abort findings were `63d75dab0ed93b0a`, `cc2e6d2f4e4b18ff` and `e3a4dfe675c1addc` until #683 folded the two commit uses into `rocketnet_server_commit_staged`.) |
+| same file/check `cc2e6d2f4e4b18ff` | Same immutable-dispatch invariant for abort. |
 | `rocketnet_tests.cpp` `clang-analyzer-security.FloatLoopCounter` `03238a92bb2cdcfc` | Synthetic-clock test loop; the floating bound is a time deadline, not an iteration count. |
 | same file/check `2d5362edbbd2b319` | Same bounded simulated-time pattern. |
 | same file/check `3f4f072b19b30f81` | Same bounded simulated-time pattern. |

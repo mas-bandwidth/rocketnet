@@ -418,6 +418,7 @@ in both directions against the SDK reads and the public header.
 * Environment: ROCKETNET_DEV_SERVER_LATENCY_MS
 * Environment: ROCKETNET_DEV_SERVER_JITTER_MS
 * Environment: ROCKETNET_DEV_SERVER_DUPLICATE_PERCENT
+* Environment: ROCKETNET_DEV_SESSION_SEQUENCE_START (development only)
 * Environment: ROCKETNET_LOG_LEVEL
 * Environment: ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS
 * Environment: ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS

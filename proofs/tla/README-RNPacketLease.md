@@ -114,9 +114,11 @@ never reread the state:
   returns true for a context that is not the lease it was.
 - `MCRNPacketLeaseRetired.cfg` (rereading the state and discarding a rewritten
   entry) passes every invariant. The code now does this in the seqlock reader
-  shape: read the fields, an acquire fence, then a relaxed load of the state,
-  compared with the first. The field read may still overlap a writer's store;
-  the fence makes discarding it safe, the standard seqlock trade.
+  shape: read the fields, then reread the state with a read-don't-modify-write
+  (`fetch_add( 0, acq_rel )`), compared with the first. The field read may still
+  overlap a writer's store; the release half of the RMW keeps the field reads
+  before the reread, which makes discarding it safe (Boehm's seqlock reader,
+  supported under ThreadSanitizer where an acquire fence is not).
 
 `retired` is reached only after `take` refused, which is caller misuse (a
 finish after a reset, or a modified context), so the old effect was a wrong
