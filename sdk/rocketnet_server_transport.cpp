@@ -716,6 +716,24 @@ void rocketnet_server_transport_link_busy_for_test( struct rocketnet_server_tran
     rocketnet_assert( server_transport );
     server_transport->link_busy_sends_for_test = sends > 0 ? sends : 0;
 }
+
+// The unit seam for a staged transport without a staged socket: exchanges the
+// io the server sends through with the one given, so a test can fake the
+// staging callbacks on a server that connected over loopback. Called again
+// with the returned pair it puts the real io back; the caller does that
+// before destroy.
+void rocketnet_server_transport_swap_io_for_test( struct rocketnet_server_transport_t * server_transport,
+                                                  const struct rocketnet_server_transport_io_operations_t ** operations,
+                                                  void ** instance )
+{
+    rocketnet_assert( server_transport && operations && instance );
+    const struct rocketnet_server_transport_io_operations_t * saved_operations = server_transport->io.operations;
+    void * saved_instance = server_transport->io.instance;
+    server_transport->io.operations = *operations;
+    server_transport->io.instance = *instance;
+    *operations = saved_operations;
+    *instance = saved_instance;
+}
 #endif // #if ROCKETNET_DEV
 
 // Returns the number of sends the link took and marks each one in accepted[],

@@ -311,6 +311,126 @@ static void test_public_link_simulator_server_lock_miss_not_counted_sent()
 
     live_link_pair_teardown( &pair );
 }
+
+// The three staged commit sites (a public start/finish, a payload that
+// collapses out of the arena, a disconnect burst) each choose between the link
+// simulator and the transport's finish. The fake here is a staged transport
+// counting what the server hands it; the server connected over loopback and
+// then sends through the fake. The simulator holding the packet (any active
+// setting, a simulated loss included, is a datagram sent) gives the slot back
+// by abort and is charged; a busy simulator lock gives it back too and is not
+// charged; the pass-through finishes it. No sockets of the fake's own, and the
+// clock is an argument.
+struct staged_fake_t
+{
+    alignas( 16 ) uint8_t frame[ROCKETNET_FRAME_STRIDE];
+    uint64_t next_id;
+    int starts;
+    int finishes;
+    int aborts;
+    int batches;
+    struct rocketnet_server_socket_process_packets_t view;
+};
+
+static uint8_t * staged_fake_start( void * instance, const rocketnet_address_t *, uint64_t * id )
+{
+    struct staged_fake_t * fake = (struct staged_fake_t *) instance;
+    fake->starts++;
+    *id = ++fake->next_id;
+    return fake->frame;
+}
+static void staged_fake_finish( void * instance, uint64_t, uint8_t *, int ) { ( (struct staged_fake_t *) instance )->finishes++; }
+static void staged_fake_abort( void * instance, uint64_t, uint8_t * ) { ( (struct staged_fake_t *) instance )->aborts++; }
+static void staged_fake_flush( void * ) {}
+static struct rocketnet_server_socket_process_packets_t * staged_fake_receive( void * instance )
+{
+    return &( (struct staged_fake_t *) instance )->view;
+}
+static void staged_fake_send_batch( void * instance, const rocketnet_platform_send_t *, int ) { ( (struct staged_fake_t *) instance )->batches++; }
+
+// loss and latency are the simulator setting; busy is the number of link sends
+// that meet the lock held. Returns through the out parameters what each site
+// did: the fake's aborts and finishes and the server's packets_sent.
+static void staged_sites_run( int latency_ms, int loss_percent, int busy, int * aborts, int * finishes, int * charged )
+{
+    struct live_link_pair_t pair;
+    check( live_link_pair_setup( &pair ) );
+    check( live_link_pair_connect( &pair ) );
+
+    struct staged_fake_t * fake = (struct staged_fake_t *) calloc( 1, sizeof( *fake ) );
+    check( fake != NULL );
+    struct rocketnet_server_transport_io_operations_t operations = {};
+    operations.flags = ROCKETNET_TRANSPORT_STAGED;
+    operations.start_packet = staged_fake_start;
+    operations.finish_packet = staged_fake_finish;
+    operations.abort_packet = staged_fake_abort;
+    operations.flush = staged_fake_flush;
+    operations.receive = staged_fake_receive;
+    operations.send_batch = staged_fake_send_batch;
+
+    const struct rocketnet_server_transport_io_operations_t * swapped_operations = &operations;
+    void * swapped_instance = fake;
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+
+    check( rocketnet_server_transport_network_simulator( pair.server, latency_ms, 0, loss_percent, 0 ) );
+    rocketnet_server_transport_link_busy_for_test( pair.server, busy );
+
+    struct rocketnet_server_transport_stats_t before;
+    struct rocketnet_server_transport_stats_t after;
+    rocketnet_server_transport_stats( pair.server, &before );
+
+    // site: a public start and finish of an ordinary payload
+    uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->starts == 1 );
+
+    // site: a write above the wire's capacity that finishes small collapses
+    // to one wire frame out of the arena
+    struct rocketnet_packet_context_t context;
+    uint8_t * frame = rocketnet_server_transport_start_packet( pair.server, 0, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES + 100, &context );
+    check( frame != NULL );
+    memcpy( frame + context.payload_index, payload, sizeof( payload ) );
+    check( rocketnet_server_transport_finish_packet( pair.server, &context, (int) sizeof( payload ) ) > 0 );
+    check( fake->starts == 2 );
+
+    // site: the disconnect burst
+    rocketnet_server_transport_disconnect_client( pair.server, 0 );
+    check( fake->starts > 2 );
+    rocketnet_server_transport_send_packets( pair.server );
+    rocketnet_server_transport_stats( pair.server, &after );
+
+    check( fake->batches == 0 );
+    check( fake->aborts + fake->finishes == fake->starts );
+    *aborts = fake->aborts;
+    *finishes = fake->finishes;
+    *charged = (int) ( after.packets_sent - before.packets_sent );
+    check( *charged >= 0 && *charged <= fake->starts );
+
+    rocketnet_server_transport_swap_io_for_test( pair.server, &swapped_operations, &swapped_instance );
+    live_link_pair_teardown( &pair );
+    free( fake );
+}
+
+static void test_public_link_simulator_staged_commit_arms()
+{
+    int aborts, finishes, charged;
+
+    // a simulator holding every packet at 100% loss still took them: the slot
+    // goes back by abort, nothing finishes, every datagram is charged sent
+
+    staged_sites_run( 0, 100, 0, &aborts, &finishes, &charged );
+    check( aborts >= 3 && finishes == 0 && charged == aborts );
+
+    // the lock busy: the slot goes back by abort and nothing is charged
+
+    staged_sites_run( 1, 0, 1000, &aborts, &finishes, &charged );
+    check( aborts >= 3 && finishes == 0 && charged == 0 );
+
+    // an all-zero setting is a pass-through: the staging finishes every frame
+
+    staged_sites_run( 0, 0, 0, &aborts, &finishes, &charged );
+    check( finishes >= 3 && aborts == 0 && charged == finishes );
+}
 #endif // #if ROCKETNET_DEV
 
 static void public_link_simulator_check_fields( const struct rocketnet_config_field_t * fields, int num_fields )
@@ -722,6 +842,7 @@ REGISTER_UNIT_TEST( test_public_link_simulator_applies_to_live_connection );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_applies_to_live_start );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_switch_off_delivers_held );
 REGISTER_UNIT_TEST( test_public_link_simulator_server_lock_miss_not_counted_sent );
+REGISTER_UNIT_TEST( test_public_link_simulator_staged_commit_arms );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_public_link_simulator_jitter );
 REGISTER_UNIT_TEST( test_public_link_simulator_same_seed_same_schedule );
