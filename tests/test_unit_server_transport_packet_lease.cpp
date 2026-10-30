@@ -19,6 +19,8 @@
 #include "rocketnet_driver.h"
 #include "rocketnet_fragment.h"
 #include "rocketnet_layers.h"
+#include "rocketnet_packet_lease.h"
+#include <atomic>
 
 #include <stdio.h>
 #include <string.h>
@@ -314,3 +316,53 @@ static void test_server_transport_finish_after_stop()
     lease_world_destroy( &world );
 }
 REGISTER_UNIT_TEST( test_server_transport_finish_after_stop );
+
+// bug: resolve and take skip an entry in the writing phase instead of waiting on its writer
+// (proofs/tla/RNPacketLease.tla RLoad, MCRNPacketLeaseSkipWriting.cfg; the wait is
+// MCRNPacketLeaseBrokenSpinPausedWriter.cfg). Two frames share one probe chain, both are
+// inserted, and the first entry is put in the writing phase by hand with no writer. The
+// pre-fix code hangs on the take of the second lease: it spins on an entry no thread will
+// ever finish. The failing form is therefore a hang, not a red check. No threads, no real time.
+static void test_packet_lease_resolve_skips_writing_entry()
+{
+    rocketnet_packet_leases_t<8> leases{};
+    uint8_t frames[512]{};
+
+    int second = -1;
+    for ( int i = 16; i < 512 && second < 0; i += 16 )
+        if ( decltype( leases )::hash( frames + i ) == decltype( leases )::hash( frames ) )
+            second = i;
+
+    check( second > 0 );
+
+    rocketnet_packet_context_t first_context{}, second_context{};
+    first_context.frame = frames;
+    first_context.packet_id = 77;
+    first_context.payload_capacity = 64;
+    second_context.frame = frames + second;
+    second_context.packet_id = 78;
+    second_context.payload_capacity = 32;
+
+    check( leases.insert( first_context ) );
+    check( leases.insert( second_context ) );
+
+    const size_t home = decltype( leases )::hash( frames );
+    const uint64_t active = ( leases.epoch << 2 ) | 2;
+    const uint64_t writing = ( leases.epoch << 2 ) | 1;
+    check( leases.entries[home].state.load() == active );
+    leases.entries[home].state.store( writing, std::memory_order_release );
+
+    rocketnet_packet_context_t trusted{};
+    uint64_t backend = 0;
+    check( leases.resolve( second_context, trusted, backend, false ) );
+    check( trusted.frame == frames + second && trusted.payload_capacity == 32 );
+    check( leases.take( second_context, trusted, backend ) );
+    check( trusted.frame == frames + second );
+    check( !leases.take( second_context, trusted, backend ) );
+    check( leases.entries[home].state.load() == writing );
+
+    leases.entries[home].state.store( active, std::memory_order_release );
+    check( leases.take( first_context, trusted, backend ) );
+    check( trusted.frame == frames && trusted.payload_capacity == 64 );
+}
+REGISTER_UNIT_TEST( test_packet_lease_resolve_skips_writing_entry );

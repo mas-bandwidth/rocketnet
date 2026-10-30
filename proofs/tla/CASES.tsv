@@ -485,10 +485,9 @@ MCRNPacketLease.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
 MCRNPacketLeaseRetired.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
 MCRNPacketLeaseRetiredRace.cfg	MCRNPacketLease.tla	invariant	NoRacyRead	check	rnpacketlease	required	-
 MCRNPacketLeaseRetiredTorn.cfg	MCRNPacketLease.tla	invariant	NoWrongSuccess	check	rnpacketlease	required	-
-MCRNPacketLeaseSpinPausedWriter.cfg	MCRNPacketLease.tla	temporal	ResolveCompletes	check	rnpacketlease	required	-
+MCRNPacketLeaseBrokenSpinPausedWriter.cfg	MCRNPacketLease.tla	temporal	ResolveCompletes	check	rnpacketlease	required	-
 MCRNPacketLeaseInsertWaitFree.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
 MCRNPacketLeaseSkipWriting.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
-MCRNPacketLeaseSkipWritingSafe.cfg	MCRNPacketLease.tla	pass	-	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenNoCas.cfg	MCRNPacketLease.tla	invariant	PublishedIntact	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenConsumeNoCas.cfg	MCRNPacketLease.tla	invariant	TakeOnce	check	rnpacketlease	required	-
 MCRNPacketLeaseBrokenReadWhileWriting.cfg	MCRNPacketLease.tla	invariant	NoRacyRead	check	rnpacketlease	required	-
