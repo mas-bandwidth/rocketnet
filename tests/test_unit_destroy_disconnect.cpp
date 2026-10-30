@@ -850,6 +850,5 @@ static void test_client_disconnect_sends_burst_staged_in_link_simulator()
         rn_test_client_stop_and_destroy( client );
         rn_test_server_stop_and_destroy( server );
     }
-
 }
 REGISTER_UNIT_TEST( test_client_disconnect_sends_burst_staged_in_link_simulator );

@@ -401,7 +401,7 @@ uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encry
 }
 
 static bool rocketnet_encryption_map_remove_generation( struct rocketnet_encryption_map_t * map,
-                                                       uint64_t index_value, uint64_t owner_generation )
+                                                        uint64_t index_value, uint64_t owner_generation )
 {
     if ( index_value >= (uint64_t) map->capacity )
         return false;
