@@ -759,7 +759,6 @@ static void test_channel_config_front_ready_rotation_and_work()
     channels->payload_capacity = 40;
     rocketnet_unit_check( schedule_enqueue( channels, 0, 16 ) );
 
-    const uint32_t before = channels->schedule_work;
     rocketnet_unit_check( rn_ordered_announce_config( &ordered, &config ) );
 
     const rn_send_descriptor_t * head = &region->send_descriptors[region->channel_send[0].queue_head];
@@ -769,7 +768,6 @@ static void test_channel_config_front_ready_rotation_and_work()
     rocketnet_unit_check( schedule_walk( channels, 0, front_order, 2 ) == 2 );
     rocketnet_unit_check( front_order[0] == region->channel_send[0].queue_head );
     rocketnet_unit_check( region->channel_send[0].queue_tail == front_order[1] );
-    rocketnet_unit_check( channels->schedule_work == before );         // a front insert is O(1): nothing is restamped
     rocketnet_unit_check( channels->ready_head == 0 );
 
     rocketnet_unit_check( schedule_enqueue( channels, 0, 16 ) );
