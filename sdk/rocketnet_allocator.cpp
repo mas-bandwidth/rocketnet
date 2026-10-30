@@ -440,7 +440,14 @@ uint32_t rn_send_store_take( rn_send_store_t * store, int bytes, uint32_t first 
         if ( needed > 1 )
             gen = block_tag;
         else if ( i < cls->fresh )
+        {
             gen = ( ( cls->meta[i] >> RN_META_GEN_SHIFT ) & RN_META_GEN_MASK ) + 1;
+
+            // 0 is never a live name (proofs/tla/RNLazyPool.tla HeldGenerationPositive): the tag wraps to 1
+
+            if ( ( gen & RN_META_GEN_MASK ) == 0 )
+                gen = 1;
+        }
         else
             gen = 1;
 
