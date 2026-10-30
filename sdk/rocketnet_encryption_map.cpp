@@ -400,16 +400,14 @@ uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encry
     return map->generation[index];
 }
 
-static bool rocketnet_encryption_map_remove_handle( struct rocketnet_encryption_map_t * map,
-                                                    const struct rn_sequence_buffer_handle_t & handle )
+static bool rocketnet_encryption_map_remove_generation( struct rocketnet_encryption_map_t * map,
+                                                       uint64_t index_value, uint64_t owner_generation )
 {
-    if ( handle.identity >= (uint64_t) map->capacity )
+    if ( index_value >= (uint64_t) map->capacity )
         return false;
 
-    const int index = (int) handle.identity;
-    const uint64_t generation = map->generation[index];
-    if ( map->address[index].type == ROCKETNET_ADDRESS_NONE ||
-         handle.generation != generation || handle.owner_epoch != generation || handle.ticket != generation )
+    const int index = (int) index_value;
+    if ( map->address[index].type == ROCKETNET_ADDRESS_NONE || owner_generation != map->generation[index] )
         return false;
 
     const uint64_t hash = rocketnet_encryption_map_hash( map, &map->address[index] );
@@ -439,13 +437,7 @@ bool rocketnet_encryption_map_remove_owned( struct rocketnet_encryption_map_t * 
     if ( index < 0 || index >= map->capacity || owner_generation == 0 )
         return false;
 
-    struct rn_sequence_buffer_handle_t handle = {};
-    handle.identity = (uint64_t) index;
-    handle.generation = owner_generation;
-    handle.owner_epoch = owner_generation;
-    handle.ticket = owner_generation;
-
-    return rocketnet_encryption_map_remove_handle( map, handle );
+    return rocketnet_encryption_map_remove_generation( map, (uint64_t) index, owner_generation );
 }
 
 void rocketnet_encryption_map_remove_current( struct rocketnet_encryption_map_t * map, int index )
@@ -512,7 +504,7 @@ int rocketnet_encryption_map_test_home( const struct rocketnet_encryption_map_t 
 }
 
 bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map_t * map, int index,
-                                           struct rn_sequence_buffer_handle_t * handle )
+                                           struct rocketnet_encryption_map_handle_t * handle )
 {
     rocketnet_assert( map );
 
@@ -520,18 +512,16 @@ bool rocketnet_encryption_map_test_handle( const struct rocketnet_encryption_map
          map->address[index].type == ROCKETNET_ADDRESS_NONE )
         return false;
 
-    handle->identity = (uint64_t) index;
+    handle->index = (uint64_t) index;
     handle->generation = map->generation[index];
-    handle->owner_epoch = map->generation[index];
-    handle->ticket = map->generation[index];
 
     return true;
 }
 
 bool rocketnet_encryption_map_test_remove_handle( struct rocketnet_encryption_map_t * map,
-                                                  const struct rn_sequence_buffer_handle_t * handle )
+                                                  const struct rocketnet_encryption_map_handle_t * handle )
 {
     rocketnet_assert( map );
-    return handle != NULL && rocketnet_encryption_map_remove_handle( map, *handle );
+    return handle != NULL && rocketnet_encryption_map_remove_generation( map, handle->index, handle->generation );
 }
 #endif // #if ROCKETNET_DEV
