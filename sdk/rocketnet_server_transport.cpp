@@ -309,7 +309,7 @@ struct rocketnet_server_transport_t
 #endif // #if ROCKETNET_DEV
 
     // The disconnect bursts waiting to leave (proofs/tla/ServerSession.tla
-    // DrainDisconnectBurst). A disconnect ends the slot at once; when this
+    // SealWaiting and SealStep). A disconnect ends the slot at once; when this
     // update's allowance cannot seal its whole burst, the burst's plaintext
     // (the ack block of the receive state at the disconnect), its first
     // sequence, salt and session key wait here in a ring, and each update
@@ -633,9 +633,9 @@ static void rocketnet_server_transport_io_send_packets( rocketnet_server_transpo
 // setting in force at the send is the setting the caller last asked for: the
 // change takes effect at once, on and off, in either direction.
 //
-// proofs/tla/Link.tla models the change: the setting in force at the send holds the
-// packet, and the change itself removes nothing that was already in flight
-// (LinkReconfigureHolds).
+// proofs/tla/Link.tla models the send: the setting in force at the send holds
+// the packet (Send). The model has no action that clears the wire on a setting
+// change, so a change removes nothing that was already in flight.
 static bool rocketnet_server_link_active( rocketnet_server_transport_t * transport )
 {
     if ( !transport->link_simulator )
@@ -2631,7 +2631,7 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
         server_transport->maintenance_next_client = ( i + 1 ) % max_clients;
     }
 
-    // proofs/tla/ServerSession.tla DrainDisconnectBurst: the public message-server
+    // proofs/tla/ServerSession.tla SealWaiting: the public message-server
     // update opens the allowance before its pre-link kicks. A direct
     // transport update opens it here instead. Either way those disconnects
     // and this drain share exactly one allowance.
@@ -3545,7 +3545,7 @@ static void rocketnet_server_transport_defer_disconnect_burst( struct rocketnet_
     rocketnet_server_transport_close_client_locally( server_transport, client_index, false );
 }
 
-// proofs/tla/ServerSession.tla DrainDisconnectBurst, each seal one SealStep: at most max_seals waiting
+// proofs/tla/ServerSession.tla SealWaiting, each seal one SealStep: at most max_seals waiting
 // disconnect packets are sealed into send frames, one per waiting burst per
 // pass in ring order, so a burst's packets leave at consecutive sequences as
 // the immediate burst's do. A burst whose last packet is sealed leaves the
@@ -3662,7 +3662,7 @@ static void rocketnet_server_transport_disconnect_client_impl( struct rocketnet_
 
     rocketnet_address_t client_address = *rocketnet_encryption_map_address( server_transport->protocol.encryption_map, mapping_index );
 
-    // proofs/tla/ServerSession.tla DisconnectAll and DrainDisconnectBurst: the slot
+    // proofs/tla/ServerSession.tla DisconnectAll and SealWaiting: the slot
     // ends now; its burst is sealed now only while this update's allowance
     // holds the whole burst and no earlier burst waits, else it waits in the
     // ring for the following updates. The stop path seals at once.

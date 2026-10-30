@@ -11,8 +11,10 @@ once: the defaults, then the config struct, then the environment, before the
 config is validated and the endpoint's memory is sized. Client connect and
 server start use that resolved config and never read the environment again,
 so a variable changed after create has no effect on that endpoint. The
-variables below are read the same way, at create. None of them is a field of
-the public config structs:
+variables below are read the same way, at create, except
+`ROCKETNET_DEV_SESSION_SEQUENCE_START`, which is read once per process. Each is
+either an environment form of a public config field (`token_epoch_unix_seconds`,
+`step_driven`) or has no field at all:
 
 | Variable | Meaning |
 | --- | --- |
@@ -21,6 +23,7 @@ the public config structs:
 | `ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the client's game clock zero, for the connect token's time check; 0 reads the wall clock once, at connect. |
 | `ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS` | Sets `token_epoch_unix_seconds`: Unix seconds at the server's game clock zero, for the connect token's time check; 0 reads the wall clock once, at the first update after start. |
 | `ROCKETNET_CLIENT_STEP_DRIVEN` | Development libraries only: 1 runs the client's I/O step inside update and send_packets on the caller's thread, with no network thread; 0 (the default) keeps the network thread. Production libraries do not recognize this variable. |
+| `ROCKETNET_DEV_SESSION_SEQUENCE_START` | Development libraries only: the first session-phase sequence every session in this process sends, in place of 1, so a run reaches the wire's 32-bit sequence wrap in seconds. Read once per process, at the first create that asks, and fixed from then on. Decimal, or hex with `0x`; range `1 .. 2^62`. Unset or empty is 1; any other value is refused with one error line and 1 is used. Production libraries do not read it. |
 | `ROCKETNET_DEV_CLIENT_PACKET_LOSS_PERCENT` | Development only: outgoing client loss, 0 .. 100; 0 is off. |
 | `ROCKETNET_DEV_SERVER_PACKET_LOSS_PERCENT` | Development only: outgoing server loss, 0 .. 100; 0 is off. |
 | `ROCKETNET_DEV_CLIENT_LATENCY_MS` | Development only: outgoing client latency, 0 .. 60000 milliseconds; 0 is off. |

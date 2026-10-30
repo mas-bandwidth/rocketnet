@@ -9,7 +9,7 @@
 // over the in-process loopback transport with time as an argument starting at
 // 1000.0; the bound on each call's work is a count the transport keeps under
 // ROCKETNET_DEV, never wall time (proofs/tla/ServerSession.tla DisconnectAll,
-// DrainDisconnectBurst). The same population joining at once is the
+// SealWaiting and SealStep). The same population joining at once is the
 // handshake burst the per-update handshake work budget spreads across updates
 // (proofs/tla/RNSecurityTables.tla HonestRequest).
 

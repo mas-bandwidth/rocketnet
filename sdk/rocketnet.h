@@ -1729,8 +1729,8 @@ struct rocketnet_receipt_t
 /// Connect tokens
 
 /// A connect token is an opaque base64 string identifying one server.
-/// Its size, including the NUL terminator, is at most
-/// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
+/// It is exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 (1024)
+/// characters, followed by a NUL terminator. Any other length is refused.
 /// Production tokens come from your backend. Development tokens come from
 /// rocketnet_create_dev_connect_token.
 
@@ -2210,8 +2210,8 @@ ROCKETNET_EXPORT void rocketnet_server_network_simulator( struct rocketnet_serve
 ROCKETNET_EXPORT struct rocketnet_client_t * rocketnet_client_create( void * context, const struct rocketnet_client_config_t * config, enum rocketnet_status_t * status );
 
 /// Starts a connection using a token string.
-/// The string must end with NUL within
-/// ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES.
+/// The string must be exactly ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1
+/// (1024) base64 characters followed by a NUL; any other length is refused.
 /// Malformed strings return ROCKETNET_STATUS_INVALID_CONNECT_TOKEN without
 /// changing the client.
 ///

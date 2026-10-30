@@ -2696,7 +2696,8 @@ void rocketnet_platform_thread_wake( rocketnet_platform_thread_t * thread )
 
 // IMPORTANT: adjust the client and server network thread priority here. Both
 // set SCHED_RR at rocketnet_platform_network_thread_rr_priority() and nothing
-// else: flow's sched_get_priority_min( SCHED_RR ), never below the default.
+// else. That priority is sched_get_priority_max( SCHED_RR ) on macOS, and
+// elsewhere sched_get_priority_min( SCHED_RR ), never below the default's.
 // No macOS server transport calls the server hook.
 
 void rocketnet_platform_client_thread_priority( rocketnet_platform_thread_t * thread )

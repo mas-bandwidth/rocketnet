@@ -1952,7 +1952,7 @@ void rocketnet_client_stats( const struct rocketnet_client_t * client, struct ro
 // its own server transport, bound at the address -- in that block;
 // rocketnet_server_stop disconnects every client (the redundant disconnect
 // packets, then the per-slot connection reset of
-// sdk/rocketnet_connection_reset.h, the model's EndClient) and releases the
+// sdk/rocketnet_connection_reset.h, the model's EndSlot) and releases the
 // transport, leaving the server stopped and able to start again. The server's
 // counters are kept across starts.
 
