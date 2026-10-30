@@ -92,6 +92,19 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_MAX_QUEUES * ROCKETNET_URING_SEND_QUEUE
 ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_BUDGET,
                          "receive budget twice send: one send reap fits the receive bank" );
 
+// one receive bank holds a whole process batch, so the swap never drops
+// below the process arrays; a reap stops short of the last
+// ROCKETNET_URING_MAX_SEGMENTS slots, the most datagrams one coalesced
+// receive carries (the kernel's UDP_MAX_SEGMENTS, the gso transport's bound)
+
+#define ROCKETNET_URING_BANK_SIZE               ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE
+#define ROCKETNET_URING_MAX_SEGMENTS                                        64
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE >= ROCKETNET_URING_SEND_BUDGET,
+                         "receive budget twice send: one send reap fits the receive bank" );
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_BANK_SIZE > ROCKETNET_URING_MAX_SEGMENTS,
+                         "the receive bank holds more than one coalesced receive" );
+
 // counters, readable any time from the main thread; indexes into the array
 // rocketnet_server_uring_counters fills
 
@@ -100,11 +113,11 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_RECEIVE_BUDGET >= ROCKETNET_URING_SEND_
 #define ROCKETNET_SERVER_URING_COUNTER_SUBMIT_SYSCALLS                       2      // io_uring_enter calls: submits and waits
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED                          3      // a send CQE with a negative result, or a destination the socket family cannot carry
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SIZE                  4      // datagram outside [server min, receive ceiling], or truncated in its buffer
-#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full
+#define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_OVERFLOW              5      // the fill bank was full during destroy's drain (a running transport leaves the CQE in the queue instead)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_SOURCE                6      // source address the boundary could not convert
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_NO_BUFFERS                    7      // the multishot ended because the buffer ring was empty (ENOBUFS)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARMS                        8      // multishot receives armed again after a CQE without F_MORE
-#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that spent its completion budget with completions left for the next call (deferred, not dropped)
+#define ROCKETNET_SERVER_URING_COUNTER_REAP_DEFERRED                         9      // a send_packets or receive_packets call that left completions in the queue for the next call: its budget spent, or the fill bank without room for a receive (deferred, not dropped)
 #define ROCKETNET_SERVER_URING_COUNTER_SEND_DEFERRED                        10      // a send_packets call that returned with sends not yet completed or staged slots not yet submitted, retired by a later call
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_DROPPED_NO_BUFFER            11      // a receive CQE with res >= 0 that names no provided buffer (no IORING_CQE_F_BUFFER, or an id outside the ring)
 #define ROCKETNET_SERVER_URING_COUNTER_RECEIVE_REARM_FAILED                 12      // a re-arm found no submission entry (queue left disarmed)

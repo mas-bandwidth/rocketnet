@@ -23,7 +23,11 @@
 (*  (call = "send") or receive_packets (call = "recv", from RecvBegin to  *)
 (*  Swap).  work counts the CQEs the current call has reaped, and a call  *)
 (*  reaps at most Budget of them; CQEs past it stay in cq for a later     *)
-(*  call.  ReapWithinBudget is the property every Reap step keeps.        *)
+(*  call.  ReapWithinBudget is the property every Reap step keeps.  A     *)
+(*  receive CQE is reaped only while the fill bank has Room for a whole   *)
+(*  coalesced receive (Segments datagrams); one without room stays in cq  *)
+(*  and ends the call, so FillWithinRoom holds however many the kernel    *)
+(*  posts between two swaps.                                              *)
 (*                                                                         *)
 (*  RECEIVE.  One multishot RECVMSG over a ring of Buffers provided       *)
 (*  buffers.  The kernel fills a ring buffer with one to Segments         *)
@@ -44,7 +48,9 @@
 (*  outstanding CQE, sends and cancels, before freeing slots, banks and   *)
 (*  the ring (Free).                                                      *)
 (*                                                                         *)
-(* Five rule switches carry the reversed witnesses.  ResetWaitsForReap =  *)
+(* Six rule switches carry the reversed witnesses.  ReapWithinRoom =      *)
+(* FALSE reaps a receive CQE into a fill bank that has no room for it     *)
+(* (the segments past Room are dropped in the code).  ResetWaitsForReap = *)
 (* FALSE lets ResetIndex run right after Submit; ReapIntoFill = FALSE     *)
 (* writes reaped receive datagrams into the exposed bank; BoundedReap =   *)
 (* FALSE is the drain until empty: no budget guard on Reap, and a call    *)
@@ -65,6 +71,8 @@ CONSTANTS Slots,              \* send staging slots per phase
           Buffers,            \* provided receive buffers in the ring
           MaxSteps,           \* bound on datagrams and on bank swaps
           Budget,             \* CQEs one send or receive call may reap
+          Room,               \* datagrams the fill bank holds between two swaps
+          ReapWithinRoom,     \* a receive CQE is reaped only with Room for Segments more
           ResetWaitsForReap,  \* ResetIndex waits for every send CQE
           ReapIntoFill,       \* reaped receive datagrams go to the fill bank
           BoundedReap,        \* Reap stops at Budget; a call may return early
@@ -73,6 +81,7 @@ CONSTANTS Slots,              \* send staging slots per phase
 
 ASSUME Slots \in Nat \ {0} /\ Buffers \in Nat \ {0} /\ MaxSteps \in Nat \ {0}
 ASSUME Budget \in Nat \ {0}
+ASSUME Room \in Nat \ {0} /\ ReapWithinRoom \in BOOLEAN
 ASSUME ResetWaitsForReap \in BOOLEAN /\ ReapIntoFill \in BOOLEAN
 ASSUME BoundedReap \in BOOLEAN
 ASSUME RearmOnReceive \in BOOLEAN
@@ -255,15 +264,25 @@ KernelStop ==
     /\ UNCHANGED SendVars
     /\ UNCHANGED CallVars
 
+\* the fill bank has room for a whole coalesced receive: the code's
+\* rocketnet_server_uring_reap_has_room, num_packets + MAX_SEGMENTS <= BANK_SIZE
+HasRoom == Cardinality(fill) + Segments <= Room
+
+\* a receive CQE waits in cq for room: the code's reap stops at it, so the
+\* call ends as it does on a spent budget
+RecvWaitsForRoom == ReapWithinRoom /\ ~HasRoom /\ \E c \in cq : c.k = "recv"
+
 \* the main thread reaps one CQE: inside a send_packets or receive_packets
 \* call, at most Budget of them per call under BoundedReap, or in destroy's
-\* drain (destroy's rounds are bounded in the code, not here)
+\* drain (destroy's rounds are bounded in the code, not here); a receive
+\* CQE only with room for its segments in the fill bank
 Reap(c) ==
     /\ c \in cq
     /\ phase # "Freed"
     /\ \/ /\ phase = "Running"
           /\ call # "none"
           /\ BoundedReap => work < Budget
+          /\ (ReapWithinRoom /\ c.k = "recv") => HasRoom
           /\ work' = work + 1
        \/ /\ phase = "Destroying"
           /\ UNCHANGED work
@@ -338,7 +357,7 @@ SendReturn ==
     /\ sending
     /\ BoundedReap
     /\ pending # {}
-    /\ (cq = {} \/ work >= Budget)
+    /\ (cq = {} \/ work >= Budget \/ RecvWaitsForRoom)
     /\ sending' = FALSE
     /\ call' = "none"
     /\ work' = 0
@@ -361,7 +380,7 @@ RecvBegin ==
 \* the generation stays put while a disarmed multishot is armed again
 Swap ==
     /\ phase = "Running" /\ call = "recv"
-    /\ (cq = {} \/ (BoundedReap /\ work >= Budget))
+    /\ (cq = {} \/ (BoundedReap /\ work >= Budget) \/ RecvWaitsForRoom)
     /\ call' = "none"
     /\ work' = 0
     /\ exposed' = fill
@@ -502,6 +521,12 @@ FreedOnlyWhenDrained ==
 \* many CQEs the kernel keeps posting
 ReapWithinBudget ==
     work <= Budget
+
+\* the fill bank never holds more than Room datagrams: a receive CQE whose
+\* segments would not fit waits in cq, whatever the kernel posts between
+\* two swaps and whichever call reaps
+FillWithinRoom ==
+    Cardinality(fill) <= Room
 
 \* every slot the kernel was handed is eventually free again
 SubmittedEventuallyFree ==
