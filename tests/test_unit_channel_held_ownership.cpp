@@ -327,3 +327,44 @@ static void test_held_erase_ends_on_a_full_index()
 }
 
 REGISTER_UNIT_TEST( test_held_erase_ends_on_a_full_index );
+
+// The W + 1st refusal, reached by hand: the held index is filled with W entries
+// (the bound the 2W cells are sized for) and held_count says so. A code-3
+// message ahead of its turn is then refused by rn_held_insert: one
+// PROTOCOL_VIOLATION, the connection ends, the index and its count are
+// unchanged, and no entry is made for the message (RNHeldOwnership Hold).
+
+static void test_held_insert_refuses_the_window_plus_first_entry()
+{
+    ho_node_t node;
+    ho_init( &node );
+
+    rn_region_t * region = node.region;
+    const uint32_t W = region->window;
+    const uint8_t held[4] = { 0xA1, 0xA2, 0xA3, 0xA4 };
+
+    for ( uint32_t k = 0; k < W; k++ )
+    {
+        rn_held_entry_t & entry = region->held_index[2 * k];
+        entry.key = ( (uint64_t) 3 << 32 ) | ( 100 + k );
+        entry.number = 0;
+        entry.used = 1;
+    }
+
+    region->held_count = W;
+    check( ho_held_used( &node ) == W );
+
+    const uint64_t before = node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION];
+
+    check( ho_receive( &node, ho_record( ROCKETNET_MESSAGE_CODE_RELIABLE_ORDERED, 1, 1, 1, 0, held, 4, 100 ) ) == ROCKETNET_CHANNEL_DISPATCH_NONE );
+
+    check( node.counters.values[ROCKETNET_COUNTER_MESSAGE_PROTOCOL_VIOLATION] == before + 1 );
+    check( node.ordered.channels.error == ROCKETNET_DISCONNECT_REASON_PROTOCOL_VIOLATION );
+    check( region->held_count == W );
+    check( ho_held_used( &node ) == W );
+
+    rn_ordered_end_update( &node.ordered );
+    rn_arena_destroy( node.arena );
+}
+
+REGISTER_UNIT_TEST( test_held_insert_refuses_the_window_plus_first_entry );
