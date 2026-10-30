@@ -569,34 +569,57 @@ inline uint64_t suite_memory_budget_bytes()
 // rocketnet runners' 18 GiB.
 #define SUITE_JOB_MEMORY_BYTES ( 1638ull * 1024 * 1024 )
 
-// One job per core, as many as the memory budget holds;
-// ROCKETNET_TEST_JOBS sets the count outright.
-inline int suite_job_count()
+// The Windows runner waits on every running case in one WaitForMultipleObjects
+// call, which takes at most MAXIMUM_WAIT_OBJECTS (64) handles, from a fixed
+// array of this size. On Windows the job count stops here; elsewhere it has
+// no ceiling.
+#define SUITE_WAIT_HANDLES 64
+
+// One job per core, as many as the memory budget holds; a requested count
+// (ROCKETNET_TEST_JOBS) sets it outright. A ceiling above zero caps the result.
+inline int suite_job_count_for( unsigned cores, uint64_t budget, int requested, int ceiling )
 {
-    unsigned jobs = std::thread::hardware_concurrency();
+    unsigned jobs = cores;
     if ( jobs == 0 )
     {
         jobs = 1;
     }
 
-    const uint64_t budget = suite_memory_budget_bytes();
     if ( budget > 0 )
     {
         const uint64_t fit = budget / SUITE_JOB_MEMORY_BYTES;
         jobs = (unsigned) ( std::min )( (uint64_t) jobs, ( std::max )( fit, (uint64_t) 1 ) );
     }
 
-    char env[256];
-    if ( rocketnet_test_getenv( "ROCKETNET_TEST_JOBS", env, sizeof( env ) ) )
+    if ( requested > 0 )
     {
-        const int requested = std::atoi( env );
-        if ( requested > 0 )
-        {
-            jobs = (unsigned) requested;
-        }
+        jobs = (unsigned) requested;
+    }
+
+    if ( ceiling > 0 && jobs > (unsigned) ceiling )
+    {
+        jobs = (unsigned) ceiling;
     }
 
     return (int) jobs;
+}
+
+inline int suite_job_count()
+{
+    int requested = 0;
+    char env[256];
+    if ( rocketnet_test_getenv( "ROCKETNET_TEST_JOBS", env, sizeof( env ) ) )
+    {
+        requested = std::atoi( env );
+    }
+
+#if defined( _WIN32 )
+    const int ceiling = SUITE_WAIT_HANDLES;
+#else
+    const int ceiling = 0;
+#endif // #if defined( _WIN32 )
+
+    return suite_job_count_for( std::thread::hardware_concurrency(), suite_memory_budget_bytes(), requested, ceiling );
 }
 
 // io_uring cases and RLIMIT_MEMLOCK (docs/LINUX.md sections 5 and 8). The
@@ -1644,13 +1667,9 @@ inline int suite_main( int argc, char ** argv,
 
         if ( !running.empty() )
         {
-            // one child per core may be running; the wait takes at most
-            // MAXIMUM_WAIT_OBJECTS of them, and the poll below sees the rest
-
-            HANDLE handles[MAXIMUM_WAIT_OBJECTS];
-            size_t n = running.size();
-            if ( n > MAXIMUM_WAIT_OBJECTS )
-                n = MAXIMUM_WAIT_OBJECTS;
+            static_assert( SUITE_WAIT_HANDLES == MAXIMUM_WAIT_OBJECTS, "the wait set is one WaitForMultipleObjects call" );
+            HANDLE handles[SUITE_WAIT_HANDLES];
+            const size_t n = ( std::min )( running.size(), (size_t) SUITE_WAIT_HANDLES );
             for ( size_t i = 0; i < n; i++ )
             {
                 handles[i] = running[i].process;
