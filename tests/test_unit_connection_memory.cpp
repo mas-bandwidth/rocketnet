@@ -1006,6 +1006,29 @@ static void test_fragment_free_bounded_by_chain()
 }
 #endif // #if ROCKETNET_DEV
 
+// A single chunk's generation tag wraps to 1, never to 0: 0 is never a live
+// name (proofs/tla/RNLazyPool.tla HeldGenerationPositive).
+
+#if ROCKETNET_DEV
+static void test_store_single_chunk_generation_never_zero()
+{
+    std::vector<uint8_t> memory( 64 * 1024 );
+    rn_send_store_t store;
+    rn_send_store_init( &store, memory.data(), memory.size() );
+
+    rn_store_class_t * cls = &store.classes[RN_STORE_SMALL];
+
+    for ( int take = 0; take < 3000; take++ )
+    {
+        cls->free_head = 0;
+        const uint32_t h = rn_send_store_alloc( &store, 10 );
+        check( h != RN_CHUNK_NONE );
+        check( rn_send_store_chunk_generation( &store, h ) != 0 );
+        check( rn_send_store_free_checked( &store, h ) );
+    }
+}
+#endif // #if ROCKETNET_DEV
+
 REGISTER_UNIT_TEST( test_memory_isolation_between_slots );
 REGISTER_UNIT_TEST( test_reassembly_geometry_refuses_bad_arguments_and_budget );
 #if ROCKETNET_DEV
@@ -1027,4 +1050,5 @@ REGISTER_UNIT_TEST( test_generation_tagged_slots_and_lifo_stack );
 REGISTER_UNIT_TEST( test_span_links_pin_oldest_live );
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_fragment_free_bounded_by_chain );
+REGISTER_UNIT_TEST( test_store_single_chunk_generation_never_zero );
 #endif // #if ROCKETNET_DEV
