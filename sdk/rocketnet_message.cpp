@@ -9,10 +9,10 @@
 
 #include <string.h>
 
-// Layer 2, message records: STANDARD.md _Messages_ and docs/CHANNELS.md
-// sections 5 and 13. No TLA+ module covers this layer: it holds no state
+// Layer 2, message records: STANDARD.md _Messages_ and standard/MESSAGES.md
+// m2 to m4. No TLA+ module covers this layer: it holds no state
 // between calls, so it is checked by known-answer vectors, the pack/parse
-// property test and the fuzz target (CHANNELS.md 3, layer 2 row).
+// property test and the fuzz target.
 
 #if ROCKETNET_DEV
 const char * rocketnet_message_violation_name( int violation )
@@ -86,11 +86,11 @@ static bool rocketnet_message_flags_allowed( uint8_t flags )
     if ( flags & ROCKETNET_MESSAGE_FLAG_RESERVED )
         return false;
     if ( block && ( code == ROCKETNET_MESSAGE_CODE_UNRELIABLE || code == ROCKETNET_MESSAGE_CODE_UNRELIABLE_SEQUENCED ) )
-        return false;                                               // only reliable messages are blocks (CHANNELS.md 8)
+        return false;                                               // only reliable messages are blocks (standard/MESSAGES.md m8)
     if ( wide && !rocketnet_message_code_has_channel( code ) )
         return false;
     if ( control && ( code != ROCKETNET_MESSAGE_CODE_RELIABLE || block ) )
-        return false;                                               // CONTROL is code 2, never a block (CHANNELS.md 10.3)
+        return false;                                               // CONTROL is code 2, never a block (standard/MESSAGES.md m11)
 
     return true;
 }
@@ -190,7 +190,7 @@ int rocketnet_message_writer_space( const struct rocketnet_message_writer_t * wr
 }
 
 // The record layout, field by field in the standard's order (STANDARD.md
-// _Messages_; CHANNELS.md 13.2): flags, length, then number, ring,
+// _Messages_; standard/MESSAGES.md m3): flags, length, then number, ring,
 // sequencing, ordering, channel, fragment, fragments, each only when its
 // code or flags carry it, then the data.
 
@@ -214,7 +214,7 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
     const uint8_t flags = rocketnet_message_record_flags( record );
     const int header = rocketnet_message_flags_header_bytes( flags );
     if ( header + record->bytes > rocketnet_message_writer_space( writer ) )
-        return 0;                                                   // never split: the record ends this packet (CHANNELS.md 9.3)
+        return 0;                                                   // never split: the record ends this packet (standard/MESSAGES.md m2)
     if ( !copy && record->data != writer->payload + writer->bytes + header )
         return 0;                                                   // in place: the data starts where its header ends
 
@@ -254,7 +254,7 @@ static int rocketnet_message_writer_put( struct rocketnet_message_writer_t * wri
         rocketnet_platform_atomic_add_u64( &rn_message_payload_copies, 1 );
 #endif // #if ROCKETNET_DEV
 
-        rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame (CHANNELS.md R5)
+        rocketnet_write_bytes( &p, record->data, record->bytes );   // the one copy, store to frame
     }
 
     writer->bytes += header + record->bytes;
@@ -278,7 +278,7 @@ int rocketnet_message_writer_finish( struct rocketnet_message_writer_t * writer 
     rocketnet_assert( writer );
 
     if ( writer->records == 0 )
-        return 0;                                                   // an empty plan writes nothing (CHANNELS.md 9.3)
+        return 0;                                                   // an empty plan writes nothing (standard/MESSAGES.md m2)
 
     rocketnet_assert( writer->bytes + 1 <= writer->capacity );
     writer->payload[writer->bytes] = ROCKETNET_MESSAGE_FORM_RECORDS;
@@ -288,7 +288,7 @@ int rocketnet_message_writer_finish( struct rocketnet_message_writer_t * writer 
 
 int rocketnet_message_single_capacity( int payload_capacity )
 {
-    // SINGLE (CHANNELS.md 5, 11.2): the form byte goes last, so the message is
+    // SINGLE (standard/MESSAGES.md m3, m2): the form byte goes last, so the message is
     // at payload offset 0, the transport's 16-aligned root, with nothing before it.
 
     return payload_capacity > 1 ? payload_capacity - 1 : 0;
@@ -397,14 +397,14 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
             return ROCKETNET_MESSAGE_VIOLATION_BAD_CHANNEL;
     }
 
-    // check 6: the type is enabled (CHANNELS.md 7.5); CONTROL is exempt
+    // check 6: the type is enabled (standard/MESSAGES.md m4); CONTROL is exempt
 
     if ( !control && ( limits->enabled_codes & ( 1u << code ) ) == 0 )
         return ROCKETNET_MESSAGE_VIOLATION_TYPE_NOT_ENABLED;
 
     // check 7, the part a record shows alone: a count of at least two, the
     // index inside it, k <= W, k * F <= max_message_bytes + F - 1, and every
-    // fragment but the last exactly F bytes (CHANNELS.md 8). The agreement
+    // fragment but the last exactly F bytes (standard/MESSAGES.md m8). The agreement
     // with a live block descriptor is layer 5's.
 
     const int F = ROCKETNET_MESSAGE_FRAGMENT_BYTES;
@@ -461,7 +461,7 @@ static int rocketnet_message_decode_record( const uint8_t * record_start, int re
 int rocketnet_message_check_payload( const uint8_t * payload, int bytes, const struct rocketnet_message_limits_t * limits )
 {
     // check 1, then each record of the body in turn; the first failure refuses
-    // the whole payload (CHANNELS.md R6).
+    // the whole payload (standard/MESSAGES.md m4).
 
     rocketnet_assert( limits );
 
@@ -566,7 +566,7 @@ int rocketnet_message_reader_next( struct rocketnet_message_reader_t * reader, s
 
 void rocketnet_message_write_config_body( uint8_t * output, const struct rocketnet_message_config_body_t * body )
 {
-    // the CONFIG body (STANDARD.md _Messages_; CHANNELS.md 13.4):
+    // the CONFIG body (STANDARD.md _Messages_; standard/MESSAGES.md m11):
     // kind, version, enabled, zero, then five u32 and four zero bytes.
 
     rocketnet_assert( output );

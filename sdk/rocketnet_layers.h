@@ -1541,7 +1541,7 @@ struct rocketnet_message_receipt_t
 
 // the message config. Fields marked WIRE must be identical on both ends; the
 // connection verifies them. Validation applies the ranges here and the cross
-// rules of docs/CHANNELS.md section 14, and refuses, never clamps
+// rules of docs/LOAD.md Table 3, and refuses, never clamps
 
 /** @brief Memory, wire, and timing settings for the message layer.
  * @details Member comments state defaults and accepted ranges. Fields marked WIRE must agree between client and server. The caller owns this value; validation and sizing do not allocate.
@@ -1622,7 +1622,7 @@ int rocketnet_message_validate_config( const struct rocketnet_message_config_t *
  */
 int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_t * config, int * status );
 
-// the exact bytes of one connection's region (docs/CHANNELS.md 14): the
+// the exact bytes of one connection's region (docs/LOAD.md Table 3): the
 // formula plus the 64-byte alignment of each part. 0 for a refused config;
 // NULL means the defaults. Allocation-free; callable before init or connect.
 // A server holds one region per client slot, a client one
@@ -1656,8 +1656,8 @@ int rocketnet_message_connection_sizing( const struct rocketnet_message_config_t
  */
 uint64_t rocketnet_message_print_connection_sizing( const struct rocketnet_message_config_t * config, int num_connections );
 
-// the client and server message objects over the transports (docs/CHANNELS.md
-// 10 to 12): a message is bytes, a pointer and a length. Each object is
+// the client and server message objects over the transports (proofs/tla/RNSlots.tla,
+// proofs/tla/RNEndpoint.tla): a message is bytes, a pointer and a length. Each object is
 // one block made at create -- the object, its connections and one region per
 // connection (the client's one, one per server slot) -- and allocates nothing
 // after create. memory is optional: NULL makes the one allocation, and a
@@ -2013,7 +2013,7 @@ static inline struct rocketnet_server_client_stats_t rn_server_client_stats_of( 
 // acknowledged. Ages are seconds at each layer's last update, on that layer's
 // own clock (a client transport's clock starts at its first update; the
 // message layer reads game time); -1 means never or none. The reliable fields
-// are the ordered path's window (docs/CHANNELS.md 6.2, 6.4): unacked =
+// are the ordered path's window (standard/MESSAGES.md m5.1, m9): unacked =
 // next - U, and the oldest unacknowledged age is that of U's first send
 
 struct rocketnet_delivery_capture_t

@@ -8286,7 +8286,7 @@ void rocketnet_test_server_uring_receive_rearms_after_no_buffers()
 
 void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 {
-    // P2 (docs/CHANNELS.md section 2) over real loopback: for an
+    // P2 (standard/MESSAGES.md m1.4) over real loopback: for an
     // unfragmented payload (type 5), an acked packet id means the payload
     // was in exactly one delivered batch at the receiver. Both directions, ten
     // thousand payloads each way. The payload body carries its sender
@@ -8499,7 +8499,7 @@ void rocketnet_test_transport_acked_unfragmented_was_in_exactly_one_batch()
 
 void rocketnet_test_transport_reply_opens_a_later_update()
 {
-    // P6 (docs/CHANNELS.md section 2) over real loopback: a reply to a packet
+    // P6 (standard/MESSAGES.md m1.4) over real loopback: a reply to a packet
     // this end opened in update j is first opened by this end in update j+1
     // or later. Each pass is one update and mirrors the transport's phase
     // order: the client's update swaps receive buffers and takes the batch

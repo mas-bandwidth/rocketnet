@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// CONFIG, the one announcement (docs/CHANNELS.md 10.3 and 13.4;
+// CONFIG, the one announcement (standard/MESSAGES.md m11;
 // proofs/tla/RNEndpoint.tla Reset, WriteOk, OnPayload with ConfigCompare, Tick):
 // each end queues one CONFIG control record at connection reset, at the head
 // of IMMEDIATE, taking the connection's first reliable number; the receiver
@@ -959,7 +959,7 @@ static void test_message_config_never_received_is_reliable_timeout()
 #endif // #if ROCKETNET_DEV
 
 // STANDARD.md labels the CONFIG defaults vector; this case regenerates it
-// from the library's own defaults (CHANNELS.md 13.4) and pins it byte for
+// from the library's own defaults (standard/MESSAGES.md m11) and pins it byte for
 // byte: enabled 0xFF, all eight types of the first version's mask (7.5).
 // Red if the default mask or the default config drifts from the standard.
 
@@ -1006,8 +1006,7 @@ static void test_config_vector_is_library_default()
     check( memcmp( payload, expected, sizeof( expected ) ) == 0 );
 }
 
-// The sent-packet map against the window (docs/CHANNELS.md 6.4,
-// standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla NoLiveEviction): under the
+// The sent-packet map against the window (standard/MESSAGES.md m9.1; proofs/tla/RNSentMap.tla NoLiveEviction): under the
 // library's default window and map (the receive ring and the store raised
 // to hold the burst), a client with no send budget writes 1000 reliable
 // messages of 800 bytes, one to a packet, while the transport holds every

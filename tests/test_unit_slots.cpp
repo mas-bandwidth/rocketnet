@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The slots machine (sdk/rocketnet_slots.h) against docs/CHANNELS.md 10.2 and
+// The slots machine (sdk/rocketnet_slots.h) against proofs/tla/RNSlots.tla and
 // proofs/tla/RNSlots.tla Observe and Admit. The machine is driven alone: no object,
 // no transport, no time, no allocation.
 
@@ -70,7 +70,7 @@ static void test_slots_observe_and_admit()
     check( rn_slots_observe( &slots, -1, 100 ) == RN_SLOTS_NONE );
 }
 
-// CHANNELS.md 10.2 same-batch churn: A sends, A leaves, B claims the slot in
+// proofs/tla/RNSlots.tla same-batch churn: A sends, A leaves, B claims the slot in
 // one batch. Observe sees the final owner B; A's entries carry A's id and are
 // discarded, and B's own entries carry B's id and are applied. A free slot
 // discards everything.

@@ -17,7 +17,7 @@
 #include "rocketnet_send_budget.h"
 
 // Layer 7 of the message layer: the endpoint, one connection as a pure machine
-// (docs/CHANNELS.md 10.1 and 16.3). It is the composition of layers 3 to 6 for
+// (proofs/tla/RNEndpoint.tla). It is the composition of layers 3 to 6 for
 // one connection -- the window, the channels, the blocks, the scheduler and the
 // packet builder (rn_ordered_t), the unreliable packet builder and the send
 // budget -- behind one struct that points into the connection's region. Events
@@ -62,7 +62,7 @@ struct rn_endpoint_config_t
     X( budget, rocketnet_send_budget_t budget ) /* R6 */                                                                                              \
     X( config, const struct rocketnet_message_config_t * config )                                                                                     \
     X( default_kbps, int32_t default_kbps ) /* the budget a reset starts with; 0 or lower uncapped */                                                 \
-    X( send_budget_enabled, int send_budget_enabled ) /* 0: this connection is uncapped (R6, docs/CHANNELS.md 11.5) */                                \
+    X( send_budget_enabled, int send_budget_enabled ) /* 0: this connection is uncapped (R6, standard/MESSAGES.md m9.4) */                                \
     X( unreliable_limit, uint32_t unreliable_limit ) /* the largest UNRELIABLE message: one record in one packet */                                   \
     X( max_payload_bytes, int max_payload_bytes ) /* the transport's payload cap (rn_endpoint_send) */                                                \
     X( send_error, int send_error ) /* ROCKETNET_DISCONNECT_REASON_MESSAGE_MEMORY_EXHAUSTED once a send found no room (R5), else NONE */ /* CONFIG (10.3): the wait for the remote endpoint's CONFIG */                                                                                               \

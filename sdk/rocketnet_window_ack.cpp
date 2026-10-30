@@ -19,8 +19,8 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 #endif // #if ROCKETNET_DEV
 
 // Layer 3 of the message layer: the sent-packet map, the resend FIFO, RTT,
-// RTT estimation, resend delay, failed-send recovery, and reliable timeout (docs/CHANNELS.md
-// section 6.4; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
+// RTT estimation, resend delay, failed-send recovery, and reliable timeout (standard/MESSAGES.md
+// m9; TLA+ actions Init, WritePacket, WriteOldest, ReceiveAck and
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // proofs/tla/RNWindow.tla). Resend links name {message number, descriptor generation,
 // schedule epoch} (proofs/tla/RNChannelQueues.tla). A compact of acked holes is not
@@ -442,7 +442,7 @@ static void rn_window_ack_record_first_send( rn_window_ack_t * ack, rn_send_numb
 // ----------------------------------------------------------------
 
 // Initializes the sent-packet map, resend FIFO, and RTT estimator
-// (docs/CHANNELS.md 6.4; proofs/tla/RNWindow.tla Init).
+// (standard/MESSAGES.md m9; proofs/tla/RNWindow.tla Init).
 void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_region_t * region, const rocketnet_message_config_t * config )
 {
     rocketnet_assert( ack );
@@ -559,7 +559,7 @@ static void rn_window_ack_gaps_measure( rn_window_ack_t * ack, uint32_t slot_ind
 
 // Commits a sent packet and its referenced reliable message numbers into the
 // P-entry sent-packet ring, 16P reference ring, 2P open-addressed sent_index,
-// and W-entry resend FIFO (docs/CHANNELS.md 6.4 "On send" and "Eviction";
+// and W-entry resend FIFO (standard/MESSAGES.md m9.1;
 // proofs/tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // RNReceipts EmitAck/SweepLoss: an outcome is an accounting event, not a
 // message-level ACK. A full ring discards its oldest event, never its history.
@@ -652,8 +652,8 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
 
     // 2. Reclaim any already-acked entries at the head of the sent-packet ring,
     //    then evict the oldest live entries while either the P-entry packet ring
-    //    or the 16P-entry reference ring needs room (docs/CHANNELS.md 6.4
-    //    "Eviction": numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
+    //    or the 16P-entry reference ring needs room (standard/MESSAGES.md m9.1):
+    //    numbers stay in the resend FIFO, MESSAGE_SENT_MAP_EVICTED
     //    is incremented once per evicted packet entry). The config keeps
     //    P >= W (rocketnet_message_validate_config_ex), so with the resend
     //    delay above the round trip the evicted entry is never one whose ack
@@ -719,7 +719,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 }
 
 // Processes one acked transport sequence `packet_id` at time `now`
-// (docs/CHANNELS.md 6.4 "Ack" and "resend delay"; proofs/tla/RNWindow.tla ReceiveAck,
+// (standard/MESSAGES.md m9.1 and m9.2; proofs/tla/RNWindow.tla ReceiveAck,
 // proofs/tla/RNResendTiming.tla Sample).
 // proofs/tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
 // proofs/tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
@@ -948,7 +948,7 @@ uint32_t rn_window_ack_on_acks( rn_window_ack_t * ack, const uint64_t * packet_i
 }
 
 // Recovers reliable numbers from a packet refused by finish_packet
-// (docs/CHANNELS.md 6.4 "Failed send").
+// (standard/MESSAGES.md m9.1).
 void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * numbers, uint32_t count, double now )
 {
     rocketnet_assert( ack );
@@ -979,7 +979,7 @@ void rn_window_ack_packet_failed( rn_window_ack_t * ack, const uint64_t * number
     }
 }
 
-// Checks the per-connection reliable timeout (docs/CHANNELS.md 6.4 "Giving up").
+// Checks the per-connection reliable timeout (standard/MESSAGES.md m9.3).
 // proofs/tla/RNReceipts.tla Disconnect: ends the connection when the oldest unacked number reaches the reliable timeout
 int rn_window_ack_check_timeout( rn_window_ack_t * ack, double now )
 {

@@ -3,7 +3,7 @@
     Licensed under the GNU Affero General Public License v3.0
 */
 
-// The endpoint (docs/CHANNELS.md 10.1): one connection's layers 3 to 6 as a
+// The endpoint (proofs/tla/RNEndpoint.tla): one connection's layers 3 to 6 as a
 // pure machine. The spec is proofs/tla/RNEndpoint.tla; each function names the action
 // it implements. The per-connection orchestration here is what the message
 // objects did for each connection (sdk/rocketnet_message_server.cpp), moved
@@ -195,7 +195,7 @@ void rn_endpoint_reset( struct rn_endpoint_t * endpoint, double now )
 
     rn_region_reset( endpoint->region );
 
-    // R6 (docs/CHANNELS.md 11.5): a config value of 0 or lower disables this
+    // R6 (standard/MESSAGES.md m9.4): a config value of 0 or lower disables this
     // connection's budget. The endpoint then holds no bucket and passes no
     // budget to its builders, whose NULL budget path never drops or waits.
 
@@ -1391,7 +1391,7 @@ int rn_endpoint_write_packet( struct rn_endpoint_t * endpoint, uint8_t * payload
 
 bool rn_endpoint_set_send_kbps( struct rn_endpoint_t * endpoint, int32_t kbps, double now )
 {
-    // proofs/tla/RNSendBudget.tla SetKbps (R6, docs/CHANNELS.md 11.5): the runtime
+    // proofs/tla/RNSendBudget.tla SetKbps (R6, standard/MESSAGES.md m9.4): the runtime
     // override. A value of 0 or lower uncaps this connection and detaches the
     // bucket from both builders; a positive value up to the maximum caps it,
     // initialising a fresh bucket at now when the connection was uncapped; above
