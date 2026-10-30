@@ -222,11 +222,10 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 };
 
 // Queue scheduling (proofs/tla/RNChannelQueues.tla). A descriptor's enqueue ticket is
-// unique on the connection until the counter wraps, and the flat descriptor
-// array ordered by that ticket is the channel and unreliable FIFO storage: a
-// hole is a ticketless entry an interior cancel leaves in place, and compact
-// restamps the live entries of one channel in one pass over its entries once
-// holes pass the bound, or once per write pass, never per emitted record.
+// unique on the connection until the counter wraps, and nonzero while the
+// descriptor is queued. The unreliable ring names an entry by it, so an entry
+// whose descriptor took another ticket is a tombstone; the per-channel reliable
+// FIFO is linked by queue_next and nothing leaves it from the middle.
 // Resend capacity stays W: one slot is in at most one resend sequence, linked
 // to its neighbours by slot index in rn_resend_link_t, and an acked hole stays
 // sequenced until a named removal so a resend walk still counts it.
