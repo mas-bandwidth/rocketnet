@@ -571,3 +571,8 @@ MCRNReconstructLayout.cfg	MCRNReconstructLayout.tla	pass	-	check	rnreconstructla
 MCRNReconstructLayoutBrokenTieSmaller.cfg	MCRNReconstructLayout.tla	invariant	CodeIsNearest	check	rnreconstructlayout	required	-
 MCRNReconstructLayoutBrokenBelowGate.cfg	MCRNReconstructLayout.tla	invariant	CodeIsNearest	check	rnreconstructlayout	required	-
 MCRNReconstructLayoutBrokenNoAbove.cfg	MCRNReconstructLayout.tla	invariant	CodeIsNearest	check	rnreconstructlayout	required	-
+MCRNClientLadder.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	required	-
+MCRNClientLadderPin.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	required	-
+MCRNClientLadderBrokenNoFallback.cfg	MCRNClientLadder.tla	invariant	NoExhaustWhileReachable	check	rnclientladder	required	-
+MCRNClientLadderBrokenOomFalls.cfg	MCRNClientLadder.tla	invariant	NoTryAfterOom	check	rnclientladder	required	-
+MCRNClientLadderBrokenIgnoresToken.cfg	MCRNClientLadder.tla	invariant	TriedInToken	check	rnclientladder	required	-

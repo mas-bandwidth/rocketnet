@@ -99,7 +99,15 @@ a backend allocation failure ends candidate selection with
 `rocketnet_client_connect`, after the token supplies the server address.
 A pin is honoured exactly: a pinned client whose backend refuses makes connect
 return `ROCKETNET_STATUS_TRANSPORT_LADDER_EXHAUSTED`, without adding another
-candidate to the configured list. `tests/test_unit_client_transport_ranking.cpp` pins the order, the
+candidate to the configured list. A token naming both families selects its
+IPv6 server on a host with IPv6; when a candidate's IPv6 socket is refused,
+at open or at connect (no route to the address is the common case), the same
+candidate is opened again, bound IPv4, for the token's IPv4 server before the
+ladder falls to the next candidate (`client transport portable refused the
+IPv6 server ... trying the IPv4 server ...`), and a client granted that way
+races nothing. A refusal for want of memory on either family ends the create
+with `ROCKETNET_STATUS_OUT_OF_MEMORY` (TRANSPORT.md t11 rule 3,
+`proofs/tla/RNClientLadder.tla`, `tests/test_unit_client_family_fallback.cpp`). `tests/test_unit_client_transport_ranking.cpp` pins the order, the
 fallback and the pins. `msgx` and `portable` share one client table, and the pump is
 the socket's, chosen at create from the transport name: `msgx` the Darwin
 `sendmsg_x`/`recvmsg_x` batch pump, `portable` the per-packet loop. On Linux
