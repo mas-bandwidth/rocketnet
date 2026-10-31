@@ -7,8 +7,8 @@
     development network simulator loses 30% of its packets. It keeps the
     serial each finish returns and reads rocketnet_client_receipts every frame,
     so it learns which updates the server got (ACKED) and which it did not
-    (LOSS). It sends NUM_UPDATES updates, and more, up to MAX_UPDATES, until
-    it has seen both outcomes. Run: ./bin/example_ack_receipts
+    (LOSS). It sends NUM_UPDATES updates; when they have all resolved without
+    both outcomes it sends one more at a time, up to MAX_UPDATES. Run: ./bin/example_ack_receipts
 */
 
 #include "rocketnet.h"
@@ -210,7 +210,7 @@ int main( void )
 
         if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED )
         {
-            if ( sent < NUM_UPDATES || ( sent < MAX_UPDATES && !( acked > 0 && lost > 0 ) ) )
+            if ( sent < NUM_UPDATES || ( sent < MAX_UPDATES && acked + lost == sent && !( acked > 0 && lost > 0 ) ) )
             {
                 // replaceable state: skip this frame when there is no room
 
