@@ -673,9 +673,12 @@ enum
 extern void ( *rocketnet_server_transport_config_staging_hook )( const uint8_t * secret_key, int stage );
 #endif // #if ROCKETNET_DEV
 
-// opens sodium and its random source once, under a lock, for every caller
-// that may draw before rocketnet_init (sdk/rocketnet.cpp). Returns false when
-// sodium cannot initialize. After the first success it is one load.
-bool rocketnet_crypto_ready( void );
+// held across the draws of every caller that may run before rocketnet_init
+// or beside rocketnet_term (the key and token generators): opens sodium and
+// its random source on first use, and keeps term from closing the source
+// until the matching release (sdk/rocketnet.cpp). Returns false, holding
+// nothing, when sodium cannot initialize.
+bool rocketnet_crypto_acquire( void );
+void rocketnet_crypto_release( void );
 
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

@@ -1,128 +1,145 @@
 -------------------------- MODULE RNCryptoSource --------------------------
-(* The bundled sodium's random source, opened before and after rocketnet_init
-   (sdk/rocketnet.cpp: rocketnet_crypto_ready, rocketnet_crypto_close; the
-   bundled sodium's randombytes_sysrandom_stir and randombytes_sysrandom_buf).
+(* The bundled sodium's random source, opened and closed beside the key and
+   token generators (sdk/rocketnet.cpp: rocketnet_crypto_acquire,
+   rocketnet_crypto_release, rocketnet_crypto_open_source,
+   rocketnet_crypto_close; the bundled sodium's randombytes_sysrandom_stir and
+   randombytes_sysrandom_buf).
 
-   The source is a flag (sodium's stream.initialized, here src) and a
-   descriptor. Sodium opens it in two steps with no lock: it reads the flag
-   and, when clear, opens a descriptor and sets the flag. A draw
-   (randombytes_buf) does that on its own whenever the flag is clear.
+   The source is sodium's flag (stream.initialized, here src) and a
+   descriptor. Sodium opens it in two unlocked steps: it reads the flag and,
+   when clear, opens a descriptor and sets the flag. A draw (randombytes_buf)
+   does that on its own whenever the flag is clear.
 
-   A generator call (rocketnet_generate_server_keypair and the others, and
-   rocketnet_init) runs rocketnet_crypto_ready first: one load of open, the
-   library's published flag; when it is clear, the lock, a second load, the
-   sodium_init and randombytes_stir that open the source, and the publish.
-   Then the call draws. Term (rocketnet_term on macOS) takes the same lock,
-   closes the source and clears open. Term never runs while a generator call
-   is in flight: the header states it.
+   A generator call takes rocketnet_crypto_mutex shared and reads open; when
+   open is clear it lets go, opens the source with the mutex exclusive
+   (sodium_init, which stirs only the first time it runs, then
+   randombytes_stir) and starts again. Holding the mutex shared it draws, then
+   releases. rocketnet_init opens the source the same exclusive way. Term
+   (rocketnet_term on macOS) takes the mutex exclusive, closes the source and
+   clears open, at any time.
 
-   Threads are generator calls; each makes one call per cycle. A term starts
-   the next cycle. The model interleaves whole steps; open is an
-   acquire/release atomic and every other variable is written under the lock
-   or by sodium's unlocked two steps, which the model keeps apart.
+   Each thread makes MaxCalls calls; terms happen at most MaxTerms times.
 
    Defect selects the reversed witness:
-     "nolock"     a call draws with no rocketnet_crypto_ready (the code before
-                  the guard): AtMostOneSource
-     "noclear"    term closes the source but leaves open set, so the next
-                  cycle's calls skip the lock: AtMostOneSource
-     "nostir"     rocketnet_crypto_ready runs sodium_init alone, which opens
-                  nothing once sodium is initialized: AtMostOneSource *)
-EXTENDS Integers
-CONSTANTS Threads, MaxTerms, Defect
-ASSUME Threads \in Nat \ {0} /\ MaxTerms \in Nat
-ASSUME Defect \subseteq {"nolock", "noclear", "nostir"}
+     "nolock"     a call draws with no lock and no open (the code before the
+                  guard): AtMostOneSource
+     "noshared"   a call opens the source but does not hold the mutex across
+                  its draw, so a term closes the source under it:
+                  AtMostOneSource
+     "noclear"    term closes the source but leaves open set: AtMostOneSource
+     "nostir"     the open runs sodium_init alone, which opens nothing once
+                  sodium is initialized: AtMostOneSource *)
+EXTENDS Integers, FiniteSets
+CONSTANTS Threads, MaxCalls, MaxTerms, Defect
+ASSUME Threads \in Nat \ {0} /\ MaxCalls \in Nat \ {0} /\ MaxTerms \in Nat
+ASSUME Defect \subseteq {"nolock", "noshared", "noclear", "nostir"}
 
 T == 1..Threads
+Free == 0
+TermHolder == Threads + 1
 
-VARIABLES open,     \* rocketnet_crypto_open
+VARIABLES open,     \* rocketnet_crypto_open, read and written under the mutex
           src,      \* sodium's stream.initialized
           fds,      \* descriptors the source holds
           sodium,   \* sodium_init has run
-          lock,     \* rocketnet_crypto_mutex holder, 0 when free
+          shared,   \* threads holding the mutex shared
+          excl,     \* the exclusive holder: a thread, TermHolder, or Free
           pc,       \* each thread's step
+          calls,    \* calls each thread has finished
           terms     \* terms completed
-vars == <<open, src, fds, sodium, lock, pc, terms>>
+vars == <<open, src, fds, sodium, shared, excl, pc, calls, terms>>
 
 Init ==
     /\ open = FALSE /\ src = FALSE /\ fds = 0 /\ sodium = FALSE
-    /\ lock = 0
+    /\ shared = {} /\ excl = Free
     /\ pc = [t \in T |-> "idle"]
+    /\ calls = [t \in T |-> 0]
     /\ terms = 0
 
-(* rocketnet_crypto_ready: the first load of open *)
-Start(t) ==
-    /\ pc[t] = "idle"
-    /\ pc' = [pc EXCEPT ![t] = IF "nolock" \in Defect \/ open THEN "draw" ELSE "wantlock"]
-    /\ UNCHANGED <<open, src, fds, sodium, lock, terms>>
+(* rocketnet_crypto_acquire: lock_shared and read open; on a clear flag
+   unlock_shared and go to the exclusive open *)
+AcquireShared(t) ==
+    /\ pc[t] = "idle" /\ calls[t] < MaxCalls
+    /\ IF "nolock" \in Defect
+       THEN /\ pc' = [pc EXCEPT ![t] = "draw"] /\ UNCHANGED shared
+       ELSE /\ excl = Free
+            /\ IF open
+               THEN /\ shared' = IF "noshared" \in Defect THEN shared ELSE shared \cup {t}
+                    /\ pc' = [pc EXCEPT ![t] = "draw"]
+               ELSE /\ pc' = [pc EXCEPT ![t] = "wantexcl"] /\ UNCHANGED shared
+    /\ UNCHANGED <<open, src, fds, sodium, excl, calls, terms>>
 
-Acquire(t) ==
-    /\ pc[t] = "wantlock" /\ lock = 0
-    /\ lock' = t /\ pc' = [pc EXCEPT ![t] = "locked"]
-    /\ UNCHANGED <<open, src, fds, sodium, terms>>
+(* rocketnet_crypto_open_source: lock exclusive *)
+AcquireExclusive(t) ==
+    /\ pc[t] = "wantexcl" /\ excl = Free /\ shared = {}
+    /\ excl' = t /\ pc' = [pc EXCEPT ![t] = "locked"]
+    /\ UNCHANGED <<open, src, fds, sodium, shared, calls, terms>>
 
-(* the second load of open, under the lock *)
 Recheck(t) ==
     /\ pc[t] = "locked"
     /\ IF open
-       THEN /\ lock' = 0 /\ pc' = [pc EXCEPT ![t] = "draw"]
-       ELSE /\ lock' = lock /\ pc' = [pc EXCEPT ![t] = "stir"]
-    /\ UNCHANGED <<open, src, fds, sodium, terms>>
+       THEN /\ excl' = Free /\ pc' = [pc EXCEPT ![t] = "idle"]
+       ELSE /\ excl' = excl /\ pc' = [pc EXCEPT ![t] = "stir"]
+    /\ UNCHANGED <<open, src, fds, sodium, shared, calls, terms>>
 
-(* sodium_init then randombytes_stir: each reads the flag first; sodium_init
-   stirs only the first time it runs *)
+(* sodium_init then randombytes_stir: the stir reads the flag first *)
 StirCheck(t) ==
     /\ pc[t] = "stir"
     /\ LET stirs == ~sodium \/ "nostir" \notin Defect
        IN pc' = [pc EXCEPT ![t] = IF stirs /\ ~src THEN "stiropen" ELSE "publish"]
     /\ sodium' = TRUE
-    /\ UNCHANGED <<open, src, fds, lock, terms>>
+    /\ UNCHANGED <<open, src, fds, shared, excl, calls, terms>>
 
 StirOpen(t) ==
     /\ pc[t] = "stiropen"
     /\ fds' = fds + 1 /\ src' = TRUE
     /\ pc' = [pc EXCEPT ![t] = "publish"]
-    /\ UNCHANGED <<open, sodium, lock, terms>>
+    /\ UNCHANGED <<open, sodium, shared, excl, calls, terms>>
 
+(* set open and unlock; the acquire starts again from lock_shared *)
 Publish(t) ==
     /\ pc[t] = "publish"
-    /\ open' = TRUE /\ lock' = 0
-    /\ pc' = [pc EXCEPT ![t] = "draw"]
-    /\ UNCHANGED <<src, fds, sodium, terms>>
+    /\ open' = TRUE /\ excl' = Free
+    /\ pc' = [pc EXCEPT ![t] = "idle"]
+    /\ UNCHANGED <<src, fds, sodium, shared, calls, terms>>
 
 (* randombytes_buf: sodium's own unlocked open when the flag is clear *)
 DrawCheck(t) ==
     /\ pc[t] = "draw"
-    /\ pc' = [pc EXCEPT ![t] = IF src THEN "done" ELSE "drawopen"]
-    /\ UNCHANGED <<open, src, fds, sodium, lock, terms>>
+    /\ pc' = [pc EXCEPT ![t] = IF src THEN "drawn" ELSE "drawopen"]
+    /\ UNCHANGED <<open, src, fds, sodium, shared, excl, calls, terms>>
 
 DrawOpen(t) ==
     /\ pc[t] = "drawopen"
     /\ fds' = fds + 1 /\ src' = TRUE
-    /\ pc' = [pc EXCEPT ![t] = "done"]
-    /\ UNCHANGED <<open, sodium, lock, terms>>
+    /\ pc' = [pc EXCEPT ![t] = "drawn"]
+    /\ UNCHANGED <<open, sodium, shared, excl, calls, terms>>
 
-(* rocketnet_crypto_close from rocketnet_term: under the lock, with no call in
-   flight; randombytes_close closes the one descriptor it holds *)
+(* rocketnet_crypto_release: unlock_shared *)
+Release(t) ==
+    /\ pc[t] = "drawn"
+    /\ shared' = shared \ {t}
+    /\ pc' = [pc EXCEPT ![t] = "idle"]
+    /\ calls' = [calls EXCEPT ![t] = calls[t] + 1]
+    /\ UNCHANGED <<open, src, fds, sodium, excl, terms>>
+
+(* rocketnet_crypto_close from rocketnet_term: exclusive, at any time *)
 Term ==
     /\ terms < MaxTerms
-    /\ lock = 0
-    /\ \A t \in T : pc[t] \in {"idle", "done"}
+    /\ excl = Free /\ shared = {}
     /\ fds' = IF src THEN fds - 1 ELSE fds
     /\ src' = FALSE
     /\ open' = IF "noclear" \in Defect THEN open ELSE FALSE
-    /\ pc' = [t \in T |-> "idle"]
     /\ terms' = terms + 1
-    /\ UNCHANGED <<sodium, lock>>
+    /\ UNCHANGED <<sodium, shared, excl, pc, calls>>
 
 Done ==
-    /\ terms = MaxTerms
-    /\ \A t \in T : pc[t] = "done"
+    /\ \A t \in T : pc[t] = "idle" /\ calls[t] = MaxCalls
     /\ UNCHANGED vars
 
 Next ==
-    \/ \E t \in T : Start(t) \/ Acquire(t) \/ Recheck(t) \/ StirCheck(t)
-                    \/ StirOpen(t) \/ Publish(t) \/ DrawCheck(t) \/ DrawOpen(t)
+    \/ \E t \in T : AcquireShared(t) \/ AcquireExclusive(t) \/ Recheck(t) \/ StirCheck(t)
+                    \/ StirOpen(t) \/ Publish(t) \/ DrawCheck(t) \/ DrawOpen(t) \/ Release(t)
     \/ Term
     \/ Done
 
@@ -131,16 +148,18 @@ Spec == Init /\ [][Next]_vars
 TypeOK ==
     /\ open \in BOOLEAN /\ src \in BOOLEAN /\ sodium \in BOOLEAN
     /\ fds \in Nat
-    /\ lock \in 0..Threads
-    /\ pc \in [T -> {"idle", "wantlock", "locked", "stir", "stiropen", "publish", "draw", "drawopen", "done"}]
+    /\ shared \subseteq T
+    /\ excl \in 0..TermHolder
+    /\ pc \in [T -> {"idle", "wantexcl", "locked", "stir", "stiropen", "publish", "draw", "drawopen", "drawn"}]
+    /\ calls \in [T -> 0..MaxCalls]
     /\ terms \in 0..MaxTerms
 
 (* the source holds at most one descriptor: no open is lost *)
 AtMostOneSource == fds <= 1
 
-(* a published open flag means the source is open *)
+(* open set means the source is open *)
 OpenMeansSource == open => src
 
-(* every draw that completes finds the source open *)
-DrawnFromSource == \A t \in T : pc[t] = "done" => src
+(* a draw that holds the mutex finds the source open until it releases *)
+HeldDrawFromSource == \A t \in shared : pc[t] = "drawn" => src
 =============================================================================

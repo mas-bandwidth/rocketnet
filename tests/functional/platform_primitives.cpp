@@ -348,7 +348,7 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
     const long baseline = rng_lifecycle_fd_count();
     rocketnet_check( baseline >= 0 );
 
-    // Each init opens the RNG descriptor once (rocketnet_crypto_ready), and
+    // Each init opens the RNG descriptor once (rocketnet_crypto_open_source), and
     // each term closes it and retains no other descriptor.
 
     for ( int cycle = 0; cycle < 3; ++cycle )
@@ -403,11 +403,12 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
 }
 
 // Key generators need no library state, so they run after a term has closed
-// the bundled RNG's descriptor, on any number of threads at once. Their first
-// draws open the source exactly once: each cycle eight threads released
-// together generate keys, and the process then holds one more descriptor
-// than at the baseline, never two. Under a thread sanitizer an unlocked open
-// is a reported race.
+// the bundled RNG's descriptor, on any number of threads at once, and beside
+// init and term. Their first draws open the source exactly once: each cycle
+// eight threads released together generate keys, and the process then holds
+// one more descriptor than at the baseline, never two. Then generators run
+// on while init and term cycle. Under a thread sanitizer an unlocked open, or
+// a close under a draw, is a reported race.
 
 #define RNG_CONCURRENT_THREADS 8
 #define RNG_CONCURRENT_CYCLES 64
@@ -466,6 +467,50 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
         rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
         rocketnet_check( rng_lifecycle_fd_count() == baseline );
     }
+
+    // generators keep running while this thread inits and terms: each term
+    // waits for the draws in flight, closes the one source, and the next draw
+    // opens it again
+
+    std::atomic<bool> stop( false );
+    std::atomic<int> failures( 0 );
+    std::thread minters[4];
+    for ( int i = 0; i < 4; i++ )
+    {
+        minters[i] = std::thread( [&stop, &failures]()
+        {
+            while ( !stop.load( std::memory_order_relaxed ) )
+            {
+                uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+                uint8_t secret_key[32];
+                if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK )
+                    failures++;
+            }
+        } );
+    }
+
+    for ( int cycle = 0; cycle < RNG_CONCURRENT_CYCLES; ++cycle )
+    {
+        rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+        const long open = rng_lifecycle_fd_count();
+        rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+        if ( open != baseline + 1 )
+        {
+            printf( "term cycle %d: %ld descriptors open, baseline %ld\n", cycle, open, baseline );
+            fflush( stdout );
+        }
+        rocketnet_check( open == baseline + 1 );
+    }
+
+    stop = true;
+    for ( int i = 0; i < 4; i++ )
+        minters[i].join();
+    rocketnet_check( failures.load() == 0 );
+
+    // with no generator running, the last term left nothing open
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rng_lifecycle_fd_count() == baseline );
 
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
