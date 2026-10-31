@@ -18,6 +18,7 @@ inputs and recorded result for each required group.
 | endpoint reset | `RNSlots`, `ClientSession` | no state or payload crosses a connection generation |
 | client I/O | `RNBufferHandoff`, `RNClientIo`, `RNClientIoDecrypt` | exclusive buffer ownership, index-only exchanges under a mutex the game thread never waits on, replay before admission and one retirement |
 | receive window layout | `RNWindow`, `RNWindowLayout` | each number accepted once and never at or past R + W, the bitmap equal to the received numbers R has not passed, no live descriptor overwritten |
+| sequenced hold pool | `RNSequencedHoldPool` | no slot returned twice or pushed past the free stack, every slot in exactly one place, no delivered payload rewritten under its view |
 
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for

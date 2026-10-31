@@ -509,3 +509,6 @@ MCRNWindowLayout.cfg	MCRNWindowLayout.tla	pass	-	check	rnwindowlayout	required	-
 MCRNWindowLayoutBrokenNoClearFloor.cfg	MCRNWindowLayout.tla	invariant	NoSilentLoss	check	rnwindowlayout	required	-
 MCRNWindowLayoutBrokenNoHalfRange.cfg	MCRNWindowLayout.tla	invariant	HonestReadExactly	check	rnwindowlayout	required	-
 MCRNWindowLayoutBrokenNoCollisionTest.cfg	MCRNWindowLayout.tla	invariant	NoLiveOverwrite	check	rnwindowlayout	required	-
+MCRNSequencedHoldPool.cfg	MCRNSequencedHoldPool.tla	pass	-	check	rnsequencedholdpool	required	-
+MCRNSequencedHoldPoolBrokenDoubleReturn.cfg	MCRNSequencedHoldPool.tla	invariant	StackInBounds	check	rnsequencedholdpool	required	-
+MCRNSequencedHoldPoolBrokenEarlyReturn.cfg	MCRNSequencedHoldPool.tla	invariant	NoPayloadOverwrite	check	rnsequencedholdpool	required	-
