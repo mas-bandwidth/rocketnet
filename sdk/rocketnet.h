@@ -1257,7 +1257,8 @@ struct rocketnet_client_config_t
     size_t config_bytes;
 
     /// ROCKETNET_CLIENT_TRANSPORT sets the candidate list. NULL means "auto".
-    /// Default is NULL.
+    /// The list is at most 63 characters; a longer one is refused at create
+    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Default is NULL.
 
     const char * transport;
 
@@ -1507,7 +1508,9 @@ struct rocketnet_server_config_t
     int handshake_deadline_seconds;
 
     /// ROCKETNET_SERVER_TRANSPORT sets the candidate list. NULL means "auto".
-    /// Every transport serves IPv4, IPv6, or both. Default is NULL.
+    /// The list is at most 63 characters; a longer one is refused at create
+    /// with ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE. Every transport serves IPv4,
+    /// IPv6, or both. Default is NULL.
 
     const char * transport;
 
