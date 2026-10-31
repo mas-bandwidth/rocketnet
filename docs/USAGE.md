@@ -200,7 +200,8 @@ returns a pointer into the connection's region (or `NULL` when dropped or refuse
 and finish message queues the bytes written and returns the serial, nonzero, or
 `0` when the send was refused. Calling `rocketnet_client_finish_message` or
 `rocketnet_server_finish_message` without a successful outstanding start is an
-error and returns `0`. Abort message gives the room back.
+error: it asserts in a debug build and returns `0` in a release build. Abort
+message gives the room back.
 One start message is pending per object at a time. To send one message to every
 connected client, loop over the slots with `rocketnet_server_client_connected`
 and start message and finish message for each. Every server per-client call
@@ -213,17 +214,13 @@ pending start, so the next start is never blocked.
 
 Finish or abort every start before `rocketnet_server_update`,
 `rocketnet_server_send_packets`, or `rocketnet_server_stop` (and the client
-calls of the same three). Those calls retire a server packet lease that is
-still open, and they are not legal while a fill is open. Finishing that
-packet afterwards is caller misuse, not a lease the reset should have kept.
-`rocketnet_server_transport_finish_packet` then returns 0 in every build,
-adds 1 to the process-wide `api_misuses` count, and logs
-`server finish packet refused: the lease was reset by update, send_packets or stop`.
-It does not assert, including in a debug build, and it does not seal the
-frame. The same context finished again is no longer that retired lease.
-A finish that had no start, a second finish, a finish after abort, or a
-modified context is a different error: it still asserts in a debug build
-and returns 0 in a release build.
+calls of the same three). An in-place start still open at update or
+send_packets is API misuse: the call counts it in `api_misuses` and aborts it;
+stop ends every slot, which cancels it. A start that took the queue
+instead stays pending, and which path a start took is not visible, so finish
+or abort every start first. A finish with no start pending (after one of those
+calls ended it, after a refused start, a second finish, or a finish after
+abort) asserts in a debug build and returns `0` in a release build.
 
 A message is sent only on a connection that is CONNECTED, on the client and on
 the server alike: the client while `rocketnet_client_state` is
