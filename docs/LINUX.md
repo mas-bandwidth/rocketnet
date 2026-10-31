@@ -549,13 +549,15 @@ What each path does with the errors it can see:
   budget of `ROCKETNET_GSO_RECV_QUEUE_SIZE`; a spent budget ends the drain, so
   the worker publishes and tests its stop request however much the socket
   holds. A `sendmmsg` refused
-  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` drops the
-  rest of that `sendmmsg` batch (at most `ROCKETNET_GSO_SEND_BATCH` messages)
-  and the flush goes on with the next batch, and any other errno drops the one refused message and
+  with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` (a full
+  socket) drops nothing: the TX worker keeps the bank's unsent rest, in
+  order and ahead of every later bank, and sends it when main's next update
+  wakes it (`ROCKETNET_GSO_SEND_RETRY_SECONDS` once main stops updating).
+  Any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets
   count in `ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED`, never resent
   (`sdk/rocketnet_server_gso_linux.cpp`,
-  `sdk/rocketnet_server_gso.h`).
+  `sdk/rocketnet_server_gso.h`, `proofs/tla/RNGsoHandoff.tla` SentOrHeld).
 - **io_uring**: a send completion with a negative result counts in
   `ROCKETNET_SERVER_URING_COUNTER_SEND_DROPPED`
   (`sdk/rocketnet_server_uring_linux.cpp`,

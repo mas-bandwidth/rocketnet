@@ -7462,14 +7462,12 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     rocketnet_check( frame );
     memset( frame + ROCKETNET_FRAME_WIRE_OFFSET, 0x55, 64 );
     rocketnet_server_gso_finish_packet( gso, id, frame, 64 );
-    rocketnet_server_gso_test_fail_sends( gso, 1024, EINTR );
-    rocketnet_server_gso_send_packets( gso );
-    rocketnet_test_gso_wait_sends( gso, ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED, 1 );
+    // interrupted sends keep the packet: stop's drain retries without main's
+    // updates, and the packet goes out once the interruptions end
 
-    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
-    rocketnet_server_gso_counters( gso, counters );
-    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == 1 );
-    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 1 );
+    const int interruptions = 64;
+    rocketnet_server_gso_test_fail_sends( gso, interruptions, EINTR );
+    rocketnet_server_gso_send_packets( gso );
     rocketnet_server_gso_stop( gso );
 
     const double deadline = rocketnet_time() + 5.0;
@@ -7479,6 +7477,12 @@ void rocketnet_test_server_gso_shutdown_send_interruptions()
     }
 
     rocketnet_check( rocketnet_server_gso_stopped( gso ) );
+
+    uint64_t counters[ROCKETNET_SERVER_GSO_NUM_COUNTERS];
+    rocketnet_server_gso_counters( gso, counters );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_SYSCALLS] == (uint64_t) interruptions + 1 );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_SEND_DROPPED] == 0 );
+    rocketnet_check( counters[ROCKETNET_SERVER_GSO_COUNTER_PACKETS_SENT] == 1 );
     rocketnet_server_gso_destroy( gso );
 }
 

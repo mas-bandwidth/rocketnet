@@ -188,6 +188,9 @@ struct rocketnet_server_gso_t
     rocketnet_platform_thread_t * send_thread = NULL;
     std::atomic<bool> send_quit{ false };
     std::atomic<bool> send_stopped{ false };
+    // TX worker sets it while it holds a bank the socket refused; main's
+    // next update wakes the worker to send the rest
+    std::atomic<bool> send_full{ false };
     int send_producer = 0; // game fill threads joined before main publishes
     int send_free[ROCKETNET_GSO_TX_BANKS] = { 1, 2, 0 };
     int send_free_head = 0;
@@ -231,6 +234,10 @@ struct rocketnet_server_gso_t
     std::atomic<int> test_fail_receive_error{ 0 };
     std::atomic<int> test_fail_sends{ 0 };
     std::atomic<int> test_fail_send_error{ 0 };
+    // the send seam: while set, each sendmmsg of a flush is this call, which
+    // answers as sendmmsg would
+    int ( *test_send )( struct mmsghdr * messages, unsigned int count, void * user ) = NULL;
+    void * test_send_user = NULL;
     // the receive seam: while set, each recvmmsg of a drain is this call,
     // which fills the queue's messages and answers as recvmmsg would
     int ( *test_receive )( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user ) = NULL;
@@ -381,7 +388,26 @@ static void rocketnet_server_gso_return_send( rocketnet_server_gso_t * gso, int 
 }
 
 static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
-                                       rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso );
+                                       rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full );
+
+// proofs/tla/RNGsoHandoff.tla TxSend: send a held bank from *slot. A live GSO
+// refusal turns segmentation off and resends from the refused message; a full
+// socket stops the bank at its first unsent slot and returns false, the rest
+// kept in order for the next attempt.
+static bool rocketnet_server_gso_send_bank( rocketnet_server_gso_t * gso, rocketnet_server_gso_send_buffer_t * bank, int * slot, int count )
+{
+    while ( *slot < count )
+    {
+        bool disable_gso = false;
+        bool full = false;
+        *slot = rocketnet_server_gso_flush( gso, bank, *slot, count, &disable_gso, &full );
+        if ( disable_gso )
+            gso->features.fetch_and( ~ROCKETNET_SERVER_GSO_FEATURE_SEGMENT, std::memory_order_relaxed );
+        if ( full )
+            return false;
+    }
+    return true;
+}
 
 // proofs/tla/RNGsoHandoff.tla TxSend: the worker sends each taken bank outside
 // the ownership mutex; stop's final bank is sent last and ends the worker.
@@ -405,14 +431,17 @@ static void rocketnet_server_gso_send_worker( rocketnet_platform_thread_t *, voi
         int count = bank->num_packets.load( std::memory_order_relaxed );
         if ( count > ROCKETNET_GSO_SEND_QUEUE_SIZE )
             count = ROCKETNET_GSO_SEND_QUEUE_SIZE;
+        // a full socket keeps the bank's unsent tail here, ahead of every
+        // later bank; main's next update (or the retry timeout, once main
+        // stops updating) wakes the worker to send it
+
         int slot = 0;
-        while ( slot < count )
+        while ( !rocketnet_server_gso_send_bank( gso, bank, &slot, count ) )
         {
-            bool disable_gso = false;
-            slot = rocketnet_server_gso_flush( gso, bank, slot, count, &disable_gso );
-            if ( disable_gso )
-                gso->features.fetch_and( ~ROCKETNET_SERVER_GSO_FEATURE_SEGMENT, std::memory_order_relaxed );
+            gso->send_full.store( true, std::memory_order_release );
+            rocketnet_platform_wake_wait( gso->send_wake, false, ROCKETNET_GSO_SEND_RETRY_SECONDS );
         }
+        gso->send_full.store( false, std::memory_order_release );
 
         if ( final )
             break;
@@ -1426,10 +1455,12 @@ void rocketnet_server_gso_abort_packet( struct rocketnet_server_gso_t * gso, uin
 
 // one flush pass: walk the staged slots once, build sendmmsg batches,
 // coalescing adjacent same-destination runs into GSO super-datagrams where
-// the feature is on. returns the first unconsumed slot so a live GSO refusal
-// can flip the feature off and resume plain from exactly where it stopped.
+// the feature is on. returns the first unconsumed slot, so a live GSO refusal
+// can flip the feature off and resume plain from exactly where it stopped,
+// and a full socket (*full) can resume from its first unsent message later.
+// A slot this pass dropped is cleared, so a resumed pass skips it uncounted.
 
-static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso )
+static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rocketnet_server_gso_send_buffer_t * bank, int first_slot, int num_slots, bool * disable_gso, bool * full )
 {
     const bool use_gso = ( gso->features & ROCKETNET_SERVER_GSO_FEATURE_SEGMENT ) != 0;
 
@@ -1509,8 +1540,11 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
             socklen_t namelen = rocketnet_server_gso_address_to_sockaddr( &info->to, gso->ipv6, &gso->send_names[num_messages] );
             if ( namelen == 0 )
             {
-                // unroutable on this socket family; drop the run counted
+                // unroutable on this socket family; drop the run counted,
+                // cleared so a resumed pass does not count it again
                 gso->counter_send_dropped += (uint64_t) run_count;
+                for ( int i = 0; i < run_count; i++ )
+                    bank->info[run_first + i].packet_bytes = 0;
                 continue;
             }
 
@@ -1582,6 +1616,8 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 result = -1;
                 errno = gso->test_fail_send_error.load( std::memory_order_relaxed );
             }
+            else if ( gso->test_send )
+                result = gso->test_send( &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), gso->test_send_user );
             else
 #endif
                 result = sendmmsg( fd, &gso->send_headers[sent], (unsigned int) ( num_messages - sent ), 0 );
@@ -1603,9 +1639,6 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
 
             gso->counter_send_syscalls++;
 
-            // Even EINTR is a best-effort send refusal. Retrying without a
-            // bound can stall a shutdown burst under a stream of signals.
-
             if ( message_is_gso[sent] && ( errno == EINVAL || errno == EIO || errno == EOPNOTSUPP ) )
             {
                 // the kernel accepted the UDP_SEGMENT probe but refused a
@@ -1618,20 +1651,17 @@ static int rocketnet_server_gso_flush( struct rocketnet_server_gso_t * gso, rock
                 return message_first_slot[sent];
             }
 
-            // a full socket (or a signal): the rest of this batch is dropped
-            // and the flush goes on with the next batch. the transport's
-            // semantics price this as packets lost on the wire, counted,
-            // never resent.
+            // a full socket (or a signal): the socket cannot take more now.
+            // nothing is dropped: the flush stops at the first unsent
+            // message and the bank keeps the rest, in order, for the next
+            // attempt (proofs/tla/RNGsoHandoff.tla TxSend, SentOrHeld)
 
             if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS || errno == ENOMEM || errno == EINTR )
             {
-                for ( int i = sent; i < num_messages; i++ )
-                    gso->counter_send_dropped += (uint64_t) message_num_packets[i];
+                rocketnet_spam( "gso transport sendmmsg refused (errno %d). %d messages wait for the next attempt", errno, num_messages - sent );
 
-                rocketnet_spam( "gso transport sendmmsg refused (errno %d). %d messages dropped", errno, num_messages - sent );
-
-                sent = num_messages;
-                continue;
+                *full = true;
+                return message_first_slot[sent];
             }
 
             // nothing went in this call, so the first unsent message is the
@@ -1656,6 +1686,12 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso )
 {
     rocketnet_assert( gso );
     rocketnet_server_gso_publish_send( gso );
+
+    // a bank the socket refused waits for this update: wake the worker to
+    // send the rest
+
+    if ( gso->send_full.load( std::memory_order_acquire ) && gso->send_wake )
+        rocketnet_platform_wake_set( gso->send_wake );
 }
 
 // ---------------------------------------------------------------------------
@@ -2156,25 +2192,135 @@ bool rocketnet_server_gso_test_send_refusals()
 
     rocketnet_server_gso_test_fail_sends( gso, 3, EHOSTUNREACH );
     bool disable_gso = false;
-    int next = rocketnet_server_gso_flush( gso, &gso->send_banks[taken], 0, 3, &disable_gso );
-    valid = valid && next == 3 && !disable_gso;
+    bool full = false;
+    int next = rocketnet_server_gso_flush( gso, &gso->send_banks[taken], 0, 3, &disable_gso, &full );
+    valid = valid && next == 3 && !disable_gso && !full;
     valid = valid && gso->counter_send_syscalls == 3 && gso->counter_send_dropped == 3 && gso->counter_packets_sent == 0;
     valid = valid && gso->test_fail_sends.load( std::memory_order_relaxed ) == 0;
     rocketnet_server_gso_return_send( gso, taken );
 
-    // a full socket drops the rest of the batch in one attempt
+    rocketnet_server_gso_stop( gso );
+    rocketnet_server_gso_take_send( gso, &final );
+    valid = valid && final;
 
-    for ( int i = 0; i < 3; i++ )
-        valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 + i ) );
+    gso->queues[0].stopped.store( true, std::memory_order_release );
+    gso->send_stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+
+    rocketnet_server_gso_test_destroy( gso );
+
+    return valid;
+}
+
+// a fake socket for the send seam: it takes accept_budget messages, then
+// answers EAGAIN as a full socket does, and records each taken message's
+// destination port in order
+struct rocketnet_server_gso_test_full_socket_t
+{
+    int accept_budget;
+    int calls;
+    int num_ports;
+    uint16_t ports[256];
+};
+
+static int rocketnet_server_gso_test_full_socket_send( struct mmsghdr * messages, unsigned int count, void * user )
+{
+    struct rocketnet_server_gso_test_full_socket_t * socket = (struct rocketnet_server_gso_test_full_socket_t *) user;
+    socket->calls++;
+    if ( socket->accept_budget <= 0 )
+    {
+        errno = EAGAIN;
+        return -1;
+    }
+    int taken = (int) count < socket->accept_budget ? (int) count : socket->accept_budget;
+    for ( int i = 0; i < taken; i++ )
+    {
+        const struct sockaddr_in * name = (const struct sockaddr_in *) messages[i].msg_hdr.msg_name;
+        if ( socket->num_ports < 256 )
+            socket->ports[socket->num_ports++] = rocketnet_platform_ntohs( name->sin_port );
+    }
+    socket->accept_budget -= taken;
+    return taken;
+}
+
+bool rocketnet_server_gso_test_send_full_keeps_rest()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+        return false;
+
+    bool valid = true;
+
+    // 200 plain packets to 200 destinations: two sendmmsg batches (128 and
+    // 71 messages). Slot 60 goes to an IPv6 destination this IPv4 socket
+    // cannot carry, a run the first pass drops and counts.
+
+    const int count = 200;
+    const int unroutable = 60;
+    for ( int i = 0; i < count; i++ )
+    {
+        if ( i != unroutable )
+        {
+            valid = valid && rocketnet_server_gso_test_stage( gso, (uint16_t) ( 40000 + i ) );
+            continue;
+        }
+        struct rocketnet_address_t to;
+        memset( &to, 0, sizeof( to ) );
+        to.type = ROCKETNET_ADDRESS_IPV6;
+        to.data.ipv6[7] = 1;
+        to.port = (uint16_t) ( 40000 + i );
+        uint64_t packet_id = 0;
+        uint8_t * packet = rocketnet_server_gso_start_packet( gso, &to, &packet_id );
+        valid = valid && packet;
+        if ( packet )
+            rocketnet_server_gso_finish_packet( gso, packet_id, packet, ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES );
+    }
     rocketnet_server_gso_send_packets( gso );
 
-    taken = rocketnet_server_gso_take_send( gso, &final );
+    bool final = false;
+    const int taken = rocketnet_server_gso_take_send( gso, &final );
     valid = valid && taken >= 0 && !final;
+    if ( !valid )
+    {
+        rocketnet_server_gso_test_destroy( gso );
+        return false;
+    }
 
-    rocketnet_server_gso_test_fail_sends( gso, 1, EAGAIN );
-    next = rocketnet_server_gso_flush( gso, &gso->send_banks[taken], 0, 3, &disable_gso );
-    valid = valid && next == 3 && !disable_gso;
-    valid = valid && gso->counter_send_syscalls == 4 && gso->counter_send_dropped == 6 && gso->counter_packets_sent == 0;
+    struct rocketnet_server_gso_test_full_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    gso->test_send = rocketnet_server_gso_test_full_socket_send;
+    gso->test_send_user = &socket;
+
+    // the socket takes 50 messages, then is full: the flush stops at the
+    // first unsent slot, drops nothing, and does not try the second batch
+
+    socket.accept_budget = 50;
+    int slot = 0;
+    rocketnet_server_gso_send_buffer_t * bank = &gso->send_banks[taken];
+    const int staged = bank->num_packets.load( std::memory_order_relaxed );
+    valid = valid && staged == count;
+    valid = valid && !rocketnet_server_gso_send_bank( gso, bank, &slot, staged );
+    valid = valid && slot == 50 && socket.calls == 2;
+    valid = valid && gso->counter_send_syscalls == 2 && gso->counter_packets_sent == 50 && gso->counter_send_dropped == 1;
+
+    // the next attempt sends the rest, in order, and counts the dropped run
+    // once
+
+    socket.accept_budget = 1000;
+    valid = valid && rocketnet_server_gso_send_bank( gso, bank, &slot, staged );
+    valid = valid && slot == count;
+    valid = valid && gso->counter_packets_sent == (uint64_t) ( count - 1 ) && gso->counter_send_dropped == 1;
+    valid = valid && socket.num_ports == count - 1;
+    int expected = 0;
+    for ( int i = 0; i < socket.num_ports; i++, expected++ )
+    {
+        if ( expected == unroutable )
+            expected++;
+        valid = valid && socket.ports[i] == (uint16_t) ( 40000 + expected );
+    }
+
+    gso->test_send = NULL;
+    gso->test_send_user = NULL;
     rocketnet_server_gso_return_send( gso, taken );
 
     rocketnet_server_gso_stop( gso );
