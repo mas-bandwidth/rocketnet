@@ -568,6 +568,14 @@ static int cmp_double( const void * a, const void * b )
     return ( da > db ) - ( da < db );
 }
 
+// the build column of the results: the configuration this program was compiled in
+
+#if defined( NDEBUG )
+#define SOAK_BUILD "Release"
+#else // #if defined( NDEBUG )
+#define SOAK_BUILD "Debug"
+#endif // #if defined( NDEBUG )
+
 int main( int argc, char ** argv )
 {
     int num_clients = 1000, seconds = 3, exit_code = 1;
@@ -1138,7 +1146,7 @@ int main( int argc, char ** argv )
     const int num_metrics = (int) ( sizeof( m_vals ) / sizeof( m_vals[0] ) );
     for ( int m = 0; m < num_metrics; m++ )
     {
-        fprintf( fp, m < 8 || m >= num_metrics - 2 ? "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.0f\n" : "%d\t%d\t%" PRIu64 "\t%s\tRelease\t%s\t%.2f\n", num_clients, seconds, seed, transport_name, m_names[m], m_vals[m] );
+        fprintf( fp, m < 8 || m >= num_metrics - 2 ? "%d\t%d\t%" PRIu64 "\t%s\t%s\t%s\t%.0f\n" : "%d\t%d\t%" PRIu64 "\t%s\t%s\t%s\t%.2f\n", num_clients, seconds, seed, transport_name, SOAK_BUILD, m_names[m], m_vals[m] );
     }
 
     fclose( fp );

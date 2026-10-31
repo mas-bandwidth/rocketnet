@@ -158,8 +158,9 @@ int main( void )
 
     ok &= create_and_prove( "pin", "portable" );
 
-    // a list, tried left to right: xdp is refused (port zero is not a port xdp
-    // can bind), so gso is granted, and the log lines show both
+    // a list, tried left to right, and the log lines show each step: on Linux
+    // xdp is refused (port zero is not a port xdp can bind) and gso is granted;
+    // elsewhere neither exists and portable is granted
 
     ok &= create_and_prove( "list", "xdp,gso,portable" );
 

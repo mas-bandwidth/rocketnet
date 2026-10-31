@@ -10,9 +10,9 @@ connection ends get no terminal outcome; see [receipts](../CHANNELS.md#receipts-
 ## What it shows
 
 1. Create a server and a client over the `loopback` transport, with 30 percent loss on outgoing client packets from `rocketnet_client_network_simulator`, so some packets arrive and some are lost.
-2. Queue 20 state updates with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_can_send_message`, `rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
+2. Queue 20 state updates, and more (at most 200) until both outcomes have been seen, with `ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT` (`rocketnet_client_can_send_message`, `rocketnet_client_start_message` and `rocketnet_client_finish_message`), recording the nonzero serial returned for each update.
 3. Read `rocketnet_client_receipts` each frame after `rocketnet_client_update` and match each `rocketnet_receipt_t` serial back to the update that sent it.
-4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that all 20 sends receive exactly one receipt.
+4. Print `ACKED` (`ROCKETNET_RECEIPT_STATUS_ACKED`) or `LOSS` (`ROCKETNET_RECEIPT_STATUS_LOSS`) for each update and verify that every send receives exactly one receipt.
 
 Each frame runs the five steps in game-loop order: update, drain the receive queue (plus receipts), simulate, queue outgoing messages, and `send_packets` last.
 

@@ -262,8 +262,9 @@ int main( void )
             }
             else if ( big_arrived && !oversize_sent )
             {
-                // above one packet's limit: an unreliable send with a receipt is
-                // promoted, where one without a receipt is refused
+                // above one packet's limit every unreliable mode is promoted to
+                // its reliable twin; this one keeps its receipt, so the promotion
+                // shows as an ACKED receipt
 
                 acked_before = receipts_acked( client );
                 printf( "promotion counter before: %llu\n", (unsigned long long) acked_before );

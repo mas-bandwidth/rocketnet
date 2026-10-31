@@ -123,10 +123,14 @@ int main( int argc, char ** argv )
         printf( "environment max_clients: %d\n", rocketnet_server_max_clients( server ) );
         result = rocketnet_server_max_clients( server ) == 5 ? 0 : 1;
     }
-    else if ( environment[0] != '\0' && !server )
+    else if ( strcmp( environment, "99999" ) == 0 && !server )
     {
         printf( "bad value refused: %s\n", rocketnet_status_name( status ) );
         result = 0;
+    }
+    else
+    {
+        printf( "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"%s\": server create %s\n", environment, server ? "accepted it" : rocketnet_status_name( status ) );
     }
 
     rn_cli_server_stop_and_destroy( server );

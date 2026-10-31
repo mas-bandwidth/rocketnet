@@ -18,8 +18,9 @@ Every example that runs alone also runs in its own fresh temporary working
 directory, so files it writes (example_soak writes soak-results.tsv) never
 collide between two runs.
 example_soak runs with --clients 64 (SINGLE_ARGS): its default is 1000
-in-process clients (examples/soak.c:121), which peaks near 8 GB of resident
-memory and is killed by an 8 GB process-tree cap when two runs go at once.
+in-process clients (the top of main in examples/soak.c), which peaks near
+8 GB of resident memory and is killed by an 8 GB process-tree cap when two
+runs go at once.
 At 64 clients each example stays well under 1 GB, so two runs at once stay
 under 4 GB together. The 1000-client proof is the soak matrix, not this
 script.
@@ -28,6 +29,12 @@ run here: its client takes a token from a backend in examples/backend/, so
 tools/run_backend_examples.py runs it with each backend between the two.
 Each process gets a 120-second timeout and must exit 0 with PASS as its last
 line. Prints one PASS example_<name> line per example; exits 1 on a failure.
+Some examples then run again in a second mode (EXTRA_RUNS):
+example_client_server_client --wrong-protocol must reach its expected refusal
+(the server, which no client reaches, is stopped once the client exits), and
+example_config_env as its ROCKETNET_SERVER_MAX_CLIENTS=5 child, with a server
+create refused for another reason, must exit 1 rather than pass as the
+bad-value child.
 """
 
 import argparse
@@ -47,6 +54,13 @@ TIMEOUT_SECONDS = 120
 PORT_TRIES = 3
 READY_SECONDS = 30
 SINGLE_ARGS = {"soak": ["--clients", "64"]}
+# second runs: (example, client arguments for a pair or arguments for a single
+# example, extra environment, exit status, a line the output must hold)
+EXTRA_RUNS = [
+    ("client_server", ["--wrong-protocol"], {}, 0, "expected refusal: "),
+    ("config_env", [], {"ROCKETNET_SERVER_MAX_CLIENTS": "5", "ROCKETNET_SERVER_NUM_CHANNELS": "0"}, 1,
+     "FAIL: ROCKETNET_SERVER_MAX_CLIENTS=\"5\": server create "),
+]
 # pairs that need more than a server and a client, run by their own script
 RUN_ELSEWHERE = {"backend"}  # tools/run_backend_examples.py
 
@@ -81,6 +95,8 @@ def failure(label, detail):
 
 
 def check_result(label, result):
+    if result is None:
+        return False
     if result.returncode != 0:
         if result.stdout:
             print(result.stdout, file=sys.stderr, end="")
@@ -96,22 +112,34 @@ def check_result(label, result):
     return True
 
 
-def run_single(name, binary):
+def run_single(name, binary, args=None, environment=None):
     workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{name}_")
     try:
         result = subprocess.run(
-            [str(binary)] + SINGLE_ARGS.get(name, []),
+            [str(binary)] + (SINGLE_ARGS.get(name, []) if args is None else args),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
             timeout=TIMEOUT_SECONDS,
             cwd=workdir,
+            env={**os.environ, **(environment or {})},
         )
     except subprocess.TimeoutExpired:
-        return failure(name, f"timed out after {TIMEOUT_SECONDS}s")
+        failure(name, f"timed out after {TIMEOUT_SECONDS}s")
+        return None
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
-    return check_result(name, result)
+    return result
+
+
+def check_extra(label, output, returncode, expected_code, expected_line):
+    if returncode != expected_code:
+        print(output, file=sys.stderr, end="")
+        return failure(label, f"exited {returncode}, expected {expected_code}")
+    if not any(line.startswith(expected_line) for line in output.splitlines()):
+        print(output, file=sys.stderr, end="")
+        return failure(label, f"printed no line starting {expected_line!r}")
+    return True
 
 
 def kill(process):
@@ -185,12 +213,12 @@ def free_udp_port():
         return probe.getsockname()[1]
 
 
-def run_pair(base, server_binary, client_binary):
+def run_pair(base, server_binary, client_binary, client_args=None):
     for attempt in range(1, PORT_TRIES + 1):
         port = free_udp_port()
         workdir = tempfile.mkdtemp(prefix=f"rocketnet_example_{base}_")
         try:
-            ok = run_pair_once(base, server_binary, client_binary, port, workdir)
+            ok = run_pair_once(base, server_binary, client_binary, port, workdir, client_args)
         finally:
             shutil.rmtree(workdir, ignore_errors=True)
         if ok != "bind":
@@ -200,7 +228,10 @@ def run_pair(base, server_binary, client_binary):
     return failure(base, f"server could not bind a free port in {PORT_TRIES} tries")
 
 
-def run_pair_once(base, server_binary, client_binary, port, workdir):
+def run_pair_once(base, server_binary, client_binary, port, workdir, client_args):
+    """Runs the pair once. With client_args the client runs with them, the
+    server is stopped once the client exits, and the client's output and exit
+    status are returned for the caller to judge."""
     env = dict(os.environ)
     env["ROCKETNET_EXAMPLE_PORT"] = str(port)
     server = subprocess.Popen(
@@ -224,7 +255,7 @@ def run_pair_once(base, server_binary, client_binary, port, workdir):
             return "bind"
         return failure(base, f"server exited {server.returncode} before it wrote its keys\n{server_out}{server_err}")
     client = subprocess.Popen(
-        [str(client_binary)],
+        [str(client_binary)] + (client_args or []),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -238,6 +269,12 @@ def run_pair_once(base, server_binary, client_binary, port, workdir):
         kill(client)
         stop(server)
         return failure(base, f"client timed out after {TIMEOUT_SECONDS}s")
+
+    if client_args is not None:
+        stop(server)
+        server_reader.join()
+        server_error_reader.join()
+        return client.returncode, client_out + client_err
 
     if client.returncode != 0:
         stop(server)
@@ -300,10 +337,29 @@ def main():
         if len(members) == 2:
             ok = run_pair(base, binaries[members[0]], binaries[members[1]])
         else:
-            ok = run_single(base, binaries[members[0]])
+            ok = check_result(base, run_single(base, binaries[members[0]]))
         if not ok:
             return 1
         print(f"PASS example_{base}")
+
+    pairs = dict(groups)
+    for base, args, environment, code, line in EXTRA_RUNS:
+        label = f"{base} {' '.join(args)} {' '.join(f'{k}={v}' for k, v in environment.items())}".strip()
+        members = pairs[base]
+        if len(members) == 2:
+            assert not environment, "a pair's second run takes client arguments only"
+            outcome = run_pair(base, binaries[members[0]], binaries[members[1]], args)
+            if outcome is False:
+                return 1
+            returncode, output = outcome
+        else:
+            result = run_single(base, binaries[members[0]], args, environment)
+            if result is None:
+                return 1
+            returncode, output = result.returncode, result.stdout + result.stderr
+        if not check_extra(label, output, returncode, code, line):
+            return 1
+        print(f"PASS example_{label}")
 
     return 0
 
