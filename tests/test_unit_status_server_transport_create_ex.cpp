@@ -18,6 +18,8 @@
 #include "portable_crt.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
+#include "rocketnet_connect_token.h"
 
 #include <stdint.h>
 #include <stdio.h>
@@ -25,10 +27,12 @@
 #include <string.h>
 #include "loopback_hub.h"
 
-// the cases test struct transport lists, so the test sets the caller's env pin aside
-// for its duration and puts it back after: the env pin wins over the struct
-// by design, so a CI leg pinned by ROCKETNET_SERVER_TRANSPORT would otherwise
-// never reach the struct's list
+// The cases test struct transport lists. The env pin wins over the struct by
+// design; the unit runner (tests/test.cpp) clears ROCKETNET_SERVER_TRANSPORT
+// for the whole run, so the struct's list is what each create reads.
+
+// A development build accepts what S11 checks is refused, so the case is
+// registered in the production (ROCKETNET_DEV=0) unit suite only.
 
 #if !ROCKETNET_DEV
 #define check rocketnet_unit_check
@@ -67,15 +71,28 @@ static void release( void * context, void * pointer )
     free( base );
 }
 
+// a packet filter of the caller's own: a production build refuses the
+// published test filter the default config carries
+static void own_packet_filter( struct rocketnet_server_transport_config_t * config )
+{
+    memset( config->packet_filter, 0x5A, sizeof( config->packet_filter ) );
+}
+
 // production-like keys: non-zero and different from the published development
 // keys, so the dev-keys refusal (S11) does not fire and S7/S12/S14 are reached
-static void production_config( struct rocketnet_server_transport_config_t * config )
+static void production_fields( struct rocketnet_server_transport_config_t * config )
 {
-    rocketnet_server_transport_default_config( config );
+    own_packet_filter( config );
     memset( config->backend_public_key, 0x42, 32 );
     memset( config->server_public_key, 0x43, 32 );
     memset( config->server_secret_key, 0x44, 32 );
     config->protocol_id = 1;
+}
+
+static void production_config( struct rocketnet_server_transport_config_t * config )
+{
+    rocketnet_server_transport_default_config( config );
+    production_fields( config );
 }
 
 // A named production server rung with a concrete memory plan. The budget=1
@@ -152,7 +169,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // S5: the reassembly cross-field allocation exceeds the operator memory budget
     {
         struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_default_config( &config );
+        production_config( &config );
         config.max_clients = ROCKETNET_MAX_CLIENTS;
         config.max_fragmented_messages = 256;    // ROCKETNET_MAX_FRAGMENTS
         status = -1;
@@ -163,11 +180,22 @@ static void test_server_transport_create_ex_reports_every_status()
     // Real environment budget parsing and both production budget rungs
     // are covered by test_platform_primitives.
 
-    // S6: a keyless config (the default shape) is refused
+    // S4: the default config carries the published test packet filter, which
+    // a production build refuses
 
     status = -1;
     check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", NULL, 1000.0, &status ) == NULL );
-    check( status == ROCKETNET_STATUS_MISSING_KEYS );
+    check( status == ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION );
+
+    // S6: a keyless config (the default shape with its own filter) is refused
+    {
+        struct rocketnet_server_transport_config_t config;
+        rocketnet_server_transport_default_config( &config );
+        own_packet_filter( &config );
+        status = -1;
+        check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_MISSING_KEYS );
+    }
 
     // S7: protocol_id 0 with production keys is refused
     {
@@ -182,7 +210,7 @@ static void test_server_transport_create_ex_reports_every_status()
     // S8: a transport-list typo refuses at parse
     {
         struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config( &config );
+        production_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "bogus" );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
@@ -201,7 +229,9 @@ static void test_server_transport_create_ex_reports_every_status()
     // S11: development keys in a production build (ROCKETNET_DEV=0) are refused
     {
         struct rocketnet_server_transport_config_t config;
-        rocketnet_server_transport_dev_config( &config );
+        production_config( &config );
+        memcpy( config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+        memcpy( config.server_public_key, rocketnet_dev_server_public_key, 32 );
         status = -1;
         check( rocketnet_server_transport_create_ex( &state, "127.0.0.1:12345", &config, 1000.0, &status ) == NULL );
         check( status == ROCKETNET_STATUS_DEV_KEYS_IN_PRODUCTION );
@@ -225,12 +255,17 @@ static void test_server_transport_create_ex_reports_every_status()
 
     // S10 and S14: a fault-injecting allocator failing at each allocation in
     // turn yields OUT_OF_MEMORY, and once every allocation succeeds the create
-    // completes with ROCKETNET_STATUS_OK
+    // completes with ROCKETNET_STATUS_OK. create_ex reads the revision-1
+    // config prefix, which ends before loopback_hub, so the sweep creates
+    // through the current-size create_current_ex over the current defaults
     {
         struct rocketnet_server_transport_config_t config;
-        production_config( &config );
+        rocketnet_server_transport_default_config_current( &config );
+        production_fields( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+        rocketnet_test_loopback_hub_context( &state );
         config.loopback_hub = rocketnet_test_loopback_hub();
+        const int hub_live = state.live;
         config.max_clients = 1;
 
         int reached_success = 0;
@@ -239,7 +274,7 @@ static void test_server_transport_create_ex_reports_every_status()
         {
             state.fail_at = state.calls + k;
             status = -1;
-            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_ex(
+            struct rocketnet_server_transport_t * server = rocketnet_server_transport_create_current_ex(
                 &state, "127.0.0.1:12345", &config, 1000.0, &status );
             if ( server )
             {
@@ -247,14 +282,14 @@ static void test_server_transport_create_ex_reports_every_status()
 
                 rn_test_server_transport_stop_and_destroy( server );
 
-                check( state.live == 0 );
+                check( state.live == hub_live );
 
                 reached_success = 1;
             }
             else
             {
                 check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
-                check( state.live == 0 );
+                check( state.live == hub_live );
 
                 out_of_memory++;
             }
