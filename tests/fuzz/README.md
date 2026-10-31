@@ -246,7 +246,13 @@ for the session target, unless every reliability type is delivered in both
 directions). A type with no seed would be a parser the fuzzer never enters,
 because random mutation cannot produce a valid AEAD tag. Seeds are
 deterministic, so a regenerated corpus differs only when the code under it
-changed.
+changed. The generator exits the process itself, from
+`LLVMFuzzerInitialize`, in the libFuzzer build and the replay driver alike:
+libFuzzer ignores that function's return value, and so does the replay
+driver. ci.yml's macOS checks leg runs all ten generators on every push
+and requires each to exit 0, and requires `rocketnet_fuzz_connect_token` and
+`rocketnet_fuzz_receive_structured` to exit 1 with `INCOMPLETE` when a seed
+is withheld (`ROCKETNET_FUZZ_WITHHOLD`).
 
 ## Coverage
 
