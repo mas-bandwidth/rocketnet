@@ -28,6 +28,7 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly-soak.yml | Windows, X64 | - |
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp | nightly | .github/workflows/nightly.yml | Windows, X64 | - |
 | [Windows 11](WINDOWS.md) | x86_64 | clang-cl (LLVM toolset) | portable | nightly | .github/workflows/nightly.yml | Windows, X64 | - |
+| [Windows 11](WINDOWS.md) | x86_64 | clang-cl (LLVM toolset) | portable, iocp, rio | nightly | .github/workflows/nightly-windows-sanitizers.yml | Windows, X64 | - |
 | Linux | arm64 | none | none | unsupported | - | - | - |
 | Windows | arm64 | MSVC (cross, build-checked) | none | unsupported | - | - | - |
 
