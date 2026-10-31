@@ -65,11 +65,9 @@ run_guide_identifiers() {
             exit 1
         fi
         TEXT="$(awk -F'`' '/^[[:space:]]*<a (id|name)=/ { next } { for (i = 1; i <= NF; i++) { if (i % 2 == 1) printf "%s ", $i; else if ($i !~ /^[A-Za-z0-9_.\/-]+\.(cpp|h|md)(:[0-9]+)?$/) printf "%s ", $i } printf "\n" }' "$DOC")"
-        IDS="$(printf '%s\n' "$TEXT" | grep -o -E '\b(rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+|rn_[a-z0-9_]+)\b' | sort -u)"
-        if [ -z "$IDS" ]; then
-            echo "error: no rocketnet identifiers found in $DOC" >&2
-            exit 1
-        fi
+        # A guide that names no identifier (README.md, a short hub) has
+        # nothing to check; one that does must name only real ones.
+        IDS="$(printf '%s\n' "$TEXT" | grep -o -E '\b(rocketnet_[a-z0-9_]+|ROCKETNET_[A-Z0-9_]+|rn_[a-z0-9_]+)\b' | sort -u || true)"
         count=0
         missing=0
         for id in $IDS; do
