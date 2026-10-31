@@ -1,0 +1,28 @@
+# The owned reds of the scheduled nightlies (tools/check_nightly_dispositions.py,
+# .github/workflows/nightly-watch.yml). One row per red job, tab separated:
+# <workflow file>	<job name prefix>	#<open pull request that fixes it>	<cause>
+# A red job with no row fails the watch (NEW-RED); a row whose job is green, or
+# whose pull request is merged or closed while the job is red, fails it too
+# (STALE). Remove a row in the pull request that turns its job green.
+nightly.yml	tsan (threaded transport)	#735	test_window_ring_operation_sequences exceeds the 600 s case bound under tsan
+nightly.yml	linux / transport cells x50	#722	test_transport_env_pin_is_honoured fails 50/50 in the portable/auto cell
+nightly.yml	macos / transport cells x50	#722	test_transport_env_pin_is_honoured fails 50/50 in the portable/auto cell
+nightly.yml	windows / clang-cl x64 and MSVC ARM64 cross	#729	C4324: rocketnet_client_transport_t padded for alignment, an error in the ARM64 build (N5)
+nightly.yml	windows / Release functional nightly tier	#724	functional_production.vcxproj does not exist in the DEV=ON build tree
+nightly.yml	windows / Release ASan	#725	test_unit_case_memory exceeds 120 s under ASan where no RSS bound is enforced
+nightly.yml	windows / Debug	#729	IOCP Debug assert (N4)
+nightly.yml	linux / Release functional nightly tier	#767	test_loopback_hub_two_shared_objects under the portable pin
+nightly.yml	macos / Release functional nightly tier	#767	test_loopback_hub_two_shared_objects under the portable pin
+nightly-macos-sanitizers.yml	macOS leaks	#767	hub case and oversize-datagram case under the transport pins
+nightly-macos-sanitizers.yml	macOS tsan	#767	hub case and oversize-datagram case under the transport pins
+nightly-macos-sanitizers.yml	macOS asan+ubsan	#767	UBSan enum load in rocketnet_max_unfragmented_message_bytes
+nightly-bigendian-system.yml	s390x full system	#767	functional fails to link without XDP (weather predicate)
+fuzz-nightly.yml	nightly fuzz MSan (rocketnet_fuzz_message)	#767	no MSan-instrumented libc++ on the runner
+fuzz-nightly.yml	nightly fuzz MSan (rocketnet_fuzz_client_transport)	#723	MSan report in rocketnet_fuzz_protect_setup memcmp
+fuzz-nightly.yml	nightly fuzz MSan (rocketnet_fuzz_server_transport)	#723	MSan report in rocketnet_fuzz_protect_setup memcmp
+fuzz-nightly.yml	nightly fuzz MSan (rocketnet_fuzz_session)	#723	MSan report in rocketnet_fuzz_protect_setup memcmp
+nightly-channels-stress.yml	channels-stress-	#749	stress config refused by the sent-map rule; plan is the lifecycle peak
+nightly-dst.yml	dst-	#766	in-flight slack left out the send budget queue
+nightly-max-clients.yml	max-clients 10000	#755	loopback hub sized by the build's clients squared; two fixtures assumed 1000
+nightly-soak.yml	soak (	#775	xdp guest sized from the whole plan (71 GiB)
+nightly-proofs.yml	nightly CBMC proofs	#754	harness_prefilter PARSING ERROR in packet_open
