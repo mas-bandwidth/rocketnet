@@ -47,7 +47,7 @@ CONSTANTS
 
 ASSUME Records \in Nat \ {0}
 ASSUME First \in Nat \ {0} /\ Last \in Nat /\ First <= Last
-ASSUME Records < Last - First + 1          \* the code's static assert: a free ephemeral port exists
+ASSUME Records < Last - First + 1          \* assumed, not enforced by the code: a free ephemeral port exists
 ASSUME BindPorts \subseteq 0..Last /\ 0 \in BindPorts
 ASSUME \A f \in {PlusOne, BindCheck, WrapToFirst, BothFamilies} : f \in BOOLEAN
 
