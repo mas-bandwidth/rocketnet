@@ -53,6 +53,15 @@ struct rocketnet_server_uring_t;
 
 #define ROCKETNET_URING_SEND_QUEUE_SIZE                                   2048
 
+// the submission queue holds the whole send staging beside one re-arm and
+// one cancel per queue, so one send_packets prepares an SQE for every staged
+// slot: a submit that takes nothing leaves those SQEs in the queue, where
+// the next send_packets or stopped submits them, and no staged slot is ever
+// left without its SQE
+
+ROCKETNET_STATIC_ASSERT( ROCKETNET_URING_ENTRIES >= ROCKETNET_URING_SEND_QUEUE_SIZE + 2 * ROCKETNET_URING_MAX_QUEUES,
+                         "the io_uring submission queue holds a whole send staging beside a re-arm and a cancel per queue" );
+
 // receive: per queue a provided buffer ring of this many buffers of this many
 // bytes. one buffer holds the multishot recvmsg header, the reserved name
 // area, the UDP_GRO control area and the payload, which with UDP_GRO is one
