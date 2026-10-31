@@ -39,6 +39,9 @@
 #include "rocketnet_wire.h"
 #include "rocketnet_fragment.h"
 
+// the suite's assert hook, installed for every case (rocketnet_functional_prepare)
+void rocketnet_functional_restore_assert_function();
+
 #include <unordered_map>
 #include <atomic>
 #include <thread>
@@ -1253,7 +1256,7 @@ void rocketnet_test_transport_start_finish_shape()
         rocketnet_test_shape_asserts = 0;
         rocketnet_assert_function( rocketnet_test_shape_assert_hook );
         rocketnet_check( rocketnet_server_transport_finish_packet( server, &changed, 1 ) == 0 );
-        rocketnet_assert_function( NULL );
+        rocketnet_functional_restore_assert_function();
         rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
     }
 
@@ -1268,7 +1271,7 @@ void rocketnet_test_transport_start_finish_shape()
     rocketnet_test_shape_asserts = 0;
     rocketnet_assert_function( rocketnet_test_shape_assert_hook );
     rocketnet_check( rocketnet_server_transport_finish_packet( server, &expired, 1 ) == 0 );
-    rocketnet_assert_function( NULL );
+    rocketnet_functional_restore_assert_function();
     rocketnet_check( rocketnet_test_shape_asserts == ( ROCKETNET_ASSERTS ? 1 : 0 ) );
 
     // an aborted packet is harmless
@@ -2132,7 +2135,7 @@ void rocketnet_test_transport_update_time_clamped()
 
     rocketnet_server_transport_update( server, (double) NAN );
 
-    rocketnet_assert_function( NULL );
+    rocketnet_functional_restore_assert_function();
 
     rocketnet_check( rocketnet_api_misuse_count() == misuse_before + 1 );
 
@@ -13079,6 +13082,32 @@ void rocketnet_functional_restore_log_function()
     rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
 }
 
+// A failed library assert in a case: the library's default logs through the
+// installed log function, which a case may replace with one that keeps only
+// what it counts, and the suite's own capture holds error lines for a failed
+// check, so the assert's line would be lost and the case would end as a bare
+// signal. This prints the line and the captured log first, on stdout and
+// unbuffered, then traps as the default does, so the signal is the same.
+
+static void rocketnet_functional_assert( const char * condition, const char * function, const char * file, int line )
+{
+    printf( "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
+    rocketnet_test_log_ring_dump();
+    fflush( stdout );
+#if defined( _MSC_VER )
+    __debugbreak();
+#elif defined( __clang__ )
+    __builtin_debugtrap();
+#else
+    __builtin_trap();
+#endif // #if defined( _MSC_VER )
+}
+
+void rocketnet_functional_restore_assert_function()
+{
+    rocketnet_assert_function( rocketnet_functional_assert );
+}
+
 void rocketnet_functional_prepare()
 {
     char verbose[256];
@@ -13087,6 +13116,8 @@ void rocketnet_functional_prepare()
         rocketnet_test_suite_log_function = rocketnet_test_log_capture;
         rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
     }
+
+    rocketnet_functional_restore_assert_function();
 
     rocketnet_forbid_xdp_commit();
 
