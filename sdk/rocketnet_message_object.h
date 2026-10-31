@@ -273,7 +273,7 @@ struct rocketnet_message_server_t
 // connections, their receive bookkeeping and the arena. 0 for a refused config
 // or count.
 uint64_t rn_message_object_required_bytes( const struct rocketnet_message_config_t * config, int num_connections, int is_server,
-                                           int32_t kbps, bool reserve_unlimited = false );
+                                           int32_t kbps = 0, bool reserve_unlimited = false );
 
 // builds the object on a link, in `memory` (NULL: one rocketnet_malloc). The
 // object owns the link's transport when link->destroy is set. NULL, with the

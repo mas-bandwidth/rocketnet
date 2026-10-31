@@ -21,6 +21,7 @@
 #include "../sdk/rocketnet_message_object.h"
 #include "../sdk/rocketnet_send_budget.h"
 #include "../sdk/rocketnet_layers.h"
+#include "../sdk/rocketnet_config.h"
 #include "loopback_hub.h"
 #include "unit_shutdown.h"
 
