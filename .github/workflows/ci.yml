@@ -622,6 +622,20 @@ jobs:
             python3 tools/check_hardening.py bin/librocketnet.so
           fi
 
+      # The other optimized configurations are hardened like Release: each
+      # builds the shared library alone in its own directory and the same
+      # checker reads it.
+      - name: Check RelWithDebInfo and MinSizeRel hardening
+        if: matrix.leg == 'checks' && matrix.build_type == 'Release' && ( runner.os == 'Linux' )
+        run: |
+          for config in RelWithDebInfo MinSizeRel; do
+            dir="build-harden-$config"
+            cmake -S . -B "$dir" -DCMAKE_BUILD_TYPE=$config -DROCKETNET_DEV=OFF \
+              -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/$dir/bin" -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/$dir/bin"
+            cmake --build "$dir" --target rocketnet_shared --parallel 4
+            python3 tools/check_hardening.py "$dir/bin/librocketnet.so"
+          done
+
       - name: Check every driver row has transport matrix cells
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: python3 tools/check_transport_matrix.py
