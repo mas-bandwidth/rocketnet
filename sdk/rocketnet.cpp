@@ -458,6 +458,26 @@ void rocketnet_allocator_set_install_hook_for_test( void ( *hook )( void ) )
 {
     rocketnet_allocator_install_hook = hook;
 }
+
+// called by rocketnet_malloc on the calling thread at its steps: once
+// counted, before the pair read (ROCKETNET_ALLOCATOR_STEP_COUNTED), and
+// after it met the installing sentinel and uncounted itself
+// (ROCKETNET_ALLOCATOR_STEP_WAITED). The seam that drives one call's
+// interleaving with install step by step (tests/test_unit_allocator_install_steps.cpp,
+// tests/test_lifecycle.cpp)
+static std::atomic<void ( * )( int step )> rocketnet_allocator_call_hook{ nullptr };
+
+void rocketnet_allocator_set_call_hook_for_test( void ( *hook )( int step ) )
+{
+    rocketnet_allocator_call_hook.store( hook, std::memory_order_relaxed );
+}
+
+static void rn_allocator_call_step( int step )
+{
+    void ( *hook )( int step ) = rocketnet_allocator_call_hook.load( std::memory_order_relaxed );
+    if ( hook )
+        hook( step );
+}
 #endif // #if ROCKETNET_DEV
 
 // call with the lifecycle lock held. NULL for both is the system allocator
@@ -564,6 +584,9 @@ void * rocketnet_malloc( void * context, size_t bytes )
     for ( ;; )
     {
         rocketnet_allocations.fetch_add( 1, std::memory_order_seq_cst );
+#if ROCKETNET_DEV
+        rn_allocator_call_step( ROCKETNET_ALLOCATOR_STEP_COUNTED );
+#endif // #if ROCKETNET_DEV
 
         const rocketnet_allocator_pair_t * pair = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
         if ( pair != &rocketnet_allocator_installing )
@@ -573,6 +596,9 @@ void * rocketnet_malloc( void * context, size_t bytes )
         }
 
         rocketnet_allocations.fetch_sub( 1, std::memory_order_seq_cst );
+#if ROCKETNET_DEV
+        rn_allocator_call_step( ROCKETNET_ALLOCATOR_STEP_WAITED );
+#endif // #if ROCKETNET_DEV
     }
 
     void * base = installed.allocate( context, bytes + overhead );
