@@ -16,3 +16,4 @@ nightly-examples.yml examples-windows DISABLED no Windows fleet runner registere
 nightly-soak.yml soak-macos DISABLED no darwin fleet runner registered for this repository; owed: a darwin runner registered for this repository
 nightly-soak.yml soak-windows DISABLED no Windows fleet runner registered for this repository; owed: the Windows fleet machine
 nightly-bigendian-system.yml bigendian-system GUEST apt install inside the s390x guest the job boots
+nightly-ubuntu-lts-vms.yml ubuntu-lts-vm GUEST apt install inside the Ubuntu LTS guest the job boots

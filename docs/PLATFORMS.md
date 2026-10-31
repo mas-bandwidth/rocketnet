@@ -21,6 +21,9 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 | Ubuntu 24.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
 | Ubuntu 24.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
 | Ubuntu 24.04 (Linux, full-system guest) | s390x | GCC | portable | nightly | .github/workflows/nightly-bigendian-system.yml | Linux, X64 | - |
+| Ubuntu 22.04 (Linux, KVM guest, stock kernel) | x86_64 | GCC | portable, gso, io_uring | nightly | .github/workflows/nightly-ubuntu-lts-vms.yml | Linux, X64 | - |
+| Ubuntu 24.04 (Linux, KVM guest, stock kernel) | x86_64 | GCC | portable, gso, io_uring | nightly | .github/workflows/nightly-ubuntu-lts-vms.yml | Linux, X64 | - |
+| Ubuntu 26.04 (Linux, KVM guest, stock kernel) | x86_64 | GCC | portable, gso, io_uring | nightly | .github/workflows/nightly-ubuntu-lts-vms.yml | Linux, X64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-soak.yml | macOS, ARM64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-frame-budget.yml | macOS, ARM64 | - |
 | [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | nightly | .github/workflows/nightly-examples.yml | macOS, ARM64 | - |
