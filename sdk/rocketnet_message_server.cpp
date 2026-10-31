@@ -854,7 +854,8 @@ static bool rn_message_send_connected( const struct rn_message_object_t * object
     // standard/MESSAGES.md m1.5 (proofs/tla/ClientSession.tla DropSend,
     // proofs/tla/ServerSession.tla ServerDropSend): an application message is sent
     // only on a CONNECTED connection. A link with no connection query (a bare
-    // object with no transport) has no transport state to wait on.
+    // object that only starts and finishes, never updating or sending) has no
+    // transport state to wait on.
 
     return connection->hot->state == RN_MESSAGE_CONNECTION_CONNECTED &&
            ( object->is_server || !object->link.connection || object->link.connection( object->link.transport, 0 ) != 0 );

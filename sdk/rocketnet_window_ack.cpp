@@ -24,8 +24,8 @@ rn_ack_cost_t rn_window_ack_cost_read() { return rn_ack_cost; }
 // invariants TablesBounded and EveryReliableAckedAndDelivered in
 // proofs/tla/RNWindow.tla). A resend link names its message number's slot and
 // the descriptor generation it was stamped with (proofs/tla/RNChannelQueues.tla).
-// Acked holes are not compacted on the walk: capacity stays W and walk_visits
-// still counts them.
+// An ack unlinks its number from the resend sequence before it marks it
+// acked, so a walk visits only unacked numbers and walk_visits counts no hole.
 
 static void rn_window_ack_count( const rn_region_t * region, int counter )
 {
@@ -610,6 +610,7 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     const uint32_t max_refs = region->sent_ref_entries;
 
     static_assert( RN_MESSAGE_RECEIPT_SERIALS_MAX == ROCKETNET_PACKET_BUILDER_MAX_RECORDS, "the receipt bound is the sent map's record limit" );
+    static_assert( RN_MESSAGE_RECEIPT_SERIALS_MAX <= UINT16_MAX, "a sent entry's 16-bit ref_count holds every legal count" );
     rocketnet_assert( count + receipt_count <= RN_MESSAGE_RECEIPT_SERIALS_MAX ); // one record table holds at most this many records
 
     const uint32_t total = count + receipt_count;
@@ -688,7 +689,6 @@ static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, con
     entry->ref_count = (uint16_t) count;
     entry->unreliable_receipts = (uint16_t) receipt_count;
     entry->receipt_first = ( ref_first + count ) % max_refs;
-    entry->flags = 0;
     ack->pkt_tail++;
 
     rn_sent_index_insert( region, packet_id, entry_index );

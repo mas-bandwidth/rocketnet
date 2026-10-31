@@ -112,7 +112,10 @@ struct rn_message_link_t
     // Observe). The server's link answers
     // rocketnet_server_transport_client_connection_id, which differs for every
     // connection a slot holds (P9a). The client's link answers 1 while it is
-    // CONNECTED.
+    // CONNECTED. Required, like update, payloads, acked and the packet calls,
+    // by rn_message_object_update and rn_message_object_send_packets; only a
+    // bare object that starts and finishes messages and never updates or
+    // sends may leave it NULL.
     uint64_t ( *connection )( void * transport, int client_index );
 
     void ( *disconnect )( void * transport, int client_index );
@@ -291,7 +294,9 @@ uint32_t rn_message_object_finish( struct rn_message_object_t * object, int inde
 
 // the room query: true when rn_message_object_start with these arguments, now,
 // would be given its room; false when it would be dropped or refused, or would
-// find no room and end the connection (R5). Pure, O(1), allocates nothing.
+// find no room and end the connection (R5). Pure and allocation-free; the
+// store lookup scans the chosen class's chunks from its cursor
+// (rn_send_store_find).
 bool rn_message_object_send_room( const struct rn_message_object_t * object, int index, int channel, int reliability, int bytes );
 void rn_message_object_abort( struct rn_message_object_t * object, int index );
 uint32_t rn_message_object_send( struct rn_message_object_t * object, int index, int channel, int reliability, const uint8_t * data, int bytes );
