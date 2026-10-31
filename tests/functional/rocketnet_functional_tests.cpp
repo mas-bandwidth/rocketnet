@@ -12503,6 +12503,11 @@ static bool rocketnet_test_server_pin_allows_portable() { return rocketnet_test_
 static bool rocketnet_test_server_pin_allows_auto() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", NULL ); }
 static bool rocketnet_test_client_pin_allows_auto() { return rocketnet_test_transport_pin_allows( "ROCKETNET_CLIENT_TRANSPORT", NULL ); }
 static bool rocketnet_test_a_transport_pin_is_set() { return !rocketnet_test_server_pin_allows_auto() || !rocketnet_test_client_pin_allows_auto(); }
+
+// the loopback hub case pins loopback in its configs: a whole-suite pin
+// overrides that, the pair connects over another transport, and nothing
+// registers on the hub, so the case is taken out of the suite under a pin
+static bool rocketnet_test_no_transport_pin_is_set() { return !rocketnet_test_a_transport_pin_is_set(); }
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 static bool rocketnet_test_server_pin_allows_iocp() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "iocp" ); }
 static bool rocketnet_test_server_pin_allows_rio() { return rocketnet_test_transport_pin_allows( "ROCKETNET_SERVER_TRANSPORT", "rio" ); }
@@ -12583,7 +12588,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_public_dev_connect_token_round_trip", rocketnet_test_public_dev_connect_token_round_trip, NULL },
 #endif // #if ROCKETNET_DEV
 #if ROCKETNET_DEV
-    { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, NULL },
+    { "test_loopback_hub_two_shared_objects", test_loopback_hub_two_shared_objects, rocketnet_test_no_transport_pin_is_set },
 #endif // #if ROCKETNET_DEV
     { "test_ack_endpoints_independent_across_threads", rocketnet_test_ack_endpoints_independent_across_threads, NULL },
     { "test_server_refuses_keyless_config", rocketnet_test_server_refuses_keyless_config, NULL },
@@ -13025,6 +13030,8 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
         return "rocketnet_test_client_pin_allows_auto";
     if ( predicate == rocketnet_test_a_transport_pin_is_set )
         return "rocketnet_test_a_transport_pin_is_set";
+    if ( predicate == rocketnet_test_no_transport_pin_is_set )
+        return "rocketnet_test_no_transport_pin_is_set";
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     if ( predicate == rocketnet_test_server_pin_allows_iocp )
         return "rocketnet_test_server_pin_allows_iocp";
