@@ -163,7 +163,7 @@ static void test_server_host_estimate_charges_the_receive_request()
     struct rocketnet_host_memory_estimate_t estimate;
     check( rocketnet_server_transport_host_memory_estimate( &config, "gso", &estimate ) );
     check( estimate.sockets == 4 );
-    check( estimate.socket_receive_buffer_bytes == 100000000ull );
+    check( estimate.socket_receive_buffer_bytes == (uint64_t) 100000000 );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX && ROCKETNET_MAX_CLIENTS == 1000
 }
 

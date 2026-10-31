@@ -15811,7 +15811,7 @@ void rocketnet_test_server_host_memory_estimate_bounds_the_plan()
 
         rocketnet_check( estimate.sockets == 8 && estimate.worker_threads == 9 );
         rocketnet_check( estimate.socket_send_buffer_bytes == 8ull * ROCKETNET_SOCKET_SEND_BUFFER_SIZE );
-        rocketnet_check( estimate.socket_receive_buffer_bytes == 8ull * (uint64_t) rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
+        rocketnet_check( estimate.socket_receive_buffer_bytes == (uint64_t) 8 * (uint64_t) rocketnet_server_receive_buffer_request( ROCKETNET_MAX_CLIENTS ) );
         rocketnet_check( estimate.thread_stack_bytes == 9ull * estimate.thread_stack_bytes_per_thread );
         rocketnet_check( estimate.total_bytes == rocketnet_test_host_memory_sum( estimate ) );
     }
