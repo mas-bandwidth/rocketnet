@@ -1139,6 +1139,52 @@ jobs:
           ./bin/Release/test.exe
           ./bin/Release/test_sodium.exe
 
+      # Leg (c): a Windows test child that fails exits at once and never waits
+      # on a window (suite_no_dialogs, tests/suite_runner.h; #201). Each
+      # tests/windows_no_dialogs.cpp case runs alone in Release and in Debug
+      # with a 30 s deadline and must exit nonzero. The negative control puts
+      # the defaults back first, and its Debug assertion must still be waiting
+      # on its box after 10 s: that wait is what every failing case did before.
+      - name: A Windows test child that aborts exits instead of waiting on a dialog
+        if: matrix.leg == 'c'
+        shell: powershell
+        run: |
+          cmake --build build --config Debug --target windows_no_dialogs
+          if ( $LASTEXITCODE -ne 0 ) { exit 1 }
+          function Run-Case( $config, $case, $ms ) {
+            $exe = "bin\$config\windows_no_dialogs.exe"
+            $log = "$env:RUNNER_TEMP\no-dialogs-$config-$case"
+            $p = Start-Process -FilePath $exe -ArgumentList '--run', $case -NoNewWindow -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
+            $null = $p.Handle
+            $clock = [Diagnostics.Stopwatch]::StartNew()
+            $exited = $p.WaitForExit( $ms )
+            $seconds = '{0:N1}' -f $clock.Elapsed.TotalSeconds
+            if ( -not $exited ) { Stop-Process -Id $p.Id -Force; $p.WaitForExit() }
+            $stderr = ( Get-Content "$log.err" -ErrorAction SilentlyContinue | Select-Object -First 3 ) -join ' | '
+            return @{ exited = $exited; code = $p.ExitCode; seconds = $seconds; stderr = $stderr }
+          }
+          $failed = 0
+          foreach ( $config in 'Release', 'Debug' ) {
+            foreach ( $case in 'test_no_dialogs_abort', 'test_no_dialogs_assert', 'test_no_dialogs_invalid_parameter', 'test_no_dialogs_access_violation' ) {
+              $r = Run-Case $config $case 30000
+              $code = '0x{0:X8}' -f $r.code
+              if ( $r.exited -and $r.code -ne 0 ) {
+                "PASS $config $case exited $code in $( $r.seconds ) s; stderr: $( $r.stderr )"
+              } else {
+                "FAIL $config $case exited=$( $r.exited ) code=$code after $( $r.seconds ) s"
+                $failed = 1
+              }
+            }
+          }
+          $r = Run-Case 'Debug' 'test_no_dialogs_defaults_restored' 10000
+          if ( -not $r.exited ) {
+            "PASS negative control: with the defaults back, the Debug assertion was still waiting on its dialog after $( $r.seconds ) s (killed)"
+          } else {
+            "FAIL negative control exited $( '0x{0:X8}' -f $r.code ) in $( $r.seconds ) s: this runner shows no dialog wait, so the cases above prove nothing here"
+            $failed = 1
+          }
+          exit $failed
+
       # Leg (c), 2026-10-29: the functional suite is back on every commit, its
       # cases in parallel (tests/functional/main.cpp), the slowest RIO and IOCP x1000
       # cycles in the nightly tier. The note below is its history.

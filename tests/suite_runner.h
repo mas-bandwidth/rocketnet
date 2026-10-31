@@ -58,6 +58,9 @@
 #endif // #ifndef WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <psapi.h>
+#if defined( _MSC_VER )
+#include <crtdbg.h>
+#endif // #if defined( _MSC_VER )
 #include "resource_file.h"
 #else
 #include <errno.h>
@@ -1500,6 +1503,34 @@ inline void suite_drain( HANDLE pipe, std::string & output )
     }
 }
 
+// A test process on a headless runner never waits on a window. Left at their
+// defaults, the CRT answers abort, a failed assertion and an invalid parameter
+// with a message box (Debug) or a fault report, and Windows answers a crash
+// with the error-reporting dialog. Nobody can see those on a runner, so the
+// case sits until the case limit kills it, and a suite of failing cases takes
+// hours instead of minutes (#201). With these set, abort exits 3 at once, a
+// crash exits with its NTSTATUS, and the report text goes to stderr, where the
+// case's captured output shows it. The error mode is inherited by every child
+// the suite spawns; each child sets all of it again in its own CRT.
+// tests/windows_no_dialogs.cpp and ci.yml's leg (b) prove it.
+
+inline void suite_no_dialogs()
+{
+    SetErrorMode( SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX );
+#if defined( _MSC_VER )
+    _set_error_mode( _OUT_TO_STDERR );
+    _set_abort_behavior( 0, _CALL_REPORTFAULT );
+#if defined( _DEBUG )
+    _CrtSetReportMode( _CRT_ASSERT, _CRTDBG_MODE_FILE );
+    _CrtSetReportFile( _CRT_ASSERT, _CRTDBG_FILE_STDERR );
+    _CrtSetReportMode( _CRT_ERROR, _CRTDBG_MODE_FILE );
+    _CrtSetReportFile( _CRT_ERROR, _CRTDBG_FILE_STDERR );
+    _CrtSetReportMode( _CRT_WARN, _CRTDBG_MODE_FILE );
+    _CrtSetReportFile( _CRT_WARN, _CRTDBG_FILE_STDERR );
+#endif // #if defined( _DEBUG )
+#endif // #if defined( _MSC_VER )
+}
+
 // A spawn failure names the call and its Windows error code, so a red that
 // never started its case says why (1455 is the commit limit, 8 and 1450 are
 // out of memory or system resources).
@@ -1522,6 +1553,8 @@ inline int suite_main( int argc, char ** argv,
                        bool bound_io_uring = false,
                        bool enforce_case_rss = true )
 {
+    suite_no_dialogs();
+
     if ( argc == 2 && std::strcmp( argv[1], "--list" ) == 0 )
         return suite_list_registered_cases( count, name_at );
 
