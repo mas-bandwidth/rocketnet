@@ -129,6 +129,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsendstore` | 2 | One store class, abstractly (README-RNSendStore.md): the control and the reversed witness, the double-free guard off (`NoLeak`) |
 | `rnsendstorelayout` | 6 | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md): the control and five reversed witnesses, the free test without the fresh guard (`NeverTouchPastFresh`), a free that does not lower the cursor (`RefuseOnlyWhenNoneFree`), a chunk generation and a descriptor generation that wrap to 0 (both `HeldGenerationPositive`) and a take that clears a live free-stack slot (`NoTakeWhileLive`) |
 | `rnupdateclock` | 2 | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md): the passing control and the reversed stall witness |
+| `rnclientladder` | 5 | The client ladder at create with the family fallback (README-RNClientLadder.md): controls at three candidates and at one (a pin), and three reversed witnesses, an IPv6 refusal that falls to the next candidate (`NoExhaustWhileReachable`), an IPv6 refusal for want of memory that falls to IPv4 (`NoTryAfterOom`) and a fallback for a token naming IPv6 alone (`TriedInToken`) |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnsentmap` | 3 | The sent-packet map against the window (README-RNSentMap.md): control at P = W, RTO = RTT and two invariant witnesses, a map one entry short (`NoLiveEviction`) and a resend delay below the round trip (`NoLiveEviction`) |
@@ -148,7 +149,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `sendhandoff` | 3 | Send handoff generations: the control and reversed witnesses for reopening the front and accepting a stale pointer below the published base |
 | `splitstart` | 4 | The load_split start barrier (docs/LOAD_SPLIT.md): the one-deadline shard rule as control, and reversed witnesses for the per-phase rule it replaced and the deadline without the reliable timeout term (`ServerIsTheAuthority`) and for a completed start (`NotAllRunning`) |
 | `rnmsgxpause` | 2 | Shared macOS msgx pause expiry (README-RNMsgxPause.md): two workers, bounded time, fresh-pause safety and expiry progress; unconditional-clear reversed witness |
-| `rnportablerx` | 6 | The portable/msgx server receive worker (README-RNPortableRx.md): controls at three and two banks (invariants and two liveness properties, no wait timeout) and four reversed witnesses: a full producer overwritten (`ExactDelivery`), a consumer returned before it is read (`ExactDelivery`), the stop wake before quit (`StopCompletes`) and no wake on a returned bank (`EveryDatagramDelivered`) |
+| `rnportablerx` | 7 | The portable/msgx server receive worker (README-RNPortableRx.md): controls at three and two banks with chaff in the socket (invariants and two liveness properties, no wait timeout) and five reversed witnesses: a full producer overwritten (`ExactDelivery`), a consumer returned before it is read (`ExactDelivery`), the stop wake before quit (`StopCompletes`), no wake on a returned bank (`EveryDatagramDelivered`) and a read that counts only kept datagrams (`ReadBudget`) |
 | `rnrioworker` | 9 | The RIO transport's I/O worker (README-RNRioWorker.md): a safety control for both directions, receive and send liveness controls, a two-bank backpressure control, and five reversed witnesses: a phase reopened before it is idle (`FillPhaseOwnedByMain`), an unbounded dequeue (`ExactDelivery`), exit before the drain (`FreedOnlyWhenDrained`), no wake on a returned bank (`EveryDatagramConsumed`) and a stop that discards a handed phase (`StopSendsHanded`) |
 | `sessionsendsequence` | 3 | The session send counter shared by fills and control sends (README-SessionSendSequence.md): the control, every sequence taken in one fetch-add and the ack baseline at the highest sealed sequence, and two reversed witnesses, a control send that reads, seals, then increments (`SequencesUnique`) and the baseline read as the next sequence less one (`BaselineIsHighestSealed`) |
 | `ackblockwrap` | 2 | The ack block reader across the wire sequence wrap (README-AckBlockWrap.md): the control, the empty block recognised on its wire fields at any highest sent (every invariant), and the reversed witness that makes the empty test on the reconstructed largest (`EmptyRecognised`) |
@@ -182,6 +183,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 The case plan in `CASES.tsv` covers every root configuration: 579 cases
 in 90 groups, 563 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 577 cases
+in 90 groups, 561 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

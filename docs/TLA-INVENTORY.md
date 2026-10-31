@@ -17,6 +17,7 @@ revision under review.
 | --- | --- | --- |
 | lossy link | `Link` | the configured loss pattern and fairness assumptions are explicit |
 | client handshake | `ClientConnection`, `ClientSession` | monotonic states, bounded deadlines, secret cleanup and reconnect reset |
+| client transport ladder | `RNClientLadder` | candidates and families tried in order, an IPv6 refusal falls back to the token's IPv4 server on the same candidate, exhaustion only when no named server is reachable, out of memory fatal on either family |
 | server handshake | `ServerConnection` | cookie gate, token/address binding, slot admission and bounded work |
 | replay and ACKs | `ReplayWindow`, `RNSentHistory` | replay refusal, honest ACK ranges and bounded retained history |
 | channel delivery | `RNChannel`, `RNChannelTypes` | reliable exactly once, ordered in order, sequenced newest and unreliable at most once |

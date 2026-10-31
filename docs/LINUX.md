@@ -544,7 +544,11 @@ What each path does with the errors it can see:
   any other errno drops the one refused entry and continues with the next.
 - **gso**: a receive worker's `recvmmsg` returning nothing or a non-`EINTR`
   error ends that drain; `EINTR` retries after checking the stop request
-  (`sdk/rocketnet_server_gso_linux.cpp`). A `sendmmsg` refused
+  (`sdk/rocketnet_server_gso_linux.cpp`). Every message a drain reads,
+  accepted or dropped, and every interrupted call spends one unit of a read
+  budget of `ROCKETNET_GSO_RECV_QUEUE_SIZE`; a spent budget ends the drain, so
+  the worker publishes and tests its stop request however much the socket
+  holds. A `sendmmsg` refused
   with `EAGAIN`, `EWOULDBLOCK`, `ENOBUFS`, `ENOMEM` or `EINTR` drops the
   rest of the flush, and any other errno drops the one refused message and
   continues with the next, as the portable batch does; dropped packets

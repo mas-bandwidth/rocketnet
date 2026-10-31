@@ -189,6 +189,8 @@ bool rocketnet_server_gso_test_worker_handoff();
 // A refused sendmmsg: a full socket drops the rest of the flush, any other
 // errno drops the one refused message and sends the rest.
 bool rocketnet_server_gso_test_send_refusals();
+// One receive drain fed endless discards returns within its read budget.
+bool rocketnet_server_gso_test_drain_budget();
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

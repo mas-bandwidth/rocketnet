@@ -263,8 +263,10 @@ int rocketnet_platform_socket_receive_packet( struct rocketnet_platform_socket_t
 // through its own accounting). receive_packets drains up to max_packets into
 // caller storage -- from[i], packet_bytes[i], and the packet bytes at
 // packet_data + i * packet_stride -- and returns the number received; zero
-// means drained. packet_stride is the caller's slot size and the per-packet
-// receive ceiling.
+// means drained, or a read budget spent with nothing kept. Each call reads at
+// most max_packets datagrams and errors, kept or skipped (the single-packet
+// receive at most 64), so a stream of chaff never holds a drain. packet_stride
+// is the caller's slot size and the per-packet receive ceiling.
 
 // the address and bytes stay caller-owned until socket_send_packets returns
 struct rocketnet_platform_send_t

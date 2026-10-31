@@ -494,6 +494,10 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
         return PORTABLE_RX_WAIT_FULL;
     }
 
+    // proofs/tla/RNPortableRx.tla WRead, WReadOne and WReadEnd: one call reads
+    // at most rx_capacity datagrams, kept or discarded (BoundedRead), so the
+    // next pass tests quit after a bounded read whatever the socket holds.
+
     portable_rx_bank_t * bank = &server->rx_bank[server->rx_producer];
     bank->count = rocketnet_platform_socket_receive_packets( server->socket,
                                                              bank->from, &bank->data[0][0], ROCKETNET_RECEIVE_CEILING, bank->bytes, server->rx_capacity );
@@ -1393,6 +1397,50 @@ bool rocketnet_portable_rx_test_worker_steps()
     valid &= server->quit.load() && rocketnet_platform_wake_wait( server->rx_wake, false, 0.0 );
     valid &= portable_rx_step( server ) == PORTABLE_RX_EXIT;
 
+    portable_server_cleanup( server );
+
+    return valid;
+#endif // #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+}
+
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+static int portable_rx_test_empty_receive( void * user, void *, int, struct sockaddr_storage * )
+{
+    // a zero-length datagram on every read, for far longer than any budget
+    int * reads = (int *) user;
+    return ++*reads > 1000000 ? -1 : 0;
+}
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
+bool rocketnet_portable_rx_test_chaff_drain()
+{
+    // the worker pass against a socket that answers only zero-length
+    // datagrams, through the platform receive seam (no descriptor, nothing
+    // opened): the pass returns idle after rx_capacity reads with nothing
+    // kept (proofs/tla/RNPortableRx.tla WReadOne and WReadEnd, BoundedRead),
+    // and a quit set then ends the next pass before any read.
+
+#if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    return true;
+#else
+    portable_server_t * server = portable_rx_test_owner();
+    if ( !server )
+        return false;
+
+    rocketnet_platform_socket_t socket;
+    memset( &socket, 0, sizeof( socket ) );
+    int reads = 0;
+    rocketnet_platform_socket_set_receive_hook( &socket, portable_rx_test_empty_receive, &reads );
+    server->socket = &socket;
+
+    bool valid = portable_rx_step( server ) == PORTABLE_RX_WAIT_IDLE && reads == server->rx_capacity &&
+                 server->rx_bank[server->rx_producer].count == 0;
+
+    server->quit.store( true, std::memory_order_release );
+    valid &= portable_rx_step( server ) == PORTABLE_RX_EXIT && reads == server->rx_capacity;
+
+    rocketnet_platform_socket_set_receive_hook( &socket, NULL, NULL );
+    server->socket = NULL;
     portable_server_cleanup( server );
 
     return valid;

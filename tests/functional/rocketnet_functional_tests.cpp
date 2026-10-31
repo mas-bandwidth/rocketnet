@@ -11658,6 +11658,136 @@ static void rocketnet_test_family_race_frees_on_caller_thread()
 }
 
 
+// The family fallback on real sockets (proofs/tla/RNClientLadder.tla). A
+// development token names a live portable server bound to 127.0.0.1 and an
+// IPv6 address no host reaches: [2001:db8::1] (the documentation prefix) and
+// [fe80::1] (link-local with no interface). Each socket client transport
+// connects over IPv4. Where the kernel refuses the IPv6 connect (2001:db8::1
+// on a host with no IPv6 route; fe80::1 on Linux always) the client logs the
+// fallback; where it accepts it the family race runs and the IPv4 server
+// answers first. One of the two paths is required, and the case prints which.
+
+#if ROCKETNET_DEV
+static std::atomic<uint64_t> fallback_logged{ 0 };
+static std::atomic<uint64_t> fallback_raced{ 0 };
+
+static bool fallback_log_has( const char * message, size_t length, const char * needle )
+{
+    const size_t needle_bytes = strlen( needle );
+    for ( size_t i = 0; i + needle_bytes <= length; i++ )
+        if ( memcmp( message + i, needle, needle_bytes ) == 0 )
+            return true;
+    return false;
+}
+
+static void fallback_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    if ( fallback_log_has( message, length, "refused the IPv6 server" ) )
+        fallback_logged.fetch_add( 1 );
+    if ( fallback_log_has( message, length, "client races both families" ) )
+        fallback_raced.fetch_add( 1 );
+}
+
+static void rocketnet_test_unroutable_ipv6_falls_back_to_ipv4()
+{
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = ROCKETNET_DEV_PROTOCOL_ID;
+    memcpy( server_config.backend_public_key, rocketnet_dev_backend_public_key, 32 );
+    server_config.max_clients = 2;
+    server_config.transport = "portable";
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, &create_status );
+    rocketnet_check( server && create_status == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+    char ipv4_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    snprintf( ipv4_address, sizeof( ipv4_address ), "127.0.0.1:%d", (int) rocketnet_server_port( server ) );
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+
+    const char * const unroutable_hosts[] = { "2001:db8::1", "fe80::1" };
+
+    const enum rocketnet_log_level_t saved_level = rocketnet_log_level_current();
+    rocketnet_log_function( fallback_log, NULL );
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_INFO );
+
+    int num_available = 0;
+    const int * available = rocketnet_client_transport_io_availability( &num_available );
+    int dialed = 0;
+
+    // one clock for the whole case: the server lives across every client
+    const double case_start = rocketnet_time();
+    for ( int i = 0; i < num_available; i++ )
+    {
+        const char * transport = rocketnet_transport_name( available[i] );
+        if ( strcmp( transport, "loopback" ) == 0 )
+            continue;
+
+        for ( int h = 0; h < (int) ( sizeof( unroutable_hosts ) / sizeof( unroutable_hosts[0] ) ); h++ )
+        {
+            fallback_logged.store( 0 );
+            fallback_raced.store( 0 );
+
+            char ipv6_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+            snprintf( ipv6_address, sizeof( ipv6_address ), "[%s]:%d", unroutable_hosts[h], (int) rocketnet_server_port( server ) );
+
+            const uint64_t create_timestamp = rocketnet_functional_token_timestamp( 0, rocketnet_platform_time() );
+            char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+            rocketnet_check( rocketnet_create_dev_connect_token( ipv4_address, ipv6_address, server_key, 300, 10, 0x2FB0 + (uint64_t) ( i * 2 + h ),
+                                                                 server_config.protocol_id, create_timestamp, NULL, token ) == ROCKETNET_STATUS_OK );
+
+            struct rocketnet_client_config_t client_config;
+            rocketnet_client_default_config( &client_config );
+            client_config.transport = transport;
+            create_status = ROCKETNET_STATUS_OK;
+            struct rocketnet_client_t * client = rocketnet_client_create( NULL, &client_config, &create_status );
+            rocketnet_check( client && create_status == ROCKETNET_STATUS_OK );
+            const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, token );
+
+            const double wall_start = rocketnet_time();
+            while ( connect_status == ROCKETNET_STATUS_OK && rocketnet_time() - wall_start < 10.0 )
+            {
+                const double now = 1000.0 + ( rocketnet_time() - case_start );
+                rocketnet_server_update( server, now );
+                rocketnet_client_update( client, now );
+                rocketnet_client_send_packets( client );
+                rocketnet_server_send_packets( server );
+                if ( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED &&
+                     rocketnet_server_client_connected( server, rocketnet_client_index( client ) ) )
+                    break;
+                if ( rocketnet_client_state( client ) < ROCKETNET_CLIENT_STATE_DISCONNECTED )
+                    break;
+                rocketnet_sleep( 0.005 );
+            }
+
+            const bool connected = rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_CONNECTED;
+            printf( "unroutable ipv6 %s over %s: connect status %d, connected %d, fell back %d, raced %d\n", unroutable_hosts[h], transport,
+                    (int) connect_status, connected ? 1 : 0, (int) fallback_logged.load(), (int) fallback_raced.load() );
+            rn_cli_client_stop_and_destroy( client, 1000.0 + ( rocketnet_time() - case_start ) );
+
+            rocketnet_check( connect_status == ROCKETNET_STATUS_OK );
+            rocketnet_check( connected );
+            rocketnet_check( fallback_logged.load() > 0 || fallback_raced.load() > 0 );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            // Linux refuses a UDP connect to a link-local address with no
+            // interface (EINVAL), so this one always takes the fallback
+            if ( strcmp( unroutable_hosts[h], "fe80::1" ) == 0 )
+                rocketnet_check( fallback_logged.load() > 0 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+            dialed++;
+        }
+    }
+    rocketnet_check( dialed > 0 );
+
+    rocketnet_log_level( saved_level );
+    rocketnet_log_function( rocketnet_test_suite_log_function, NULL );
+    rn_cli_server_stop_and_destroy( server );
+}
+#endif // #if ROCKETNET_DEV
+
 // A public development token must complete the asynchronous connection and
 // carry application bytes in both directions over a real portable socket.
 static void rocketnet_test_public_dev_connect_token_round_trip()
@@ -12739,6 +12869,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_public_client_reads_server_disconnected", rocketnet_test_public_client_reads_server_disconnected, NULL },
     { "test_two_address_token_connects_over_ipv4", rocketnet_test_two_address_token_connects_over_ipv4, NULL },
     { "test_family_race_frees_on_caller_thread", rocketnet_test_family_race_frees_on_caller_thread, NULL },
+    { "test_unroutable_ipv6_falls_back_to_ipv4", rocketnet_test_unroutable_ipv6_falls_back_to_ipv4, NULL },
 #endif // production excludes dev-key/test-filter cases
     { "test_portable_transport_server_io_pin", rocketnet_test_server_transport_io_pin_portable, rocketnet_test_server_pin_allows_portable },
     { "test_loopback_transport_server_io_pin", rocketnet_test_server_transport_io_pin_loopback, NULL },

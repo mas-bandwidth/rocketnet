@@ -100,7 +100,7 @@ cannot peek at queued traffic. The first real batch call is the functional
 probe: a `recvmsg_x` there delivers what it reads, so a fixed-port bind that
 already has a datagram queued keeps it. A result of zero or more, or
 `EAGAIN`/`EWOULDBLOCK`, keeps the pump;
-ordinary receive-weather errors retry within a finite per-call budget.
+ordinary receive-weather errors are skipped within the call's read budget.
 An error outside that set pauses it and that same call finishes on the
 portable per-packet loop (`rocketnet_msgx_pause`, the receive block in
 `rocketnet_platform_socket_receive_packets`). The functional case
@@ -310,11 +310,13 @@ which skips it as weather. A server socket is never connected, and every send
 names its destination. A failed `sendto`
 is logged at debug level and the packet is dropped
 (`rocketnet_platform_socket_send_packet`). Receive-weather errors such as
-`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, and `EINTR` retry
-within a finite per-call budget. EAGAIN, an exhausted retry budget, or another
-receive error ends the drain; unexpected errors are logged at debug level.
-A zero-length datagram is skipped
-rather than read as "drained", and a datagram longer than the caller's slot
+`ECONNREFUSED`, `EHOSTUNREACH`, `ENETUNREACH`, `ENOBUFS`, and `EINTR` are
+skipped. EAGAIN, a spent read budget, or another receive error ends the
+drain; unexpected errors are logged at debug level. A zero-length datagram or
+a refused source is skipped rather than read as "drained". Every read spends
+one unit of the call's read budget (`max_packets` for a batch, 64 for the
+single-packet call), kept or skipped, so a call returns after a bounded number
+of reads whatever the socket holds. A datagram longer than the caller's slot
 keeps its true length so the transport drops it as oversize
 (`rocketnet_platform_socket_receive_packet`). The msgx pump applies the
 weather and pause rules above to the same errnos.
