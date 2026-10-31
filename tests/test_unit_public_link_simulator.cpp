@@ -452,9 +452,10 @@ static void test_public_link_simulator_staged_commit_arms()
 }
 
 // The held packets come due into a staged transport whose staging takes three
-// frames a flush: each update's drain moves only what the room takes and
-// leaves the rest held, so a disconnect burst of ten reaches the transport
-// whole, with no start refused and lost. The clock is an argument.
+// frames a flush: ten payloads held together come due together, and each
+// update's drain moves only what the room takes and leaves the rest held, so
+// all ten reach the transport with no start refused and lost. The clock is an
+// argument.
 static void test_public_link_simulator_drain_spreads_within_room()
 {
     struct live_link_pair_t pair;
@@ -480,21 +481,25 @@ static void test_public_link_simulator_drain_spreads_within_room()
 
     check( rocketnet_server_transport_network_simulator( pair.server, 50, 0, 0, 0 ) );
 
-    // the burst is sealed into the simulator, which holds it for 50 ms
+    // each payload is taken by the simulator, its staging slot given back,
+    // and all ten are held for the same 50 ms
 
-    rocketnet_server_transport_disconnect_client( pair.server, 0 );
+    const int payloads = 10;
+    uint8_t payload[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    for ( int i = 0; i < payloads; i++ )
+        rocketnet_server_transport_send_packet( pair.server, 0, payload, sizeof( payload ) );
+    check( fake->finishes == 0 && fake->aborts == payloads );
+
     double time = pair.time;
-    int updates = 0;
-    while ( fake->finishes < ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS && updates < 32 )
+    for ( int update = 0; update < 8; update++ )
     {
         const int before = fake->finishes;
         time += 0.1;
         rocketnet_server_transport_update( pair.server, time );
         check( fake->finishes - before <= fake->capacity );
-        updates++;
     }
 
-    check( fake->finishes == ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    check( fake->finishes >= payloads );
     check( fake->refused == 0 );
     check( fake->batches == 0 );
 

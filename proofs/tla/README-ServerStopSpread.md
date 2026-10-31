@@ -31,7 +31,7 @@ operation as `send_capacity_available` returns it.
 | `IoStopped` | the workers exit; `rocketnet_server_stopped` is true |
 | `Connect(i)` | environment: a client takes a free slot |
 | `Complete` | environment: the kernel or worker finishes a flushed frame |
-| `LoseRoute(s)`, `FindRoute(s)` | environment: a destination loses or regains its link-layer address (the XDP reply MAC) |
+| `LoseRoute(s)`, `FindRoute(s)` | environment: a destination loses or regains its link-layer address (the XDP reply MAC), or the transport refuses it with room left (an address its socket cannot carry); either refusal abandons the burst |
 
 ## Properties
 
