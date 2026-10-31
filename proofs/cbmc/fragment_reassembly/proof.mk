@@ -15,8 +15,6 @@
 
 NIGHTLY += proofs-fragment_reassembly
 
-ESBMC ?= esbmc
-
 FRAG_REASSEMBLY_SOURCE = $(CURDIR)/fragment_reassembly/proof_fragment_reassembly.c
 FRAG_REASSEMBLY_SHIM = $(CURDIR)/esbmc_shim.h
 FRAG_REASSEMBLY_FLAGS = --std c++17 --overflow-check --ub-shift-check \

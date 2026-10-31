@@ -5,7 +5,7 @@
     CBMC proof of the XDP free list.
 
     Push is rocketnet_xdp_free_list_push in sdk/rocketnet_xdp_free_list.h.
-    Pop is the alloc_send_frame / alloc_receive_frame pattern: if the
+    Pop is the alloc_send_frame pattern (sdk/rocketnet_server_socket_linux.cpp): if the
     count is positive, decrement it, take that slot, and store an invalid
     frame there. Otherwise return the invalid frame and leave the count
     at zero.

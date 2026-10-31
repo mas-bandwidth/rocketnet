@@ -34,8 +34,8 @@ Each run used one CPU at nice 19; the target applied `timeout 1800s` and
 buffer bound was used.
 
 The existing per-commit `make -C proofs/cbmc` target also exited 0 on this
-tree. It ran its original CBMC leaves only, including the declared expected
-`replay-far` counterexample; the new reader remains nightly-only.
+tree. It ran its original CBMC leaves only; the new reader remains
+nightly-only.
 
 The first trial with unwind 1 failed only an unwinding assertion in ESBMC's
 byte-copy model (`/esbmc-vfs/libc/library/string.c:284`), not in RocketNet.

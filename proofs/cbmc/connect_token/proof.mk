@@ -1,7 +1,6 @@
 # Connect-token reader proofs on the real SDK. Nightly only.
 NIGHTLY += proofs-connect_token
 
-ESBMC ?= esbmc
 CONNECT_TOKEN_SOURCE = connect_token/proof_connect_token.cpp
 CONNECT_TOKEN_FLAGS = --std c++17 --z3 --overflow-check -DROCKETNET_ESBMC -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
 CONNECT_TOKEN_TIMEOUT = 1800s

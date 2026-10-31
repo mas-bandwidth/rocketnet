@@ -1,8 +1,7 @@
 # CBMC proofs. `make -C proofs/cbmc` runs the proofs that finish:
 # the arithmetic leaves below, then the bounded readers, the message reader,
-# and the XDP free list. fragment-bounds stays a target but leaves `all`:
-# proofs/cbmc/fragment_reassembly proves the real reassembly code on ESBMC
-# and supersedes the copy that target checks.
+# and the XDP free list. The reassembly code is proved on ESBMC by
+# proofs/cbmc/fragment_reassembly, on the nightly list.
 #
 # Every target prints the bound it proves beside the deployed constant the
 # bound is measured against, so a bounded proof cannot read as the whole
@@ -18,7 +17,8 @@
 #                      over the full domain (with valid per-partition
 #                      witnesses), then proves each partition with its
 #                      intended-failure reachability control.
-#   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1:
+#   reconstruct        proved: proof_reconstruct_sequence.c, unwind 1, on
+#                      sdk/rocketnet_protocol.cpp and sdk/rocketnet_message.h:
 #                      - rocketnet_reconstruct_near (k=32, 2^32 <= expected <
 #                        2^64 - 2^32): keeps wire low 32 bits, |result -
 #                        expected| <= 2^31, round-trips every in-window value
@@ -26,11 +26,11 @@
 #                      - rocketnet_reconstruct_sequence (reference =
 #                        highest_opened + 1, 2^32 - 1 <= highest_opened <
 #                        2^64 - 2^32 - 1): same claims.
-#                      - rocketnet_reconstruct_u24 (k=24 signed half-range,
-#                        2^23 <= reference <= 2^64 - 2^23): keeps wire low 24
-#                        bits, |result - reference| <= 2^23, round-trips every
-#                        in-window value (tie at 2^23 goes to the lower
-#                        candidate).
+#                      - rocketnet_message_u24_delta (k=24 signed half-range,
+#                        2^23 <= reference <= 2^64 - 2^23): reference + delta
+#                        keeps wire low 24 bits, |result - reference| <= 2^23,
+#                        round-trips every in-window value (tie at 2^23 goes
+#                        to the lower candidate).
 #   replay-far         proved: harness_replay_far in proof_replay_advance.c,
 #                      unwind 65, sequence - highest_opened >= 4096: a delta of
 #                      at least 4096 clears every word, then sets the new
@@ -38,9 +38,9 @@
 #                      itself, which the harness includes.
 #
 # `ack-run-bound-8`, `ack-run-full-4096`, and `ack-run-negative-control`
-# use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They remain
-# explicit targets until their exact-head results are recorded in
-# full-bounds-results.md.
+# use ESBMC on the current C++ leaf in sdk/rocketnet_ack.cpp. They are
+# explicit targets, on no list: even the run-8 instance exhausts memory
+# (INVENTORY.md records the measurements).
 
 CBMC ?= cbmc
 
@@ -63,8 +63,6 @@ REPLAY_WINDOW_BITS := $(call deployed_literal,ROCKETNET_HISTORY_PACKETS,rocketne
 REPLAY_UNWIND := $(shell expr $(REPLAY_WINDOW_BITS) / 64 + 1)
 MAX_PAYLOAD_BYTES := $(call deployed_literal,ROCKETNET_MAX_PACKET_PAYLOAD_BYTES,rocketnet.h)
 MAX_FRAGMENT_BYTES := $(call deployed_comment,ROCKETNET_MAX_FRAGMENT_BYTES,rocketnet_fragment.h)
-MAX_FRAGMENTS := $(call deployed_literal,ROCKETNET_MAX_FRAGMENTS,rocketnet_fragment.h)
-MAX_FRAGMENTED_PAYLOAD_BYTES := $(shell expr $(MAX_FRAGMENTS) \* $(MAX_FRAGMENT_BYTES))
 XDP_NUM_FRAMES := $(call deployed_literal,ROCKETNET_XDP_NUM_FRAMES,rocketnet_constants.h)
 XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_constants.h)
 
@@ -77,26 +75,14 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      dest_size 0 writes nothing and returns 0; a positive
 #                      dest_size up to 8 keeps the copy inside the buffer
 #                      and terminates it.
-#   fragment-bounds    superseded: proof_fragment_bounds.c copies the
-#                      reassembly function, and fragment_reassembly/ proves
-#                      the real one on ESBMC. It is no longer in `all`.
-#                      Its bounds: unwind 64, one connection and one slot.
-#                      Fragment payloads are symbolic up to 8 bytes, or
-#                      outside the legal size window (refused, no read).
-#                      max_payload_bytes is symbolic from 1 to 16, below
-#                      every deployed maximum. A reconstructed total above
-#                      that maximum is refused with no eviction and no
-#                      payload write. A final that arrives while the stride
-#                      is 0 is staged, and the payload region is untouched.
-#                      Counts above 8-byte fragments, payload maxima above
-#                      16, and the uint32 id-rollover half of the stale
-#                      check, are not proved.
 #   message-read       proved: proof_message_read.c, unwind 8, payloads of
 #                      24 bytes. rocketnet_message_reader_begin / next read
 #                      no byte past the given length. An accepted holdable
 #                      record or block has its ring span inside
 #                      receive_message_buffer_bytes. A refused payload yields no
-#                      record. The fixed-size config body reader refuses a
+#                      record. The limits are symbolic over every value the
+#                      configuration accepts (W and B up to 1 << 20,
+#                      max_message_bytes up to ROCKETNET_MAX_MESSAGE_BYTES). The fixed-size config body reader refuses a
 #                      short buffer.
 #   xdp-free-list      proved: proof_xdp_free_list.c, unwind 5, capacity 3,
 #                      four push/pop steps. Push refuses a full list, a
@@ -107,7 +93,7 @@ XDP_FRAME_SIZE := $(call deployed_literal,ROCKETNET_XDP_FRAME_SIZE,rocketnet_con
 #                      popped.
 
 .PHONY: all replay-delta-1-3 replay-near-4096 replay-far reconstruct \
-        read-write fragment-bounds message-read xdp-free-list \
+        read-write message-read xdp-free-list \
         ack-run-bound-8 ack-run-full-4096 ack-run-negative-control clean
 
 all: replay-delta-1-3 replay-far reconstruct \
@@ -193,9 +179,11 @@ replay-far: proof_replay_advance.c
 	$(CBMC) $(CBMC_FLAGS) --unwind $(REPLAY_UNWIND) -I$(SDK) \
 	    --function harness_replay_far proof_replay_advance.c
 
+RECONSTRUCT_FLAGS = -DNDEBUG -I$(SDK) -I$(SDK)/../sodium
+
 reconstruct: proof_reconstruct_sequence.c
 	@echo "reconstruct bound 32-bit and 24-bit wire half-ranges deployed ROCKETNET_REPLAY_WINDOW_BITS=$(REPLAY_WINDOW_BITS)"
-	$(CBMC) $(CBMC_FLAGS) --unwind 1 proof_reconstruct_sequence.c
+	$(CBMC) $(CBMC_FLAGS) --unwind 1 $(RECONSTRUCT_FLAGS) proof_reconstruct_sequence.c
 
 ESBMC ?= esbmc
 ACK_RUN_SOURCE = $(CURDIR)/proof_ack_apply_run.c
@@ -262,11 +250,6 @@ read-write: proof_read_write.c
 	@echo "read-write bound buffers 8 bytes deployed ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 9 -I$(SDK) proof_read_write.c
 
-# Superseded by fragment_reassembly/. Not part of `all`.
-fragment-bounds: proof_fragment_bounds.c
-	@echo "fragment-bounds bound payload max 16 bytes, fragment 8 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES) ROCKETNET_MAX_FRAGMENT_BYTES=$(MAX_FRAGMENT_BYTES) ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES=$(MAX_FRAGMENTED_PAYLOAD_BYTES); not proved above 16"
-	$(CBMC) $(CBMC_FLAGS) --unwind 64 -I$(SDK) proof_fragment_bounds.c
-
 message-read: proof_message_read.c
 	@echo "message-read bound payload 24 bytes deployed ROCKETNET_MAX_PACKET_PAYLOAD_BYTES=$(MAX_PAYLOAD_BYTES)"
 	$(CBMC) $(CBMC_FLAGS) --unwind 8 -DNDEBUG -I$(SDK) proof_message_read.c
@@ -316,7 +299,7 @@ replay-far-reachability: proof_replay_advance.c
 	$(call run_reachability,replay-far,$(REPLAY_UNWIND),-I$(SDK) -DREPLAY_FAR_REACHABILITY=1 --function harness_replay_far proof_replay_advance.c,,replay-far reachability control)
 
 reconstruct-reachability: proof_reconstruct_sequence.c
-	$(call run_reachability,reconstruct,1,-DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
+	$(call run_reachability,reconstruct,1,$(RECONSTRUCT_FLAGS) -DREACHABILITY_CONTROL=1 proof_reconstruct_sequence.c,,reconstruct reachability control)
 
 read-write-reachability: proof_read_write.c
 	$(call run_reachability,read-write,9,-I$(SDK) -DREACHABILITY_CONTROL=1 proof_read_write.c,,read-write reachability control)

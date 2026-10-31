@@ -243,24 +243,3 @@ bounds are the largest that finished inside a 16 GB address-space limit.
     under 40 GB in 27 s.
   - The proved range covers every caller in the sdk; the gap is values no
     transport passes.
-
-## Supersedes `proof_fragment_bounds.c`
-
-This harness supersedes `proof_fragment_bounds.c`, which copies the
-reassembly function. The copy is still in `all` (per-commit CI) and is
-unchanged. Its divergences from the real function:
-
-- **Stale check.** The copy refuses when unsigned
-  `payload_id - slot->payload_id > ROCKETNET_MAX_FRAGMENTS`
-  (`proofs/cbmc/proof_fragment_bounds.c:159-160`). The real code keeps a
-  `uint32_t` newest-completed reference per connection
-  (`sdk/rocketnet_fragment.cpp:378`), applies a reach test against it
-  (line 380), and a behind test against `ROCKETNET_REASSEMBLY_BEHIND`
-  (line 388).
-- **Delivery.** The copy writes delivered bytes at
-  `delivered + num_delivered * max_payload_bytes`
-  (`proof_fragment_bounds.c:348-349`). The real code packs at a 16-byte stride
-  (`ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED`, lines 577-582) and enforces
-  the byte bound `delivered_bytes`.
-- **Fields.** The copy has no `delivered_bytes` field and no
-  `newest_completed` reference.

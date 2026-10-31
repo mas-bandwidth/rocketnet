@@ -4,9 +4,7 @@
 
     Bounded model-checking proof of the fragment readers on the real sdk
     code. The readers are sdk/rocketnet_fragment.cpp, included below (never
-    copied). This harness supersedes proof_fragment_bounds.c, which copies
-    the reassembly function; the copy's divergences from the real function
-    are named in results.md.
+    copied).
 
     The checker is ESBMC, built as C++17: sdk/rocketnet_fragment.cpp is C++
     that the CBMC front end does not parse (results.md). proof.mk passes
