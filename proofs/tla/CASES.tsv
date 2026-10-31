@@ -581,3 +581,5 @@ MCRNClientDeliveryLazy.cfg	MCRNClientDelivery.tla	pass	-	check	rnclientdelivery	
 MCRNClientDeliveryBrokenEndWipes.cfg	MCRNClientDelivery.tla	invariant	CountedImpliesHanded	check	rnclientdelivery	required	-
 MCRNClientDeliveryBrokenEndWipesLive.cfg	MCRNClientDelivery.tla	temporal	DeliveredReachesCaller	check	rnclientdelivery	required	-
 MCRNClientDeliveryBrokenNoBeginClear.cfg	MCRNClientDelivery.tla	invariant	OfferedOnce	check	rnclientdelivery	required	-
+MCRNClientDeliveryBrokenCountBeforePlace.cfg	MCRNClientDelivery.tla	invariant	CountedImpliesHanded	check	rnclientdelivery	required	-
+MCRNClientDeliveryBrokenBudgetOverBatch.cfg	MCRNClientDelivery.tla	invariant	SlotForNextPacket	check	rnclientdelivery	required	-

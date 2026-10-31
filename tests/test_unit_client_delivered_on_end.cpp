@@ -7,7 +7,10 @@
 // caller, also when the connection ends in the same update or the caller
 // disconnects before reading it: the connection reset keeps the batch, and
 // the next update clears it (proofs/tla/RNClientDelivery.tla
-// CountedImpliesHanded and OfferedOnce). The cases run on the in-memory
+// CountedImpliesHanded and OfferedOnce). One update processes no more packets
+// than the batch holds, so every payload counted delivered is placed, and a
+// burst larger than the batch spreads across updates (SlotForNextPacket).
+// The cases run on the in-memory
 // loopback transport with a step-driven client, time passed as an argument
 // from 1000.0, and no socket.
 
@@ -234,4 +237,70 @@ static void test_client_payload_delivered_before_disconnect_reaches_caller()
 }
 
 REGISTER_UNIT_TEST( test_client_payload_delivered_before_disconnect_reaches_caller );
+
+// A burst of one payload per packet larger than the batch: the first update
+// fills the batch to capacity, every payload it counts delivered is placed,
+// and the rest arrive in the next update, in order, none dropped.
+
+#define DELIVERED_ON_END_BURST ( ROCKETNET_NUM_CLIENT_PACKETS + 176 )
+
+static void test_client_payload_burst_past_batch_capacity_spreads_across_updates()
+{
+    struct delivered_on_end_pair_t pair;
+    delivered_on_end_setup( &pair );
+    delivered_on_end_connect( &pair );
+
+    for ( int k = 0; k < DELIVERED_ON_END_BURST; k++ )
+    {
+        const uint8_t payload[4] = { (uint8_t) k, (uint8_t) ( k >> 8 ), 0xB5, 0x7E };
+        rocketnet_server_transport_send_packet( pair.server, 0, payload, (int) sizeof( payload ) );
+        if ( k % 64 == 63 )
+            rocketnet_server_transport_send_packets( pair.server );
+    }
+    rocketnet_server_transport_send_packets( pair.server );
+
+    const uint64_t delivered_before = delivered_on_end_delivered( &pair );
+
+    int next = 0;
+    int full_updates = 0;
+
+    for ( int update = 0; update < 8 && next < DELIVERED_ON_END_BURST; update++ )
+    {
+        const uint64_t before = delivered_on_end_delivered( &pair );
+
+        delivered_on_end_client_update( &pair );
+
+        const int num = rocketnet_client_transport_num_payloads( pair.client );
+
+        // counted delivered this update is exactly what the batch holds
+
+        check( num <= ROCKETNET_NUM_CLIENT_PACKETS );
+        check( delivered_on_end_delivered( &pair ) - before == (uint64_t) num );
+
+        if ( num == ROCKETNET_NUM_CLIENT_PACKETS )
+            full_updates++;
+
+        for ( int i = 0; i < num; i++ )
+        {
+            int bytes = 0;
+            const uint8_t * data = rocketnet_client_transport_payload( pair.client, i, &bytes );
+            check( data != NULL && bytes == 4 );
+            check( data && ( (int) data[0] | ( (int) data[1] << 8 ) ) == next );
+            check( data && data[2] == 0xB5 && data[3] == 0x7E );
+            next++;
+        }
+    }
+
+    check( full_updates == 1 );
+    check( next == DELIVERED_ON_END_BURST );
+    check( delivered_on_end_delivered( &pair ) - delivered_before == DELIVERED_ON_END_BURST );
+    check( rocketnet_client_transport_counters( pair.client )->values[ROCKETNET_COUNTER_CLIENT_FRAGMENT_PAYLOAD_BATCH_FULL] == 0 );
+
+    rn_test_client_transport_stop_and_destroy( pair.client );
+    rn_test_server_transport_stop_and_destroy( pair.server );
+
+    printf( "test_client_payload_burst_past_batch_capacity_spreads_across_updates\n" );
+}
+
+REGISTER_UNIT_TEST( test_client_payload_burst_past_batch_capacity_spreads_across_updates );
 #endif // #if ROCKETNET_DEV
