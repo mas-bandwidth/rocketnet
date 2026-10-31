@@ -364,6 +364,16 @@ struct rocketnet_dst_schedule_t
     uint64_t burst_received;
 };
 
+// the delivery ROCKETNET_DST_WITNESS_ORDERED_SWAP holds back
+
+struct rocketnet_dst_held_delivery_t
+{
+    int session, channel, type, incarnation, expected_incarnation;
+    uint32_t sequence, generation, epoch, expected_generation;
+    uint64_t identity;
+    int bytes;
+};
+
 typedef struct rocketnet_dst_world_t
 {
     struct rocketnet_network_simulator_t * sim;
@@ -398,13 +408,7 @@ typedef struct rocketnet_dst_world_t
     struct rocketnet_dst_check_state_t check;
     int witness;
     int witness_state;                  // 0 armed, 1 holding (ORDERED_SWAP), 2 fired
-    struct rocketnet_dst_held_delivery_t
-    {
-        int session, channel, type, incarnation, expected_incarnation;
-        uint32_t sequence, generation, epoch, expected_generation;
-        uint64_t identity;
-        int bytes;
-    } witness_held;
+    struct rocketnet_dst_held_delivery_t witness_held;
     int failed;
     uint64_t fail_step;
     char fail_check[64];
