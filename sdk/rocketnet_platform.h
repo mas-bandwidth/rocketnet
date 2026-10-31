@@ -585,10 +585,9 @@ bool rocketnet_platform_thread_priority_enabled( void );
 /**
  * @brief The SCHED_RR priority the client and server network threads request.
  *
- * Above every ordinary thread: sched_get_priority_min( SCHED_RR ) on Linux
- * (1), sched_get_priority_max( SCHED_RR ) on macOS (47; its minimum, 15, is
- * below the default 31), elsewhere the minimum raised to a default thread's
- * priority where that is higher.
+ * One above a thread with default attributes, clamped to the SCHED_RR range:
+ * 1 on Linux (the SCHED_RR minimum, above SCHED_OTHER's 0), 32 on macOS (an
+ * ordinary thread is 31; its SCHED_RR range is 15 to 47).
  * @return The priority.
  */
 int rocketnet_platform_network_thread_rr_priority( void );
