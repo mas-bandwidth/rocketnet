@@ -2167,9 +2167,10 @@ a row marked server or client applies only at that end.
 16. For session types, a receiver MUST check the opened size less the ack
     block against the type. A mismatch is `WRONG_OPENED_SIZE`.
 17. Before applying the ack block, a client MUST validate the index and
-    slot count in a keep-alive. The slot count MUST be from 1 through the
-    maximum client slot count, and the index MUST be less than the slot count.
-    An invalid value is `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
+    slot count in a keep-alive. The slot count MUST be at least 1 and the
+    index MUST be less than the slot count; the client has no opinion about
+    the server's slot count. An invalid value is
+    `CLIENT_KEEP_ALIVE_WRONG_OPENED_SIZE`.
 18. After the session checks pass, a receiver MUST apply the ack block's
     delivery information and refresh the connection's receive time, then
     perform the type-specific processing. A type-specific refusal increments
@@ -2214,7 +2215,6 @@ types, and the response padding are:
 | connection ack minimum wire size | `33` | bytes | size | [t8 Packet formats](#t8) |
 | connection payload fragment minimum wire size | `40` | bytes | size | [t8 Packet formats](#t8) |
 | connection response padding | `24` | bytes | size | [t8 Packet formats](#t8) |
-| maximum client slot count | `1000` | slots | limit | [t3 Constants and registries](#t3) |
 
 A session packet's total wire size is its minimum or larger, up to the
 receive ceiling, which equals the maximum packet size. After the ack block, a
@@ -2997,7 +2997,7 @@ The type data of a keep-alive is:
 | Name | Offset | Size | Type | Meaning | Valid values |
 |---|---|---|---|---|---|
 | client index | 0 | 4 | u32 | the slot the server assigned this connection | 0 to one less than the client slot count |
-| client slot count | 4 | 4 | u32 | the server's configured number of client slots | 1 to the `maximum client slot count` row of [t3 Constants and registries](#t3) |
+| client slot count | 4 | 4 | u32 | the server's configured number of client slots | at least 1 |
 
 A keep-alive's type data is eight bytes and follows the ack block
 ([t15 Acknowledgement](#t15)). A keep-alive carries no application bytes.
