@@ -204,5 +204,6 @@ deployment. Read [qualification](TESTING.md) before choosing a deployment size.
 
 - [Integration guide](USAGE.md): frame contracts, backpressure, receipts, lifecycle, configuration, and stats.
 - [Game loop example](examples/game_loop.md): a fixed-step simulation and the cost of the wrong frame order.
+- [Fixed memory example](examples/fixed_memory.md): size a server and a client up front and hold each to one region of that size.
 - [Transports](TRANSPORTS.md): platform selection and deployment requirements.
 - [Documentation index](README.md): all reading paths, references, and engineering records.
