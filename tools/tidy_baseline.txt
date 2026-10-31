@@ -103,7 +103,6 @@ clang-tidy	sdk/rocketnet_platform.cpp	cert-err33-c	b6e019295a45cb0d
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	5338b9d4292643b1
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	604cf34623db7e62
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	77d63a3376ae6759
-clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	8af97ad9db62aab6
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	b54cadc47f2f6d73
 clang-tidy	sdk/rocketnet_platform.cpp	concurrency-mt-unsafe	ed3ab86dc3a75c5c
 clang-tidy	sdk/rocketnet_protocol.cpp	bugprone-branch-clone	2d1d77c2829d58ff

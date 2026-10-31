@@ -3476,7 +3476,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
                 // IMPORTANT: clamp num packets because it's an atomic increment across multiple threads so it can go over max if unlucky
 
                 const uint64_t num_claimed = send_buffer->num_packets;
-                const int num_staged_packets = num_claimed < ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) num_claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
+                const int num_staged_packets = num_claimed < (uint64_t) ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) num_claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
 
                 rocketnet_assert( num_staged_packets >= 0 );
                 rocketnet_assert( num_staged_packets <= ROCKETNET_XDP_SEND_QUEUE_SIZE );
