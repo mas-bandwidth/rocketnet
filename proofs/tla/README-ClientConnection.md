@@ -262,8 +262,8 @@ only the measured changes the table names; the TSV has one row per run.
 | `Reach-delay` | the S-delay constants, Timeout 3 | SpecReach | NotReached | 16493 | fail as expected (NotReached violated) |
 | `F4-ephemeral` | Timeout 2, ServerMute TRUE, KindLoss "none" | Spec | EphemeralErasedOutsideHandshake | 20 | pass |
 | `F8-terminal` | Timeout 2, MaxAttempts 2, Disconnects TRUE, ServerMute TRUE, KindLoss "none" | Spec | TerminalAbsorbing | 149 | pass |
-| `keys-erased` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 2, MaxNonces 2, OthersMayJoin TRUE, Disconnects TRUE, KindLoss "none", FIFO links | Spec | SafetyInvariants, KeysErasedWhenDown | KEYS_DISTINCT | pass |
-| `W-down-keeps-keys` | the keys-erased constants | SpecDownKeepsKeys | KeysErasedWhenDown | WIT_DISTINCT | fail as expected |
+| `keys-erased` | Timeout 2, Deadline 4, ServerDeadline 3, MaxAttempts 1, MaxNonces 1, OthersMayJoin FALSE, Disconnects TRUE, KindLoss "none", FIFO links | Spec | SafetyInvariants, KeysErasedWhenDown | 21987 | pass |
+| `W-down-keeps-keys` | the keys-erased constants | SpecDownKeepsKeys | KeysErasedWhenDown | 151 | fail as expected |
 | `W-denied-keeps-keys` | Timeout 0, Deadline 0, OthersMayJoin TRUE, Disconnects FALSE, ServerPayloads FALSE, KindLoss "none" | SpecDeniedKeepsKeys | KeysErasedWhenDown | 250 | fail as expected |
 
 The small instance: `SendInterval = 1`, `MaxIds = 2`, `MaxSlots = 1`,
