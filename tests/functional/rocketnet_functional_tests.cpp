@@ -12764,7 +12764,9 @@ static int rocketnet_test_token_time_wall_clock_create( uint64_t create, uint64_
     signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
     const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
     memcpy( signed_fields.ipv4_address, server_address, 6 );
-    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+    // a server key of its own: a production build refuses a token sealed to
+    // the published development server key before it reads the token's times
+    memset( signed_fields.server_public_key, 0x42, sizeof( signed_fields.server_public_key ) );
 
     struct rocketnet_connect_token_private_t private_fields;
     memset( &private_fields, 0, sizeof( private_fields ) );
