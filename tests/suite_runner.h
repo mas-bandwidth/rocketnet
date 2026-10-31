@@ -11,7 +11,8 @@
     scales it for Debug, sanitizer or emulated builds (tests/time_scale.h).
     ROCKETNET_TEST_CASE_TIME_SCALE in the environment multiplies the case limit
     a suite passes in; the nightly macOS TSAN functional runs set 30, a
-    one-hour case limit, and every other run leaves it unset. A
+    one-hour case limit, the nightly Linux threaded TSan leg sets 4, and
+    every other run leaves it unset. A
     functional case whose peak resident set (wait4 ru_maxrss on POSIX,
     PeakWorkingSetSize on Windows) is over its bound fails
     (ROCKETNET_TEST_MAX_CASE_RSS_MB, overridable by that environment variable;
