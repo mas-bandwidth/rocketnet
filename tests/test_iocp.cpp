@@ -322,6 +322,13 @@ static void test_completion_owns_frames()
     uint64_t refused_id;
     CHECK( !rocketnet_server_iocp_start_packet( transport, &invalid, &refused_id ) );
 
+    // the refused address is counted SEND_FAILED, once (an address the
+    // socket cannot carry, never a full staging); the sends below add none
+
+    uint64_t refused_counters[ROCKETNET_IOCP_NUM_COUNTERS];
+    rocketnet_server_iocp_counters( transport, refused_counters );
+    CHECK( refused_counters[ROCKETNET_IOCP_SEND_FAILED] == 1 );
+
     // address refusal must leave a whole generation available below
 
     // exhaust and abort a complete phase. Every frame must be reclaimable.
@@ -359,7 +366,7 @@ static void test_completion_owns_frames()
 
     uint64_t counters[ROCKETNET_IOCP_NUM_COUNTERS];
     rocketnet_server_iocp_counters( transport, counters );
-    CHECK( counters[ROCKETNET_IOCP_SEND_FAILED] == 0 );
+    CHECK( counters[ROCKETNET_IOCP_SEND_FAILED] == 1 );
 
     for ( int i = 0; i < rocketnet_server_iocp_send_queue_size( ROCKETNET_DEFAULT_MAX_CLIENTS ) - 32; ++i )
     {
@@ -382,7 +389,7 @@ static void test_completion_owns_frames()
     } while ( rocketnet_platform_time() < deadline );
 
     CHECK( counters[ROCKETNET_IOCP_SEND_COMPLETED] == 32 );
-    CHECK( counters[ROCKETNET_IOCP_SEND_FAILED] == 0 );
+    CHECK( counters[ROCKETNET_IOCP_SEND_FAILED] == 1 );          // the refused address alone
 
     // Counters are diagnostic reads, not completion fences. Join the
     // retirement batch before checking that every frame is back in the pool.
