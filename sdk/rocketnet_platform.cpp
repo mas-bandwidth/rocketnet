@@ -54,13 +54,34 @@ extern "C" uint64_t rocketnet_direct_allocation_bytes( void )
 // then on and advances only as the caller's clock does: a paused clock pauses
 // token expiry. The only wall-clock read on the token path.
 
+#if ROCKETNET_DEV
+// test seam for the wall clock (rocketnet_internal.h): NULL reads the real
+// clock; the unit suite's fake replaces it
+static std::atomic<uint64_t ( * )( void )> rocketnet_platform_wall_clock_override{ NULL };
+
+void rocketnet_platform_set_wall_clock_for_testing( uint64_t ( *wall_clock )( void ) )
+{
+    rocketnet_platform_wall_clock_override.store( wall_clock, std::memory_order_release );
+}
+#endif // #if ROCKETNET_DEV
+
+static uint64_t rocketnet_platform_wall_clock()
+{
+#if ROCKETNET_DEV
+    uint64_t ( *wall_clock )( void ) = rocketnet_platform_wall_clock_override.load( std::memory_order_acquire );
+    if ( wall_clock )
+        return wall_clock();
+#endif // #if ROCKETNET_DEV
+    const time_t now = ::time( NULL );
+    return now > 0 ? (uint64_t) now : 0;
+}
+
 uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time )
 {
     if ( configured != 0 )
         return configured;
 
-    const time_t now = ::time( NULL );
-    const uint64_t wall = now > 0 ? (uint64_t) now : 0;
+    const uint64_t wall = rocketnet_platform_wall_clock();
     const uint64_t elapsed = time > 0.0 ? (uint64_t) time : 0;
 
     return wall > elapsed ? wall - elapsed : 1;

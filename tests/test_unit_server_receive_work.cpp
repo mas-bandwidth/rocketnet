@@ -216,8 +216,6 @@ static void test_server_receive_one_lookup_per_packet()
     check( packets_total >= (uint64_t) ( SERVER_RECEIVE_WORK_UPDATES * SERVER_RECEIVE_WORK_PACKETS_PER_UPDATE ) );
 
     server_receive_work_pair_teardown( &pair );
-
-    printf( "test_server_receive_one_lookup_per_packet\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_receive_one_lookup_per_packet );
@@ -241,8 +239,6 @@ static void test_server_receive_payload_one_copy()
     }
 
     server_receive_work_pair_teardown( &pair );
-
-    printf( "test_server_receive_payload_one_copy\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_receive_payload_one_copy );

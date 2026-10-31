@@ -84,7 +84,6 @@ static void test_loopback_transport_io_binds_and_discovers_a_port()
 
     rn_test_server_io_stop_and_close( &sa );
     rocketnet_client_transport_io_close( &cc );
-    printf( "test_loopback_transport_io_binds_and_discovers_a_port\n" );
 }
 
 static void test_loopback_transport_io_exchanges_both_ways()
@@ -157,7 +156,6 @@ static void test_loopback_transport_io_exchanges_both_ways()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_io_exchanges_both_ways\n" );
 }
 
 // a server bound to the IPv6 wildcard is dual stack: it serves an IPv4
@@ -231,7 +229,6 @@ static void test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6()
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client4 );
     rocketnet_client_transport_io_close( &client6 );
-    printf( "test_loopback_transport_io_dual_stack_serves_ipv4_and_ipv6\n" );
 }
 
 static void test_loopback_transport_io_full_queue_drops_and_counts()
@@ -299,7 +296,6 @@ static void test_loopback_transport_io_full_queue_drops_and_counts()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_io_full_queue_drops_and_counts\n" );
 }
 
 // The allocator hook for test_loopback_transport_io_runtime_does_not_allocate: it
@@ -472,7 +468,6 @@ static void test_loopback_transport_io_runtime_does_not_allocate()
 
     rocketnet_unit_check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     rocketnet_unit_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-    printf( "test_loopback_transport_io_runtime_does_not_allocate\n" );
 }
 
 static void test_loopback_transport_io_destroy_frees_the_port()
@@ -525,7 +520,6 @@ static void test_loopback_transport_io_destroy_frees_the_port()
     rn_test_server_io_stop_and_close( &server2 );
     rocketnet_client_transport_io_close( &client );
     rocketnet_unit_check( rocketnet_loopback_endpoints_live( hub ) == live_before );
-    printf( "test_loopback_transport_io_destroy_frees_the_port\n" );
 }
 
 // The transport compiled into this TU includes <sodium.h>. CMakeLists.txt puts
@@ -688,7 +682,6 @@ static void test_wire_totals_staged_finish_counts_exactly()
     rocketnet_unit_check( cstats.bytes_sent == total_wire + (uint64_t) N * overhead );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_wire_totals_staged_finish_counts_exactly\n" );
 }
 
 // A zero-length datagram a batch receive hands the server transport (the
@@ -777,7 +770,6 @@ static void test_server_counts_zero_length_datagram_as_too_short()
     rocketnet_unit_check( rocketnet_counter_value( counters, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE ) - large_before == 1 );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_counts_zero_length_datagram_as_too_short\n" );
 }
 
 // A hub at the most clients holds them all and its server. The process is
@@ -900,7 +892,6 @@ static void test_loopback_transport_io_holds_max_clients_plus_server()
     free( seen );
     free( clients );
     free( client_addresses );
-    printf( "test_loopback_transport_io_holds_max_clients_plus_server\n" );
 }
 
 static char g_loopback_refusal_log[1024];
@@ -992,7 +983,6 @@ static void test_loopback_transport_io_refuses_past_hub_capacity()
 
     rocketnet_log_function( NULL, NULL );
     rocketnet_log_level( saved_level );
-    printf( "test_loopback_transport_io_refuses_past_hub_capacity\n" );
 }
 
 // Junk from many sources takes no per-source state: the portable path reads
@@ -1130,7 +1120,6 @@ static void test_server_connects_after_junk_from_many_sources()
 
     rn_test_client_transport_stop_and_destroy( client );
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_connects_after_junk_from_many_sources\n" );
 }
 
 // The shape check runs first (rocketnet_server_packet_shape_valid): a
@@ -1346,7 +1335,6 @@ static void test_server_shape_check_first_on_the_staged_loop()
     shape_junk_expect_counters( &before, &server->counters );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_shape_check_first_on_the_staged_loop\n" );
 }
 
 static struct shape_junk_t shape_junk_portable;
@@ -1412,7 +1400,6 @@ static void test_server_shape_check_first_on_the_portable_loop()
     shape_junk_expect_counters( &before, &server->counters );
 
     rn_test_server_transport_stop_and_destroy( server );
-    printf( "test_server_shape_check_first_on_the_portable_loop\n" );
 }
 
 static void test_loopback_transport_server_batch_drops_packet_larger_than_stride()
@@ -1455,7 +1442,6 @@ static void test_loopback_transport_server_batch_drops_packet_larger_than_stride
     rocketnet_unit_check( memcmp( data, valid, sizeof( valid ) ) == 0 );
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_transport_server_batch_drops_packet_larger_than_stride\n" );
 }
 
 // This fake starts with a known completed input queue. It tests the server's
@@ -1629,7 +1615,6 @@ static void test_loopback_queue_restarts_at_slot_zero_when_empty()
 
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-    printf( "test_loopback_queue_restarts_at_slot_zero_when_empty\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_drains_completed_queue_to_budget );

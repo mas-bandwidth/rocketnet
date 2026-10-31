@@ -12742,6 +12742,65 @@ extern void rocketnet_test_session_reconnect_isolation_iocp();
 extern void rocketnet_test_session_reconnect_isolation_rio();
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 
+// With token_epoch_unix_seconds zero a client transport create judges its
+// token by the wall clock: a token stamped in 1970 is refused as expired, and
+// one stamped from the clock now is admitted. Moved from the unit suite
+// (tests/test_unit_token_time_game_clock.cpp), which passes every time as an
+// argument and reads no clock.
+
+#include "rocketnet_test_vectors.h"
+
+static int rocketnet_test_token_time_wall_clock_create( uint64_t create, uint64_t expire )
+{
+    struct rocketnet_signed_connect_data_t signed_fields;
+    memset( &signed_fields, 0, sizeof( signed_fields ) );
+    signed_fields.version = ROCKETNET_WIRE_VERSION;
+    signed_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    signed_fields.create_timestamp = create;
+    signed_fields.expire_timestamp = expire;
+    signed_fields.timeout_seconds = ROCKETNET_TEST_TIMEOUT;
+    signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+    const uint8_t server_address[6] = { 203, 0, 113, 10, 0x40, 0x9c };
+    memcpy( signed_fields.ipv4_address, server_address, 6 );
+    memcpy( signed_fields.server_public_key, rocketnet_test_server_public_key, 32 );
+
+    struct rocketnet_connect_token_private_t private_fields;
+    memset( &private_fields, 0, sizeof( private_fields ) );
+    private_fields.client_id = ROCKETNET_TEST_CLIENT_ID;
+    private_fields.protocol_id = ROCKETNET_TEST_PROTOCOL_ID;
+    private_fields.expire_timestamp = expire;
+    memcpy( private_fields.client_to_server_key, rocketnet_test_token_c2s_key, 32 );
+    memcpy( private_fields.server_to_client_key, rocketnet_test_token_s2c_key, 32 );
+
+    uint8_t token_data[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_connect_token( &signed_fields, &private_fields, rocketnet_test_backend_secret_key, token_data ) );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config_current( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "loopback" );
+    config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
+    config.token_epoch_unix_seconds = 0;
+
+    int status = 0;
+    struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, 1000.0, &status );
+    if ( transport )
+    {
+        rn_native_client_transport_stop_and_destroy( transport );
+        return ROCKETNET_STATUS_OK;
+    }
+
+    return status;
+}
+
+static void rocketnet_test_token_time_game_clock_off_reads_the_wall_clock()
+{
+    rocketnet_check( rocketnet_test_token_time_wall_clock_create( 1000, 1010 ) == ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED );
+
+    const uint64_t now = rocketnet_functional_token_timestamp( 0, 1000.0 );
+    rocketnet_check( rocketnet_test_token_time_wall_clock_create( now, now + 60 ) == ROCKETNET_STATUS_OK );
+}
+
 static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_DEV
     { "test_client_destroy_early_threaded_keeps_then_frees", test_client_destroy_early_threaded_keeps_then_frees, NULL },
@@ -12764,6 +12823,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     // moved from the unit suite: each creates or reads a real OS resource
     // (the Windows high-resolution waitable timer; the macOS descriptor table)
     { "test_frame_sync_lifecycle", rocketnet_test_frame_sync_lifecycle, NULL },
+    { "test_token_time_game_clock_off_reads_the_wall_clock", rocketnet_test_token_time_game_clock_off_reads_the_wall_clock, NULL },
     { "test_frame_sync_create_ex_success_status", rocketnet_test_frame_sync_create_ex_success_status, NULL },
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
     { "test_bundled_rng_closes_and_reopens_on_mac", rocketnet_test_bundled_rng_closes_and_reopens_on_mac, NULL },

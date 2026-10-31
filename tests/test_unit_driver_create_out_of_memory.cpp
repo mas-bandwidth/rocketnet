@@ -310,7 +310,6 @@ static void test_transport_open_reports_out_of_memory()
     }
 
     transport_oom_end( &state );
-    printf( "test_transport_open_reports_out_of_memory\n" );
 }
 
 // ---- the server ladder ---------------------------------------------------------
@@ -392,7 +391,6 @@ static void test_transport_create_server_ladder_stops_on_out_of_memory()
 #if ROCKETNET_DEV
     transport_oom_env_put_back( "ROCKETNET_SERVER_TRANSPORT", &pin );
 #endif // #if ROCKETNET_DEV
-    printf( "test_transport_create_server_ladder_stops_on_out_of_memory\n" );
 }
 
 // ---- the client ladder ---------------------------------------------------------
@@ -472,7 +470,6 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
 #if ROCKETNET_DEV
     transport_oom_env_put_back( "ROCKETNET_CLIENT_TRANSPORT", &pin );
 #endif // #if ROCKETNET_DEV
-    printf( "test_transport_create_client_ladder_stops_on_out_of_memory\n" );
 }
 #endif // #if ROCKETNET_DEV
 
@@ -502,7 +499,6 @@ static void test_platform_init_survives_a_refusing_allocator()
     check( status == ROCKETNET_STATUS_OK );
     check( asked == 0 );
     transport_oom_end( &state );
-    printf( "test_platform_init_survives_a_refusing_allocator\n" );
 }
 
 REGISTER_UNIT_TEST( test_transport_open_reports_out_of_memory );
@@ -551,8 +547,6 @@ static void test_create_status_out_of_memory_is_kept()
 
     transport_oom_end( &state );
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-
-    printf( "test_create_status_out_of_memory_is_kept\n" );
 }
 
 REGISTER_UNIT_TEST( test_create_status_out_of_memory_is_kept );

@@ -603,6 +603,13 @@ struct rocketnet_platform_network_lookups_t
 
 void rocketnet_platform_set_network_lookups_for_testing( const struct rocketnet_platform_network_lookups_t * lookups );
 
+// the wall clock the connect token checks read when token_epoch_unix_seconds
+// is zero (rocketnet_platform_token_epoch). With a function set, they read it
+// instead of the real clock; NULL, the default, reads the real clock. The unit
+// suite sets a fixed clock before rocketnet_init (tests/test.cpp) so no unit
+// case reads the real time. Not exported
+void rocketnet_platform_set_wall_clock_for_testing( uint64_t ( *wall_clock )( void ) );
+
 #endif // #if ROCKETNET_DEV
 
 // the public config structs in rocketnet.h are written out field by field;
