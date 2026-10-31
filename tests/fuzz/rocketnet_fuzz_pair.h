@@ -821,11 +821,11 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
 
 // Whether two images of one block hold the same bytes. A block holds bytes
 // the library never writes (allocation padding, fields a path leaves alone),
-// so its images do too; the comparison is of the harness's own snapshots,
+// so its images do too; the comparison is of the harness's own saved copies,
 // not a read the library makes, and under MemorySanitizer it runs
 // uninstrumented and compares those bytes as the values they hold. The
 // images keep their shadow: a restore copies a never-written byte back as
-// uninitialised, so a library read of it still reports.
+// uninitialized, so a library read of it still reports.
 #if defined( __has_feature )
 #if __has_feature( memory_sanitizer )
 #define ROCKETNET_FUZZ_COMPARE_UNINSTRUMENTED 1
@@ -833,8 +833,7 @@ static inline void rocketnet_fuzz_state_save( struct rocketnet_fuzz_pair_t * pai
 #endif // #if defined( __has_feature )
 
 #if defined( ROCKETNET_FUZZ_COMPARE_UNINSTRUMENTED )
-__attribute__(( no_sanitize( "memory" ) ))
-static inline bool rocketnet_fuzz_bytes_equal( const void * a, const void * b, size_t bytes )
+__attribute__( ( no_sanitize( "memory" ) ) ) static inline bool rocketnet_fuzz_bytes_equal( const void * a, const void * b, size_t bytes )
 {
     // a byte loop, not memcmp: the MSan memcmp interceptor checks its
     // arguments whatever the caller's attribute
