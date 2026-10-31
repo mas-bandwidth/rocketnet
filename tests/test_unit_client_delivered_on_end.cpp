@@ -191,8 +191,6 @@ static void test_client_payload_delivered_in_ending_update_reaches_caller()
 
     rn_test_client_transport_stop_and_destroy( pair.client );
     rn_test_server_transport_stop_and_destroy( pair.server );
-
-    printf( "test_client_payload_delivered_in_ending_update_reaches_caller\n" );
 }
 
 REGISTER_UNIT_TEST( test_client_payload_delivered_in_ending_update_reaches_caller );
@@ -232,8 +230,6 @@ static void test_client_payload_delivered_before_disconnect_reaches_caller()
 
     rn_test_client_transport_stop_and_destroy( pair.client );
     rn_test_server_transport_stop_and_destroy( pair.server );
-
-    printf( "test_client_payload_delivered_before_disconnect_reaches_caller\n" );
 }
 
 REGISTER_UNIT_TEST( test_client_payload_delivered_before_disconnect_reaches_caller );
@@ -298,8 +294,6 @@ static void test_client_payload_burst_past_batch_capacity_spreads_across_updates
 
     rn_test_client_transport_stop_and_destroy( pair.client );
     rn_test_server_transport_stop_and_destroy( pair.server );
-
-    printf( "test_client_payload_burst_past_batch_capacity_spreads_across_updates\n" );
 }
 
 REGISTER_UNIT_TEST( test_client_payload_burst_past_batch_capacity_spreads_across_updates );

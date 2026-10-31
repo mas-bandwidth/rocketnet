@@ -268,7 +268,6 @@ static void test_client_transport_create_ex_reports_every_status()
     check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
-
 }
 
 REGISTER_UNIT_TEST( test_client_transport_create_ex_reports_every_status );

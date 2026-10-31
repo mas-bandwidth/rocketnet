@@ -258,7 +258,6 @@ static void test_server_stop_spreads_disconnect_bursts_across_updates()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_stop_spreads_disconnect_bursts_across_updates\n" );
 }
 
 // A stop is complete only once its bursts are: stopped is false, and each
@@ -284,7 +283,6 @@ static void test_server_stop_polls_are_the_stop_steps()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_stop_polls_are_the_stop_steps\n" );
 }
 
 // A destination the transport has no link-layer address for can never be
@@ -314,7 +312,6 @@ static void test_server_stop_abandons_an_unreachable_burst()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_stop_abandons_an_unreachable_burst\n" );
 }
 
 // A kick on a running server whose staging has less room than a burst: the
@@ -349,7 +346,6 @@ static void test_server_kick_spreads_its_burst_across_updates()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_kick_spreads_its_burst_across_updates\n" );
 }
 
 // send_capacity_available on a staged transport is the transport's own
@@ -387,7 +383,6 @@ static void test_server_send_capacity_reports_staged_room()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_send_capacity_reports_staged_room\n" );
 }
 
 // A refused start is counted by what refused it: a full staging is
@@ -448,7 +443,6 @@ static void test_server_refused_starts_counted_by_cause()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_refused_starts_counted_by_cause\n" );
 }
 
 // The stop tells the I/O to stop only once the transport reports every send
@@ -480,7 +474,6 @@ static void test_server_stop_waits_for_flushed_sends()
 
     rn_test_server_transport_stop_and_destroy( server );
     delete f;
-    printf( "test_server_stop_waits_for_flushed_sends\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );

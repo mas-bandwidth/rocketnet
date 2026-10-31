@@ -236,7 +236,7 @@ static void test_xdp_transport_preflight_refuses_any_attached_mode()
 
 #if ROCKETNET_DEV
 // The frames each queue's userspace receive dropped, by reason, reach the
-// transport's XDP_RECEIVE_FRAME_DROPPED through the builtin dispatch the
+// transport's ROCKETNET_COUNTER_XDP_RECEIVE_FRAME_DROPPED through the builtin dispatch the
 // counter read calls, once each queue's worker publishes them: two synthetic
 // queues, no socket, no worker (sdk/rocketnet_server_socket_linux.cpp)
 bool rocketnet_server_transport_io_receive_frames_dropped( const struct rocketnet_server_transport_io_operations_t * operations, void * transport,

@@ -500,7 +500,6 @@ static void test_loopback_transport_payload_batch_full_is_counted()
         check( client_payload_bytes[i] == 1 && client_payloads[i][0] == (uint8_t) ( i + 1 ) );
 
     loopback_transport_pair_teardown( &pair );
-    printf( "test_loopback_transport_payload_batch_full_is_counted\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_payload_batch_full_is_counted );

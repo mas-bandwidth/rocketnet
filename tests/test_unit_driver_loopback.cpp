@@ -284,8 +284,6 @@ static void test_loopback_transport_io_dual_stack_port_is_exclusive()
     rocketnet_unit_check( rocketnet_client_transport_io_open( backend->client, NULL, &client_setup, &client_loopback, &client ) );
     rn_test_server_io_stop_and_close( &server );
     rocketnet_client_transport_io_close( &client );
-
-    printf( "test_loopback_transport_io_dual_stack_port_is_exclusive\n" );
 }
 
 static void test_loopback_transport_io_full_queue_drops_and_counts()

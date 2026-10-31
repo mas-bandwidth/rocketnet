@@ -162,11 +162,13 @@ static void test_message_required_memory_takes_the_create_budget()
     memcpy( server_config.server_secret_key, server_secret_key, sizeof( server_config.server_secret_key ) );
     snprintf( server_config.transport, sizeof( server_config.transport ), "%s", "loopback" );
     server_config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( server_config.packet_filter, 0x5A, sizeof( server_config.packet_filter ) );    // not the published test filter, which a production build refuses first
 
     struct rocketnet_client_transport_config_t client_config;
     rocketnet_client_transport_default_config_current( &client_config );
     snprintf( client_config.transport, sizeof( client_config.transport ), "%s", "loopback" );
     client_config.loopback_hub = rocketnet_test_loopback_hub();
+    memset( client_config.packet_filter, 0x5A, sizeof( client_config.packet_filter ) );
     client_config.step_driven = 1;
 
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
