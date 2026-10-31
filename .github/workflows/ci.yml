@@ -1147,42 +1147,47 @@ jobs:
       # on its box after 10 s: that wait is what every failing case did before.
       - name: A Windows test child that aborts exits instead of waiting on a dialog
         if: matrix.leg == 'c'
-        shell: powershell
+        shell: bash
         run: |
-          cmake --build build --config Debug --target windows_no_dialogs
-          if ( $LASTEXITCODE -ne 0 ) { exit 1 }
-          function Run-Case( $config, $case, $ms ) {
-            $exe = "bin\$config\windows_no_dialogs.exe"
-            $log = "$env:RUNNER_TEMP\no-dialogs-$config-$case"
-            $p = Start-Process -FilePath $exe -ArgumentList '--run', $case -NoNewWindow -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
-            $null = $p.Handle
-            $clock = [Diagnostics.Stopwatch]::StartNew()
-            $exited = $p.WaitForExit( $ms )
-            $seconds = '{0:N1}' -f $clock.Elapsed.TotalSeconds
-            if ( -not $exited ) { Stop-Process -Id $p.Id -Force; $p.WaitForExit() }
-            $stderr = ( Get-Content "$log.err" -ErrorAction SilentlyContinue | Select-Object -First 3 ) -join ' | '
-            return @{ exited = $exited; code = $p.ExitCode; seconds = $seconds; stderr = $stderr }
+          set -uo pipefail
+          cmake --build build --config Debug --target windows_no_dialogs || exit 1
+          # runs one case alone; prints "exited <code> <seconds>" or "waiting <seconds>" (then kills it)
+          run_case() {
+            local config=$1 case=$2 limit=$3 log="$RUNNER_TEMP/no-dialogs-$1-$2"
+            local start=$SECONDS
+            "bin/$config/windows_no_dialogs.exe" --run "$case" > "$log.out" 2> "$log.err" &
+            local pid=$!
+            while kill -0 "$pid" 2>/dev/null && [ $(( SECONDS - start )) -lt "$limit" ]; do sleep 0.2; done
+            if kill -0 "$pid" 2>/dev/null; then
+              taskkill //F //T //PID "$(cat "/proc/$pid/winpid")" > /dev/null 2>&1 || kill -9 "$pid"
+              wait "$pid" 2>/dev/null
+              echo "waiting $(( SECONDS - start ))"
+              return
+            fi
+            local code=0
+            wait "$pid" || code=$?
+            echo "exited $code $(( SECONDS - start ))"
           }
-          $failed = 0
-          foreach ( $config in 'Release', 'Debug' ) {
-            foreach ( $case in 'test_no_dialogs_abort', 'test_no_dialogs_assert', 'test_no_dialogs_invalid_parameter', 'test_no_dialogs_access_violation' ) {
-              $r = Run-Case $config $case 30000
-              $code = '0x{0:X8}' -f $r.code
-              if ( $r.exited -and $r.code -ne 0 ) {
-                "PASS $config $case exited $code in $( $r.seconds ) s; stderr: $( $r.stderr )"
-              } else {
-                "FAIL $config $case exited=$( $r.exited ) code=$code after $( $r.seconds ) s"
-                $failed = 1
-              }
-            }
-          }
-          $r = Run-Case 'Debug' 'test_no_dialogs_defaults_restored' 10000
-          if ( -not $r.exited ) {
-            "PASS negative control: with the defaults back, the Debug assertion was still waiting on its dialog after $( $r.seconds ) s (killed)"
-          } else {
-            "FAIL negative control exited $( '0x{0:X8}' -f $r.code ) in $( $r.seconds ) s: this runner shows no dialog wait, so the cases above prove nothing here"
-            $failed = 1
-          }
+          failed=0
+          for config in Release Debug; do
+            for case in test_no_dialogs_abort test_no_dialogs_assert test_no_dialogs_invalid_parameter test_no_dialogs_access_violation; do
+              read -r state code seconds <<< "$(run_case "$config" "$case" 30)"
+              stderr=$(head -n 3 "$RUNNER_TEMP/no-dialogs-$config-$case.err" 2>/dev/null | tr -d '\r' | tr '\n' '|')
+              if [ "$state" = exited ] && [ "$code" != 0 ]; then
+                echo "PASS $config $case exited $code (low byte of the status) in ${seconds} s; stderr: $stderr"
+              else
+                echo "FAIL $config $case: $state ${code} after ${seconds:-$code} s"
+                failed=1
+              fi
+            done
+          done
+          read -r state code seconds <<< "$(run_case Debug test_no_dialogs_defaults_restored 10)"
+          if [ "$state" = waiting ]; then
+            echo "PASS negative control: with the defaults back, the Debug assertion was still waiting on its dialog after $code s (killed)"
+          else
+            echo "FAIL negative control exited $code in $seconds s: this runner shows no dialog wait, so the cases above prove nothing here"
+            failed=1
+          fi
           exit $failed
 
       # Leg (c), 2026-10-29: the functional suite is back on every commit, its
