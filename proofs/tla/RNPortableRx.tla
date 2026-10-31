@@ -38,6 +38,13 @@
 (*   Timeout       the worker's waits time out (0.1 s production bound).   *)
 (*                 The liveness controls run with Timeout = FALSE, so      *)
 (*                 progress is proved from the wake protocol alone.        *)
+(*   BoundedRead   one socket read spends a read budget of Cap on every    *)
+(*                 datagram it takes, kept or discarded; FALSE counts only *)
+(*                 kept datagrams, so chaff (zero-length datagrams,        *)
+(*                 refused sources) holds the worker inside the read.      *)
+(*                                                                         *)
+(* Chaff is the ordinal 0 in the socket: a datagram the receive helper     *)
+(* takes and discards.  It is never delivered and never kept.              *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -45,14 +52,18 @@ CONSTANTS NumBanks,        \* PORTABLE_RX_BANKS, at least 2
           Cap,             \* PORTABLE_RX_CAPACITY: datagrams per socket read
           Budget,          \* the count passed to one portable_receive call
           MaxDatagrams,    \* datagrams the network delivers to the socket
-          HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout
+          MaxChaff,        \* discarded datagrams the network delivers
+          HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout,
+          BoundedRead
 
-ASSUME NumBanks >= 2 /\ Cap >= 1 /\ Budget >= 1 /\ MaxDatagrams >= 1
-ASSUME {HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout} \subseteq BOOLEAN
+ASSUME NumBanks >= 2 /\ Cap >= 1 /\ Budget >= 1 /\ MaxDatagrams >= 1 /\ MaxChaff >= 0
+ASSUME {HoldOnFull, ReturnWhenRead, QuitBeforeWake, WakeOnReturn, Timeout,
+        BoundedRead} \subseteq BOOLEAN
 
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
 NoBank == 0
+Chaff == 0
 
 VARIABLES arrived,    \* datagrams that have entered the socket, 0..MaxDatagrams
           sock,       \* the socket receive buffer, oldest first
@@ -70,15 +81,18 @@ VARIABLES arrived,    \* datagrams that have entered the socket, 0..MaxDatagrams
           wpc,        \* worker program counter
           mpc,        \* main program counter
           budget,     \* the rest of the current call's count
-          freed       \* this acquire returned a bank to an empty free FIFO
+          freed,      \* this acquire returned a bank to an empty free FIFO
+          chaff,      \* chaff datagrams that have entered the socket
+          taken       \* datagrams the current read has taken, kept or not
 
 vars == <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-          lock, wake, quit, stopping, wpc, mpc, budget, freed>>
+          lock, wake, quit, stopping, wpc, mpc, budget, freed, chaff, taken>>
 
 Range(s) == {s[i] : i \in 1..Len(s)}
 RECURSIVE Concat(_)
 Concat(s) == IF s = <<>> THEN <<>> ELSE data[Head(s)] \o Concat(Tail(s))
 Upto(n) == [i \in 1..n |-> i]
+Kept(s) == SelectSeq(s, LAMBDA x : x # Chaff)
 
 Init ==
     /\ arrived = 0
@@ -98,6 +112,8 @@ Init ==
     /\ mpc = "idle"
     /\ budget = 0
     /\ freed = FALSE
+    /\ chaff = 0
+    /\ taken = 0
 
 \* ------------------------------------------------------------------------
 \* The network.  A datagram enters the socket buffer.
@@ -107,7 +123,16 @@ Arrive ==
     /\ arrived' = arrived + 1
     /\ sock' = Append(sock, arrived + 1)
     /\ UNCHANGED <<data, prod, cons, cursor, free, ready, delivered, lock, wake,
-                   quit, stopping, wpc, mpc, budget, freed>>
+                   quit, stopping, wpc, mpc, budget, freed, chaff, taken>>
+
+\* A datagram the receive helper discards (zero-length, or a refused source)
+\* enters the socket.
+ArriveChaff ==
+    /\ chaff < MaxChaff
+    /\ chaff' = chaff + 1
+    /\ sock' = Append(sock, Chaff)
+    /\ UNCHANGED <<arrived, data, prod, cons, cursor, free, ready, delivered, lock,
+                   wake, quit, stopping, wpc, mpc, budget, freed, taken>>
 
 \* ------------------------------------------------------------------------
 \* The RX worker, portable_rx_worker.
@@ -117,7 +142,7 @@ WTop ==
     /\ wpc = "top"
     /\ wpc' = IF quit THEN "exited" ELSE "publish"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, wake, quit, stopping, mpc, budget, freed>>
+                   lock, wake, quit, stopping, mpc, budget, freed, chaff, taken>>
 
 \* portable_rx_publish: an empty producer needs no exchange
 WPublishEmpty ==
@@ -125,7 +150,7 @@ WPublishEmpty ==
     /\ data[prod] = <<>>
     /\ wpc' = "read"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, wake, quit, stopping, mpc, budget, freed>>
+                   lock, wake, quit, stopping, mpc, budget, freed, chaff, taken>>
 
 \* portable_rx_publish: the worker's blocking acquire
 WLock ==
@@ -135,7 +160,7 @@ WLock ==
     /\ lock' = "worker"
     /\ wpc' = "swap"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   wake, quit, stopping, mpc, budget, freed>>
+                   wake, quit, stopping, mpc, budget, freed, chaff, taken>>
 
 \* under rx_mutex: queue the producer and take a free bank, or refuse
 WSwap ==
@@ -143,13 +168,13 @@ WSwap ==
     /\ lock' = "none"
     /\ IF free = <<>>
        THEN /\ wpc' = IF HoldOnFull THEN "waitfull" ELSE "read"
-            /\ UNCHANGED <<prod, free, ready>>
+            /\ UNCHANGED <<prod, free, ready, chaff, taken>>
        ELSE /\ ready' = Append(ready, prod)
             /\ prod' = Head(free)
             /\ free' = Tail(free)
             /\ wpc' = "reset"
     /\ UNCHANGED <<arrived, sock, data, cons, cursor, delivered, wake, quit,
-                   stopping, mpc, budget, freed>>
+                   stopping, mpc, budget, freed, chaff, taken>>
 
 \* after the release: the new producer's count = 0
 WReset ==
@@ -157,23 +182,48 @@ WReset ==
     /\ data' = [data EXCEPT ![prod] = <<>>]
     /\ wpc' = "read"
     /\ UNCHANGED <<arrived, sock, prod, cons, cursor, free, ready, delivered,
-                   lock, wake, quit, stopping, mpc, budget, freed>>
+                   lock, wake, quit, stopping, mpc, budget, freed, chaff, taken>>
 
-\* rocketnet_platform_socket_receive_packets into the producer: bank->count
-\* is assigned, so the read replaces whatever the bank held
+\* rocketnet_platform_socket_receive_packets into the producer, one
+\* datagram per step.  bank->count is assigned, so the read replaces
+\* whatever the bank held; an empty socket returns 0 at once.
 WRead ==
     /\ wpc = "read"
     /\ \/ /\ sock # <<>>
-          /\ \E k \in 1..Cap :
-                /\ k <= Len(sock)
-                /\ data' = [data EXCEPT ![prod] = SubSeq(sock, 1, k)]
-                /\ sock' = SubSeq(sock, k + 1, Len(sock))
-          /\ wpc' = "top"
+          /\ data' = [data EXCEPT ![prod] = <<>>]
+          /\ taken' = 0
+          /\ wpc' = "reading"
        \/ /\ sock = <<>>
           /\ wpc' = "waitidle"
-          /\ UNCHANGED <<sock, data>>
+          /\ UNCHANGED <<data, taken>>
+    /\ UNCHANGED <<arrived, sock, prod, cons, cursor, free, ready, delivered, lock,
+                   wake, quit, stopping, mpc, budget, freed, chaff>>
+
+\* the read takes the oldest datagram: chaff is discarded, any other is kept.
+\* With BoundedRead every datagram spends the read budget of Cap; without it
+\* only a kept one counts against the bank's room.
+WReadOne ==
+    /\ wpc = "reading"
+    /\ sock # <<>>
+    /\ Len(data[prod]) < Cap
+    /\ BoundedRead => taken < Cap
+    /\ data' = IF Head(sock) = Chaff THEN data
+               ELSE [data EXCEPT ![prod] = Append(@, Head(sock))]
+    /\ sock' = Tail(sock)
+    /\ taken' = taken + 1
     /\ UNCHANGED <<arrived, prod, cons, cursor, free, ready, delivered, lock,
-                   wake, quit, stopping, mpc, budget, freed>>
+                   wake, quit, stopping, wpc, mpc, budget, freed, chaff>>
+
+\* the read returns: the socket is empty, the bank is full or the budget is
+\* spent.  A read that kept nothing is an empty read.
+WReadEnd ==
+    /\ wpc = "reading"
+    /\ \/ sock = <<>>
+       \/ Len(data[prod]) = Cap
+       \/ BoundedRead /\ taken = Cap
+    /\ wpc' = IF data[prod] = <<>> THEN "waitidle" ELSE "top"
+    /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
+                   lock, wake, quit, stopping, mpc, budget, freed, chaff, taken>>
 
 \* full banks: wait on the wake alone
 WWaitFull ==
@@ -184,7 +234,7 @@ WWaitFull ==
           /\ UNCHANGED wake
     /\ wpc' = "top"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, quit, stopping, mpc, budget, freed>>
+                   lock, quit, stopping, mpc, budget, freed, chaff, taken>>
 
 \* an empty read: wait on the wake or socket readability
 WWaitIdle ==
@@ -197,7 +247,7 @@ WWaitIdle ==
           /\ UNCHANGED wake
     /\ wpc' = "top"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, quit, stopping, mpc, budget, freed>>
+                   lock, quit, stopping, mpc, budget, freed, chaff, taken>>
 
 \* ------------------------------------------------------------------------
 \* Main, portable_receive and portable_rx_acquire.
@@ -208,7 +258,7 @@ MCall ==
     /\ mpc' = "call"
     /\ budget' = Budget
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, wake, quit, stopping, wpc, freed>>
+                   lock, wake, quit, stopping, wpc, freed, chaff, taken>>
 
 Unread == IF cons = NoBank THEN 0 ELSE Len(data[cons]) - cursor
 
@@ -221,7 +271,7 @@ MCopy ==
     /\ cursor' = cursor + 1
     /\ budget' = budget - 1
     /\ UNCHANGED <<arrived, sock, data, prod, cons, free, ready, lock, wake,
-                   quit, stopping, wpc, mpc, freed>>
+                   quit, stopping, wpc, mpc, freed, chaff, taken>>
 
 \* the budget is spent: the call returns.  The reversed rule returns a
 \* partly copied consumer here.
@@ -231,10 +281,10 @@ MEnd ==
     /\ IF ~ReturnWhenRead /\ cons # NoBank /\ lock = "none"
        THEN /\ free' = Append(free, cons)
             /\ cons' = NoBank
-       ELSE UNCHANGED <<free, cons>>
+       ELSE UNCHANGED <<free, cons, chaff, taken>>
     /\ mpc' = "idle"
     /\ UNCHANGED <<arrived, sock, data, prod, cursor, ready, delivered, lock,
-                   wake, quit, stopping, wpc, budget, freed>>
+                   wake, quit, stopping, wpc, budget, freed, chaff, taken>>
 
 \* the consumer is completely copied (or absent): try the mutex
 MTry ==
@@ -245,7 +295,7 @@ MTry ==
     /\ lock' = "main"
     /\ mpc' = "swap"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   wake, quit, stopping, wpc, budget, freed>>
+                   wake, quit, stopping, wpc, budget, freed, chaff, taken>>
 
 \* a failed try ends the call; main never waits
 MTryFail ==
@@ -255,7 +305,7 @@ MTryFail ==
     /\ lock # "none"
     /\ mpc' = "idle"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, wake, quit, stopping, wpc, budget, freed>>
+                   lock, wake, quit, stopping, wpc, budget, freed, chaff, taken>>
 
 \* under rx_mutex: return the consumer, take the oldest ready bank
 MSwap ==
@@ -273,7 +323,7 @@ MSwap ==
     /\ lock' = "none"
     /\ mpc' = "wake"
     /\ UNCHANGED <<arrived, sock, data, prod, delivered, wake, quit, stopping,
-                   wpc, budget>>
+                   wpc, budget, chaff, taken>>
 
 \* after the release: signal the worker if it may be waiting for a free bank
 MWake ==
@@ -282,7 +332,7 @@ MWake ==
     /\ freed' = FALSE
     /\ mpc' = IF cons = NoBank THEN "idle" ELSE "call"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, quit, stopping, wpc, budget>>
+                   lock, quit, stopping, wpc, budget, chaff, taken>>
 
 \* portable_stop, between calls: stopping, then quit and the RX wake in the
 \* order the rule says
@@ -292,7 +342,7 @@ MStop ==
     /\ stopping' = TRUE
     /\ mpc' = "stop1"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, wake, quit, wpc, budget, freed>>
+                   lock, wake, quit, wpc, budget, freed, chaff, taken>>
 
 MStop1 ==
     /\ mpc = "stop1"
@@ -300,7 +350,7 @@ MStop1 ==
                          ELSE wake' = TRUE /\ UNCHANGED quit
     /\ mpc' = "stop2"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, stopping, wpc, budget, freed>>
+                   lock, stopping, wpc, budget, freed, chaff, taken>>
 
 MStop2 ==
     /\ mpc = "stop2"
@@ -308,7 +358,7 @@ MStop2 ==
                          ELSE quit' = TRUE /\ UNCHANGED wake
     /\ mpc' = "stopped"
     /\ UNCHANGED <<arrived, sock, data, prod, cons, cursor, free, ready, delivered,
-                   lock, stopping, wpc, budget, freed>>
+                   lock, stopping, wpc, budget, freed, chaff, taken>>
 
 \* after stop main polls portable_stopped between frames; a poll changes
 \* nothing until the worker has exited (then it is the terminal state)
@@ -317,8 +367,9 @@ MPollStopped ==
     /\ UNCHANGED vars
 
 Next ==
-    \/ Arrive
+    \/ Arrive \/ ArriveChaff
     \/ WTop \/ WPublishEmpty \/ WLock \/ WSwap \/ WReset \/ WRead
+    \/ WReadOne \/ WReadEnd
     \/ WWaitFull \/ WWaitIdle
     \/ MCall \/ MCopy \/ MEnd \/ MTry \/ MTryFail \/ MSwap \/ MWake
     \/ MStop \/ MStop1 \/ MStop2
@@ -327,7 +378,7 @@ Next ==
 Spec == Init /\ [][Next]_vars
 
 WorkerStep == WTop \/ WPublishEmpty \/ WLock \/ WSwap \/ WReset \/ WRead \/
-              WWaitFull \/ WWaitIdle
+              WReadOne \/ WReadEnd \/ WWaitFull \/ WWaitIdle
 
 \* The worker runs whenever it can, and its blocking acquire is granted if
 \* the mutex is free infinitely often (main holds it for an index swap
@@ -345,7 +396,9 @@ SpecFair ==
 
 TypeOK ==
     /\ arrived \in 0..MaxDatagrams
-    /\ sock \in Seq(Ids)
+    /\ chaff \in 0..MaxChaff
+    /\ sock \in Seq(Ids \cup {Chaff})
+    /\ taken \in 0..(MaxDatagrams + MaxChaff)
     /\ data \in [Banks -> Seq(Ids)]
     /\ \A b \in Banks : Len(data[b]) <= Cap
     /\ prod \in Banks
@@ -378,8 +431,14 @@ ExactDelivery ==
       \o (IF cons = NoBank THEN <<>> ELSE SubSeq(data[cons], cursor + 1, Len(data[cons])))
       \o Concat(ready)
       \o Produced
-      \o sock
+      \o Kept(sock)
     = Upto(arrived)
+
+\* The read budget: one socket read takes at most Cap datagrams, kept or
+\* discarded, so the worker is back at its quit test after a bounded read
+\* however much chaff the socket holds.
+ReadBudget ==
+    wpc = "reading" => taken <= Cap
 
 \* Main's only lock is a try: it never blocks (MTryFail ends the call).
 \* Stated as an action property: main never holds the lock across a call
