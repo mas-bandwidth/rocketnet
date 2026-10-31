@@ -34,8 +34,8 @@ the `countbeforeplace` witness is checked without it.
 
 | Case | Expected |
 |---|---|
-| `MCRNClientDelivery.cfg` (Cap 3, 4 payloads, a caller that drains every batch) | pass, 176 distinct states |
-| `MCRNClientDeliveryLazy.cfg` (the caller may leave entries unread) | pass, 902 distinct states |
+| `MCRNClientDelivery.cfg` (Cap 3, Budget 3, 4 payloads, a caller that drains every batch) | pass, 548 distinct states |
+| `MCRNClientDeliveryLazy.cfg` (the caller may leave entries unread) | pass, 3202 distinct states |
 | `MCRNClientDeliveryBrokenEndWipes.cfg` (the reset zeroes both counts) | `CountedImpliesHanded` violated |
 | `MCRNClientDeliveryBrokenEndWipesLive.cfg` (the same, under fairness) | `DeliveredReachesCaller` violated |
 | `MCRNClientDeliveryBrokenNoBeginClear.cfg` (update does not clear the counts) | `OfferedOnce` violated |
@@ -63,7 +63,7 @@ what keeps a batch kept through a connection's end from being offered by the
 next update; the same unit case checks that the update after the end offers
 nothing and counts nothing.
 
-`BrokenCountBeforePlace`, six states: `Begin`, then four `RecvPayload`. The
+`BrokenCountBeforePlace`, six states (Cap 3, Budget 4): `Begin`, then four `RecvPayload`. The
 first three fill slots 0..2; the fourth finds `num = Cap`, is counted and is
 not placed. This is the code before the batch was tied to the budget:
 `rocketnet_client_process_packet` handed the protocol a stack overflow buffer
