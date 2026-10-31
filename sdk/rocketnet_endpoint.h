@@ -35,7 +35,7 @@
 #define RN_ENDPOINT_WRITE_IDLE              0   // no write pass open
 #define RN_ENDPOINT_WRITE_RELIABLE          1   // the reliable path: retransmits and ordered progress
 #define RN_ENDPOINT_WRITE_UNRELIABLE        2   // the queued unreliable records
-#define RN_ENDPOINT_WRITE_DONE              3   // the pass is over; the next next_packet_bytes answers 0
+#define RN_ENDPOINT_WRITE_DONE              3   // the pass is over; next_packet_bytes answers 0 until the next flush or update
 
 #define RN_ENDPOINT_PACKET_NONE             0
 #define RN_ENDPOINT_PACKET_ORDERED          1   // rn_ordered_write's packet
@@ -229,8 +229,13 @@ uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint );
 //                          actions out
 // ---------------------------------------------------------------
 
+// Opens the write pass for this flush (send_packets): a pass the last flush
+// ended opens again at its reliable phase.
+void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint );
+
 // The size of the frame payload to request for the next packet of this write
-// pass, or 0 when the pass is over (the next call opens a new pass).
+// pass, or 0 when the pass is over. An ended pass answers 0 until the next
+// flush or update.
 int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now );
 
 // Writes the planned packet into payload (at least next_packet_bytes bytes)

@@ -1315,7 +1315,10 @@ void rn_message_object_send_packets( struct rn_message_object_t * object )
 
     rn_message_object_close_in_place( object );
     for ( int i = 0; i < object->num_connections; ++i )
+    {
         rn_message_flush_unreliable( object, i, false );
+        rn_endpoint_begin_flush( &object->connections[i] );
+    }
 
     // RNSlots Send, fair rotation: start at the first connection not yet
     // offered a frame, and stop when the transport's send capacity for this
