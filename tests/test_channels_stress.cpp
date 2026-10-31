@@ -50,6 +50,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "loopback_hub.h"
+#include "channels_stress_config.h"
 
 #define check rocketnet_unit_check
 
@@ -74,7 +75,7 @@
 #define STRESS_MAX_MESSAGE_BYTES        ( STRESS_HEADER_BYTES + STRESS_MAX_PATTERN_BYTES )
 #define STRESS_FRAME_SECONDS            0.01
 #define STRESS_DRAIN_FRAMES             3000
-#define STRESS_RECEIPTS_PER_UPDATE      65536      // max_message_receipts
+#define STRESS_RECEIPTS_PER_UPDATE      CHANNELS_STRESS_RECEIPTS_PER_UPDATE
 
 // the link simulator on both ends: one-way latency, jitter (which reorders),
 // loss and duplication, from the transports' fixed simulator seeds
@@ -121,23 +122,7 @@ static void stress_count_reset( stress_allocation_count_t * count )
 
 // ---- the configs -------------------------------------------------------------
 
-// the message config both ends share: every channel, a reliable window and
-// send queue that hold the reliable rounds in flight under loss, and no send
-// budget, so a refusal or a drop is a defect and never the budget
-
-static void stress_message_config( int * num_channels, int * reliable_messages_in_flight, int * send_message_buffer_bytes,
-                                   int * send_queue_messages, int * packets_in_flight, int * packets_per_update,
-                                   int * unreliable_messages_per_update, int * max_message_receipts, int channels )
-{
-    *num_channels = channels;
-    *reliable_messages_in_flight = 65536;
-    *send_message_buffer_bytes = 32 * 1024 * 1024;
-    *send_queue_messages = 65536;
-    *packets_in_flight = 16384;
-    *packets_per_update = 1024;
-    *unreliable_messages_per_update = 65536;
-    *max_message_receipts = STRESS_RECEIPTS_PER_UPDATE;
-}
+// the message config both ends share is tests/channels_stress_config.h
 
 static void stress_client_config( rocketnet_client_config_t * config, int channels, double ( *clock )( void * ) )
 {
@@ -147,7 +132,7 @@ static void stress_client_config( rocketnet_client_config_t * config, int channe
     config->step_driven = true;
     config->time_callback = clock;
     config->send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
-    stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
+    channels_stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
                            &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
                            &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
 }
@@ -161,7 +146,7 @@ static void stress_server_config( rocketnet_server_config_t * config, const uint
     config->transport = "loopback";
     config->loopback_hub = rocketnet_test_loopback_hub();
     config->per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
-    stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
+    channels_stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
                            &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
                            &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
 }
