@@ -85,6 +85,11 @@ struct rocketnet_message_client_t * rocketnet_client_message_client( struct rock
 struct rocketnet_message_server_t * rocketnet_server_message_server( struct rocketnet_server_t * server );
 
 #if ROCKETNET_DEV
+// calls sodium's misuse path, as an unavailable OS random source does: the
+// handler rocketnet_init installed runs, then sodium aborts the process. For
+// the functional case that runs it in a child process
+void rocketnet_sodium_misuse_for_test( void );
+
 // the address a created server serves for one family, after the
 // environment overrides. Writes it and returns true, or returns false when
 // the server does not serve that family. Reads no socket

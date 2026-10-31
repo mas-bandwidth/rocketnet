@@ -723,6 +723,25 @@ const char * rocketnet_platform_name( int platform_id )
     return "unknown";
 }
 
+// sodium aborts the process on a misuse it cannot return from, an
+// unavailable OS random source above all (randombytes_stir, randombytes_buf).
+// The handler runs before that abort: the process ends with one error line
+// that names the cause. Installed only on the bundled sodium, whose handler
+// slot is this library's own; a system libsodium's belongs to the application.
+
+static void rocketnet_sodium_misuse()
+{
+    rocketnet_error( "sodium refused an operation it cannot complete (the OS random source is unavailable, or a sodium misuse). the process aborts" );
+    fflush( stdout );
+}
+
+#if ROCKETNET_DEV
+void rocketnet_sodium_misuse_for_test()
+{
+    sodium_misuse();
+}
+#endif // #if ROCKETNET_DEV
+
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_OK;
@@ -779,6 +798,15 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     (void) context;
 
     const bool platform_ready = rocketnet_platform_init();
+
+    // before sodium_init, whose randombytes_stir is the first read of the OS
+    // random source; it stays installed after term, for the key generators
+    // that need no init
+#if defined( ROCKETNET_BUNDLED_SODIUM )
+    if ( platform_ready )
+        (void) sodium_set_misuse_handler( rocketnet_sodium_misuse );
+#endif // #if defined( ROCKETNET_BUNDLED_SODIUM )
+
     const bool sodium_ready = platform_ready && sodium_init() >= 0;
     if ( !sodium_ready )
     {

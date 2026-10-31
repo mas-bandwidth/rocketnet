@@ -215,8 +215,12 @@ enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
-    if ( crypto_sign_keypair( public_key, secret_key ) != 0 )
-        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    // sodium's keypair returns 0; an unavailable OS random source aborts the
+    // process inside sodium after rocketnet_init's misuse handler logs it
+
+    const int generated = crypto_sign_keypair( public_key, secret_key );
+    rocketnet_assert( generated == 0 );
+    (void) generated;
 
     return ROCKETNET_STATUS_OK;
 }
@@ -237,8 +241,12 @@ enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key,
     if ( !rocketnet_api_null_guard( public_key ) || !rocketnet_api_null_guard( secret_key ) )
         return ROCKETNET_STATUS_INVALID_ARGUMENT;
 
-    if ( crypto_box_keypair( public_key, secret_key ) != 0 )
-        return ROCKETNET_STATUS_CRYPTO_INIT_FAILED;
+    // sodium's keypair returns 0; an unavailable OS random source aborts the
+    // process inside sodium after rocketnet_init's misuse handler logs it
+
+    const int generated = crypto_box_keypair( public_key, secret_key );
+    rocketnet_assert( generated == 0 );
+    (void) generated;
 
     return ROCKETNET_STATUS_OK;
 }

@@ -234,10 +234,11 @@ enum rocketnet_status_t
     ROCKETNET_STATUS_PLATFORM_INIT_FAILED = -4,
 
     /// The crypto library failed. Init returns it when the library did not
-    /// start, and the library stays uninitialized. Server create, the key
-    /// generators and the connect token makers return it when a key or token
-    /// could not be made; nothing is created. Retrying will not help unless the
-    /// cause is corrected.
+    /// start, and the library stays uninitialized. The connect token makers
+    /// return it when a token could not be sealed; nothing is created.
+    /// Retrying will not help unless the cause is corrected. An unavailable OS
+    /// random source is not a status: the crypto library aborts the process,
+    /// after one error line once rocketnet_init has run.
 
     ROCKETNET_STATUS_CRYPTO_INIT_FAILED = -5,
 
@@ -977,8 +978,11 @@ ROCKETNET_EXPORT uint32_t rocketnet_version( void );
 /// Returns ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT,
 /// ROCKETNET_STATUS_ALREADY_INITIALIZED,
 /// ROCKETNET_STATUS_LIVE_ALLOCATIONS when the allocator changes while
-/// allocations are live, ROCKETNET_STATUS_PLATFORM_INIT_FAILED or
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// allocations are live, ROCKETNET_STATUS_PLATFORM_INIT_FAILED, or
+/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when sodium_init cannot take its own
+/// lock. Init installs a sodium misuse handler that logs one error line
+/// before sodium aborts the process; sodium aborts when the OS random source
+/// is unavailable (its first read is inside init).
 ///
 /// ROCKETNET_LOG_LEVEL sets the maximum level before init logs. Values are
 /// 0 .. 5, from ROCKETNET_LOG_LEVEL_NONE to ROCKETNET_LOG_LEVEL_SPAM. Other
@@ -1754,8 +1758,10 @@ struct rocketnet_receipt_t
 /// @param public_key Receives ROCKETNET_BACKEND_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
 /// when done.
-/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
-/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// An unavailable OS random source aborts the process after one error line
+/// (rocketnet_init installs the line; docs/ERRORS-AND-LOGGING.md).
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -1769,8 +1775,10 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uin
 /// @param public_key Receives ROCKETNET_SERVER_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
 /// when done.
-/// @return ROCKETNET_STATUS_OK, ROCKETNET_STATUS_INVALID_ARGUMENT for a NULL
-/// buffer, or ROCKETNET_STATUS_CRYPTO_INIT_FAILED.
+/// An unavailable OS random source aborts the process after one error line
+/// (rocketnet_init installs the line; docs/ERRORS-AND-LOGGING.md).
+/// @return ROCKETNET_STATUS_OK, or ROCKETNET_STATUS_INVALID_ARGUMENT for a
+/// NULL buffer.
 
 ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_server_keypair( uint8_t * public_key, uint8_t * secret_key );
 
@@ -2668,8 +2676,9 @@ ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISSING or
 /// ROCKETNET_STATUS_LOOPBACK_HUB_MISMATCH for a list naming loopback,
 /// ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION,
-/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED, ROCKETNET_STATUS_OUT_OF_MEMORY or
-/// ROCKETNET_STATUS_CRYPTO_INIT_FAILED when the server key cannot be made.
+/// ROCKETNET_STATUS_MEMORY_BUDGET_EXCEEDED or ROCKETNET_STATUS_OUT_OF_MEMORY.
+/// An unavailable OS random source aborts the process after one error line
+/// while the server key is made (rocketnet_init installs the line).
 
 ROCKETNET_EXPORT struct rocketnet_server_t * rocketnet_server_create( void * context, const char * ipv4_address, const char * ipv6_address, const struct rocketnet_server_config_t * config, enum rocketnet_status_t * status );
 
