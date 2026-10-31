@@ -452,6 +452,8 @@ MCRNChannelQueues.cfg	MCRNChannelQueues.tla	pass	-	ignore-terminal	rnchannelqueu
 MCRNChannelQueuesBrokenStale.cfg	MCRNChannelQueues.tla	invariant	NamedGenerationOnly	ignore-terminal	rnchannelqueues	required	-
 MCRNGsoHandoff.cfg	MCRNGsoHandoff.tla	pass	-	check	rngsohandoff	required	-
 MCRNGsoHandoffBrokenPublishWhileHeld.cfg	MCRNGsoHandoff.tla	invariant	NoPublishWhileHeld	check	rngsohandoff	required	-
+MCRNGsoRecvFill.cfg	MCRNGsoRecvFill.tla	pass	-	check	rngsorecvfill	required	-
+MCRNGsoRecvFillBrokenFullBatch.cfg	MCRNGsoRecvFill.tla	invariant	NoOverflow	check	rngsorecvfill	required	-
 MCRNClientRace.cfg	MCRNClientRace.tla	pass	-	check	clientrace	required	-
 MCRNClientRaceBrokenReaderFrees.cfg	MCRNClientRace.tla	invariant	FreedOnlyByCaller	check	clientrace	required	-
 MCRNClientRaceBrokenCallerUsesLoser.cfg	MCRNClientRace.tla	invariant	NoUseAfterClose	check	clientrace	required	-

@@ -77,6 +77,24 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_MAX_QUEUES * ROCKETNET_GSO_SEND_QUEUE_SIZ
 #define ROCKETNET_GSO_RECV_BATCH                                            64
 #define ROCKETNET_GSO_RECV_BUFFER_BYTES                                  65536
 
+// the most segments one GRO message carries: the kernel's UDP_GRO_CNT_MAX,
+// the receive coalescing limit
+
+#define ROCKETNET_GSO_RECV_MAX_SEGMENTS                                     64
+
+// the messages one recvmmsg of a drain may ask for, so that every segment of
+// every message it returns has a slot: the buffer's free slots, divided by
+// ROCKETNET_GSO_RECV_MAX_SEGMENTS when GRO is on, at most a batch. 0 when not
+// one more message fits: the drain stops and the datagrams wait in the
+// socket for the next buffer, never read only to be dropped.
+
+static inline int rocketnet_server_gso_recv_vlen( int num_packets, bool gro )
+{
+    const int free_slots = num_packets < ROCKETNET_GSO_RECV_QUEUE_SIZE ? ROCKETNET_GSO_RECV_QUEUE_SIZE - num_packets : 0;
+    const int messages = gro ? free_slots / ROCKETNET_GSO_RECV_MAX_SEGMENTS : free_slots;
+    return messages < ROCKETNET_GSO_RECV_BATCH ? messages : ROCKETNET_GSO_RECV_BATCH;
+}
+
 // send batching geometry: sendmmsg messages per call, GSO segments per
 // super-datagram (the kernel's UDP_MAX_SEGMENTS is 64), and a total-bytes
 // cap keeping every super-datagram inside the 16-bit UDP payload space
@@ -184,6 +202,7 @@ bool rocketnet_server_gso_test_worker_handoff();
 bool rocketnet_server_gso_test_send_refusals();
 // One receive drain fed endless discards returns within its read budget.
 bool rocketnet_server_gso_test_drain_budget();
+bool rocketnet_server_gso_test_drain_room();
 #endif // #if ROCKETNET_DEV
 
 #endif // ROCKETNET_SDK_ROCKETNET_SERVER_GSO_H

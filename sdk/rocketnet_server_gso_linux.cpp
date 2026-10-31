@@ -233,7 +233,7 @@ struct rocketnet_server_gso_t
     std::atomic<int> test_fail_send_error{ 0 };
     // the receive seam: while set, each recvmmsg of a drain is this call,
     // which fills the queue's messages and answers as recvmmsg would
-    int ( *test_receive )( struct rocketnet_server_gso_queue_t * queue, void * user ) = NULL;
+    int ( *test_receive )( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user ) = NULL;
     void * test_receive_user = NULL;
 #endif // #if ROCKETNET_DEV
 };
@@ -715,6 +715,8 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
 // ready buffer waits and a free buffer exists; otherwise nothing moves and
 // the worker retains its buffer (the queue's bounded backpressure). The
 // defect WriteHeld has no such step: the guard below is what excludes it.
+// proofs/tla/RNGsoRecvFill.tla Publish: the worker fills a free buffer from slot 0;
+// Done is a drained socket whose last buffer is published.
 static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_queue_t * queue )
 {
     struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
@@ -736,19 +738,29 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
 // One drain of the socket into the worker's buffer. Every message recvmmsg
 // returns spends one read of a budget of ROCKETNET_GSO_RECV_QUEUE_SIZE,
 // accepted or dropped, and so does an interrupted call: the drain ends when
-// the budget is spent, the buffer is full, the socket is empty or a call
-// fails, so no stream of discarded datagrams holds the worker away from its
-// publish and its quit test.
+// the budget is spent, the buffer has no room for one more message, the
+// socket is empty or a call fails, so no stream of discarded datagrams holds
+// the worker away from its publish and its quit test. Each call asks for at
+// most the messages whose every segment fits (rocketnet_server_gso_recv_vlen),
+// so nothing read is dropped for want of room.
+// proofs/tla/RNGsoRecvFill.tla Read: one message of a call, its segments
+// staged from the fill index; Vlen is rocketnet_server_gso_recv_vlen, and
+// Arrive is the kernel queueing a GRO run on the socket between calls.
 
 static void rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * queue )
 {
     struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    const bool gro = ( queue->gso->features.load( std::memory_order_relaxed ) & ROCKETNET_SERVER_GSO_FEATURE_GRO ) != 0;
 
     int reads = 0;
 
-    while ( buffer->num_packets < ROCKETNET_GSO_RECV_QUEUE_SIZE && reads < ROCKETNET_GSO_RECV_QUEUE_SIZE )
+    while ( reads < ROCKETNET_GSO_RECV_QUEUE_SIZE )
     {
-        for ( int i = 0; i < ROCKETNET_GSO_RECV_BATCH; i++ )
+        const int vlen = rocketnet_server_gso_recv_vlen( (int) buffer->num_packets, gro );
+        if ( vlen == 0 )
+            break;                              // no room for one more message: the socket keeps the rest
+
+        for ( int i = 0; i < vlen; i++ )
         {
             queue->iovecs[i].iov_base = queue->scratch[i];
             queue->iovecs[i].iov_len = ROCKETNET_GSO_RECV_BUFFER_BYTES;
@@ -770,10 +782,10 @@ static void rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
             errno = queue->gso->test_fail_receive_error.load();
         }
         else if ( queue->gso->test_receive )
-            count = queue->gso->test_receive( queue, queue->gso->test_receive_user );
+            count = queue->gso->test_receive( queue, vlen, queue->gso->test_receive_user );
         else
 #endif
-            count = recvmmsg( queue->fd, queue->messages, ROCKETNET_GSO_RECV_BATCH, MSG_DONTWAIT, NULL );
+            count = recvmmsg( queue->fd, queue->messages, (unsigned int) vlen, MSG_DONTWAIT, NULL );
 
         // every recvmmsg counts, empty ones included -- an instrument
         // that hides the misses cannot argue the syscall win. the 1ms
@@ -885,7 +897,7 @@ static void rocketnet_server_gso_drain( struct rocketnet_server_gso_queue_t * qu
             }
         }
 
-        if ( count < ROCKETNET_GSO_RECV_BATCH )
+        if ( count < vlen )
             break;                              // the socket is drained; go back to poll
     }
 }
@@ -1897,6 +1909,7 @@ enum rocketnet_server_gso_test_kind_t
     ROCKETNET_SERVER_GSO_TEST_REFUSED,
     ROCKETNET_SERVER_GSO_TEST_SHORT,
     ROCKETNET_SERVER_GSO_TEST_VALID,
+    ROCKETNET_SERVER_GSO_TEST_GRO,              // a GRO run of ROCKETNET_GSO_RECV_MAX_SEGMENTS valid segments
 };
 
 struct rocketnet_server_gso_test_source_t
@@ -1904,9 +1917,10 @@ struct rocketnet_server_gso_test_source_t
     rocketnet_server_gso_test_kind_t kind;
     int remaining; // messages before the source reports an empty socket
     int delivered;
+    int largest_vlen;
 };
 
-static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso_queue_t * queue, void * user )
+static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso_queue_t * queue, int vlen, void * user )
 {
     struct rocketnet_server_gso_test_source_t * source = (struct rocketnet_server_gso_test_source_t *) user;
     if ( source->remaining <= 0 )
@@ -1915,7 +1929,8 @@ static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso
         return -1;
     }
 
-    const int count = source->remaining < ROCKETNET_GSO_RECV_BATCH ? source->remaining : ROCKETNET_GSO_RECV_BATCH;
+    source->largest_vlen = vlen > source->largest_vlen ? vlen : source->largest_vlen;
+    const int count = source->remaining < vlen ? source->remaining : vlen;
 
     for ( int i = 0; i < count; i++ )
     {
@@ -1945,6 +1960,18 @@ static int rocketnet_server_gso_test_source_receive( struct rocketnet_server_gso
             bytes = 0;
         else if ( source->kind == ROCKETNET_SERVER_GSO_TEST_SHORT )
             bytes = 1;
+        else if ( source->kind == ROCKETNET_SERVER_GSO_TEST_GRO )
+        {
+            const int segment_bytes = ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES;
+            bytes = segment_bytes * ROCKETNET_GSO_RECV_MAX_SEGMENTS;
+            header->msg_control = queue->controls[i];
+            header->msg_controllen = sizeof( queue->controls[i] );
+            struct cmsghdr * cmsg = CMSG_FIRSTHDR( header );
+            cmsg->cmsg_level = IPPROTO_UDP;
+            cmsg->cmsg_type = UDP_GRO;
+            cmsg->cmsg_len = CMSG_LEN( sizeof( int ) );
+            memcpy( CMSG_DATA( cmsg ), &segment_bytes, sizeof( segment_bytes ) );
+        }
         memset( queue->scratch[i], 'v', (size_t) bytes );
         queue->messages[i].msg_len = (unsigned int) bytes;
     }
@@ -1976,7 +2003,7 @@ bool rocketnet_server_gso_test_drain_budget()
         buffer->dropped_size = 0;
         buffer->dropped_source = 0;
 
-        struct rocketnet_server_gso_test_source_t source = { kind, 1000000, 0 };
+        struct rocketnet_server_gso_test_source_t source = { kind, 1000000, 0, 0 };
         gso->test_receive_user = &source;
         rocketnet_server_gso_drain( queue );
 
@@ -1986,11 +2013,80 @@ bool rocketnet_server_gso_test_drain_budget()
     }
 
     buffer->num_packets = 0;
-    struct rocketnet_server_gso_test_source_t source = { ROCKETNET_SERVER_GSO_TEST_VALID, 3, 0 };
+    struct rocketnet_server_gso_test_source_t source = { ROCKETNET_SERVER_GSO_TEST_VALID, 3, 0, 0 };
     gso->test_receive_user = &source;
     rocketnet_server_gso_drain( queue );
     valid = valid && source.delivered == 3 && buffer->num_packets == 3 &&
             buffer->packet_bytes[2] == ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES && buffer->packet_data[2][0] == (uint8_t) 'v';
+
+    // no worker ran, so stop is complete once both stopped flags are set
+
+    gso->test_receive = NULL;
+    gso->test_receive_user = NULL;
+    rocketnet_server_gso_stop( gso );
+    queue->stopped.store( true, std::memory_order_release );
+    gso->send_stopped.store( true, std::memory_order_release );
+    valid = valid && rocketnet_server_gso_stopped( gso );
+    rocketnet_server_gso_test_destroy( gso );
+
+    return valid;
+}
+
+// The drain reads only what fits, on the fixture with the receive seam: each
+// recvmmsg asks for no more messages than the buffer has slots for every
+// segment of (ROCKETNET_GSO_RECV_MAX_SEGMENTS each with GRO), and a buffer
+// with no room for one more message reads nothing, so a full batch is never
+// read into a nearly full buffer and dropped as overflow. The datagrams the
+// drain did not read stay with the source, the socket, for the next buffer.
+
+bool rocketnet_server_gso_test_drain_room()
+{
+    struct rocketnet_server_gso_t * gso = rocketnet_server_gso_test_create();
+    if ( !gso )
+        return false;
+
+    struct rocketnet_server_gso_queue_t * queue = &gso->queues[0];
+    struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
+    gso->test_receive = rocketnet_server_gso_test_source_receive;
+
+    bool valid = true;
+
+    // GRO on, one slot free: not one message of 64 segments fits
+
+    gso->features.fetch_or( ROCKETNET_SERVER_GSO_FEATURE_GRO, std::memory_order_relaxed );
+    buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE - 1;
+    buffer->dropped_overflow = 0;
+    struct rocketnet_server_gso_test_source_t gro = { ROCKETNET_SERVER_GSO_TEST_GRO, ROCKETNET_GSO_RECV_BATCH, 0, 0 };
+    gso->test_receive_user = &gro;
+    rocketnet_server_gso_drain( queue );
+    valid = valid && gro.delivered == 0 && gro.remaining == ROCKETNET_GSO_RECV_BATCH && buffer->dropped_overflow == 0 &&
+            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE - 1;
+
+    // room for two runs and part of a third: two are read, every segment
+    // staged, and the drain stops with the rest unread
+
+    buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE - ( 2 * ROCKETNET_GSO_RECV_MAX_SEGMENTS + 5 );
+    rocketnet_server_gso_drain( queue );
+    valid = valid && gro.delivered == 2 && gro.largest_vlen == 2 && buffer->dropped_overflow == 0 &&
+            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE - 5;
+
+    // an empty buffer asks for a whole batch
+
+    buffer->num_packets = 0;
+    gro.largest_vlen = 0;
+    rocketnet_server_gso_drain( queue );
+    valid = valid && gro.largest_vlen == ROCKETNET_GSO_RECV_BATCH && buffer->dropped_overflow == 0 &&
+            buffer->num_packets == (uint32_t) ( ( ROCKETNET_GSO_RECV_BATCH - 2 ) * ROCKETNET_GSO_RECV_MAX_SEGMENTS );
+
+    // GRO off, three slots free: three datagrams are read, the rest wait
+
+    gso->features.fetch_and( ~ROCKETNET_SERVER_GSO_FEATURE_GRO, std::memory_order_relaxed );
+    buffer->num_packets = ROCKETNET_GSO_RECV_QUEUE_SIZE - 3;
+    struct rocketnet_server_gso_test_source_t plain = { ROCKETNET_SERVER_GSO_TEST_VALID, ROCKETNET_GSO_RECV_BATCH, 0, 0 };
+    gso->test_receive_user = &plain;
+    rocketnet_server_gso_drain( queue );
+    valid = valid && plain.delivered == 3 && plain.largest_vlen == 3 && buffer->dropped_overflow == 0 &&
+            buffer->num_packets == ROCKETNET_GSO_RECV_QUEUE_SIZE;
 
     // no worker ran, so stop is complete once both stopped flags are set
 
