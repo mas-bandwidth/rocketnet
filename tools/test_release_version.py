@@ -19,7 +19,8 @@ start = workflow.index('          set -euo pipefail')
 end = workflow.index('          exit $fail', start) + len('          exit $fail')
 check = textwrap.dedent(workflow[start:end])
 extract = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('version=$(sed '))
-drift_start = workflow.index('          newest_tag=$(git tag --list')
+drift_start = workflow.index('          newest_tag=$(git ')
+select_newest = next(line.strip() for line in workflow.splitlines() if line.strip().startswith('newest_tag=$(git '))
 drift_end = workflow.index('\n', workflow.index('echo "::warning::HEAD carries', drift_start))
 drift = 'set -euo pipefail\n' + textwrap.dedent(workflow[drift_start:drift_end])
 def fixture(full, numeric='1.0.0', dev_full='dev', dev_numeric='255.255.255'):
@@ -126,4 +127,46 @@ with tempfile.TemporaryDirectory(prefix='rocketnet-drift-') as tmp:
     commit('sdk/rocketnet.h', fixture('v1.0.0-preview-2'), 'bump to v1.0.0-preview-2')
     drift_check(True, '::warning::HEAD carries 1 wire-affecting commit(s) past v1.0.0-preview-1. The version is already bumped to v1.0.0-preview-2')
     print('Drift: wire commit with the label bumped accepted with a warning')
-print('24 release version fixtures passed')
+
+# The newest tag: a final release sorts above its own prereleases, and
+# prerelease numbers sort numerically. Past a final release, a wire commit with
+# the label still at that release is refused.
+with tempfile.TemporaryDirectory(prefix='rocketnet-newest-') as tmp:
+    root = Path(tmp)
+    env = dict(os.environ, GIT_AUTHOR_NAME='fixture', GIT_AUTHOR_EMAIL='fixture@example.invalid',
+               GIT_COMMITTER_NAME='fixture', GIT_COMMITTER_EMAIL='fixture@example.invalid',
+               GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1',
+               GITHUB_STEP_SUMMARY=str(root / 'summary.md'))
+    repo = root / 'repo'
+    (repo / 'sdk').mkdir(parents=True)
+
+    def git(*args):
+        subprocess.run(['git', *args], cwd=repo, env=env, check=True, capture_output=True)
+
+    def commit(path, text, message):
+        (repo / path).write_text(text)
+        git('add', path)
+        git('commit', '-q', '-m', message)
+
+    def newest():
+        result = subprocess.run(['bash', '-c', select_newest + '\nprintf "%s" "$newest_tag"'], cwd=repo, env=env,
+                                text=True, capture_output=True, check=True)
+        return result.stdout
+
+    git('init', '-q', '-b', 'main')
+    for label in ('v1.0.0-preview-5', 'v1.0.0-preview-9', 'v1.0.0-preview-10'):
+        commit('sdk/rocketnet.h', fixture(label), 'release ' + label)
+        git('tag', label)
+    assert newest() == 'v1.0.0-preview-10', newest()
+    print('Newest tag: v1.0.0-preview-10 above v1.0.0-preview-9')
+    commit('sdk/rocketnet.h', fixture('v1.0.0'), 'release v1.0.0')
+    git('tag', 'v1.0.0')
+    assert newest() == 'v1.0.0', newest()
+    print('Newest tag: v1.0.0 above its prereleases')
+    commit('sdk/rocketnet_protocol.cpp', '// one line\n', 'touch the protocol layer')
+    result = subprocess.run(['bash', '-c', drift], cwd=repo, env=env, text=True, capture_output=True)
+    expect = '::error::HEAD carries 1 wire-affecting commit(s) past v1.0.0 and the shipping version is still v1.0.0'
+    if result.returncode == 0 or expect not in result.stdout:
+        raise AssertionError(f'drift past v1.0.0: exit {result.returncode}\n{result.stdout}\n{result.stderr}')
+    print('Drift: wire commit past v1.0.0 with the label unbumped rejected')
+print('27 release version fixtures passed')

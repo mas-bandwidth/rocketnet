@@ -156,7 +156,9 @@ jobs:
         run: |
           set -euo pipefail
 
-          newest_tag=$(git tag --list 'v*' --sort=-v:refname | head -n1)
+          # versionsort.suffix=- sorts a prerelease (v1.0.0-preview-5) below
+          # its final release (v1.0.0); git's default puts it above.
+          newest_tag=$(git -c versionsort.suffix=- tag --list 'v*' --sort=-v:refname | head -n1)
           if [ -z "$newest_tag" ]; then
             echo "::error::No v* tag is visible in this checkout, so there is no release to compare against. The checkout must fetch tags."
             exit 1
