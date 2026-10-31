@@ -49,9 +49,12 @@
 // the DEV ON client, which was 22971807 and is now 22971871; the contract
 // audit adds 64 more, 22971935 by the same legs. The DEV OFF leg
 // stayed within its figure.
+// Read 2026-10-31 from the windows Release (a) and (c) CI legs, the
+// client's heap in its create-time block: client was 22971935, now
+// 23602543.
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971935 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 23602543 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596899594 )
 #define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
