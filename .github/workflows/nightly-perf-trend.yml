@@ -1,0 +1,181 @@
+# THE NIGHTLY PERFORMANCE TREND.
+#
+# ci.yml's instruction-gate job gates instruction counts on every commit
+# against benchmarks/instruction_baseline.json. What no workflow keeps is the
+# trend: the same numbers night after night on the same hardware, so a slow
+# drift inside the gate's 2% and a wall-clock change the gate cannot see are
+# both visible. This workflow measures nothing new. Each night it runs the two
+# measurements the repository already has and records them:
+#
+#   - tools/check_instructions.py over build/instruction_count (cachegrind;
+#     benchmarks/instruction_count.md), recorded with the checker's verdict.
+#     Gating stays with the per-commit job; this records.
+#   - the transport bench campaign, benchmarks/run_all.sh
+#     (benchmarks/PROTOCOL.md): the harness-honesty pace plants, then a 30 s
+#     warm-up and five 60 s windows per harness. A refusal of the campaign's
+#     own (a failed plant, an invalid window, a harness that aborts) fails the
+#     night. Wall-clock pps is report-only.
+#
+# tools/perf_trend (Go) appends the night to perf-trend.jsonl and prints it
+# beside the previous night to the job summary: instruction counts as a
+# percentage of the night before, pps rows the way PROTOCOL.md compares two
+# sittings (a median inside the other's min/max spread is tied, outside it is
+# above or below). The history is carried from night to night in the Actions
+# cache (perf-trend-<os>-<ref>-<run>, the newest restored first) and each
+# night's history, record and raw logs are uploaded as perf-trend-<os>-<run>
+# for 90 days.
+#
+# Where, fixed so that nights compare:
+#   - Linux: amd-2's quiet runner. The bench pair is pinned the way
+#     PROTOCOL.md says, cores 15 (receive) and 14 (send) at nice 10, two
+#     physical cores of the 8. The toolchain is whatever amd-2 has (gcc 15.2
+#     and valgrind 3.26 when this was written); each record carries the
+#     checker's verdict, and a toolchain the baseline was not pinned with
+#     says "not comparable" in the record rather than a count.
+#   - macOS: mini-m5, the darwin harnesses (make -C benchmarks darwin),
+#     unpinned (macOS has no userspace affinity API). No instruction count:
+#     valgrind does not run on Apple silicon.
+#   - Windows: none. The bench harnesses and run_all.sh are Linux and darwin
+#     only, and the instruction count needs valgrind.
+#
+# Wall time: about 30 minutes per leg (the honesty plants, then four matrix
+# rows of 5.5 minutes on each OS).
+
+name: nightly-perf-trend
+
+on:
+  schedule:
+    - cron: "10 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
+jobs:
+  perf-trend:
+    name: perf trend (${{ matrix.os }})
+    runs-on: ${{ fromJSON(matrix.runner) }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        ref: ${{ github.event_name == 'workflow_dispatch' && fromJSON(format('["{0}"]', github.ref_name)) || fromJSON(vars.ROCKETNET_NIGHTLY_REFS || '["main"]') }}
+        os: [linux, macos]
+        include:
+          - os: linux
+            runner: '["self-hosted", "Linux", "X64", "fleet", "rocketnet-quiet", "amd-2"]'
+          - os: macos
+            runner: '["self-hosted", "macOS", "ARM64", "rocketnet-macos", "mini-m5"]'
+    concurrency:
+      group: nightly-perf-trend-${{ matrix.ref }}-${{ matrix.os }}
+      cancel-in-progress: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          ref: ${{ matrix.ref }}
+
+      - name: Check the fleet's tools are present
+        run: |
+          set -euo pipefail
+          missing=0
+          tools="go make python3"
+          if [ "${{ matrix.os }}" = linux ]; then tools="$tools cmake gcc g++ xxd pkg-config valgrind taskset"; else tools="$tools clang"; fi
+          for tool in $tools; do
+            if ! command -v "$tool" >/dev/null 2>&1; then
+              echo "TOOL-MISSING $tool (any) (missing) on $RUNNER_NAME"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Build the trend recorder and run its cases
+        run: |
+          cd tools/perf_trend
+          go test -count=1 ./...
+          go build -o "$RUNNER_TEMP/perf_trend" .
+
+      - name: Build instruction_count (Release)
+        if: matrix.os == 'linux'
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target instruction_count
+
+      # recorded, never gated here: the per-commit instruction-gate job gates
+      - name: Count instructions (cachegrind)
+        if: matrix.os == 'linux'
+        run: |
+          mkdir -p perf
+          python3 tools/check_instructions.py --bin ./build/instruction_count > perf/instructions.txt 2>&1 || true
+          cat perf/instructions.txt
+
+      - name: Build the bench harnesses
+        run: |
+          if [ "${{ matrix.os }}" = linux ]; then
+            make -C benchmarks bench_portable bench_gso bench_uring_system
+            # the static feature probe is the campaign's host report; run_all.sh records its absence
+            make -C benchmarks probe || echo "the static probe did not build on $RUNNER_NAME"
+          else
+            make -C benchmarks darwin
+          fi
+
+      - name: Run the bench campaign
+        working-directory: benchmarks
+        run: |
+          if [ "${{ matrix.os }}" = linux ]; then
+            ./run_all.sh "$GITHUB_WORKSPACE/perf/bench" 15 14
+          else
+            ./run_all.sh "$GITHUB_WORKSPACE/perf/bench"
+          fi
+
+      - name: Restore the trend history
+        if: always()
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: perf/history
+          key: perf-trend-${{ matrix.os }}-${{ matrix.ref }}-${{ github.run_id }}
+          restore-keys: perf-trend-${{ matrix.os }}-${{ matrix.ref }}-
+
+      - name: Record the night
+        if: always()
+        env:
+          REF: ${{ matrix.ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p perf/history
+          instructions=()
+          if [ -f perf/instructions.txt ]; then instructions=(--instructions perf/instructions.txt); fi
+          "$RUNNER_TEMP/perf_trend" --os "${{ matrix.os }}" --host "$RUNNER_NAME" --ref "$REF" \
+            --commit "$(git rev-parse HEAD)" --date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --bench perf/bench/run.txt "${instructions[@]}" \
+            --history perf/history/perf-trend.jsonl \
+            --out perf/perf-trend.jsonl --record-out perf/record.json | tee -a "$GITHUB_STEP_SUMMARY"
+          cp perf/perf-trend.jsonl perf/history/perf-trend.jsonl
+
+      - name: Save the trend history
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: perf/history
+          key: perf-trend-${{ matrix.os }}-${{ matrix.ref }}-${{ github.run_id }}
+
+      - name: Upload the night
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: perf-trend-${{ matrix.os }}-${{ github.run_id }}
+          path: |
+            perf/perf-trend.jsonl
+            perf/record.json
+            perf/instructions.txt
+            perf/bench/
+          retention-days: 90
+          if-no-files-found: warn
