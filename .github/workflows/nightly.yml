@@ -15,8 +15,11 @@
 #
 # A RED NIGHT HERE IS A GATE THAT WOULD HAVE GONE RED ON A COMMIT. That makes
 # it different from a red soak, which is a finding to investigate. This one
-# has a commit range and a bisect, and whoever is on the estate that morning
-# owns walking it back.
+# has a commit range and a bisect: nightly-watch.yml prints, for every red job,
+# the newest earlier night it was green and a `git bisect start <bad> <good>`
+# line, and fails on any red job tools/nightly_dispositions.txt does not give
+# to an open pull request. Whoever is on the estate that morning owns walking
+# it back, starting from that line.
 #
 # What is here, and why it is not on the per-commit gate:
 #
@@ -615,8 +618,8 @@ jobs:
   # this leg catches the next morning instead of on the commit; everything
   # else about the check still gates.
   #
-  # A red here has a commit range and a bisect. Whoever is on the estate that
-  # morning owns walking it back.
+  # A red here has a commit range and a bisect (nightly-watch.yml prints both).
+  # Whoever is on the estate that morning owns walking it back.
 
   windows-transport-extension:
     name: external transport backend / windows-2025
