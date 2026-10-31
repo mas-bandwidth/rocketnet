@@ -254,7 +254,8 @@ struct rocketnet_client_legacy_receive_state_t
 
 /*
     The declaration manifest: the struct is declared from this list, so a
-    member exists only as an entry here. The RESET/KEEP inventory in
+    member exists only as an entry here, besides the tail padding the struct
+    writes out after them. The RESET/KEEP inventory in
     rocketnet_connection_reset.h is compared with it by name, and a member with
     no decision is named in test_connection_reset_inventory_covers_every_field.
 */
@@ -305,12 +306,51 @@ struct rocketnet_client_legacy_receive_state_t
     X( current_stats_index, int current_stats_index )
 // clang-format on
 
+#define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
+
+// The manifest's members alone, never constructed: it measures where the last
+// member ends, so the transport can write its tail padding out. The measure
+// keeps its own tail padding implicit, so MSVC C4324 is off for it alone.
+#if defined( _MSC_VER )
+#pragma warning( push )
+#pragma warning( disable : 4324 )
+#endif // #if defined( _MSC_VER )
+struct rocketnet_client_transport_members_t
+{
+    ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE )
+};
+#if defined( _MSC_VER )
+#pragma warning( pop )
+#endif // #if defined( _MSC_VER )
+
+// the bytes of the manifest's members, padding between them included
+#define ROCKETNET_CLIENT_TRANSPORT_MEMBER_BYTES ( offsetof( rocketnet_client_transport_members_t, current_stats_index ) + sizeof( int ) )
+#define ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT    alignof( rocketnet_client_transport_members_t )
+
 struct rocketnet_client_transport_t
 {
-#define ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE( name, declaration ) declaration;
     ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE )
-#undef ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE
+    // the rest of the last cache line, explicit so the compiler adds no tail
+    // padding (MSVC C4324); a whole cache line when the members end on one
+    uint8_t padding[ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT - ROCKETNET_CLIENT_TRANSPORT_MEMBER_BYTES % ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT];
 };
+
+#undef ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS_DECLARE
+
+static_assert( alignof( rocketnet_client_transport_t ) == 64 && ROCKETNET_CLIENT_TRANSPORT_ALIGNMENT == 64,
+               "the transport is cache-line aligned by its leading members" );
+static_assert( offsetof( rocketnet_client_transport_t, payload_ring ) == sizeof( ( (rocketnet_client_transport_t *) 0 )->packet_leases ) &&
+                   offsetof( rocketnet_client_transport_t, payload_ring ) % 64 == 0,
+               "the payload rings start on a cache line with no implicit padding" );
+static_assert( offsetof( rocketnet_client_transport_t, context ) ==
+                   offsetof( rocketnet_client_transport_t, payload_ring ) + sizeof( ( (rocketnet_client_transport_t *) 0 )->payload_ring ),
+               "the cache-line-aligned members leave no implicit padding after them" );
+static_assert( offsetof( rocketnet_client_transport_t, current_stats_index ) == offsetof( rocketnet_client_transport_members_t, current_stats_index ) &&
+                   offsetof( rocketnet_client_transport_t, padding ) == ROCKETNET_CLIENT_TRANSPORT_MEMBER_BYTES,
+               "current_stats_index is the last member, and the padding follows it" );
+static_assert( sizeof( rocketnet_client_transport_t ) == offsetof( rocketnet_client_transport_t, padding ) + sizeof( ( (rocketnet_client_transport_t *) 0 )->padding ) &&
+                   sizeof( rocketnet_client_transport_t ) % 64 == 0,
+               "the transport has no implicit tail padding" );
 
 // The members construction does not zero. Three are buffers: their bytes
 // are written before they are read, at the count or ring index that names
@@ -361,11 +401,14 @@ static void rocketnet_client_transport_construct( rocketnet_client_transport_t *
 #if ROCKETNET_DEV
 bool rocketnet_client_transport_inventory_matches_for_test( char * failure, size_t failure_bytes )
 {
+    // the tail padding follows the manifest's members and is never written: KEEP
 #define TRANSPORT_MEMBER( field, declaration ) ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, field, -1 ),
-    static const rocketnet_reset_member_t members[] = { ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( TRANSPORT_MEMBER ) };
+    static const rocketnet_reset_member_t members[] = { ROCKETNET_CLIENT_TRANSPORT_LAYOUT_FIELDS( TRANSPORT_MEMBER )
+                                                            ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, padding, -1 ) };
 #undef TRANSPORT_MEMBER
 #define TRANSPORT_DECISION( decision, field ) ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, field, #decision[0] == 'R' ),
-    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( TRANSPORT_DECISION ) };
+    static const rocketnet_reset_member_t decisions[] = { ROCKETNET_CLIENT_TRANSPORT_CONNECTION_FIELDS( TRANSPORT_DECISION )
+                                                              ROCKETNET_RESET_MEMBER( rocketnet_client_transport_t, padding, 0 ) };
 #undef TRANSPORT_DECISION
     return rocketnet_reset_inventory_matches( "rocketnet_client_transport_t", members, sizeof( members ) / sizeof( members[0] ),
                                               decisions, sizeof( decisions ) / sizeof( decisions[0] ), 0,
