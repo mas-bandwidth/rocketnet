@@ -57,10 +57,6 @@
    :title "ClientConnection KeysErasedWhenDown matches the code"
    :text "Audit 66. Branch rowan/model-clientkeys at 5bbf6e7a: the model is done. Owed: the clientconnection group's RUNS.tsv on a quiet, fast Linux host (MCClientConnectionReachSFirstkind runs 117-132 s on captain against the 110 s budget, 50 s on Linux)."
    :date "2026-10-31" :origin "Audit item 66")
-  (item "request-one-hash" :group "finish" :area "rocketnet"
-   :title "One address hash per connection request"
-   :text "Audit 97. Branch rowan/sdkfu-request-one-hash at d3c2edfb: the resend shape is 15% faster (120.6 to 102.8 ns per request on intel). Owed: a macOS unit run; put the numbers in the commit."
-   :date "2026-10-31" :origin "Audit item 97")
   (item "live-matrix-flake" :group "finish" :area "tests"
    :title "Live message matrix: a late probe copy counts as its probe"
    :text "Audit 59. Branch rowan/low-matrix-flake at a1693544, never built. Owed: functional build and repeated runs on Linux and macOS, a negative control, and a reproduction on main with injected latency."

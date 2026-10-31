@@ -320,14 +320,18 @@ static void rocketnet_server_release_mapping_claim( struct rocketnet_server_prot
 // moves it to the next, the cheap rungs before the crypto ones.
 // proofs/tla/ServerConnection.tla ServerRecvRequest
 // proofs/tla/RNSecurityTables.tla Request
-int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
-                                                          const struct rocketnet_address_t * from,
-                                                          const uint8_t * packet_data,
-                                                          int packet_bytes,
-                                                          uint64_t current_timestamp,
-                                                          double current_time,
-                                                          uint8_t * response_packet,
-                                                          int * response_bytes )
+// known_mapping_index is the caller's encryption-map lookup for from, or
+// ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP and the existing-mapping rung looks
+// it up: a request pays one keyed address hash either way.
+static int rocketnet_server_protocol_process_connection_request_known( struct rocketnet_server_protocol_t * server,
+                                                                       const struct rocketnet_address_t * from,
+                                                                       int known_mapping_index,
+                                                                       const uint8_t * packet_data,
+                                                                       int packet_bytes,
+                                                                       uint64_t current_timestamp,
+                                                                       double current_time,
+                                                                       uint8_t * response_packet,
+                                                                       int * response_bytes )
 {
     rocketnet_assert( server );
     rocketnet_assert( from );
@@ -375,7 +379,8 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     int replace_index = -1;
 
     {
-        int existing = rocketnet_encryption_map_find( server->encryption_map, from );
+        const int existing = known_mapping_index != ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP ? known_mapping_index
+                                                                                           : rocketnet_encryption_map_find( server->encryption_map, from );
         if ( existing != -1 )
         {
             struct rocketnet_encryption_mapping_t * mapping = rocketnet_encryption_map_entry( server->encryption_map, existing );
@@ -1158,6 +1163,19 @@ struct rocketnet_sealed_type_counters_t
       ROCKETNET_COUNTER_##type##_DID_NOT_OPEN, -1, ROCKETNET_COUNTER_##type##_NOT_CONNECTED, ROCKETNET_COUNTER_##type##_BAD_ACK_BLOCK, \
       ROCKETNET_COUNTER_##type##_WRONG_OPENED_SIZE }
 
+int rocketnet_server_protocol_process_connection_request( struct rocketnet_server_protocol_t * server,
+                                                          const struct rocketnet_address_t * from,
+                                                          const uint8_t * packet_data,
+                                                          int packet_bytes,
+                                                          uint64_t current_timestamp,
+                                                          double current_time,
+                                                          uint8_t * response_packet,
+                                                          int * response_bytes )
+{
+    return rocketnet_server_protocol_process_connection_request_known( server, from, ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP, packet_data, packet_bytes,
+                                                                       current_timestamp, current_time, response_packet, response_bytes );
+}
+
 // The sealed types. known_mapping_index is the caller's lookup for this
 // address, or ROCKETNET_SERVER_MAPPING_NOT_LOOKED_UP. The packet opens into
 // opened (ROCKETNET_RECEIVE_CEILING bytes, the caller's): an accepted
@@ -1608,9 +1626,9 @@ int rocketnet_server_protocol_process_received( struct rocketnet_server_protocol
     }
 
     if ( packet_type == ROCKETNET_CONNECTION_REQUEST_PACKET )
-        return rocketnet_server_protocol_process_connection_request( server, from, packet_data, packet_bytes,
-                                                                     current_timestamp, current_time,
-                                                                     response_packet, response_bytes );
+        return rocketnet_server_protocol_process_connection_request_known( server, from, known_mapping_index, packet_data, packet_bytes,
+                                                                           current_timestamp, current_time,
+                                                                           response_packet, response_bytes );
 
     // a server never processes what only a server sends -- denied,
     // challenge, cookie arriving here are reflections or junk
