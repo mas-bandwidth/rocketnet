@@ -90,7 +90,7 @@ static const char * const rn_part_names[RN_NUM_PARTS] = {
 
 static const char * const rn_part_formulas[RN_NUM_PARTS] = {
     "40C",
-    "16C",
+    "24C",
     "32W",
     "8W",
     "32W",
@@ -117,28 +117,11 @@ const char * rn_region_part_name( int part )
 }
 #endif // #if ROCKETNET_DEV
 
-// Section 14: each part is its formula's term exactly, at a 64-aligned offset
-// (4: ROCKETNET_ALLOCATION_ALIGNMENT), so the ring base is 16-aligned and the
-// exact region is the formula plus at most 63 bytes per part.
-
-bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout )
+bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_region_reserve_sizes_t * sizes )
 {
-    rocketnet_assert( layout );
+    rocketnet_assert( config );
+    rocketnet_assert( sizes );
 
-    rocketnet_message_config_t defaults;
-
-    if ( !config )
-    {
-        rocketnet_message_default_config( &defaults );
-
-        config = &defaults;
-    }
-
-    if ( !rocketnet_message_validate_config( config ) )
-        return false;
-
-    const uint64_t C = (uint64_t) config->num_channels;
-    const uint64_t W = (uint64_t) config->reliable_messages_in_flight;
     const uint64_t B = (uint64_t) config->receive_message_buffer_bytes;
 
     // Local create-time payload reserve. The documented typical payloads are
@@ -164,7 +147,11 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
         // config past that is refused whole
 
         if ( count > RN_HANDLE_INDEX )
+        {
+            rocketnet_error( "message config refused: the resend reserve of %" PRIu64 " bytes (send rate %d kbps for message_resend_delay_max_ms %d) needs %" PRIu64 " send store chunks of %u bytes, more than the %u a class holds",
+                             reserve, kbps, config->message_resend_delay_max_ms, count, chunk_bytes[c], RN_HANDLE_INDEX );
             return false;
+        }
 
         chunks[c] = (uint32_t) count;
         S += rn_align64( count * ( chunk_bytes[c] + sizeof( uint32_t ) ) );
@@ -174,8 +161,61 @@ bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layo
 
     if ( S < (uint64_t) config->send_message_buffer_bytes )
         S = (uint64_t) config->send_message_buffer_bytes;
+
     if ( Q >= UINT32_MAX || SR > UINT32_MAX )
+    {
+        rocketnet_error( "message config refused: the resend reserve of %" PRIu64 " bytes (send rate %d kbps for message_resend_delay_max_ms %d) needs %" PRIu64 " send descriptors (below %u) and %" PRIu64 " receive reserve bytes (at most %u)",
+                         reserve, kbps, config->message_resend_delay_max_ms, Q, UINT32_MAX, SR, UINT32_MAX );
         return false;
+    }
+
+    sizes->Q = Q;
+    sizes->SR = SR;
+    sizes->S = S;
+    for ( int c = 0; c < RN_STORE_NUM_CLASSES; c++ )
+        sizes->chunks[c] = chunks[c];
+
+    return true;
+}
+
+// Section 14: each part is its formula's term exactly, at a 64-aligned offset
+// (4: ROCKETNET_ALLOCATION_ALIGNMENT), so the ring base is 16-aligned and the
+// exact region is the formula plus at most 63 bytes per part.
+
+bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout )
+{
+    rocketnet_assert( layout );
+
+    rocketnet_message_config_t defaults;
+
+    if ( !config )
+    {
+        rocketnet_message_default_config( &defaults );
+
+        config = &defaults;
+    }
+
+    if ( !rocketnet_message_validate_config( config ) )
+        return false;
+
+    const uint64_t C = (uint64_t) config->num_channels;
+    const uint64_t W = (uint64_t) config->reliable_messages_in_flight;
+    const uint64_t B = (uint64_t) config->receive_message_buffer_bytes;
+
+    // the validation above has already refused a config whose reserve does
+    // not fit, so this cannot fail
+
+    rn_region_reserve_sizes_t sizes;
+    if ( !rn_region_reserve_sizes( config, &sizes ) )
+    {
+        rocketnet_assert( 0 );
+        return false;
+    }
+
+    const uint64_t Q = sizes.Q;
+    const uint64_t SR = sizes.SR;
+    const uint64_t S = sizes.S;
+    const uint32_t * chunks = sizes.chunks;
 
     const uint64_t P = (uint64_t) config->packets_in_flight;
     const uint64_t Du = (uint64_t) config->unreliable_messages_per_update;

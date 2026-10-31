@@ -2712,12 +2712,12 @@ The server turns a connection request into an encryption mapping, and a connecti
 
 1. On a connection request, a server MUST apply the checks below in the order given, and MUST stop at the first that refuses.
 2. A server MUST ignore a request whose size is not the request wire size, counting `CONNECTION_REQUEST_WRONG_SIZE`.
-3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot MUST be answered with that mapping's stored connection challenge packet, byte-identical, regardless of the request's connection salt, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4).
+3. A server MUST then ignore a request from a source address that is already connected, counting `CONNECTION_REQUEST_ALREADY_CONNECTED`. A request from a source address that holds a mapping without a connected slot, and whose connection salt or token identifier matches the mapping's, MUST be answered with that mapping's stored connection challenge packet, byte-identical, counting `CONNECTION_REQUEST_CHALLENGE_RESENT`, and it MUST NOT create a second mapping or derive new keys for that address. Only a request whose connection salt matches the mapping's refreshes the mapping's half-open idle deadline ([t17 Timing and defaults](#t17) rule 4). A request from that address whose connection salt and token identifier both differ from the mapping's is a new attempt: it MUST go through every later rule, and it MUST be refused, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`, when its token identifier is bound to any source address, its own included. Only once it has passed every check, its signature verified, does it replace the half-open mapping: the server releases that mapping's request claim, removes it, and creates the new mapping in its place, which needs no free mapping slot. A refused request leaves the half-open mapping as it was. A mapping with a connected slot is never replaced.
 4. A server MUST then ignore a request whose version is not the protocol version, and then one whose protocol id is not the server's.
 5. A server MUST then refuse a token whose expire timestamp is not later than the server's current time, counting `CONNECTION_REQUEST_TOKEN_EXPIRED`, and then a token whose create timestamp is more than the creation skew after the server's current time, counting `CONNECTION_REQUEST_TOKEN_CREATED_IN_FUTURE`. Such a token MUST NOT be answered. A server places no limit on a token's lifetime; `CONNECTION_REQUEST_TOKEN_LIFETIME_TOO_LONG` is a retired counter and stays zero.
 6. A server MUST then ignore a request whose timeout is zero or negative, then one whose address flags name no family or set a bit above bit 1, then one whose token address of the family the request arrived on (a v4-mapped source is IPv4) is not one this server serves, the token's other-family address unread, and then one whose server public key is not this server's. It MUST NOT answer a request that rules 2, 4, 5 or 6 refuse.
 7. A server MUST require a valid return cookie before any asymmetric work, and MUST answer a request without one, with a forged one, or with an expired one with a fresh connection cookie packet.
-8. A server MUST refuse, unanswered, a request whose cookie is valid when the per-update handshake work budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`.
+8. A server MUST check the per-update handshake work budget after the cheap rungs of rule 9 and immediately before the signature verify of rule 10, and MUST refuse, unanswered, a request that reaches that check when the budget is spent, counting `CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED`. Only a request that reaches the check spends budget; a request refused by an earlier rung spends none.
 9. A server MUST apply the cheap rungs below in the order given, before it verifies the signature in rule 10, and MUST stop at the first that refuses:
     1. Ignore, unanswered, a request whose token identifier is bound to a different source address, counting `CONNECTION_REQUEST_TOKEN_ALREADY_USED`.
     2. Ignore, unanswered, a request when the failed-signature budget of the current window is spent and the source has a recorded failure in that window, counting `CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT`. A source with no recorded failure in the window is not refused by that budget ([t17 Timing and defaults](#t17) item 12).
@@ -2757,17 +2757,19 @@ list is ignored in that state.
 | no mapping | request | token created in the future | ignore, count | no mapping |
 | no mapping | request | timeout, address flags, advertised address or server key check fails | ignore, count the reason | no mapping |
 | no mapping | request | cookie absent, forged or expired | send a fresh cookie packet | no mapping |
-| no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | token used from another address | ignore, count | no mapping |
 | no mapping | request | token claimed from another address until the handshake deadline or its half-open mapping's removal | ignore, count | no mapping |
 | no mapping | request | encryption mapping table full | ignore, count | no mapping |
 | no mapping | request | failed-signature budget spent and the source has a recorded failure in the window | ignore, count | no mapping |
+| no mapping | request | handshake work budget spent | ignore, count | no mapping |
 | no mapping | request | signature, seal or sealed-field check fails | ignore, count | no mapping |
 | no mapping | request | client id connected | ignore, count | no mapping |
 | no mapping | request | no free slot | send connection denied | no mapping |
 | no mapping | request | all checks pass | create mapping, derive keys, send challenge | mapping |
 | mapping | request | salt matches the mapping's | resend the stored challenge, refresh idle | mapping |
-| mapping | request | salt differs from the mapping's | resend the stored challenge | mapping |
+| mapping | request | salt differs, token matches the mapping's | resend the stored challenge | mapping |
+| mapping | request | salt and token differ from the mapping's, any check refuses | as for no mapping; the mapping is kept | mapping |
+| mapping | request | salt and token differ from the mapping's, token bound to no address, all checks pass | release the mapping's claim, replace the mapping, derive keys, send challenge | mapping |
 | mapping | response | mapping has no connected slot, source or client id already connected | ignore, count | mapping |
 | mapping | response | no free slot | send connection denied | mapping |
 | mapping | response | free slot | bind token, assign slot, send keep-alive | connected |
@@ -3646,8 +3648,9 @@ an input ([t1.4 Conventions](#t1.4)).
 10. Message retransmission belongs to RN-2. An endpoint implementing RN-2
     MUST apply [RN-2 m9 Acknowledgement mapping, resend and send budget](MESSAGES.md#m9).
     RN-1 alone does not retransmit application payloads.
-11. A server MUST enforce the handshake work budget after the cookie of a
-    connection request validates and before any asymmetric operation. A request
+11. A server MUST enforce the handshake work budget after the cheap refusals
+    of a connection request and immediately before its signature verification,
+    and MUST charge it only for a request that reaches that point. A request
     past the budget MUST be refused with no reply and counted as a refusal.
     The budget MUST be reset at the start of each update.
 12. A server MUST apply the failed-signature budget before the signature
@@ -3678,7 +3681,7 @@ The values this section introduces are:
 | Name | Value | Unit | Meaning |
 |---|---|---|---|
 | half-open idle deadline | `10` | seconds | a half-open mapping with no matching request from its address for this long is discarded |
-| handshake work budget | `16` | requests per update | default post-cookie connection requests one server processes in one update |
+| handshake work budget | `16` | requests per update | default connection requests one server takes to the signature verification in one update |
 | failed-signature budget | `90` | failed verifications per window | default failed Ed25519 verifications one server performs in one failed-signature window |
 | failed-signature window | `10` | seconds | the period over which the failed-signature budget is counted |
 

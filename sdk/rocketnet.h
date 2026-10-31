@@ -1133,7 +1133,8 @@ ROCKETNET_EXPORT void rocketnet_log_function( rocketnet_log_function_t function,
 /// - A setter for a disconnected client or empty server slot returns OK and
 ///   does nothing. An invalid value returns INVALID_ARGUMENT.
 
-/// Returns monotonic elapsed seconds from an unspecified origin.
+/// Returns monotonic elapsed seconds from an unspecified origin, or 0 before
+/// the first rocketnet_init has set up the clock.
 
 ROCKETNET_EXPORT double rocketnet_time( void );
 
@@ -1630,7 +1631,7 @@ struct rocketnet_server_config_t
     int disconnect_packets_per_update;
 
     /// ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE sets the handshake work budget:
-    /// the most connection requests with a valid cookie the server processes
+    /// the most connection requests the server takes to the signature check
     /// in one update, each one signature verification and, for a valid token,
     /// the key exchange. Range is 1 .. 1024. Default is 16. A request past it
     /// is dropped unanswered and counted in handshakes_dropped_over_budget;

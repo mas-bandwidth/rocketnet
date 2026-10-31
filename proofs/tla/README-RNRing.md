@@ -18,8 +18,9 @@ State the sender owns (6.1):
 
 - `next`: the next message number.
 - `ringNext`: `ring_next`, an absolute byte position, never reduced modulo `B`.
-- `span[n] = [s, e)`: the absolute ring span of every numbered record, the
-  per-number table's `ring_start` and `ring_end`.
+- `span[n] = [s, e)`: the absolute ring span of every numbered record: the
+  per-number table's `ring_start`, and the record's size rounded up to 16
+  bytes past it.
 - `first[n]`: the first number of `n`'s block, `n` itself for a single record. `U'`
   is `first[U]`.
 - `acked`: the numbers the sender has seen acked. `U` is the lowest unacked number,

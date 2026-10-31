@@ -194,6 +194,15 @@ into `./bin/test` and checks it byte for byte against the same generator
 (`test_vectors_regenerate_byte_identical`). A real backend authenticates the
 player before it writes them a token.
 
+The backend must also rate-limit token issuance per account. A server bounds
+half-open handshakes per token and per source address, not per client id: its
+encryption mapping table holds `2 * max_clients` mappings, and each token buys
+at most one half-open mapping. One account that is issued tokens freely and
+presents each from its own source address (an IPv6 prefix supplies many) can
+fill that table, and the server refuses everyone else's handshakes until those
+mappings reach their handshake deadline. Issue an account only the tokens a
+player needs to connect and retry.
+
 ## Rotation
 
 What the code supports today:

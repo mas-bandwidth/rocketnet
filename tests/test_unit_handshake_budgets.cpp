@@ -81,7 +81,9 @@ static void budgets_server_setup( struct budgets_server_t * test )
     server->handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
     server->handshake_deadline_seconds = 5.0;
     server->max_timeout_seconds = 0;
-    server->encryption_map = rocketnet_encryption_map_create( NULL, 8 );
+    // room for a half-open mapping per request that reaches the verify: a
+    // full table refuses before it, and only a verified request spends budget
+    server->encryption_map = rocketnet_encryption_map_create( NULL, 64 );
     server->used_token_history = rocketnet_used_token_history_create( NULL, 64 );
     server->client_slots = rocketnet_client_slots_create( NULL, 4 );
     server->acks = rocketnet_server_acks_create( NULL, 4 );
@@ -108,13 +110,31 @@ static void budgets_server_teardown( struct budgets_server_t * test )
     rocketnet_reassembly_set_destroy( test->server.reassembly );
 }
 
-// builds a valid request around a fresh token, with a return cookie valid for
-// this request's own source address, so the request reaches the post-cookie
-// rungs rather than the cookie exchange.
+// writes a return cookie valid for this source address and salt into a
+// request, so one request's token can be presented from another address.
+// Every token written is a distinct token: its sealed private block is
+// randomized, so a replay of one token reuses the request's bytes.
 
-static void budgets_build_request( uint8_t * request, int index,
-                                   const struct rocketnet_address_t * address,
-                                   const uint8_t * cookie_key )
+static void budgets_write_cookie( uint8_t * request, const struct rocketnet_address_t * address,
+                                  const uint8_t * cookie_key, const uint8_t * salt )
+{
+    const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
+    uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
+    check( rocketnet_generate_cookie_mac( cookie_mac, address, salt, cookie_expire, cookie_key ) );
+
+    uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
+    rocketnet_write_uint64( &cookie, cookie_expire );
+    memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+}
+
+// builds a valid request around a fresh token, with a return cookie valid for
+// this request's own source address and salt, so the request reaches the
+// post-cookie rungs rather than the cookie exchange.
+
+static void budgets_build_request_salted( uint8_t * request, int index,
+                                          const struct rocketnet_address_t * address,
+                                          const uint8_t * cookie_key,
+                                          const uint8_t * salt )
 {
     struct rocketnet_signed_connect_data_t signed_fields;
     struct rocketnet_connect_token_private_t private_fields;
@@ -129,17 +149,18 @@ static void budgets_build_request( uint8_t * request, int index,
     rocketnet_read_connect_token( &token, token_data );
 
     const uint8_t tag[ROCKETNET_FILTER_VALUE_BYTES] = ROCKETNET_TEST_FILTER_VALUE;
-    rocketnet_write_connection_request_packet( request, tag, NULL, rocketnet_test_salt,
+    rocketnet_write_connection_request_packet( request, tag, NULL, salt,
                                                rocketnet_test_client_eph_public,
                                                token.signed_connect_data, token.signature );
 
-    const uint64_t cookie_expire = ROCKETNET_TEST_CREATE_TS + 3;
-    uint8_t cookie_mac[ROCKETNET_COOKIE_MAC_BYTES];
-    check( rocketnet_generate_cookie_mac( cookie_mac, address, rocketnet_test_salt, cookie_expire, cookie_key ) );
+    budgets_write_cookie( request, address, cookie_key, salt );
+}
 
-    uint8_t * cookie = request + ROCKETNET_PREFILTER_BYTES;
-    rocketnet_write_uint64( &cookie, cookie_expire );
-    memcpy( cookie, cookie_mac, ROCKETNET_COOKIE_MAC_BYTES );
+static void budgets_build_request( uint8_t * request, int index,
+                                   const struct rocketnet_address_t * address,
+                                   const uint8_t * cookie_key )
+{
+    budgets_build_request_salted( request, index, address, cookie_key, rocketnet_test_salt );
 }
 
 // one window, one source: the 91st failed signature is refused before the
@@ -436,6 +457,346 @@ static void test_handshake_failure_budget_no_global_lockout()
 }
 
 REGISTER_UNIT_TEST( test_handshake_failure_budget_no_global_lockout );
+
+// A source past the failed-signature budget is refused before the verify,
+// and that refusal spends none of the update's handshake work budget: the
+// budget bounds asymmetric work, so only a request that reaches the
+// signature verify is charged (standard/TRANSPORT.md t12 rule 9;
+// proofs/tla/ReceiveOrder.tla WorkBudgetOnlyForVerify). One unspoofed
+// source with valid cookies spends the window's failures, then floods the
+// next update with more forged requests; an honest client in that update
+// is still challenged, not refused for budget.
+
+static void test_handshake_refused_source_spends_no_work_budget()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    struct rocketnet_address_t forger;
+    check( rocketnet_address_parse( &forger, "10.4.0.1:56789" ) );
+
+    // the window's failures, all from one source, in one wide update
+
+    test.server.handshakes_per_update = ROCKETNET_SERVER_MAX_HANDSHAKES_PER_UPDATE;
+
+    int index = 0;
+    for ( int i = 0; i < ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET; i++ )
+        check( budgets_send_forged( &test, &forger, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+
+    // the next update, at the default budget: the forger floods past it, and
+    // every request is refused by the failed-signature budget before the
+    // verify, none of them charged
+
+    test.server.handshakes_per_update = ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    const int flood = 4 * ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE;
+    for ( int i = 0; i < flood; i++ )
+        check( budgets_send_forged( &test, &forger, ++index ) == ROCKETNET_SERVER_PROCESS_IGNORED );
+
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_VERIFY_LIMIT] == (uint64_t) flood );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == (uint64_t) ROCKETNET_SIGNATURE_VERIFY_FAILURE_BUDGET );
+    check( test.counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    check( test.server.counters->handshakes_processed_this_update == 0 );
+
+    // the honest client in the same update: verified and challenged
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    budgets_build_request( request, 0x40000, &test.client_address, test.server.cookie_key );
+
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    const int result = rocketnet_server_protocol_process_connection_request( &test.server, &test.client_address,
+                                                                             request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                             ROCKETNET_TEST_CREATE_TS, 1000.1,
+                                                                             challenge, &challenge_bytes );
+    check( result == ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+    check( test.server.counters->handshakes_processed_this_update == 1 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_refused_source_spends_no_work_budget );
+
+// The four other cheap refusals between the cookie and the verify spend none
+// of the handshake work budget either (standard/TRANSPORT.md t12 rule 9;
+// proofs/tla/ReceiveOrder.tla WorkBudgetOnlyForVerify): a token bound to
+// another address, a token claimed by another address, a full mapping table
+// and a full claim table. Each case stages its refusal in one update, then
+// floods the next update past the budget with requests that hit it, each with
+// a valid cookie and a valid signature, and an honest request in that same
+// update is still verified and challenged.
+
+// one request from this address, at this time. returns the ladder's result;
+// a refused request is never answered.
+
+static int budgets_send_request( struct budgets_server_t * test, const struct rocketnet_address_t * address,
+                                 const uint8_t * request, double current_time,
+                                 uint8_t * response, int * response_bytes )
+{
+    *response_bytes = 0;
+    const int result = rocketnet_server_protocol_process_connection_request( &test->server, address,
+                                                                             request, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES,
+                                                                             ROCKETNET_TEST_CREATE_TS, current_time,
+                                                                             response, response_bytes );
+    if ( result != ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE )
+        check( *response_bytes == 0 );
+
+    return result;
+}
+
+// a fresh token's request from this address, verified and challenged; the
+// request's bytes are left in request for a replay of its token
+
+static void budgets_challenge( struct budgets_server_t * test, const struct rocketnet_address_t * address,
+                               int index, const uint8_t * salt, double current_time,
+                               uint8_t * request, uint8_t * challenge, int * challenge_bytes )
+{
+    budgets_build_request_salted( request, index, address, test->server.cookie_key, salt );
+    check( budgets_send_request( test, address, request, current_time, challenge, challenge_bytes ) ==
+           ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE );
+    check( *challenge_bytes == ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+}
+
+// the client's response to its challenge, which seats it: connected, the
+// token bound to its address and its claim released
+
+static void budgets_connect( struct budgets_server_t * test, const struct rocketnet_address_t * address,
+                             const uint8_t * challenge, int challenge_bytes, double current_time )
+{
+    uint8_t response[ROCKETNET_CONNECTION_RESPONSE_WIRE_BYTES];
+    budgets_client_response_from_challenge( challenge, challenge_bytes, response );
+
+    uint8_t out[ROCKETNET_RECEIVE_CEILING];
+    int out_bytes = 0;
+    uint8_t payload[ROCKETNET_RECEIVE_CEILING];
+    int payload_bytes = 0;
+    int payload_client_index = -1;
+    check( rocketnet_server_protocol_process_packet( &test->server, address, response, sizeof( response ),
+                                                     ROCKETNET_TEST_CREATE_TS, current_time,
+                                                     out, &out_bytes, payload, &payload_bytes, &payload_client_index ) ==
+           ROCKETNET_SERVER_PROCESS_SEND_KEEP_ALIVE );
+}
+
+static void budgets_honest_address( struct rocketnet_address_t * address, int i )
+{
+    char addr_str[64];
+    snprintf( addr_str, sizeof( addr_str ), "10.3.0.%d:56789", i + 1 );
+    check( rocketnet_address_parse( address, addr_str ) );
+}
+
+// the flood: four budgets' worth of requests from distinct addresses, each
+// refused by the staged rung, its counter firing once per request, and none
+// of them charged to the update's handshake work budget
+
+// replay is a request whose token every flood request presents, or NULL for
+// a fresh token in each
+
+static void budgets_flood_spends_nothing( struct budgets_server_t * test, const uint8_t * replay,
+                                          int counter, double current_time )
+{
+    const uint64_t counter_before = test->counters.values[counter];
+    const uint64_t verified_before = test->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY];
+
+    const int flood = 4 * test->server.handshakes_per_update;
+    for ( int i = 0; i < flood; i++ )
+    {
+        struct rocketnet_address_t address;
+        budgets_forged_address( &address, i );
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        if ( replay )
+        {
+            memcpy( request, replay, sizeof( request ) );
+            budgets_write_cookie( request, &address, test->server.cookie_key, rocketnet_test_salt );
+        }
+        else
+        {
+            budgets_build_request( request, 0x60000 + i, &address, test->server.cookie_key );
+        }
+
+        uint8_t response[ROCKETNET_RECEIVE_CEILING];
+        int response_bytes = 0;
+        check( budgets_send_request( test, &address, request, current_time, response, &response_bytes ) ==
+               ROCKETNET_SERVER_PROCESS_IGNORED );
+    }
+
+    check( test->counters.values[counter] - counter_before == (uint64_t) flood );
+    check( test->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_SIGNATURE_DID_NOT_VERIFY] == verified_before );
+    check( test->counters.values[ROCKETNET_COUNTER_CONNECTION_REQUEST_HANDSHAKE_BUDGET_EXCEEDED] == 0 );
+    check( test->server.counters->handshakes_processed_this_update == 0 );
+}
+
+// the honest client in the flood's update: a fresh token from a new address,
+// verified (charged one unit of the budget) and challenged
+
+static void budgets_honest_challenged( struct budgets_server_t * test, const struct rocketnet_address_t * address,
+                                       int index, const uint8_t * salt, double current_time )
+{
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    budgets_challenge( test, address, index, salt, current_time, request, challenge, &challenge_bytes );
+    check( test->server.counters->handshakes_processed_this_update == 1 );
+}
+
+// a token bound to another address: one client connects with it, then a
+// flood replays it from other addresses
+
+static void test_handshake_used_token_spends_no_work_budget()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int token = 0x50000;
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    budgets_challenge( &test, &test.client_address, token, rocketnet_test_salt, 1000.0, request, challenge, &challenge_bytes );
+    budgets_connect( &test, &test.client_address, challenge, challenge_bytes, 1000.0 );
+    check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    budgets_flood_spends_nothing( &test, request, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED, 1000.1 );
+
+    struct rocketnet_address_t honest;
+    budgets_honest_address( &honest, 0 );
+    budgets_honest_challenged( &test, &honest, token + 1, rocketnet_test_salt, 1000.1 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_used_token_spends_no_work_budget );
+
+// a token claimed by another address: one client's request verifies and holds
+// the claim with its half-open mapping, then a flood presents the same token
+// from other addresses before the handshake deadline
+
+static void test_handshake_claimed_token_spends_no_work_budget()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int token = 0x50000;
+
+    uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+    uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+    int challenge_bytes = 0;
+    budgets_challenge( &test, &test.client_address, token, rocketnet_test_salt, 1000.0, request, challenge, &challenge_bytes );
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    budgets_flood_spends_nothing( &test, request, ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED, 1000.1 );
+
+    struct rocketnet_address_t honest;
+    budgets_honest_address( &honest, 0 );
+    budgets_honest_challenged( &test, &honest, token + 1, rocketnet_test_salt, 1000.1 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_claimed_token_spends_no_work_budget );
+
+// a full mapping table: four half-open handshakes fill a table of four, then
+// a flood of fresh tokens from new addresses finds no room. The honest
+// request is a client reconnecting from its own half-open address with a new
+// salt and a new token: a replacement reuses its address's mapping, so it
+// needs no free one.
+
+static void test_handshake_map_full_spends_no_work_budget()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int capacity = 4;
+    rocketnet_encryption_map_destroy( test.server.encryption_map );
+    test.server.encryption_map = rocketnet_encryption_map_create( NULL, capacity );
+    check( test.server.encryption_map );
+
+    for ( int i = 0; i < capacity; i++ )
+    {
+        struct rocketnet_address_t address;
+        budgets_honest_address( &address, i );
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+        int challenge_bytes = 0;
+        budgets_challenge( &test, &address, 0x50000 + i, rocketnet_test_salt, 1000.0, request, challenge, &challenge_bytes );
+    }
+    check( rocketnet_encryption_map_full( test.server.encryption_map ) );
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    budgets_flood_spends_nothing( &test, NULL, ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING, 1000.1 );
+
+    uint8_t salt[sizeof( rocketnet_test_salt )];
+    memcpy( salt, rocketnet_test_salt, sizeof( salt ) );
+    salt[0] ^= 1;
+
+    struct rocketnet_address_t honest;
+    budgets_honest_address( &honest, 0 );
+    budgets_honest_challenged( &test, &honest, 0x50000 + capacity, salt, 1000.1 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_map_full_spends_no_work_budget );
+
+// a full claim table, the mapping table with room: four half-open handshakes
+// hold the four claims, then a flood of fresh tokens from new addresses finds
+// no claim to take. In the same update one of the four completes its
+// handshake, which binds its token and frees its claim, and a new honest
+// client takes it.
+
+static void test_handshake_claim_table_full_spends_no_work_budget()
+{
+    struct budgets_server_t test;
+    budgets_server_setup( &test );
+
+    const int capacity = 4;
+    rocketnet_used_token_history_destroy( test.server.used_token_history );
+    test.server.used_token_history = rocketnet_used_token_history_create( NULL, capacity );
+    check( test.server.used_token_history );
+
+    uint8_t first_challenge[ROCKETNET_RECEIVE_CEILING];
+    int first_challenge_bytes = 0;
+    struct rocketnet_address_t first;
+    budgets_honest_address( &first, 0 );
+
+    for ( int i = 0; i < capacity; i++ )
+    {
+        struct rocketnet_address_t address;
+        budgets_honest_address( &address, i );
+        uint8_t request[ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES];
+        uint8_t challenge[ROCKETNET_RECEIVE_CEILING];
+        int challenge_bytes = 0;
+        budgets_challenge( &test, &address, 0x50000 + i, rocketnet_test_salt, 1000.0, request, challenge, &challenge_bytes );
+        if ( i == 0 )
+        {
+            memcpy( first_challenge, challenge, (size_t) challenge_bytes );
+            first_challenge_bytes = challenge_bytes;
+        }
+    }
+    check( !rocketnet_encryption_map_full( test.server.encryption_map ) );
+
+    rocketnet_server_protocol_update( &test.server, 1000.1 );
+
+    budgets_flood_spends_nothing( &test, NULL, ROCKETNET_COUNTER_CONNECTION_REQUEST_CLAIM_TABLE_FULL, 1000.1 );
+
+    budgets_connect( &test, &first, first_challenge, first_challenge_bytes, 1000.1 );
+    check( rocketnet_client_slots_num_connected( test.server.client_slots ) == 1 );
+
+    struct rocketnet_address_t honest;
+    budgets_honest_address( &honest, capacity );
+    budgets_honest_challenged( &test, &honest, 0x50000 + capacity, rocketnet_test_salt, 1000.1 );
+
+    budgets_server_teardown( &test );
+}
+
+REGISTER_UNIT_TEST( test_handshake_claim_table_full_spends_no_work_budget );
 
 // A burst over the cap: 40 honest clients, each with a valid cookie for its
 // own address, send a request every update until they are challenged, as a

@@ -475,8 +475,8 @@ int rocketnet_config_read_sized( const char * type, void * config, const void * 
 
 #define ROCKETNET_DEFAULT_MAX_CLIENTS          ( ROCKETNET_MAX_CLIENTS < 1000 ? ROCKETNET_MAX_CLIENTS : 1000 )
 
-// the handshake work budget (handshakes_per_update): the most post-cookie
-// connection requests one server update processes, each one Ed25519 verify
+// the handshake work budget (handshakes_per_update): the most connection
+// requests one server update takes to the signature verify, each one Ed25519 verify
 // and, when it verifies, the sealed-block open, a keypair and the key
 // exchange. A request past it is dropped before any asymmetric work and
 // counted; the client's next request, at its send rate, is processed in a

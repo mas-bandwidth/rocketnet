@@ -668,7 +668,7 @@ where `Q`, `S`, and `SR` include the resend-delay payload reserve derived from
 
 | Sub-region | Formula | `default` server (`C=32, W=1024, P=1024`) | `light` server (`C=8, W=256, P=256`) | `arena-64` (`C=4, W=64, P=128`) |
 | --- | --- | ---: | ---: | ---: |
-| Channel send state | `32 * C` | `1,024` | `256` | `128` |
+| Channel send state | `40 * C` | `1,280` | `320` | `160` |
 | Channel receive state | `24 * C` | `768` | `192` | `96` |
 | Sender per-number table | `32 * W` | `32,768` | `8,192` | `2,048` |
 | Sender first-send times | `8 * W` | `8,192` | `2,048` | `512` |
@@ -676,7 +676,7 @@ where `Q`, `S`, and `SR` include the resend-delay payload reserve derived from
 | Received bitset | `W / 8` | `128` | `32` | `8` |
 | Held-ordered index | `16 * 2 * W` | `32,768` | `8,192` | `2,048` |
 | Receive ring | `B` | `1,048,576` | `142,400` | `65,536` |
-| Send descriptors | `64 * Q_eff` | `1,315,584` | `40,192` | `141,440` |
+| Send descriptors | `72 * Q_eff` | `1,480,032` | `45,216` | `159,120` |
 | Send store (`128`/`512`/`1152` slabs) | `S_eff` | `12,114,368` | `343,616` | `857,856` |
 | Sent-packet ring | `32 * P` | `32,768` | `8,192` | `4,096` |
 | Sent-packet index | `16 * 2 * P` | `32,768` | `8,192` | `4,096` |
@@ -684,10 +684,11 @@ where `Q`, `S`, and `SR` include the resend-delay payload reserve derived from
 | Delivered entries | `24 * (W + Du)` | `49,152` | `6,240` | `3,072` |
 | Sequenced holds | `1,440 * Ru` | `23,040` | `144,000` | `11,520` |
 | Receipt ring | `16 * Rq` | `4,096` | `2,048` | `4,096` |
-| Resend FIFO | `8 * W` | `8,192` | `2,048` | `512` |
+| Resend FIFO | `12 * W` | `12,288` | `3,072` | `768` |
+| Unreliable ring | `8 * 2 * Q_eff` | `328,896` | `10,048` | `35,360` |
 | Send spans | `SR` | `3,581,120` | `207,296` | `318,848` |
-| Alignment padding | to 64 B | `0` | `64` | `88` |
-| **Total `connection_bytes`** | — | **`18,383,616` (17.53 MiB)** | **`947,776` (0.90 MiB)** | **`1,426,240` (1.36 MiB)** |
+| Alignment padding | to 64 B | `32` | `96` | `200` |
+| **Total `connection_bytes`** | — | **`18,881,344` (18.01 MiB)** | **`963,968` (0.92 MiB)** | **`1,479,680` (1.41 MiB)** |
 
 ### Deterministic planner values vs. measured OS and process memory
 

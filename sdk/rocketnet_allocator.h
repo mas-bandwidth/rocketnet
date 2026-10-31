@@ -79,7 +79,6 @@ struct rn_send_number_t                 // 32 bytes: the sender's per-number tab
     double last_send;                   // RN_SEND_NUMBER_NEVER_SENT: never sent; else the last send time (>= 0.0), or a negative failed-send sentinel
     uint32_t descriptor;                // the send descriptor, or RN_DESCRIPTOR_NONE
     uint16_t fragment;                  // index within its block
-    uint8_t ring_units;                 // ring span in 16-byte units: ring_end = ring_start + 16 * ring_units
     uint8_t acked;
 };
 
@@ -238,7 +237,7 @@ struct rn_resend_link_t                 // 12 bytes: resend sequence entry, inde
 enum
 {
     RN_PART_CHANNEL_SEND = 0,           // 40 C
-    RN_PART_CHANNEL_RECEIVE,            // 24 C (the printed part tag stays 16C; the byte total uses sizeof)
+    RN_PART_CHANNEL_RECEIVE,            // 24 C
     RN_PART_SEND_NUMBERS,               // 32 W
     RN_PART_SEND_FIRST_SENDS,           // 8 W
     RN_PART_RECEIVE_DESCRIPTORS,        // 32 W
@@ -276,6 +275,22 @@ struct rn_region_layout_t
     uint64_t region_bytes;              // the exact region: the formula plus each part's alignment padding
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
 };
+
+// the parts the maximum resend-delay payload reserve sizes: the send
+// descriptors Q, the send store S and its chunks per class, and the send
+// spans SR. A reserve whose descriptor or chunk indices, or whose span bytes,
+// do not fit in 32 bits is refused, false with a log line naming the rule.
+// rocketnet_message_validate_config runs it, so a validate and a create
+// refuse the same configs. The config's fields are already in range.
+struct rn_region_reserve_sizes_t
+{
+    uint64_t Q;
+    uint64_t SR;
+    uint64_t S;
+    uint32_t chunks[RN_STORE_NUM_CLASSES];
+};
+
+bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_region_reserve_sizes_t * sizes );
 
 // false, with a log line naming the rule, for a refused config. NULL is the defaults.
 bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout );

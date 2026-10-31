@@ -309,9 +309,10 @@ Bind(tk, a, op) ==
 \* is the only thing that has run before it.
 \* The rungs a request passes before its verify: the cookie generation,
 \* the expiry, the history from another address, the admitted set (with
-\* HoldUntilExpire), the per-update budget, then the claim from another
-\* address (claim_check) and the claim table's capacity (claim_can_record,
-\* read-only).  Past the verify the claim is recorded (claim_record).
+\* HoldUntilExpire), the claim from another address (claim_check) and the
+\* claim table's capacity (claim_can_record, read-only), then the
+\* per-update work budget, charged only by a request that reaches the
+\* verify.  Past the verify the claim is recorded (claim_record).
 RequestRungs(a, tok, g) ==
     /\ ~Live(a)
     \* a connected address provokes nothing from the request path
@@ -320,9 +321,9 @@ RequestRungs(a, tok, g) ==
     /\ IF g \notin LiveGens \/ TokExpired(tok) THEN FALSE
        ELSE IF HistLive(tok) /\ HistAddr(tok) # a THEN FALSE
        ELSE IF Used(tok) THEN FALSE
-       ELSE IF CapVerifyBudget /\ verifies >= VerifyBudget THEN FALSE
        ELSE IF tok \in ClaimTokens /\ ~ClaimCheckOk(tok, a) THEN FALSE
        ELSE IF tok \in ClaimTokens /\ ~CanRecord(tok) THEN FALSE
+       ELSE IF CapVerifyBudget /\ verifies >= VerifyBudget THEN FALSE
        ELSE TRUE
     /\ verifies' = verifies + 1
 
@@ -458,9 +459,10 @@ ClaimsSpec == Init /\ [][ClaimsNext]_vars
 \* source with a recorded failure is refused.  With RefuseUnremembered (the
 \* code before 2026-10-20, `if ( empty_slot == -1 ) return 0;`) a source
 \* the full table does not hold is refused too.  Every request here has
-\* passed the cookie gate and spends one unit of the per-update handshake
-\* work budget (VerifyBudget, the server config's handshakes_per_update),
-\* checked before this gate.  The flood keeps the window spent for longer
+\* passed the cookie gate; one this gate refuses spends nothing, and one it
+\* allows spends one unit of the per-update handshake work budget
+\* (VerifyBudget, the server config's handshakes_per_update), checked after
+\* this gate and just before the verify.  The flood keeps the window spent for longer
 \* than one honest attempt runs (the handshake deadline, 5 s, is under the
 \* window, 10 s).
 \*
