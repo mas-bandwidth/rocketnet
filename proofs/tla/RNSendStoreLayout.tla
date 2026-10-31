@@ -42,7 +42,7 @@
 (*   FreshGuard    the free test reads meta without the i >= fresh guard   *)
 (*   LowerCursor   a free that does not lower the cursor                   *)
 (*   ChunkSkipZero a chunk generation that wraps to 0                      *)
-(*   DescSkipZero  a descriptor generation that wraps to 0 (5b214176)      *)
+(*   DescSkipZero  a descriptor generation that wraps to 0      *)
 (*   KeepFreeSlot  the take clears a free_slot the stack still uses        *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets

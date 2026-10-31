@@ -128,7 +128,7 @@ counterexample below was checked against the C by hand.
    is 0 at the wrap.
 4. **`MCRNSendStoreLayoutBrokenDescGenZero.cfg`** (`DescSkipZero = FALSE`):
    the descriptor generation as `descriptor->generation + 1` without the
-   `== UINT32_MAX ? 1` test (703), the bug commit 5b214176 fixed. Violates
+   `== UINT32_MAX ? 1` test (703), the descriptor generation's skip-zero. Violates
    `HeldGenerationPositive`: descriptor 0 is taken three times off the stack
    and its generation goes 1, 2, 0. A resend link stamped 0 is never unlinked
    by the ack while its descriptor is in use.

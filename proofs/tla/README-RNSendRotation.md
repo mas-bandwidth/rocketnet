@@ -10,7 +10,7 @@ several connections whose windows stall and whose budgets refuse.
 
 ## What it guards
 
-Commit bba252cb fixed this: a connection whose window was stalled, or whose
+The fix: a connection whose window was stalled, or whose
 reliable packet the budget refused, answered `ORDERED` from
 `rn_endpoint_next_packet_bytes`; the object started a transport frame, the
 write found nothing to send, and the frame was aborted. The pass then ended,
@@ -99,7 +99,7 @@ Each turns one rule off and must fail with the invariant it names. Every
 counterexample was checked against the C by hand.
 
 1. **`MCRNSendRotationBrokenReopen.cfg`** (`KeepDone = FALSE`, the code before
-   bba252cb: the end of `rn_endpoint_next_packet_bytes` set `IDLE`). TLC, three
+   the fix: the end of `rn_endpoint_next_packet_bytes` set `IDLE`). TLC, three
    connections and four frames: connection 0 has a ready message and a budget
    that refuses it; connection 2 has an unreliable record. Round one:
    connection 0 plans `ORDERED`, a frame is started (`used = 1`),
@@ -110,7 +110,7 @@ counterexample was checked against the C by hand.
    `reliable_waiting`) and plans the same refused packet: a second abort
    (`AbortsBounded`), `used = 3` for one written frame.
 2. **`MCRNSendRotationBrokenStallDue.cfg`** (`StallGate = FALSE`, the code
-   before bba252cb: `rn_endpoint_ordered_due` answered yes to
+   before the fix: `rn_endpoint_ordered_due` answered yes to
    `ready_head != RN_DESCRIPTOR_NONE` without `!ordered->send.stalled`). TLC:
    a connection whose budget pays has a ready message and a stalled window;
    it plans `ORDERED`, a frame is started, `rn_ordered_write` numbers nothing

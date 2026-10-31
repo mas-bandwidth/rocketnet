@@ -30,9 +30,9 @@
 (*                                                                         *)
 (* Reversed witnesses (each flag FALSE is a bug class):                    *)
 (*   KeepDone    a pass that ended reopens on the next next_packet_bytes, *)
-(*               within the same flush (the code before bba252cb)          *)
+(*               within the same flush (the pass end before the fix)          *)
 (*   StallGate   rn_endpoint_ordered_due answers yes to ready messages of *)
-(*               a stalled window (the code before bba252cb)               *)
+(*               a stalled window (the pass end before the fix)               *)
 (*   CursorNext  send_next_connection is set to i, not (i + 1) % N         *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
@@ -80,7 +80,7 @@ EndReliable(e) ==
     IF e.waiting THEN [ e EXCEPT !.unr = 0, !.phase = "done" ]
     ELSE [ e EXCEPT !.phase = "unr" ]
 
-\* the pass is over: before bba252cb it went back to idle
+\* the pass is over: without the fix it went back to idle
 EndPass(e) == [ e EXCEPT !.phase = IF KeepDone THEN "done" ELSE "idle" ]
 
 \* rn_endpoint_next_packet_bytes: << e', kind >>,

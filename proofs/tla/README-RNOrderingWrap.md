@@ -53,7 +53,7 @@ and `rn_channels_drain_sequenced` (550 and 568).
 
 | Case | Rule off | Declared invariant |
 |---|---|---|
-| `MCRNOrderingWrapBrokenUnmasked.cfg` | `Masked = FALSE`: `rn_u24(record->ordering) != rx->ordered_read`, the reservation before 4ec79571 | `NoExhaust` |
+| `MCRNOrderingWrapBrokenUnmasked.cfg` | `Masked = FALSE`: `rn_u24(record->ordering) != rx->ordered_read`, the reservation before the masked compare | `NoExhaust` |
 
 ### Hand check against the code
 

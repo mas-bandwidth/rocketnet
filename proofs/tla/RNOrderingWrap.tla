@@ -26,7 +26,7 @@
 (* RNChannelTypes; this model is the width of each comparison.             *)
 (*                                                                         *)
 (* Reversed witness: Masked = FALSE compares the masked record ordering    *)
-(* with the unmasked counter in the reservation, the bug 4ec79571 fixed.   *)
+(* with the unmasked counter in the reservation, the reservation bug the masked compare fixes.   *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
