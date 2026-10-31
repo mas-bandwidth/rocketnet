@@ -1116,7 +1116,12 @@ static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * cont
 {
 #if ROCKETNET_DEV
     if ( rocketnet_client_memory_plan_seam_enabled )
-        return (rocketnet_platform_thread_t *) rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
+    {
+        void * record = rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
+        if ( !record )
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        return (rocketnet_platform_thread_t *) record;
+    }
 #endif // #if ROCKETNET_DEV
 
     return rocketnet_platform_thread_create( context, function, argument, status );

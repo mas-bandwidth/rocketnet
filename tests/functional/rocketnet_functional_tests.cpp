@@ -10998,12 +10998,18 @@ void rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait()
 // allocator's outstanding count back where it was before the call, and the
 // call then succeeds on the same object. A success must come with the armed
 // allocation never reached, so a create that dropped its OUT_OF_MEMORY and
-// was passed over for another candidate fails the sweep. Every transport the
-// host grants is swept pinned on its own (each server transport with its own
-// client transport, or portable where it has none), and the automatic ladder
-// once; a transport the host does not grant is reported and skipped. Every
-// transport create writes OUT_OF_MEMORY at the allocation that failed
-// (rocketnet_create_status, sdk/rocketnet_internal.h).
+// was passed over for another candidate fails the sweep. Every server
+// transport this platform lists (rocketnet_server_transport_io_availability)
+// is swept pinned on its own, with its own client transport where the client
+// list has it and portable where not, and the automatic ladder once; a listed
+// transport that is not granted fails the sweep. Three are printed and
+// skipped, each for a reason this host reports: loopback opens no socket and
+// allocates nothing in its create (the unit loopback walks sweep it); xdp
+// binds an explicit public port as root in a veth namespace (the xdp matrix
+// cell); io_uring where the kernel disables it. The environment's transport
+// pins are set aside for the sweep. Every transport create writes
+// OUT_OF_MEMORY at the allocation that failed (rocketnet_create_status,
+// sdk/rocketnet_internal.h).
 
 struct rocketnet_test_oom_sweep_allocator_t
 {
@@ -11103,13 +11109,8 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
                                ( !server_transport || strcmp( rocketnet_server_transport_name( probe ), server_transport ) == 0 );
     rn_cli_server_stop_and_destroy( probe );
     if ( !probe_granted )
-    {
-        printf( "out of memory sweep: server transport %s not granted on this host (%s), skipped\n", name, rocketnet_status_name( probe_status ) );
-        rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
-        rocketnet_check( state.live.load() == 0 );
-        rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
-        return;
-    }
+        printf( "out of memory sweep: server transport %s is listed but not granted (%s)\n", name, rocketnet_status_name( probe_status ) );
+    rocketnet_check( probe_granted );
 
     struct rocketnet_server_t * server = rocketnet_test_oom_sweep_server( &state, &keys, server_transport );
 
@@ -11163,10 +11164,9 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
     rn_cli_client_stop_and_destroy( client_probe, 1000.0 );
 
     if ( !client_granted )
-    {
-        printf( "out of memory sweep: client transport %s not granted on this host (%s), skipped\n", client_name, rocketnet_status_name( client_probe_status ) );
-    }
-    else
+        printf( "out of memory sweep: client transport %s is listed but not granted (%s)\n", client_name, rocketnet_status_name( client_probe_status ) );
+    rocketnet_check( client_granted );
+
     {
         struct rocketnet_client_t * client = rocketnet_test_oom_sweep_client( &state, client_transport );
 
@@ -11211,25 +11211,59 @@ static void rocketnet_test_oom_sweep( const char * server_transport, const char 
     rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
 }
 
+// the reason a listed server transport is not swept on this host, or NULL
+
+static const char * rocketnet_test_oom_sweep_not_offered( const char * transport )
+{
+    if ( strcmp( transport, "loopback" ) == 0 )
+        return "opens no socket and allocates nothing in its create; the unit loopback walks sweep it";
+    if ( strcmp( transport, "xdp" ) == 0 )
+        return "binds an explicit public port as root in a veth namespace; the xdp matrix cell runs it";
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    if ( strcmp( transport, "io_uring" ) == 0 && !rocketnet_test_posix_io_uring_offered() )
+        return "this kernel disables io_uring";
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+    return NULL;
+}
+
 void rocketnet_test_public_start_and_connect_out_of_memory_sweep()
 {
-    // each server transport with its own client transport, or portable where
-    // it has none; then the automatic ladder
+    // the sweep's pins are the only pins: an environment pin would override them
 
-    static const char * const rungs[][2] = {
-        { "portable", "portable" },
-        { "msgx", "msgx" },
-        { "gso", "gso" },
-        { "io_uring", "portable" },
-        { "xdp", "portable" },
-        { "iocp", "iocp" },
-        { "rio", "portable" },
-    };
+    struct rocketnet_test_env_guard_t server_pin;
+    struct rocketnet_test_env_guard_t client_pin;
+    rocketnet_test_env_clear( &server_pin, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin, "ROCKETNET_CLIENT_TRANSPORT" );
 
-    for ( size_t i = 0; i < sizeof( rungs ) / sizeof( rungs[0] ); i++ )
-        rocketnet_test_oom_sweep( rungs[i][0], rungs[i][1] );
+    int num_servers = 0;
+    const int * servers = rocketnet_server_transport_io_availability( &num_servers );
+    int num_clients = 0;
+    const int * clients = rocketnet_client_transport_io_availability( &num_clients );
+
+    for ( int i = 0; i < num_servers; i++ )
+    {
+        const char * server_transport = rocketnet_transport_name( servers[i] );
+        const char * reason = rocketnet_test_oom_sweep_not_offered( server_transport );
+        if ( reason )
+        {
+            printf( "out of memory sweep: server transport %s skipped: %s\n", server_transport, reason );
+            continue;
+        }
+
+        const char * client_transport = "portable";
+        for ( int j = 0; j < num_clients; j++ )
+        {
+            if ( clients[j] == servers[i] )
+                client_transport = server_transport;
+        }
+
+        rocketnet_test_oom_sweep( server_transport, client_transport );
+    }
 
     rocketnet_test_oom_sweep( NULL, NULL );
+
+    rocketnet_test_env_restore( &client_pin );
+    rocketnet_test_env_restore( &server_pin );
 }
 
 // 1000 create and destroy cycles of a client transport whose receive thread

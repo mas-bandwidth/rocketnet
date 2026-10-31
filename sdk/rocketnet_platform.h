@@ -88,14 +88,6 @@ struct rocketnet_platform_thread_t;
 // a thread's function receives its own record, for thread_wait and thread_sleep
 typedef void ( *rocketnet_platform_thread_func_t )( struct rocketnet_platform_thread_t * thread, void * arg );
 
-// the trailing status the creates below write OUT_OF_MEMORY through when an
-// allocation is refused (rocketnet_create_status); C++ callers may leave it out
-#ifdef __cplusplus
-#define ROCKETNET_STATUS_NOT_ASKED = NULL
-#else // #ifdef __cplusplus
-#define ROCKETNET_STATUS_NOT_ASKED
-#endif // #ifdef __cplusplus
-
 // ----------------------------------------------------------------
 
 #ifdef __cplusplus
@@ -224,11 +216,13 @@ extern "C"
 {
 #endif // #ifdef __cplusplus
 
-// port zero is written back as the assigned port; release with socket_destroy
-struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status ROCKETNET_STATUS_NOT_ASKED );
+// port zero is written back as the assigned port; release with socket_destroy.
+// The socket, wake and thread creates write OUT_OF_MEMORY through status when
+// their allocation is refused (rocketnet_create_status); NULL: not asked.
+struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status = NULL );
 
 // pump is NULL or "auto", "portable", or "msgx" (macOS only); NULL back when it is unavailable
-struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump, int * status ROCKETNET_STATUS_NOT_ASKED );
+struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump, int * status = NULL );
 
 void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
 
@@ -445,7 +439,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // level-triggered; a socket given to wake_create must outlive the wake
 struct rocketnet_platform_wake_t;
 // socket may be NULL for an event-only wake; NULL back when the platform has no wakes
-struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket, int * status ROCKETNET_STATUS_NOT_ASKED );
+struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket, int * status = NULL );
 // zero when wakes are unavailable
 uint64_t rocketnet_platform_wake_allocation_bytes( void );
 // destroy before the associated socket
@@ -466,7 +460,7 @@ extern "C"
 
 // join before thread_destroy. The record exists before the thread starts and
 // is the function's first argument.
-struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg, int * status ROCKETNET_STATUS_NOT_ASKED );
+struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg, int * status = NULL );
 
 // call once, from another thread
 void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread );

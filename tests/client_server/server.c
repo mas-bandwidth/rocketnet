@@ -19,7 +19,6 @@
 #include "tests/native_shutdown.h"
 #include "rocketnet.h"
 #include "rocketnet_layers.h"
-#include "rocketnet_platform.h"
 #include "rocketnet_counters.h"
 #include "tests/live_verify.h"
 #include "tests/portable_crt.h"
@@ -860,7 +859,7 @@ static void matrix_client_window( struct rocketnet_message_server_t * server, in
         }
 
         rocketnet_message_server_send_packets( server );
-        rocketnet_platform_sleep( 0.0005 );
+        rocketnet_sleep( 0.0005 );
     }
 
     matrix_write_cells( c );
@@ -1275,7 +1274,7 @@ int main( int argc, char ** argv )
             }
 
             check_stdin_closed();
-            rocketnet_platform_sleep( 0.0005 );
+            rocketnet_sleep( 0.0005 );
         }
 
         for ( int i = 0; i < max_clients; i++ )
