@@ -1,8 +1,9 @@
 ------------------------------ MODULE RNSentMap ------------------------------
 (***************************************************************************)
 (* The sender's sent-packet map against the reliable window, as            *)
-(* sdk/rocketnet_window_ack.cpp keeps it (rn_window_ack_commit,            *)
-(* rn_window_ack_on_ack, rn_window_ack_resend) and as                      *)
+(* sdk/rocketnet_window_ack.cpp keeps it (rn_window_ack_commit and        *)
+(* rn_window_ack_on_ack), as the resend walk of rn_ordered_write           *)
+(* (rn_ordered_walk, sdk/rocketnet_channel.cpp) resends from it, and as    *)
 (* rocketnet_message_validate_config_ex (sdk/rocketnet_config.cpp) sizes   *)
 (* it: P entries (packets_in_flight) against W numbers in flight           *)
 (* (reliable_messages_in_flight).                                          *)
