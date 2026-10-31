@@ -169,6 +169,40 @@ static void test_client_memory_plan_step_driven()
 
     check( plan_bytes >= allocated );
 }
+
+// RNClientReceiveQuit StopWake: stop on the legacy path (here the path an
+// active link simulator selects) wakes the receive thread after it stores
+// quit, so the thread never depends on its wait timing out. The seam stands in
+// for the thread: no thread runs and no socket opens.
+extern uint64_t rocketnet_client_transport_legacy_wakes_for_test();
+
+static void test_client_legacy_stop_wakes_the_receive_thread()
+{
+    rocketnet_client_transport_set_memory_plan_seam_for_test( true );
+
+    uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];
+    plan_make_token( token );
+
+    struct rocketnet_client_transport_config_t config;
+    rocketnet_client_transport_default_config( &config );
+    snprintf( config.transport, sizeof( config.transport ), "%s", "portable" );
+    config.step_driven = 0;
+    config.simulated_latency_ms = 50;
+
+    int status = -1;
+    struct rocketnet_client_transport_t * client = rocketnet_client_transport_create_ex(
+        NULL, token, &config, 1000.0, &status );
+    check( client != NULL );
+    check( status == ROCKETNET_STATUS_OK );
+
+    const uint64_t before = rocketnet_client_transport_legacy_wakes_for_test();
+    rn_test_client_transport_stop_and_destroy( client );
+    check( rocketnet_client_transport_legacy_wakes_for_test() == before + 1 );
+
+    rocketnet_client_transport_set_memory_plan_seam_for_test( false );
+}
+
+REGISTER_UNIT_TEST( test_client_legacy_stop_wakes_the_receive_thread );
 #endif // #if ROCKETNET_DEV
 
 // The client plan answers bytes for "msgx" only where the registry offers it
