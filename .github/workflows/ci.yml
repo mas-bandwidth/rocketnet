@@ -2524,12 +2524,13 @@ jobs:
           # baseline was; the setup-subtraction fallback measures differently
           grep -qx 'isolation mode=client_requests' <<<"$output"
 
-  # The six validation-tool self-test suites the repository ships
+  # The validation-tool self-test suites the repository ships
   # (tools/test_check_frame_budget.py, test_check_server_calls.py,
   # test_check_split_load.py, test_check_test_environment.py,
-  # test_profile_1000_load.py, test_release_version.py). Each is
+  # test_profile_1000_load.py, test_release_version.py,
+  # test_check_release_tsan.py, check_header_guards.py --self-test). Each is
   # self-contained -- fixtures only, no build, no network, no third-party
-  # Python packages -- so every commit runs all six, which covers their
+  # Python packages -- so every commit runs all of them, which covers their
   # tools, their dependencies and this file's own callers changing without
   # per-job path filters (this workflow does not filter jobs by path; its
   # header explains why). Each suite runs in its own step so no shell
@@ -2593,6 +2594,14 @@ jobs:
           output="$(python3 tools/test_release_version.py 2>&1)" || { printf '%s\n' "$output"; exit 1; }
           printf '%s\n' "$output"
           grep -Eq '^[1-9][0-9]* release version fixtures passed$' <<<"$output"
+
+      - name: Test the release threaded-TSan run check
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(python3 tools/test_check_release_tsan.py -v 2>&1)" || { printf '%s\n' "$output"; exit 1; }
+          printf '%s\n' "$output"
+          grep -Eq '^Ran [1-9][0-9]* tests' <<<"$output"
 
       - name: Test the header-guard checker's verdicts
         shell: bash

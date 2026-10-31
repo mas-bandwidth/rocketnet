@@ -26,6 +26,29 @@ permissions:
 
 jobs:
 
+  # The release commit's threaded TSan run (docs/RELEASING.md). nightly.yml's
+  # `tsan (threaded transport)` is too long for the per-commit tier, so it is
+  # dispatched on the release commit before the tag; on a v* tag push this job
+  # fails unless the Actions API shows that job green for the tagged commit.
+  # Its reader is whoever cuts the release. tools/test_check_release_tsan.py
+  # drives the check with fake API answers.
+
+  tsan-qualified:
+    name: threaded tsan run on the release commit
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: [self-hosted, Linux, X64, fleet]
+    permissions:
+      actions: read
+      contents: read
+    steps:
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      - name: Find a green threaded TSan run for the tagged commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 tools/check_release_tsan.py
+
   # The version sites in the tree agree with each other, and on a v* tag push
   # with the tag. Runs on every trigger; its reader is the pull request, and
   # on a tag push whoever cuts the release.

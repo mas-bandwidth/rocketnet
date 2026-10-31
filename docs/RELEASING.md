@@ -97,8 +97,12 @@ required runs are:
   - `instruction count gate`, `validation tool selftests`,
     `format check (clang-format 18)` and `runs-on-lint`.
 - **nightly** ([.github/workflows/nightly.yml](../.github/workflows/nightly.yml)):
-  `tsan (threaded transport)` on the release commit. Run it with
-  workflow_dispatch on `main` before the tag.
+  `tsan (threaded transport) (main)` on the release commit. Run it with
+  workflow_dispatch on `main` (`gh workflow run nightly.yml --ref main`) once
+  the release commit is `main`'s head; the leg checks out the run's head
+  commit, so its verdict is about that commit. A scheduled nightly whose head
+  is the release commit also counts. Release Check enforces this on the tag
+  push.
 - **static analysis**
   ([.github/workflows/static.yml](../.github/workflows/static.yml)):
   `static analysis (gcc -fanalyzer)` and
@@ -112,7 +116,11 @@ required runs are:
   `docs (MrDocs HTML reference build)`.
 - **Release Check** ([.github/workflows/release-check.yml](../.github/workflows/release-check.yml)):
   `version consistency` on the pull request that carries the release version
-  and on the tag push itself, and `unreleased wire changes`.
+  and on the tag push itself, and `unreleased wire changes`. On the tag push,
+  `threaded tsan run on the release commit` asks the Actions API for a
+  nightly.yml run whose head is the tagged commit with
+  `tsan (threaded transport) (<that run's ref>)` concluded `success`, and
+  fails when there is none (`tools/check_release_tsan.py`).
 
 The [GCC analyzer evidence limit](TESTING.md#static-analysis-evidence-limit)
 also applies to release qualification: the current wrapper can return green
@@ -141,15 +149,19 @@ A pushed tag is never moved or reused.
 4. Build and test with `make && ./bin/test`, then `./bin/functional` where the
    platform permits it.
 5. Open the release pull request against `main` with the version change.
-   Merge it, then wait for every required run on that merged commit to be green,
-   including the dispatched threaded TSan run. Resolve the evidence limitation
+   Merge it, dispatch nightly.yml on `main`, then wait for every required run
+   on that merged commit to be green, including the dispatched threaded TSan
+   run. Resolve the evidence limitation
    above before treating the GCC result as a clean analyzer pass.
 6. On the merged `main` commit, create an annotated tag `vMAJOR.MINOR.PATCH`,
    or `vMAJOR.MINOR.PATCH-PRERELEASE` for a prerelease, for example
    `v1.0.0-preview-N`, whose complete label equals the shipping
    `ROCKETNET_VERSION_FULL`. Do not tag a different commit, and do not move or
    reuse a tag after pushing it. Verify its consistency with the header before
-   pushing it. Release Check also performs this check on the tag push.
+   pushing it. Release Check also performs this check on the tag push, and
+   fails the tag push when the threaded TSan run on that commit is not green.
+   Do not publish the release while that job is red; re-run it once the
+   threaded TSan run is green.
 7. Publish the GitHub release for that tag.
 
 ## Release notes
