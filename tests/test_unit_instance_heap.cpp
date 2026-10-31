@@ -4,15 +4,17 @@
 */
 
 // The instance heap (sdk/rocketnet_allocator.h): tlsf over one block a
-// client takes at create, so the installed allocator is called at create and
-// destroy only.
+// client or server takes at create, so the installed allocator is called at
+// create and destroy only.
 //
 //   * the heap itself: a plan of allocations fits rocketnet_heap_required_bytes
 //     of it, freeing everything coalesces the pool back, a full heap refuses
 //     and counts, and tlsf's integrity walk passes throughout;
 //   * the client: under a counting allocator, connect, the handshake,
 //     disconnect and three reconnects call the installed allocator not once
-//     after create, and destroy frees the one block create took.
+//     after create, and destroy frees the one block create took;
+//   * the server: start, a client's handshake, stop and three restarts call
+//     the installed allocator not once after create.
 //
 // No socket, no real time and no thread: the client is step-driven on the
 // loopback transport, on a test clock starting at 1000.0.
@@ -331,5 +333,67 @@ static void test_instance_heap_client_connect_allocates_nothing_after_create()
 }
 
 REGISTER_UNIT_TEST( test_instance_heap_client_connect_allocates_nothing_after_create );
+
+// start, the handshake of a client, stop and restart take nothing from the
+// installed allocator after create; destroy frees what create took
+
+static void test_instance_heap_server_start_allocates_nothing_after_create()
+{
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, heap_counting_malloc, heap_counting_free ) == ROCKETNET_STATUS_OK );
+    rocketnet_quiet( 1 );
+
+    heap_identity_t identity;
+    heap_identity( &identity );
+
+    heap_counting_allocator_t server_counts = {};
+    rocketnet_server_config_t server_config;
+    heap_server_config( &server_config, &identity );
+    rocketnet_server_t * server = rocketnet_server_create( &server_counts, "127.0.0.1:0", NULL, &server_config, NULL );
+    check( server != NULL );
+    const uint64_t create_mallocs = server_counts.mallocs;
+    printf( "create: server mallocs %llu\n", (unsigned long long) create_mallocs );
+    check( create_mallocs >= 1 );
+    check( server_counts.frees == 0 );
+
+    heap_counting_allocator_t client_counts = {};
+    rocketnet_client_config_t client_config;
+    heap_client_config( &client_config );
+    rocketnet_client_t * client = rocketnet_client_create( &client_counts, &client_config, NULL );
+    check( client != NULL );
+
+    for ( int generation = 0; generation < 4; generation++ )
+    {
+        check( rocketnet_server_start( server ) == ROCKETNET_STATUS_OK );
+
+        heap_client_generation( client, server, &identity, 0x2EA9 + (uint64_t) generation );
+
+        rocketnet_server_stop( server );
+        for ( int i = 0; i < 32 && !rocketnet_server_stopped( server ); i++ )
+        {
+        }
+
+        check( rocketnet_server_stopped( server ) );
+
+        // the installed allocator saw create's blocks and nothing since
+
+        printf( "generation %d: server mallocs %llu frees %llu\n", generation, (unsigned long long) server_counts.mallocs, (unsigned long long) server_counts.frees );
+        check( server_counts.mallocs == create_mallocs );
+        check( server_counts.frees == 0 );
+    }
+
+    rn_test_client_stop_and_destroy( client );
+    check( client_counts.live == 0 );
+
+    rocketnet_server_destroy( server );
+    check( server_counts.mallocs == create_mallocs );
+    check( server_counts.live == 0 );
+
+    check( rocketnet_test_loopback_hub_release() );
+    check( rocketnet_term_ex() == ROCKETNET_STATUS_OK );
+    check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+REGISTER_UNIT_TEST( test_instance_heap_server_start_allocates_nothing_after_create );
 
 #endif // #if ROCKETNET_DEV
