@@ -93,7 +93,7 @@ struct rocketnet_server_socket_send_buffer_t
 {
     uint8_t padding_0[4096];
 
-    std::atomic<int> num_packets{ 0 };
+    std::atomic<uint64_t> num_packets{ 0 };
 
     uint8_t padding_1[4096];
 
@@ -219,8 +219,8 @@ struct rocketnet_server_xdp_socket_t
     // this queue's xdp thread outside the handoff lock
     std::atomic<uint64_t> send_refused_length{ 0 };
 
-    // staged packets the start path refused because the queue was full or its
-    // counter had wrapped negative (rocketnet_xdp_send_claim); written by the
+    // staged packets the start path refused because the queue was full
+    // (rocketnet_xdp_send_claim); written by the
     // fill threads, read by this queue's xdp thread at flush time
     std::atomic<uint64_t> send_refused_overflow{ 0 };
 
@@ -2252,9 +2252,6 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
         return NULL;
     rocketnet_server_socket_send_buffer_t * send_buffer = &socket->send_buffer[flow_index];
 
-    // the lower bound matters too: an app that stages forever without ever
-    // flushing wraps this counter negative after ~2^31 packets, and a
-    // negative index here is an out-of-bounds write, not a dropped packet.
     // the claim counts a refusal instead of logging on this hot path
 
     const int packet_index = rocketnet_xdp_send_claim( send_buffer->num_packets, ROCKETNET_XDP_SEND_QUEUE_SIZE, socket->send_refused_overflow );
@@ -2407,8 +2404,8 @@ static void rocketnet_server_socket_hold_greetings( struct rocketnet_server_sock
     const bool hold_all = server_socket->replay_hold_all_greetings;
     if ( !hold_all && !( server_socket->replay_marks && rocketnet_xdp_replay_marks_holding_greetings( server_socket->replay_marks ) ) )
         return;
-    const int num_packets = send_buffer->num_packets.load( std::memory_order_relaxed );
-    for ( int i = 0; i < num_packets && i < ROCKETNET_XDP_SEND_QUEUE_SIZE; i++ )
+    const uint64_t num_packets = send_buffer->num_packets.load( std::memory_order_relaxed );
+    for ( int i = 0; (uint64_t) i < num_packets && i < ROCKETNET_XDP_SEND_QUEUE_SIZE; i++ )
     {
         rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[i];
 
@@ -2430,7 +2427,7 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
     {
         rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
         const int index = socket->send_flow_index.load( std::memory_order_relaxed );
-        if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) <= 0 )
+        if ( index < 0 || socket->send_buffer[index].num_packets.load( std::memory_order_relaxed ) == 0 )
             continue;
         rocketnet_server_socket_hold_greetings( server_socket, &socket->send_buffer[index] );
         if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
@@ -3478,12 +3475,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
                 // IMPORTANT: clamp num packets because it's an atomic increment across multiple threads so it can go over max if unlucky
 
-                int num_staged_packets = send_buffer->num_packets;
-
-                if ( num_staged_packets > ROCKETNET_XDP_SEND_QUEUE_SIZE )
-                {
-                    num_staged_packets = ROCKETNET_XDP_SEND_QUEUE_SIZE;
-                }
+                const uint64_t num_claimed = send_buffer->num_packets;
+                const int num_staged_packets = num_claimed < ROCKETNET_XDP_SEND_QUEUE_SIZE ? (int) num_claimed : ROCKETNET_XDP_SEND_QUEUE_SIZE;
 
                 rocketnet_assert( num_staged_packets >= 0 );
                 rocketnet_assert( num_staged_packets <= ROCKETNET_XDP_SEND_QUEUE_SIZE );

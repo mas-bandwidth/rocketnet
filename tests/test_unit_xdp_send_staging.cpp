@@ -68,7 +68,7 @@ REGISTER_UNIT_TEST( test_xdp_transport_send_packets_flushes_simulator_window );
 static void test_xdp_transport_send_claim_counts_each_refusal()
 {
     const int limit = 1024;
-    std::atomic<int> num_packets( 0 );
+    std::atomic<uint64_t> num_packets( 0 );
     std::atomic<uint64_t> refused( 0 );
 
     // the first limit claims take an index of their own, the next five are
@@ -103,5 +103,27 @@ static void test_xdp_transport_send_claim_counts_each_refusal()
 }
 
 REGISTER_UNIT_TEST( test_xdp_transport_send_claim_counts_each_refusal );
+
+// the counter type rocketnet_xdp_send_claim reserves from
+template <typename T> struct xdp_send_claim_counter;
+template <typename T> struct xdp_send_claim_counter<int ( * )( std::atomic<T> &, int, std::atomic<uint64_t> & )>
+{
+    typedef T type;
+};
+
+// A send buffer that has taken 2^32 - 1 claims without a flush refuses the
+// next two: the claim count does not wrap back onto a slot it handed out.
+static void test_xdp_transport_send_claim_does_not_wrap()
+{
+    typedef xdp_send_claim_counter<decltype( &rocketnet_xdp_send_claim )>::type count_t;
+    std::atomic<count_t> num_packets( (count_t) 0xFFFFFFFFull );
+    std::atomic<uint64_t> refused( 0 );
+
+    rocketnet_unit_check( rocketnet_xdp_send_claim( num_packets, 1024, refused ) == -1 );
+    rocketnet_unit_check( rocketnet_xdp_send_claim( num_packets, 1024, refused ) == -1 );
+    rocketnet_unit_check( refused.load( std::memory_order_relaxed ) == 2 );
+}
+
+REGISTER_UNIT_TEST( test_xdp_transport_send_claim_does_not_wrap );
 
 #endif // #if defined(__linux__)
