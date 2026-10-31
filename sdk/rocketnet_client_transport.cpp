@@ -2679,6 +2679,20 @@ void rocketnet_client_transport_destroy( rocketnet_client_transport_t * client_t
     rocketnet_free( allocation_context, client_transport );
 }
 
+// The unit seam: the payload batch's capacity for this update's receive,
+// below ROCKETNET_NUM_CLIENT_PACKETS, so a case can fill it with a few
+// packets. 0 keeps the full batch.
+#if ROCKETNET_DEV
+static int rocketnet_client_test_payload_batch_capacity = 0;
+
+void rocketnet_client_transport_set_payload_batch_capacity_for_test( int payloads )
+{
+    rocketnet_client_test_payload_batch_capacity = payloads > 0 && payloads <= ROCKETNET_NUM_CLIENT_PACKETS ? payloads : 0;
+}
+#else // #if ROCKETNET_DEV
+static const int rocketnet_client_test_payload_batch_capacity = 0;
+#endif // #if ROCKETNET_DEV
+
 static void rocketnet_client_process_packet( rocketnet_client_transport_t * client_transport, rocketnet_address_t * from, uint8_t * packet_data, int packet_bytes, double current_time,
                                              uint8_t verdict, uint64_t sequence )
 {
@@ -2711,7 +2725,8 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
-    uint8_t * payload = received->num_packets < ROCKETNET_NUM_CLIENT_PACKETS ? received->data + received->num_packets * ROCKETNET_FRAME_SIZE : NULL;
+    const int batch_capacity = rocketnet_client_test_payload_batch_capacity > 0 ? rocketnet_client_test_payload_batch_capacity : ROCKETNET_NUM_CLIENT_PACKETS;
+    uint8_t * payload = received->num_packets < batch_capacity ? received->data + received->num_packets * ROCKETNET_FRAME_SIZE : NULL;
 
     uint8_t overflow[ROCKETNET_RECEIVE_CEILING];
     int payload_bytes = 0;
@@ -2736,6 +2751,12 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
 
     const uint64_t session_sequence = client_transport->protocol.received_session_sequence;
 
+    // the batch holds one entry per record the update exposes, at most
+    // ROCKETNET_NUM_CLIENT_PACKETS, and a record yields one payload or one
+    // reassembled payload at most, so it has room for every one; a payload
+    // that opened into overflow past that bound is counted, never dropped
+    // silently
+
     if ( payload_bytes > 0 && payload )
     {
         const int index = received->num_packets;
@@ -2743,6 +2764,12 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
         received->packet_bytes[index] = payload_bytes;
         received->sequence[index] = session_sequence;
         received->num_packets++;
+    }
+    else if ( payload_bytes > 0 )
+    {
+        rocketnet_spam( "client dropped payload. receive batch full" );
+
+        client_transport->counters.values[ROCKETNET_COUNTER_CLIENT_PAYLOAD_BATCH_FULL]++;
     }
 
     // a fragment that completed its payload delivers here, in arrival
@@ -2752,7 +2779,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     struct rocketnet_reassembly_set_t * reassembly = client_transport->protocol.reassembly;
     if ( reassembly && reassembly->completed_bytes > 0 )
     {
-        if ( received->num_packets < ROCKETNET_NUM_CLIENT_PACKETS )
+        if ( received->num_packets < batch_capacity )
         {
             const int index = received->num_packets;
             received->packet_data[index] = reassembly->completed_payload;
