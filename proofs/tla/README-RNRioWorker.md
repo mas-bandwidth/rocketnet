@@ -46,10 +46,14 @@ every RIO call after create.
   1. Stop sets `stopping` and signals the wake.
   2. The worker posts handed phases in order and the finished fill phase,
      commits deferred sends, and retries a refused commit.
-  3. It closes the socket, which completes every posted request, and drains
+  3. It retires send completions on each pass and keeps the socket open
+     while any committed send is in flight. `closesocket` cancels a send
+     still in flight, which would retire it as `SEND_FAILED` and lose the
+     shutdown disconnect burst.
+  4. It closes the socket, which cancels every posted receive, and drains
      both queues.
-  4. Only then does it set `exited`, which `stopped` reports.
-  5. Destroy joins the worker and frees the registered region.
+  5. Only then does it set `exited`, which `stopped` reports.
+  6. Destroy joins the worker and frees the registered region.
 
 ## The abstraction
 
@@ -72,6 +76,9 @@ every RIO call after create.
   - `pend` is posted but uncommitted.
   - `infl` is committed and kernel owned.
   - `scq` is the send completion queue, and `done` the retired sends.
+  - `cancelled` is the sends that completed after the close, which the
+    kernel cancelled: `SendComplete` on a closed socket completes a send
+    failed.
 - **Worker.** `wpc` steps through `WTop`, then:
   - `WTake`, under the mutex, which marks the phase posted;
   - `WPost` and `WCommit`;
@@ -81,7 +88,9 @@ every RIO call after create.
     drained phases idle.
 
   With no progress it goes to `WArm` and then `WWait`. The stop path is
-  `WStop`, then `WClose` (only once committed), then `WDrain`.
+  `WStop`, then `WClose` (only once committed, and under the rule only once
+  no committed send is in flight; until then it retires the send completions
+  and returns to `WStop`), then `WDrain`.
 - **Main.** Main's steps are:
   - `Stage`, a fill thread;
   - `SendPackets` and `ReceivePackets`, each a successful try;
@@ -102,9 +111,10 @@ every RIO call after create.
   for a re-post.
 - `NoSendDuplicated`.
 - `StopSendsHanded`: at worker exit no handed phase was silently dropped.
-- `StopSendsFinished`: every staged send, including the finished fill phase, has retired at exit.
+- `StopSendsFinished`: every staged send, including the finished fill
+  phase, has retired at exit, and the close cancelled none of them.
 - `FreedOnlyWhenDrained`: the region is freed only when the kernel owns no
-  request.
+  request and every completion has been dequeued.
 - `EveryDatagramConsumed`, `EveryStagedSent` and `StopCompletes` (`stopping`
   leads to `freed`) are the liveness properties. They are checked with no
   wait timeout for an idle worker. The waits that are really timed in the
@@ -124,6 +134,7 @@ every RIO call after create.
 | `MCRNRioWorkerBrokenExitBeforeDrain.cfg` | `FreedOnlyWhenDrained` | `DrainBeforeExit = FALSE` |
 | `MCRNRioWorkerBrokenDropHanded.cfg` | `StopSendsHanded` | `DropHanded = TRUE` keeps the old stop discard. |
 | `MCRNRioWorkerBrokenNoWake.cfg` | `EveryDatagramConsumed` | `WakeOnReturn = FALSE` |
+| `MCRNRioWorkerBrokenCloseCancelsSends.cfg` | `StopSendsFinished` | `DrainSendsBeforeClose = FALSE` keeps the stop pass that closes with sends in flight. |
 
 The liveness controls are split by direction so each run fits the 110 s
 budget at two TLC workers.
@@ -150,9 +161,10 @@ Each reversed witness was read against the code by hand (2026-10-22):
     `RIODequeueCompletion` for at most that many. The overflow branch in
     `rocketnet_rio_complete_receive` is unreachable.
 - **ExitBeforeDrain.**
-  - In the trace, stop arrives while phase 0 is in hand. The worker posts
-    and commits send 1, closes the socket and reports stopped at once. Send
-    1 is still kernel owned when destroy frees the region.
+  - In the trace, stop arrives with no send staged. The worker closes the
+    socket, which cancels both posted slices into the receive queue, and
+    reports stopped at once. Destroy frees the region with both cancelled
+    completions still undequeued.
   - In the code, `rocketnet_rio_stop_pass` returns true only when both
     `outstanding` counts and `posted_receives` are zero. The worker sets
     `exited` only after that, and `rocketnet_server_rio_stopped` returns
@@ -166,6 +178,22 @@ Each reversed witness was read against the code by hand (2026-10-22):
     `wake = free_count == 0 && exposed_count > 0` under the mutex and calls
     `SetEvent( rio->wake )` after the release.
 
+- **CloseCancelsSends** (one send).
+  - In the trace, one packet is staged into the fill phase and stop
+    arrives. The stop pass posts and commits it, then closes the socket
+    while it is in flight. It completes cancelled, the drain retires it, and
+    the worker exits with the burst lost.
+  - In the code, `rocketnet_rio_close_socket` returns false, leaving the
+    socket open, while `rocketnet_rio_outstanding_sends` is above zero after
+    `rocketnet_rio_dequeue_send` retires the completions available. The
+    worker's stop loop runs the pass again after a 1 ms wait. A cancelled
+    completion has a nonzero status, which `rocketnet_rio_retire_send`
+    counts as `SEND_FAILED`.
+
+The stop pass has no deadline: like the IOCP transport, which keeps its
+socket open until `pending` is zero, it waits for the kernel to complete
+every committed UDP send.
+
 The unit case `test_rio_transport_worker_handoff`
 (`test_unit_rio_overflow_seam.cpp`, through
 `rocketnet_server_rio_test_worker_handoff`) drives the real worker pass and
@@ -177,3 +205,10 @@ thread and no clock. It covers these cases:
 - the wake on a return to an empty free list;
 - the send-phase handoff that hands and opens the next phase only when it
   is idle, and otherwise keeps the fill phase open with nothing refused.
+
+The unit case `test_rio_transport_stop_drains_sends` (the same file, through
+`rocketnet_server_rio_test_stop_drains_sends`) steps the real stop pass
+against a fake kernel whose `closesocket` cancels every send in flight. The
+stop pass keeps the socket open across two passes while the burst is in
+flight, and closes it only after the burst completes. Every packet counts
+`PACKETS_SENT` and none `SEND_FAILED`.

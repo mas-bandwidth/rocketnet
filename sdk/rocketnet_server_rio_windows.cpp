@@ -198,11 +198,14 @@ typedef ULONG( WINAPI * rocketnet_rio_test_dequeue_fn )( RIO_CQ, PRIORESULT, ULO
 typedef BOOL( WINAPI * rocketnet_rio_test_receive_fn )( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF,
                                                         PRIO_BUF, PRIO_BUF, DWORD, PVOID );
 
+typedef int( WINAPI * rocketnet_rio_test_close_fn )( SOCKET );
+
 struct rocketnet_rio_test_function_table_t
 {
     rocketnet_rio_test_dequeue_fn dequeue;
     rocketnet_rio_test_receive_fn receive;
     rocketnet_rio_test_receive_fn send;         // NULL: sends use the real table
+    rocketnet_rio_test_close_fn close;          // NULL: closesocket
 };
 
 static const rocketnet_rio_test_function_table_t * rocketnet_rio_test_functions = NULL;
@@ -227,6 +230,15 @@ static BOOL rocketnet_rio_send_call( rocketnet_server_rio_t * rio, RIO_BUF * dat
         return rocketnet_rio_test_functions->send( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
 #endif // #if ROCKETNET_DEV
     return rio->rio.RIOSendEx( rio->request_queue, data, data ? 1 : 0, NULL, address, NULL, NULL, flags, request_context );
+}
+
+static int rocketnet_rio_close_call( rocketnet_server_rio_t * rio )
+{
+#if ROCKETNET_DEV
+    if ( rocketnet_rio_test_functions && rocketnet_rio_test_functions->close )
+        return rocketnet_rio_test_functions->close( rio->socket );
+#endif // #if ROCKETNET_DEV
+    return closesocket( rio->socket );
 }
 
 static void rocketnet_rio_count( rocketnet_server_rio_t * rio, int counter, uint64_t amount = 1 )
@@ -442,16 +454,28 @@ static int rocketnet_rio_dequeue_send( rocketnet_server_rio_t * rio )
 
 // proofs/tla/RNRioDriver.tla Close: closesocket completes every outstanding request
 // with an error. proofs/tla/RNRioWorker.tla WClose: the close waits for a successful
-// commit of the deferred sends.
+// commit of the deferred sends, then for every committed send to complete.
 // A deferred send still occupies request-queue capacity after a refused
 // commit. Keep the socket open so a later completion check can retry the
-// commit before closing the request queue that owns those sends.
+// commit before closing the request queue that owns those sends. A
+// committed send still in flight at closesocket is cancelled and retires as
+// SEND_FAILED, which would lose the shutdown disconnect burst, so each pass
+// retires the send completions available and keeps the socket open while
+// any send is outstanding.
 static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
 {
     if ( rio->request_queue != RIO_INVALID_RQ && rio->uncommitted )
     {
         rocketnet_rio_commit( rio );
         if ( rio->uncommitted )
+            return false;
+    }
+
+    if ( rio->socket != INVALID_SOCKET && rocketnet_rio_outstanding_sends( rio ) > 0 )
+    {
+        if ( rio->have_table && rio->send_cq != RIO_INVALID_CQ )
+            rocketnet_rio_dequeue_send( rio );
+        if ( rocketnet_rio_outstanding_sends( rio ) > 0 )
             return false;
     }
 
@@ -469,7 +493,7 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
             return false;
         }
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        if ( closesocket( rio->socket ) != 0 )
+        if ( rocketnet_rio_close_call( rio ) != 0 )
         {
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
             rocketnet_lifecycle_track_close_end( rio->socket_generation, false );
@@ -492,10 +516,11 @@ static bool rocketnet_rio_close_socket( rocketnet_server_rio_t * rio )
 static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, int count );
 
 // proofs/tla/RNRioWorker.tla WStop, WClose and WDrain: post handed and finished fill
-// phases, commit deferred sends, close the socket (which
-// completes every posted request), then dequeue one available batch of each
-// queue. True when nothing is kernel owned. Runs on the worker, or inline on
-// create's failure path before the worker exists; never waits.
+// phases, commit deferred sends, retire send completions until no committed
+// send is in flight, close the socket (which cancels every posted receive),
+// then dequeue one available batch of each queue. True when nothing is
+// kernel owned. Runs on the worker, or inline on create's failure path
+// before the worker exists; never waits.
 // proofs/tla/RNRioDriver.tla Drain: both completion queues are dequeued and nothing
 // is re-posted.
 static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
@@ -553,7 +578,7 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
     if ( rio->have_table && rio->send_cq != RIO_INVALID_CQ )
     {
         RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
-        const ULONG count = rio->rio.RIODequeueCompletion( rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+        const ULONG count = rocketnet_rio_dequeue( rio, rio->send_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
         if ( count == RIO_CORRUPT_CQ )
             return false;
         for ( ULONG i = 0; i < count; ++i )
@@ -563,7 +588,7 @@ static bool rocketnet_rio_stop_pass( rocketnet_server_rio_t * rio )
     if ( rio->have_table && rio->receive_cq != RIO_INVALID_CQ )
     {
         RIORESULT results[ROCKETNET_RIO_DEQUEUE_BATCH];
-        const ULONG count = rio->rio.RIODequeueCompletion( rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
+        const ULONG count = rocketnet_rio_dequeue( rio, rio->receive_cq, results, ROCKETNET_RIO_DEQUEUE_BATCH );
         if ( count == RIO_CORRUPT_CQ )
             return false;
         rio->posted_receives.fetch_sub( (int) count, std::memory_order_relaxed );
@@ -1558,6 +1583,7 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
     const rocketnet_rio_test_function_table_t functions = {
         rocketnet_rio_overflow_test_dequeue,
         rocketnet_rio_overflow_test_receive,
+        NULL,
         NULL
     };
     rocketnet_rio_overflow_test_state = &state;
@@ -1699,7 +1725,8 @@ bool rocketnet_server_rio_test_worker_handoff()
     const rocketnet_rio_test_function_table_t functions = {
         rocketnet_rio_handoff_test_dequeue,
         rocketnet_rio_handoff_test_receive,
-        rocketnet_rio_handoff_test_send
+        rocketnet_rio_handoff_test_send,
+        NULL
     };
     rocketnet_rio_handoff_test_state = &state;
     rocketnet_rio_test_functions = &functions;
@@ -1798,6 +1825,148 @@ bool rocketnet_server_rio_test_worker_handoff()
              rio->phase_state[0] == ROCKETNET_RIO_PHASE_FILL && rio->counters[ROCKETNET_RIO_COUNTER_SEND_FULL].load() == 0;
 
     rocketnet_rio_handoff_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+// The stop seam's fake kernel: a commit moves the deferred sends in flight,
+// where they stay until the case delivers them; closesocket cancels every
+// send still in flight and every posted receive into the completion queues.
+struct rocketnet_rio_stop_test_state_t
+{
+    int deferred;
+    ULONGLONG deferred_context[ROCKETNET_RIO_SEND_QUEUE_SIZE];
+    int in_flight;
+    ULONGLONG in_flight_context[ROCKETNET_RIO_SEND_QUEUE_SIZE];
+    int completed;
+    ULONGLONG completed_context[ROCKETNET_RIO_SEND_QUEUE_SIZE];
+    LONG completed_status[ROCKETNET_RIO_SEND_QUEUE_SIZE];
+    int cancelled_receives;
+    int closes;
+};
+
+static rocketnet_rio_stop_test_state_t * rocketnet_rio_stop_test_state = NULL;
+
+static void rocketnet_rio_stop_test_complete_in_flight( LONG status )
+{
+    rocketnet_rio_stop_test_state_t * state = rocketnet_rio_stop_test_state;
+    while ( state->in_flight > 0 )
+    {
+        state->completed_context[state->completed] = state->in_flight_context[--state->in_flight];
+        state->completed_status[state->completed++] = status;
+    }
+}
+
+static ULONG WINAPI rocketnet_rio_stop_test_dequeue( RIO_CQ cq, PRIORESULT results, ULONG max_results )
+{
+    rocketnet_rio_stop_test_state_t * state = rocketnet_rio_stop_test_state;
+
+    ULONG count = 0;
+    if ( cq == (RIO_CQ) (uintptr_t) 2 )
+    {
+        while ( count < max_results && state->completed > 0 )
+        {
+            state->completed--;
+            results[count].Status = state->completed_status[state->completed];
+            results[count].BytesTransferred = state->completed_status[state->completed] == 0 ? ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES : 0;
+            results[count].RequestContext = state->completed_context[state->completed];
+            count++;
+        }
+
+        return count;
+    }
+
+    while ( count < max_results && state->cancelled_receives > 0 )
+    {
+        state->cancelled_receives--;
+        results[count].Status = (LONG) WSA_OPERATION_ABORTED;
+        results[count].BytesTransferred = 0;
+        results[count].RequestContext = (ULONGLONG) rocketnet_rio_context( ROCKETNET_RIO_CONTEXT_RECEIVE, 0, (uint32_t) count );
+        count++;
+    }
+
+    return count;
+}
+
+static BOOL WINAPI rocketnet_rio_stop_test_send( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF, PRIO_BUF, PRIO_BUF, DWORD flags, PVOID context )
+{
+    rocketnet_rio_stop_test_state_t * state = rocketnet_rio_stop_test_state;
+
+    if ( flags & RIO_MSG_COMMIT_ONLY )
+    {
+        while ( state->deferred > 0 )
+            state->in_flight_context[state->in_flight++] = state->deferred_context[--state->deferred];
+        return TRUE;
+    }
+
+    state->deferred_context[state->deferred++] = (ULONGLONG) (uintptr_t) context;
+
+    return TRUE;
+}
+
+static BOOL WINAPI rocketnet_rio_stop_test_receive( RIO_RQ, PRIO_BUF, ULONG, PRIO_BUF, PRIO_BUF, PRIO_BUF, PRIO_BUF, DWORD, PVOID )
+{
+    return TRUE;
+}
+
+static int WINAPI rocketnet_rio_stop_test_close( SOCKET )
+{
+    rocketnet_rio_stop_test_state_t * state = rocketnet_rio_stop_test_state;
+    state->closes++;
+    rocketnet_rio_stop_test_complete_in_flight( (LONG) WSA_OPERATION_ABORTED );
+    state->cancelled_receives = ROCKETNET_RIO_RECEIVES;
+    return 0;
+}
+
+// proofs/tla/RNRioWorker.tla WClose under DrainSendsBeforeClose, stepped on one thread
+// with a fake kernel and no socket, worker thread or clock: the stop pass
+// posts and commits the staged fill phase, keeps the socket open while the
+// committed sends are in flight, and closes it only after every send
+// completed, so the stop burst retires delivered and none is cancelled.
+bool rocketnet_server_rio_test_stop_drains_sends()
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+        return false;
+    static rocketnet_rio_stop_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_stop_test_dequeue,
+        rocketnet_rio_stop_test_receive,
+        rocketnet_rio_stop_test_send,
+        rocketnet_rio_stop_test_close
+    };
+    rocketnet_rio_stop_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    rio->have_table = true;
+    rio->socket = (SOCKET) 7;
+
+    const int burst = 3;
+    bool valid = rocketnet_rio_test_stage( rio, burst );
+    rocketnet_server_rio_stop( rio );
+
+    // The pass posts and commits the burst; the sends are in flight, so the
+    // socket stays open, on this pass and the next.
+
+    valid &= !rocketnet_rio_stop_pass( rio ) && state.in_flight == burst && rocketnet_rio_outstanding_sends( rio ) == burst;
+    valid &= !rocketnet_rio_stop_pass( rio ) && state.closes == 0 && rio->socket != INVALID_SOCKET;
+
+    // The sends complete. The next pass retires them, closes the socket and
+    // drains the cancelled receives.
+
+    rocketnet_rio_stop_test_complete_in_flight( 0 );
+    bool stopped = false;
+    for ( int pass = 0; pass <= ROCKETNET_RIO_RECEIVES / ROCKETNET_RIO_DEQUEUE_BATCH + 1 && !stopped; ++pass )
+        stopped = rocketnet_rio_stop_pass( rio );
+    valid &= stopped && state.closes == 1 && rio->socket == INVALID_SOCKET;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == (uint64_t) burst &&
+             rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 0 &&
+             rocketnet_rio_outstanding_sends( rio ) == 0 && rio->posted_receives.load() == 0;
+
+    rio->have_table = false;
+    rocketnet_rio_stop_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
     return valid;
