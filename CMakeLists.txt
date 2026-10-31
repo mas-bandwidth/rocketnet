@@ -743,6 +743,11 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
            AND (NOT APPLE OR NOT CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
         target_compile_options(test_fp_contract_fma PRIVATE -mfma)
     endif()
+    # GCC contracts only when optimizing (Clang and clang-cl contract at -O0
+    # as well), so without -O2 a GCC Debug build would pass with no floor.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(test_fp_contract_fma PRIVATE -O2)
+    endif()
     string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" rocketnet_host_processor)
     string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" rocketnet_target_processor)
     if(NOT CMAKE_CROSSCOMPILING AND rocketnet_host_processor STREQUAL rocketnet_target_processor)
