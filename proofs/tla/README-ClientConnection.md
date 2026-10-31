@@ -378,14 +378,16 @@ acknowledges one (`rocketnet_server_protocol_write_keep_alive_if_due`,
    `sdk/rocketnet.h` documents that. The property allows that step, to 0, and a
    connect, to 1. `DisconnectIsTerminal` still says the only way up from a
    non-positive state is a fresh connect.
-6. **The session keys survive a timeout or a received disconnect** (`OBS-keys`,
-   `KeysErasedWhenDown`, 11 states): the challenge commits the keys; two ticks
-   later the client is down and `cKeys` is still set. A denial zeroes the keys,
-   matching `rocketnet_client_set_state`. A timeout (`rocketnet_client_check_deadlines`)
-   and a received disconnect (`rocketnet_client_process_disconnect`) also go
-   through `set_state`, which zeroes the keys, and this model does not. The run
-   stays the observation. The state gate refuses every session packet below 3,
-   so the keys cannot be used, only read from memory.
+6. **Every way down zeroes the session keys** (`keys-erased`, `KeysErasedWhenDown`,
+   pass; `W-down-keeps-keys`, fail as expected). `rocketnet_client_set_state`
+   zeroes the keys and the ephemeral (`rocketnet_client_connection_reset`) at every
+   state at or below `DISCONNECTED`, and every automatic terminal transition goes
+   through it: the deadline and the idle timeout (`rocketnet_client_check_deadlines`),
+   a denial, and a received disconnect. The model's `Tick` (`TickRule` with `Erase`
+   TRUE) and `ClientRecvSession` (`ClientRecvSessionRule` with `Erase` TRUE) zero
+   `cKeys` as the code does. `SpecDownKeepsKeys` adds the pre-fix rules
+   (`TickKeepsKeys`, `ClientRecvSessionKeepsKeys`) that leave the keys, and TLC
+   finds a timeout from state 3 or 4 that reaches a state below 0 with the keys set.
 
 ### Model errors, fixed
 
@@ -465,6 +467,7 @@ original parameters and is not a completed proof.
 | 33 | `MCClientConnectionBrokenDeniedKeepsKeys.cfg` | invariant / KeysErasedWhenDown |
 
 Seven reversed reachability witnesses have no historical row: `MCClientConnectionReachSNone.cfg`, `MCClientConnectionReachSFirst.cfg`, `MCClientConnectionReachSAlternate.cfg`, `MCClientConnectionReachSBurst.cfg`, `MCClientConnectionReachSArbitrary.cfg`, `MCClientConnectionReachSFirstkind.cfg` and `MCClientConnectionReachSDelay.cfg` (invariant / NotReached).
+`MCClientConnectionKeysErased.cfg` (pass) and its reversed witness `MCClientConnectionBrokenDownKeepsKeys.cfg` (invariant / KeysErasedWhenDown) replace historical row 32's observation, which recorded the model keeping the keys where the code zeroes them.
 
 ### The cookie restarts nothing (OnlyAuthenticatedRefreshes)
 
@@ -577,7 +580,7 @@ and `rocketnet_client_protocol_connect` runs it again before anything else,
 so `has_cookie` and `return_cookie` are zero at the new attempt; only the
 pre-fix action carries them.
 
-The `clientconnection` group has 37 cases and `tlacheck groups --root . --stale`
+The `clientconnection` group has 40 cases and `tlacheck groups --root . --stale`
 prints `[]`. Every required case reaches its declared result: `RetryFromFailure`
 passes and `BrokenRetryKeepsAttempt` exits 13 on `FreshAttemptFromFailure`, and the
 seven `Reach-*` witnesses each exit 12 on `NotReached`. The six bench debt cases
