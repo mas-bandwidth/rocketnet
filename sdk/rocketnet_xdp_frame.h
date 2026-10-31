@@ -713,9 +713,9 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
 }
 
 // STATS PUBLISH: a read that succeeded sums the per-cpu values into counters
-// and keeps the sum as the last good snapshot. A read that failed (the map
+// and keeps the sum as the last good read. A read that failed (the map
 // lookup refused, or a cpu count that does not fit) publishes the last good
-// snapshot, never zeros, since a count the kernel could not report is not a
+// read, never zeros, since a count the kernel could not report is not a
 // count of nothing. The return is true when this read starts a run of
 // failures, so the caller logs once per run.
 

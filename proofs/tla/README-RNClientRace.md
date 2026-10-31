@@ -66,7 +66,7 @@ races).
 | `MCRNClientRaceBrokenFreeBeforeJoin.cfg` | `FreedOnlyAfterJoin`: destroy frees before the join |
 | `MCRNClientRaceBrokenReaderClosesEarly.cfg` | `NoUseAfterClose`: the reader closes a family before any commit |
 | `MCRNClientRaceBrokenCommitKeepsRing.cfg` | `PostCommitSlotsKept`: the commit leaves a ring bound to the losing server, as the code did before `rocketnet_client_io_rebind_held` |
-| `MCRNClientRaceBrokenNoSnapshotAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
+| `MCRNClientRaceBrokenNoKeepAtCommit.cfg` | `SendFailedMonotonic`: only the reader's close keeps the losing family's failures, as the code did before the commit kept them |
 
 Each counterexample was checked by hand against the code: the reader-frees
 trace is commit, then one reading step whose `rocketnet_client_race_kept`
@@ -87,7 +87,7 @@ hand-off is LATE, then lets the cookie from IPv4 commit the race in an update
 whose connection request joins the same ring; before the rebind the request
 never left, and with it the request reaches IPv4 in that update.
 
-The no-snapshot trace is a send failure on family 0, a read (1), a commit
+The no-keep trace is a send failure on family 0, a read (1), a commit
 to family 1, and a read before the reader's step: the kept family's count
 plus `closed_send_failures`, still 0, is 0.
 `test_client_race_send_failed_holds_across_the_commit` injects send failures

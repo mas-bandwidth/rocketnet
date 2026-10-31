@@ -60,7 +60,7 @@ VARIABLES
     dGen,       \* dGen[d]: send_descriptors[d].generation (0: never taken)
     fly,        \* fly[n]: packets in the sent map that reference n
     wrote,      \* ghost: [n, d, g] for each number written by d at generation g
-    got,        \* ghost: numbers carried by a packet the peer acked
+    got,        \* ghost: numbers carried by a packet the receiver acked
     freed       \* ghost: [d, g] for each fragment an ack returned
 
 vars == << U, nxt, sn, lk, st, dIn, dGen, fly, wrote, got, freed >>

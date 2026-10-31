@@ -1058,9 +1058,7 @@ static struct rocketnet_server_transport_t * secrets_wiped_transport_create( con
     memset( secrets_wiped_transport_staging_seen, 0, sizeof( secrets_wiped_transport_staging_seen ) );
     rocketnet_server_transport_config_staging_hook = secrets_wiped_transport_staging_hook;
 
-    struct rocketnet_server_transport_t * server = through_create_ex ?
-        rocketnet_server_transport_create_ex( NULL, address, &config, 1000.0, status ) :
-        rocketnet_server_transport_create_current_ex( NULL, address, &config, 1000.0, status );
+    struct rocketnet_server_transport_t * server = through_create_ex ? rocketnet_server_transport_create_ex( NULL, address, &config, 1000.0, status ) : rocketnet_server_transport_create_current_ex( NULL, address, &config, 1000.0, status );
     rocketnet_server_transport_config_staging_hook = NULL;
 
     for ( int stage = 0; stage < ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_COUNT; stage++ )

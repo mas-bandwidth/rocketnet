@@ -170,8 +170,8 @@ static void stress_client_config( rocketnet_client_config_t * config, int channe
     config->time_callback = clock;
     config->send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     channels_stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
-                           &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
-                           &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
+                                    &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
+                                    &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
 }
 
 static void stress_server_config( rocketnet_server_config_t * config, const uint8_t * backend_public_key, int max_clients, int channels )
@@ -184,8 +184,8 @@ static void stress_server_config( rocketnet_server_config_t * config, const uint
     config->loopback_hub = rocketnet_test_loopback_hub();
     config->per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
     channels_stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
-                           &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
-                           &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
+                                    &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
+                                    &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
 }
 
 // ---- the message pattern -----------------------------------------------------

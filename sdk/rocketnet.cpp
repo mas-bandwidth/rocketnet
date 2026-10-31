@@ -755,7 +755,8 @@ static bool rocketnet_crypto_open_source()
 bool rocketnet_crypto_acquire()
 {
     std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
-    rocketnet_crypto_changed.wait( lock, []() { return !rocketnet_crypto_closing; } );
+    rocketnet_crypto_changed.wait( lock, []()
+                                   { return !rocketnet_crypto_closing; } );
     if ( !rocketnet_crypto_open_locked() )
         return false;
     rocketnet_crypto_holders++;
@@ -780,7 +781,8 @@ static void rocketnet_crypto_close()
 #if defined( ROCKETNET_BUNDLED_SODIUM ) && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
     std::unique_lock<std::mutex> lock( rocketnet_crypto_mutex );
     rocketnet_crypto_closing = true;
-    rocketnet_crypto_changed.wait( lock, []() { return rocketnet_crypto_holders == 0; } );
+    rocketnet_crypto_changed.wait( lock, []()
+                                   { return rocketnet_crypto_holders == 0; } );
     (void) randombytes_close();
     rocketnet_crypto_open = false;
     rocketnet_crypto_closing = false;

@@ -32,7 +32,7 @@
                       bound to the losing server bound there: a slot the
                       attempt commits after the commit leaves for the losing
                       family and the race's send drops it: PostCommitSlotsKept
-     "nosnapshotatcommit" the commit does not keep the losing family's send
+     "nokeepatcommit" the commit does not keep the losing family's send
                       failures; only the reader's close stores them, so a
                       SEND_FAILED read between the two leaves them out:
                       SendFailedMonotonic
@@ -56,7 +56,7 @@
 EXTENDS Integers, FiniteSets
 CONSTANTS Defect
 ASSUME Defect \subseteq {"readerfrees", "callerusesloser", "freebeforejoin", "readerclosesearly",
-                         "commitkeepsring", "nosnapshotatcommit"}
+                         "commitkeepsring", "nokeepatcommit"}
 
 MaxFail == 2
 
@@ -144,7 +144,7 @@ CallerCommit(f) ==
     /\ ~destroyed /\ committed < 0
     /\ committed' = f
     /\ ringTo' = IF ringTo = 1 - f /\ "commitkeepsring" \notin Defect THEN f ELSE ringTo
-    /\ kept' = IF "nosnapshotatcommit" \in Defect THEN kept ELSE failures[1 - f]
+    /\ kept' = IF "nokeepatcommit" \in Defect THEN kept ELSE failures[1 - f]
     /\ UNCHANGED <<seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<ringPost, lost, failures, reported, dipped>>
 

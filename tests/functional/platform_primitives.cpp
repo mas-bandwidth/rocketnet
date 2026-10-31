@@ -478,15 +478,14 @@ void rocketnet_test_bundled_rng_opens_once_under_concurrent_keygen_on_mac()
     for ( int i = 0; i < 4; i++ )
     {
         minters[i] = std::thread( [&stop, &failures]()
-        {
+                                  {
             while ( !stop.load( std::memory_order_relaxed ) )
             {
                 uint8_t public_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
                 uint8_t secret_key[32];
                 if ( rocketnet_generate_server_keypair( public_key, secret_key ) != ROCKETNET_STATUS_OK )
                     failures++;
-            }
-        } );
+            } } );
     }
 
     for ( int cycle = 0; cycle < RNG_CONCURRENT_CYCLES; ++cycle )
