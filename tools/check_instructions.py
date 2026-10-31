@@ -10,9 +10,15 @@ benchmarks/instruction_baseline.json.
 Exit codes:
   0: PASS (all regions <= +2.0% over baseline; prints NOTE if < -2.0% under)
   1: FAIL (any region > +2.0% over baseline, build_type mismatch, or runner error)
-  2: NOT COMPARABLE (compiler_id or valgrind_version differs from baseline;
-     outputs 'not comparable: <local> vs <pinned> verdict=FAIL' and names the
-     pinned toolchain to measure with)
+  2: NOT COMPARABLE (toolchain_id, compiler_id or valgrind_version differs from
+     baseline; outputs 'not comparable: <local> vs <pinned> verdict=FAIL' and
+     names the pinned toolchain to measure with)
+
+The toolchain_id tells the pinned build (tools/build_pinned_toolchain.sh, which
+writes <prefix>/toolchain-id naming both versions and the script's hash) apart
+from a host or distro build that reports the same compiler_id. --toolchain
+<prefix> measures with that prefix's valgrind and records its id; without it
+the id is 'unpinned', which no pinned baseline accepts.
 """
 
 import argparse
@@ -25,6 +31,7 @@ import tempfile
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 REGIONS: Tuple[str, ...] = ("client_frame", "server_tick")
+UNPINNED_TOOLCHAIN_ID: str = "unpinned"
 DEFAULT_THRESHOLD_PCT: float = 2.0
 DEFAULT_BASELINE_PATH: str = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -124,16 +131,24 @@ def check_toolchain_comparable(
     baseline: Dict[str, Any],
     compiler_id: str,
     valgrind_version: str,
+    toolchain_id: str,
 ) -> Optional[str]:
     """
-    Return 'not comparable: <local> vs <pinned>' when compiler_id or
-    valgrind_version differs from the pinned baseline, or None when comparable.
+    Return 'not comparable: <local> vs <pinned>' when toolchain_id, compiler_id
+    or valgrind_version differs from the pinned baseline, or None when
+    comparable. A baseline with no toolchain_id matches no toolchain.
     """
+    pinned_toolchain = str(baseline.get("toolchain_id", ""))
     pinned_compiler = str(baseline.get("compiler_id", ""))
     pinned_valgrind = str(baseline.get("valgrind_version", ""))
-    if compiler_id != pinned_compiler or valgrind_version != pinned_valgrind:
-        local = f"{compiler_id}/{valgrind_version}"
-        pinned = f"{pinned_compiler}/{pinned_valgrind}"
+    if (
+        not pinned_toolchain
+        or toolchain_id != pinned_toolchain
+        or compiler_id != pinned_compiler
+        or valgrind_version != pinned_valgrind
+    ):
+        local = f"{toolchain_id}/{compiler_id}/{valgrind_version}"
+        pinned = f"{pinned_toolchain or '(none)'}/{pinned_compiler}/{pinned_valgrind}"
         return f"not comparable: {local} vs {pinned}"
     return None
 
@@ -144,6 +159,7 @@ def evaluate_instructions(
     compiler_id: str,
     valgrind_version: str,
     build_type: str,
+    toolchain_id: str,
     threshold_pct: Optional[float] = None,
 ) -> Tuple[int, str]:
     """
@@ -154,6 +170,7 @@ def evaluate_instructions(
 
     mismatches: List[str] = []
     for field, actual in (
+        ("toolchain_id", toolchain_id),
         ("compiler_id", compiler_id),
         ("valgrind_version", valgrind_version),
         ("build_type", build_type),
@@ -233,6 +250,7 @@ def write_repin_baseline(
     compiler_id: str,
     valgrind_version: str,
     build_type: str,
+    toolchain_id: str,
     commit: str,
     reason: str,
     threshold_pct: float = DEFAULT_THRESHOLD_PCT,
@@ -244,6 +262,8 @@ def write_repin_baseline(
     clean_reason = (reason or "").strip()
     if not clean_reason:
         raise ValueError("--repin requires a non-empty --reason <text>")
+    if not toolchain_id or toolchain_id == UNPINNED_TOOLCHAIN_ID:
+        raise ValueError("--repin requires --toolchain <prefix> from tools/build_pinned_toolchain.sh")
 
     regions_out: Dict[str, Dict[str, Any]] = {}
     for region in REGIONS:
@@ -258,6 +278,7 @@ def write_repin_baseline(
         }
 
     payload: Dict[str, Any] = {
+        "toolchain_id": toolchain_id,
         "compiler_id": compiler_id,
         "valgrind_version": valgrind_version,
         "build_type": build_type,
@@ -364,10 +385,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Path to instruction_baseline.json (default: benchmarks/instruction_baseline.json).",
     )
     parser.add_argument(
-        "--valgrind",
-        default="valgrind",
-        help="The valgrind to measure with (default: valgrind). CI passes the pinned "
-        "build from tools/build_pinned_toolchain.sh by its path.",
+        "--toolchain",
+        default=None,
+        help="Prefix built by tools/build_pinned_toolchain.sh: measure with its valgrind "
+        "and record its toolchain-id. Without it, valgrind is taken from PATH and the "
+        "toolchain is 'unpinned', which no pinned baseline accepts.",
     )
     parser.add_argument(
         "--repin",
@@ -390,13 +412,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"error: instruction_count binary not found or not executable: {args.bin}", file=sys.stderr)
         return 1
 
+    valgrind = "valgrind"
+    toolchain_id = UNPINNED_TOOLCHAIN_ID
+    if args.toolchain:
+        prefix = os.path.abspath(args.toolchain)
+        valgrind = os.path.join(prefix, "bin", "valgrind")
+        os.environ["VALGRIND_LIB"] = os.path.join(prefix, "libexec", "valgrind")
+        try:
+            with open(os.path.join(prefix, "toolchain-id"), "r", encoding="utf-8") as f:
+                toolchain_id = f.read().strip()
+        except OSError as exc:
+            print(f"error: {prefix} is not a pinned toolchain prefix: {exc} verdict=FAIL", file=sys.stderr)
+            return 1
+
     try:
-        valgrind_version = get_valgrind_version(args.valgrind)
+        valgrind_version = get_valgrind_version(valgrind)
         measured: Dict[str, Dict[str, Any]] = {}
         compiler_id = "unknown"
         build_type = "unknown"
         for region in REGIONS:
-            res = run_cachegrind_region(binary, region, args.valgrind)
+            res = run_cachegrind_region(binary, region, valgrind)
             measured[region] = res
             compiler_id = res["compiler_id"]
             build_type = res["build_type"]
@@ -413,6 +448,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 compiler_id=compiler_id,
                 valgrind_version=valgrind_version,
                 build_type=build_type,
+                toolchain_id=toolchain_id,
                 commit=commit,
                 reason=args.reason or "",
             )
@@ -430,13 +466,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         baseline=baseline,
         compiler_id=compiler_id,
         valgrind_version=valgrind_version,
+        toolchain_id=toolchain_id,
     )
     if not_comparable is not None:
         print(f"{not_comparable} verdict=FAIL")
         print(
-            f"the baseline is measured with {baseline.get('compiler_id')} and "
-            f"{baseline.get('valgrind_version')}; build them with "
-            "tools/build_pinned_toolchain.sh and measure with that gcc and --valgrind"
+            f"the baseline is measured with toolchain {baseline.get('toolchain_id')} "
+            f"({baseline.get('compiler_id')}, {baseline.get('valgrind_version')}); build it "
+            "with tools/build_pinned_toolchain.sh, compile with its gcc and pass --toolchain <prefix>"
         )
         return 2
 
@@ -446,6 +483,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         compiler_id=compiler_id,
         valgrind_version=valgrind_version,
         build_type=build_type,
+        toolchain_id=toolchain_id,
     )
     print(report)
     return code

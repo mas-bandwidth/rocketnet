@@ -9,8 +9,14 @@
 # from the host: it builds them here, caches the prefix keyed by the pins,
 # and runs the measurement with explicit paths into it.
 #
+# The prefix's toolchain-id file names the build: both versions and the first
+# 12 hex digits of this script's sha256, so any change to how the toolchain is
+# built is a different toolchain. tools/check_instructions.py records it in the
+# baseline and refuses to compare across ids, which keeps a host or distro gcc
+# reporting the same version from ever matching.
+#
 # Usage: bash tools/build_pinned_toolchain.sh <prefix> <gcc version> <valgrind version>
-#   A prefix already holding both pinned versions is left as it is. A version
+#   A prefix already holding this toolchain-id is left as it is. A version
 #   with no sha256 here is refused. gcc's in-tree prerequisites (gmp, mpfr,
 #   mpc) are fetched from gcc.gnu.org over HTTPS and checked against the
 #   sha512 list shipped inside the verified gcc tarball.
@@ -37,10 +43,12 @@ case "$valgrind_version" in
     *) echo "build_pinned_toolchain: no pinned valgrind source for $valgrind_version; add its release sha256 here" >&2; exit 1 ;;
 esac
 
+script_sha256=$(sha256sum "${BASH_SOURCE[0]}" | cut -c1-12)
+toolchain_id="pinned-gcc-$gcc_version-valgrind-$valgrind_version-script-$script_sha256"
+
 if [ -x "$prefix/bin/g++" ] && [ -x "$prefix/bin/valgrind" ] \
-    && [ "$("$prefix/bin/g++" -dumpfullversion)" = "$gcc_version" ] \
-    && [ "$(VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version)" = "valgrind-$valgrind_version" ]; then
-    echo "build_pinned_toolchain: $prefix already holds gcc $gcc_version and valgrind $valgrind_version"
+    && [ "$(cat "$prefix/toolchain-id" 2>/dev/null)" = "$toolchain_id" ]; then
+    echo "build_pinned_toolchain: $prefix already holds $toolchain_id"
     exit 0
 fi
 
@@ -111,5 +119,7 @@ tar -xjf "$work/$valgrind_tarball" -C "$work"
     make install
 )
 
-"$prefix/bin/g++" --version | head -1
-VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version
+[ "$("$prefix/bin/g++" -dumpfullversion)" = "$gcc_version" ]
+[ "$(VALGRIND_LIB="$prefix/libexec/valgrind" "$prefix/bin/valgrind" --version)" = "valgrind-$valgrind_version" ]
+echo "$toolchain_id" > "$prefix/toolchain-id"
+echo "build_pinned_toolchain: built $toolchain_id"

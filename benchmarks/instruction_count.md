@@ -77,8 +77,8 @@ instruction count.
 `tools/check_instructions.py` compares the measured `Ir` count for each region
 against `benchmarks/instruction_baseline.json`:
 
-- **Toolchain match**: `compiler_id`, `valgrind_version`, and `build_type` must
-  match the baseline exactly. Any difference fails immediately naming the
+- **Toolchain match**: `toolchain_id`, `compiler_id`, `valgrind_version`, and
+  `build_type` must match the baseline exactly. Any difference fails immediately naming the
   mismatched field and the pinned toolchain, because instruction counts across
   different compiler or valgrind versions are not comparable.
 - **Regression threshold (`+2.0%`)**: if any region exceeds its baseline `Ir`
@@ -114,12 +114,16 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_C_FLAGS="-I$tc/include" -DCMAKE_CXX_FLAGS="-I$tc/include" \
   -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath,$tc/lib64"
 cmake --build build --target instruction_count --parallel
-VALGRIND_LIB="$tc/libexec/valgrind" python3 tools/check_instructions.py \
-  --bin ./build/instruction_count --valgrind "$tc/bin/valgrind"
+python3 tools/check_instructions.py --bin ./build/instruction_count --toolchain "$tc"
 ```
 
 `-I$tc/include` puts the pinned valgrind's `cachegrind.h` ahead of any the host
-carries, and the rpath loads the pinned gcc's own `libstdc++`. A cold cache
+carries, and the rpath loads the pinned gcc's own `libstdc++`. The script writes
+`$tc/toolchain-id` (both versions and the first 12 hex digits of the script's
+sha256); `--toolchain` measures with that prefix's valgrind and checks the id
+against the baseline's `toolchain_id`, so a host or distro gcc that reports the
+same version is never compared, and any change to the script is a new
+toolchain that needs a re-pin. A cold cache
 builds gcc (C and C++ only, one stage) and valgrind; a warm cache restores the
 prefix and builds nothing. Moving to a new gcc or valgrind is a re-pin: add
 its sha256 to the script, then re-pin the baseline with the new toolchain.
@@ -133,9 +137,8 @@ upgrade moves the instruction count or changes the toolchain version:
    toolchain, as above, and run `--repin` with a mandatory `--reason`:
 
    ```sh
-   VALGRIND_LIB="$tc/libexec/valgrind" python3 tools/check_instructions.py \
-     --bin ./build/instruction_count --valgrind "$tc/bin/valgrind" \
-     --repin --reason "<why the baseline moved>"
+   python3 tools/check_instructions.py --bin ./build/instruction_count \
+     --toolchain "$tc" --repin --reason "<why the baseline moved>"
    ```
 
 2. Commit `benchmarks/instruction_baseline.json` alone in its own commit with the
@@ -143,8 +146,9 @@ upgrade moves the instruction count or changes the toolchain version:
 
 ### Why a re-pin requires a stated reason
 
-`--repin` refuses to run without `--reason <text>` and records the reason, git
-commit SHA, compiler ID, valgrind version, and build type inside
+`--repin` refuses to run without `--reason <text>` or without `--toolchain`, and
+records the reason, git commit SHA, toolchain ID, compiler ID, valgrind version,
+and build type inside
 `benchmarks/instruction_baseline.json`. Requiring an explicit reason prevents silent
 baseline ratcheting: every baseline shift in git history records whether the
 count moved because of a deliberate wire/protocol change, a compiler upgrade,

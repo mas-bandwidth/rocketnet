@@ -2403,7 +2403,9 @@ jobs:
   # never takes either from the host: tools/build_pinned_toolchain.sh builds
   # both from checksum-verified release source into ./pinned-toolchain, the
   # prefix is cached keyed by the two pins, the host OS and C library, and the
-  # script itself, and the measurement runs with explicit paths into it. A
+  # script itself, and the measurement runs with explicit paths into it. The
+  # prefix's toolchain-id must equal the baseline's, so a host or distro gcc
+  # reporting the same version is never compared. A
   # cold cache builds gcc (C and C++ only, one stage) and valgrind; a warm
   # cache restores the prefix and builds nothing.
   instruction-gate:
@@ -2485,7 +2487,7 @@ jobs:
           tc="$GITHUB_WORKSPACE/pinned-toolchain"
           gcc_resolved="$("$tc/bin/g++" -dumpfullversion)"
           valgrind_resolved="$("$tc/bin/valgrind" --version)"
-          echo "prefix holds gcc ${gcc_resolved} and ${valgrind_resolved} (pins are ${{ steps.pins.outputs.gcc }} and valgrind-${{ steps.pins.outputs.valgrind }})"
+          echo "prefix holds gcc ${gcc_resolved} and ${valgrind_resolved}, toolchain-id $(cat "$tc/toolchain-id") (pins are ${{ steps.pins.outputs.gcc }} and valgrind-${{ steps.pins.outputs.valgrind }})"
           [ "$gcc_resolved" = "${{ steps.pins.outputs.gcc }}" ]
           [ "$valgrind_resolved" = "valgrind-${{ steps.pins.outputs.valgrind }}" ]
 
@@ -2512,12 +2514,10 @@ jobs:
       - name: Run the cachegrind instruction gate with the pinned valgrind
         timeout-minutes: 5
         shell: bash
-        env:
-          VALGRIND_LIB: ${{ github.workspace }}/pinned-toolchain/libexec/valgrind
         run: |
           set -euo pipefail
           status=0
-          output="$(python3 tools/check_instructions.py --bin ./build/instruction_count --valgrind "$GITHUB_WORKSPACE/pinned-toolchain/bin/valgrind")" || status=$?
+          output="$(python3 tools/check_instructions.py --bin ./build/instruction_count --toolchain "$GITHUB_WORKSPACE/pinned-toolchain")" || status=$?
           printf '%s\n' "$output"
           [ "$status" -eq 0 ] || exit "$status"
           # the regions were isolated by cachegrind's client requests, as the
