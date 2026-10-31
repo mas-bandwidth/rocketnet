@@ -1311,6 +1311,31 @@ rocketnet_client_transport_t * rocketnet_client_transport_create( void * context
     return rocketnet_client_transport_create_ex( context, connect_token, config, time, NULL );
 }
 
+// One socket of the ladder: opens the transport bound as bind asks and
+// connects it to server (TRANSPORT.md t11: the kernel then drops datagrams
+// from any other source). A connect the kernel refuses closes the socket and
+// is a refusal. bind is written with the bound address only when the socket
+// is opened and connected, so a refused attempt never constrains the next
+// one's port. A refusal for want of memory is reported in config->status.
+
+static bool rocketnet_client_transport_open_connected( const rocketnet_client_transport_io_operations_t * operations, void * operations_context,
+                                                       const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind,
+                                                       const rocketnet_address_t * server, rocketnet_client_transport_io_t * io )
+{
+    rocketnet_address_t attempt = *bind;
+    if ( !rocketnet_client_transport_io_open( operations, operations_context, config, &attempt, io ) )
+        return false;
+
+    if ( io->operations->connect && !io->operations->connect( io->instance, server ) )
+    {
+        rocketnet_client_transport_io_close( io );
+        return false;
+    }
+
+    *bind = attempt;
+    return true;
+}
+
 static rocketnet_client_transport_t * rocketnet_client_transport_create_internal( void * context, const uint8_t * connect_token, const struct rocketnet_client_transport_config_t * config, double time, int * status,
                                                                                   const rocketnet_client_transport_io_operations_t * step_driven_operations, void * step_driven_transport_context, size_t config_bytes, uint64_t test_timestamp,
                                                                                   const uint64_t * resolved_memory_budget = NULL );
@@ -1351,10 +1376,17 @@ rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_
                                                                                            const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
                                                                                            const rocketnet_client_transport_io_operations_t * operations, void * transport_context )
 {
+    return rocketnet_client_transport_create_step_driven_at_timestamp_ex( context, connect_token, config, time, current_timestamp, operations, transport_context, NULL );
+}
+
+rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp_ex( void * context, const uint8_t * connect_token,
+                                                                                              const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
+                                                                                              const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status )
+{
     if ( !operations || current_timestamp == 0 )
         return NULL;
 
-    return rocketnet_client_transport_create_internal( context, connect_token, config, time, NULL, operations, transport_context,
+    return rocketnet_client_transport_create_internal( context, connect_token, config, time, status, operations, transport_context,
                                                        sizeof( struct rocketnet_client_transport_config_t ), current_timestamp );
 }
 
@@ -1838,6 +1870,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
                                                    &client_transport->protocol.server_address );
 
     char string_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
+    char address_buffer[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
     rocketnet_info( "client connecting to %s", rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ) );
 
     // on macOS and iOS an IPv4 server's client binds IPv4. Darwin picks the
@@ -1897,10 +1930,35 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         }
     }
 
+    // A token naming both families on a host that can use both selected its
+    // IPv6 server above. Its IPv4 server is the family race's second server
+    // (below) and the family fallback's: a candidate whose IPv6 socket is
+    // refused, at open or at connect, is opened again for the IPv4 server
+    // before the ladder falls to the next candidate. The fallback binds IPv4,
+    // as a host without IPv6 binds for an IPv4 server, so a host that refuses
+    // IPv6 sockets does not refuse it too.
+
+    const uint8_t token_flags = client_transport->protocol.signed_fields.address_flags;
+    const bool both_families = client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 &&
+                               ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 && ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0;
+
+    rocketnet_address_t ipv4_server;
+    memset( &ipv4_server, 0, sizeof( ipv4_server ) );
+    if ( both_families )
+    {
+        struct rocketnet_signed_connect_data_t ipv4_only = client_transport->protocol.signed_fields;
+        ipv4_only.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
+        rocketnet_client_protocol_pick_server_address( &ipv4_only, false, &ipv4_server );
+    }
+
+    rocketnet_address_t ipv4_bind = bind_address;
+    ipv4_bind.type = (uint8_t) rocketnet_platform_client_bind_family( ROCKETNET_ADDRESS_IPV4, false, false );
+
     // THE LADDER, the client's short form: candidates tried left to
     // right, first grant wins, a one-element list is a pin that refuses
     // rather than falls, and the exhausted list fails loudly naming what
-    // was skipped for platform and what refused for grant.
+    // was skipped for platform and what refused for grant
+    // (proofs/tla/RNClientLadder.tla).
 
     int granted_transport = -1;
 
@@ -2009,25 +2067,44 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             const rocketnet_client_transport_io_operations_t * operations = definition && definition->backend ? definition->backend->client : NULL;
             void * operations_context = client_transport->context;
 #endif // #if ROCKETNET_DEV
-            if ( rocketnet_client_transport_io_open( operations, operations_context,
-                                                     &transport_config, &bind_address, &client_transport->io ) )
+
+            // the client trusts only the server (TRANSPORT.md t11): a
+            // transport with a socket connects it to the server the token
+            // selected, before anything is sent or received, so the kernel
+            // drops datagrams from any other source. the source check in
+            // rocketnet_client_process_packet stays behind it. a connect the
+            // kernel refuses is a refusal (proofs/tla/RNClientLadder.tla
+            // TryPrimary).
+
+            if ( rocketnet_client_transport_open_connected( operations, operations_context, &transport_config, &bind_address,
+                                                            &client_transport->protocol.server_address, &client_transport->io ) )
             {
-                // the client trusts only the server (TRANSPORT.md t11): a
-                // transport with a socket connects it to the server the token
-                // selected, before anything is sent or received, so the
-                // kernel drops datagrams from any other source. the source
-                // check in rocketnet_client_process_packet stays behind it.
-                // a connect the kernel refuses is a refusal and falls.
-                const rocketnet_client_transport_io_operations_t * opened = client_transport->io.operations;
-                if ( opened->connect && !opened->connect( client_transport->io.instance, &client_transport->protocol.server_address ) )
-                    rocketnet_client_transport_io_close( &client_transport->io );
-                else
+                granted_transport = candidate;
+            }
+            else if ( both_families && transport_status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+            {
+                // the family fallback (proofs/tla/RNClientLadder.tla
+                // TryFallback): the same candidate, for the token's IPv4
+                // server. A refusal for want of memory never falls to it.
+
+                rocketnet_warn( "client transport %s refused the IPv6 server %s. trying the IPv4 server %s",
+                                rocketnet_transport_name( candidate ),
+                                rocketnet_address_to_string( &client_transport->protocol.server_address, string_buffer ),
+                                rocketnet_address_to_string( &ipv4_server, address_buffer ) );
+
+                if ( rocketnet_client_transport_open_connected( operations, operations_context, &transport_config, &ipv4_bind,
+                                                                &ipv4_server, &client_transport->io ) )
+                {
+                    client_transport->protocol.server_address = ipv4_server;
+                    bind_address = ipv4_bind;
                     granted_transport = candidate;
+                }
             }
 
             // a rung that failed for want of memory is not a refusal: the create
             // ends with OUT_OF_MEMORY and never falls to the next candidate
-            // (rocketnet_client_transport_io_config_t.status, sdk/rocketnet_driver.h);
+            // or family (rocketnet_client_transport_io_config_t.status,
+            // sdk/rocketnet_driver.h, proofs/tla/RNClientLadder.tla NoTryAfterOom);
             // any other failed open is a refusal and falls
 
             if ( granted_transport < 0 && transport_status == ROCKETNET_STATUS_OUT_OF_MEMORY )
@@ -2080,29 +2157,24 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
     // the family race (TRANSPORT.md t11 rule 3, proofs/tla/ServerConnection.tla
     // RaceFamilies): a token naming both families on a host that can use
-    // both selected its IPv6 server above, and the IPv4 server is dialed
-    // too, on a second socket of the granted transport, bound with the
-    // family an IPv4 server binds today and connected to that server. Both
-    // sockets are opened here, with the connect; nothing is opened during
-    // update. A host whose second socket is refused races nothing and
-    // connects exactly as a one-family client; a refusal for want of memory
-    // ends the create, as for the first socket. The memory plan seam opens
-    // no socket and races nothing.
+    // both selected its IPv6 server above, and when the ladder granted that
+    // server the IPv4 server is dialed too, on a second socket of the
+    // granted transport, bound with the family an IPv4 server binds today
+    // and connected to that server. A ladder that fell back to the IPv4
+    // server races nothing. Both sockets are opened here, with the connect;
+    // nothing is opened during update. A host whose second socket is
+    // refused races nothing and connects exactly as a one-family client; a
+    // refusal for want of memory ends the create, as for the first socket.
+    // The memory plan seam opens no socket and races nothing.
 
-    const uint8_t token_flags = client_transport->protocol.signed_fields.address_flags;
-    bool race_ipv4 = client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6 &&
-                     ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV4 ) != 0 && ( token_flags & ROCKETNET_ADDRESS_FLAG_IPV6 ) != 0;
+    bool race_ipv4 = both_families && client_transport->protocol.server_address.type == ROCKETNET_ADDRESS_IPV6;
 #if ROCKETNET_DEV
     if ( rocketnet_client_memory_plan_seam_enabled )
         race_ipv4 = false;
 #endif // #if ROCKETNET_DEV
     if ( race_ipv4 )
     {
-        struct rocketnet_signed_connect_data_t ipv4_only = client_transport->protocol.signed_fields;
-        ipv4_only.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
-
-        rocketnet_address_t race_server;
-        rocketnet_client_protocol_pick_server_address( &ipv4_only, false, &race_server );
+        const rocketnet_address_t race_server = ipv4_server;
 
         rocketnet_address_t race_bind;
         memset( &race_bind, 0, sizeof( race_bind ) );
@@ -2119,10 +2191,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
         int race_status = ROCKETNET_STATUS_OK;
         const rocketnet_client_transport_io_config_t race_config = { rocketnet_transport_name( granted_transport ), config, &race_status };
         rocketnet_client_transport_io_t race_io = {};
-        if ( rocketnet_client_transport_io_open( operations, operations_context,
-                                                 &race_config, &race_bind, &race_io ) &&
-             race_io.operations->connect && !race_io.operations->connect( race_io.instance, &race_server ) )
-            rocketnet_client_transport_io_close( &race_io );
+        rocketnet_client_transport_open_connected( operations, operations_context, &race_config, &race_bind, &race_server, &race_io );
 
         rocketnet_client_race_t * race = NULL;
         bool race_out_of_memory = race_status == ROCKETNET_STATUS_OUT_OF_MEMORY;

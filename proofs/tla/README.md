@@ -129,6 +129,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnsendstore` | 2 | One store class, abstractly (README-RNSendStore.md): the control and the reversed witness, the double-free guard off (`NoLeak`) |
 | `rnsendstorelayout` | 6 | The send store and the descriptor free stack at the code's layout, three chunks and four descriptors (README-RNSendStoreLayout.md): the control and five reversed witnesses, the free test without the fresh guard (`NeverTouchPastFresh`), a free that does not lower the cursor (`RefuseOnlyWhenNoneFree`), a chunk generation and a descriptor generation that wrap to 0 (both `HeldGenerationPositive`) and a take that clears a live free-stack slot (`NoTakeWhileLive`) |
 | `rnupdateclock` | 2 | The update clock of the client transport, the server transport and the message object (README-RNUpdateClock.md): the passing control and the reversed stall witness |
+| `rnclientladder` | 5 | The client ladder at create with the family fallback (README-RNClientLadder.md): controls at three candidates and at one (a pin), and three reversed witnesses, an IPv6 refusal that falls to the next candidate (`NoExhaustWhileReachable`), an IPv6 refusal for want of memory that falls to IPv4 (`NoTryAfterOom`) and a fallback for a token naming IPv6 alone (`TriedInToken`) |
 | `rnring` | 5 | Existing committed control and four invariant witnesses |
 | `rnsendspans` | 3 | Send-span ring control and two invariant witnesses |
 | `rnsentmap` | 3 | The sent-packet map against the window (README-RNSentMap.md): control at P = W, RTO = RTT and two invariant witnesses, a map one entry short (`NoLiveEviction`) and a resend delay below the round trip (`NoLiveEviction`) |
@@ -179,8 +180,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnfreestacklayout` | 4 | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md): the control and three reversed witnesses, a release without the liveness guard and a pop before the generation refusal (both `StackIsFree`) and a generation that wraps to 1 (`GenerationNeverReissued`) |
 | `rnreconstructlayout` | 4 | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md): the control and three reversed witnesses, a tie to the smaller, the below gate `>` and no candidate above (all `CodeIsNearest`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 572 cases
-in 89 groups, 556 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 577 cases
+in 90 groups, 561 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

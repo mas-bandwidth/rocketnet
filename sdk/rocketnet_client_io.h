@@ -852,6 +852,12 @@ struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_dri
                                                                                                   const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
                                                                                                   const rocketnet_client_transport_io_operations_t * operations, void * transport_context );
 
+// As create_step_driven_at_timestamp, and when status is not NULL it is
+// written with ROCKETNET_STATUS_OK or the refusal's section-2.1 code.
+struct rocketnet_client_transport_t * rocketnet_client_transport_create_step_driven_at_timestamp_ex( void * context, const uint8_t * connect_token,
+                                                                                                     const struct rocketnet_client_transport_config_t * config, double time, uint64_t current_timestamp,
+                                                                                                     const rocketnet_client_transport_io_operations_t * operations, void * transport_context, int * status );
+
 // As the step-driven create above, and when status is not NULL it is written
 // with ROCKETNET_STATUS_OK or the refusal's section-2.1 code (a config whose
 // step_driven field asks for a transport with no non-blocking step is refused).

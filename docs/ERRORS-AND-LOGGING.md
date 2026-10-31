@@ -100,7 +100,8 @@ status code and the accompanying `ERROR` log line:
    - `TRANSPORT_FAMILIES_UNSUPPORTED`: the selected transport cannot
      serve the configured IPv4/IPv6 family combination.
    - `TRANSPORT_LADDER_EXHAUSTED`: every candidate in the resolved
-     transport ladder failed host preflight, socket bind, or the operator
+     transport ladder failed host preflight, socket bind (on a client, the
+     connect to every server family the token names), or the operator
      transport memory budget (`ROCKETNET_*_MEMORY_BUDGET_BYTES`, which checks
      `allocator_bytes + umem_bytes` per candidate, not the create-time block).
    - **Action**: inspect the `WARN` / `ERROR` log lines emitted by each
