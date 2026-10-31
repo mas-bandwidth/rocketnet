@@ -12035,10 +12035,10 @@ void rocketnet_test_linux_uring_receive_cqe_errors();
 void rocketnet_test_linux_uring_send_cqe_errors();
 void rocketnet_test_linux_gso_refuses_explicit_port_in_use();
 void rocketnet_test_linux_uring_refuses_explicit_port_in_use();
+#if ROCKETNET_XDP
 void rocketnet_test_linux_xdp_receive_weather_ipv4();
 void rocketnet_test_linux_xdp_receive_weather_ipv6();
 bool rocketnet_test_linux_xdp_weather_runs_here();
-#if ROCKETNET_XDP
 bool rocketnet_test_xdp_veth_runs_here();
 #endif // #if ROCKETNET_XDP
 #endif // #if defined( __linux__ )
@@ -13137,10 +13137,10 @@ static const char * rocketnet_functional_predicate_name( bool ( *predicate )() )
         return "rocketnet_test_posix_io_uring_offered";
     if ( predicate == rocketnet_test_posix_xdp_offered )
         return "rocketnet_test_posix_xdp_offered";
-#if ROCKETNET_DEV
+#if ROCKETNET_DEV && ROCKETNET_XDP
     if ( predicate == rocketnet_test_linux_xdp_weather_runs_here )
         return "rocketnet_test_linux_xdp_weather_runs_here";
-#endif // #if ROCKETNET_DEV
+#endif // #if ROCKETNET_DEV && ROCKETNET_XDP
     if ( predicate == rocketnet_test_server_receive_low_tick_measurement_requested )
         return "rocketnet_test_server_receive_low_tick_measurement_requested";
     if ( predicate == rocketnet_test_server_pin_allows_gso )
