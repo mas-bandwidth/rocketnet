@@ -1740,7 +1740,15 @@ int rocketnet_max_unfragmented_message_bytes( enum rocketnet_reliability_t relia
     memset( &shape, 0, sizeof( shape ) );
     shape.channel = (uint32_t) channel;
 
-    switch ( reliability )
+    // a C caller can pass any int here; the value is read as an int, never as
+    // the enum, so one outside the enumerators is refused below and not
+    // undefined behavior in this C++ translation unit
+
+    static_assert( sizeof( reliability ) == sizeof( int ), "rocketnet_reliability_t is int-sized" );
+    int value = 0;
+    memcpy( &value, &reliability, sizeof( value ) );
+
+    switch ( value )
     {
         case ROCKETNET_RELIABILITY_UNRELIABLE:
         case ROCKETNET_RELIABILITY_UNRELIABLE_WITH_ACK_RECEIPT:
