@@ -12,20 +12,22 @@ The version lives in `sdk/rocketnet.h`, in two branches selected by
 The shipping branch carries `ROCKETNET_VERSION_FULL` and the integer macros
 `ROCKETNET_VERSION_MAJOR`, `ROCKETNET_VERSION_MINOR` and
 `ROCKETNET_VERSION_PATCH`. At this revision, the full label is
-`"v1.0.0-preview-5"` and the integers are `1.0.0`. The development branch uses
+`"v1.0.0-preview-6"` and the integers are `1.0.0`. The development branch uses
 `"dev"` and the integer sentinel `255.255.255`.
 
 The header label does not identify the current checkout as a release. The
-`v1.0.0-preview-5` tag identifies commit
-`77cd38b0a4f879f3ae04ee6681ac7d94bfd63151`; later commits can still carry that
-label. Check the exact tag and the repository's published release when choosing
-an artifact. Advancing a label alone neither tags nor publishes a release.
+newest tag, `v1.0.0-preview-5`, identifies commit
+`77cd38b0a4f879f3ae04ee6681ac7d94bfd63151`; the header names
+`v1.0.0-preview-6` because wire-affecting changes landed after that tag, and
+no `v1.0.0-preview-6` tag exists yet. Check the exact tag and the repository's
+published release when choosing an artifact. Advancing a label alone neither
+tags nor publishes a release.
 
 The numeric `ROCKETNET_VERSION`, CMake project `VERSION` and installed
 `RocketNetConfigVersion.cmake` remain numeric. CMake reads the full label
 from the header and checks that its numeric portion matches the project
-version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-5` and
-derives `RocketNet_VERSION_PRERELEASE` as `preview-5`. A final release has
+version. It exports `RocketNet_VERSION_STRING` as `v1.0.0-preview-6` and
+derives `RocketNet_VERSION_PRERELEASE` as `preview-6`. A final release has
 an empty prerelease string. There is no separate public prerelease macro.
 
 The `version-consistency` job in
@@ -42,8 +44,9 @@ label. Keep the installed libraries, export list and consumers consistent.
 
 The `unreleased-wire-changes` job in the same workflow enforces that `main` does
 not drift past the newest release with unannounced wire changes. It runs on a
-push to `main`, not on a pull request or a tag push, and compares `main` with the newest
-`v*` tag. The job classifies a commit as wire-affecting when it touches one of these paths:
+pull request, where it judges the merge result, and on a push to `main`; it does
+not run on a tag push. It compares the checked-out commit with the newest `v*`
+tag. The job classifies a commit as wire-affecting when it touches one of these paths:
 
 - `standard/TRANSPORT.md`
 - `standard/MESSAGES.md`
@@ -58,15 +61,16 @@ match, even when no wire behavior changes. The job does not inspect semantics.
 
 When there are wire-affecting commits past the newest tag and the shipping
 version still equals the tag version, the job fails: nothing announces that a
-release is owed. The release must either bump the shipping version and tag it,
-or revert the wire change. When the shipping version has already been bumped,
-the job warns and the change waits for the tag. Until the first `v*` tag exists
-the job reports itself dormant and exits green.
+release is owed. Bump the shipping version to the next label (for a preview,
+`v1.0.0-preview-N` becomes `v1.0.0-preview-N+1`, integers unchanged), or revert
+the wire change. When the shipping version has already been bumped, the job
+warns and the change waits for the tag. When the checkout shows no `v*` tag at
+all, the job fails, because it has nothing to compare against.
 
-A pull request that touches a wire-affecting path therefore has to arrange the
-version bump that will make `main` truthful after merge. The tag may follow in
-the release, but the version in `sdk/rocketnet.h` must no longer name the newest
-release once a wire change is on `main`.
+A pull request that touches a wire-affecting path, while the shipping version
+still names the newest tag, is red until it carries the bump. The tag may follow
+in the release, but the version in `sdk/rocketnet.h` must no longer name the
+newest release once a wire change is on `main`.
 
 ## Default CI requirements
 
