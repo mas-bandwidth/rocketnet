@@ -178,6 +178,8 @@ in 73 groups, 490 required and 16 bench cases whose `debt` column names
 The case plan in `CASES.tsv` covers every root configuration: 514 cases
 in 74 groups, 498 required and 16 bench cases whose `debt` column names
 in 75 groups, 503 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 536 cases
+in 80 groups, 520 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
