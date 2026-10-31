@@ -2453,7 +2453,9 @@ ROCKETNET_EXPORT void rocketnet_client_abort_message( struct rocketnet_client_t 
 /// room, so a true answer holds until the next of either. Room returns as the
 /// server acknowledges messages.
 ///
-/// Changes no state, counts nothing and allocates nothing. Constant time.
+/// Changes no state, counts nothing and allocates nothing. Usually constant
+/// time; a message that needs a send store chunk scans that size class for a
+/// free one, so its worst case grows with the chunks in the class.
 /// A false answer may be pessimistic for a small unreliable message: start
 /// can write it straight into a transport frame without message memory.
 ///

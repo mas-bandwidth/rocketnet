@@ -285,8 +285,10 @@ returns `false`—skipping a send, deferring it until room returns as the remote
 endpoint acknowledges messages, dropping it, or coalescing state—is application
 policy rather than library behavior.
 
-The query changes no state, counts nothing, allocates nothing and runs in
-constant time. Only start message and update take room, so a `true` answer
+The query changes no state, counts nothing and allocates nothing. It is
+usually constant time; a message that needs a send store chunk scans that size
+class for a free one, so its worst case grows with the chunks in the class.
+Only start message and update take room, so a `true` answer
 holds until the next of either. Each server client slot has its own message
 memory; a server index outside `0 .. max_clients - 1` is misuse and answers
 `false`. A `false` may be pessimistic for an unreliable message that fits in
