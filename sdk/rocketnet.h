@@ -1748,8 +1748,9 @@ struct rocketnet_receipt_t
 /// backend_public_key takes the public key; the secret key signs tokens and
 /// stays with whatever mints them.
 ///
-/// Needs no client, server or library state. Thread: any thread; it touches
-/// only its arguments.
+/// Needs no client, server or library state: it runs before rocketnet_init
+/// too. Thread: any thread, never during rocketnet_term; it writes only its
+/// arguments.
 ///
 /// @param public_key Receives ROCKETNET_BACKEND_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_BACKEND_SECRET_KEY_BYTES. Wipe it
@@ -1763,8 +1764,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_generate_backend_keypair( uin
 /// itself at create. A token is sealed to the server's public key, which
 /// rocketnet_server_public_key reads from a running server.
 ///
-/// Needs no client, server or library state. Thread: any thread; it touches
-/// only its arguments.
+/// Needs no client, server or library state: it runs before rocketnet_init
+/// too. Thread: any thread, never during rocketnet_term; it writes only its
+/// arguments.
 ///
 /// @param public_key Receives ROCKETNET_SERVER_PUBLIC_KEY_BYTES.
 /// @param secret_key Receives ROCKETNET_SERVER_SECRET_KEY_BYTES. Wipe it
@@ -1894,8 +1896,9 @@ static inline enum rocketnet_status_t rocketnet_connect_token_default_config( st
 /// returns ROCKETNET_STATUS_CONFIG_NOT_INITIALIZED. Failure leaves the
 /// output unchanged.
 ///
-/// Needs no client, server or library state. Thread: any thread; it touches
-/// only its arguments.
+/// Needs no client, server or library state: it runs before rocketnet_init
+/// too. Thread: any thread, never during rocketnet_term; it writes only its
+/// arguments.
 ///
 /// @param config The token's inputs, filled by
 /// rocketnet_connect_token_default_config and then set.
