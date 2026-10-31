@@ -101,6 +101,21 @@ static void test_coalesce_split_refuses_past_max()
     rocketnet_unit_check( lengths[0] == -9 );
 }
 
+static void test_coalesce_split_near_int_max_writes_only_its_segments()
+{
+    // 2147483647 bytes at stride 1073741825: one full segment and a
+    // 1073741822-byte tail. Stepping past the tail's offset would pass
+    // INT_MAX, so the split writes the two segments and nothing after them.
+
+    int offsets[3] = { -7, -7, -7 };
+    int lengths[3] = { -7, -7, -7 };
+
+    rocketnet_unit_check( rocketnet_coalesce_split( 2147483647, 1073741825, offsets, lengths, 2 ) == 2 );
+    rocketnet_unit_check( offsets[0] == 0 && lengths[0] == 1073741825 );
+    rocketnet_unit_check( offsets[1] == 1073741825 && lengths[1] == 1073741822 );
+    rocketnet_unit_check( offsets[2] == -7 && lengths[2] == -7 );
+}
+
 static void coalesce_test_address( struct rocketnet_address_t * address, uint8_t last, uint16_t port )
 {
     memset( address, 0, sizeof( *address ) );
@@ -193,5 +208,6 @@ static void test_coalesce_send_run_stops_on_destination_and_abort()
 
 REGISTER_UNIT_TEST( test_coalesce_split_by_stride_round_trips );
 REGISTER_UNIT_TEST( test_coalesce_split_refuses_past_max );
+REGISTER_UNIT_TEST( test_coalesce_split_near_int_max_writes_only_its_segments );
 REGISTER_UNIT_TEST( test_coalesce_send_run_equal_sizes_and_tail );
 REGISTER_UNIT_TEST( test_coalesce_send_run_stops_on_destination_and_abort );

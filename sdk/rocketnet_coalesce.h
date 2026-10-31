@@ -46,18 +46,19 @@ static inline int rocketnet_coalesce_split( int message_bytes, int segment_bytes
     if ( count > max_segments )
         return -1;
 
-    int n = 0;
+    // segment i starts at i * segment_bytes, below message_bytes for every
+    // i < count, so no offset passes INT_MAX
 
-    for ( int offset = 0; offset < message_bytes; offset += segment_bytes )
+    for ( int i = 0; i < count; i++ )
     {
+        const int offset = i * segment_bytes;
         const int remaining = message_bytes - offset;
 
-        offsets[n] = offset;
-        lengths[n] = remaining < segment_bytes ? remaining : segment_bytes;
-        n++;
+        offsets[i] = offset;
+        lengths[i] = remaining < segment_bytes ? remaining : segment_bytes;
     }
 
-    return n;
+    return count;
 }
 
 // The length of the send run starting at index 0 of a queue of count packets.
