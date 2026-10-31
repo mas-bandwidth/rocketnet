@@ -463,6 +463,18 @@ uint64_t rocketnet_allocation_overhead()
     return sizeof( rocketnet_allocation_header_t ) + ROCKETNET_ALLOCATION_ALIGNMENT - 1;
 }
 
+#if ROCKETNET_DEV
+// called by install between its count read and its publish, on the
+// installing thread: the seam that widens that window for the install race
+// harness (tests/test_lifecycle.cpp)
+static void ( *rocketnet_allocator_install_hook )( void ) = nullptr;
+
+void rocketnet_allocator_set_install_hook_for_test( void ( *hook )( void ) )
+{
+    rocketnet_allocator_install_hook = hook;
+}
+#endif // #if ROCKETNET_DEV
+
 // call with the lifecycle lock held. NULL for both is the system allocator
 
 static int rn_allocator_install_locked( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
@@ -484,7 +496,10 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
 
     // proofs/tla/RNAllocatorInstall.tla InstallBegin, InstallCheck and
     // InstallPublish: the door closes, the count is read, then the pair goes
-    // back or the new one is published
+    // back or the new one is published. A call spinning on the sentinel holds
+    // a count from its add to its uncount, so it can make install refuse with
+    // LIVE_ALLOCATIONS; that happens only when something allocates while init
+    // or rocketnet_allocator_ex runs.
 
     rocketnet_allocator_pair.store( &rocketnet_allocator_installing, std::memory_order_seq_cst );
     if ( rocketnet_allocations.load( std::memory_order_seq_cst ) != 0 )
@@ -492,6 +507,11 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
         rocketnet_allocator_pair.store( installed, std::memory_order_seq_cst );
         return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
     }
+
+#if ROCKETNET_DEV
+    if ( rocketnet_allocator_install_hook )
+        rocketnet_allocator_install_hook();
+#endif // #if ROCKETNET_DEV
 
     rocketnet_allocator_pair_t * next = &rocketnet_allocator_pairs[installed == &rocketnet_allocator_pairs[0] ? 1 : 0];
     next->allocate = malloc_function;
