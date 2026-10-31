@@ -728,6 +728,28 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
         set(ROCKETNET_UNIT_TRANSPORT_SOURCE)
         set(ROCKETNET_TEST_CHANNELS_SOURCE)
     endif()
+    # The floor canary with FMA code generation: x86-64 has no FMA in its
+    # baseline, so the unit suite's canary passes there with or without the
+    # floor. This build of it fuses a*b+c unless the floor holds, and runs as
+    # soon as it links, so a build whose floor does not hold fails to build.
+    # It runs where the build machine runs the target (not when cross
+    # compiling) and needs a CPU with FMA (every fleet host has it).
+    add_executable(test_fp_contract_fma tests/fp_contract_fma.cpp)
+    if(MSVC)
+        if(CMAKE_CXX_COMPILER_ARCHITECTURE_ID STREQUAL "x64")
+            target_compile_options(test_fp_contract_fma PRIVATE /arch:AVX2)
+        endif()
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$"
+           AND (NOT APPLE OR NOT CMAKE_OSX_ARCHITECTURES OR CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64"))
+        target_compile_options(test_fp_contract_fma PRIVATE -mfma)
+    endif()
+    string(TOLOWER "${CMAKE_HOST_SYSTEM_PROCESSOR}" rocketnet_host_processor)
+    string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" rocketnet_target_processor)
+    if(NOT CMAKE_CROSSCOMPILING AND rocketnet_host_processor STREQUAL rocketnet_target_processor)
+        add_custom_command(TARGET test_fp_contract_fma POST_BUILD
+            COMMAND test_fp_contract_fma
+            VERBATIM)
+    endif()
     add_executable(test ${ROCKETNET_UNIT_TRANSPORT_SOURCE} tests/test.cpp ${ROCKETNET_TEST_CHANNELS_SOURCE} ${ROCKETNET_UNIT_TEST_SOURCES})
     if(TARGET RocketNet::Uring)
         # the io_uring seam cases are built only where the driver is
