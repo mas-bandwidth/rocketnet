@@ -19,6 +19,7 @@ revision under review.
 | client handshake | `ClientConnection`, `ClientSession` | monotonic states, bounded deadlines, secret cleanup and reconnect reset |
 | client transport ladder | `RNClientLadder` | candidates and families tried in order, an IPv6 refusal falls back to the token's IPv4 server on the same candidate, exhaustion only when no named server is reachable, out of memory fatal on either family |
 | server handshake | `ServerConnection` | cookie gate, token/address binding, slot admission and bounded work |
+| io_uring server driver and reap | `RNUringDriver`, `RNUringReapLayout` | no slot reused while the kernel owns it; the fill bank within its room; no call ends with a send completion behind a receive held for room |
 | replay and ACKs | `ReplayWindow`, `RNSentHistory` | replay refusal, honest ACK ranges and bounded retained history |
 | channel delivery | `RNChannel`, `RNChannelTypes` | reliable exactly once, ordered in order, sequenced newest and unreliable at most once |
 | fragmentation | `RNBlocks`, `FragmentsAndAcks` | exact reconstruction, bounded slots and ACK coupling |
