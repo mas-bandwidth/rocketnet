@@ -1107,8 +1107,6 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
 #endif // #if ROCKETNET_DEV
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) )
         return NULL;
-    if ( num_workers == 0 )
-        num_workers = ROCKETNET_IOCP_DEFAULT_WORKERS;
     if ( num_workers < 1 || num_workers > ROCKETNET_IOCP_MAX_WORKERS )
     {
         rocketnet_warn( "iocp transport refused: worker count %d is outside 1..%d", num_workers, ROCKETNET_IOCP_MAX_WORKERS );

@@ -63,7 +63,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE >= 2 * 
 struct rocketnet_server_iocp_t;
 
 // bind_address is updated with the actual port. IPv6 sockets accept both
-// families and normalize mapped IPv4 sources. Zero workers selects the default.
+// families and normalize mapped IPv4 sources.
 rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context,
                                                         rocketnet_address_t * bind_address, int num_workers
 #if ROCKETNET_DEV
