@@ -580,6 +580,14 @@ static inline uint64_t rn_round_up_alignment( uint64_t bytes )
 
 static const uint64_t rn_client_header_bytes = rn_round_up_alignment( sizeof( struct rocketnet_client_t ) );
 
+// The required_memory calls size a region the caller puts its own heap over
+// (tlsf or similar), so they are conservative, not exact: the planned peak
+// plus this fixed slack for that heap's block headers, alignment and
+// fragmentation. tests/test_unit_memory_plan_lifecycle.cpp holds the slack to
+// 64 bytes for each allocation a lifecycle makes.
+
+static const uint64_t rn_required_memory_slack_bytes = (uint64_t) 1024 * 1024;
+
 struct rocketnet_message_client_t * rocketnet_client_message_client( struct rocketnet_client_t * client )
 {
     return client ? ( client->connection ? client->connection : client->retiring ) : NULL;
@@ -1074,11 +1082,12 @@ static size_t rn_client_required_memory_current( const struct rocketnet_client_c
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport connect creates for the candidate it grants;
     // disconnect retires it and the next connect frees it before it creates
-    // the next, so a reconnect takes the same bytes again
+    // the next, so a reconnect takes the same bytes again; then the slack
 
     uint64_t total = rn_client_header_bytes + connection_bytes;
     if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) ||
-         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) )
+         !rocketnet_memory_add( total, 1, rocketnet_client_transport_ladder_allocator_bytes( &transport ) ) ||
+         !rocketnet_memory_add( total, 1, rn_required_memory_slack_bytes ) )
         return 0;
 
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;
@@ -2262,7 +2271,7 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
     // the peak over the lifecycle: create's one block as the allocator sees
     // it, plus the transport start creates for the candidate it grants; stop
     // retires it and the next start frees it before it creates the next, so
-    // a restart takes the same bytes again
+    // a restart takes the same bytes again; then the slack
 
     const uint64_t transport_bytes = rocketnet_server_transport_ladder_allocator_bytes( &transport );
 
@@ -2272,7 +2281,8 @@ static size_t rn_server_required_memory_current( const struct rocketnet_server_c
         return 0;
 
     uint64_t total = rn_server_header_bytes + running_bytes;
-    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) || !rocketnet_memory_add( total, 1, transport_bytes ) )
+    if ( !rocketnet_memory_add( total, 1, rocketnet_allocation_overhead() ) || !rocketnet_memory_add( total, 1, transport_bytes ) ||
+         !rocketnet_memory_add( total, 1, rn_required_memory_slack_bytes ) )
         return 0;
 
     return total > (uint64_t) SIZE_MAX ? 0 : (size_t) total;

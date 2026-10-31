@@ -1680,12 +1680,15 @@ struct rocketnet_server_config_t
 /// next connect or start frees it before it allocates the next, and destroy
 /// frees it, so a reconnect or restart takes the same bytes again and the
 /// peak never grows across cycles. The required_memory calls report that
-/// peak: the most the allocator holds over create, connect or start,
-/// disconnect or stop, reconnect or restart, and destroy, each allocation
-/// with its alignment header, for whichever transport of the config's list
-/// is granted (the largest of them). For the planned built-in transports,
-/// with unchanged configuration and environment overrides, an allocator over
-/// a region of that size never runs out. The development link simulator is
+/// peak plus 1 MiB of slack: the peak is the most the allocator holds over
+/// create, connect or start, disconnect or stop, reconnect or restart, and
+/// destroy, each allocation with its alignment header, for whichever
+/// transport of the config's list is granted (the largest of them). The
+/// slack is for a heap the caller puts over one region of that size (tlsf or
+/// similar): its block headers, alignment and fragmentation. The number is
+/// deliberately conservative, not exact. For the planned built-in
+/// transports, with unchanged configuration and environment overrides, a
+/// heap over a region of that size never runs out. The development link simulator is
 /// included in development builds.
 ///
 /// Not counted, because the operating system owns it: each worker thread's
@@ -2011,7 +2014,8 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
 
 /// Returns the most memory the allocator holds for this config over the
 /// client's lifecycle: create's block plus the transport each connect
-/// allocates (see Messages above). It is at least the block create needs.
+/// allocates, plus 1 MiB of slack for the caller's heap (see Messages above).
+/// It is conservative, not exact, and at least the block create needs.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0.
 ///
@@ -2020,7 +2024,7 @@ static inline enum rocketnet_status_t rocketnet_client_light_config( struct rock
 ///
 /// @param config The config to size, or NULL for the defaults.
 /// @return The most bytes the allocator holds for the client over its
-/// lifecycle, or 0 when the config, its config_bytes or an environment
+/// lifecycle plus the slack, or 0 when the config, its config_bytes or an environment
 /// override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_client_required_memory( const struct rocketnet_client_config_t * config );
@@ -2611,8 +2615,9 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
 
 /// Returns the most memory the allocator holds for this config and
 /// max_clients over the server's lifecycle: create's block plus the
-/// transport and per-client tables each start allocates (see Messages above).
-/// It is at least the block create needs.
+/// transport and per-client tables each start allocates, plus 1 MiB of slack
+/// for the caller's heap (see Messages above). It is conservative, not exact,
+/// and at least the block create needs.
 /// Applies the same environment overrides as create.
 /// NULL config selects defaults. Invalid config returns 0, including the
 /// defaults' test filter in a production build. A named transport memory
@@ -2623,7 +2628,7 @@ static inline enum rocketnet_status_t rocketnet_server_light_config( struct rock
 ///
 /// @param config The config to size, or NULL for the defaults.
 /// @return The most bytes the allocator holds for the server over its
-/// lifecycle, or 0 when the config, its config_bytes or an environment
+/// lifecycle plus the slack, or 0 when the config, its config_bytes or an environment
 /// override is invalid.
 
 ROCKETNET_EXPORT size_t rocketnet_server_required_memory( const struct rocketnet_server_config_t * config );

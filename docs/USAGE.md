@@ -489,7 +489,8 @@ Each client and server starts with one block that create allocates through the
 allocator. `rocketnet_client_required_memory` and
 `rocketnet_server_required_memory` report the peak allocator memory over the
 whole lifecycle, including transport allocations at connect and start and the
-development link simulator in development builds. For planned built-in
+development link simulator in development builds, plus 1 MiB of slack for the
+heap a caller puts over that region. The number is conservative, not exact. For planned built-in
 transports with unchanged configuration and environment overrides, a program
 can pass `rocketnet_init` an allocator over a region of that size, aligned to
 `ROCKETNET_ALLOCATION_ALIGNMENT`. Operating-system-owned memory and a custom
