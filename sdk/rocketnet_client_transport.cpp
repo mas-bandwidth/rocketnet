@@ -3001,6 +3001,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
             rocketnet_client_io_step( &client_transport->client_io, false ); // RNClientIo CallerStep
 #endif // #if ROCKETNET_DEV
         receive_buffers[0] = rocketnet_client_io_expose( &client_transport->client_io );
+        rocketnet_client_io_fold_counters( &client_transport->client_io );
         num_receive_buffers = receive_buffers[0] ? 1 : 0;
     }
     else

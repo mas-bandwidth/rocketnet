@@ -348,6 +348,45 @@ static void test_transport_results_client_batch_impossible_length_is_a_fault()
 }
 REGISTER_UNIT_TEST( test_transport_results_client_batch_impossible_length_is_a_fault );
 
+// A datagram past the UDP envelope reads PREFILTER_TOO_LARGE, on the batch
+// path and the per-packet path. The step that refuses it leaves the main
+// thread's counter alone; the fold at update adds it, once.
+
+static void test_transport_results_client_oversize_counts_at_the_fold()
+{
+    for ( int batch = 0; batch < 2; batch++ )
+    {
+        transport_results_lie_t lie = {};
+        lie.mode = batch ? 7 : 3;
+
+        rocketnet_client_transport_io_operations_t ops;
+        rocketnet_client_transport_io_t transport = {};
+        rocketnet_client_receive_buffer_t * buffers[ROCKETNET_CLIENT_IO_NUM_BUFFERS] = {};
+        transport_results_clock_t clock;
+        rocketnet_client_io_t io = {};
+        transport_results_open_io( &lie, &ops, &transport, &io, buffers, &clock, batch != 0 );
+
+        uint64_t too_large = 0;
+        io.prefilter_too_large = &too_large;
+
+        rocketnet_client_io_step( &io, false );
+        rocketnet_unit_check( io.transport_faults == 1 );
+        rocketnet_unit_check( too_large == 0 );
+
+        rocketnet_client_io_expose( &io );
+        rocketnet_client_io_fold_counters( &io );
+        rocketnet_unit_check( too_large == 1 );
+
+        rocketnet_client_io_fold_counters( &io );
+        rocketnet_unit_check( too_large == 1 );
+
+        transport_results_close_io( &transport, buffers );
+    }
+
+    printf( "test_transport_results_client_oversize_counts_at_the_fold\n" );
+}
+REGISTER_UNIT_TEST( test_transport_results_client_oversize_counts_at_the_fold );
+
 // A transport open allows wait and wake both absent. A blocked idle step does
 // not call wait.
 
