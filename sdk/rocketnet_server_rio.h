@@ -80,6 +80,8 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio,
 void rocketnet_server_rio_abort_packet( rocketnet_server_rio_t * rio,
                                         uint64_t packet_id, uint8_t * frame );
 void rocketnet_server_rio_send_packets( rocketnet_server_rio_t * rio );
+// the slots start_packet may still take in the open fill phase. Main thread.
+int rocketnet_server_rio_send_room( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_receive_packets( rocketnet_server_rio_t * rio );
 rocketnet_server_socket_process_packets_t * rocketnet_server_rio_process_packets( rocketnet_server_rio_t * rio );
 

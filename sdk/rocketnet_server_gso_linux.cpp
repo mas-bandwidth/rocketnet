@@ -1305,6 +1305,18 @@ void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, ui
 // send
 // ---------------------------------------------------------------------------
 
+// proofs/tla/ServerStopSpread.tla Room: the producer bank's free slots
+
+int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+
+    if ( gso->stopping || gso->send_producer < 0 )
+        return 0;
+    const int used = gso->send_banks[gso->send_producer].num_packets.load( std::memory_order_relaxed );
+    return used < 0 || used >= ROCKETNET_GSO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_GSO_SEND_QUEUE_SIZE - used;
+}
+
 // proofs/tla/RNGsoHandoff.tla TxStage: a fill thread stages one packet into the
 // producer bank, outside the ownership mutex.
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id )

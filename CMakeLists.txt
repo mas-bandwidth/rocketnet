@@ -716,6 +716,10 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
     # receive_batch. Not a second translation unit.
     set(ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_driver_results_checked.cpp")
     list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_RESULTS_SOURCE}")
+    # Included by the same translation unit, so the stop-spread cases can
+    # swap in a fake staged transport with a fixed staging.
+    set(ROCKETNET_UNIT_TRANSPORT_STOP_SPREAD_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_unit_server_stop_spread.cpp")
+    list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES "${ROCKETNET_UNIT_TRANSPORT_STOP_SPREAD_SOURCE}")
     # The RIO fake-kernel overflow fixture is development instrumentation, not
     # a production-behavior unit case. A DEV=0 suite keeps every real unit case
     # and does not compile or link this seam.

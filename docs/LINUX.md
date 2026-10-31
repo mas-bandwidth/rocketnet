@@ -189,8 +189,8 @@ at most 32: a larger count refuses the rung, never clamps
 Each socket has its own receive worker thread, and the server has one
 transmit worker. Three server-wide send banks hold 4096 slots each, with
 only the current producer bank available to a fill. Adding sockets does not
-increase this fill capacity. See [staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations),
-including the current fairness issue under send pressure
+increase this fill capacity; sends past it spread across updates as the
+transport's send room reports. See [staging and drain limitations](TRANSPORT-INTERNALS.md#current-staging-and-drain-limitations)
 (`sdk/rocketnet_server_gso_linux.cpp`).
 
 **The plain tier.** Create probes `UDP_SEGMENT` and `UDP_GRO` on the bound

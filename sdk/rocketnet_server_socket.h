@@ -156,6 +156,11 @@ void rocketnet_server_socket_abort_packet( struct rocketnet_server_socket_t * se
 
 void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * server_socket );
 
+// the frames start_packet takes for any destination before the next flush:
+// the fewest free slots of any queue's producer buffer, since a destination
+// hashes to one queue. Main thread.
+int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
+
 // receive packets (staged, one copy each way)
 
 void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t * server_socket );
