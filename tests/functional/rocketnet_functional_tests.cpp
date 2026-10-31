@@ -7318,7 +7318,10 @@ static void rocketnet_test_gso_client_wire_exchange( const char * server_bind, c
     rocketnet_client_gso_test_disable_segment.store( false );
     rocketnet_client_gso_test_disable_gro.store( false );
 
-    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
+    // the client's start refuses at a full ring under load, and the loop
+    // above sends that frame's rest on the next pass: an expected refusal
+
+    ROCKETNET_FUNCTIONAL_DESTROY_CLIENT_EXCEPT( client, ROCKETNET_COUNTER_SEND_RING_FULL );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER( server );
 
     rocketnet_test_env_restore( &client_guard );
