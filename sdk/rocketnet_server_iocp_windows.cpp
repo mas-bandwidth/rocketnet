@@ -740,8 +740,10 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
         {
             ++segments;
 
+            // rocketnet_coalesce_split writes only positive lengths
+
             const int length = lengths[i];
-            if ( length > 0 && length <= ROCKETNET_RECEIVE_CEILING && buffer->num_packets < ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE )
+            if ( length <= ROCKETNET_RECEIVE_CEILING && buffer->num_packets < ROCKETNET_IOCP_RECEIVE_QUEUE_SIZE )
             {
                 const int index = buffer->num_packets++;
                 buffer->from[index] = from;
@@ -752,9 +754,7 @@ static void rocketnet_iocp_publish_uro( rocketnet_server_iocp_t * iocp, rocketne
             else
             {
                 iocp->counters[ROCKETNET_IOCP_RECEIVE_DROPPED].fetch_add( 1, std::memory_order_relaxed );
-                if ( length <= 0 )
-                    iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_SHORT].fetch_add( 1, std::memory_order_relaxed );
-                else if ( length > ROCKETNET_RECEIVE_CEILING )
+                if ( length > ROCKETNET_RECEIVE_CEILING )
                     iocp->counters[ROCKETNET_IOCP_RECEIVE_TOO_LARGE].fetch_add( 1, std::memory_order_relaxed );
             }
         }

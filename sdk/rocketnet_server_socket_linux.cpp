@@ -3325,23 +3325,22 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
         {
             // receive packets
 
-            // How many descriptors this pass actually took. The loop below can
-            // stop early when the staging buffer fills, and everything after
-            // this point -- the release, the refill, the pending-return spill --
-            // must cover exactly that many, not the number peeked. Releasing
-            // more would hand the kernel uninitialized stack as umem addresses:
-            // rejected (leaking the frame forever) or in range and aliasing a
-            // LIVE frame, which is the packet corruption the shouty comment at
-            // rocketnet_constants.h:22 warns about.
+            // How many descriptors this pass took. The peek is capped by the
+            // staging room (receive_limit), so the loop below takes every
+            // peeked descriptor; the release, the refill and the
+            // pending-return spill each cover exactly num_consumed. Releasing
+            // more than were read would hand the kernel uninitialized stack
+            // as umem addresses: rejected, leaking the frame, or in range and
+            // aliasing a live frame.
             //
-            // The peek above advanced the ring's cached consumer past all
+            // The peek advanced the ring's cached consumer past all
             // num_packets descriptors; rocketnet_xdp_receive_ring_finish
-            // cancels the num_packets - num_consumed descriptors not taken
+            // cancels any num_packets - num_consumed descriptors not taken
             // (xsk_ring_cons__cancel) before releasing num_consumed
-            // (xsk_ring_cons__release), so the next peek returns the skipped
-            // descriptors first. The frame ownership is modelled in
-            // proofs/tla/RNXdpReceiveRing.tla; the loop below is its Take, one
-            // descriptor read and its frame held while the staging buffer has room.
+            // (xsk_ring_cons__release), so a later peek returns them first.
+            // The frame ownership is modelled in proofs/tla/RNXdpReceiveRing.tla;
+            // the loop below is its Take, one descriptor read and its frame
+            // held while the staging buffer has room.
 
             uint32_t num_consumed = 0;
 
@@ -3358,8 +3357,7 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
             for ( uint32_t i = 0; i < num_packets; i++ )
             {
-                if ( receive_buffer->num_packets >= ROCKETNET_XDP_RECV_QUEUE_SIZE )
-                    break;
+                rocketnet_assert( receive_buffer->num_packets < ROCKETNET_XDP_RECV_QUEUE_SIZE );
 
                 const struct xdp_desc * __restrict__ desc = xsk_ring_cons__rx_desc( &socket->receive_queue, receive_index + i );
 

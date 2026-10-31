@@ -1165,10 +1165,10 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         }
         else if ( !rocketnet_rio_address_read( rocketnet_rio_receive_address( rio, slice ), rio->ipv6, &from ) )
             rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_FAILED );
-        else if ( bank->num_packets >= ROCKETNET_RIO_RECEIVES )
-            rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_OVERFLOW );    // unreachable: the dequeue is bounded by the room
         else
         {
+            rocketnet_assert( bank->num_packets < ROCKETNET_RIO_RECEIVES );     // the dequeue takes at most the bank's room
+
             const int index = bank->num_packets++;
             bank->from[index] = from;
             bank->packet_bytes[index] = bytes;
