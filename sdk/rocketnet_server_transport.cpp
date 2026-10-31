@@ -312,9 +312,13 @@ struct rocketnet_server_transport_t
     // (the ack block of the receive state at the disconnect), its first
     // sequence, salt and session key wait here in a ring, and each update
     // seals at most disconnect_packets_per_update of them, one
-    // packet per waiting burst per pass, so every client's first disconnect
-    // packet leaves before any burst's redundant copies. The keys are wiped
-    // as each burst completes and at destroy.
+    // packet per waiting burst per pass: a pass seals each waiting burst
+    // once and ends only when every waiting burst was sealed in it
+    // (proofs/tla/RNDisconnectBurstRing.tla PassFair). A burst deferred
+    // during a pass joins it at the tail, so its first packet may leave
+    // after redundant copies of the bursts ahead of it; bursts deferred
+    // together each send their first packet before any of their redundant
+    // copies. The keys are wiped as each burst completes and at destroy.
     struct rocketnet_server_disconnect_burst_t disconnect_bursts[ROCKETNET_MAX_CLIENTS];
     uint8_t disconnect_burst_keys[ROCKETNET_MAX_CLIENTS][ROCKETNET_KEY_BYTES];
     int disconnect_burst_head;
