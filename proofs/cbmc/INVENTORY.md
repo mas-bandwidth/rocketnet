@@ -9,6 +9,11 @@ copy of a body, and a retained historical result from an execution at this
 exact source. A timeout, resource exhaustion, `UNKNOWN`, failed unwinding
 assertion, skipped property, or smaller diagnostic bound is not a pass.
 
+A bound tied to an SDK constant is written with the constant and its value,
+`ROCKETNET_RECEIVE_CEILING` (1452); `tools/check_cbmc_bounds.py` checks every
+such statement here, in the results files and in the harness comments
+against the SDK, and fails the CBMC workflow when one drifts.
+
 ## Exact-head execution status
 
 The first full-bound completion run is recorded in `full-bounds-results.md`.

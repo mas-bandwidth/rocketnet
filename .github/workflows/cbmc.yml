@@ -17,11 +17,13 @@ on:
     paths:
       - 'sdk/**'
       - 'proofs/cbmc/**'
+      - 'tools/check_cbmc_bounds.py'
       - '.github/workflows/cbmc.yml'
   pull_request:
     paths:
       - 'sdk/**'
       - 'proofs/cbmc/**'
+      - 'tools/check_cbmc_bounds.py'
       - '.github/workflows/cbmc.yml'
   workflow_dispatch:
 
@@ -61,6 +63,14 @@ jobs:
           check cbmc "$(pin CBMC)"
           check cadical "$(pin CADICAL)"
           check esbmc "$(pin ESBMC)"
+
+      # every bound the inventory, results and harness comments state for an
+      # SDK constant equals the SDK's value (tools/check_cbmc_bounds.py); the
+      # self-test plants stale statements and requires them refused
+      - name: Check the stated proof bounds against the SDK
+        run: |
+          python3 tools/check_cbmc_bounds.py --self-test
+          python3 tools/check_cbmc_bounds.py
 
       - name: Run the CBMC proofs
         run: make -C proofs/cbmc
