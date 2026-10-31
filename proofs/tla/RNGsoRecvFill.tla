@@ -86,7 +86,12 @@ Publish ==
     /\ num' = 0
     /\ UNCHANGED << socket, dropped, arrived >>
 
-Next == Arrive \/ Read \/ Publish
+(* every message the kernel queues is read and published: the run ends    *)
+Done ==
+    /\ arrived = MaxArrive /\ socket = << >> /\ num = 0
+    /\ UNCHANGED vars
+
+Next == Arrive \/ Read \/ Publish \/ Done
 
 Spec == Init /\ [][Next]_vars
 

@@ -715,7 +715,8 @@ int rocketnet_server_gso_gro_segment_bytes( struct msghdr * header, int message_
 // ready buffer waits and a free buffer exists; otherwise nothing moves and
 // the worker retains its buffer (the queue's bounded backpressure). The
 // defect WriteHeld has no such step: the guard below is what excludes it.
-// proofs/tla/RNGsoRecvFill.tla Publish: the worker fills a free buffer from slot 0.
+// proofs/tla/RNGsoRecvFill.tla Publish: the worker fills a free buffer from slot 0;
+// Done is a drained socket whose last buffer is published.
 static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_queue_t * queue )
 {
     struct rocketnet_server_gso_recv_buffer_t * buffer = queue->worker_buffer;
