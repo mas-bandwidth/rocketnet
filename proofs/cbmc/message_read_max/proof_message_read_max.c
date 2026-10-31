@@ -70,17 +70,36 @@ static int round16( int bytes )
     return ( bytes + 15 ) & ~15;
 }
 
+/* every limit the configuration accepts and below: W and B up to their
+   INT_FIELD maximum in sdk/rocketnet_internal.h, max_message_bytes up to
+   ROCKETNET_MAX_MESSAGE_BYTES. W_PARTITION 1 and 2 split W into 1..4096 and
+   4097..LIMIT_MAX, which together are the whole range: the multi-record
+   harness with every limit at its full range at once exhausts the solver
+   (results.md), and each half finishes. Unset, W is the whole range. */
+#define LIMIT_MAX ( 1 << 20 )
+
+#if !defined( W_PARTITION )
+#define W_LOW 1
+#define W_HIGH LIMIT_MAX
+#elif W_PARTITION == 1
+#define W_LOW 1
+#define W_HIGH 4096
+#elif W_PARTITION == 2
+#define W_LOW 4097
+#define W_HIGH LIMIT_MAX
+#endif // #if !defined( W_PARTITION )
+
 static void fill_limits( struct rocketnet_message_limits_t * limits )
 {
     limits->num_channels = nondet_int();
     __CPROVER_assume( limits->num_channels >= 1 && limits->num_channels <= 65536 );
     limits->enabled_codes = nondet_uint();
     limits->reliable_messages_in_flight = nondet_int();
-    __CPROVER_assume( limits->reliable_messages_in_flight >= 1 && limits->reliable_messages_in_flight <= 4096 );
+    __CPROVER_assume( limits->reliable_messages_in_flight >= W_LOW && limits->reliable_messages_in_flight <= W_HIGH );
     limits->max_message_bytes = nondet_int();
-    __CPROVER_assume( limits->max_message_bytes >= 1 && limits->max_message_bytes <= 65536 );
+    __CPROVER_assume( limits->max_message_bytes >= 1 && limits->max_message_bytes <= ROCKETNET_MAX_MESSAGE_BYTES );
     limits->receive_message_buffer_bytes = nondet_int();
-    __CPROVER_assume( limits->receive_message_buffer_bytes >= 0 && limits->receive_message_buffer_bytes <= 65536 );
+    __CPROVER_assume( limits->receive_message_buffer_bytes >= 0 && limits->receive_message_buffer_bytes <= LIMIT_MAX );
 }
 
 void harness_message_reader( void )

@@ -13,22 +13,31 @@ the end of a stack buffer (`buf + (BOUND - bytes)`), so any read 1 byte past the
 symbolic length `bytes` is an immediate out-of-bounds object violation rather
 than slack inside the stack array.
 
+The limits are symbolic over every value the configuration accepts and below:
+`reliable_messages_in_flight` (W) and `receive_message_buffer_bytes` (B) from
+1 and 0 up to their `1 << 20` maximum in `sdk/rocketnet_internal.h`, and
+`max_message_bytes` up to `ROCKETNET_MAX_MESSAGE_BYTES` (1048576). The
+multi-record harness runs in two W partitions, 1..4096 and 4097..`1 << 20`:
+with all three limits at their full range in one run, Bitwuzla exhausted
+memory (95 GB resident after 3 min, and again under a 24 GB limit after
+59 s) and Z3 ran past a 15-minute limit, while each partition finishes in
+under a minute.
+
 ## Run
 
-`make -C proofs/cbmc proofs-message_read_max` on hetzner1 (Linux x86_64),
-ESBMC 8.5.0, at 49c36e8f: RocketNet 8e792181 plus the CBMC harness commits
-of #754. `sdk/rocketnet_message.cpp` and every header the harness includes
-are identical at main 212f6da6.
+`make -C proofs/cbmc proofs-message_read_max` on vision (Linux x86_64),
+ESBMC 8.5.0, at af705a92.
 
 ## Results
 
 | Harness | Reader(s) | Symbolic length bound | Unwind | Solver | Properties passed / total | Failed / unproved | Verdict | Time |
 | --- | --- | --- | ---: | --- | ---: | ---: | --- | ---: |
-| `harness_message_reader` | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 24]` (`PAYLOAD_BOUND = 24`), arbitrary single-message and multi-record payloads, symbolic `rocketnet_message_limits_t` | 7 | `--bitwuzla` | 213 / 213 | 0 | `VERIFICATION SUCCESSFUL` | 12 s |
-| `harness_message_reader_single_max` | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 1416]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`), non-`RECORDS` payloads (`FORM_SINGLE`, invalid form bytes, short and `NULL` inputs), symbolic `rocketnet_message_limits_t` | 2 | `--z3` | 201 / 201 | 0 | `VERIFICATION SUCCESSFUL` | 4 s |
-| `harness_message_read_config_body` | `rocketnet_message_read_config_body` | `bytes` in `[0, 1416]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`), symbolic buffer contents and `NULL` | 1 | `--z3` | 71 / 71 | 0 | `VERIFICATION SUCCESSFUL` | 1 s |
+| `harness_message_reader`, W 1..4096 | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 24]` (`PAYLOAD_BOUND = 24`), arbitrary single-message and multi-record payloads, symbolic `rocketnet_message_limits_t` | 7 | `--bitwuzla` | 215 / 215 | 0 | `VERIFICATION SUCCESSFUL` | 29 s |
+| `harness_message_reader`, W 4097..`1 << 20` | as above | as above | 7 | `--bitwuzla` | 216 / 216 | 0 | `VERIFICATION SUCCESSFUL` | 44 s |
+| `harness_message_reader_single_max` | `rocketnet_message_reader_begin`, `rocketnet_message_reader_next` | `bytes` in `[0, 1416]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`), non-`RECORDS` payloads (`FORM_SINGLE`, invalid form bytes, short and `NULL` inputs), symbolic `rocketnet_message_limits_t` | 2 | `--z3` | 204 / 204 | 0 | `VERIFICATION SUCCESSFUL` | 13 s |
+| `harness_message_read_config_body` | `rocketnet_message_read_config_body` | `bytes` in `[0, 1416]` (`ROCKETNET_RECEIVE_PAYLOAD_BYTES`), symbolic buffer contents and `NULL` | 1 | `--z3` | 71 / 71 | 0 | `VERIFICATION SUCCESSFUL` | 3 s |
 
-All 485 / 485 checked properties across the three harnesses pass (`0`
+All 706 / 706 checked properties across the four runs pass (`0`
 failed, `0` refuted, `0` timed out at the configured bounds).
 
 ## Claims proved
@@ -53,9 +62,19 @@ failed, `0` refuted, `0` timed out at the configured bounds).
 $ make -C proofs/cbmc proofs-message_read_max
 proofs-message_read_max
 harness_message_reader VERIFICATION SUCCESSFUL
-  unwind 7 --bitwuzla; ** 0 of 213 properties failed, 213 passed; 12 s
+  unwind 7 --bitwuzla -DW_PARTITION=1; ** 0 of 215 properties failed, 215 passed; 29 s
+harness_message_reader VERIFICATION SUCCESSFUL
+  unwind 7 --bitwuzla -DW_PARTITION=2; ** 0 of 216 properties failed, 216 passed; 44 s
 harness_message_reader_single_max VERIFICATION SUCCESSFUL
-  unwind 2 --z3; ** 0 of 201 properties failed, 201 passed; 4 s
+  unwind 2 --z3; ** 0 of 204 properties failed, 204 passed; 13 s
 harness_message_read_config_body VERIFICATION SUCCESSFUL
-  unwind 1 --z3; ** 0 of 71 properties failed, 71 passed; 1 s
+  unwind 1 --z3; ** 0 of 71 properties failed, 71 passed; 3 s
+```
+
+With check 8's block span test removed from `rocketnet_message.cpp`
+(`base_units < 0` alone), the first partition fails on the span assertion:
+
+```
+harness_message_reader VERIFICATION FAILED
+  unwind 7 --bitwuzla -DW_PARTITION=1; ** 1 of 211 properties failed, 133 passed, 77 not checked; 17 s
 ```
