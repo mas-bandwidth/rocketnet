@@ -90,16 +90,14 @@ title's. The example backends take it as `PUT /servers/{serverID}`, with no
 authentication, and say so.
 
 **The client holds no long-lived signing or server secret key.** It holds a
-connect token, an opaque base64 string
-of at most `ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`, which it passes to
+connect token, an opaque string of exactly 1024 base64 characters and a NUL
+(`ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES`), which it passes to
 `rocketnet_client_connect`. The token carries the two token keys for that one
 connection, which the backend draws fresh for each token; they are not
 long-lived and they identify nothing outside that connection. Fetch a token
 just before connecting: a token expires (30 seconds is the recommended
-lifetime; the development token's lifetime is
-`ROCKETNET_DEV_CONNECT_TOKEN_EXPIRE_SECONDS`, defined in
-[sdk/rocketnet_connect_token.h](../sdk/rocketnet_connect_token.h), an internal
-header, not in the public [sdk/rocketnet.h](../sdk/rocketnet.h)).
+lifetime; a development token lives for the `expire_seconds` its caller
+passes to `rocketnet_create_dev_connect_token`).
 
 ## Development keys and production keys
 

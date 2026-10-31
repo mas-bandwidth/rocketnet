@@ -61,7 +61,7 @@ status code and the accompanying `ERROR` log line:
      `rocketnet_client_create` and `rocketnet_server_create` (and causes
      `rocketnet_*_required_memory` to return `0`) when `config.packet_filter`
      is set to the published four-byte test filter
-     (`b7:59:01:00`, `ROCKETNET_TEST_FILTER_VALUE`) in a production library
+     (`b7:59:01:00`) in a production library
      (`ROCKETNET_DEV=0`). That is the default value, so a config that is never
      given a title filter is refused; an all-zero filter is not the test
      filter and is not refused by this rule.
@@ -95,8 +95,8 @@ status code and the accompanying `ERROR` log line:
      `ROCKETNET_*_TRANSPORT`) contains an unknown transport name, an empty
      comma-separated token, or mixes `"auto"` with other names (`"auto"` must
      stand alone).
-   - `TRANSPORT_NOT_BUILT`: a pinned transport (such as `"xdp"` or
-     `"io_uring"`) was not compiled into the binary (`docs/LINUX.md`).
+   - `TRANSPORT_NOT_BUILT`: a pinned `"xdp"` was not compiled into the
+     binary (`docs/LINUX.md`).
    - `TRANSPORT_FAMILIES_UNSUPPORTED`: the selected transport cannot
      serve the configured IPv4/IPv6 family combination.
    - `TRANSPORT_LADDER_EXHAUSTED`: every candidate in the resolved
