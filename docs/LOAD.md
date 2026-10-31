@@ -445,6 +445,14 @@ requirements to each configuration group:
 - **`reliable_message_timeout_ms`** (range `1000 .. 600000`, default `10000`): disconnects
   a connection with `ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT` when a
   reliable message remains unacknowledged past this deadline.
+- **Cross-field rules** (each refused at create with `CONFIG_OUT_OF_RANGE`,
+  never clamped): `message_resend_delay_min_ms` is at most
+  `message_resend_delay_max_ms`; `message_resend_delay_initial_ms` is from
+  `message_resend_delay_min_ms` to `message_resend_delay_max_ms`; and
+  `reliable_message_timeout_ms` is at least four times
+  `message_resend_delay_initial_ms`. At the default initial delay of `2000`
+  that makes `8000` the smallest timeout, so `1000` is legal only with an
+  initial delay of `250` or less.
 
 ### 6. Transports, queues, CPUs, and memory budgets (`transport`, `num_xdp_queues`, `num_os_cpus`, `ROCKETNET_*_MEMORY_BUDGET_BYTES`, `ROCKETNET_XDP_MEMORY_MIB`)
 
