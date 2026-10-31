@@ -1309,6 +1309,7 @@ static bool rn_message_connection_write( rn_message_object_t * object, int index
     }
 }
 
+// proofs/tla/RNSendRotation.tla BeginFlush and Visit: rounds while any connection progresses, the capacity test, the cursor at i + 1.
 void rn_message_object_send_packets( struct rn_message_object_t * object )
 {
     // RNOutgoingBuild BeginFlush: a pending in-place start aborted, then every

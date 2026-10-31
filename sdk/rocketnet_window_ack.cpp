@@ -128,6 +128,7 @@ static bool rn_resend_fifo_index_ok( rn_window_ack_t * ack, uint32_t index )
 }
 
 // Returns false when a link was out of range and nothing was changed.
+// proofs/tla/RNResendFifoLayout.tla Unlink: the fields, heads, tails, flag bits and count at W = 4.
 static bool rn_resend_fifo_unlink( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_link_t * fifo = ack->region->resend_fifo;
@@ -243,6 +244,7 @@ static void rn_resend_fifo_insert_after( rn_window_ack_t * ack, uint32_t after, 
     rn_resend_fifo_stamp( ack, slot );
 }
 
+// proofs/tla/RNResendFifoLayout.tla PushTail: a slot that is already the tail links after its prev.
 static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
 {
     const bool chunk = rn_window_ack_slot_is_chunk( ack, slot );
@@ -252,11 +254,13 @@ static void rn_resend_fifo_push_tail( rn_window_ack_t * ack, uint32_t slot )
     rn_resend_fifo_insert_after( ack, tail, slot );
 }
 
+// proofs/tla/RNResendFifoLayout.tla PushHead
 static void rn_resend_fifo_push_head( rn_window_ack_t * ack, uint32_t slot )
 {
     rn_resend_fifo_insert_after( ack, RN_RESEND_NONE, slot );
 }
 
+// proofs/tla/RNResendFifoLayout.tla Park
 void rn_window_ack_park( rn_window_ack_t * ack, uint32_t after, uint32_t slot_index )
 {
     rocketnet_assert( ack );
@@ -560,6 +564,7 @@ static void rn_window_ack_receipt_emit( rn_window_ack_t * ack, uint32_t serial, 
     ack->receipt_tail++;
 }
 
+// proofs/tla/RNSentRingLayout.tla EmitOther: an event from outside the sent rings, through the same full-ring drop.
 void rn_window_ack_receipt_emit_loss( rn_window_ack_t * ack, uint32_t serial )
 {
     rocketnet_assert( ack );
@@ -583,6 +588,7 @@ static void rn_window_ack_receipt_resolve( rn_window_ack_t * ack, rn_sent_packet
 // proofs/tla/RNWindow.tla WritePacket, WriteOldest, TablesBounded).
 // proofs/tla/RNReceipts.tla WritePacket, EvictMap: evicts the oldest live sent-map entry when a ring needs room, resolving its unreliable receipts as LOSS
 // proofs/tla/RNSentMap.tla WriteAny: records the packet in the ring in send order, reclaiming the head past holes; the oldest entry is evicted only when the ring spans packets_in_flight
+// proofs/tla/RNSentRingLayout.tla Commit: the eviction tests (>= P, + total > max_refs) and the writes at pkt_tail % P and ref_tail % max_refs.
 static void rn_window_ack_commit( rn_window_ack_t * ack, uint64_t packet_id, const uint64_t * numbers, uint32_t count,
                                   const uint32_t * serials, uint32_t receipt_count, double now )
 {
@@ -700,6 +706,7 @@ void rn_window_ack_commit_receipt_packet( rn_window_ack_t * ack, uint64_t packet
 // proofs/tla/RNReceipts.tla ReceiveAck: marks the acked packet's numbers acked, removes its sent-map entry and emits the receipts it completes.
 // proofs/tla/RNChannelTypes.tla AckAny: one acked packet id retires that packet's reliable send.
 // proofs/tla/RNSentMap.tla Ack: an id the ring still holds marks its numbers acked and leaves a hole; an id it no longer holds is ignored.
+// proofs/tla/RNSentRingLayout.tla Ack: the entry becomes a hole and the head is reclaimed.
 int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now )
 {
     rocketnet_assert( ack );
@@ -816,6 +823,7 @@ int rn_window_ack_on_ack( rn_window_ack_t * ack, uint64_t packet_id, double now 
 }
 
 // proofs/tla/RNReceipts.tla TakeReceipt
+// proofs/tla/RNSentRingLayout.tla BeginUpdate
 void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -831,6 +839,7 @@ void rn_window_ack_receipt_begin_update( rn_window_ack_t * ack )
 }
 
 // proofs/tla/RNReceipts.tla TakeReceipt
+// proofs/tla/RNSentRingLayout.tla EndUpdate
 void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
 {
     rocketnet_assert( ack );
@@ -838,6 +847,7 @@ void rn_window_ack_receipt_end_update( rn_window_ack_t * ack )
     ack->receipt_visible_tail = ack->receipt_tail;
 }
 
+// proofs/tla/RNSentRingLayout.tla Sweep: the cursor clamped at pkt_head before any read.
 void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 {
     rocketnet_assert( ack );
@@ -866,6 +876,7 @@ void rn_window_ack_receipt_sweep( rn_window_ack_t * ack, double now )
 }
 
 // proofs/tla/RNReceipts.tla TakeReceipt
+// proofs/tla/RNSentRingLayout.tla ReadReceipts: the first reported event is clamped at receipt_head.
 int rn_window_ack_receipts( const rn_window_ack_t * ack, rocketnet_message_receipt_t * out, int capacity )
 {
     if ( !ack || capacity < 0 || ( !out && capacity > 0 ) )

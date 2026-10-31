@@ -6,11 +6,10 @@ many sends fit before the connection gives up, and that a chunk of a block,
 paced by the resend delay, never holds back a small record paced by the 100 ms cap. `proofs/tla/RNWindow.tla`
 keeps the resend delay abstract (a record is resent "after the resend delay"); this module is
 the schedule alone. The code is `rn_window_ack_resend_delay`,
-`rn_window_ack_chunk_resend_delay`, `rn_window_ack_resend` and
-`rn_window_ack_check_timeout`
+`rn_window_ack_chunk_resend_delay` and `rn_window_ack_check_timeout`
 (`sdk/rocketnet_window_ack.h` and `.cpp`), the resend walk of
-`rn_ordered_write` (`sdk/rocketnet_channel.cpp`), `rn_message_ordered_due`
-(`sdk/rocketnet_message_server.cpp`) and the attempts rule of
+`rn_ordered_write` (`rn_ordered_walk`, `sdk/rocketnet_channel.cpp`),
+`rn_endpoint_ordered_due` (`sdk/rocketnet_endpoint.cpp`) and the attempts rule of
 `rocketnet_message_validate_config` (`sdk/rocketnet_config.cpp`); each cites
 the module. The model was written before the code.
 
