@@ -737,8 +737,9 @@ static inline bool rocketnet_xdp_stats_cpus_fit( int num_cpus )
 // allocation: open addressing over ROCKETNET_XDP_REPLY_MAC_ENTRIES slots,
 // a lookup stopping at the first never-used slot and probing at most
 // ROCKETNET_XDP_REPLY_MAC_PROBES slots. A learn into a full probe window
-// replaces the entry learned longest ago; a forget leaves a tombstone. No
-// allocation, no clock and no lock: its owner serialises writes.
+// replaces the entry learned longest ago; a forget leaves the address's entry
+// in place as its answered entry. No allocation, no clock and no lock: its
+// owner serialises writes.
 
 // The table holds a learned MAC for every client at most a quarter full:
 // four slots per client, rounded up to a power of two for the index mask
@@ -754,7 +755,6 @@ ROCKETNET_STATIC_ASSERT( ( ROCKETNET_XDP_REPLY_MAC_ENTRIES & ( ROCKETNET_XDP_REP
 
 #define ROCKETNET_XDP_REPLY_MAC_EMPTY       0
 #define ROCKETNET_XDP_REPLY_MAC_LIVE        1
-#define ROCKETNET_XDP_REPLY_MAC_TOMBSTONE   2
 #define ROCKETNET_XDP_REPLY_MAC_ANSWERED    3
 
 struct rocketnet_xdp_reply_mac_entry_t
@@ -889,8 +889,7 @@ static inline void rocketnet_xdp_reply_macs_learn( struct rocketnet_xdp_reply_ma
 }
 
 // keeps mac as the address's answered entry: in its own answered entry, else
-// a never-used or forgotten slot, else the oldest answered entry of its
-// probe window. A learned entry is never displaced; with no room the answer
+// a never-used slot, else the oldest answered entry of its probe window. A learned entry is never displaced; with no room the answer
 // is not kept.
 
 // proofs/tla/RNXdpReplyMacsLayout.tla Answer: the address's ANSWERED entry, else
@@ -911,7 +910,7 @@ static inline void rocketnet_xdp_reply_macs_answer( struct rocketnet_xdp_reply_m
         for ( int i = 0; i < ROCKETNET_XDP_REPLY_MAC_PROBES; ++i )
         {
             struct rocketnet_xdp_reply_mac_entry_t * candidate = &table->entries[( slot + (uint32_t) i ) & ( ROCKETNET_XDP_REPLY_MAC_ENTRIES - 1 )];
-            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_EMPTY || candidate->state == ROCKETNET_XDP_REPLY_MAC_TOMBSTONE )
+            if ( candidate->state == ROCKETNET_XDP_REPLY_MAC_EMPTY )
             {
                 entry = candidate;
                 break;

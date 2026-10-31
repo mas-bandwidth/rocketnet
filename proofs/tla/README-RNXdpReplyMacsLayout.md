@@ -21,12 +21,10 @@ evictions.
 collision pattern is checked. Probe `i` of address `a` is slot
 `(home[a] + i) % N`, for `i < P`.
 
-`ROCKETNET_XDP_REPLY_MAC_TOMBSTONE` is written by no function: a forget turns a
-`LIVE` entry into an `ANSWERED` one in place, and nothing returns a used slot to
-`EMPTY` but a reset of the whole table. The model has no tombstone state;
-answer's test for one is never true in the code. The forgotten `ANSWERED` entry
-is the slot a lookup for another address must probe past, the role a tombstone
-has in other tables.
+The table has no tombstone state: a forget turns a `LIVE` entry into an
+`ANSWERED` one in place, and nothing returns a used slot to `EMPTY` but a reset
+of the whole table. The forgotten `ANSWERED` entry is the slot a lookup for
+another address must probe past, the role a tombstone has in other tables.
 
 Only the order of the stamps matters to the code (learn's and answer's oldest
 choice), and `learn_count` is above every stamp, so the `VIEW` keeps each used
