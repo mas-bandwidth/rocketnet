@@ -28,9 +28,10 @@
 // allocates, which the counting allocator checks.
 //
 // test_channels_stress_memory_is_planned: the public memory plan
-// (rocketnet_client_required_memory, rocketnet_server_required_memory) is the
-// block create takes, measured through the allocator; the server's bytes per
-// connection is the plan's step from one client slot to two; and the plan is
+// (rocketnet_client_required_memory, rocketnet_server_required_memory) holds
+// the one block create takes, measured through the allocator; the server's
+// bytes per connection is the plan's step from one client slot to two; and the
+// plan is
 // linear in the channel count: every 64 more channels add the same bytes, on
 // the client and per server connection (each per-channel table is rounded up
 // to the 64-byte allocation alignment, so the line is exact at that stride).
@@ -50,6 +51,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "loopback_hub.h"
+#include "channels_stress_config.h"
 
 #define check rocketnet_unit_check
 
@@ -74,7 +76,7 @@
 #define STRESS_MAX_MESSAGE_BYTES        ( STRESS_HEADER_BYTES + STRESS_MAX_PATTERN_BYTES )
 #define STRESS_FRAME_SECONDS            0.01
 #define STRESS_DRAIN_FRAMES             3000
-#define STRESS_RECEIPTS_PER_UPDATE      65536      // max_message_receipts
+#define STRESS_RECEIPTS_PER_UPDATE      CHANNELS_STRESS_RECEIPTS_PER_UPDATE
 
 // the link simulator on both ends: one-way latency, jitter (which reorders),
 // loss and duplication, from the transports' fixed simulator seeds
@@ -85,10 +87,25 @@
 
 // ---- the counting allocator ------------------------------------------------
 
+// allocations and bytes are what an endpoint asked for; live and peak are
+// the bytes it holds now and the most it held, which the plan bounds over the
+// whole run (create, start or connect, the traffic, destroy). Each block
+// carries its size and context in a header ahead of the bytes returned.
+
 struct stress_allocation_count_t
 {
     std::atomic<uint64_t> allocations;
     std::atomic<uint64_t> bytes;
+    std::atomic<uint64_t> live;
+    std::atomic<uint64_t> peak;
+};
+
+#define STRESS_ALLOCATION_HEADER_BYTES 64
+
+struct stress_allocation_header_t
+{
+    stress_allocation_count_t * count;
+    uint64_t bytes;
 };
 
 static std::atomic<uint64_t> stress_allocations_total( 0 );
@@ -97,47 +114,52 @@ static void * stress_malloc( void * context, size_t bytes )
 {
     stress_allocations_total++;
 
-    stress_allocation_count_t * count = (stress_allocation_count_t *) context;
+    uint8_t * block = (uint8_t *) malloc( STRESS_ALLOCATION_HEADER_BYTES + bytes );
+    if ( !block )
+        return NULL;
+
+    stress_allocation_header_t * header = (stress_allocation_header_t *) block;
+    header->count = (stress_allocation_count_t *) context;
+    header->bytes = (uint64_t) bytes;
+
+    stress_allocation_count_t * count = header->count;
     if ( count )
     {
         count->allocations++;
         count->bytes += (uint64_t) bytes;
+        const uint64_t live = count->live += (uint64_t) bytes;
+        if ( live > count->peak.load() )
+            count->peak = live;
     }
 
-    return malloc( bytes );
+    return block + STRESS_ALLOCATION_HEADER_BYTES;
 }
 
 static void stress_free( void * context, void * p )
 {
     (void) context;
-    free( p );
+    if ( !p )
+        return;
+
+    uint8_t * block = (uint8_t *) p - STRESS_ALLOCATION_HEADER_BYTES;
+    const stress_allocation_header_t * header = (const stress_allocation_header_t *) block;
+    if ( header->count )
+        header->count->live -= header->bytes;
+
+    free( block );
 }
 
 static void stress_count_reset( stress_allocation_count_t * count )
 {
     count->allocations = 0;
     count->bytes = 0;
+    count->live = 0;
+    count->peak = 0;
 }
 
 // ---- the configs -------------------------------------------------------------
 
-// the message config both ends share: every channel, a reliable window and
-// send queue that hold the reliable rounds in flight under loss, and no send
-// budget, so a refusal or a drop is a defect and never the budget
-
-static void stress_message_config( int * num_channels, int * reliable_messages_in_flight, int * send_message_buffer_bytes,
-                                   int * send_queue_messages, int * packets_in_flight, int * packets_per_update,
-                                   int * unreliable_messages_per_update, int * max_message_receipts, int channels )
-{
-    *num_channels = channels;
-    *reliable_messages_in_flight = 65536;
-    *send_message_buffer_bytes = 32 * 1024 * 1024;
-    *send_queue_messages = 65536;
-    *packets_in_flight = 16384;
-    *packets_per_update = 1024;
-    *unreliable_messages_per_update = 65536;
-    *max_message_receipts = STRESS_RECEIPTS_PER_UPDATE;
-}
+// the message config both ends share is tests/channels_stress_config.h
 
 static void stress_client_config( rocketnet_client_config_t * config, int channels, double ( *clock )( void * ) )
 {
@@ -147,7 +169,7 @@ static void stress_client_config( rocketnet_client_config_t * config, int channe
     config->step_driven = true;
     config->time_callback = clock;
     config->send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
-    stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
+    channels_stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
                            &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
                            &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
 }
@@ -161,7 +183,7 @@ static void stress_server_config( rocketnet_server_config_t * config, const uint
     config->transport = "loopback";
     config->loopback_hub = rocketnet_test_loopback_hub();
     config->per_client_send_kbps = ROCKETNET_SEND_KBPS_UNLIMITED;
-    stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
+    channels_stress_message_config( &config->num_channels, &config->reliable_messages_in_flight, &config->send_message_buffer_bytes,
                            &config->send_queue_messages, &config->packets_in_flight, &config->packets_per_update,
                            &config->unreliable_messages_per_update, &config->max_message_receipts, channels );
 }
@@ -604,6 +626,24 @@ static int stress_reliable_receipt_sends( const stress_side_t * side )
     return count;
 }
 
+static size_t stress_client_plan( int channels )
+{
+    rocketnet_client_config_t config;
+    stress_client_config( &config, channels, stress_clock );
+    return rocketnet_client_required_memory( &config );
+}
+
+static size_t stress_server_plan( int max_clients, int channels )
+{
+    uint8_t key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    memset( key, 0x11, sizeof( key ) );
+
+    rocketnet_server_config_t config;
+    stress_server_config( &config, key, max_clients, channels );
+
+    return rocketnet_server_required_memory( &config );
+}
+
 static void test_channels_stress_every_channel_delivers()
 {
     stress_world_t * world = new stress_world_t();
@@ -646,6 +686,11 @@ static void test_channels_stress_every_channel_delivers()
     check( world->server_side.reliable_receipts_acked == reliable_receipts );
     check( loop_allocations == 0 );
 
+    // the plan is the most each endpoint held over the run
+
+    check( world->client_count.peak.load() <= (uint64_t) stress_client_plan( STRESS_NUM_CHANNELS ) );
+    check( world->server_count.peak.load() <= (uint64_t) stress_server_plan( 1, STRESS_NUM_CHANNELS ) );
+
     struct rocketnet_client_stats_t client_stats;
     struct rocketnet_server_stats_t server_stats;
     rocketnet_client_stats( world->client, &client_stats );
@@ -678,31 +723,13 @@ static void test_channels_stress_every_channel_delivers()
     printf( "test_channels_stress_every_channel_delivers\n" );
 }
 
-static size_t stress_client_plan( int channels )
-{
-    rocketnet_client_config_t config;
-    stress_client_config( &config, channels, stress_clock );
-    return rocketnet_client_required_memory( &config );
-}
-
-static size_t stress_server_plan( int max_clients, int channels )
-{
-    uint8_t key[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
-    memset( key, 0x11, sizeof( key ) );
-
-    rocketnet_server_config_t config;
-    stress_server_config( &config, key, max_clients, channels );
-
-    return rocketnet_server_required_memory( &config );
-}
-
 static void test_channels_stress_memory_is_planned()
 {
     rocketnet_quiet( true );
 
-    const uint64_t overhead = rocketnet_allocation_overhead();
-
-    // the client: create takes one block, the plan's bytes
+    // the client: create takes one block, inside the plan; the plan is the
+    // lifecycle peak, which adds the transport connect creates
+    // (test_channels_stress_every_channel_delivers bounds that peak)
 
     const size_t client_plan = stress_client_plan( STRESS_NUM_CHANNELS );
     check( client_plan > 0 );
@@ -717,11 +744,11 @@ static void test_channels_stress_memory_is_planned()
         rocketnet_client_t * client = rocketnet_client_create( &count, &config, NULL );
         check( client != NULL );
         check( count.allocations.load() == 1 );
-        check( count.bytes.load() == (uint64_t) client_plan + overhead );
+        check( count.bytes.load() <= (uint64_t) client_plan );
         rocketnet_client_destroy( client );
     }
 
-    // the server: create takes one block, the plan's bytes, at one slot and at two
+    // the server: create takes one block, inside the plan, at one slot and at two
 
     uint8_t seed[32];
     for ( int i = 0; i < 32; i++ )
@@ -749,7 +776,7 @@ static void test_channels_stress_memory_is_planned()
         rocketnet_server_t * server = rocketnet_server_create( &count, "127.0.0.1:0", NULL, &config, NULL );
         check( server != NULL );
         check( count.allocations.load() == 1 );
-        check( count.bytes.load() == (uint64_t) server_plans[max_clients - 1] + overhead );
+        check( count.bytes.load() <= (uint64_t) server_plans[max_clients - 1] );
         rocketnet_server_destroy( server );
     }
 
