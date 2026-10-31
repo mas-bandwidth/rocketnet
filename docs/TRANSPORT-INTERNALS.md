@@ -827,7 +827,8 @@ the checker compiles the object twice from copies of the sources at different
 paths, mtimes and umasks and requires identical bytes, requires the generated
 header to embed exactly the object, shows that a changed source changes the
 object, and fails when a build tree's embedded object differs from a fresh
-compile of the current sources (stale):
+compile of the current sources with the tree's own BPF clang, multiarch
+triple, `ROCKETNET_HISTORY_PACKETS` and `ROCKETNET_MAX_CLIENTS` (stale):
 
 ```sh
 python3 tools/check_xdp_archive.py            # checks ./build when it exists
