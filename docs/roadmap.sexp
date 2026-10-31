@@ -24,6 +24,11 @@
 
  :items
  (
+  (item "landing-known-reds" :group "finish" :area "rocketnet"
+   :title "Known reds at the 2026-10-31 landing"
+   :text "Merged to main on Glenn's word with the nightly to catch the rest. Red on the fleet at ab74c810: (1) DEV=OFF unit test_message_required_memory_takes_the_create_budget, the client never reaches stopped in unit_shutdown.h:24 (from rowan/low-channel-message); (2) check_tla_coverage --actions-strict: RNGsoHandoff TxSendFull and RNOrderingWrap HoldSequenced, ReceiveUnreliable are cited nowhere in the code; (3) functional test_gso_transport_posix_server_create_destroy_1000 past its 120 s bound on loaded vision, host load not confirmed; (4) Windows Debug never finished (CreateProcessW 1455, paging file). Not run before the merge: the GitHub CI run, Linux DEV=OFF functional beyond these, Windows Debug."
+   :date "2026-10-31" :origin "Integration fleet run, ab74c810")
+
   (item "remove-type9" :group "finish" :area "rocketnet"
    :title "Remove transport type-9 fragmentation"
    :text "Glenn ruled remove (audit 13). Branch rowan/remove-type9-fragmentation at 0689412d: unreachability confirmed; the code, config field, status code, 41 counters, standard sections and the model's fragment half are gone; server required_memory at 1000 clients drops 379 MB and the client's from 29.3 MB to 20.3 MB. Owed: a full fleet run at the head; five one-line negative controls; timing the split lock-in sweep under the sanitizers; a Windows light-profile ceiling measurement; the fragment text left in proofs/tla/Link.tla (editing it pushes MCRNChannel past the 110 s TLC budget). Rebase onto main (conflicts with the counter renumbering)."
@@ -64,11 +69,14 @@
    :title "Remove the resend FIFO's generation stamp"
    :text "RNResendGenerations shows the stamp never decides; the number comparison refuses a stale ack. Removing it shrinks each resend entry from 12 to 8 bytes. Uncommitted edits in the worktree rocketnet-remove-stamp, branch rowan/remove-resend-generation-stamp."
    :date "2026-10-31" :origin "Audit item 12 follow-on")
+  (item "cbmc-lows-797" :group "finish" :area "proofs"
+   :title "Land #797: CBMC low items"
+   :text "Audit 150-156, fleet-verified on vision (CBMC 6.6.0, ESBMC 8.5.0): esbmc_r_ok runs nightly; the message-reader harnesses cover every accepted limit; the 24-bit window arithmetic moves into rocketnet_message_u24_delta and is proved; the fragment-bounds proof and dead fallbacks are deleted. 150 is refuted: ack-run-bound-8 runs out of memory at 48 GB, so a working ACK proof needs the harness redesigned. Stacked on #782 and #754; left out of the 2026-10-31 landing so the fleet run did not restart."
+   :date "2026-10-31" :origin "FABLE-AUDIT.md low proofs items")
   (item "proofs-lows" :group "finish" :area "proofs"
    :title "Low-severity proofs items"
-   :text "The low items under proofs/ in FABLE-AUDIT.md, partly worked on plain branches rowan/low-proofs-<family>; each branch states what is verified."
+   :text "Not started, by family. Coverage and citations: 89, 109, 233, 234 (rio row), 235, 243, 251, 255, 264, 286. Session and protocol docs: 92, 254, 268, 285, 288-290. Handoff layouts: 232, 236, 237, 239, 241, 256. Rio and IndexRing: 242, 244, 248, 262. Update and ownership: 253, 257, 260, 265, 266. Channel and pools: 99, 249, 259, 263, 267, 291. Code gaps: 250 (iocp count load order), 258 and 269 (dedupe pending XDP forgets), each with a unit lock-in. Lows on models other work owns: 238, 240, 245-247, 252, 261, 293. 292 rides #729, 287 #721, the uring part of 234 #738."
    :date "2026-10-31" :origin "FABLE-AUDIT.md")
-
   (item "pr-794-795-rebase" :group "finish" :area "tests"
    :title "Rebase #794 and #795 onto main and land them"
    :text "Both are fleet-verified but were left out of the landing: #794 (unit tests take an injected environment source) has 21 conflicting hunks against the staged create, create_ex, the sodium misuse handler and the unit environment clearing; #795 (gate that every unit case runs in some CI build) conflicts with the CI rewrite into per-commit and nightly tiers."

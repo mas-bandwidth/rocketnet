@@ -6,7 +6,7 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 
 ## Contents
 
-- [Started work to finish and land](#started-work-to-finish-and-land) (12)
+- [Started work to finish and land](#started-work-to-finish-and-land) (14)
 - [Audit items not yet fixed](#audit-items-not-yet-fixed) (12)
 - [Investigations that need a quiet host](#investigations-that-need-a-quiet-host) (3)
 - [Older open pull requests](#older-open-pull-requests) (2)
@@ -15,6 +15,12 @@ Planned work for RocketNet that is not on main. Work lands on main before new wo
 ## Started work to finish and land
 
 Work begun on 2026-10-31 and stopped when the landing froze. Each names its branch and exactly what is owed before it lands.
+
+### Known reds at the 2026-10-31 landing
+
+Merged to main on Glenn's word with the nightly to catch the rest. Red on the fleet at ab74c810: (1) DEV=OFF unit test_message_required_memory_takes_the_create_budget, the client never reaches stopped in unit_shutdown.h:24 (from rowan/low-channel-message); (2) check_tla_coverage --actions-strict: RNGsoHandoff TxSendFull and RNOrderingWrap HoldSequenced, ReceiveUnreliable are cited nowhere in the code; (3) functional test_gso_transport_posix_server_create_destroy_1000 past its 120 s bound on loaded vision, host load not confirmed; (4) Windows Debug never finished (CreateProcessW 1455, paging file). Not run before the merge: the GitHub CI run, Linux DEV=OFF functional beyond these, Windows Debug.
+
+From: Integration fleet run, ab74c810
 
 ### Remove transport type-9 fragmentation
 
@@ -76,9 +82,15 @@ RNResendGenerations shows the stamp never decides; the number comparison refuses
 
 From: Audit item 12 follow-on
 
+### Land #797: CBMC low items
+
+Audit 150-156, fleet-verified on vision (CBMC 6.6.0, ESBMC 8.5.0): esbmc_r_ok runs nightly; the message-reader harnesses cover every accepted limit; the 24-bit window arithmetic moves into rocketnet_message_u24_delta and is proved; the fragment-bounds proof and dead fallbacks are deleted. 150 is refuted: ack-run-bound-8 runs out of memory at 48 GB, so a working ACK proof needs the harness redesigned. Stacked on #782 and #754; left out of the 2026-10-31 landing so the fleet run did not restart.
+
+From: FABLE-AUDIT.md low proofs items
+
 ### Low-severity proofs items
 
-The low items under proofs/ in FABLE-AUDIT.md, partly worked on plain branches rowan/low-proofs-<family>; each branch states what is verified.
+Not started, by family. Coverage and citations: 89, 109, 233, 234 (rio row), 235, 243, 251, 255, 264, 286. Session and protocol docs: 92, 254, 268, 285, 288-290. Handoff layouts: 232, 236, 237, 239, 241, 256. Rio and IndexRing: 242, 244, 248, 262. Update and ownership: 253, 257, 260, 265, 266. Channel and pools: 99, 249, 259, 263, 267, 291. Code gaps: 250 (iocp count load order), 258 and 269 (dedupe pending XDP forgets), each with a unit lock-in. Lows on models other work owns: 238, 240, 245-247, 252, 261, 293. 292 rides #729, 287 #721, the uring part of 234 #738.
 
 From: FABLE-AUDIT.md
 
