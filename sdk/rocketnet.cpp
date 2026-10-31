@@ -482,18 +482,20 @@ uint64_t rocketnet_allocation_overhead()
 
 static thread_local const rocketnet_heap_scope_t * rocketnet_heap_in_scope = NULL;
 
-const rocketnet_heap_scope_t * rocketnet_heap_scope_enter( const rocketnet_heap_scope_t * scope )
+bool rocketnet_heap_scope_enter( const rocketnet_heap_scope_t * scope )
 {
-    const rocketnet_heap_scope_t * previous = rocketnet_heap_in_scope;
-    if ( scope->heap )
-        rocketnet_heap_in_scope = scope;
+    if ( !scope->heap )
+        return false;
 
-    return previous;
+    rocketnet_assert( !rocketnet_heap_in_scope );
+
+    rocketnet_heap_in_scope = scope;
+    return true;
 }
 
-void rocketnet_heap_scope_leave( const rocketnet_heap_scope_t * previous )
+void rocketnet_heap_scope_leave()
 {
-    rocketnet_heap_in_scope = previous;
+    rocketnet_heap_in_scope = NULL;
 }
 
 // call with the lifecycle lock held. NULL for both is the system allocator
