@@ -348,9 +348,12 @@ ENETUNREACH, EHOSTDOWN, ENETDOWN, ENOBUFS and EINTR as weather
 (`rocketnet_platform_receive_weather` in `sdk/rocketnet_platform.cpp`): the
 portable arm (`rocketnet_platform_socket_receive_packet`) and the msgx arm
 (`rocketnet_platform_socket_receive_packets`) skip the error and keep
-draining. These errors are nonfatal and do not pause the msgx pump. Retries consume
-a finite per-call weather budget; exhausting it ends the current drain so the
-next call can continue. EAGAIN ends a drain because the queue is empty. Any other
+draining. These errors are nonfatal and do not pause the msgx pump. Each call
+has one read budget (`max_packets` for a batch, 64 for the single-packet call),
+and every read spends one unit of it: a datagram kept, a zero-length datagram
+or refused source skipped, a weather error skipped. A spent budget ends the
+current drain so the next call can continue, so neither a repeating errno nor
+a stream of chaff holds a drain. EAGAIN ends a drain because the queue is empty. Any other
 receive errno pauses the msgx pump with one warning per pause
 (`rocketnet_msgx_pause`). The send side
 already classes the same errnos as weather. A backend's receive keeps the same
