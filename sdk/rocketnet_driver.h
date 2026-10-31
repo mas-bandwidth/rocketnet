@@ -151,6 +151,16 @@ struct rocketnet_server_transport_io_operations_t
     // running it is exact; a transport without it is treated as unbounded
     // (proofs/tla/ServerStopSpread.tla Room).
     int ( *send_room )( void * transport );
+
+    // optional; main thread only, never waits. True once every frame the
+    // transport was handed has finished: nothing staged, published, queued
+    // for a worker or waiting for its send to complete. A lock it cannot take
+    // at once reads as not idle; it may retry its own deferred publish, as
+    // stopped may service completions. Stop tells the I/O to stop only once
+    // this is true, so no flushed send is cut off. A transport without it is
+    // idle as soon as its flush returns (proofs/tla/ServerStopSpread.tla
+    // RequestIoStop).
+    bool ( *send_idle )( void * transport );
 };
 
 // the start_packet id of a refusal for want of a link-layer destination

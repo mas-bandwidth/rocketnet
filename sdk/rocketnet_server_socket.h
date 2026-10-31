@@ -161,6 +161,11 @@ void rocketnet_server_socket_send_packets( struct rocketnet_server_socket_t * se
 // hashes to one queue. Main thread.
 int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server_socket );
 
+// true once every queue's producer buffer is empty and its worker has
+// written and recycled every buffer it was handed. Main thread; a send
+// mutex held by a worker reads as not idle.
+bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * server_socket );
+
 // receive packets (staged, one copy each way)
 
 void rocketnet_server_socket_receive_packets( struct rocketnet_server_socket_t * server_socket );

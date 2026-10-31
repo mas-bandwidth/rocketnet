@@ -1368,6 +1368,21 @@ int rocketnet_server_iocp_send_room( rocketnet_server_iocp_t * iocp )
     return (int) ( free_sends < slots ? free_sends : slots );
 }
 
+// proofs/tla/ServerStopSpread.tla RequestIoStop: every send operation free.
+// An operation holds its slot from its start through the bank, the post and
+// its completion, so all of them free means no send is in flight. dequeue is
+// read first: a free whose push is claimed and not yet published already
+// finished its send.
+
+bool rocketnet_server_iocp_send_idle( rocketnet_server_iocp_t * iocp )
+{
+    if ( iocp->num_staged.load( std::memory_order_relaxed ) != 0 )
+        return false;
+    const uint64_t dequeue = iocp->free_sends.dequeue.load( std::memory_order_acquire );
+    const uint64_t enqueue = iocp->free_sends.enqueue.load( std::memory_order_acquire );
+    return enqueue - dequeue >= ROCKETNET_IOCP_SEND_QUEUE_SIZE;
+}
+
 uint8_t * rocketnet_server_iocp_start_packet( rocketnet_server_iocp_t * iocp, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     if ( iocp->stopping.load( std::memory_order_acquire ) )

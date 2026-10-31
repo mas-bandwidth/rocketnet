@@ -2716,8 +2716,9 @@ ROCKETNET_EXPORT enum rocketnet_status_t rocketnet_server_start( struct rocketne
 /// be sealed. This call and each rocketnet_server_stopped poll after it is a
 /// stop step: it seals and hands the transport as many of those packets as
 /// the transport's send staging has room for, one per client in turn before
-/// any client's next copy, and once every client's packets are handed over
-/// the transport is told to stop, so they go out before the workers exit.
+/// any client's next copy. Once every client's packets are handed over and
+/// the transport reports every send it was handed finished, its I/O is told
+/// to stop, so they go out before the workers exit.
 /// Messages queued and not yet sent are dropped. A client that receives one
 /// of them moves to ROCKETNET_CLIENT_STATE_SERVER_DISCONNECTED; one that loses
 /// every copy times out under its token's timeout. Each step's work is

@@ -190,9 +190,10 @@ in 91 groups, 565 required and 16 bench cases whose `debt` column names
 The case plan in `CASES.tsv` covers every root configuration: 583 cases
 in 91 groups, 567 required and 16 bench cases whose `debt` column names
 | `serverstopspread` | 7 | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md): a safety control, a liveness control (`StopFinishes`) and five reversed witnesses, the single-shot stop (`FullBurstBeforeStopped`), a ring of `SteadyCap` entries and a steady cap off by one (both `RingHolds`), a complete entry sealed again (`SealedWithinBurst`) and an unreachable start that ends the drain (`StopFinishes`) |
+| `serverstopspread` | 8 | The disconnect ring's layout and the stop spread across steps within the send room (README-ServerStopSpread.md): a safety control, a liveness control (`StopFinishes`) and six reversed witnesses, the single-shot stop (`FullBurstBeforeStopped`), a ring of `SteadyCap` entries and a steady cap off by one (both `RingHolds`), a complete entry sealed again (`SealedWithinBurst`), an unreachable start that ends the drain (`StopFinishes`) and an I/O stop with a flushed send unfinished (`NoSendCutAtStop`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 586 cases
-in 91 groups, 570 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 587 cases
+in 91 groups, 571 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

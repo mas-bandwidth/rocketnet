@@ -606,6 +606,15 @@ static int rocketnet_server_transport_io_send_room( const rocketnet_server_trans
     return room > 0 ? room : 0;
 }
 
+// True once every frame the transport was handed has finished; a transport
+// that does not report it is idle when its flush returns.
+static bool rocketnet_server_transport_io_send_idle( const rocketnet_server_transport_t * server_transport )
+{
+    if ( !server_transport->io.operations || !server_transport->io.operations->send_idle )
+        return true;
+    return server_transport->io.operations->send_idle( server_transport->io.instance );
+}
+
 // A refused start with room left refused that one frame; without room, or
 // from a transport that does not report it, it is a full staging.
 static bool rocketnet_server_transport_io_refused_full( const rocketnet_server_transport_t * server_transport )
@@ -2295,9 +2304,10 @@ static void rocketnet_server_transport_flush( struct rocketnet_server_transport_
 
 // proofs/tla/ServerStopSpread.tla SealOne, Flush and RequestIoStop: one stop
 // step. The waiting bursts are sealed within the transport's send room,
-// what was sealed is flushed, and once nothing waits the I/O is told to
-// stop. Bounded work and no wait: a burst the room cannot take waits for
-// the next step, after the transport has finished frames it holds.
+// what was sealed is flushed, and once nothing waits and the transport
+// reports every send it was handed finished, the I/O is told to stop, so no
+// flushed send is cut off. Bounded work and no wait: a burst the room
+// cannot take, or a send still in flight, waits for the next step.
 static void rocketnet_server_transport_stop_step( struct rocketnet_server_transport_t * server_transport )
 {
     if ( server_transport->state != ROCKETNET_SERVER_TRANSPORT_STOPPING || server_transport->io_stop_requested )
@@ -2308,7 +2318,7 @@ static void rocketnet_server_transport_stop_step( struct rocketnet_server_transp
 
     rocketnet_server_transport_flush( server_transport, true );
 
-    if ( server_transport->disconnect_burst_count == 0 )
+    if ( server_transport->disconnect_burst_count == 0 && rocketnet_server_transport_io_send_idle( server_transport ) )
     {
         server_transport->io_stop_requested = true;
         rocketnet_server_transport_io_stop( &server_transport->io );

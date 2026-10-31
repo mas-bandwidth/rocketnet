@@ -1317,6 +1317,25 @@ int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso )
     return used < 0 || used >= ROCKETNET_GSO_SEND_QUEUE_SIZE ? 0 : ROCKETNET_GSO_SEND_QUEUE_SIZE - used;
 }
 
+// proofs/tla/ServerStopSpread.tla RequestIoStop: every bank back in the free
+// queue and the producer empty
+
+bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso )
+{
+    rocketnet_assert( gso );
+
+    if ( gso->send_producer < 0 )
+        return true;
+    if ( gso->send_banks[gso->send_producer].num_packets.load( std::memory_order_relaxed ) != 0 )
+        return false;
+    if ( !rocketnet_platform_mutex_try_acquire( &gso->send_mutex ) )
+        return false;
+    const bool idle = gso->send_ready_count == 0 && gso->send_free_count == ROCKETNET_GSO_TX_BANKS - 1;
+    rocketnet_platform_mutex_release( &gso->send_mutex );
+
+    return idle;
+}
+
 // proofs/tla/RNGsoHandoff.tla TxStage: a fill thread stages one packet into the
 // producer bank, outside the ownership mutex.
 uint8_t * rocketnet_server_gso_start_packet( struct rocketnet_server_gso_t * gso, const struct rocketnet_address_t * to, uint64_t * packet_id )

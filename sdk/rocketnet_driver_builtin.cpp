@@ -1571,10 +1571,26 @@ static int portable_send_room( void * transport )
     return used >= server->tx_capacity ? 0 : server->tx_capacity - used;
 }
 
+// proofs/tla/ServerStopSpread.tla RequestIoStop: the producer published (a
+// deferred publish is retried here) and every bank back in the free queue,
+// the worker's sends finished
+static bool portable_send_idle( void * transport )
+{
+    portable_server_t * server = (portable_server_t *) transport;
+    if ( !portable_tx_publish( server ) )
+        return false;
+    if ( !rocketnet_platform_mutex_try_acquire( &server->mutex ) )
+        return false;
+    const bool idle = server->ready_count == 0 && server->free_count == PORTABLE_TX_BANKS - 1;
+    rocketnet_platform_mutex_release( &server->mutex );
+
+    return idle;
+}
+
 static const rocketnet_server_transport_io_operations_t portable_server_operations = {
     ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE, portable_create, portable_destroy, portable_stop, portable_stopped,
     NULL, NULL, NULL, NULL, NULL, portable_send, portable_receive,
-    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room
+    NULL, NULL, NULL, NULL, NULL, portable_send_failures, portable_send, portable_send_room, portable_send_idle
 };
 
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
@@ -1787,7 +1803,8 @@ extern const rocketnet_transport_backend_t rocketnet_msgx_transport = { &portabl
     static void name##_flush( void * transport ) { prefix##_send_packets( (type*) transport ); } \
     static rocketnet_server_socket_process_packets_t * name##_receive( void * transport ) \
     { prefix##_receive_packets( (type*) transport ); return prefix##_process_packets( (type*) transport ); } \
-    static int name##_send_room( void * transport ) { return prefix##_send_room( (type*) transport ); }
+    static int name##_send_room( void * transport ) { return prefix##_send_room( (type*) transport ); } \
+    static bool name##_send_idle( void * transport ) { return prefix##_send_idle( (type*) transport ); }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
 #include "rocketnet_server_gso.h"
@@ -1843,7 +1860,7 @@ static const rocketnet_server_transport_io_operations_t gso_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     gso_create, gso_destroy, gso_stop, gso_stopped,
     gso_start, gso_finish, gso_abort, gso_flush, gso_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room
+    NULL, NULL, NULL, NULL, NULL, gso_send_failures, NULL, gso_send_room, gso_send_idle
 };
 
 // the client side: sendmmsg with UDP_SEGMENT, recvmmsg (sdk/rocketnet_client_gso_linux.cpp)
@@ -1891,7 +1908,7 @@ static const rocketnet_server_transport_io_operations_t io_uring_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE | ROCKETNET_TRANSPORT_REFLUSHES,
     io_uring_create, io_uring_destroy, io_uring_stop, io_uring_stopped,
     io_uring_start, io_uring_finish, io_uring_abort, io_uring_flush, io_uring_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room
+    NULL, NULL, NULL, NULL, NULL, io_uring_send_failures, NULL, io_uring_send_room, io_uring_send_idle
 };
 
 extern const rocketnet_transport_backend_t rocketnet_io_uring_transport = { &io_uring_operations, NULL };
@@ -1963,7 +1980,7 @@ static const rocketnet_server_transport_io_operations_t xdp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FINISH_FINAL | ROCKETNET_TRANSPORT_BINDS_PUBLIC_ADDRESS | ROCKETNET_TRANSPORT_REFLUSHES,
     xdp_create, xdp_destroy, xdp_stop, xdp_stopped,
     xdp_start, xdp_finish, xdp_abort, xdp_flush, xdp_receive, NULL, NULL, xdp_prefilter_counters,
-    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room
+    xdp_replay_forget, xdp_replay_mark, xdp_replay_commit, xdp_client_accepted, xdp_send_failures, NULL, xdp_send_room, xdp_send_idle
 };
 #else
 static void * xdp_disabled_create( void *, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
@@ -1990,7 +2007,7 @@ static int xdp_disabled_receive( void *, rocketnet_address_t *, uint8_t *, int, 
 static const rocketnet_server_transport_io_operations_t xdp_operations = {
     0, xdp_disabled_create, xdp_disabled_destroy, synchronous_stop, synchronous_stopped,
     NULL, NULL, NULL, NULL, NULL, xdp_disabled_send, xdp_disabled_receive,
-    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
 };
 #endif // #if ROCKETNET_XDP
 
@@ -2048,7 +2065,7 @@ static const rocketnet_server_transport_io_operations_t iocp_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     iocp_create, iocp_destroy, iocp_stop, iocp_stopped,
     iocp_start, iocp_finish, iocp_abort, iocp_flush, iocp_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room
+    NULL, NULL, NULL, NULL, NULL, iocp_send_failures, NULL, iocp_send_room, iocp_send_idle
 };
 
 // the client column is the iocp client (sdk/rocketnet_client_iocp_windows.cpp):
@@ -2102,7 +2119,7 @@ static const rocketnet_server_transport_io_operations_t rio_operations = {
     ROCKETNET_TRANSPORT_STAGED | ROCKETNET_TRANSPORT_FLUSH_ON_UPDATE,
     rio_create, rio_destroy, rio_stop, rio_stopped,
     rio_start, rio_finish, rio_abort, rio_flush, rio_receive, NULL, NULL,
-    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room
+    NULL, NULL, NULL, NULL, NULL, rio_send_failures, NULL, rio_send_room, rio_send_idle
 };
 
 extern const rocketnet_transport_backend_t rocketnet_rio_transport = { &rio_operations, NULL };

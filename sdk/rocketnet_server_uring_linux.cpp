@@ -1664,6 +1664,16 @@ int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring )
     return used < 0 || used >= ROCKETNET_URING_SEND_QUEUE_SIZE ? 0 : (int) ( ROCKETNET_URING_SEND_QUEUE_SIZE - used );
 }
 
+// proofs/tla/ServerStopSpread.tla RequestIoStop: nothing staged and no send
+// without its completion
+
+bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring )
+{
+    rocketnet_assert( uring );
+
+    return uring->sends_pending == 0 && (int64_t) uring->send.num_packets.load( std::memory_order_relaxed ) == 0;
+}
+
 // the slot from pointer arithmetic against the staging: a pointer that is not
 // a live slot root lands out of range and fails closed as a lost packet
 
