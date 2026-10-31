@@ -2315,6 +2315,8 @@ static void rocketnet_server_receive_one( struct rocketnet_server_transport_t * 
     if ( response )
         response += ROCKETNET_FRAME_WIRE_OFFSET;
 
+    // proofs/tla/SessionAcks.tla RecvData: the replay check, then the payload opens
+
     const int outcome = rocketnet_server_protocol_process_received( &server_transport->protocol, from, mapping_index,
                                                                     packet_data, packet_bytes,
                                                                     current_timestamp, current_time,
@@ -2405,8 +2407,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
 
     server_transport->payloads.num_payloads = 0;
 
-    // the acked-packet batch drains per update: what the blocks processed
-    // below acknowledge lands here, valid until the next update
+    // proofs/tla/SessionAcks.tla Tick: the acked-packet batch drains per
+    // update: what the blocks processed below acknowledge lands here, valid
+    // until the next update
 
     server_transport->protocol.acks->num_acked = 0;
 
@@ -2853,7 +2856,7 @@ static void rocketnet_server_charge_staged_frame( struct rocketnet_server_transp
     rocketnet_server_wire_totals_add_sent_atomic( server_transport, client_index, address_type, wire_bytes );
 }
 
-// proofs/tla/FragmentsAndAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
+// proofs/tla/SessionAcks.tla BurnOne: a seal refusal after the sequence was taken leaves that sequence unsent.
 static int rocketnet_server_transport_finish_packet_unchecked( struct rocketnet_server_transport_t * server_transport, struct rocketnet_packet_context_t * context, int payload_bytes, uint64_t backend_id )
 {
     rocketnet_assert( server_transport );
@@ -2959,7 +2962,7 @@ int rocketnet_server_transport_finish_packet( rocketnet_server_transport_t * ser
     return result;
 }
 
-// proofs/tla/FragmentsAndAcks.tla Flush: puts this update's staged packets on the wire in fill order.
+// proofs/tla/SessionAcks.tla Flush: puts this update's staged packets on the wire in fill order.
 static void rocketnet_server_transport_send_packets_impl( struct rocketnet_server_transport_t * server_transport, bool shutdown )
 {
     if ( !rocketnet_api_null_guard( server_transport ) )

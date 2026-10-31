@@ -26,8 +26,8 @@ files are the instances; their required cases are in `proofs/tla/CASES.tsv` (gro
 |---|---|---|
 | `st` | the public client state in `sdk/rocketnet_api.cpp` | `NONE` (no object), `DISCONNECTED`, the three handshake stages, `CONNECTED`, and the seven modeled token/transport errors |
 | `cur` | ghost | the session tag of the connection in progress, 0 outside one |
-| `conn[f]` | the per-connection fields of `struct rocketnet_client_protocol_t` (`sdk/rocketnet_client_protocol.h:57`: the send sequences `:91-92`, the replay windows `:94-95`, the reassembly set `:136`) and the message layer above it | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
-| `reason` | `rocketnet_message_client_disconnect_reason` (`sdk/rocketnet.h:2324`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED |
+| `conn[f]` | the per-connection fields of `struct rocketnet_client_protocol_t` (`sdk/rocketnet_client_protocol.h`: the send sequences, the replay windows) and the message layer above it | one field per row of the reset inventory, each 0 (Init) or the tag of the session that wrote it |
+| `reason` | `rocketnet_message_client_disconnect_reason` (`sdk/rocketnet.h`) | the disconnect reason, kept through the reset, cleared to NONE when the next connection reaches CONNECTED |
 | `kept` | the lifetime counters and the config | kept across connections; fresh only at create |
 | `link` | the path from the server | the session tags of server packets in flight, including old generations (lossy: `Lose`) |
 | `owner`, `ownerGen`, `pending` | `connection`/`retiring` and transport stop/completion in `sdk/rocketnet_api.cpp` | current worker ownership and a pending nonwaiting stop request |
@@ -45,7 +45,7 @@ lifecycle boundary. Token parsing and native thread mechanics are abstracted.
 | `Connect` (the token) | `token_state` (challenge, cookie and token state), `client_id`, `user_data`, `timeouts` |
 | the challenge (`SENDING_CONNECTION_RESPONSE`) | `session_keys` (keys and nonces) |
 | `Send` (message start/finish) | `packet_sequence`, `message_sequence`, `sent_packets`, `reliable_send_queue`, `ordering_indices`, `send_budget`, `connection_counters`, `ack_receipt_ring` |
-| `Deliver` (a packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `fragment_reassembly`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
+| `Deliver` (a packet opens) | `received_packets`, `reliable_receive_queue`, `ack_bits`, `replay_window`, `rtt_estimator`, `loss_estimator`, `connection_counters` |
 | `ClientDisconnect` | `pending_disconnect` (the disconnect burst) |
 
 **Kept on purpose**: `kept.lifetime` (the lifetime counters, monotonic over the client's life),
@@ -85,7 +85,7 @@ have no transport owner and can retry immediately.
 **Reads.** Every field is read by some step of the next session (`HandshakeReads`, `SendReads`,
 `RecvReads`, with an `ASSUME` that together they cover `Fields`), so a field a reset misses is
 observed: a stale ack bit or sent entry (`Deliver` reads `ack_bits`, `sent_packets`,
-`ack_receipt_ring`), a stale fragment slot (`fragment_reassembly`), a replay window that refuses
+`ack_receipt_ring`), a replay window that refuses
 the new session's first sequences (`replay_window`).
 
 ## Properties

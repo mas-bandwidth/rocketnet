@@ -69,7 +69,7 @@ int rocketnet_ack_block_write( uint8_t * output, const struct rocketnet_ack_bloc
 // exactly while nothing is opened, and every other block has a first range
 // length of at least one (proofs/tla/AckBlockWrap.tla WriteBlock)
 
-// proofs/tla/FragmentsAndAcks.tla SendAck: builds the block the session packet carries from the replay window
+// proofs/tla/SessionAcks.tla SendAck: builds the block the session packet carries from the replay window
 // proofs/tla/RNSentHistory.tla ReceiverAck: restates the received set inside the window as one ack block
 
 // proofs/tla/RNAckBuildLayout.tla Step and Finish: the word load, the clz phases, the range cap and the run emitted at the floor
@@ -1048,7 +1048,7 @@ static void rocketnet_ack_stats_publish_received( struct rocketnet_ack_endpoint_
 }
 
 // proofs/tla/RNSentHistory.tla Send
-// proofs/tla/FragmentsAndAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
+// proofs/tla/SessionAcks.tla StartPayload: writes the one sequence's record with its packet id and sets its held and unacked bits
 // proofs/tla/RNServerStats.tla Send: takes the sent sequence (past the high-water mark, or a refused stale one)
 // proofs/tla/RNServerStats.tla Write: removes the overwritten record from the aggregates, writes the ring slot and adds it
 
@@ -1330,7 +1330,7 @@ static void rn_bitmap_walk_bits_desc( const uint64_t * bitmap, uint32_t a, uint3
 
 // marks one described run of received sequences [low, high], clamped to the
 // retained window, and appends newly acknowledged packet ids to the batch
-// (proofs/tla/FragmentsAndAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
+// (proofs/tla/SessionAcks.tla, RecvAck: SurfacedOnce, SurfacedOnlyIfOpened,
 // AckedMeansSurfaced, BurnedNeverNamed)
 // proofs/tla/RNSentHistory.tla ReceiveAck
 // proofs/tla/RNServerStats.tla Ack: marks each held, unacknowledged record acked and moves it to the acked aggregates
@@ -1371,7 +1371,7 @@ static int rocketnet_ack_apply_run( struct rocketnet_ack_endpoint_t * endpoint,
     int newly_acked = 0;
 
     // RNSentHistory ReceiveAck marks exactly the named records that are held
-    // and unacknowledged; FragmentsAndAcks RecvAck carries the batch deferral
+    // and unacknowledged; SessionAcks RecvAck carries the batch deferral
     // (SurfacedOnce, AckedMeansSurfaced, BurnedNeverNamed,
     // OpenedSurfacesOrLaps). The held count over the named slots yields the
     // unknown count arithmetically (the named-but-never-sent sequences); only

@@ -85,7 +85,7 @@ SendFields == {"packet_sequence", "message_sequence", "sent_packets",
                "reliable_send_queue", "ordering_indices", "send_budget",
                "connection_counters", "ack_receipt_ring"}
 RecvFields == {"received_packets", "reliable_receive_queue", "ack_bits",
-               "replay_window", "fragment_reassembly", "rtt_estimator",
+               "replay_window", "rtt_estimator",
                "loss_estimator", "connection_counters"}
 DisconnectFields == {"pending_disconnect"}
 Fields == MappingFields \cup SendFields \cup RecvFields \cup DisconnectFields
@@ -183,7 +183,7 @@ Init ==
 \* whether the path sends the disconnect burst to a connected client. The
 \* reset keeps the used-token history: rocketnet_server_connection_reset
 \* (sdk/rocketnet_connection_reset.cpp) removes the slot's encryption
-\* mapping and resets its slot-owned ACK/reassembly state, but never accesses
+\* mapping and resets its slot-owned ACK state, but never accesses
 \* protocol.used_token_history. The defect "resetclearshistory" empties it.
 EndSlot(v, i, why, sendDisc) ==
     LET w == Reset(v, i, why)
@@ -658,7 +658,7 @@ RecordIsCurrent == \A i \in Slots : \A f \in Fields : slot[i].rec[f] \in {0, slo
 
 \* A later session in a slot observes nothing of an earlier one: no packet of
 \* session s opened by another session, and no step reads a field another
-\* session wrote (a stale ack, a stale fragment, a replay window that would
+\* session wrote (a stale ack, a replay window that would
 \* refuse the new session's first sequences).
 SlotReuseObservesNothing == observed = {} /\ crossDelivered = {}
 

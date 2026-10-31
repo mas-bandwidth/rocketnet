@@ -647,9 +647,9 @@ succeeds.
 prints the plan without opening a socket; without `--plan-only` it creates a
 loopback server and checks the allocator against the plan
 (`benchmarks/transport_memory.cpp`, `BUILDING.md`). At 1000 clients and
-1416-byte payloads the plans are TODO-NUMBER bytes (`portable`), TODO-NUMBER
-(`gso`), TODO-NUMBER (`io_uring`) and TODO-NUMBER (`xdp`, 7 queues, of which
-1,879,048,192 UMEM). Use the exact-build probe below for current capacity
+1416-byte payloads the plans are 495,178,594 bytes (`portable`), 536,022,330
+(`gso`), 1,511,867,072 (`io_uring`) and 3,544,766,128 (`xdp`, 7 queues, of which
+1,409,286,144 UMEM). Use the exact-build probe below for current capacity
 planning. The plan excludes OS stacks,
 kernel queues, loader and application memory
 (`sdk/rocketnet_server_transport.cpp`, `BUILDING.md`).

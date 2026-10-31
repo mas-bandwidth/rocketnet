@@ -12,7 +12,7 @@
 
     Modules mirrored here: proofs/tla/RNChannel.tla, proofs/tla/RNChannelTypes.tla,
     proofs/tla/RNEndpoint.tla, proofs/tla/RNWindow.tla, proofs/tla/RNReceipts.tla,
-    proofs/tla/ReplayWindow.tla, proofs/tla/FragmentsAndAcks.tla, proofs/tla/ServerSession.tla,
+    proofs/tla/ReplayWindow.tla, proofs/tla/SessionAcks.tla, proofs/tla/ServerSession.tla,
     proofs/tla/ClientSession.tla, proofs/tla/RNSlots.tla and proofs/tla/RNSimFaults.tla.
 */
 
@@ -77,7 +77,7 @@ struct rocketnet_dst_check_stream_t
     int sequenced_has_epoch;
 
     // reliable (RNChannelTypes::ReliableExactlyOnce, RNEndpoint::
-    // ReliableExactlyOnce, FragmentsAndAcks::DeliveredOnce).
+    // ReliableExactlyOnce).
     uint8_t reliable_delivered[ROCKETNET_DST_CHECK_SEQ_BYTES];
     uint8_t reliable_sent[ROCKETNET_DST_CHECK_SEQ_BYTES];
 
@@ -101,8 +101,8 @@ struct rocketnet_dst_check_stream_t
     // LossOnlyForUnreliableReceipt).
     uint8_t receipt_seen[ROCKETNET_DST_CHECK_SEQ_BYTES];
 
-    // whole_message (RNChannel::WholeMessagesOnly, FragmentsAndAcks::
-    // DeliveredExact): the size recorded when the sequence was sent.
+    // whole_message (RNChannel::WholeMessagesOnly): the size recorded when
+    // the sequence was sent.
     uint32_t sent_size[ROCKETNET_DST_CHECK_SEQ_BITS];
     uint8_t sent_size_set[ROCKETNET_DST_CHECK_SEQ_BITS];
     uint32_t last_sent_seq;
@@ -114,7 +114,7 @@ struct rocketnet_dst_check_stream_t
 
     // acked_means_opened (RNReceipts::AckedMeansPacketOpened,
     // RNChannelTypes::AckedImpliesTransportArrival, ReplayWindow::
-    // AckReportsOnlyReceived, FragmentsAndAcks::AckedMeansSurfaced).
+    // AckReportsOnlyReceived, SessionAcks::AckedMeansSurfaced).
     uint8_t opened[ROCKETNET_DST_CHECK_SEQ_BYTES];
 
     // liveness_delivered (RNChannel::EveryOrderedMessageDelivered,
@@ -438,8 +438,8 @@ static inline int rocketnet_dst_check_ordered( struct rocketnet_dst_check_state_
     return 0;
 }
 
-// Mirrors RNChannelTypes::ReliableExactlyOnce, RNEndpoint::ReliableExactlyOnce
-// and FragmentsAndAcks::DeliveredOnce. No sequence of a reliable stream is
+// Mirrors RNChannelTypes::ReliableExactlyOnce and
+// RNEndpoint::ReliableExactlyOnce. No sequence of a reliable stream is
 // delivered twice, and no sequence that was never sent is delivered.
 static inline int rocketnet_dst_check_reliable_once( struct rocketnet_dst_check_state_t * st,
                                                      double time, int stream, uint32_t seq )
@@ -539,7 +539,7 @@ static inline void rocketnet_dst_check_opened( struct rocketnet_dst_check_state_
 
 // Mirrors RNReceipts::AckedMeansPacketOpened, RNChannelTypes::
 // AckedImpliesTransportArrival, ReplayWindow::AckReportsOnlyReceived and
-// FragmentsAndAcks::AckedMeansSurfaced. Every sequence a link ack names was
+// SessionAcks::AckedMeansSurfaced. Every sequence a link ack names was
 // opened by the receiver.
 static inline int rocketnet_dst_check_acked( struct rocketnet_dst_check_state_t * st,
                                              double time, int stream, uint32_t seq )
@@ -620,8 +620,7 @@ static inline int rocketnet_dst_check_liveness_delivered( struct rocketnet_dst_c
     return 0;
 }
 
-// Mirrors RNChannel::WholeMessagesOnly and FragmentsAndAcks::DeliveredExact:
-// the delivery's length matches the size recorded when its sequence was sent.
+// Mirrors RNChannel::WholeMessagesOnly: the delivery's length matches the size recorded when its sequence was sent.
 
 static inline int rocketnet_dst_check_whole_message( struct rocketnet_dst_check_state_t * st,
                                                      int stream, uint32_t seq, int bytes )

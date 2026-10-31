@@ -40,8 +40,8 @@ results is a measurement of your current build. See [Testing](TESTING.md).
 ## Server memory footprint
 
 An illustrative default 1000-client estimate recorded in this guide is about
-TODO-NUMBER GB (TODO-NUMBER bytes), with a marginal cost of about TODO-NUMBER MB
-(TODO-NUMBER bytes) per slot. These are sizing examples, not portable constants:
+21.0 GB (21,027,222,087 bytes), with a marginal cost of about 19.2 MB
+(19,175,094 bytes) per slot. These are sizing examples, not portable constants:
 build options, platform, transport availability, and configuration affect the
 result. Query your own build with `rocketnet_server_required_memory` before
 allocating. It reports the planned allocator peak over create, start, stop,
@@ -98,20 +98,19 @@ bytes, the send buffer is 141,500 bytes, the send queue is 128 messages,
 packets in flight are 256, each update may send 4 packets and 4 unreliable
 messages, 100 sequenced messages are held, 128 receipts are kept, and there
 are eight channels. At `max_clients` 1000, `rocketnet_server_required_memory`
-reports TODO-NUMBER bytes (about TODO-NUMBER GB) on Linux x86-64 with io_uring
+reports 3,108,118,087 bytes (about 3.1 GB) on Linux x86-64 with io_uring
 and XDP built. The matching `rocketnet_client_light_config` makes
-`rocketnet_client_required_memory` report TODO-NUMBER bytes.
+`rocketnet_client_required_memory` report 14,146,994 bytes.
 
 Both figures are the lifecycle peak the caller's allocator sees: create, the
 transport connect or start allocates for the largest transport the ladder can
 grant, disconnect or stop, the next cycle, and destroy. They exclude the
 memory the operating system owns (worker thread stacks, XDP UMEM, io_uring
 rings, kernel socket buffers) and process overhead. In a production build
-(`ROCKETNET_DEV=OFF`) they are TODO-NUMBER and TODO-NUMBER bytes. Other
+(`ROCKETNET_DEV=OFF`) they are 3,101,736,931 and 13,362,070 bytes. Other
 platforms report their own figures (macOS has no io_uring or XDP, so its
-server figure is about half). On Windows x64 with MSVC, the server/client
-figures are TODO-NUMBER / TODO-NUMBER bytes in development builds and
-TODO-NUMBER / TODO-NUMBER bytes with `ROCKETNET_DEV=OFF`. The default profile
+server figure is about half; Windows x64 with MSVC has no io_uring or XDP
+either). The default profile
 remains the stock acceptance.
 
 ```c

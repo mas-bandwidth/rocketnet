@@ -97,8 +97,8 @@ static void test_max_clients_derived_limits()
 REGISTER_UNIT_TEST( test_max_clients_derived_limits );
 
 // A light per-client config, so a server of ROCKETNET_MAX_CLIENTS slots stays
-// small enough for the unit suite (about 370 MB at 1000 clients, 3.7 GB at
-// 10000). The slot count is what the case is about, not the per-client depth.
+// small enough for the unit suite. The slot count is what the case is about,
+// not the per-client depth.
 
 static void max_clients_server_config( rocketnet_server_config_t * config )
 {

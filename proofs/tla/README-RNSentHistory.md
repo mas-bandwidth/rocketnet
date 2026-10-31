@@ -124,7 +124,7 @@ scratch copy and failed on the named property, so each property is not vacuous:
 
 Duplicate delivery (a duplicate ack block is a no-op), ack-block loss (a lost
 block is a delayed one that never arrives, and the next block restates), the
-wrapping of the 32-bit wire sequence, the aggregate ring, keep-alive marking and
+wrapping of the 32-bit wire sequence, keep-alive marking and
 the concurrent writers behind `sent_lock` (the stale-writer refusal is
 `REFUSED_STALE`, counted overflow; the model has the single in-order writer).
 `LostImpliesLaterAcked` is the reordering reading of RFC 9002 6.1.1: a packet

@@ -8,10 +8,10 @@
 // server assigns a sequence only when finish accepts the payload and reserves
 // every wire frame, so a server lease or ring refusal, an abort, or a
 // refused finish leaves no sequence gap.
-// proofs/tla/FragmentsAndAcks.tla models such a sequence as a burn (BurnOne,
-// :300-310; "a burn spends sequences nothing is ever sent on", :19-20) and
-// checks BurnedNeverNamed (:705-707): a burned sequence is never opened and
-// never named by an ack block.
+// proofs/tla/SessionAcks.tla models such a sequence as a burn (BurnOne: a
+// burn spends a sequence nothing is ever sent on) and checks
+// BurnedNeverNamed: a burned sequence is never opened and never named by an
+// ack block.
 //
 // The first two cases drive the ack endpoint and the block builder directly.
 // The rest cause real refusals on the in-memory loopback transport, time from

@@ -340,7 +340,7 @@ static void test_ack_block_walk_bits_match_ring()
     rocketnet_free( NULL, ep );
 
     // a deferral on a fresh endpoint: capacity 2 over three new unacknowledged
-    // records (FragmentsAndAcks RecvAck's batch deferral)
+    // records (SessionAcks RecvAck's batch deferral)
 
     ep = (struct rocketnet_ack_endpoint_t *) rocketnet_malloc( NULL, sizeof( struct rocketnet_ack_endpoint_t ) );
     rocketnet_unit_check( ep );

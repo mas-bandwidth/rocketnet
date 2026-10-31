@@ -142,9 +142,8 @@ static int rocketnet_functional_test_group( const char * name )
 // history becomes resident by design. Its
 // footprint is those servers' memory plans, not the suite-wide bound. The
 // 300-client server is destroyed before the full-capacity one is created,
-// but an allocator may keep its freed pages resident: macOS does (a 994 MiB
-// peak with both runs, 782 MiB with the full-capacity run alone, while Linux
-// measures 772 MiB either way), so both plans count. Loopback has no plan
+// but an allocator may keep its freed pages resident (macOS does: its peak
+// with both runs is above the full-capacity run alone), so both plans count. Loopback has no plan
 // row: the portable plan stands in for its common storage, and the process's
 // one loopback hub (tests/loopback_hub.h) is added once, as the other
 // loopback full-capacity cases do, plus 32 MiB for the process. The servers it builds after these have at

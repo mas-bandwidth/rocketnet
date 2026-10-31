@@ -36,7 +36,7 @@ CITATION_SCAN_FILES = (
     "proofs/tla/RNClientReceiveQuit.tla",
     "proofs/tla/README-ReplayWindow.md",
     "proofs/tla/README-ClientConnection.md",
-    "proofs/tla/README-FragmentsAndAcks.md",
+    "proofs/tla/README-SessionAcks.md",
 )
 _FUNC_HEADER_RE = re.compile(
     r"^\s*(?:static\s+|extern\s+\"C\"\s+|inline\s+)*[A-Za-z_][\w\s\*&<>:,]*?"

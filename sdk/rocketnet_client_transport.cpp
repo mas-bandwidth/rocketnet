@@ -2622,6 +2622,7 @@ static void rocketnet_client_process_packet( rocketnet_client_transport_t * clie
     // proofs/tla/RNClientIoDecrypt.tla UpdateConsume: a record the I/O thread opened
     // or refused is consumed with its verdict; a raw one is processed as at
     // BASE
+    // proofs/tla/SessionAcks.tla RecvData: the replay check, then the payload opens
 
     rocketnet_client_protocol_process_record( &client_transport->protocol, packet_data, packet_bytes, verdict, sequence,
                                               current_time,
@@ -2942,7 +2943,7 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
 
     const int state_before = client_transport->protocol.state;
 
-    // the acked-packet batch drains per update: what the blocks processed below acknowledge lands there, valid until the next update
+    // proofs/tla/SessionAcks.tla Tick: the acked-packet batch drains per update: what the blocks processed below acknowledge lands there, valid until the next update
 
     client_transport->protocol.num_acked = 0;
 
@@ -3084,7 +3085,7 @@ void rocketnet_client_transport_send_packet( rocketnet_client_transport_t * clie
     rocketnet_client_transport_send_packets( client_transport );
 }
 
-// proofs/tla/FragmentsAndAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring or the lease refuses the frame.
+// proofs/tla/SessionAcks.tla BurnOne: a sequence taken for this packet is spent unsent when the ring or the lease refuses the frame.
 // The client's acquire family: the same shape, layout and phase
 // contract as the server's, minus the client index. The convenience send
 // above rides this path and flushes immediately, preserving its
@@ -3284,7 +3285,7 @@ int rocketnet_client_transport_finish_packet( rocketnet_client_transport_t * cli
     return result;
 }
 
-// proofs/tla/FragmentsAndAcks.tla Flush: puts the outbox on the wire in fill order.
+// proofs/tla/SessionAcks.tla Flush: puts the outbox on the wire in fill order.
 
 void rocketnet_client_transport_send_packets( rocketnet_client_transport_t * client_transport )
 {

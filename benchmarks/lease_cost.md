@@ -103,7 +103,7 @@ ordinary range. This checks timing sensitivity, not a library performance target
 `sizeof` the unchanged table is 8,388,672 bytes per server and 65,600 per client
 on this target. Both benchmark builds retain those bytes. The timed connection
 uses two configured server clients and 1416-byte maximum payloads; its observed
-allocator totals are TODO-NUMBER bytes for the server and TODO-NUMBER for the client.
+allocator totals are 71,985,678 bytes for the server and 10,916,519 for the client.
 
 `transport_memory.cpp` supplies a separate constructor/destructor observation:
 
@@ -118,11 +118,11 @@ Use `-lbpf -lxdp -pthread` instead of the frameworks on Linux.
 
 | Configured clients | Max payload bytes | Live allocator bytes after create |
 | ---: | ---: | ---: |
-| 1 | 1192 | TODO-NUMBER |
-| 2 | 1192 | TODO-NUMBER |
-| 1000 | 1192 | TODO-NUMBER |
+| 1 | 1192 | 71,629,272 |
+| 2 | 1192 | 71,985,678 |
+| 1000 | 1192 | 495,178,866 |
 
-Each profile used the portable server, 40 live allocations, and the same peak
+Each profile used the portable server, 62 live allocations, and the same peak
 as post-create storage. Every profile returned to zero on destroy. These totals
 include RocketNet's alignment/ownership overhead, and exclude kernel socket
 buffers, OS thread stacks, libc bookkeeping, observer overhead and application

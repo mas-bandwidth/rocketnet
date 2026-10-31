@@ -299,8 +299,8 @@ universal preset suitable for every game:
   packets in flight, 256 packets and 1,024 unreliable messages per update,
   a 1,000-kbps client send budget, and a 10,000-kbps server per-client send
   budget. The server budget produces an `18,383,616`-byte (17.53 MiB) message
-  region per connection and a `TODO-NUMBER`-byte
-  (TODO-NUMBER GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
+  region per connection and a `21,027,222,087`-byte
+  (19.58 GiB, `ROCKETNET_DEV=1`) worst-case server allocator footprint at
   `max_clients = 1000`. A game with small messages, fewer channels, or smaller
   match sizes pays for unused per-client arena space if it leaves every field
   at `0` (default).
@@ -713,9 +713,9 @@ directions:
    - The Linux kernel only faults physical pages into Resident Set Size (RSS)
      when bytes are written. For example, running
      `./bin/transport_memory 1000 1416 portable` on Linux x86-64 allocates
-     `live_allocator_bytes = TODO-NUMBER` (TODO-NUMBER MiB) of transport arenas at
+     `live_allocator_bytes = 495,178,594` (472.24 MiB) of transport arenas at
      startup, while `process_peak_rss_bytes` after `create` and `start` is only
-     `TODO-NUMBER` bytes (TODO-NUMBER MiB) until clients connect and fill their
+     `53,215,232` bytes (50.75 MiB) until clients connect and fill their
      message rings. Capacity planning must size host RAM for the
      touched working set under peak load plus the OS/kernel resources below,
      never from idle startup RSS.
@@ -731,8 +731,8 @@ receive requests use the client-count formula above. Run `--plan-only` and
 
 | Server transport | Transport `allocator_bytes` | `umem_bytes` (page-aligned) | `os_bytes` (UMEM + stacks + mapped rings) | Worker threads (`stack_bytes`) | Sockets (`SO_SNDBUF` + `SO_RCVBUF` req) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| `portable` | `TODO-NUMBER` | `0` | `16,777,216` (16.00 MiB) | `2` (`16,777,216`) | `1` (`1,000,000` + `1,000,000`) |
-| `gso` | `TODO-NUMBER` | `0` | `41,943,040` (40.00 MiB) | `5` (`41,943,040`) | `4` (`4,000,000` + `4,000,000`) |
-| `io_uring` | `TODO-NUMBER` | `0` | `262,144` (256.00 KiB) | `0` (`0`) | `4` (`4,000,000` + `4,000,000`) |
-| `xdp` (7 queues) | `TODO-NUMBER` | `1,409,286,144` (1.31 GiB) | `1,468,006,400` (1.37 GiB) | `7` (`58,720,256`) | `7` (`2,293,760` XDP rings) |
-| `loopback` | `TODO-NUMBER` | `0` | `0` | `0` (`0`) | `0` |
+| `portable` | `495,178,594` (472.24 MiB) | `0` | `16,777,216` (16.00 MiB) | `2` (`16,777,216`) | `1` (`1,000,000` + `1,000,000`) |
+| `gso` | `536,022,330` (511.19 MiB) | `0` | `41,943,040` (40.00 MiB) | `5` (`41,943,040`) | `4` (`4,000,000` + `4,000,000`) |
+| `io_uring` | `1,511,867,072` (1.41 GiB) | `0` | `262,144` (256.00 KiB) | `0` (`0`) | `4` (`4,000,000` + `4,000,000`) |
+| `xdp` (7 queues) | `2,135,479,984` (1.99 GiB) | `1,409,286,144` (1.31 GiB) | `1,468,006,400` (1.37 GiB) | `7` (`58,720,256`) | `7` (`2,293,760` XDP rings) |
+| `loopback` | `352,328,978` (336.01 MiB) | `0` | `0` | `0` (`0`) | `0` |

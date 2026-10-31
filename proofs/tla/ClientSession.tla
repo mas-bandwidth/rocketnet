@@ -48,7 +48,7 @@ SendFields == {"packet_sequence", "message_sequence", "sent_packets",
                "reliable_send_queue", "ordering_indices", "send_budget",
                "connection_counters", "ack_receipt_ring"}
 RecvFields == {"received_packets", "reliable_receive_queue", "ack_bits",
-               "replay_window", "fragment_reassembly", "rtt_estimator",
+               "replay_window", "rtt_estimator",
                "loss_estimator", "connection_counters"}
 DisconnectFields == {"pending_disconnect"}
 Fields == TokenFields \cup KeyFields \cup SendFields \cup RecvFields \cup DisconnectFields
@@ -376,8 +376,8 @@ RecordIsCurrent == \A f \in Fields : conn[f] \in {0, cur}
 
 \* A later session observes nothing of an earlier one: no packet of session
 \* s opened by session s' # s, and no step of a session reads a field another
-\* session wrote (a stale ack bit or sent entry, a stale fragment slot, a
-\* replay window that would refuse the new session's first sequences).
+\* session wrote (a stale ack bit or sent entry, a replay window
+\* that would refuse the new session's first sequences).
 ReconnectObservesNothing == observed = {} /\ crossDelivered = {}
 
 ReasonKeptUntilNextConnection ==
