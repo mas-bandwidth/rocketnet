@@ -1059,10 +1059,18 @@ void rocketnet_platform_sleep( double time )
     if ( !( time > 0.0 ) )
         return;
     const rocketnet_platform_sleep_split_t split = rocketnet_platform_sleep_split( time );
-    if ( split.seconds > 0 )
-        sleep( split.seconds );
-    if ( split.microseconds > 0 )
-        usleep( split.microseconds );
+    if ( split.seconds == 0 && split.microseconds == 0 )
+        return;
+
+    // a signal handler cuts nanosleep short and leaves the rest in remaining;
+    // sleep that rest until the whole interval has passed
+
+    struct timespec request;
+    request.tv_sec = (time_t) split.seconds;
+    request.tv_nsec = (long) split.microseconds * 1000L;
+    struct timespec remaining;
+    while ( nanosleep( &request, &remaining ) != 0 && errno == EINTR )
+        request = remaining;
 }
 
 // ---------------------------------------------------
@@ -1825,26 +1833,40 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
         {
             errno = 0;
 
-            int result = sendmmsg( socket->handle, msg + sent, (unsigned int) ( count - sent ), 0 );
+            int result = -1;
+            int injected_error = 0;
+#if ROCKETNET_DEV
+            if ( rocketnet_platform_send_failure_should_inject( socket, &injected_error ) )
+                errno = injected_error;
+            else
+#endif // #if ROCKETNET_DEV
+                result = sendmmsg( socket->handle, msg + sent, (unsigned int) ( count - sent ), 0 );
+            (void) injected_error;
+
             if ( result > 0 )
             {
                 sent += result;
                 continue;
             }
 
-            if ( errno == EINTR )
+            // saved before anything below runs: the address formatting and the
+            // log sink may each set errno
+
+            const int error = errno;
+
+            if ( error == EINTR )
                 continue;
 
             // a full socket: drop the unsent tail, as the per-packet path would
 
-            if ( errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS )
+            if ( error == EAGAIN || error == EWOULDBLOCK || error == ENOBUFS )
             {
                 for ( int i = sent; i < count; i++ )
                 {
                     char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
                     rocketnet_address_to_string( sends[map[i]].to, address_string );
-                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( errno ) );
-                    rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, errno );
+                    rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );
+                    rocketnet_platform_send_failed( socket, &socket->send_failures, ROCKETNET_PLATFORM_SEND_CALL_SENDTO, error );
                 }
 
                 break;
@@ -1853,7 +1875,6 @@ void rocketnet_platform_socket_send_packets_mmsg( rocketnet_platform_socket_t * 
             // nothing went in this call, so the first unsent entry is the one
             // the kernel refused: drop it and retry the rest in order
 
-            const int error = errno;
             char address_string[ROCKETNET_MAX_ADDRESS_STRING_LENGTH];
             rocketnet_address_to_string( sends[map[sent]].to, address_string );
             rocketnet_debug( "sendmmsg (%s) failed: %s", address_string, strerror( error ) );

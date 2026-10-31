@@ -8997,6 +8997,67 @@ void rocketnet_test_platform_wake_linux_wakes_and_reads()
 }
 
 // The Linux client's mmsg batch send/receive (#client-io-linux-mmsg): two
+// rocketnet_sleep sleeps the whole interval when signals arrive during it:
+// a SIGALRM handler installed without SA_RESTART, fired every 5 ms by a
+// repeating timer, cuts each underlying sleep call short, and the platform
+// sleep goes back to sleep for the rest. Real time and real signals, so this
+// case lives in the functional tier.
+
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
+#include <signal.h>
+#include <sys/time.h>
+
+static volatile sig_atomic_t rocketnet_test_sleep_signals = 0;
+
+static void rocketnet_test_sleep_signal_handler( int )
+{
+    rocketnet_test_sleep_signals = rocketnet_test_sleep_signals + 1;
+}
+
+static double rocketnet_test_sleep_monotonic()
+{
+    struct timespec ts;
+    clock_gettime( CLOCK_MONOTONIC, &ts );
+    return (double) ts.tv_sec + (double) ts.tv_nsec / 1000000000.0;
+}
+
+void rocketnet_test_sleep_resumes_after_signal()
+{
+    struct sigaction action;
+    struct sigaction previous;
+    memset( &action, 0, sizeof( action ) );
+    action.sa_handler = rocketnet_test_sleep_signal_handler;
+    sigemptyset( &action.sa_mask );
+    action.sa_flags = 0;
+    rocketnet_check( sigaction( SIGALRM, &action, &previous ) == 0 );
+
+    struct itimerval timer;
+    timer.it_interval.tv_sec = 0;
+    timer.it_interval.tv_usec = 5000;
+    timer.it_value.tv_sec = 0;
+    timer.it_value.tv_usec = 5000;
+    rocketnet_test_sleep_signals = 0;
+    rocketnet_check( setitimer( ITIMER_REAL, &timer, NULL ) == 0 );
+
+    const double start = rocketnet_test_sleep_monotonic();
+    rocketnet_sleep( 0.2 );
+    const double elapsed = rocketnet_test_sleep_monotonic() - start;
+
+    struct itimerval off;
+    memset( &off, 0, sizeof( off ) );
+    rocketnet_check( setitimer( ITIMER_REAL, &off, NULL ) == 0 );
+    rocketnet_check( sigaction( SIGALRM, &previous, NULL ) == 0 );
+
+    printf( "  slept %.3f seconds through %d signals\n", elapsed, (int) rocketnet_test_sleep_signals );
+    fflush( stdout );
+
+    rocketnet_check( rocketnet_test_sleep_signals > 0 );
+    rocketnet_check( elapsed >= 0.2 );
+}
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 // loopback sockets, 100 datagrams of distinct sizes 20..119 in one
 // send_packets_mmsg call, receive_packets_mmsg with max 64 returning them
 // in order over two calls byte-exact with the sender's address, and an
@@ -12809,6 +12870,9 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_client_io_linux_mmsg_batch_round_trip", rocketnet_test_client_io_linux_mmsg_batch_round_trip, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+    { "test_sleep_resumes_after_signal", rocketnet_test_sleep_resumes_after_signal, NULL },
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
     { "test_platform_wake_apple_wakes_and_reads", rocketnet_test_platform_wake_apple_wakes_and_reads, NULL },
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS

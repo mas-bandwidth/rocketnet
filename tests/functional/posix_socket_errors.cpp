@@ -1379,6 +1379,83 @@ static void test_msgx_send_replay_refusals_counted_apart( int ipv6 )
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
 
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
+// test_mmsg_full_socket_logs_its_errno: a sendmmsg refused with EAGAIN drops
+// the unsent tail and logs one line per entry with the refusal's own errno.
+// The log sink sets errno to EBADF on every line, as a sink's own I/O can, so
+// a loop that reread errno after logging would name the wrong error from the
+// second entry on.
+
+static std::atomic<int> posix_mmsg_lines( 0 );
+static std::atomic<int> posix_mmsg_lines_eagain( 0 );
+
+static void posix_mmsg_log( void * context, enum rocketnet_log_level_t level, const char * message, size_t length )
+{
+    (void) context;
+    (void) level;
+    (void) length;
+
+    if ( strstr( message, "sendmmsg (" ) != NULL )
+    {
+        posix_mmsg_lines++;
+        if ( strstr( message, strerror( EAGAIN ) ) != NULL )
+            posix_mmsg_lines_eagain++;
+    }
+
+    errno = EBADF;
+}
+
+static void test_mmsg_full_socket_logs_its_errno( int ipv6 )
+{
+    const int num_packets = 4;
+
+    rocketnet_address_t bind_address;
+    posix_check( rocketnet_address_parse( &bind_address, ipv6 ? "::1" : "127.0.0.1" ) );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create( NULL, &bind_address, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0,
+                                                                             ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    posix_check( socket != NULL );
+
+    rocketnet_address_t to;
+    posix_check( rocketnet_address_parse( &to, ipv6 ? "::1" : "127.0.0.1" ) );
+    to.port = bind_address.port;
+
+    uint8_t packets[num_packets][64];
+    struct rocketnet_platform_send_t sends[num_packets];
+    for ( int i = 0; i < num_packets; i++ )
+    {
+        memset( packets[i], i + 1, sizeof( packets[i] ) );
+        sends[i].to = &to;
+        sends[i].packet_data = packets[i];
+        sends[i].packet_bytes = (int) sizeof( packets[i] );
+    }
+
+    const enum rocketnet_log_level_t level = rocketnet_log_level_current();
+    posix_mmsg_lines = 0;
+    posix_mmsg_lines_eagain = 0;
+    rocketnet_log_level( ROCKETNET_LOG_LEVEL_DEBUG );
+    rocketnet_log_function( posix_mmsg_log, NULL );
+
+    const uint64_t failures_before = rocketnet_platform_socket_send_failures( socket );
+    rocketnet_platform_socket_fail_next_sends( socket, 1, EAGAIN );
+    rocketnet_platform_socket_send_packets_mmsg( socket, sends, num_packets );
+    rocketnet_platform_socket_fail_next_sends( socket, 0, 0 );
+    const uint64_t failures = rocketnet_platform_socket_send_failures( socket ) - failures_before;
+
+    rocketnet_log_function( NULL, NULL );
+    rocketnet_log_level( level );
+
+    printf( "  ipv%d mmsg: %d lines, %d name EAGAIN, %llu failures\n", ipv6 ? 6 : 4, posix_mmsg_lines.load(), posix_mmsg_lines_eagain.load(), (unsigned long long) failures );
+    fflush( stdout );
+    posix_check( failures == (uint64_t) num_packets );
+    posix_check( posix_mmsg_lines == num_packets );
+    posix_check( posix_mmsg_lines_eagain == num_packets );
+
+    rocketnet_platform_socket_destroy( socket );
+}
+
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+
 void rocketnet_test_posix_transport_send_seam()
 {
     for ( int ipv6 = 0; ipv6 < 2; ipv6++ )
@@ -1388,6 +1465,9 @@ void rocketnet_test_posix_transport_send_seam()
         test_msgx_send_replay_refusals_counted_apart( ipv6 );
         posix_transport_send_seam_cell( ipv6, "msgx", "msgx" );
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
+        test_mmsg_full_socket_logs_its_errno( ipv6 );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     }
 }
 
