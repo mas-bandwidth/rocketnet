@@ -353,7 +353,31 @@ void rocketnet_default_free_function( void * context, void * p )
     free( p );
 }
 
-static void * ( *rocketnet_malloc_function )( void * context, size_t bytes ) = rocketnet_default_malloc_function;
+// The installed allocator pair, fixed while any allocation of it is live,
+// read by rocketnet_malloc with no lock. Install closes the door first: it
+// publishes the installing sentinel, then reads the live count, all
+// sequentially consistent with rocketnet_malloc's count and load. Either
+// install sees the call counted and refuses with LIVE_ALLOCATIONS, putting
+// the pair back, or the call sees the sentinel, uncounts itself and tries
+// again once the new pair is published, whole, in the slot the old pair is
+// not in. A call copies the pair it read, so its allocate and the release its
+// header keeps are one pair's (proofs/tla/RNAllocatorInstall.tla:
+// ReleasedThroughItsPair, CountCoversCalls, InstallOnlyWhenIdle).
+
+struct rocketnet_allocator_pair_t
+{
+    void * ( *allocate )( void * context, size_t bytes );
+    void ( *release )( void * context, void * p );
+};
+
+static rocketnet_allocator_pair_t rocketnet_allocator_pairs[2] = {
+    { rocketnet_default_malloc_function, rocketnet_default_free_function },
+    { rocketnet_default_malloc_function, rocketnet_default_free_function },
+};
+
+static const rocketnet_allocator_pair_t rocketnet_allocator_installing = { NULL, NULL };
+
+static std::atomic<const rocketnet_allocator_pair_t *> rocketnet_allocator_pair{ &rocketnet_allocator_pairs[0] };
 
 // the allocations refused on this thread, so a failed create can report OUT_OF_MEMORY
 static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
@@ -370,10 +394,42 @@ void rocketnet_allocation_refused()
     ++rocketnet_allocation_refusals_on_this_thread;
 }
 
-static void ( *rocketnet_free_function )( void * context, void * p ) = rocketnet_default_free_function;
-
 static std::mutex rocketnet_lifecycle_mutex;
-static size_t rocketnet_allocations = 0; // includes allocator callbacks in flight
+
+#if ROCKETNET_DEV
+// the lifecycle lock's takes, ever, on this thread: the unit seam that shows
+// which calls take it
+static thread_local uint64_t rocketnet_lifecycle_locks_on_this_thread = 0;
+
+uint64_t rocketnet_lifecycle_locks_for_test()
+{
+    return rocketnet_lifecycle_locks_on_this_thread;
+}
+#endif // #if ROCKETNET_DEV
+
+// the lifecycle lock, held for a scope
+struct rn_lifecycle_lock_t
+{
+    rn_lifecycle_lock_t()
+    {
+        rocketnet_lifecycle_mutex.lock();
+#if ROCKETNET_DEV
+        ++rocketnet_lifecycle_locks_on_this_thread;
+#endif // #if ROCKETNET_DEV
+    }
+
+    ~rn_lifecycle_lock_t() { rocketnet_lifecycle_mutex.unlock(); }
+
+    rn_lifecycle_lock_t( const rn_lifecycle_lock_t & ) = delete;
+    rn_lifecycle_lock_t & operator=( const rn_lifecycle_lock_t & ) = delete;
+};
+
+// the installed allocator's live allocations, allocator callbacks in flight
+// included: rocketnet_malloc counts before it calls the allocator, and
+// rocketnet_free after the release returns. Install and term read it.
+
+static std::atomic<size_t> rocketnet_allocations{ 0 };
+
 static bool rocketnet_initialized = false;
 static bool rocketnet_transitioning = false;
 
@@ -391,7 +447,7 @@ void rocketnet_api_misuse_record()
 
 bool rocketnet_library_initialized()
 {
-    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    rn_lifecycle_lock_t lock;
     return rocketnet_initialized;
 }
 
@@ -422,13 +478,25 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
 
     if ( rocketnet_initialized || rocketnet_transitioning )
         return ROCKETNET_STATUS_ALREADY_INITIALIZED;
-    if ( malloc_function == rocketnet_malloc_function && free_function == rocketnet_free_function )
+    const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
+    if ( malloc_function == installed->allocate && free_function == installed->release )
         return ROCKETNET_STATUS_OK;
-    if ( rocketnet_allocations != 0 )
-        return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
 
-    rocketnet_malloc_function = malloc_function;
-    rocketnet_free_function = free_function;
+    // proofs/tla/RNAllocatorInstall.tla InstallBegin, InstallCheck and
+    // InstallPublish: the door closes, the count is read, then the pair goes
+    // back or the new one is published
+
+    rocketnet_allocator_pair.store( &rocketnet_allocator_installing, std::memory_order_seq_cst );
+    if ( rocketnet_allocations.load( std::memory_order_seq_cst ) != 0 )
+    {
+        rocketnet_allocator_pair.store( installed, std::memory_order_seq_cst );
+        return ROCKETNET_STATUS_LIVE_ALLOCATIONS;
+    }
+
+    rocketnet_allocator_pair_t * next = &rocketnet_allocator_pairs[installed == &rocketnet_allocator_pairs[0] ? 1 : 0];
+    next->allocate = malloc_function;
+    next->release = free_function;
+    rocketnet_allocator_pair.store( next, std::memory_order_seq_cst );
 
     return ROCKETNET_STATUS_OK;
 }
@@ -438,10 +506,11 @@ static int rn_allocator_install_locked( void * ( *malloc_function )( void * cont
 
 static bool rn_allocator_installed_locked( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
+    const rocketnet_allocator_pair_t * installed = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
     if ( !malloc_function && !free_function )
-        return rocketnet_malloc_function == rocketnet_default_malloc_function && rocketnet_free_function == rocketnet_default_free_function;
+        return installed->allocate == rocketnet_default_malloc_function && installed->release == rocketnet_default_free_function;
 
-    return malloc_function == rocketnet_malloc_function && free_function == rocketnet_free_function;
+    return malloc_function == installed->allocate && free_function == installed->release;
 }
 
 int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
@@ -450,7 +519,7 @@ int rocketnet_allocator_ex( void * ( *malloc_function )( void * context, size_t 
 
     if ( malloc_function && free_function )
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         status = rn_allocator_install_locked( malloc_function, free_function );
     }
@@ -475,26 +544,32 @@ void * rocketnet_malloc( void * context, size_t bytes )
         return NULL;
     }
 
-    void * ( *allocate )( void *, size_t );
+    // counted first, so install and term see the call in flight, then the
+    // pair read and copied whole, with no lock; an install in progress is
+    // waited out uncounted (proofs/tla/RNAllocatorInstall.tla CallCount,
+    // CallRead, then CallAllocate)
 
-    void ( *release )( void *, void * );
-
+    rocketnet_allocator_pair_t installed;
+    for ( ;; )
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rocketnet_allocations.fetch_add( 1, std::memory_order_seq_cst );
 
-        allocate = rocketnet_malloc_function;
-        release = rocketnet_free_function;
-        ++rocketnet_allocations;
+        const rocketnet_allocator_pair_t * pair = rocketnet_allocator_pair.load( std::memory_order_seq_cst );
+        if ( pair != &rocketnet_allocator_installing )
+        {
+            installed = *pair;
+            break;
+        }
+
+        rocketnet_allocations.fetch_sub( 1, std::memory_order_seq_cst );
     }
 
-    void * base = allocate( context, bytes + overhead );
+    void * base = installed.allocate( context, bytes + overhead );
     if ( !base )
     {
         ++rocketnet_allocation_refusals_on_this_thread;
 
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
-
-        --rocketnet_allocations;
+        rocketnet_allocations.fetch_sub( 1, std::memory_order_release );
         return NULL;
     }
 
@@ -502,7 +577,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     rocketnet_allocation_header_t * header = (rocketnet_allocation_header_t *) ( aligned - sizeof( rocketnet_allocation_header_t ) );
     header->base = base;
     header->context = context;
-    header->free_function = release;
+    header->free_function = installed.release;
 
     return (void *) aligned;
 }
@@ -516,11 +591,12 @@ void rocketnet_free( void * context, void * p )
 
     const rocketnet_allocation_header_t allocation = *(rocketnet_allocation_header_t *) ( (uint8_t *) p - sizeof( rocketnet_allocation_header_t ) );
 
+    // proofs/tla/RNAllocatorInstall.tla CallFree: through the header's
+    // release, then uncounted
+
     allocation.free_function( allocation.context, allocation.base );
 
-    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
-
-    --rocketnet_allocations;
+    rocketnet_allocations.fetch_sub( 1, std::memory_order_release );
 }
 
 double rocketnet_time()
@@ -653,7 +729,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     bool other_allocator = false;
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         refused = rn_allocator_install_locked( malloc_function, free_function );
         if ( refused == ROCKETNET_STATUS_OK )
@@ -705,7 +781,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
         rocketnet_global_context = NULL;
 
         {
-            std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+            rn_lifecycle_lock_t lock;
 
             rocketnet_transitioning = false;
         }
@@ -727,7 +803,7 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     rocketnet_info( "platform is %s", rocketnet_platform_name( rocketnet_platform_id() ) );
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         rocketnet_initialized = true;
         rocketnet_transitioning = false;
@@ -750,13 +826,13 @@ int rocketnet_term_ex()
     bool live_allocations = false;
 
     {
-        std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+        rn_lifecycle_lock_t lock;
 
         if ( !rocketnet_initialized || rocketnet_transitioning )
             not_initialized = true;
         else
         {
-            live_allocations = rocketnet_allocations != 0;
+            live_allocations = rocketnet_allocations.load( std::memory_order_acquire ) != 0;
             if ( !live_allocations )
                 rocketnet_transitioning = true;
         }
@@ -784,7 +860,7 @@ int rocketnet_term_ex()
 
     rocketnet_global_context = NULL;
 
-    std::lock_guard<std::mutex> lock( rocketnet_lifecycle_mutex );
+    rn_lifecycle_lock_t lock;
 
     rocketnet_initialized = false;
     rocketnet_transitioning = false;
