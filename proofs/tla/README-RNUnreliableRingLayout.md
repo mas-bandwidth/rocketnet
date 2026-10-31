@@ -6,7 +6,7 @@ carries the same ring (array, head, count, positions modulo the ring, the
 in-place full-ring pass) with tickets that never wrap; `RNIndexRing.tla` and
 `RNChannelQueues.tla` carry the queue abstractly. This model adds what the
 endpoint's ring has beyond them: tickets that wrap, drawn from a counter the
-reliable enqueues share, the renumber after a wrap (commit 86627506), the
+reliable enqueues share, the renumber after a wrap, the
 eager head sync, and the walk.
 
 ## State
@@ -77,7 +77,7 @@ Each fails with `LiveIsOrder`. Every counterexample was checked against the C
 by hand.
 
 1. **`MCRNUnreliableRingLayoutBrokenNoRenumber.cfg`** (`Renumber = FALSE`, the
-   code before 86627506). TLC: push 1 (ticket 1), push 2 (ticket 2), unlink 2
+   code before the renumber). TLC: push 1 (ticket 1), push 2 (ticket 2), unlink 2
    (a tombstone behind the live head, so the sync keeps it), push 3 (ticket 3,
    the counter wraps to 1), a reliable enqueue draws 1, push 2 again: its
    stamp is 2, the tombstone's ticket, so the ring reads 1, 2, 3, 2 with both
