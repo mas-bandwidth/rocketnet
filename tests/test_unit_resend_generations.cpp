@@ -56,6 +56,9 @@ static void test_resend_stale_ack_leaves_the_later_generation()
     rocketnet_message_default_config( &f.config );
     f.config.reliable_messages_in_flight = 64;
     f.config.packets_in_flight = 128;                       // the stale packet stays in the sent map
+    f.config.receive_message_buffer_bytes = 4096;
+    f.config.max_message_bytes = ROCKETNET_MESSAGE_SINGLE_BYTES;
+    f.config.send_message_buffer_bytes = 12288;
     check( rocketnet_message_validate_config( &f.config ) );
     f.arena = rn_arena_create( NULL, &f.config, 1, NULL );
     check( f.arena != NULL );
