@@ -16,6 +16,7 @@
 #include "native_shutdown.h"
 
 #include "rocketnet_internal.h"
+#include "rocketnet_platform.h"
 #include "rocketnet_protocol.h"
 #include "rocketnet_counters.h"
 #include "rocketnet_connect_token.h"
