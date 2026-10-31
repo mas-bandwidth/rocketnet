@@ -177,6 +177,19 @@ bool rocketnet_server_rio_test_receive_overflow( uint64_t * counters, int * pack
 
 #define CHECK( x ) do { if (!(x)) { fprintf(stderr, "IOCP check failed: %s (%s:%d)\n", #x, __FILE__, __LINE__); exit(1); } } while (0)
 
+// The library's default assert handler logs through rocketnet_error, which
+// ROCKETNET_LOG_LEVEL_NONE silences, so a failed assert would end this binary
+// with no message. main installs this handler: it prints the assert to stderr,
+// then traps through the default handler.
+static rocketnet_assert_function_t iocp_default_assert = NULL;
+
+static void iocp_print_assert( const char * condition, const char * function, const char * file, int line )
+{
+    fprintf( stderr, "assert failed: ( %s ), function %s, file %s, line %d\n", condition, function, file, line );
+    fflush( stderr );
+    iocp_default_assert( condition, function, file, line );
+}
+
 // Native workers advance in real time. Wait for the asserted state, never for
 // an assumed amount of work to fit inside one caller flush or a fixed sleep.
 
@@ -2177,6 +2190,8 @@ static const fault_case_t fault_cases[] = {
 
 int main( int argc, char ** argv )
 {
+    iocp_default_assert = rn_assert_function;
+    rocketnet_assert_function( iocp_print_assert );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_NONE );
     CHECK( rocketnet_init( NULL, allocate, release ) == ROCKETNET_STATUS_OK );
 
