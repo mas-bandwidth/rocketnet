@@ -2008,9 +2008,9 @@ static void * iocp_create( void * context, const rocketnet_server_transport_io_c
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
 
 #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, 0, 0, config->status );
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, 0, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->status );
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -2062,9 +2062,9 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 static void * rio_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
 #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, 0, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, 0, config->status );
 #else // #if ROCKETNET_DEV
-    return rocketnet_server_rio_create( context, bind, config->status );
+    return rocketnet_server_rio_create( context, bind, config->transport->max_clients, config->status );
 #endif // #if ROCKETNET_DEV
 }
 
@@ -2193,17 +2193,17 @@ bool rocketnet_builtin_server_memory_plan( const rocketnet_server_transport_conf
     {
         // rn-iocp-one-completion-worker: iocp always plans one completion worker plus one send worker
 
-        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS );
+        plan.transport_io_bytes = rocketnet_server_iocp_allocation_bytes( ROCKETNET_IOCP_DEFAULT_WORKERS, config->max_clients );
         plan.worker_threads = ROCKETNET_IOCP_DEFAULT_WORKERS + 1;
         plan.sockets = 1;
     }
     else if ( strcmp( transport, "rio" ) == 0 )
     {
-        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes();
+        plan.transport_io_bytes = rocketnet_server_rio_allocation_bytes( config->max_clients );
 
         // the registered region is one rocketnet_malloc (rocketnet_server_rio_create)
 
-        const uint64_t region = rocketnet_server_rio_registered_region_bytes();
+        const uint64_t region = rocketnet_server_rio_registered_region_bytes( config->max_clients );
         if ( !region )
             return false;
 

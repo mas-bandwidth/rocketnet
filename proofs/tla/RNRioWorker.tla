@@ -47,7 +47,7 @@
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
-CONSTANTS Slices,          \* ROCKETNET_RIO_RECEIVES
+CONSTANTS Slices,          \* receives: rocketnet_server_rio_receives( max_clients )
           NumBanks,        \* ROCKETNET_RIO_RECEIVE_BANKS
           Cap,             \* receive bank capacity
           View,            \* the process view's capacity

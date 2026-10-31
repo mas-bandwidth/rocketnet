@@ -3,8 +3,9 @@
 (* The run-ticket ring of the IOCP server transport's USO sends as the    *)
 (* code lays it out (sdk/rocketnet_server_iocp_windows.cpp, run_refs,     *)
 (* next_run_ticket, rocketnet_iocp_allocate_run and                        *)
-(* rocketnet_iocp_take_run).  The ring is N fixed slots (N =               *)
-(* ROCKETNET_IOCP_SEND_QUEUE_SIZE), each a reference, an owner epoch, a    *)
+(* rocketnet_iocp_take_run).  The ring is N fixed slots (N = the send    *)
+(* queue size the configured max_clients sets at create), each a          *)
+(* reference, an owner epoch, a                                            *)
 (* ticket and an occupied flag.  Ticket t selects slot (t - 1) % N.  The   *)
 (* TX worker allocates a run of count members (2 .. MaxSeg) as the         *)
 (* tickets next_run_ticket .. next_run_ticket + count - 1: only when       *)
@@ -37,7 +38,7 @@
 EXTENDS Naturals, FiniteSets
 
 CONSTANTS
-    N,           \* slots: ROCKETNET_IOCP_SEND_QUEUE_SIZE
+    N,           \* slots: send_queue_size, rocketnet_server_iocp_send_queue_size( max_clients )
     MaxSeg,      \* the longest run: ROCKETNET_IOCP_USO_MAX_SEGMENTS, at most N
     TicketMax,   \* the largest ticket: UINT64_MAX in the code
     MaxRuns,     \* exploration bound: allocation attempts
@@ -48,7 +49,7 @@ ASSUME N >= 2 /\ MaxSeg \in 2 .. N /\ TicketMax >= MaxSeg /\ MaxRuns >= 1
 ASSUME CheckShort \in 0 .. 1 /\ TicketWrap \in BOOLEAN
 
 Slots == 0 .. N - 1
-\* run_refs[( ticket - 1 ) % ROCKETNET_IOCP_SEND_QUEUE_SIZE]
+\* run_refs[( ticket - 1 ) % iocp->send_queue_size]
 SlotOf(t) == (t - 1) % N
 \* first + i, wrapping into 1 .. TicketMax under the defect
 TicketAt(first, i) == IF TicketWrap THEN ((first + i - 1) % TicketMax) + 1 ELSE first + i

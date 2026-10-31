@@ -157,7 +157,7 @@ Each reversed witness was read against the code by hand (2026-10-22):
     takes datagram 4 with no room and drops it. This is the old
     caller-driven `RECEIVE_DROPPED_OVERFLOW` path.
   - In the code, `rocketnet_rio_dequeue_receive` starts from
-    `room = ROCKETNET_RIO_RECEIVES - num_packets` and asks
+    `room = rio->receives - num_packets` and asks
     `RIODequeueCompletion` for at most that many. The overflow branch in
     `rocketnet_rio_complete_receive` is unreachable.
 - **ExitBeforeDrain.**
