@@ -22,9 +22,6 @@
 #include "../sdk/rocketnet_address.h"
 #include "../sdk/rocketnet_xdp_frame.h"
 
-// the AF_XDP code is Linux only, so its tests are built there only
-#if defined( __linux__ )
-
 static const uint8_t bounds_server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t bounds_gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
 
@@ -327,5 +324,3 @@ REGISTER_UNIT_TEST( test_xdp_transport_refused_descriptor_not_refilled );
 REGISTER_UNIT_TEST( test_xdp_transport_pin_cpu_refuses_outside_the_set );
 REGISTER_UNIT_TEST( test_xdp_transport_preflight_refuses_pin_targets_outside_isolated );
 REGISTER_UNIT_TEST( test_xdp_transport_stats_cpus_are_bounded );
-
-#endif // #if defined(__linux__)

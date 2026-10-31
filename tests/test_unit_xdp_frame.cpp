@@ -21,9 +21,6 @@
 
 #include <stdlib.h>
 
-// the AF_XDP code is Linux only, so its tests are built there only
-#if defined( __linux__ )
-
 static const uint8_t server_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x01 };
 static const uint8_t gateway_mac[6] = { 0x02, 0x00, 0x00, 0x00, 0x00, 0x02 };
 static const uint8_t golden_payload[4] = { 0xDE, 0xAD, 0xBE, 0xEF };
@@ -199,6 +196,40 @@ static void test_ipv6_payload_over_budget_is_refused()
 
     len = rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &d4, 4 );
     rocketnet_unit_check( len == 0 );
+}
+
+static void test_build_refuses_missing_inputs_and_short_frames()
+{
+    rocketnet_address_t src, dst;
+    rocketnet_unit_check( rocketnet_address_parse( &src, "192.168.1.10:40000" ) );
+    rocketnet_unit_check( rocketnet_address_parse( &dst, "192.168.1.20:40001" ) );
+
+    uint8_t frame[2048];
+    memset( frame, 0x5A, sizeof( frame ) );
+
+    // a missing frame, MAC or address
+
+    rocketnet_unit_check( rocketnet_xdp_frame_build( NULL, sizeof( frame ), server_mac, gateway_mac, &src, &dst, 4 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), NULL, gateway_mac, &src, &dst, 4 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, NULL, &src, &dst, 4 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, NULL, &dst, 4 ) == 0 );
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, NULL, 4 ) == 0 );
+
+    // a negative payload length
+
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, sizeof( frame ), server_mac, gateway_mac, &src, &dst, -1 ) == 0 );
+
+    // a frame one byte short of the 42 header bytes and a 4-byte payload,
+    // then exactly long enough
+
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, 45, server_mac, gateway_mac, &src, &dst, 4 ) == 0 );
+
+    // nothing was written by any refusal
+
+    for ( size_t i = 0; i < sizeof( frame ); i++ )
+        rocketnet_unit_check( frame[i] == 0x5A );
+
+    rocketnet_unit_check( rocketnet_xdp_frame_build( frame, 46, server_mac, gateway_mac, &src, &dst, 4 ) == 46 );
 }
 
 static void test_parse_round_trips_both_families()
@@ -841,7 +872,10 @@ static void test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create()
 }
 #endif // #if ROCKETNET_XDP
 
-#if !ROCKETNET_XDP
+// a Linux build without the xdp transport: xdp is a transport of the
+// platform, so a pin names it and refuses at open
+
+#if defined( __linux__ ) && !ROCKETNET_XDP
 static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
 {
     int count = 0;
@@ -867,7 +901,7 @@ static void test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks()
 }
 
 REGISTER_UNIT_TEST( test_xdp_disabled_pin_refuses_and_auto_keeps_fallbacks );
-#endif // #if !ROCKETNET_XDP
+#endif // #if defined( __linux__ ) && !ROCKETNET_XDP
 
 REGISTER_UNIT_TEST( test_ipv4_frame_matches_golden );
 REGISTER_UNIT_TEST( test_ipv6_frame_matches_golden );
@@ -875,6 +909,7 @@ REGISTER_UNIT_TEST( test_ipv6_udp_checksum_verifies );
 REGISTER_UNIT_TEST( test_ipv6_checksum_zero_is_sent_as_ffff );
 REGISTER_UNIT_TEST( test_ipv6_max_payload_is_1452_and_fits_1514 );
 REGISTER_UNIT_TEST( test_ipv6_payload_over_budget_is_refused );
+REGISTER_UNIT_TEST( test_build_refuses_missing_inputs_and_short_frames );
 REGISTER_UNIT_TEST( test_parse_round_trips_both_families );
 REGISTER_UNIT_TEST( test_parse_refuses_extension_headers );
 REGISTER_UNIT_TEST( test_parse_refuses_truncated_ipv6_frames );
@@ -889,5 +924,3 @@ REGISTER_UNIT_TEST( test_xdp_transport_mac_address_parse_is_strict );
 #if ROCKETNET_XDP
 REGISTER_UNIT_TEST( test_xdp_transport_ipv6_pin_reaches_the_xdp_transport_at_create );
 #endif // #if ROCKETNET_XDP
-
-#endif // #if defined(__linux__)
