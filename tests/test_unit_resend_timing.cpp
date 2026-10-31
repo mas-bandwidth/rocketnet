@@ -407,7 +407,7 @@ REGISTER_UNIT_TEST( test_message_config_abi_size_is_unchanged );
 
 // ---------------------------------------------------------------------------
 // The chunks of a block wait the resend delay alone (standard/MESSAGES.md m9.3;
-// proofs/tla/RNResendTiming.tla Delay("c"), SmallNeverHeldByChunk and the reversed
+// proofs/tla/RNResendTiming.tla Delay("c"), NoDueRecordHeld and the reversed
 // witness MCRNResendTimingBrokenOneFifo.cfg). These cases read only what
 // every version of layer 3 has (the walk's output and resend_count), so they
 // build against the one-FIFO walk too and show where it differs.
@@ -537,6 +537,49 @@ static void test_small_record_behind_a_chunk_not_held()
 }
 
 REGISTER_UNIT_TEST( test_small_record_behind_a_chunk_not_held );
+
+// test_chunk_behind_a_small_record_not_held: the one-FIFO hazard the other way
+// round (proofs/tla/RNResendTiming.tla NoDueRecordHeld and the reversed witness
+// MCRNResendTimingBrokenOneFifo.cfg). With reliable_message_timeout_ms 4000 the
+// chunk cap is 1 s, below the 1230 ms resend delay a 200 ms path gives; a
+// small record sent before a block is at the head of a single FIFO ordered by
+// last send, not yet due when the chunks are, and would hold them back. With
+// one FIFO per class the chunks go at their capped delay and the small record
+// at its own.
+static void test_chunk_behind_a_small_record_not_held()
+{
+    resend_timing_fixture_t f;
+    rocketnet_message_default_config( &f.config );
+    f.config.reliable_message_timeout_ms = 4000;
+    f.config.message_resend_delay_initial_ms = 1000;
+    f.config.message_resend_delay_max_ms = 2000;
+    resend_timing_open( &f );
+
+    const double t1 = resend_timing_sample( &f, resend_timing_start, 0.200 );
+    check( fabs( f.ack.resend_delay - 1.230 ) < 1e-9 );
+    check( fabs( rn_window_ack_chunk_resend_delay( &f.ack ) - 1.000 ) < 1e-9 );
+
+    uint64_t small = 0;
+    resend_timing_send( &f, t1, &small );
+    uint64_t chunks[8];
+    const uint32_t n = resend_timing_send_block( &f, t1 + 0.010, 2500, chunks, 8 );
+
+    uint64_t out[64];
+    uint32_t resent = resend_timing_pass_numbers( &f, t1 + 1.011, out );
+    check( resent == n );                                          // chunks at the capped delay
+    for ( uint32_t i = 0; i < n; i++ )
+    {
+        check( resend_timing_contains( out, resent, chunks[i] ) );
+    }
+    check( !resend_timing_contains( out, resent, small ) );
+
+    resent = resend_timing_pass_numbers( &f, t1 + 1.231, out );
+    check( resent == 1 && out[0] == small );                       // the small record at its own delay
+
+    resend_timing_close( &f );
+}
+
+REGISTER_UNIT_TEST( test_chunk_behind_a_small_record_not_held );
 
 // test_both_fifos_walk_only_what_is_due: each class is walked from its head while
 // due and no further. Tripwires show it: a number marked acked by hand stays
