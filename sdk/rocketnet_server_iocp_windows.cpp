@@ -1664,6 +1664,7 @@ static void rocketnet_iocp_send_worker( rocketnet_platform_thread_t * thread, vo
 {
     // proofs/tla/RNBufferHandoff.tla WorkerExit drains ready banks and the final producer.
     rocketnet_server_iocp_t * iocp = (rocketnet_server_iocp_t *) argument;
+    (void) thread; // the development test hold sleeps on it
 
     for ( ;; )
     {
