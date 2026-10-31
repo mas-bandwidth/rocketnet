@@ -576,8 +576,8 @@ jobs:
   # the same MSan flags, gives an engine whose every write updates the shadow.
   # The source tarball is the one that script verifies, at its pinned sha256.
   #
-  # A runner without /opt/msan-libcxx-<clang version> fails with a
-  # TOOL-MISSING line naming it. Any MemorySanitizer report fails the leg;
+  # A runner without /opt/msan-libcxx-<clang version> builds the library
+  # from the pinned source into a cache. Any MemorySanitizer report fails the leg;
   # tools/msan_known.txt belongs to the unit gate and is not an allowlist for
   # fuzzing. The corpus cache is separate from the asan leg's (corpus-msan/).
   fuzz-msan:
@@ -608,17 +608,32 @@ jobs:
         with:
           ref: ${{ matrix.ref }}
 
-      - name: Check the MSan-instrumented libc++
+      - name: Read the clang version
         id: msan-clang
+        shell: bash
+        run: echo "version=$(clang++ -dumpversion)" >> "$GITHUB_OUTPUT"
+
+      # a runner whose provisioning installed /opt/msan-libcxx-<version> uses
+      # it; any other builds the same library from the pinned source
+      # (tools/build_msan_libcxx.sh) into a cache keyed by the clang version
+      # and the script, so the first night on a runner pays about ten minutes
+      # and later nights restore it
+      - name: Restore the MSan-instrumented libc++
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4.3.0
+        with:
+          path: .msan-libcxx
+          key: msan-libcxx-${{ runner.os }}-${{ runner.arch }}-${{ steps.msan-clang.outputs.version }}-${{ hashFiles('tools/build_msan_libcxx.sh') }}
+
+      - name: The MSan-instrumented libc++
         shell: bash
         run: |
           set -euo pipefail
-          clang_version=$(clang++ -dumpversion)
-          echo "version=$clang_version" >> "$GITHUB_OUTPUT"
+          clang_version=${{ steps.msan-clang.outputs.version }}
           libcxx=/opt/msan-libcxx-"$clang_version"
           if [ ! -f "$libcxx/lib/libc++.so" ] || [ ! -f "$libcxx/include/c++/v1/__config_site" ]; then
-            echo "TOOL-MISSING msan-libcxx $clang_version (no MSan-instrumented libc++ in $libcxx; bash tools/build_msan_libcxx.sh) on ${RUNNER_NAME:-$(hostname)}"
-            exit 1
+            libcxx="$PWD/.msan-libcxx"
+            echo "no $libcxx at /opt on ${RUNNER_NAME:-$(hostname)}: building the pinned source into $libcxx"
+            bash tools/build_msan_libcxx.sh "$libcxx"
           fi
           echo "MSAN_LIBCXX=$libcxx" >> "$GITHUB_ENV"
 
