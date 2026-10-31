@@ -7,7 +7,7 @@ without breaking a caller compiled against an older header. It is the document
 The SDK's ABI revision is its major version (`ROCKETNET_VERSION_MAJOR`), and
 the shared library's soname follows it (`CMakeLists.txt`,
 `ROCKETNET_ABI_SOVERSION`). A change this document admits is additive: it keeps
-the major version and adds exports to `tools/exports.txt`. A change it does not
+the major version; any new exports are added to `tools/exports.txt`. A change it does not
 admit (a field moved, removed, resized or retyped) is an incompatible change
 and bumps the major version.
 
@@ -81,8 +81,8 @@ them.
    and a list naming `loopback` with a `NULL` hub is refused with
    `ROCKETNET_STATUS_LOOPBACK_HUB_MISSING`. The loopback transport no longer
    keeps a process-wide endpoint table to fall back on, so a caller compiled
-   before the field must set it to use loopback; every other transport is
-   unchanged for that caller.
+   before the field must rebuild against a header that includes it and set a
+   hub to use loopback; every other transport is unchanged for that caller.
 
 The steps for adding a field:
 

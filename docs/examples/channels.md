@@ -1,8 +1,9 @@
 # Channels
 
 Games put different traffic on different channels so a lost reliable message
-(like chat or an inventory change) never stalls time-critical state updates
-(like player positions) that only care about the newest value.
+(like chat or an inventory change) does not impose an ordering wait on
+time-critical state updates (like player positions) on another channel.
+Channels still share connection memory, wire budget, and packet capacity.
 
 ## What it shows
 
@@ -20,7 +21,7 @@ Games put different traffic on different channels so a lost reliable message
 
 Each frame follows the standard loop order: `update`, drain the one receive
 queue, simulation, `start_message` and `finish_message`, and `send_packets`
-last so queued messages leave in the same frame.
+last so queued work becomes available to the transport.
 
 ## Run it
 
@@ -42,24 +43,12 @@ PASS
 Lines marked `chat held while positions arrive` show `positions` advancing on
 channel 1 while channel 0 waits for a lost chat message to be retransmitted.
 Lines marked `chat delivered in order` show channel 0 releasing held chat
-messages in sequence once the retransmission arrives. `PASS` confirms both
-conditions held.
+messages in sequence once the retransmission arrives. `PASS` checks that all eight chat messages arrived in order and that any
+received positions increased. The diagnostic lines illustrate stalls when
+they occur; a particular stall pattern is not required for the check to pass.
 
-## Public calls it uses
+<a id="public-calls-it-uses"></a>
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_start`, `rocketnet_server_destroy`,
-  `rocketnet_server_update`, `rocketnet_server_send_packets`,
-  `rocketnet_server_ipv4_address`,
-  `rocketnet_server_public_key`, `rocketnet_server_client_connected`,
-  `rocketnet_server_receive_messages`
-- `rocketnet_client_default_config`, `rocketnet_client_create`,
-  `rocketnet_client_connect`, `rocketnet_client_destroy`,
-  `rocketnet_client_update`, `rocketnet_client_send_packets`,
-  `rocketnet_client_state`, `rocketnet_client_can_send_message`, `rocketnet_client_start_message`,
-  `rocketnet_client_finish_message`, `rocketnet_client_receive_messages`,
-  `rocketnet_client_network_simulator`
-- `rocketnet_create_dev_connect_token` and
-  `ROCKETNET_DEV_BACKEND_PUBLIC_KEY` (development library only)
-- `rocketnet_status_name`, `rocketnet_time`, `rocketnet_sleep`
+Source: [`examples/channels.c`](../../examples/channels.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.

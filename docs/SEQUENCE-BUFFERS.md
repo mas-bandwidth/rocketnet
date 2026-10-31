@@ -67,8 +67,8 @@ A queue that needs insert-after, insert-at-head or interior removal in O(1)
 may link its entries by index inside one fixed, bounded array it owns: no
 pointers, no allocation, every link an index into that array. Glenn chose this
 on 2026-10-28 for the message layer's queues. Each linking site is listed by
-file, function and field; the audit fails on any link site not listed here,
-and on a row that matches no site.
+file, function and field; the audit fails on any detected link site not listed
+here, and on a row that matches no site. Its syntactic limits still apply.
 
 | File | Function | Field | Decision |
 |---|---|---|---|

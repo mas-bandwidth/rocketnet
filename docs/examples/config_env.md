@@ -52,15 +52,11 @@ environment displacing the struct value, and `environment max_clients: 5`
 confirms it won. The final library error line and `bad value refused: CONFIG_OUT_OF_RANGE` confirm the out-of-range value was refused. `PASS`
 means each precedence held and the bad value was refused.
 
-## Public calls it uses
+<a id="public-calls-it-uses"></a>
 
-- `rocketnet_init`, `rocketnet_term`
-- `rocketnet_server_default_config`, `rocketnet_server_create`,
-  `rocketnet_server_destroy`, `rocketnet_server_max_clients`
-- `rocketnet_status_name`, `ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE`
-- The C standard library: `getenv`, `system`, `strcmp`, `memcpy`, `snprintf`, `printf`
-
-The full field list lives in `sdk/rocketnet.h`.
+Source: [`examples/config_env.c`](../../examples/config_env.c). See the
+[integration guide](../USAGE.md) for shared lifecycle, threading, and message
+ownership rules.
 
 ## Disconnect notification work
 

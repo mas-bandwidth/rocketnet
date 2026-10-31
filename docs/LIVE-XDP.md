@@ -24,9 +24,12 @@ The short gates for this release are:
 - run the ordinary functional transport cases supported by the allocated
   bench.
 
-Multi-host stress, long soak, throughput and profiler campaigns are planned
-hardening work. Their scripts remain operator tools and their results are not
-part of this release's contract.
+Earlier multi-host delivery and soak results are indexed by
+[Testing](TESTING.md) and the [LAN proof record](runs/lan-1000-proof.md).
+Those records apply to their recorded source revisions, workloads and copy-mode
+or zero-copy tier. They do not qualify a new build, a different NIC, or the
+100-microsecond main-call target. Further stress, throughput and profiling
+campaigns require their own deployment-specific evidence.
 
 ## Shutdown evidence
 

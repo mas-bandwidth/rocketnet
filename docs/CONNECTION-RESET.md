@@ -65,8 +65,8 @@ other session state.
 | | replay windows and integrity failures | receive security history | RESET | old ciphertext cannot affect a new mapping |
 | `rocketnet_encryption_mapping_control_t` | client index, established | slot identity | RESET | identity cannot leak to reuse |
 | | timeout, handshake deadline and receive time | expiry clocks | RESET | one mapping |
-| `rocketnet_client_slots_t` | per-index identity, mapping, confirmation, user data and hash link | slot record | RESET | slot release clears the index |
-| | hash key, buckets and free-stack geometry | table owner | KEEP | server-lifetime allocation |
+| `rocketnet_client_slots_t` | per-index identity, mapping, confirmation and user data | slot record | RESET | slot release clears the record and removes its flat-index entry |
+| | hash key, flat-index allocation and free-stack geometry | table owner | KEEP | server-lifetime allocation |
 | `rocketnet_server_acks_t` | `endpoints[client_index]` | ack rings, bitfields and quality estimates | RESET | packet history is per connection |
 | | acked batch rows for this index | pending receipts | RESET | compacted out before reuse |
 | | other endpoints and rows | other clients | KEEP | reset touches only its slot |

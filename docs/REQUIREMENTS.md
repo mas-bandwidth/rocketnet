@@ -39,14 +39,17 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   1.02's security baseline.
 - Development builds accept the published development keys, which a program
   sets into its server config explicitly, and provide a development token
-  helper. A production start requires application-supplied keys.
+  helper. A production start requires an application-supplied backend public
+  key and protocol id. The server generates its own X25519 keypair unless the
+  application supplies `server_secret_key`.
 - Player-hosted servers remain possible because token verification needs a
   backend public key rather than a backend/server shared secret.
 
 ## Messages
 
 - The eight `rocketnet_reliability_t` modes cover unreliable, sequenced,
-  reliable, ordered and receipt-bearing delivery across up to 32 channels.
+  reliable, ordered and receipt-bearing delivery across up to 32 channels in
+  the default build; `ROCKETNET_MAX_CHANNELS` sets the compile-time ceiling.
 - Sending uses reserve, write and finish or abort. Receiving drains one
   endpoint-wide `rocketnet_message_batch_t` queue with no release call.
 - Fragmentation and reassembly carry messages up to the configured maximum
@@ -108,11 +111,14 @@ in `sdk/rocketnet.h`; no C++ type crosses it.
   preserving refusal and drop semantics without infinite retry loops, unchecked
   message completion, early context destruction, or forced shutdown.
 
-## First-deliverable boundary
+## Scope and qualification boundary
 
-The first deliverable contains the public client/server API, secure connection,
+The SDK contains the public client/server API, secure connection,
 message reliability, runtime transports, examples, short functional gates and
 formal models for its bounded state machines. Server subscription flows,
-backend-wide identity coordination, rotating keyed prefilters, long soak,
-large load and performance profiling are planned work and are not current API
-or performance claims.
+backend-wide identity coordination and rotating keyed prefilters are not current
+SDK features. Soak, load and profiling tools exist, but their presence does not
+qualify a workload. Use the exact source, configuration, duration and hardware
+in the [recorded results](TESTING.md#recorded-results), and retain the
+[qualification limits](TESTING.md#qualification-limits) when describing scale
+or performance.

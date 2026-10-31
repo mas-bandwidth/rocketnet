@@ -14,9 +14,9 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 
 | Operating system | Architecture | Compiler | Transports | Tier | Workflow | Runner label | Per-commit functional |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite (auto ladder |
+| Ubuntu 24.04 (Linux, CI) | x86_64 | GCC 13 | portable, gso, io_uring, xdp | supported | .github/workflows/ci.yml | Linux, X64 | full: Run functional suite |
 | Ubuntu 24.04 (Linux, cross/QEMU) | s390x | s390x-linux-gnu-gcc | portable | supported | .github/workflows/ci.yml | Linux, X64 | subset: Run the big-endian wire check |
-| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite (auto ladder |
+| [macOS 27](MACOS.md) | arm64 | Apple Clang | portable, msgx | supported | .github/workflows/ci.yml | macOS, ARM64 | full: Run functional suite |
 | [Windows 11](WINDOWS.md) | x86_64 | MSVC | portable, iocp, rio | supported | .github/workflows/ci.yml | Windows, X64 | subset: Functional: lifecycle binary; Functional: native driver contract; Transport family matrix |
 | Ubuntu 24.04 (Linux, CI) | x86_64 | GCC | portable, gso, xdp | nightly | .github/workflows/nightly-leaks.yml | Linux, X64 | - |
 | Ubuntu 24.04 (Linux, CI) | x86_64 | Clang | portable | nightly | .github/workflows/fuzz-nightly.yml | Linux, X64 | - |
@@ -33,7 +33,8 @@ checks that each row is backed by the workflow it names. See [docs/LINUX.md](LIN
 
 The last column says which functional coverage each supported row runs on
 every commit. `full: <step>` names the step that runs the whole functional
-suite. `subset: <step>; <step>` names the steps that run the platform-specific
+suite; the checker accepts a step-name prefix, used here where a full name
+contains a semicolon. `subset: <step>; <step>` names the steps that run the platform-specific
 subset, and the rest of the suite for that row runs in the nightly tier. The
 Windows 11 row is a subset: the whole functional suite takes about 223 s on
 the Windows runner, which is over the two-minute per-commit law and the

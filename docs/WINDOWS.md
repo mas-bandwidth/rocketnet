@@ -4,10 +4,9 @@ The page a Windows server operator or engine programmer reads first: how to
 build with MSVC, which transport a server and a client get and how to pin one,
 what `iocp` and `rio` need from the host, the firewall, what a dead client's
 ICMP answers do, the limits for 1000 clients, and the commands that verify a
-host, in order. The transport table for every platform is at the top of
-[TRANSPORTS.md](TRANSPORTS.md); the engineering detail for each Windows
-transport is further down that page, and this guide links to it rather than
-repeating it. The support tiers are in [PLATFORMS.md](PLATFORMS.md); this page
+host, in order. The transport table for every platform is in
+[TRANSPORTS.md](TRANSPORTS.md); implementation details are in
+[TRANSPORT-INTERNALS.md](TRANSPORT-INTERNALS.md). The support tiers are in [PLATFORMS.md](PLATFORMS.md); this page
 does not widen them.
 
 ## What is supported
@@ -15,7 +14,7 @@ does not widen them.
 The supported row is Windows 11 on x86_64 with MSVC, transports `portable`,
 `iocp` and `rio` ([PLATFORMS.md](PLATFORMS.md), the table). CI builds and runs
 it on every commit as two Release legs: a development library
-(`ROCKETNET_DEV=ON`) running the unit and functional suites, and a production
+(`ROCKETNET_DEV=ON`) running the unit suite and the per-commit functional subset, and a production
 library (`ROCKETNET_DEV=OFF`) checked as a consumer sees it, with the transport
 matrix below (`.github/workflows/ci.yml`, `build-and-test-windows`). clang-cl
 on x86_64 is a nightly row; Windows on arm64 is build-checked only and
@@ -43,14 +42,14 @@ the SDK into a game's own build.
 
 | Transport | Endpoint | `auto` rank | What it is |
 | --- | --- | --- | --- |
-| `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket with a receive worker and a transmit worker |
-| `iocp` | server | 40 | overlapped UDP on one I/O completion port, one completion worker and one transmit worker |
+| `portable` | server and client | server: development 30, production 50; client 30 | one UDP socket; two workers on the server, one I/O worker on the client |
+| `iocp` | server and client | server 40; client 10 | server: one completion worker and one transmit worker; client: one I/O worker on its own completion port |
 | `rio` | server | 45 | Winsock Registered I/O: one registered memory region and one I/O worker polling its completion queues |
 | `loopback` | server and client | pin only | in-process, no socket; for tests and tools |
 
 A production server's `auto` is **iocp, then rio, then portable**; a
-development server's is **portable, iocp, rio**. The client has one transport
-in `auto`, `portable`, on the client I/O thread of
+development server's is **portable, iocp, rio**. The client's `auto` order is
+**iocp, then portable**, on the client I/O thread described in
 [CLIENT-IO.md](CLIENT-IO.md). The ranks are the rows of
 `sdk/rocketnet_drivers.inc`.
 
@@ -101,7 +100,7 @@ and in PowerShell, `$env:ROCKETNET_SERVER_TRANSPORT = "rio"`. Clear it with
 
 One name is a pin: that transport or a failed start, never a quiet fall to
 another. A comma list such as `rio,iocp` is tried in that order. A name
-Windows does not have (`gso`, `io_uring`, `xdp`, `msgx`), or `iocp` or `rio`
+Windows does not have (`gso`, `io_uring`, `xdp`, `msgx`), or `rio`
 named for a client, is skipped with an info line; a list left empty by
 skipping uses `auto` with a warning. The table of what each kind of unmet pin
 returns is in TRANSPORTS.md, "Choosing a transport".
@@ -174,7 +173,8 @@ for a given config before deploying:
 - `rocketnet_server_required_memory( &config )` in code, and
 - `bin\Release\transport_memory.exe 1000 1416 16 iocp 0 --plan-only` (or
   `rio`) for the per-transport breakdown, including the registered region,
-  workers and sockets. The arguments are explained in BUILDING.md.
+  workers and sockets. The arguments are explained in
+  [Memory and capacity](MEMORY.md#pre-allocation-server-resource-plans).
 
 ## Verify a host
 
@@ -214,8 +214,8 @@ How to read them:
 - Each pinned `functional.exe --run` prints
   `test_transport_env_pin_is_honoured` when the pinned transport is the one the
   server got. CI's Windows matrix runs four cases under each of
-  `portable/portable`, `iocp/portable`, `rio/portable` and
-  `loopback/loopback` (`.github/workflows/ci.yml`, "Transport family matrix").
+  `portable/portable`, `portable/auto`, `iocp/portable`, `portable/iocp`,
+  `rio/portable` and `loopback/loopback` (`.github/workflows/ci.yml`, "Transport family matrix").
 - The functional suite has timing bounds. On a loaded host rerun a case that
   failed on time on its own, with `functional.exe --run <case>`, before
   reading it as a defect.
