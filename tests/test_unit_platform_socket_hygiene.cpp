@@ -340,27 +340,54 @@ static int platform_socket_hygiene_chaff_reads( platform_socket_hygiene_arm_t ar
 
 static const platform_socket_hygiene_datagram_t platform_socket_hygiene_empty = { { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 }, 40001, "" };
 
-static void test_platform_socket_hygiene_chaff_drain_is_bounded()
+static const platform_socket_hygiene_datagram_t platform_socket_hygiene_chaff[] = { platform_socket_hygiene_empty, platform_socket_hygiene_mapped };
+
+static void platform_socket_hygiene_chaff_batch_is_bounded( platform_socket_hygiene_arm_t arm )
 {
-    const platform_socket_hygiene_datagram_t chaff[] = { platform_socket_hygiene_empty, platform_socket_hygiene_mapped };
     const int budgets[] = { 1, 8, 128 };
 
-    for ( const platform_socket_hygiene_datagram_t & datagram : chaff )
+    for ( const platform_socket_hygiene_datagram_t & datagram : platform_socket_hygiene_chaff )
     {
-        rocketnet_unit_check( platform_socket_hygiene_chaff_reads( PLATFORM_SOCKET_HYGIENE_SINGLE, datagram, 1 ) == 64 );
-
         for ( int max_packets : budgets )
         {
-            rocketnet_unit_check( platform_socket_hygiene_chaff_reads( PLATFORM_SOCKET_HYGIENE_BATCH, datagram, max_packets ) == max_packets );
-#if defined( __APPLE__ )
-            rocketnet_unit_check( platform_socket_hygiene_chaff_reads( PLATFORM_SOCKET_HYGIENE_MSGX, datagram, max_packets ) == max_packets );
-#endif // #if defined( __APPLE__ )
-#if defined( __linux__ )
-            rocketnet_unit_check( platform_socket_hygiene_chaff_reads( PLATFORM_SOCKET_HYGIENE_MMSG, datagram, max_packets ) == max_packets );
-#endif // #if defined( __linux__ )
+            rocketnet_unit_check( platform_socket_hygiene_chaff_reads( arm, datagram, max_packets ) == max_packets );
         }
     }
 }
+
+static void test_platform_socket_hygiene_single_chaff_drain_is_bounded()
+{
+    for ( const platform_socket_hygiene_datagram_t & datagram : platform_socket_hygiene_chaff )
+    {
+        rocketnet_unit_check( platform_socket_hygiene_chaff_reads( PLATFORM_SOCKET_HYGIENE_SINGLE, datagram, 1 ) == 64 );
+    }
+}
+
+static void test_platform_socket_hygiene_batch_chaff_drain_is_bounded()
+{
+    // the portable batch: the per-packet loop on every platform but macOS
+    // (the generic pump), the per-packet arm of the msgx call on macOS
+
+    platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_BATCH );
+}
+
+#if defined( __APPLE__ )
+static void test_platform_socket_hygiene_msgx_chaff_drain_is_bounded()
+{
+    platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_MSGX );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_msgx_chaff_drain_is_bounded );
+#endif // #if defined( __APPLE__ )
+
+#if defined( __linux__ )
+static void test_platform_socket_hygiene_mmsg_chaff_drain_is_bounded()
+{
+    platform_socket_hygiene_chaff_batch_is_bounded( PLATFORM_SOCKET_HYGIENE_MMSG );
+}
+
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_mmsg_chaff_drain_is_bounded );
+#endif // #if defined( __linux__ )
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
 
@@ -442,7 +469,8 @@ REGISTER_UNIT_TEST( test_platform_socket_hygiene_descriptor_valid );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_reads_next );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_refused_source_then_drained );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_dual_stack_accepts_mapped );
-REGISTER_UNIT_TEST( test_platform_socket_hygiene_chaff_drain_is_bounded );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_single_chaff_drain_is_bounded );
+REGISTER_UNIT_TEST( test_platform_socket_hygiene_batch_chaff_drain_is_bounded );
 REGISTER_UNIT_TEST( test_platform_socket_hygiene_timeout_milliseconds_rounds_up );
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC && ROCKETNET_DEV
