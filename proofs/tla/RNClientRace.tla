@@ -72,7 +72,7 @@ VARIABLES committed,  \* -1 while both are in flight, else the kept family (call
           joined,     \* the caller joined the reading thread
           destroyed,  \* the caller destroyed the transport
           fault,      \* a use of a closed handle or freed memory: "none" or the thread
-          ringTo,     \* the Filling ring's bound destination family, or "none" (io->to_held clear)
+          ringTo,     \* the Filling ring's bound destination family, or -1 (io->to_held clear)
           ringPost,   \* the Filling ring holds a slot committed after the commit
           lost,       \* a slot committed after the commit left for the losing family and was dropped
           failures,   \* [Families -> 0..MaxFail]: each family's send failures
@@ -99,7 +99,7 @@ Init ==
     /\ frees = {}
     /\ reader = "running" /\ joined = FALSE /\ destroyed = FALSE
     /\ fault = "none"
-    /\ ringTo = "none" /\ ringPost = FALSE /\ lost = FALSE
+    /\ ringTo = -1 /\ ringPost = FALSE /\ lost = FALSE
     /\ failures = [f \in Families |-> 0] /\ kept = 0 /\ reported = 0 /\ dipped = FALSE
 
 (* rocketnet_client_race_send / send_batch, the caller: both families while
@@ -118,7 +118,7 @@ CallerSend ==
    with the caller. *)
 CallerHandOffLate ==
     /\ ~destroyed
-    /\ ringTo' = IF ringTo = "none" THEN Server ELSE ringTo
+    /\ ringTo' = IF ringTo < 0 THEN Server ELSE ringTo
     /\ ringPost' = (ringPost \/ committed >= 0)
     /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED <<lost, failVars>>
@@ -130,10 +130,10 @@ CallerHandOffLate ==
    or an earlier LATE did. *)
 CallerHandOff ==
     /\ ~destroyed
-    /\ LET to   == IF ringTo = "none" THEN Server ELSE ringTo
+    /\ LET to   == IF ringTo < 0 THEN Server ELSE ringTo
            post == ringPost \/ committed >= 0
        IN lost' = (lost \/ (post /\ to # committed))
-    /\ ringTo' = "none" /\ ringPost' = FALSE
+    /\ ringTo' = -1 /\ ringPost' = FALSE
     /\ UNCHANGED <<committed, seen, closed, handle, memory, frees, reader, joined, destroyed, fault>>
     /\ UNCHANGED failVars
 
@@ -251,7 +251,7 @@ TypeOK ==
     /\ reader \in {"running", "stopping", "exited"}
     /\ joined \in BOOLEAN /\ destroyed \in BOOLEAN
     /\ fault \in {"none"} \cup Threads
-    /\ ringTo \in {"none"} \cup Families /\ ringPost \in BOOLEAN /\ lost \in BOOLEAN
+    /\ ringTo \in {-1} \cup Families /\ ringPost \in BOOLEAN /\ lost \in BOOLEAN
     /\ failures \in [Families -> 0..MaxFail] /\ kept \in 0..MaxFail
     /\ reported \in 0..(2 * MaxFail) /\ dipped \in BOOLEAN
 

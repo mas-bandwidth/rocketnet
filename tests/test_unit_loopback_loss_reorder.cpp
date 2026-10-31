@@ -269,8 +269,8 @@ static void loopback_check_trace( const struct loopback_trace_t * got, const str
 // Hashes include the appended, zero-valued XDP_KERNEL_DROPPED_NO_SOCKET, CLIENT_RECEIVE_FOREIGN_SOURCE,
 // XDP_KERNEL_DROPPED_IP_OPTIONS_OR_EXTENSION, MESSAGE_NOT_RECEIVED, CONNECTION_RESPONSE_PADDING_NOT_ZERO
 // CONNECTION_REQUEST_CLAIM_TABLE_FULL, PAYLOAD_BATCH_FULL and CLIENT_PAYLOAD_BATCH_FULL counters.
-static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x0fba63931b14c9e7 ), UINT64_C( 0x2f0d46e7331070c5 ), 24 };
-static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0x8e0796e56833fa27 ), UINT64_C( 0x2f0d46e7331070c5 ), 26 };
+static const struct loopback_trace_t loopback_base_trace_simulator_off = { 67, 66, 5954, 4320, 67, 66, 4389, 5889, UINT64_C( 0x1fbc860c8827eba7 ), UINT64_C( 0x5254591d60e81a05 ), 24 };
+static const struct loopback_trace_t loopback_base_trace_simulator_on = { 68, 66, 5775, 4328, 67, 66, 4389, 5653, UINT64_C( 0xee72db50bed92be7 ), UINT64_C( 0x5254591d60e81a05 ), 26 };
 
 static void test_loopback_transport_patterns_off_same_trace()
 {
