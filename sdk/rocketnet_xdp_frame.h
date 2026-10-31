@@ -1036,10 +1036,11 @@ struct rocketnet_xdp_gateway_refresh_t
     double next_time;
 };
 
-// proofs/tla/RNXdpGatewayRefresh.tla Refresh: at or past the deadline,
-// resolves each served family and writes every changed gateway MAC into the
-// table, recording each change in changes (room for two). The first call
-// only schedules: create has just resolved. Returns the number of changes.
+// proofs/tla/RNXdpGatewayRefresh.tla Refresh and WriteLow: at or past the
+// deadline, resolves each served family and writes every changed gateway
+// MAC into the table, whole before the call returns, recording each change
+// in changes (room for two). The first call only schedules: create has just
+// resolved. Returns the number of changes.
 
 static inline int rocketnet_xdp_gateway_refresh( struct rocketnet_xdp_gateway_refresh_t * refresh, struct rocketnet_xdp_reply_macs_t * table, double now,
                                                  rocketnet_xdp_gateway_resolve_t resolve, void * context, struct rocketnet_xdp_gateway_change_t * changes )

@@ -576,3 +576,6 @@ MCRNClientLadderPin.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	require
 MCRNClientLadderBrokenNoFallback.cfg	MCRNClientLadder.tla	invariant	NoExhaustWhileReachable	check	rnclientladder	required	-
 MCRNClientLadderBrokenOomFalls.cfg	MCRNClientLadder.tla	invariant	NoTryAfterOom	check	rnclientladder	required	-
 MCRNClientLadderBrokenIgnoresToken.cfg	MCRNClientLadder.tla	invariant	TriedInToken	check	rnclientladder	required	-
+MCRNXdpGatewayRefresh.cfg	MCRNXdpGatewayRefresh.tla	pass	-	check	rnxdpgatewayrefresh	required	-
+MCRNXdpGatewayRefreshBrokenRefreshInFill.cfg	MCRNXdpGatewayRefresh.tla	invariant	NoTornMac	check	rnxdpgatewayrefresh	required	-
+MCRNXdpGatewayRefreshBrokenNeverRefreshed.cfg	MCRNXdpGatewayRefresh.tla	invariant	FreshAfterPeriod	check	rnxdpgatewayrefresh	required	-

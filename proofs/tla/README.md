@@ -139,6 +139,7 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnclientiodecrypt` | 5 | Decrypt on the client I/O thread: control (invariants and liveness) and four invariant witnesses |
 | `fragmentsandacks` | 24 | Fragments and the ack window: controls, findings and witnesses, and the sent-ring bitmaps control with its two invariant witnesses, including seven debt cases |
 | `rnxdpreplay` | 4 | Kernel replay high-water map control and three invariant witnesses |
+| `rnxdpgatewayrefresh` | 3 | The XDP server's gateway refresh and the handoff of the gateway MAC to the fill threads, a MAC in two halves (RNXdpGatewayRefresh.tla): the control and two reversed witnesses, the refresh run during the fill phase (`NoTornMac`) and the gateway resolved at create only (`FreshAfterPeriod`) |
 | `rnriodriver` | 3 | Windows RIO server transport design: control with two liveness properties and two invariant witnesses |
 | `rnlivefleetrun` | 3 | Live fleet run lifecycle (docs/LIVE-XDP.md): control with one liveness property and two invariant witnesses |
 | `rnoutgoingbuild` | 4 | The outgoing build (docs/OUTGOING-BUILD.md): control with one action property and three witnesses: the copy step (`NoCopy`), an allowance of its own for in-place packets (`PacketQuota`), and no packet kept for due reliable work (`ReliableSentWithinOneUpdate`) |
@@ -180,8 +181,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnfreestacklayout` | 4 | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md): the control and three reversed witnesses, a release without the liveness guard and a pop before the generation refusal (both `StackIsFree`) and a generation that wraps to 1 (`GenerationNeverReissued`) |
 | `rnreconstructlayout` | 4 | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md): the control and three reversed witnesses, a tie to the smaller, the below gate `>` and no candidate above (all `CodeIsNearest`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 577 cases
-in 90 groups, 561 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 580 cases
+in 91 groups, 564 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

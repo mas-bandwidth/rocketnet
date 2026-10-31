@@ -2329,6 +2329,10 @@ uint8_t * rocketnet_server_socket_start_packet_internal( struct rocketnet_server
     if ( packet_index < 0 )
         return NULL;
 
+    // proofs/tla/RNXdpGatewayRefresh.tla ReadHigh and ReadLow: a fill copies
+    // the reply MAC, the gateway's for an unlearned address, into the staged
+    // packet; the xdp thread sends this copy and never reads the table
+
     send_buffer->packet_info[packet_index].to = *to;
     send_buffer->packet_info[packet_index].packet_bytes = 0;
     memcpy( send_buffer->packet_info[packet_index].destination_mac, destination_mac, ETH_ALEN );
@@ -3371,6 +3375,10 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     rocketnet_assert( server_socket );
 
     server_socket->process_packets.num_packets = 0;
+
+    // proofs/tla/RNXdpGatewayRefresh.tla Join and Refresh: the fills are
+    // joined before receive (rocketnet_driver.h), so the refresh's stores
+    // land before the next fill copies a gateway MAC
 
     rocketnet_server_socket_refresh_gateway( server_socket, rocketnet_platform_time() );
 
