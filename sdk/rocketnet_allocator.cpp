@@ -499,6 +499,7 @@ static void rn_region_point( rn_region_t * region, uint8_t * base, const rn_regi
 
     // proofs/tla/RNConnectionMemory.tla, Reuse: the slate is carved clean
     // proofs/tla/RNSendStoreLayout.tla Carve: both send pools empty, both watermarks at zero
+// proofs/tla/RNSequencedHoldPool.tla Carve: the hold free stack full, lowest index on top
 void rn_region_carve( rn_region_t * region )
 {
     rocketnet_assert( region && region->base );
