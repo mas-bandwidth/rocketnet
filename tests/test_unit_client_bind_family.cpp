@@ -532,6 +532,8 @@ static uint64_t race_harness_send_failed( race_harness_t * h )
     return rocketnet_client_transport_counters( h->transport )->values[ROCKETNET_COUNTER_SEND_FAILED];
 }
 
+#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
+
 // proofs/tla/RNClientRace.tla PostCommitSlotsKept. The update that resends the
 // cookie request meets the I/O thread holding the mutex: the hand-off is LATE
 // and the Filling ring stays bound to the IPv6 server, the protocol's server
@@ -539,7 +541,8 @@ static uint64_t race_harness_send_failed( race_harness_t * h )
 // to IPv4, and commits the connection request into that same ring; the
 // commit rebinds the ring to the IPv4 server, so the request and the cookie
 // request before it leave for IPv4 in that update and none is dropped as the
-// losing family's.
+// losing family's. The test holds the mutex on its own thread, so it runs
+// where the platform mutex is not recursive (a Windows critical section is).
 
 static void test_client_race_commit_rebinds_a_late_ring()
 {
@@ -593,6 +596,8 @@ static void test_client_race_commit_rebinds_a_late_ring()
 }
 
 REGISTER_UNIT_TEST( test_client_race_commit_rebinds_a_late_ring );
+
+#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
 // proofs/tla/RNClientRace.tla SendFailedMonotonic. Sends failed on both sockets
 // while the race was in flight, three on IPv6, the family that loses. The

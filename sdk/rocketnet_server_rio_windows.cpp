@@ -2091,7 +2091,7 @@ bool rocketnet_server_rio_test_send_accounting()
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_COMMITS].load() == 1;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == 3;
     valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 2;
-    valid &= rocketnet_rio_accounting_test_asserts == 2;
+    valid &= rocketnet_rio_accounting_test_asserts == ( ROCKETNET_ASSERTS ? 2 : 0 );    // each refused finish asserts where asserts are compiled in
 
     rocketnet_rio_handoff_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
