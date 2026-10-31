@@ -276,6 +276,22 @@ struct rn_region_layout_t
     uint32_t store_chunks[RN_STORE_NUM_CLASSES];
 };
 
+// the parts the maximum resend-delay payload reserve sizes: the send
+// descriptors Q, the send store S and its chunks per class, and the send
+// spans SR. A reserve whose descriptor or chunk indices, or whose span bytes,
+// do not fit in 32 bits is refused, false with a log line naming the rule.
+// rocketnet_message_validate_config runs it, so a validate and a create
+// refuse the same configs. The config's fields are already in range.
+struct rn_region_reserve_sizes_t
+{
+    uint64_t Q;
+    uint64_t SR;
+    uint64_t S;
+    uint32_t chunks[RN_STORE_NUM_CLASSES];
+};
+
+bool rn_region_reserve_sizes( const rocketnet_message_config_t * config, rn_region_reserve_sizes_t * sizes );
+
 // false, with a log line naming the rule, for a refused config. NULL is the defaults.
 bool rn_region_layout( const rocketnet_message_config_t * config, rn_region_layout_t * layout );
 

@@ -1126,6 +1126,53 @@ static void test_message_config_resend_delay_cross_rule_refused()
     check( rocketnet_message_validate_config( &config ) );
 }
 
+// The resend reserve is sized for the send rate over the longest resend delay,
+// and its receive-reserve span bytes SR must fit in 32 bits. Memory is the
+// application's to choose, so this is no budget: it is the one bound the
+// region layout cannot represent past, and validation refuses a config past
+// it exactly as create does, with the same status, so a validate never
+// reports OK for a config a create refuses. With the defaults and
+// message_resend_delay_max_ms 60000, 565169 kbps puts SR at 4294960512 bytes
+// and 565170 kbps at 4294968128, just past UINT32_MAX. Nothing is allocated:
+// the accepted config is only sized, and the refused create fails before it
+// allocates.
+
+static void test_message_config_reserve_past_32_bits_refused_by_validate_and_create()
+{
+    const int last_kbps = 565169;
+    const int past_kbps = 565170;
+
+    rocketnet_message_config_t config;
+    rocketnet_message_default_config( &config );
+    config.message_resend_delay_max_ms = 60000;
+
+    int status = -1;
+    config.client_send_kbps = last_kbps;
+    check( rocketnet_message_validate_config_ex( &config, &status ) == 1 );
+    check( status == ROCKETNET_STATUS_OK );
+    check( rocketnet_message_connection_bytes( &config ) > (uint64_t) UINT32_MAX );
+
+    status = -1;
+    config.client_send_kbps = past_kbps;
+    check( rocketnet_message_validate_config_ex( &config, &status ) == 0 );
+    check( status == ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE );
+    check( rocketnet_message_connection_bytes( &config ) == 0 );
+    check( rocketnet_message_client_required_memory( &config ) == 0 );
+
+    // the public client at the same rate: create refuses with the status the
+    // validate reported, and required_memory gives no size
+
+    struct rocketnet_client_config_t client_config;
+    check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    client_config.message_resend_delay_max_ms = 60000;
+    client_config.send_kbps = past_kbps;
+
+    enum rocketnet_status_t create_status = ROCKETNET_STATUS_OK;
+    check( rocketnet_client_create( NULL, &client_config, &create_status ) == NULL );
+    check( (int) create_status == status );
+    check( rocketnet_client_required_memory( &client_config ) == 0 );
+}
+
 #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_mismatch_ends_both_connections );
 REGISTER_UNIT_TEST( test_message_config_equal_connects_and_verifies );
@@ -1138,3 +1185,4 @@ REGISTER_UNIT_TEST( test_message_config_sent_map_holds_a_window_burst );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_message_config_resend_delay_max_zero_refused );
 REGISTER_UNIT_TEST( test_message_config_resend_delay_cross_rule_refused );
+REGISTER_UNIT_TEST( test_message_config_reserve_past_32_bits_refused_by_validate_and_create );

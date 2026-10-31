@@ -328,6 +328,18 @@ int rocketnet_message_validate_config_ex( const struct rocketnet_message_config_
         return 0;
     }
 
+    // the resend reserve the region sizes for the send rate and the longest
+    // resend delay: past 32-bit descriptor, chunk or span sizes, the region
+    // layout refuses it, so validation refuses it too
+
+    rn_region_reserve_sizes_t reserve_sizes;
+    if ( !rn_region_reserve_sizes( config, &reserve_sizes ) )
+    {
+        if ( status )
+            *status = ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE;
+        return 0;
+    }
+
     if ( status )
         *status = ROCKETNET_STATUS_OK;
 
