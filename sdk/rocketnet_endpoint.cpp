@@ -975,8 +975,12 @@ static int rn_endpoint_fifo_due( const rn_region_t * region, const rn_window_ack
 
 static bool rn_endpoint_ordered_due( const rn_endpoint_t * endpoint, double now )
 {
+    // New messages are due while the window can number them: a stalled
+    // window numbers nothing until an ack moves U' and clears the stall
+    // (rn_window_send_mark_acked), so a frame is never started for them.
+
     const rn_ordered_t * ordered = &endpoint->ordered;
-    if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE )
+    if ( ordered->channels.ready_head != RN_DESCRIPTOR_NONE && !ordered->send.stalled )
         return true;
 
     const rn_window_ack_t * ack = &ordered->ack;
@@ -1188,12 +1192,22 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
         return ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
     }
 
-    // the pass is over; the next call opens a new one
+    // the pass is over until the next flush (rn_endpoint_begin_flush) or update:
+    // reopening it within this flush would plan work it just found unwritable
 
-    endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
+    endpoint->write_phase = RN_ENDPOINT_WRITE_DONE;
     endpoint->packet_kind = RN_ENDPOINT_PACKET_NONE;
 
     return 0;
+}
+
+void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint )
+{
+    // proofs/tla/RNOutgoingBuild.tla BeginFlush: a pass the last flush ended opens
+    // again; a pass the transport's capacity cut short continues where it was
+
+    if ( endpoint->write_phase == RN_ENDPOINT_WRITE_DONE )
+        endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;
 }
 
 static int rn_endpoint_unreliable_items( rn_endpoint_t * endpoint, rn_packet_item_t * items, uint32_t * descriptors, uint32_t * generations )

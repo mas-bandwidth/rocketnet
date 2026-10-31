@@ -928,9 +928,148 @@ static void test_endpoint_reliable_continues_after_capacity_cut()
     rn_arena_destroy( arena );
 }
 
+// A window stalled on unacked numbers writes nothing new until an ack moves
+// it, so the endpoint asks for no frame: a server that started one per
+// stalled connection and aborted it would spend the transport's per-update
+// send capacity on packets that never exist.
+
+static void test_endpoint_stalled_window_requests_no_frame()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+    config.packets_per_update = 8;
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    for ( int i = 0; i <= config.reliable_messages_in_flight; i++ )
+    {
+        uint8_t * message = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 10, endpoint_config.max_payload_bytes );
+        check( message != NULL );
+        if ( message )
+        {
+            memset( message, i, 10 );
+            check( rn_endpoint_finish( &endpoint, 10, 0 ) != 0 );
+        }
+    }
+
+    // the first update numbers W messages and stalls on the next
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+    uint64_t packet_id = 1;
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    while ( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 )
+    {
+        const int bytes = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), packet_id, 1000.0 );
+        if ( bytes > 0 )
+            rn_endpoint_packet_sent( &endpoint, packet_id++, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, bytes ), 1000.0 );
+    }
+
+    check( endpoint.ordered.send.stalled );
+    check( endpoint.ordered.send.next - endpoint.ordered.send.U == (uint64_t) config.reliable_messages_in_flight );
+    check( counters.values[ROCKETNET_COUNTER_MESSAGE_WINDOW_STALL] == 1 );
+
+    // the next update, before any resend is due: nothing to write, no frame
+
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.001 ) == 0 );
+
+    rn_arena_destroy( arena );
+}
+
+// A pass that ended stays ended for the rest of the flush: a reliable packet
+// the budget cannot pay is not planned again, frame after frame, while the
+// send loop serves other connections. The next flush plans it again.
+
+static void test_endpoint_ended_pass_stays_ended_until_the_next_flush()
+{
+    rocketnet_message_config_t config;
+    ep_config( &config );
+
+    rocketnet_counters_t counters = {};
+    rn_arena_t * arena = rn_arena_create( NULL, &config, 1, &counters );
+    check( arena != NULL );
+
+    rn_endpoint_config_t endpoint_config = {};
+    endpoint_config.config = &config;
+    endpoint_config.send_kbps = 64;
+    endpoint_config.max_payload_bytes = ROCKETNET_MAX_PACKET_PAYLOAD_BYTES;
+
+    rn_endpoint_t endpoint;
+    rn_endpoint_init( &endpoint, rn_arena_region( arena, 0 ), &endpoint_config );
+    rn_endpoint_reset( &endpoint, 1000.0 );
+
+    uint8_t frame[ROCKETNET_MAX_PACKET_PAYLOAD_BYTES];
+
+    // one 200 byte packet spends enough of the bucket that a 1000 byte
+    // reliable record no longer fits; time does not move
+
+    uint8_t * spend = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_UNRELIABLE, 200, endpoint_config.max_payload_bytes );
+    check( spend != NULL );
+    if ( spend )
+    {
+        memset( spend, 0x50, 200 );
+        check( rn_endpoint_finish( &endpoint, 200, 0 ) != 0 );
+    }
+
+    rn_endpoint_begin_update( &endpoint );
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    const int spent = rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 1, 1000.0 );
+    check( spent > 0 );
+    if ( spent > 0 )
+        rn_endpoint_packet_sent( &endpoint, 1, rocketnet_send_budget_wire_bytes( ROCKETNET_ACK_BLOCK_MIN_BYTES, spent ), 1000.0 );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
+
+    uint8_t * reliable = rn_endpoint_start( &endpoint, 0, ROCKETNET_RELIABILITY_RELIABLE, 1000, endpoint_config.max_payload_bytes );
+    check( reliable != NULL );
+    if ( reliable )
+    {
+        memset( reliable, 0x7a, 1000 );
+        check( rn_endpoint_finish( &endpoint, 1000, 0 ) != 0 );
+    }
+
+    // a second flush in the same update plans the reliable packet once; the
+    // budget refuses it and the pass ends
+
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) > 0 );
+    check( endpoint.packet_kind == RN_ENDPOINT_PACKET_ORDERED );
+    check( rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 2, 1000.0 ) == 0 );
+    check( endpoint.budget.reliable_waiting );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
+
+    // asked again in the same flush, the ended pass plans nothing
+
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1000.0 ) == 0 );
+
+    // the next flush, after the bucket refills, plans and writes it
+
+    rn_endpoint_begin_flush( &endpoint );
+    check( rn_endpoint_next_packet_bytes( &endpoint, 1001.0 ) > 0 );
+    check( endpoint.packet_kind == RN_ENDPOINT_PACKET_ORDERED );
+    check( rn_endpoint_write_packet( &endpoint, frame, sizeof( frame ), 3, 1001.0 ) > 0 );
+
+    rn_arena_destroy( arena );
+}
+
 REGISTER_UNIT_TEST( test_endpoint_back_to_back_over_lossy_array );
 REGISTER_UNIT_TEST( test_endpoint_uncapped_large_sequenced_skips_the_bucket );
 REGISTER_UNIT_TEST( test_endpoint_never_allocates_or_reads_a_clock );
 REGISTER_UNIT_TEST( test_endpoint_capacity_cut_starts_new_write_pass );
 REGISTER_UNIT_TEST( test_endpoint_dropped_large_sequenced_is_not_a_written_packet );
 REGISTER_UNIT_TEST( test_endpoint_reliable_continues_after_capacity_cut );
+REGISTER_UNIT_TEST( test_endpoint_stalled_window_requests_no_frame );
+REGISTER_UNIT_TEST( test_endpoint_ended_pass_stays_ended_until_the_next_flush );
