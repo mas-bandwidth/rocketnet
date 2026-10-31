@@ -1164,6 +1164,7 @@ static void test_message_config_reserve_past_32_bits_refused_by_validate_and_cre
 
     struct rocketnet_client_config_t client_config;
     check( rocketnet_client_default_config( &client_config ) == ROCKETNET_STATUS_OK );
+    memset( client_config.packet_filter, 0x5A, sizeof( client_config.packet_filter ) );   // not the published test filter, which a production build refuses first
     client_config.message_resend_delay_max_ms = 60000;
     client_config.send_kbps = past_kbps;
 
