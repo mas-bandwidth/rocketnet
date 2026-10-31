@@ -40,7 +40,7 @@ if(CMAKE_SOURCE_DIR STREQUAL PROJECT_SOURCE_DIR)
     set(ROCKETNET_TOP_LEVEL ON)
 endif()
 option(ROCKETNET_USE_SYSTEM_SODIUM "Use an external libsodium instead of the pinned two-file vendor" OFF)
-option(ROCKETNET_HARDEN "Enable hardening flags for release builds" ON)
+option(ROCKETNET_HARDEN "Enable hardening flags for optimized builds (Release, RelWithDebInfo, MinSizeRel)" ON)
 option(ROCKETNET_BUILD_SHARED "Build the shared libraries (rocketnet_shared and rocketnet_shared_dev)" ON)
 option(ROCKETNET_BUILD_DEV_LIBRARIES "Build the build-tree development libraries (rocketnet_dev and rocketnet_shared_dev)" ON)
 option(ROCKETNET_BUILD_TESTS "Build the native tests and ABI fixtures" ${ROCKETNET_TOP_LEVEL})
@@ -334,6 +334,10 @@ set(ROCKETNET_SOURCE
     ${ROCKETNET_TRANSPORT_SOURCES}
 )
 
+# Hardening applies to every optimized configuration: _FORTIFY_SOURCE needs
+# optimization, and Debug and an empty build type have none.
+set(ROCKETNET_HARDEN_CONFIGS "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
+
 if(ROCKETNET_HARDEN)
     foreach(language C CXX)
         if(language STREQUAL "C")
@@ -492,15 +496,15 @@ foreach(target IN LISTS rocketnet_static_targets rocketnet_shared_targets)
     endif()
     target_compile_options(${target} PRIVATE ${ROCKETNET_FP_FLOOR})
     if(ROCKETNET_HARDEN)
-        target_compile_definitions(${target} PRIVATE "$<$<CONFIG:Release>:_FORTIFY_SOURCE=2>")
+        target_compile_definitions(${target} PRIVATE "$<${ROCKETNET_HARDEN_CONFIGS}:_FORTIFY_SOURCE=2>")
         foreach(language C CXX)
             if(ROCKETNET_${language}_STACK_PROTECTOR)
                 target_compile_options(${target} PRIVATE
-                    "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:${language}>>:-fstack-protector-strong>")
+                    "$<$<AND:${ROCKETNET_HARDEN_CONFIGS},$<COMPILE_LANGUAGE:${language}>>:-fstack-protector-strong>")
             endif()
             if(ROCKETNET_${language}_CF_PROTECTION)
                 target_compile_options(${target} PRIVATE
-                    "$<$<AND:$<CONFIG:Release>,$<COMPILE_LANGUAGE:${language}>>:-fcf-protection>")
+                    "$<$<AND:${ROCKETNET_HARDEN_CONFIGS},$<COMPILE_LANGUAGE:${language}>>:-fcf-protection>")
             endif()
         endforeach()
     endif()
@@ -523,7 +527,7 @@ endforeach()
 include_directories("${CMAKE_CURRENT_SOURCE_DIR}/sdk")
 
 if(ROCKETNET_HARDEN AND ROCKETNET_LINK_RELRO_NOW AND TARGET rocketnet_shared)
-    target_link_options(rocketnet_shared PRIVATE "$<$<CONFIG:Release>:-Wl,-z,relro,-z,now>")
+    target_link_options(rocketnet_shared PRIVATE "$<${ROCKETNET_HARDEN_CONFIGS}:-Wl,-z,relro,-z,now>")
 endif()
 
 # The public header at the strictest level each compiler has, in the default
