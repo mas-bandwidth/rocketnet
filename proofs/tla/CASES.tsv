@@ -580,6 +580,7 @@ MCServerStopSpreadBrokenRingSmall.cfg	MCServerStopSpread.tla	invariant	RingHolds
 MCServerStopSpreadBrokenSteadyCapOffByOne.cfg	MCServerStopSpread.tla	invariant	RingHolds	check	serverstopspread	required	-
 MCServerStopSpreadBrokenNoSkip.cfg	MCServerStopSpread.tla	invariant	SealedWithinBurst	check	serverstopspread	required	-
 MCServerStopSpreadBrokenUnreachableStalls.cfg	MCServerStopSpread.tla	temporal	StopFinishes	ignore-terminal	serverstopspread	required	-
+MCServerStopSpreadBrokenStopInFlight.cfg	MCServerStopSpread.tla	invariant	NoSendCutAtStop	check	serverstopspread	required	-
 MCRNClientLadder.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	required	-
 MCRNClientLadderPin.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	required	-
 MCRNClientLadderBrokenNoFallback.cfg	MCRNClientLadder.tla	invariant	NoExhaustWhileReachable	check	rnclientladder	required	-

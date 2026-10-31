@@ -269,6 +269,10 @@ void rocketnet_server_uring_send_packets( struct rocketnet_server_uring_t * urin
 // kernel holds until its completion is not room. Main thread.
 int rocketnet_server_uring_send_room( struct rocketnet_server_uring_t * uring );
 
+// true once every staged slot is submitted and every send has its
+// completion reaped: the reservation index is back at 0. Main thread.
+bool rocketnet_server_uring_send_idle( struct rocketnet_server_uring_t * uring );
+
 // receive packets: receive_packets reaps at most
 // ROCKETNET_URING_RECEIVE_BUDGET completions without blocking into the fill
 // bank, then swaps the banks; process_packets exposes

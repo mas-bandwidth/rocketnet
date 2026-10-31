@@ -954,7 +954,8 @@ void rocketnet_server_transport_destroy( struct rocketnet_server_transport_t * s
  * waiting leave first, as many each step as the transport has room for: this
  * call is the first step, and each later stopped, state or update call while
  * any is waiting is the next. The transport's I/O is told to stop once the
- * last of them is flushed (proofs/tla/ServerStopSpread.tla).
+ * last of them is flushed and the transport reports every flushed send
+ * finished (proofs/tla/ServerStopSpread.tla).
  */
 void rocketnet_server_transport_stop( struct rocketnet_server_transport_t * server_transport );
 /** @brief True once a stop has completed: every waiting disconnect burst

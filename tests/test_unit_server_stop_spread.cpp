@@ -33,6 +33,8 @@ struct stop_spread_fixture_t
     int unreachable_port;                               // a destination with no link-layer address, 0: none
     int refused_port;                                   // a destination the socket cannot carry, 0: none
     int stops;                                          // the I/O told to stop
+    bool hold_flushed;                                  // a flush hands frames on without finishing them
+    int in_flight;                                      // frames flushed and not yet finished
     int staged[STOP_SPREAD_MAX_CLIENTS];                // disconnect packets staged, by client
     int flushed[STOP_SPREAD_MAX_CLIENTS];               // disconnect packets flushed, by client
     int order[STOP_SPREAD_MAX_PACKETS];                 // the client of each disconnect packet, in seal order
@@ -98,7 +100,15 @@ static void stop_spread_flush( void * p )
         f->flushed[i] += f->staged[i];
         f->staged[i] = 0;
     }
+    if ( f->hold_flushed )
+        f->in_flight += f->used;
     f->used = 0;
+}
+
+static bool stop_spread_send_idle( void * p )
+{
+    stop_spread_fixture_t * f = (stop_spread_fixture_t *) p;
+    return f->used == 0 && f->in_flight == 0;
 }
 
 static int stop_spread_send_room( void * p )
@@ -154,6 +164,7 @@ static rocketnet_server_transport_t * stop_spread_server( stop_spread_fixture_t 
     operations->flush = stop_spread_flush;
     operations->receive = stop_spread_receive;
     operations->send_room = report_room ? stop_spread_send_room : NULL;
+    operations->send_idle = report_room ? stop_spread_send_idle : NULL;
     server->io.instance = f;
     server->io.operations = operations;
 
@@ -440,7 +451,40 @@ static void test_server_refused_starts_counted_by_cause()
     printf( "test_server_refused_starts_counted_by_cause\n" );
 }
 
+// The stop tells the I/O to stop only once the transport reports every send
+// it was handed finished: with the last burst flushed and still in flight,
+// each poll is not-stopped and leaves the I/O running, and the poll after the
+// transport finishes them stops it.
+static void test_server_stop_waits_for_flushed_sends()
+{
+    stop_spread_fixture_t * f = new stop_spread_fixture_t();
+    f->capacity = 64;
+    f->hold_flushed = true;
+    const int clients = 2;
+
+    rocketnet_server_transport_io_operations_t operations;
+    rocketnet_server_transport_t * server = stop_spread_server( f, &operations, clients, true );
+
+    stop_spread_stop_server( server, clients );
+    rocketnet_unit_check( stop_spread_flushed( f ) == clients * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( f->in_flight == clients * ROCKETNET_SERVER_NUM_DISCONNECT_PACKETS );
+    rocketnet_unit_check( f->stops == 0 );
+
+    for ( int poll = 0; poll < 4; poll++ )
+        rocketnet_unit_check( !rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 0 );
+
+    f->in_flight = 0;
+    rocketnet_unit_check( rocketnet_server_transport_stopped( server ) );
+    rocketnet_unit_check( f->stops == 1 );
+
+    rn_test_server_transport_stop_and_destroy( server );
+    delete f;
+    printf( "test_server_stop_waits_for_flushed_sends\n" );
+}
+
 REGISTER_UNIT_TEST( test_server_stop_spreads_disconnect_bursts_across_updates );
+REGISTER_UNIT_TEST( test_server_stop_waits_for_flushed_sends );
 REGISTER_UNIT_TEST( test_server_refused_starts_counted_by_cause );
 REGISTER_UNIT_TEST( test_server_stop_polls_are_the_stop_steps );
 REGISTER_UNIT_TEST( test_server_stop_abandons_an_unreachable_burst );

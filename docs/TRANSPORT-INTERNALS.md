@@ -219,7 +219,10 @@ staged transports, so the message layer's rotation stops at a full staging
 and its cursor keeps the next unserved connection. The disconnect drain seals
 no more than the room each update, a kicked client's burst is sealed at once
 only while the room holds all of it, and stop's bursts leave across stop steps
-the same way (`proofs/tla/ServerStopSpread.tla`). A custom transport without
+the same way (`proofs/tla/ServerStopSpread.tla`). Stop tells the I/O to stop
+only once the optional `send_idle` operation reports every send it was handed
+finished (each built-in server transport reports it), so a stopping worker
+never retires a bank of disconnect packets unsent. A custom transport without
 `send_room` is treated as unbounded; a start it refuses ends that update's
 drain, and the bursts wait for the next.
 

@@ -163,6 +163,11 @@ void rocketnet_server_gso_send_packets( struct rocketnet_server_gso_t * gso );
 // producers fill, whatever the queue count. Main thread.
 int rocketnet_server_gso_send_room( struct rocketnet_server_gso_t * gso );
 
+// true once the producer is empty, no bank waits for the transmit worker and
+// the worker has returned every bank it took, its sends finished. Main
+// thread; a send mutex held by the worker reads as not idle.
+bool rocketnet_server_gso_send_idle( struct rocketnet_server_gso_t * gso );
+
 // Receive workers stage into per-queue producer/ready/main banks off main.
 // receive_packets try-swaps ownership and gathers within the caller budget;
 // unconsumed tails stay main-owned until a later receive call. process_packets

@@ -2293,6 +2293,30 @@ int rocketnet_server_socket_send_room( struct rocketnet_server_socket_t * server
     return room;
 }
 
+// proofs/tla/ServerStopSpread.tla RequestIoStop: every queue's buffers back
+// with its producer, the producer empty
+
+bool rocketnet_server_socket_send_idle( struct rocketnet_server_socket_t * server_socket )
+{
+    rocketnet_assert( server_socket );
+
+    for ( int queue = 0; queue < server_socket->num_queues; queue++ )
+    {
+        rocketnet_server_xdp_socket_t * socket = &server_socket->socket[queue];
+        const int flow_index = socket->send_flow_index.load( std::memory_order_acquire );
+        if ( flow_index >= 0 && socket->send_buffer[flow_index].num_packets.load( std::memory_order_relaxed ) != 0 )
+            return false;
+        if ( !rocketnet_platform_mutex_try_acquire( &socket->send_mutex ) )
+            return false;
+        const bool idle = socket->send_handoff.ready_count == 0 && socket->send_handoff.free_count == ROCKETNET_XDP_NUM_BUFFERS - 1;
+        rocketnet_platform_mutex_release( &socket->send_mutex );
+        if ( !idle )
+            return false;
+    }
+
+    return true;
+}
+
 uint8_t * rocketnet_server_socket_start_packet( struct rocketnet_server_socket_t * server_socket, const rocketnet_address_t * to, uint64_t * packet_id )
 {
     rocketnet_assert( server_socket );
