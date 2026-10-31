@@ -809,12 +809,18 @@ static void rocketnet_server_link_flush( rocketnet_server_transport_t * transpor
 // simulator already holds, and they still leave when they come due (as the
 // client drain does). Gating it on the setting would strand and lose them.
 // A simulator holding nothing is read without the lock and drains nothing.
+// A due packet leaves only while the transport reports send room; the rest
+// stay held for the next update's drain, so none is refused and lost
+// (proofs/tla/ServerStopSpread.tla Room).
 static void rocketnet_server_link_drain( rocketnet_server_transport_t * transport )
 {
     if ( !transport->link_simulator || !rocketnet_network_simulator_holds_any( transport->link_simulator ) )
         return;
     for ( ;; )
     {
+        if ( rocketnet_server_transport_io_send_room( transport ) <= 0 )
+            break;
+
         rocketnet_address_t from, to;
 
         uint8_t packet[ROCKETNET_RECEIVE_CEILING];
