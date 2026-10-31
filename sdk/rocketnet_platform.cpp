@@ -140,43 +140,6 @@ static bool rocketnet_platform_test_environment_getenv( const char * name, char 
 // rounding forgives the floating-point error of the scaling (a millionth of
 // a unit), so 0.0005 s is exactly 5000 units and not 5001.
 
-struct timeval rocketnet_platform_timeval_from_seconds( float seconds )
-{
-    struct timeval tv;
-
-    if ( !( seconds > 0.0f ) )
-    {
-        tv.tv_sec = 0;
-        tv.tv_usec = 0;
-        return tv;
-    }
-#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    tv.tv_sec = (long) seconds;
-    tv.tv_usec = (long) ( ( seconds - (float) tv.tv_sec ) * 1000000.0f );
-#else
-    tv.tv_sec = (time_t) seconds;
-    tv.tv_usec = (suseconds_t) ( ( seconds - (float) tv.tv_sec ) * 1000000.0f );
-#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    if ( tv.tv_usec >= 1000000 )
-    {
-        tv.tv_sec += 1;
-        tv.tv_usec -= 1000000;
-    }
-
-    return tv;
-}
-
-uint32_t rocketnet_platform_timeout_milliseconds( float seconds )
-{
-    // Round positive timeouts up and cap before conversion, never requesting an infinite wait.
-    const double milliseconds = ceil( (double) seconds * 1000.0 );
-    if ( !( milliseconds > 1.0 ) )
-        return 1;
-    if ( milliseconds >= 4294967294.0 )
-        return UINT32_C( 0xFFFFFFFE );
-    return (uint32_t) milliseconds;
-}
-
 struct rocketnet_platform_sleep_plan_t
 {
     bool yield_only;
@@ -1186,6 +1149,7 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 {
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
+    (void) timeout_seconds;
 
     rocketnet_platform_socket_t * socket = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
     if ( !socket )
@@ -1196,7 +1160,6 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
 
     memset( socket, 0, sizeof( rocketnet_platform_socket_t ) );
     socket->context = context;
-    socket->type = socket_type;
     socket->ipv6 = address->type == ROCKETNET_ADDRESS_IPV6;
 
 #if ROCKETNET_DEV
@@ -1351,16 +1314,6 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
         if ( flags == -1 || fcntl( socket->handle, F_SETFL, rocketnet_platform_nonblocking_flags( flags ) ) == -1 )
         {
             rocketnet_error( "failed to set socket to non-blocking" );
-            rocketnet_platform_socket_destroy( socket );
-            return NULL;
-        }
-    }
-    else if ( timeout_seconds > 0.0f )
-    {
-        struct timeval tv = rocketnet_platform_timeval_from_seconds( timeout_seconds );
-        if ( setsockopt( socket->handle, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof( tv ) ) < 0 )
-        {
-            rocketnet_error( "failed to set socket receive timeout" );
             rocketnet_platform_socket_destroy( socket );
             return NULL;
         }
@@ -1635,7 +1588,7 @@ static ssize_t rocketnet_platform_receive_one( rocketnet_platform_socket_t * soc
     (void) overflow;
     (void) overflow_bytes;
     socklen_t from_length = sizeof( sockaddr_storage );
-    const int flags = ( socket->type == ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING ? MSG_DONTWAIT : 0 ) | MSG_TRUNC;
+    const int flags = MSG_DONTWAIT | MSG_TRUNC;
     return recvfrom( socket->handle, (char *) packet_data, (size_t) max_packet_size, flags, (sockaddr *) from, &from_length );
 #endif // #if defined( __APPLE__ )
 }
@@ -3558,6 +3511,8 @@ int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t 
 
 rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status )
 {
+    (void) timeout_seconds;
+
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
 
     if ( !s )
@@ -3717,21 +3672,6 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, 
             rocketnet_platform_socket_destroy( s );
             return NULL;
         }
-    }
-    else if ( timeout_seconds > 0.0f )
-    {
-        // set receive timeout
-        DWORD tv = (DWORD) rocketnet_platform_timeout_milliseconds( timeout_seconds );
-        if ( setsockopt( s->handle, SOL_SOCKET, SO_RCVTIMEO, (const char *) ( &tv ), sizeof( tv ) ) < 0 )
-        {
-            rocketnet_error( "failed to set socket receive timeout" );
-            rocketnet_platform_socket_destroy( s );
-            return NULL;
-        }
-    }
-    else
-    {
-        // timeout < 0, socket is blocking with no timeout
     }
 
     // set don't fragment bit
@@ -3929,7 +3869,7 @@ receive_again:
                 continue;
             }
 
-            if ( error != WSAEWOULDBLOCK && error != WSAETIMEDOUT )
+            if ( error != WSAEWOULDBLOCK )
             {
                 rocketnet_debug( "WSARecvFrom failed with error %d", error );
             }

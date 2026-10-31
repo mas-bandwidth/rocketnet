@@ -76,7 +76,6 @@ bool rocketnet_lifecycle_track_read( rocketnet_lifecycle_resources_t * result );
 #endif
 
 #define ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING       0
-#define ROCKETNET_PLATFORM_SOCKET_BLOCKING           1
 
 struct rocketnet_address_t;
 struct sockaddr_in;
@@ -124,11 +123,6 @@ uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time );
 // them, and otherwise nanosleeps to a monotonic deadline, resuming after a
 // signal interrupts it
 void rocketnet_platform_sleep( double time );
-
-struct timeval rocketnet_platform_timeval_from_seconds( float seconds );
-
-// Whole milliseconds rounded up and clamped to 1 .. 0xFFFFFFFE.
-uint32_t rocketnet_platform_timeout_milliseconds( float seconds );
 
 // 1 set and copied, 0 unset, -1 value too long for size; buffer is left empty unless 1
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
@@ -220,6 +214,8 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 // port zero is written back as the assigned port; release with socket_destroy.
+// socket_type is ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, the one mode;
+// timeout_seconds is not read.
 // The socket, wake and thread creates write OUT_OF_MEMORY through status when
 // their allocation is refused (rocketnet_create_status); NULL: not asked.
 struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status ROCKETNET_DEFAULT_NULL );
@@ -673,7 +669,6 @@ typedef int rocketnet_platform_socket_handle_t;
 struct rocketnet_platform_socket_t
 {
     void * context;
-    int type;
     bool ipv6;
     bool connected;                 // connected to its one remote endpoint (rocketnet_platform_socket_connect); sends name no destination
     rocketnet_platform_socket_handle_t handle;

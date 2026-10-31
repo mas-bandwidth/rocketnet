@@ -2327,11 +2327,9 @@ static void rocketnet_test_platform_socket_exchange( const char * address, int m
 
     rocketnet_platform_socket_send_packet( socket, &local_address, sent, (int) sizeof( sent ) );
 
-    // Every mode, including blocking with no timeout, first observes
-    // readiness under the shared harness watchdog, so a missing datagram
-    // fails as a harness timeout instead of hanging in the receive. The
-    // blocking/no-timeout wrapper is still created and exercised by the
-    // one receive below; readiness does not change its mode.
+    // The receive first observes readiness under the shared harness
+    // watchdog, so a missing datagram fails as a harness timeout instead of
+    // a drained receive.
 
     rocketnet_address_t from;
 
@@ -2351,11 +2349,7 @@ static void rocketnet_test_platform_socket_exchange( const char * address, int m
 void rocketnet_test_platform_socket()
 {
     rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f );
-    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f );
-    rocketnet_test_platform_socket_exchange( "127.0.0.1", ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f );
     rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f );
-    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_BLOCKING, 0.01f );
-    rocketnet_test_platform_socket_exchange( "[::1]", ROCKETNET_PLATFORM_SOCKET_BLOCKING, -1.0f );
 }
 
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC
