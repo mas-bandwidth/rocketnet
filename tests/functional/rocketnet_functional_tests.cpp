@@ -2478,6 +2478,13 @@ void rocketnet_test_receive_drops_oversize_datagram()
     // OS connect and no new seam. This leg exists only in the DEV functional
     // target; the raw-wrapper production coverage above always runs.
 
+    // this leg is about the portable server's receive, so a pinned suite's
+    // transport pins are cleared while it runs and put back after
+
+    struct rocketnet_test_env_guard_t server_pin_guard, client_pin_guard;
+    rocketnet_test_env_clear( &server_pin_guard, "ROCKETNET_SERVER_TRANSPORT" );
+    rocketnet_test_env_clear( &client_pin_guard, "ROCKETNET_CLIENT_TRANSPORT" );
+
     struct rocketnet_server_transport_config_t server_config;
     rocketnet_server_transport_dev_config( &server_config );
     server_config.max_clients = 1;
@@ -2572,6 +2579,9 @@ void rocketnet_test_receive_drops_oversize_datagram()
 
     ROCKETNET_FUNCTIONAL_DESTROY_CLIENT( client );
     ROCKETNET_FUNCTIONAL_DESTROY_SERVER_EXCEPT( server, ROCKETNET_COUNTER_PREFILTER_TOO_LARGE );
+
+    rocketnet_test_env_restore( &client_pin_guard );
+    rocketnet_test_env_restore( &server_pin_guard );
 #endif // #if ROCKETNET_DEV && ( ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC )
 
     rocketnet_platform_socket_destroy( socket );
