@@ -26,6 +26,13 @@ inputs and recorded result for each required group.
 | message receive views | `RNSlots`, `RNMessageViews` | held counts exact, a release always finds the view it names, every delivery of an update handed out |
 | channel queues layout | `RNChannelQueues`, `RNChannelQueuesLayout` | the links walk each FIFO and the ready list exactly, no link written into a descriptor outside its FIFO, every channel with work takes turns |
 | ordering index width | `RNOrderingWrap` | every comparison of the 24-bit wire ordering with the 32-bit read index made modulo 2^24; a full delivery table defers a packet rather than exhausting the region |
+| replay window layout | `ReplayWindow`, `RNReplayLayout` | the ring bits equal the received sequences of the retained range after every advance, its word-level clear split at the ring end |
+| ack block builder layout | `RNAckBuildLayout` | the descending word pass builds the bit-by-bit walk's block, never more ranges than the capacity |
+| acknowledged-run walk layout | `RNAckWalkLayout` | the masked popcount and descending walk over the sent ring's words visit exactly the named unacknowledged sequences, newest first; the lowest-acked word skip finds the lowest |
+| receive statistics blocks layout | `RNServerStats`, `RNReceivedBlocksLayout` | each block summary exact after retention clears split at the ring end, the older-half query equal to a record-by-record read |
+| rtt minimum tree layout | `RNRttTreeLayout` | every tree node the minimum of its children, the root the minimum positive sample |
+| protocol tables' free stacks | `RNOpenAddress`, `RNFreeStackLayout` | each stack holds exactly the slots not live, each once; a map generation never reissued and never 0 |
+| wire sequence reconstruction | `AckBlockWrap`, `RNReconstructLayout` | the three-candidate arithmetic chooses the nearest candidate, the larger on a tie |
 
 Model constants must stay small enough for exhaustive checking while retaining
 the production relationship being proved. A model-check result is evidence for

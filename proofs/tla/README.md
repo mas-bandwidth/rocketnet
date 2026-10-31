@@ -171,9 +171,16 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnmessageviews` | 4 | The message object's receive views at the code's layout, a table of three and a batch of two (README-RNMessageViews.md): the control and three reversed witnesses, the release search starting at the cursor (`ReleaseFindsHeld`), the batch release without the `HELD` test (`HeldCountExact`) and the views cleared by the count read after the table was emptied (`NoLostView`) |
 | `rnchannelqueueslayout` | 4 | The channel FIFOs and the ready list at the code's links, three descriptors and two channels (README-RNChannelQueuesLayout.md): the control and three reversed witnesses, a pop of the last entry that keeps the tail (`NoForeignLink`), a push to the front of an empty FIFO that leaves the tail unset (`QueueIsList`) and a ready removal that leaves the ends naming the channel (`ReadyIsList`) |
 | `rnorderingwrap` | 2 | The 24-bit ordering against the 32-bit read index, W = 2, wire modulo 8, counter modulo 32 and a table of two (README-RNOrderingWrap.md): the control and the reversed witness, the reservation's in-turn compare against the unmasked read index (`NoExhaust`) |
+| `rnreplaylayout` | 4 | The replay window's words at the code's layout, three words of four bits and sequences to 30 (README-RNReplayLayout.md): the control and three reversed witnesses, no split at the ring end, the cleared range one early and the first word's mask unshifted (all `WindowIsTruth`) |
+| `rnackbuildlayout` | 4 | The ack block builder's descending word pass, three words of three bits, every window (README-RNAckBuildLayout.md): the control and three reversed witnesses, the chunk not clamped (`BlockIsReference`), the range cap one late (`RangesFit`) and the run at the floor dropped (`BlockIsReference`) |
+| `rnackwalklayout` | 5 | The acknowledged-run walk over the sent ring's words, six slots in three words (README-RNAckWalkLayout.md): controls for `apply_run` and for `lowest_acked`, and three reversed witnesses, the wrapped piece mapped from `low` and the last word's mask one short (both `VisitsExact`) and a whole-word skip (`LowestExact`) |
+| `rnreceivedblockslayout` | 4 | The receive statistics blocks, four blocks of two slots and sequences to 26 (README-RNReceivedBlocksLayout.md): the control and three reversed witnesses, no split at the ring end, the first block rounded up and a summary read for a short edge piece (all `QueryIsReference`) |
+| `rnrtttreelayout` | 3 | The rtt minimum tree, a history of 8 (README-RNRttTreeLayout.md): the control and two reversed witnesses, no leaf offset (`TreeExact`) and a walk that stops unless the minimum falls (`RootIsMinimum`) |
+| `rnfreestacklayout` | 4 | The protocol tables' free stacks, capacity 3 (README-RNFreeStackLayout.md): the control and three reversed witnesses, a release without the liveness guard and a pop before the generation refusal (both `StackIsFree`) and a generation that wraps to 1 (`GenerationNeverReissued`) |
+| `rnreconstructlayout` | 4 | The wire sequence reconstruction, modulus 8 in a space of 32 (README-RNReconstructLayout.md): the control and three reversed witnesses, a tie to the smaller, the below gate `>` and no candidate above (all `CodeIsNearest`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 544 cases
-in 82 groups, 528 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 572 cases
+in 89 groups, 556 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

@@ -62,6 +62,7 @@ int rocketnet_replay_already_received( const struct rocketnet_replay_protection_
 
 // proofs/tla/ReplayWindow.tla Advance
 // proofs/tla/ReplayWindow.tla Receive: advances highest_opened, clears the skipped bits and sets the received sequence's bit
+// proofs/tla/RNReplayLayout.tla Advance: the skipped bits cleared in words (partial first, whole, partial last) and split at the ring end
 void rocketnet_replay_advance( struct rocketnet_replay_protection_t * replay, uint64_t sequence )
 {
     rocketnet_assert( replay );

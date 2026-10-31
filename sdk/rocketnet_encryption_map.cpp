@@ -321,6 +321,7 @@ int rocketnet_encryption_map_full( const struct rocketnet_encryption_map_t * map
 
 // proofs/tla/RNOpenAddress.tla Insert: linear probe from the home cell to the first
 // empty one, wrapping at the end of the index
+// proofs/tla/RNFreeStackLayout.tla TakeMap: the pop of free_indices[--num_free] and the generation that steps to the exhausted 0
 int rocketnet_encryption_map_add( struct rocketnet_encryption_map_t * map,
                                   const struct rocketnet_address_t * address,
                                   double handshake_deadline )
@@ -400,6 +401,7 @@ uint64_t rocketnet_encryption_map_owner_generation( const struct rocketnet_encry
     return map->generation[index];
 }
 
+// proofs/tla/RNFreeStackLayout.tla Release: only a live, generation-matched slot is pushed
 static bool rocketnet_encryption_map_remove_generation( struct rocketnet_encryption_map_t * map,
                                                         uint64_t index_value, uint64_t owner_generation )
 {
