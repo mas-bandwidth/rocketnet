@@ -109,12 +109,15 @@ enum
     // a live mapping, a refusal after the open checked with its allowance
     // (a session packet marked received, or a connection response opened on
     // a mapping that holds its slot), a packet of the token's arriving from
-    // the second address while its connection lives, and the ledgers checked
-    // with that connection live and refusals counted in three families
+    // the second address while its connection lives, the ledgers checked
+    // with that connection live and refusals counted in three families, and
+    // a request whose salt is not its half-open mapping's arriving later
+    // than the mapping's last receive, so a wrongful idle refresh would show
     ROCKETNET_FUZZ_RECEIVE_ORACLE_REFUSAL = 1ULL << 15,
     ROCKETNET_FUZZ_RECEIVE_ORACLE_OPENED_REFUSAL = 1ULL << 16,
     ROCKETNET_FUZZ_RECEIVE_ORACLE_SECOND_SOURCE = 1ULL << 17,
-    ROCKETNET_FUZZ_RECEIVE_ORACLE_LEDGER = 1ULL << 18
+    ROCKETNET_FUZZ_RECEIVE_ORACLE_LEDGER = 1ULL << 18,
+    ROCKETNET_FUZZ_RECEIVE_ORACLE_SALT_MISMATCH = 1ULL << 19
 };
 
 static uint64_t rocketnet_fuzz_receive_coverage = 0;
@@ -350,6 +353,8 @@ static void rocketnet_fuzz_expected_after_refusal( const struct rocketnet_fuzz_m
         const uint8_t * salt = packet + ROCKETNET_PREFILTER_BYTES + ROCKETNET_COOKIE_FIELD_BYTES;
         if ( memcmp( salt, previous->mapping.connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 )
             expected->control.last_receive_time = time;
+        else if ( previous->control.last_receive_time != time )
+            rocketnet_fuzz_receive_coverage |= ROCKETNET_FUZZ_RECEIVE_ORACLE_SALT_MISMATCH;
     }
 }
 
@@ -422,9 +427,7 @@ extern "C" int LLVMFuzzerInitialize( int * argc, char *** argv )
     char seed_dir[1024];
     if ( rocketnet_test_getenv( "ROCKETNET_FUZZ_SEED_DIR", seed_dir, sizeof( seed_dir ) ) && seed_dir[0] != '\0' )
     {
-        if ( !rocketnet_fuzz_receive_generate_seed_dir( seed_dir ) )
-            return 1;
-        exit( 0 );
+        exit( rocketnet_fuzz_receive_generate_seed_dir( seed_dir ) ? 0 : 1 );
     }
 
     return 0;
@@ -936,6 +939,7 @@ enum
     ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_FRAGMENT,
     ROCKETNET_FUZZ_RECEIVE_SEED_REFUSE_IMMUTABLE,
     ROCKETNET_FUZZ_RECEIVE_SEED_LEDGER_BALANCE,
+    ROCKETNET_FUZZ_RECEIVE_SEED_SALT_MISMATCH,
     ROCKETNET_FUZZ_RECEIVE_SEED_SINGLE_CONNECT
 };
 
@@ -964,7 +968,8 @@ static const struct rocketnet_fuzz_receive_seed_spec_t rocketnet_fuzz_receive_se
     { "seed_type_client_fragment", ROCKETNET_FUZZ_RECEIVE_CLIENT_FRAGMENT, ROCKETNET_FUZZ_RECEIVE_SEED_CLIENT_FRAGMENT },
     { "seed_oracle_refuse_immutable", ROCKETNET_FUZZ_RECEIVE_ORACLE_REFUSAL | ROCKETNET_FUZZ_RECEIVE_ORACLE_OPENED_REFUSAL, ROCKETNET_FUZZ_RECEIVE_SEED_REFUSE_IMMUTABLE },
     { "seed_oracle_ledger_balance", ROCKETNET_FUZZ_RECEIVE_ORACLE_LEDGER, ROCKETNET_FUZZ_RECEIVE_SEED_LEDGER_BALANCE },
-    { "seed_oracle_single_connect", ROCKETNET_FUZZ_RECEIVE_ORACLE_SECOND_SOURCE, ROCKETNET_FUZZ_RECEIVE_SEED_SINGLE_CONNECT }
+    { "seed_oracle_single_connect", ROCKETNET_FUZZ_RECEIVE_ORACLE_SECOND_SOURCE, ROCKETNET_FUZZ_RECEIVE_SEED_SINGLE_CONNECT },
+    { "seed_oracle_salt_mismatch", ROCKETNET_FUZZ_RECEIVE_ORACLE_SALT_MISMATCH, ROCKETNET_FUZZ_RECEIVE_SEED_SALT_MISMATCH }
 };
 
 static void rocketnet_fuzz_receive_append_u8( uint8_t * output, size_t * size, uint8_t value )
@@ -1006,9 +1011,14 @@ static void rocketnet_fuzz_receive_append_injection( uint8_t * output, size_t * 
     rocketnet_fuzz_receive_append_u8( output, size, 31 );
 }
 
+// the salt seed's handshake steps before the step that sends the request:
+// cookie request, cookie, and the client's send period between them
+static const int ROCKETNET_FUZZ_RECEIVE_SALT_SEED_STEPS = 5;
+
 static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, size_t capacity )
 {
-    const size_t required_capacity = 256;
+    // the largest seed, the salt mismatch, carries one whole 710-byte request
+    const size_t required_capacity = 1024;
     if ( capacity < required_capacity )
         return 0;
 
@@ -1028,7 +1038,9 @@ static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, siz
         // The refusal seed alternates the replay with a copy whose sealed
         // body is damaged, so a response that does not open (DID_NOT_OPEN,
         // one integrity failure) and a request whose salt is not the
-        // mapping's (CHALLENGE_RESENT with no idle refresh) reach it as well.
+        // mapping's (CHALLENGE_RESENT) reach it as well; that request arrives
+        // in the same step as a matching one, so the salt rule on its own is
+        // seed_oracle_salt_mismatch's.
         const int refusal = kind == ROCKETNET_FUZZ_RECEIVE_SEED_REFUSE_IMMUTABLE;
         for ( int operation = 0; operation < 20; operation++ )
         {
@@ -1046,6 +1058,25 @@ static size_t rocketnet_fuzz_receive_build_seed( int kind, uint8_t * output, siz
             }
             rocketnet_fuzz_receive_append_u8( output, &size, 31 );
         }
+    }
+    else if ( kind == ROCKETNET_FUZZ_RECEIVE_SEED_SALT_MISMATCH )
+    {
+        // the handshake up to the client's connection request, each step
+        // long enough for the client to send; the step that sends the
+        // request (the server makes the half-open mapping) is 5 ms, inside
+        // the client's 100 ms send period. The next step then forges a
+        // request from the client's address with an all-zero salt: the
+        // client sends nothing in that step, so it arrives alone and later
+        // than the mapping's last receive, and must not refresh the idle
+        // clock (t12 rule 3)
+        for ( int operation = 0; operation < ROCKETNET_FUZZ_RECEIVE_SALT_SEED_STEPS; operation++ )
+        {
+            rocketnet_fuzz_receive_append_u8( output, &size, 0 );
+            rocketnet_fuzz_receive_append_u8( output, &size, 31 );
+        }
+        rocketnet_fuzz_receive_append_u8( output, &size, 0 );
+        rocketnet_fuzz_receive_append_u8( output, &size, 0 );
+        rocketnet_fuzz_receive_append_injection( output, &size, 0x10, ROCKETNET_CONNECTION_REQUEST_PACKET, ROCKETNET_CONNECTION_REQUEST_WIRE_BYTES );
     }
     else
     {
