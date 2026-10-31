@@ -404,18 +404,20 @@ inline int suite_layer_of( const std::string & name )
         { "log", "allocator", "status_name", NULL },
         // helpers: platform, time, base64, config, memory
         { "platform", "time", "update_time", "sleep", "thread", "endian", "read", "base64", "hash", "copy", "address", "random", "config", "memory", "status", "version", "value_tracker", "secret", "suite", "fp", "hostname", "counter", "class", "sized", "dev", "abi", "unit", "runtime", "user", "deterministic", "fuzz", "pcapng", "rocketnet", "default", "disabled", "limits", "release", "exhaustion", NULL },
-        // packet: wire, crypto, tokens, prefilter, fragments
-        { "wire", "crypto", "wycheproof", "token", "connect_token", "protocol", "signed", "prefilter", "packet", "sealed", "unsealed", "open_sealed", "fragment", "reassembly", "cookie", "standard", "serialize", "replay", "integrity", "keyed", "encryption", "used", "hostile", "tampered", "vectors", "salt", "response", "admission", "payload", "max", "large", "small", "chunk", "span", "builder", "coalesce", "v4", "ipv4", "ipv6", "reused", "parse", NULL },
-        // acks: ack, window, sequence, receipts
-        { "ack", "window", "sequence", "receipt", "rnreceipts", "send_history", "loss", "jitter", "out_of_order", "resend", "resent", "reply", "previous", "pending", "never", "newer", "older", "newest", "equal", "watermark", "same", "repeated", "higher", "round", "one", "both", "first", "each", "held", "hold", NULL },
+        // packet: wire, crypto, tokens, prefilter, sealed packets
+        { "wire", "crypto", "wycheproof", "token", "connect_token", "protocol", "signed", "prefilter", "packet", "sealed", "unsealed", "open_sealed", "cookie", "standard", "serialize", "replay", "integrity", "keyed", "encryption", "used", "hostile", "tampered", "vectors", "salt", "response", "admission", "payload", "max", "large", "small", "coalesce", "v4", "ipv4", "ipv6", "reused", "parse", NULL },
+        // acks: the transport's ack system and sequence buffers
+        { "ack", "sequence", "send_history", "loss", "jitter", "out_of_order", "reply", "previous", "pending", "never", "newer", "older", "newest", "equal", "same", "repeated", "higher", "round", "one", "both", "first", "each", NULL },
+        // the message layer: fragments, the window, receipts, channels, the endpoint and the message objects
+        { "fragment", "reassembly", "window", "receipt", "rnreceipts", "resend", "resent", "watermark", "held", "hold", "endpoint", "budget", "send_budget", "rnscheduler", "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "block", "promoted", "mixed", "rtt_estimator", "shares", "generation", "reservation", "store", "chunk", "span", "builder", NULL },
         // transport basics: the driver/transport interface and the ladder
-        { "driver", "transport", "ladder", "endpoint", "network_simulator", "sim", "link", "send", "receive", "budget", "fake", "table", "rnslots", "rnscheduler", NULL },
+        { "driver", "transport", "ladder", "network_simulator", "sim", "link", "send", "receive", "fake", "table", "rnslots", NULL },
         // each transport type
         { "portable", "loopback", "msgx", "gso", "io_uring", "xdp", "iocp", "rio", "windows", "posix", "linux", "macos", "umem", NULL },
         // client/server: connect, handshake, slots, disconnect, lifecycle
         { "server", "client", "connect", "handshake", "request", "challenge", "slot", "disconnect", "lifecycle", "keep_alive", "frame_sync", "dst", "live", "public", "api", "create", "destroy", "start", "backend", "session", "half", "two", "swarm", "full", "stale", NULL },
-        // messages: channels, reliability, message layer, examples
-        { "message", "channel", "rnchannel", "reliab", "unreliable", "ordered", "violation", "wide", "dispatch", "harness", "control", "state", "block", "promoted", "mixed", "rtt_estimator", "shares", "example", NULL },
+        // harnesses, control and examples
+        { "harness", "control", "state", "example", NULL },
     };
     const int count = (int) ( sizeof( layers ) / sizeof( layers[0] ) );
     const std::string area = name.compare( 0, 5, "test_" ) == 0 ? name.substr( 5 ) : name;
