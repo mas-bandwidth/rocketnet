@@ -116,8 +116,26 @@ struct rocketnet_received_packet_record_t
     uint64_t sequence;
     double receive_time;
     uint32_t wire_bytes;
-    uint32_t stats_word;                   // one word of the fixed block-aggregate storage
+    uint32_t stats_word;                   // one word of the received statistics storage
 };
+
+// An in-order reduction of received records: a generation's block summary,
+// a suffix of the older half's first generation, or a cached piece of the
+// older half. first_offset is the lowest counted offset inside a block
+// summary, where records join in any order.
+
+struct rocketnet_ack_received_aggregate_t
+{
+    uint64_t bytes;
+    double low_time;
+    double high_time;
+    uint32_t count;
+    uint8_t first_is_nan;
+    uint8_t first_offset;
+    uint8_t pad[2];
+};
+
+static_assert( sizeof( rocketnet_ack_received_aggregate_t ) == 32, "received aggregate size" );
 
 static_assert( sizeof( rocketnet_received_packet_record_t ) == 24,
                "received block metadata reuses the former link storage" );
@@ -291,10 +309,12 @@ struct rocketnet_ack_endpoint_t
     // that goes backwards), so the sent spans are read at the lowest and
     // highest counted sequences. Receive times do not follow sequence
     // (reordering, late and duplicate arrivals), so the counted received
-    // records are summarized by fixed 32-slot physical blocks. Their compact
-    // summaries occupy the stats_word padding reclaimed from these records,
-    // so the endpoint memory budget does not grow. Exact sequence tags reject
-    // stale aliases before a summary or edge record is counted.
+    // records are summarized per 32-sequence generation, each in its fixed
+    // physical block and tagged with its generation. The summaries and the
+    // older half's left-piece suffixes occupy the stats_word padding
+    // reclaimed from these records. Exact sequence tags reject stale aliases
+    // before a record is counted. The older half is cached as three pieces
+    // (sdk/rocketnet_ack.cpp rocketnet_ack_stats_received_refresh).
     // All zero is the empty state.
 
     uint64_t stats_sent_bytes;                  // counted sent records' wire bytes
@@ -320,6 +340,10 @@ struct rocketnet_ack_endpoint_t
 #else
     uint32_t stats_received_pad;
 #endif // #if ROCKETNET_DEV
+    uint64_t stats_received_cache_base;         // the older half [base, top] the pieces were built for; 0 = none
+    uint64_t stats_received_cache_top;
+    struct rocketnet_ack_received_aggregate_t stats_received_middle;    // whole generations between base's and top's
+    struct rocketnet_ack_received_aggregate_t stats_received_right;     // top's generation, from its start to top
     double stats_rtt_sum;                       // sum and count of the positive rtt samples
     uint32_t stats_rtt_count;
     uint32_t stats_pad;
@@ -352,8 +376,8 @@ struct rocketnet_ack_endpoint_t
 
 static_assert( ( ROCKETNET_RTT_HISTORY_SIZE & ( ROCKETNET_RTT_HISTORY_SIZE - 1 ) ) == 0,
                "the rtt min tree needs a power-of-two history" );
-static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE % 32 == 0,
-               "the received block aggregate needs 32-slot blocks" );
+static_assert( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE % 32 == 0 && ( ROCKETNET_RECEIVED_PACKET_BUFFER_SIZE / 2 ) % 32 == 0,
+               "the received generations need 32-slot blocks" );
 
 void rocketnet_ack_endpoint_reset( struct rocketnet_ack_endpoint_t * endpoint );
 
