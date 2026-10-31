@@ -316,9 +316,10 @@ struct rocketnet_client_transport_t
 
 // The members construction does not zero. Three are buffers: their bytes
 // are written before they are read, at the count or ring index that names
-// them, so only their counts are state, and construction and the connection
-// reset set the counts and never touch the bytes (6.5 MB of receive buffers,
-// 2.1 MB of received packets and 1.6 MB of payload rings at the defaults).
+// them, so only their counts are state, and construction, the connection
+// reset (the payload rings) and update (the received batch) set the counts
+// and never touch the bytes (6.5 MB of receive buffers, 2.1 MB of received
+// packets and 1.6 MB of payload rings at the defaults).
 // Two initialize themselves: the lease table by its constructor, and the
 // protocol by rocketnet_client_protocol_init.
 
@@ -393,7 +394,6 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
         memset( client->payload_ring[ring].data, 0xA5, sizeof( client->payload_ring[ring].data ) );
     }
 
-    memset( &client->received_packets, 0xA5, sizeof( client->received_packets ) );
     client->stats_counted = UINT64_MAX;
     rocketnet_client_connection_reset( client );
 
@@ -410,9 +410,7 @@ bool rocketnet_client_transport_reset_witness_for_test( struct rocketnet_client_
 
     rocketnet_send_arena_reset( client->send_arena );
 
-    return arena_clean &&
-           client->received_packets.num_packets == 0 && client->received_packets.receive_index == 0 &&
-           client->stats_counted == 0;
+    return arena_clean && client->stats_counted == 0;
 }
 
 void rocketnet_client_transport_mark_connection_state_for_test( struct rocketnet_client_transport_t * client )
@@ -442,8 +440,6 @@ bool rocketnet_client_transport_connection_state_clean_for_test( struct rocketne
 
     if ( !member && client->send_arena->num_used != 0 )
         member = "send_arena";
-    if ( !member && ( client->received_packets.num_packets != 0 || client->received_packets.receive_index != 0 ) )
-        member = "received_packets";
     if ( !member && client->stats_counted != 0 )
         member = "stats_counted";
     if ( member )
@@ -493,8 +489,12 @@ void rocketnet_client_connection_reset( struct rocketnet_client_transport_t * cl
 
     rocketnet_send_arena_reset( client->send_arena );
 
-    client->received_packets.num_packets = 0;
-    client->received_packets.receive_index = 0;
+    // the received batch is left as it is: its payloads were counted
+    // CLIENT_PAYLOAD_DELIVERED, and they stay the caller's until the next
+    // update clears the batch (proofs/tla/RNClientDelivery.tla
+    // CountedImpliesHanded). A transport runs one connection, so no later
+    // connection reads them.
+
     client->stats_counted = 0;
 }
 
@@ -3087,6 +3087,9 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
         num_receive_buffers = num_legacy_exposed;
     }
 
+    // proofs/tla/RNClientDelivery.tla Begin: the last update's batch, kept
+    // through a connection's end, is cleared here and never offered again
+
     client_transport->received_packets.num_packets = 0;
     client_transport->received_packets.receive_index = 0;
 
@@ -3125,6 +3128,10 @@ void rocketnet_client_transport_update( rocketnet_client_transport_t * client_tr
     uint8_t packet[ROCKETNET_RECEIVE_CEILING];
     int packet_bytes = 0;
     rocketnet_client_protocol_update( &client_transport->protocol, current_time, packet, &packet_bytes );
+
+    // the connection ended inside this update: the reset keeps the batch, so
+    // the payloads this update counted delivered reach the caller
+    // (proofs/tla/RNClientDelivery.tla Return)
 
     if ( state_before > ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED &&
          client_transport->protocol.state <= ROCKETNET_CLIENT_TRANSPORT_STATE_DISCONNECTED )
@@ -3625,10 +3632,11 @@ int rocketnet_client_transport_receive_packet( rocketnet_client_transport_t * cl
 
     struct rocketnet_client_received_packets_t * received = &client_transport->received_packets;
 
-    // a payload larger than the caller's buffer is refused whole and
-    // counted, never truncated, and the cursor moves on to the next
-    // payload that fits -- a caller sizing by the configured maximum
-    // payload never refuses anything
+    // proofs/tla/RNClientDelivery.tla Read: the cursor copies out the entry at
+    // receive_index. a payload larger than the caller's buffer is refused
+    // whole and counted, never truncated, and the cursor moves on to the next
+    // payload that fits -- a caller sizing by the configured maximum payload
+    // never refuses anything
 
     while ( received->receive_index < received->num_packets )
     {
@@ -3776,6 +3784,9 @@ void rocketnet_client_transport_disconnect( rocketnet_client_transport_t * clien
     int burst_count = 0;
     int burst_bytes = 0;
     rocketnet_client_protocol_disconnect( &client_transport->protocol, burst, &burst_count, &burst_bytes );
+
+    // proofs/tla/RNClientDelivery.tla Disconnect: the reset keeps the batch the
+    // last update delivered, readable until the next update
 
     rocketnet_client_connection_reset( client_transport );
 

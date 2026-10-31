@@ -37,7 +37,8 @@ naming `<struct>.<member>`.
 | | geometry, arenas and delivered capacity | fixed allocation | KEEP | client object storage |
 | `rocketnet_ack_endpoint_t` | sequence heads, ack debt, sent/received records, bitmaps and aggregates | delivery and ack history | RESET | a new connection starts with no packet history |
 | | RTT, jitter, loss and bandwidth estimates | connection quality | RESET | statistics describe one session |
-| `rocketnet_client_transport_t` | payload rings, received batch and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
+| `rocketnet_client_transport_t` | payload rings and send arena contents | staged connection packets | RESET | invalid after the terminal transition |
+| | `received_packets` | the last update's batch of delivered payloads | KEEP | counted `CLIENT_PAYLOAD_DELIVERED`, so the caller reads them until the next update clears the batch, also when the connection ended inside that update (`proofs/tla/RNClientDelivery.tla` `CountedImpliesHanded`); a transport runs one connection, so no later connection reads them |
 | | config, transport, I/O objects, lifetime counters and statistics rings | client-lifetime transport state | KEEP | construction state of this transport object; public session counters are the connection that is held |
 | | `time`, `raw_time`, `time_offset` | the update clock, the caller's raw time and the backwards offset | KEEP | the game's clock is client-lifetime state; a connection reset does not rewind it |
 | | `link_simulator`, `link_simulator_from` | the simulated link and its source address | KEEP | a property of the link, not of a connection; packets already on it are on the wire, sealed under the ended session |

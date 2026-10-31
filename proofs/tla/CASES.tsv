@@ -576,3 +576,8 @@ MCRNClientLadderPin.cfg	MCRNClientLadder.tla	pass	-	check	rnclientladder	require
 MCRNClientLadderBrokenNoFallback.cfg	MCRNClientLadder.tla	invariant	NoExhaustWhileReachable	check	rnclientladder	required	-
 MCRNClientLadderBrokenOomFalls.cfg	MCRNClientLadder.tla	invariant	NoTryAfterOom	check	rnclientladder	required	-
 MCRNClientLadderBrokenIgnoresToken.cfg	MCRNClientLadder.tla	invariant	TriedInToken	check	rnclientladder	required	-
+MCRNClientDelivery.cfg	MCRNClientDelivery.tla	pass	-	check	rnclientdelivery	required	-
+MCRNClientDeliveryLazy.cfg	MCRNClientDelivery.tla	pass	-	check	rnclientdelivery	required	-
+MCRNClientDeliveryBrokenEndWipes.cfg	MCRNClientDelivery.tla	invariant	CountedImpliesHanded	check	rnclientdelivery	required	-
+MCRNClientDeliveryBrokenEndWipesLive.cfg	MCRNClientDelivery.tla	temporal	DeliveredReachesCaller	check	rnclientdelivery	required	-
+MCRNClientDeliveryBrokenNoBeginClear.cfg	MCRNClientDelivery.tla	invariant	OfferedOnce	check	rnclientdelivery	required	-
