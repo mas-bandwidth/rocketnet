@@ -425,6 +425,42 @@ jobs:
           done
           exit $failed
 
+      # Every seed generator runs through its replay driver, which ignores
+      # LLVMFuzzerInitialize's return value as libFuzzer does: each must exit
+      # 0 (every seed reaches its type or oracle). The two generators that
+      # can withhold a seed must then exit 1 and print INCOMPLETE, so a
+      # generator that only returned its failure would be seen to go on.
+      # An empty input file stands in for a corpus, so a generator that does
+      # not exit replays it and exits 0, which this step refuses.
+      - name: Run the fuzz seed generators
+        if: matrix.leg == 'checks' && ( runner.os == 'macOS' )
+        shell: bash
+        run: |
+          harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
+          empty="$RUNNER_TEMP/fuzz-empty-input"
+          : > "$empty"
+          failed=0
+          for harness in $harnesses; do
+            out="$RUNNER_TEMP/fuzz-seeds-$harness"
+            rm -rf "$out" && mkdir -p "$out"
+            if ROCKETNET_FUZZ_SEED_DIR="$out" ROCKETNET_FUZZ_SEED_FROM=tests/fuzz/corpus "./bin/fuzz_replay_$harness" "$empty" > "fuzz-seeds-$harness.log" 2>&1; then
+              if [ -z "$(ls -A "$out")" ]; then echo "seed generator wrote nothing: $harness"; failed=1; fi
+            else
+              echo "seed generator failed: $harness"; cat "fuzz-seeds-$harness.log"; failed=1
+            fi
+          done
+          for entry in rocketnet_fuzz_connect_token:seed_type_client_expired rocketnet_fuzz_receive_structured:seed_type_server_payload; do
+            harness="${entry%%:*}"
+            out="$RUNNER_TEMP/fuzz-seeds-withheld-$harness"
+            rm -rf "$out" && mkdir -p "$out"
+            status=0
+            ROCKETNET_FUZZ_SEED_DIR="$out" ROCKETNET_FUZZ_WITHHOLD="${entry#*:}" "./bin/fuzz_replay_$harness" "$empty" > "fuzz-withheld-$harness.log" 2>&1 || status=$?
+            if [ "$status" -ne 1 ] || ! grep -q INCOMPLETE "fuzz-withheld-$harness.log"; then
+              echo "seed generator with ${entry#*:} withheld exited $status, not 1 with INCOMPLETE: $harness"; cat "fuzz-withheld-$harness.log"; failed=1
+            fi
+          done
+          exit $failed
+
       # On Linux the strace run below is this run: one suite run, not two.
       - name: Run unit tests (RSS telemetry, deterministic verdict)
         if: runner.os != 'Linux' && matrix.leg == 'unit'
