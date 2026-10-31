@@ -1242,8 +1242,8 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
 // proofs/tla/RNSendRotation.tla BeginFlush: an ended pass stays ended until here or the next update.
 void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint )
 {
-    // proofs/tla/RNOutgoingBuild.tla BeginFlush: a pass the last flush ended opens
-    // again; a pass the transport's capacity cut short continues where it was
+    // a pass the last flush ended opens again; a pass the transport's
+    // capacity cut short continues where it was
 
     if ( endpoint->write_phase == RN_ENDPOINT_WRITE_DONE )
         endpoint->write_phase = RN_ENDPOINT_WRITE_IDLE;

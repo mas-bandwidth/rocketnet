@@ -468,6 +468,11 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     // The resend sequences start empty: the region is freshly carved, and
     // rn_region_carve cleared every resend link.
 
+#if ROCKETNET_DEV
+    for ( uint32_t n = 0; n < region->window; n++ )
+        rocketnet_assert( region->resend_fifo[n].prev == 0 && region->resend_fifo[n].next == 0 );
+#endif // #if ROCKETNET_DEV
+
     ack->resend_delay_initial = (double) config->message_resend_delay_initial_ms / 1000.0;
     ack->resend_delay_min = (double) config->message_resend_delay_min_ms / 1000.0;
     ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
