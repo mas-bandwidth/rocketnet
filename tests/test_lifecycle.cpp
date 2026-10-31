@@ -875,8 +875,9 @@ static void * install_allocate_b( void *, size_t bytes ) { return install_pair_a
 static void install_release_b( void *, void * pointer ) { install_pair_release( install_pairs[1], pointer ); }
 
 // one worker: allocate and free through whatever pair is installed until
-// told to stop, resting every 16 calls so the count reaches zero and an
-// install can land
+// told to stop, resting every 256 calls so the count reaches zero and an
+// install can land (a sleep is a millisecond or more on Windows, so the
+// rest is rare enough that the workers still reach their minimum there)
 
 struct install_race_worker_args
 {
@@ -900,7 +901,7 @@ static void install_race_worker( install_race_worker_args * args )
         p[bytes - 1] = (uint8_t) args->worker;
         rocketnet_free( NULL, p );
         args->operations->fetch_add( 1, std::memory_order_relaxed );
-        if ( i % 16 == 15 )
+        if ( i % 256 == 255 )
             std::this_thread::sleep_for( std::chrono::microseconds( 1 ) );
     }
 }
