@@ -431,6 +431,7 @@ MCLinkReconfigure.cfg	MCLinkReconfigure.tla	pass	-	check	link	required	-
 MCLinkReconfigureBrokenInFlight.cfg	MCLinkReconfigure.tla	invariant	NoInFlightDrop	check	link	required	-
 MCLinkReconfigureBrokenSetting.cfg	MCLinkReconfigure.tla	invariant	SendUsesForce	check	link	required	-
 MCRNRioWorkerBrokenDropHanded.cfg	MCRNRioWorker.tla	invariant	StopSendsHanded	check	rnrioworker	required	-
+MCRNRioWorkerBrokenCloseCancelsSends.cfg	MCRNRioWorker.tla	invariant	StopSendsFinished	check	rnrioworker	required	-
 MCRNBufferHandoffBrokenDiscardOnStop.cfg	MCRNBufferHandoff.tla	invariant	ExitSentAll	check	rnbufferhandoff	required	-
 MCLoopbackQueue.cfg	MCLoopbackQueue.tla	pass	-	check	loopbackqueue	required	-
 MCLoopbackQueueBrokenNoRestart.cfg	MCLoopbackQueue.tla	invariant	TouchedWithinBacklog	check	loopbackqueue	required	-

@@ -30,16 +30,20 @@
 (* on a non-empty queue sets the event at once (the documented rule).      *)
 (*                                                                         *)
 (* Stop sets stopping and the wake.  The worker posts ready phases,        *)
-(* commits any deferred sends (a refused commit is retried), closes the    *)
-(* socket, which completes every posted receive and send, drains both      *)
-(* queues and only then reports stopped.  Destroy frees the registered     *)
-(* region only after stopped.                                              *)
+(* commits any deferred sends (a refused commit is retried), retires send  *)
+(* completions until no committed send is in flight, closes the socket,    *)
+(* which cancels every posted receive and every send still in flight (a    *)
+(* cancelled send completes failed), drains both queues and only then      *)
+(* reports stopped.  Destroy frees the registered region only after        *)
+(* stopped.                                                                *)
 (*                                                                         *)
 (* Rule switches, each FALSE in one reversed witness:                      *)
 (*   SwitchOnIdle   main opens the next phase only when it is idle         *)
 (*   BoundedDequeue the worker dequeues at most the fill bank's free room  *)
 (*   DrainBeforeExit the worker exits only when nothing is kernel owned    *)
 (*   WakeOnReturn   main wakes the worker when it frees a bank             *)
+(*   DrainSendsBeforeClose the worker closes the socket only when no       *)
+(*                  committed send is in flight                            *)
 (***************************************************************************)
 EXTENDS Naturals, Sequences, FiniteSets
 
@@ -49,11 +53,13 @@ CONSTANTS Slices,          \* ROCKETNET_RIO_RECEIVES
           View,            \* the process view's capacity
           MaxDatagrams,    \* datagrams the network offers
           MaxSends,        \* packets the fill threads stage
-          SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded
+          SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
+          DrainSendsBeforeClose
 
 ASSUME Slices >= 1 /\ NumBanks >= 2 /\ Cap >= 1 /\ View >= Cap
 ASSUME MaxDatagrams \in Nat /\ MaxSends \in Nat
-ASSUME {SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded} \subseteq BOOLEAN
+ASSUME {SwitchOnIdle, BoundedDequeue, DrainBeforeExit, WakeOnReturn, DropHanded,
+        DrainSendsBeforeClose} \subseteq BOOLEAN
 
 Banks == 1..NumBanks
 Ids == 1..MaxDatagrams
@@ -88,6 +94,7 @@ VARIABLES
     scq,         \* the send completion queue: <<phase, id>>
     done,        \* send ids retired by a completion
     dropped,     \* send ids dropped at stop
+    cancelled,   \* send ids the close cancelled in flight (completed failed)
     \* control
     wake,        \* the worker's wake event, pending
     evt,         \* the RIO notification event, pending
@@ -96,7 +103,7 @@ VARIABLES
     wpc, progress
 
 rvars == <<arrived, accepted, posted, retry, rcq, data, fill, free, ready, exposed, view, consumed>>
-svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped>>
+svars == <<sent, staged, state, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled>>
 cvars == <<wake, evt, armed, stopping, closed, exited, freed, wpc, progress>>
 vars == <<rvars, svars, cvars>>
 
@@ -120,7 +127,7 @@ Init ==
     /\ state = [p \in Phases |-> IF p = 0 THEN "fill" ELSE "idle"]
     /\ phase = 0 /\ sready = <<>> /\ inhand = NoPhase
     /\ pend = [p \in Phases |-> <<>>] /\ infl = [p \in Phases |-> <<>>]
-    /\ scq = <<>> /\ done = <<>> /\ dropped = {}
+    /\ scq = <<>> /\ done = <<>> /\ dropped = {} /\ cancelled = {}
     /\ wake = FALSE /\ evt = FALSE /\ armed = FALSE
     /\ stopping = FALSE /\ closed = FALSE /\ exited = FALSE /\ freed = FALSE
     /\ wpc = "top" /\ progress = FALSE
@@ -152,11 +159,13 @@ ArriveDropped ==
     /\ UNCHANGED svars /\ UNCHANGED cvars
 
 \* a committed send completes.  Send completions do not arm the event in
-\* this model: the worker waits only when no send is outstanding.
+\* this model: the worker waits only when no send is outstanding.  Once the
+\* socket is closed, a send still in flight completes cancelled (failed).
 SendComplete(p) ==
     /\ infl[p] # <<>>
     /\ scq' = Append(scq, <<p, Head(infl[p])>>)
     /\ infl' = [infl EXCEPT ![p] = Tail(infl[p])]
+    /\ cancelled' = IF closed THEN cancelled \cup {Head(infl[p])} ELSE cancelled
     /\ UNCHANGED rvars
     /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, done, dropped>>
     /\ UNCHANGED cvars
@@ -172,7 +181,7 @@ Stage ==
     /\ sent' = sent + 1
     /\ staged' = [staged EXCEPT ![phase] = Append(staged[phase], sent + 1)]
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<state, phase, sready, inhand, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<state, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled>>
     /\ UNCHANGED cvars
 
 CanOpen(p) == IF SwitchOnIdle THEN state[p] = "idle" ELSE state[p] \in {"idle", "posted"}
@@ -190,7 +199,7 @@ SendPackets ==
     /\ phase' = After(phase)
     /\ wake' = TRUE
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, inhand, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, inhand, pend, infl, scq, done, dropped, cancelled>>
     /\ UNCHANGED <<evt, armed, stopping, closed, exited, freed, wpc, progress>>
 
 RECURSIVE Fit(_, _)
@@ -262,7 +271,7 @@ WTake ==
        ELSE /\ UNCHANGED <<inhand, sready, state>>
             /\ wpc' = "retire"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, phase, pend, infl, scq, done, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 \* RIOSendEx with RIO_MSG_DEFER for each finished slot: the kernel owns them
@@ -273,7 +282,7 @@ WPost ==
     /\ wpc' = "commit"
     /\ progress' = TRUE
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, sready, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, infl, scq, done, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed>>
 
 \* RIO_MSG_COMMIT_ONLY: success moves every deferred send to the kernel's
@@ -289,7 +298,7 @@ WCommit ==
           /\ UNCHANGED <<pend, infl>>
     /\ wpc' = IF stopping THEN "stop" ELSE "retire"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, scq, done, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 \* dequeue every send completion; a refused commit is retried here
@@ -302,7 +311,7 @@ WRetire ==
     /\ progress' = (progress \/ scq # <<>>)
     /\ wpc' = "dequeue"
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed>>
 
 \* retry refused re-posts, then dequeue receive completions into the fill
@@ -341,7 +350,7 @@ WPublish ==
     /\ state' = [p \in Phases |-> IF state[p] = "posted" /\ ~Outstanding(p) THEN "idle" ELSE state[p]]
     /\ wpc' = IF progress THEN "top" ELSE "arm"
     /\ UNCHANGED <<arrived, accepted, posted, retry, rcq, exposed, view, consumed>>
-    /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped>>
+    /\ UNCHANGED <<sent, staged, phase, sready, inhand, pend, infl, scq, done, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
 
 \* nothing progressed: arm RIONotify on the receive queue when the fill bank
@@ -400,13 +409,26 @@ WStop ==
                  /\ wpc' = "close"
                  /\ UNCHANGED state
     /\ UNCHANGED rvars
-    /\ UNCHANGED <<sent, staged, phase, scq, done>>
+    /\ UNCHANGED <<sent, staged, phase, scq, done, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, exited, freed, progress>>
+
+\* Closing the socket cancels every posted receive and every committed send
+\* still in flight.  Under DrainSendsBeforeClose the close waits for a
+\* successful commit and then for every committed send to complete,
+\* retiring send completions on each pass; otherwise it closes once
+\* committed, and SendComplete completes the sends still in flight as
+\* cancelled.
+SendsInFlight == \E p \in Phases : infl[p] # <<>>
 
 WClose ==
     /\ wpc = "close"
     /\ IF Uncommitted
        THEN /\ wpc' = "stop"      \* the close waits for a successful commit
+            /\ UNCHANGED <<closed, posted, rcq, scq, done>>
+       ELSE IF DrainSendsBeforeClose /\ ~closed /\ SendsInFlight
+       THEN /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
+            /\ scq' = <<>>
+            /\ wpc' = "stop"      \* the close waits for the sends in flight
             /\ UNCHANGED <<closed, posted, rcq>>
        ELSE /\ IF ~closed
                THEN /\ rcq' = rcq \o [i \in 1..posted |-> 0]
@@ -414,21 +436,27 @@ WClose ==
                ELSE UNCHANGED <<rcq, posted>>
             /\ closed' = TRUE
             /\ wpc' = "drain"
+            /\ UNCHANGED <<scq, done>>
     /\ UNCHANGED <<arrived, accepted, retry, data, fill, free, ready, exposed, view, consumed>>
-    /\ UNCHANGED svars
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, exited, freed, progress>>
 
-\* drain both queues; exit only when nothing is kernel owned
+\* drain both queues; exit only when nothing is kernel owned.  Without
+\* DrainBeforeExit the worker exits right after the close, before the
+\* cancelled requests are dequeued.
 WDrain ==
     /\ wpc = "drain"
-    /\ rcq' = <<>>
-    /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
-    /\ scq' = <<>>
-    /\ IF ~DrainBeforeExit \/ (posted = 0 /\ ~KernelOwnsSend)
+    /\ IF ~DrainBeforeExit
        THEN /\ exited' = TRUE /\ wpc' = "exited"
-       ELSE /\ UNCHANGED exited /\ wpc' = "drain"
+            /\ UNCHANGED <<rcq, scq, done>>
+       ELSE /\ rcq' = <<>>
+            /\ done' = done \o [i \in 1..Len(scq) |-> scq[i][2]]
+            /\ scq' = <<>>
+            /\ IF posted = 0 /\ ~KernelOwnsSend
+               THEN /\ exited' = TRUE /\ wpc' = "exited"
+               ELSE /\ UNCHANGED exited /\ wpc' = "drain"
     /\ UNCHANGED <<arrived, accepted, posted, retry, data, fill, free, ready, exposed, view, consumed>>
-    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped>>
+    /\ UNCHANGED <<sent, staged, state, phase, sready, inhand, pend, infl, dropped, cancelled>>
     /\ UNCHANGED <<wake, evt, armed, stopping, closed, freed, progress>>
 
 Next ==
@@ -467,6 +495,7 @@ TypeOK ==
     /\ state \in [Phases -> {"fill", "ready", "posted", "idle"}]
     /\ phase \in Phases
     /\ inhand \in Phases \cup {NoPhase}
+    /\ cancelled \subseteq SendIds
 
 \* Slice accounting until the socket closes: every slice is posted,
 \* completed in the queue, or waiting for a re-post.
@@ -498,13 +527,15 @@ FillPhaseOwnedByMain ==
 NoSendDuplicated ==
     \A i, j \in 1..Len(done) : i # j => done[i] # done[j]
 
-\* The registered region is freed only when the kernel owns no request.
+\* The registered region is freed only when the kernel owns no request and
+\* every completion has been dequeued.
 FreedOnlyWhenDrained ==
-    freed => posted = 0 /\ ~KernelOwnsSend
+    freed => posted = 0 /\ ~KernelOwnsSend /\ rcq = <<>> /\ scq = <<>>
 
-\* Every staged send is retired at exit; stop never silently drops a phase.
+\* Every staged send is retired at exit; stop never silently drops a phase,
+\* and the close cancels no send in flight: every send retired delivered.
 StopSendsHanded == exited => dropped = {}
-StopSendsFinished == exited => Range(done) = 1..sent
+StopSendsFinished == exited => Range(done) = 1..sent /\ cancelled = {}
 
 \* Liveness: every accepted datagram reaches main unless stop begins.
 EveryDatagramConsumed ==
