@@ -408,14 +408,17 @@ static void * rocketnet_client_iocp_create( void * context, const rocketnet_clie
 
     void * memory = rocketnet_malloc( context, sizeof( rocketnet_client_iocp_io_t ) );
     if ( !memory )
+    {
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     rocketnet_client_iocp_io_t * client = new ( memory ) rocketnet_client_iocp_io_t();
     client->context = context;
     client->ipv6 = bind->type == ROCKETNET_ADDRESS_IPV6;
 
     client->socket = rocketnet_platform_socket_create( context, bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
-                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+                                                       ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->status );
     if ( !client->socket )
     {
         client->~rocketnet_client_iocp_io_t();

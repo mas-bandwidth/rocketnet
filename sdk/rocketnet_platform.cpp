@@ -1177,14 +1177,17 @@ static int rocketnet_platform_reserve_ipv4_port( const rocketnet_address_t * add
 // "portable" transport). Nothing is read at create: the first real batch call
 // is the probe and delivers what it reads.
 
-static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, bool batch_pump )
+static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, bool batch_pump, int * status )
 {
     rocketnet_assert( address );
     rocketnet_assert( address->type != ROCKETNET_ADDRESS_NONE );
 
     rocketnet_platform_socket_t * socket = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
     if ( !socket )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     memset( socket, 0, sizeof( rocketnet_platform_socket_t ) );
     socket->context = context;
@@ -1398,9 +1401,9 @@ static rocketnet_platform_socket_t * rocketnet_platform_socket_create_internal( 
     return socket;
 }
 
-rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
+rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status )
 {
-    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, true );
+    return rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, true, status );
 }
 
 bool rocketnet_platform_socket_close( rocketnet_platform_socket_t * socket )
@@ -2256,11 +2259,14 @@ struct rocketnet_platform_wake_t
     bool read_enabled;
 };
 
-rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket, int * status )
 {
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
     wake->context = context;
     wake->socket_fd = socket ? socket->handle : -1;
     wake->read_enabled = socket != NULL;
@@ -2383,7 +2389,7 @@ static bool rocketnet_platform_wake_fd_flags( int fd )
 }
 #endif // #if !defined( __linux__ )
 
-rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket, int * status )
 {
 #if !defined( __linux__ )
     if ( socket )
@@ -2392,7 +2398,10 @@ rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rock
 
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
     wake->context = context;
     wake->socket_fd = socket ? socket->handle : -1;
 
@@ -2516,7 +2525,6 @@ struct thread_shim_data_t
     void * context;
     void * real_thread_data;
     rocketnet_platform_thread_func_t real_thread_function;
-    rocketnet_platform_thread_t * thread;
 };
 
 struct thread_record_t
@@ -2526,16 +2534,11 @@ struct thread_record_t
 };
 static_assert( offsetof( thread_record_t, thread ) == 0, "the thread is the record's first member" );
 
-// the platform thread the calling thread runs as, for thread_wait; NULL on a
-// thread that thread_create did not start
-static thread_local rocketnet_platform_thread_t * rocketnet_platform_thread_self = NULL;
-
 static void * thread_function_shim( void * data )
 {
     rocketnet_assert( data );
-    thread_shim_data_t * shim_data = (thread_shim_data_t *) data;
-    rocketnet_platform_thread_self = shim_data->thread;
-    shim_data->real_thread_function( shim_data->real_thread_data );
+    thread_record_t * record = (thread_record_t *) data;
+    record->shim.real_thread_function( &record->thread, record->shim.real_thread_data );
     return NULL;
 }
 
@@ -2585,11 +2588,14 @@ static void rocketnet_platform_thread_wake_term( rocketnet_platform_thread_t * t
 #endif // #if defined( __APPLE__ )
 }
 
-rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
+rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg, int * status )
 {
     thread_record_t * record = (thread_record_t *) rocketnet_malloc( context, sizeof( thread_record_t ) );
     if ( !record )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
@@ -2598,7 +2604,6 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->context = context;
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
-    shim_data->thread = thread;
 
     if ( !rocketnet_platform_thread_wake_init( thread ) )
     {
@@ -2606,7 +2611,7 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
         return NULL;
     }
 
-    if ( pthread_create( &thread->handle, NULL, thread_function_shim, shim_data ) != 0 )
+    if ( pthread_create( &thread->handle, NULL, thread_function_shim, record ) != 0 )
     {
         rocketnet_platform_thread_wake_term( thread );
         rocketnet_free( context, thread );
@@ -2629,14 +2634,16 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
     rocketnet_free( thread->context, thread );
 }
 
-void rocketnet_platform_thread_wait( double time )
+void rocketnet_platform_thread_sleep( rocketnet_platform_thread_t * thread, double time )
 {
-    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_self;
-    if ( !thread )
-    {
-        rocketnet_platform_sleep( time );
-        return;
-    }
+    rocketnet_assert( thread );
+    (void) thread;
+    rocketnet_platform_sleep( time );
+}
+
+void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, double time )
+{
+    rocketnet_assert( thread );
 
     // whole seconds and nanoseconds converted apart, clamped to a day, so no
     // conversion overflows a 32-bit long
@@ -3173,20 +3180,39 @@ static DWORD WINAPI thread_function_shim( void * data )
 {
     rocketnet_assert( data );
 
-    thread_shim_data_t * shim_data = (thread_shim_data_t *) data;
-    void * real_thread_data = shim_data->real_thread_data;
-    rocketnet_platform_thread_func_t real_thread_function = shim_data->real_thread_function;
-    real_thread_function( real_thread_data );
+    thread_record_t * record = (thread_record_t *) data;
+    record->shim.real_thread_function( &record->thread, record->shim.real_thread_data );
 
     return 0;
 }
 
-rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg )
+static HANDLE rocketnet_platform_sleep_timer_create();
+
+static void rocketnet_platform_thread_sleep_timer_close( rocketnet_platform_thread_t * thread )
+{
+    if ( !thread->sleep_timer )
+        return;
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) thread->sleep_timer, thread->sleep_timer_generation ) )
+    {
+        const BOOL closed = CloseHandle( thread->sleep_timer );
+        rocketnet_lifecycle_track_close_end( thread->sleep_timer_generation, closed != 0 );
+    }
+#else
+    CloseHandle( thread->sleep_timer );
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    thread->sleep_timer = NULL;
+}
+
+rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t thread_function, void * arg, int * status )
 {
     thread_record_t * record = (thread_record_t *) rocketnet_malloc( context, sizeof( thread_record_t ) );
 
     if ( !record )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     rocketnet_platform_thread_t * thread = &record->thread;
     thread->context = context;
@@ -3196,10 +3222,19 @@ rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, 
     shim_data->real_thread_function = thread_function;
     shim_data->real_thread_data = arg;
 
-    thread->handle = CreateThread( NULL, 0, thread_function_shim, shim_data, 0, NULL );
+    // the thread's sleep timer exists before the thread runs
+
+    thread->sleep_timer = rocketnet_platform_sleep_timer_create();
+#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    if ( thread->sleep_timer )
+        thread->sleep_timer_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) thread->sleep_timer, "platform thread sleep timer" );
+#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+
+    thread->handle = CreateThread( NULL, 0, thread_function_shim, record, 0, NULL );
 
     if ( thread->handle == NULL )
     {
+        rocketnet_platform_thread_sleep_timer_close( thread );
         rocketnet_free( context, thread );
         return NULL;
     }
@@ -3229,6 +3264,7 @@ void rocketnet_platform_thread_destroy( rocketnet_platform_thread_t * thread )
 #else
     CloseHandle( thread->handle );
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    rocketnet_platform_thread_sleep_timer_close( thread );
     rocketnet_free( thread->context, thread );
 }
 
@@ -3295,14 +3331,18 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 // Sleep() rounds up to the system timer tick (15.6 ms by default) and a
 // millisecond cast truncates a sub-millisecond request to Sleep(0), so the
-// sleep blocks on a per-thread high-resolution waitable timer instead (Windows
-// 10 1803 and later), set for the whole request, which keeps the system-wide
-// timer resolution untouched. rocketnet_platform_sleep_plan converts the
-// request; rocketnet_platform_sleep_tail_yields decides the at most 50 us
-// SwitchToThread tail when the timer wakes before the request is up. Where
-// the timer cannot be created, SetWaitableTimer fails, or the wait does not
-// return WAIT_OBJECT_0, the fallback raises the timer to 1 ms only for the
-// duration of a rounded-up Sleep.
+// sleep blocks on a high-resolution waitable timer instead (Windows 10 1803
+// and later), set for the whole request, which keeps the system-wide timer
+// resolution untouched. rocketnet_platform_sleep_plan converts the request;
+// rocketnet_platform_sleep_tail_yields decides the at most 50 us
+// SwitchToThread tail when the timer wakes before the request is up. A thread
+// rocketnet_platform_thread_create started sleeps on its own timer, created
+// with its record (rocketnet_platform_thread_sleep); any other caller holds no
+// timer, and its sleep creates one for itself and closes it on return
+// (rocketnet_platform_sleep). Where the timer cannot be created,
+// SetWaitableTimer fails, or the wait does not return WAIT_OBJECT_0, the
+// fallback raises the timer to 1 ms only for the duration of a rounded-up
+// Sleep.
 
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -3312,37 +3352,57 @@ void rocketnet_platform_mutex_destroy( rocketnet_platform_mutex_t * mutex )
 
 #pragma comment( lib, "winmm.lib" )
 
-struct rocketnet_platform_sleep_timer_t
+static HANDLE rocketnet_platform_sleep_timer_create()
 {
-    HANDLE handle;
-    bool tried;
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    uint64_t lifecycle_generation;
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    ~rocketnet_platform_sleep_timer_t()
-    {
-        if ( handle )
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        {
-            if ( rocketnet_lifecycle_track_close_begin( ROCKETNET_LIFECYCLE_TIMER, (uintptr_t) handle, lifecycle_generation ) )
-            {
-                const BOOL closed = CloseHandle( handle );
-                rocketnet_lifecycle_track_close_end( lifecycle_generation, closed != 0 );
-            }
-        }
-#else
-            CloseHandle( handle );
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    }
-};
+    return CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
+}
 
-static thread_local rocketnet_platform_sleep_timer_t rocketnet_platform_sleep_timer = {
-    NULL,
-    false,
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    0,
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-};
+// the sleep on a timer: true when the timer waited out the request
+
+static bool rocketnet_platform_sleep_on_timer( HANDLE handle, const rocketnet_platform_sleep_plan_t & plan )
+{
+    LARGE_INTEGER frequency;
+    LARGE_INTEGER start;
+    QueryPerformanceFrequency( &frequency );
+    QueryPerformanceCounter( &start );
+
+    LARGE_INTEGER due;
+    due.QuadPart = plan.due_time;
+    if ( !SetWaitableTimer( handle, &due, 0, NULL, NULL, FALSE ) || WaitForSingleObject( handle, INFINITE ) != WAIT_OBJECT_0 )
+        return false;
+
+    const double elapsed_units = (double) -plan.due_time;
+    const double counts = ceil( elapsed_units * (double) frequency.QuadPart / 10000000.0 );
+    const LONGLONG end = start.QuadPart + ( counts > 9.0e18 ? (LONGLONG) 9.0e18 : (LONGLONG) counts );
+    LARGE_INTEGER now;
+    QueryPerformanceCounter( &now );
+
+    if ( rocketnet_platform_sleep_tail_yields( (double) ( end - now.QuadPart ) / (double) frequency.QuadPart ) )
+    {
+        while ( now.QuadPart < end )
+        {
+            SwitchToThread();
+            QueryPerformanceCounter( &now );
+        }
+    }
+
+    return true;
+}
+
+// the sleep on timer, which may be NULL: the fallback serves a request the
+// timer cannot
+
+static void rocketnet_platform_sleep_on( HANDLE timer, const rocketnet_platform_sleep_plan_t & plan )
+{
+    if ( timer && rocketnet_platform_sleep_on_timer( timer, plan ) )
+        return;
+
+    // the 1 ms timer period, when the priority calls are enabled, is the
+    // process's from rocketnet_platform_init; the fallback makes no timer
+    // period call of its own
+
+    Sleep( (DWORD) plan.fallback_milliseconds );
+}
 
 void rocketnet_platform_sleep( double time )
 {
@@ -3354,58 +3414,30 @@ void rocketnet_platform_sleep( double time )
         return;
     }
 
-    if ( !rocketnet_platform_sleep_timer.tried )
-    {
-        rocketnet_platform_sleep_timer.tried = true;
-        rocketnet_platform_sleep_timer.handle = CreateWaitableTimerExW( NULL, NULL, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS );
-#if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-        if ( rocketnet_platform_sleep_timer.handle )
-            rocketnet_platform_sleep_timer.lifecycle_generation = rocketnet_lifecycle_track_open( ROCKETNET_LIFECYCLE_TIMER,
-                                                                                                  (uintptr_t) rocketnet_platform_sleep_timer.handle, "platform sleep timer" );
-#endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
-    }
-
-    if ( rocketnet_platform_sleep_timer.handle )
-    {
-        LARGE_INTEGER frequency;
-        LARGE_INTEGER start;
-        QueryPerformanceFrequency( &frequency );
-        QueryPerformanceCounter( &start );
-
-        LARGE_INTEGER due;
-        due.QuadPart = plan.due_time;
-        if ( SetWaitableTimer( rocketnet_platform_sleep_timer.handle, &due, 0, NULL, NULL, FALSE ) &&
-             WaitForSingleObject( rocketnet_platform_sleep_timer.handle, INFINITE ) == WAIT_OBJECT_0 )
-        {
-            const double elapsed_units = (double) -plan.due_time;
-            const double counts = ceil( elapsed_units * (double) frequency.QuadPart / 10000000.0 );
-            const LONGLONG end = start.QuadPart + ( counts > 9.0e18 ? (LONGLONG) 9.0e18 : (LONGLONG) counts );
-            LARGE_INTEGER now;
-            QueryPerformanceCounter( &now );
-
-            if ( rocketnet_platform_sleep_tail_yields( (double) ( end - now.QuadPart ) / (double) frequency.QuadPart ) )
-            {
-                while ( now.QuadPart < end )
-                {
-                    SwitchToThread();
-                    QueryPerformanceCounter( &now );
-                }
-            }
-
-            return;
-        }
-    }
-
-    // the 1 ms timer period, when the priority calls are enabled, is the
-    // process's from rocketnet_platform_init; the fallback makes no timer
-    // period call of its own
-
-    Sleep( (DWORD) plan.fallback_milliseconds );
+    const HANDLE timer = rocketnet_platform_sleep_timer_create();
+    rocketnet_platform_sleep_on( timer, plan );
+    if ( timer )
+        CloseHandle( timer );
 }
 
-void rocketnet_platform_thread_wait( double time )
+void rocketnet_platform_thread_sleep( rocketnet_platform_thread_t * thread, double time )
 {
-    rocketnet_platform_sleep( time );
+    rocketnet_assert( thread );
+
+    const rocketnet_platform_sleep_plan_t plan = rocketnet_platform_sleep_plan( time );
+
+    if ( plan.yield_only )
+    {
+        Sleep( 0 );
+        return;
+    }
+
+    rocketnet_platform_sleep_on( thread->sleep_timer, plan );
+}
+
+void rocketnet_platform_thread_wait( rocketnet_platform_thread_t * thread, double time )
+{
+    rocketnet_platform_thread_sleep( thread, time );
 }
 
 double rocketnet_platform_time()
@@ -3511,12 +3543,15 @@ int rocketnet_platform_socket_receive_buffer_bytes( rocketnet_platform_socket_t 
     return granted;
 }
 
-rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size )
+rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status )
 {
     rocketnet_platform_socket_t * s = (rocketnet_platform_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_socket_t ) );
 
     if ( !s )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     s->context = context;
     s->send_failures = 0;
@@ -3954,11 +3989,14 @@ struct rocketnet_platform_wake_t
 
 // docs/CLIENT-IO.md "The wake": the socket's FD_READ event and an unset
 // manual-reset wake event (proofs/tla/RNClientIo.tla's Init: wake = FALSE)
-rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket, int * status )
 {
     rocketnet_platform_wake_t * wake = (rocketnet_platform_wake_t *) rocketnet_malloc( context, sizeof( rocketnet_platform_wake_t ) );
     if ( !wake )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
     wake->context = context;
     wake->socket_handle = socket ? socket->handle : INVALID_SOCKET;
     wake->read_event = WSA_INVALID_EVENT;
@@ -4469,10 +4507,11 @@ int rocketnet_platform_socket_receive_packets( rocketnet_platform_socket_t * soc
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE ) && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_MAC && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_IOS && ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket )
+rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, rocketnet_platform_socket_t * socket, int * status )
 {
     (void) context;
     (void) socket;
+    (void) status;
     return NULL;
 }
 
@@ -4514,7 +4553,7 @@ void rocketnet_platform_wake_set( rocketnet_platform_wake_t * wake )
 // its own live-refusal pause-and-reprobe discipline remains the
 // transport's internal behavior below the ladder.
 
-rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump )
+rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump, int * status )
 {
     const bool require_msgx = pump && strcmp( pump, "msgx" ) == 0;
 
@@ -4540,7 +4579,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
 
     const bool force_portable = pump && strcmp( pump, "portable" ) == 0;
 
-    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, !force_portable );
+    rocketnet_platform_socket_t * socket = rocketnet_platform_socket_create_internal( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, !force_portable, status );
     if ( !socket )
         return NULL;
 
@@ -4558,7 +4597,7 @@ rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void *
     // every other platform has exactly one pump, so "portable" and auto
     // are the same create
 
-    return rocketnet_platform_socket_create( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size );
+    return rocketnet_platform_socket_create( context, address, socket_type, timeout_seconds, send_buffer_size, receive_buffer_size, status );
 
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_MAC || ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_IOS
 }

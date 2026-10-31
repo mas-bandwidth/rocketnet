@@ -810,7 +810,7 @@ inline int rocketnet_client_io_step( rocketnet_client_io_t * io, bool block )
 // proofs/tla/RNClientIo.tla IoExit: runs the step until it has stored stopped and returned exited.
 // The transport creates the thread with this function and joins it before closing the transport.
 
-inline void rocketnet_client_io_thread_function( void * data )
+inline void rocketnet_client_io_thread_function( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_client_io_t * io = (rocketnet_client_io_t *) data;
 
@@ -823,7 +823,7 @@ inline void rocketnet_client_io_thread_function( void * data )
         // Built-in loopback has no native wait object. Keep its bounded idle polling on the worker; the caller still exchanges only indices.
 
         if ( result == ROCKETNET_CLIENT_IO_IDLE && !io->transport->operations->wait )
-            rocketnet_platform_sleep( 0.001 );
+            rocketnet_platform_thread_sleep( thread, 0.001 );
     }
 }
 

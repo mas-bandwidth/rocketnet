@@ -1436,7 +1436,7 @@ static void posix_burst_take( struct posix_burst_drain_t * drain, const uint8_t 
     }
 }
 
-static void posix_burst_drain_thread( void * context )
+static void posix_burst_drain_thread( rocketnet_platform_thread_t *, void * context )
 {
     struct posix_burst_drain_t * drain = (struct posix_burst_drain_t *) context;
     static uint8_t data[64 * POSIX_BURST_BYTES];
@@ -1707,7 +1707,7 @@ struct posix_linux_flush_t
     std::atomic<int> done{ 0 };
 };
 
-static void posix_linux_flush_thread( void * context )
+static void posix_linux_flush_thread( rocketnet_platform_thread_t *, void * context )
 {
     struct posix_linux_flush_t * flush = (struct posix_linux_flush_t *) context;
     rocketnet_server_transport_send_packets( flush->server );

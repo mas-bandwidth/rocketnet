@@ -23,10 +23,12 @@
 //
 // The socket transports (portable, msgx, gso, iocp) and the kernel-object
 // transports (xdp, io_uring, rio) open a socket or a kernel object in their
-// create, which the unit tier never does; their allocations go through
-// rocketnet_malloc, or for the xdp umem and the rio region are counted by
-// rocketnet_allocation_refused (sdk/rocketnet.cpp:378), and the open reads
-// that count (sdk/rocketnet_driver.cpp:126), the same path these cases walk.
+// create, which the unit tier never does; each writes OUT_OF_MEMORY through
+// the config's status at the allocation that failed (rocketnet_create_status,
+// sdk/rocketnet_internal.h), as the in-memory transport here does, and the
+// functional sweep test_public_start_and_connect_out_of_memory_sweep walks
+// them. test_create_status_out_of_memory_is_kept holds the status rule and
+// the platform wake create's report.
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
@@ -157,14 +159,17 @@ struct transport_oom_instance_t
 
 static bool transport_oom_refuse = false;
 
-static void * transport_oom_create( void * context )
+static void * transport_oom_create( void * context, int * status )
 {
     if ( transport_oom_refuse )
         return NULL;
 
     transport_oom_instance_t * instance = (transport_oom_instance_t *) rocketnet_malloc( context, sizeof( transport_oom_instance_t ) );
     if ( !instance )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
     memset( instance, 0, sizeof( *instance ) );
     instance->context = context;
 
@@ -173,6 +178,7 @@ static void * transport_oom_create( void * context )
         instance->blocks[i] = rocketnet_malloc( context, 64 );
         if ( !instance->blocks[i] )
         {
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
             for ( int j = 1; j < i; j++ )
             {
                 rocketnet_free( context, instance->blocks[j] );
@@ -195,13 +201,13 @@ static void transport_oom_destroy( void * transport )
     rocketnet_free( instance->context, instance );
 }
 
-static void * transport_oom_server_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * )
+static void * transport_oom_server_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * )
 {
-    return transport_oom_create( context );
+    return transport_oom_create( context, config->status );
 }
-static void * transport_oom_client_create( void * context, const rocketnet_client_transport_io_config_t *, rocketnet_address_t * )
+static void * transport_oom_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * )
 {
-    return transport_oom_create( context );
+    return transport_oom_create( context, config->status );
 }
 static void transport_oom_stop( void * ) {}
 static bool transport_oom_stopped( void * ) { return true; }
@@ -505,3 +511,48 @@ REGISTER_UNIT_TEST( test_transport_create_server_ladder_stops_on_out_of_memory )
 REGISTER_UNIT_TEST( test_transport_create_client_ladder_stops_on_out_of_memory );
 #endif // #if ROCKETNET_DEV
 REGISTER_UNIT_TEST( test_platform_init_survives_a_refusing_allocator );
+
+// ---- the status rule and the platform wake create ----------------------------
+
+// rocketnet_create_status writes a reason unless OUT_OF_MEMORY is already
+// there, and writes nothing to a NULL status. The platform wake create, its
+// one allocation refused, returns NULL with OUT_OF_MEMORY and nothing live, a
+// later reason written over it leaves it OUT_OF_MEMORY, and with no status
+// asked for it returns NULL all the same. Its first allocation is the wake
+// record, before any descriptor or event is opened.
+
+static void test_create_status_out_of_memory_is_kept()
+{
+    int status = ROCKETNET_STATUS_OK;
+    rocketnet_create_status( &status, ROCKETNET_STATUS_THREAD_CREATE_FAILED );
+    check( status == ROCKETNET_STATUS_THREAD_CREATE_FAILED );
+    rocketnet_create_status( &status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    rocketnet_create_status( &status, ROCKETNET_STATUS_MUTEX_CREATE_FAILED );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    rocketnet_create_status( NULL, ROCKETNET_STATUS_OUT_OF_MEMORY );
+
+#if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+    transport_oom_allocator_t state;
+    transport_oom_begin( &state );
+
+    status = ROCKETNET_STATUS_OK;
+    state.fail_at = state.calls + 1;
+    check( rocketnet_platform_wake_create( &state, NULL, &status ) == NULL );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+    check( state.live == 0 );
+
+    rocketnet_create_status( &status, ROCKETNET_STATUS_THREAD_CREATE_FAILED );
+    check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+
+    state.fail_at = state.calls + 1;
+    check( rocketnet_platform_wake_create( &state, NULL ) == NULL );
+    check( state.live == 0 );
+
+    transport_oom_end( &state );
+#endif // #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
+
+    printf( "test_create_status_out_of_memory_is_kept\n" );
+}
+
+REGISTER_UNIT_TEST( test_create_status_out_of_memory_is_kept );

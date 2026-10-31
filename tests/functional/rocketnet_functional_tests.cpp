@@ -24,6 +24,7 @@
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_client_protocol.h"
 #include "rocketnet_client_io.h"
+#include "rocketnet_base64.h"
 
 #include <math.h>
 #include <errno.h>
@@ -116,7 +117,7 @@ struct rocketnet_test_hammer_args_t
     int packets;
 };
 
-static void rocketnet_test_hammer_thread( void * data )
+static void rocketnet_test_hammer_thread( rocketnet_platform_thread_t *, void * data )
 {
     struct rocketnet_test_hammer_args_t * args = (struct rocketnet_test_hammer_args_t *) data;
     for ( int i = 0; i < args->packets; i++ )
@@ -146,7 +147,7 @@ struct rocketnet_test_wire_hammer_args_t
     uint64_t wire_bytes_sum;
 };
 
-static void rocketnet_test_wire_hammer_thread( void * data )
+static void rocketnet_test_wire_hammer_thread( rocketnet_platform_thread_t *, void * data )
 {
     struct rocketnet_test_wire_hammer_args_t * args = (struct rocketnet_test_wire_hammer_args_t *) data;
     uint64_t sum = 0;
@@ -853,7 +854,7 @@ struct rocketnet_test_client_hammer_args_t
     int packets;
 };
 
-static void rocketnet_test_client_hammer_thread( void * data )
+static void rocketnet_test_client_hammer_thread( rocketnet_platform_thread_t *, void * data )
 {
     struct rocketnet_test_client_hammer_args_t * args = (struct rocketnet_test_client_hammer_args_t *) data;
     for ( int i = 0; i < args->packets; i++ )
@@ -8883,7 +8884,7 @@ void rocketnet_test_message_objects_loopback_from_t1000()
 // nor consume the pending signal.
 
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-static void rocketnet_test_platform_wake_event_only_set_thread( void * arg )
+static void rocketnet_test_platform_wake_event_only_set_thread( rocketnet_platform_thread_t *, void * arg )
 {
     rocketnet_platform_sleep( 0.01 );
     rocketnet_platform_wake_set( (rocketnet_platform_wake_t *) arg );
@@ -10945,18 +10946,18 @@ struct rocketnet_test_receive_thread_quit_waiter_t
     std::atomic<int> waits_done;
 };
 
-static void rocketnet_test_receive_thread_quit_long_wait( void * data )
+static void rocketnet_test_receive_thread_quit_long_wait( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_test_receive_thread_quit_waiter_t * waiter = (rocketnet_test_receive_thread_quit_waiter_t *) data;
     waiter->about_to_wait.store( 1, std::memory_order_release );
 
     // an hour-long wait: only the wake ends it within the test
 
-    rocketnet_platform_thread_wait( 3600.0 );
+    rocketnet_platform_thread_wait( thread, 3600.0 );
 
     // once woken, every later wait returns at once
 
-    rocketnet_platform_thread_wait( 3600.0 );
+    rocketnet_platform_thread_wait( thread, 3600.0 );
     waiter->waits_done.store( 2, std::memory_order_release );
 }
 
@@ -10992,6 +10993,155 @@ void rocketnet_test_client_receive_thread_quit_wake_ends_a_long_wait()
 
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
+// Every allocation rocketnet_server_start and rocketnet_client_connect make,
+// refused in turn on real transports: each refusal is OUT_OF_MEMORY with the
+// allocator's outstanding count back where it was before the call, and the
+// call then succeeds on the same object once nothing is refused. The client's
+// own network thread record is the one connect step that reports
+// THREAD_CREATE_FAILED (docs/ERRORS-AND-LOGGING.md). Run for the platform's
+// automatic transports and for portable pinned; every transport create writes
+// OUT_OF_MEMORY at the allocation that failed
+// (rocketnet_create_status, sdk/rocketnet_internal.h).
+
+struct rocketnet_test_oom_sweep_allocator_t
+{
+    std::atomic<int> live;
+    std::atomic<int> calls;
+    std::atomic<int> fail_at;
+};
+
+static void * rocketnet_test_oom_sweep_allocate( void * context, size_t bytes )
+{
+    rocketnet_test_oom_sweep_allocator_t * state = (rocketnet_test_oom_sweep_allocator_t *) context;
+    const int call = ++state->calls;
+    if ( state->fail_at.load() == call )
+        return NULL;
+    void * p = malloc( bytes );
+    if ( p )
+        ++state->live;
+    return p;
+}
+
+static void rocketnet_test_oom_sweep_release( void * context, void * pointer )
+{
+    rocketnet_test_oom_sweep_allocator_t * state = (rocketnet_test_oom_sweep_allocator_t *) context;
+    if ( !pointer )
+        return;
+    --state->live;
+    free( pointer );
+}
+
+static void rocketnet_test_oom_sweep( const char * transport )
+{
+    rocketnet_test_oom_sweep_allocator_t state;
+    state.live = 0;
+    state.calls = 0;
+    state.fail_at = 0;
+
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( rocketnet_init( &state, rocketnet_test_oom_sweep_allocate, rocketnet_test_oom_sweep_release ) == ROCKETNET_STATUS_OK );
+
+    // production keys, so the sweep runs in a production build as well
+
+    static const uint64_t protocol_id = 0x57E9011FEC7C1E02ULL;
+    uint8_t seed[32];
+    for ( int i = 0; i < 32; ++i )
+        seed[i] = (uint8_t) ( 0x5C ^ i );
+    uint8_t backend_public[ROCKETNET_BACKEND_PUBLIC_KEY_BYTES];
+    uint8_t backend_secret[64];
+    rocketnet_check( rocketnet_generate_backend_keypair_from_seed( seed, backend_public, backend_secret ) == ROCKETNET_STATUS_OK );
+
+    struct rocketnet_server_config_t server_config;
+    rocketnet_server_default_config( &server_config );
+    server_config.protocol_id = protocol_id;
+    memcpy( server_config.backend_public_key, backend_public, sizeof( server_config.backend_public_key ) );
+    server_config.max_clients = 2;
+    if ( transport )
+        server_config.transport = transport;
+
+    enum rocketnet_status_t status = ROCKETNET_STATUS_OK;
+    struct rocketnet_server_t * server = rocketnet_server_create( &state, "127.0.0.1:0", NULL, &server_config, &status );
+    rocketnet_check( server );
+
+    int start_refusals = 0;
+    for ( int k = 1;; k++ )
+    {
+        rocketnet_check( k < 4096 );
+        const int live_before = state.live.load();
+        state.fail_at = state.calls.load() + k;
+        const enum rocketnet_status_t start_status = rocketnet_server_start( server );
+        state.fail_at = 0;
+        if ( start_status == ROCKETNET_STATUS_OK )
+            break;
+        if ( start_status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+            printf( "server start refusal %d: %s\n", k, rocketnet_status_name( start_status ) );
+        rocketnet_check( start_status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+        rocketnet_check( state.live.load() == live_before );
+        start_refusals++;
+    }
+    rocketnet_check( start_refusals > 0 );
+
+    char server_address[ROCKETNET_MAX_ADDRESS_STRING_BYTES];
+    rocketnet_check( rocketnet_server_ipv4_address( server, server_address, sizeof( server_address ) ) );
+
+    uint8_t server_key[ROCKETNET_SERVER_PUBLIC_KEY_BYTES];
+    rocketnet_server_public_key( server, server_key );
+
+    const char * server_addresses[] = { server_address };
+    uint8_t token_bytes[ROCKETNET_CONNECT_TOKEN_BYTES];
+    rocketnet_check( rocketnet_write_production_connect_token( backend_secret, server_key, protocol_id, server_addresses, 1,
+                                                               0xC11E18ULL, 0, 1ULL << 40, 5, NULL, token_bytes, sizeof( token_bytes ) ) == ROCKETNET_STATUS_OK );
+    char token[ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES];
+    rocketnet_check( rocketnet_base64_encode_data( token_bytes, sizeof( token_bytes ), token, sizeof( token ) ) == ROCKETNET_MAX_CONNECT_TOKEN_STRING_BYTES - 1 );
+
+    struct rocketnet_client_config_t client_config;
+    rocketnet_client_default_config( &client_config );
+    if ( transport )
+        client_config.transport = transport;
+
+    struct rocketnet_client_t * client = rocketnet_client_create( &state, &client_config, &status );
+    rocketnet_check( client );
+
+    int connect_refusals = 0;
+    int thread_refusals = 0;
+    for ( int k = 1;; k++ )
+    {
+        rocketnet_check( k < 4096 );
+        const int live_before = state.live.load();
+        state.fail_at = state.calls.load() + k;
+        const enum rocketnet_status_t connect_status = rocketnet_client_connect( client, token );
+        state.fail_at = 0;
+        if ( connect_status == ROCKETNET_STATUS_OK )
+            break;
+        if ( connect_status == ROCKETNET_STATUS_THREAD_CREATE_FAILED )
+            thread_refusals++;
+        else
+        {
+            if ( connect_status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+                printf( "client connect refusal %d: %s\n", k, rocketnet_status_name( connect_status ) );
+            rocketnet_check( connect_status == ROCKETNET_STATUS_OUT_OF_MEMORY );
+            connect_refusals++;
+        }
+        rocketnet_check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+        rocketnet_check( state.live.load() == live_before );
+    }
+    rocketnet_check( connect_refusals > 0 );
+    rocketnet_check( thread_refusals == 1 );
+
+    rn_cli_client_stop_and_destroy( client, 1000.0 );
+    rn_cli_server_stop_and_destroy( server );
+
+    rocketnet_check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    rocketnet_check( state.live.load() == 0 );
+    rocketnet_check( rocketnet_init( NULL, NULL, NULL ) == ROCKETNET_STATUS_OK );
+}
+
+void rocketnet_test_public_start_and_connect_out_of_memory_sweep()
+{
+    rocketnet_test_oom_sweep( NULL );
+    rocketnet_test_oom_sweep( "portable" );
+}
+
 // 1000 create and destroy cycles of a client transport whose receive thread
 // polls the in-memory loopback transport: every destroy returns
 void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
@@ -11021,7 +11171,7 @@ void rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times()
 
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 
-static void rocketnet_test_receive_thread_quit_wait_after_wake( void * data )
+static void rocketnet_test_receive_thread_quit_wait_after_wake( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_test_receive_thread_quit_waiter_t * waiter = (rocketnet_test_receive_thread_quit_waiter_t *) data;
 
@@ -11033,11 +11183,11 @@ static void rocketnet_test_receive_thread_quit_wait_after_wake( void * data )
 
     // an hour-long wait: only the stored wake ends it within the test
 
-    rocketnet_platform_thread_wait( 3600.0 );
+    rocketnet_platform_thread_wait( thread, 3600.0 );
 
     // once woken, every later wait returns at once
 
-    rocketnet_platform_thread_wait( 3600.0 );
+    rocketnet_platform_thread_wait( thread, 3600.0 );
     waiter->waits_done.store( 2, std::memory_order_release );
 }
 
@@ -12320,6 +12470,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_client_receive_thread_quit_wake_before_wait_returns", rocketnet_test_client_receive_thread_quit_wake_before_wait_returns, NULL },
 #endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
     { "test_client_receive_thread_quit_destroy_joins_1000_times", rocketnet_test_client_receive_thread_quit_destroy_joins_1000_times, NULL },
+    { "test_public_start_and_connect_out_of_memory_sweep", rocketnet_test_public_start_and_connect_out_of_memory_sweep, NULL },
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     { "test_portable_transport_posix_init_term_1000", rocketnet_test_posix_init_term_1000_portable, NULL },
     { "test_gso_transport_posix_init_term_1000", rocketnet_test_posix_init_term_1000_gso, NULL },

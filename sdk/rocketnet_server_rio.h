@@ -67,7 +67,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context,
                                                       ,
                                                       int fail_stage = 0
 #endif // #if ROCKETNET_DEV
-);
+                                                      ,
+                                                      int * status = NULL );
 void rocketnet_server_rio_destroy( rocketnet_server_rio_t * rio );
 void rocketnet_server_rio_stop( rocketnet_server_rio_t * rio );
 bool rocketnet_server_rio_stopped( rocketnet_server_rio_t * rio );

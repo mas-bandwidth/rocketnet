@@ -1064,8 +1064,8 @@ static void windows_connect_disconnect_1000( const char * server_transport )
     windows_clear_transport_env();
     windows_library_heap_begin();
 
-    // The caller's reusable sleep timer belongs to the process thread; warm
-    // it before marking the server/client ownership interval.
+    // A sleep on this thread creates and closes its own timer, so the
+    // server/client ownership interval below holds only what they own.
 
     rocketnet_platform_sleep( 0.001 );
 

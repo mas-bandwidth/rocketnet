@@ -467,7 +467,7 @@ static void rocketnet_client_transport_abort_create( rocketnet_client_transport_
     rocketnet_client_transport_destroy( transport );
 }
 
-static void rocketnet_client_thread_function( void * data );
+static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thread, void * data );
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time = NULL );
 
 // The transport-owned part of ClientSession End. The protocol overload has
@@ -1087,16 +1087,12 @@ struct rocketnet_client_iocp_io_layout_t
 // The memory plan seam allocates this mirror of the platform thread_record_t
 // (the thread and its shim, one allocation, sdk/rocketnet_platform.cpp) that
 // rocketnet_platform_thread_create allocates, so the seam allocates the bytes
-// rocketnet_platform_thread_allocation_bytes counts. The Windows shim carries
-// no thread pointer; the POSIX shims do.
+// rocketnet_platform_thread_allocation_bytes counts.
 struct rocketnet_thread_shim_layout_t
 {
     void * context;
     void * real_thread_data;
     void * real_thread_function;
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-    void * thread;
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 };
 struct rocketnet_thread_record_layout_t
 {
@@ -4084,7 +4080,7 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 // proofs/tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
 // stop is complete.
 
-static void rocketnet_client_thread_function( void * data )
+static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) data;
 
@@ -4096,7 +4092,7 @@ static void rocketnet_client_thread_function( void * data )
 
         rocketnet_client_receive_packets( client_transport );
 
-        rocketnet_platform_thread_wait( 0.001 );
+        rocketnet_platform_thread_wait( thread, 0.001 );
     }
 
     rocketnet_client_transport_finish_stop( client_transport );

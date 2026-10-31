@@ -94,7 +94,7 @@ static void release( void * context, void * pointer )
 
 static void * refuse_allocation( void *, size_t ) { return NULL; }
 static void refuse_free( void *, void * ) { check( false ); }
-static void thread_body( void * ) {}
+static void thread_body( rocketnet_platform_thread_t *, void * ) {}
 
 // The platform thread and shim share one custom-allocator-backed record.
 static const int expected_platform_thread_allocations = 1;
@@ -107,7 +107,7 @@ struct ack_writer
     bool accepted;
 };
 
-static void ack_thread( void * data )
+static void ack_thread( rocketnet_platform_thread_t *, void * data )
 {
     auto * writer = (ack_writer *) data;
     while ( !writer->go->load( std::memory_order_acquire ) )
@@ -214,7 +214,7 @@ struct lease_consumer
     bool consumed;
 };
 
-static void lease_thread( void * data )
+static void lease_thread( rocketnet_platform_thread_t *, void * data )
 {
     auto * consumer = (lease_consumer *) data;
     while ( !consumer->go->load( std::memory_order_acquire ) )

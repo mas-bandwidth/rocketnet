@@ -155,11 +155,11 @@ uint64_t rocketnet_server_uring_allocation_bytes( int queues );
 // dual stack: ipv4 senders arrive as native ipv4 addresses. num_queues <= 0
 // selects the default; a count past ROCKETNET_URING_MAX_QUEUES refuses.
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues );
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int * status = NULL );
 
 // create with flags, the DISABLE set above; create is create_flags with 0
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags );
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status = NULL );
 
 // the FEATURE bits in use now: a live refusal of a segmented send clears
 // ROCKETNET_SERVER_URING_FEATURE_SEGMENT

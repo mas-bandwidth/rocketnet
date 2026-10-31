@@ -446,7 +446,10 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
 {
     void * memory = rocketnet_malloc( context, sizeof( rocketnet_client_gso_io_t ) );
     if ( !memory )
+    {
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     rocketnet_client_gso_io_t * client = new ( memory ) rocketnet_client_gso_io_t();
     client->context = context;
@@ -454,7 +457,7 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
     // dual stack as the portable client is: the platform socket binds the family of bind and converts addresses on an ipv6 socket
 
     client->socket = rocketnet_platform_socket_create_with_pump( context, bind, ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f,
-                                                                 ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->name );
+                                                                 ROCKETNET_SOCKET_SEND_BUFFER_SIZE, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->name, config->status );
     if ( !client->socket )
     {
         client->~rocketnet_client_gso_io_t();
@@ -463,7 +466,7 @@ static void * rocketnet_client_gso_create( void * context, const rocketnet_clien
         return NULL;
     }
 
-    client->wake = rocketnet_platform_wake_create( context, client->socket );
+    client->wake = rocketnet_platform_wake_create( context, client->socket, config->status );
     if ( !client->wake )
     {
         rocketnet_platform_socket_destroy( client->socket );

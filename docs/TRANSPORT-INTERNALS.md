@@ -261,18 +261,16 @@ functional cases `test_gso_server_refuses_explicit_port_in_use` and
 A factory reports why it failed through `config->status`
 (`rocketnet_server_transport_io_config_t.status` and
 `rocketnet_client_transport_io_config_t.status`, `sdk/rocketnet_driver.h`),
-one form for every transport. `rocketnet_server_transport_io_open` and
-`rocketnet_client_transport_io_open` write `ROCKETNET_STATUS_OUT_OF_MEMORY` there
-when the create returned NULL after an allocation on the calling thread was
-refused (`sdk/rocketnet_driver.cpp`, reading the per-thread
-count kept in `sdk/rocketnet.cpp`); any other NULL leaves it OK and is a
-refusal. The count rises on every `rocketnet_malloc` refusal
-(`sdk/rocketnet.cpp`) and on the two page buffers a transport
-allocates outside it, the xdp umem (`sdk/rocketnet_server_socket_linux.cpp`)
-and the rio region (`sdk/rocketnet_server_rio_windows.cpp`), through
-`rocketnet_allocation_refused` (`sdk/rocketnet.cpp`). So every built-in
-transport (portable, msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it
-through the open. The transport ladder falls to the next
+one form for every transport. A create that is refused an allocation writes
+`ROCKETNET_STATUS_OUT_OF_MEMORY` there, at the allocation that failed, through
+`rocketnet_create_status` (`sdk/rocketnet_internal.h`), which never replaces
+an `OUT_OF_MEMORY` already written. The platform socket, wake and thread
+creates take the status for the allocations they make, and the xdp umem
+(`sdk/rocketnet_server_socket_linux.cpp`), allocated outside
+`rocketnet_malloc`, writes it the same way. Every built-in transport (portable,
+msgx, gso, xdp, io_uring, iocp, rio, loopback) reports it so; a native
+extension's create does the same. Any other NULL leaves the status OK and is a
+refusal. The transport ladder falls to the next
 candidate on a refusal, and on OUT_OF_MEMORY it stops:
 `rocketnet_server_transport_create_ex` (`sdk/rocketnet_server_transport.cpp`)
 and `rocketnet_client_transport_create_ex`

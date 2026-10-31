@@ -83,7 +83,18 @@ struct sockaddr_in;
 struct sockaddr_in6;
 struct sockaddr_storage;
 
-typedef void ( *rocketnet_platform_thread_func_t )( void * );
+struct rocketnet_platform_thread_t;
+
+// a thread's function receives its own record, for thread_wait and thread_sleep
+typedef void ( *rocketnet_platform_thread_func_t )( struct rocketnet_platform_thread_t * thread, void * arg );
+
+// the trailing status the creates below write OUT_OF_MEMORY through when an
+// allocation is refused (rocketnet_create_status); C++ callers may leave it out
+#ifdef __cplusplus
+#define ROCKETNET_STATUS_NOT_ASKED = NULL
+#else // #ifdef __cplusplus
+#define ROCKETNET_STATUS_NOT_ASKED
+#endif // #ifdef __cplusplus
 
 // ----------------------------------------------------------------
 
@@ -214,10 +225,10 @@ extern "C"
 #endif // #ifdef __cplusplus
 
 // port zero is written back as the assigned port; release with socket_destroy
-struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size );
+struct rocketnet_platform_socket_t * rocketnet_platform_socket_create( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, int * status ROCKETNET_STATUS_NOT_ASKED );
 
 // pump is NULL or "auto", "portable", or "msgx" (macOS only); NULL back when it is unavailable
-struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump );
+struct rocketnet_platform_socket_t * rocketnet_platform_socket_create_with_pump( void * context, struct rocketnet_address_t * address, int socket_type, float timeout_seconds, int send_buffer_size, int receive_buffer_size, const char * pump, int * status ROCKETNET_STATUS_NOT_ASKED );
 
 void rocketnet_platform_socket_destroy( struct rocketnet_platform_socket_t * socket );
 
@@ -434,7 +445,7 @@ int rocketnet_platform_socket_receive_packets_mmsg( struct rocketnet_platform_so
 // level-triggered; a socket given to wake_create must outlive the wake
 struct rocketnet_platform_wake_t;
 // socket may be NULL for an event-only wake; NULL back when the platform has no wakes
-struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket );
+struct rocketnet_platform_wake_t * rocketnet_platform_wake_create( void * context, struct rocketnet_platform_socket_t * socket, int * status ROCKETNET_STATUS_NOT_ASKED );
 // zero when wakes are unavailable
 uint64_t rocketnet_platform_wake_allocation_bytes( void );
 // destroy before the associated socket
@@ -453,16 +464,23 @@ extern "C"
 {
 #endif // #ifdef __cplusplus
 
-// join before thread_destroy
-struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg );
+// join before thread_destroy. The record exists before the thread starts and
+// is the function's first argument.
+struct rocketnet_platform_thread_t * rocketnet_platform_thread_create( void * context, rocketnet_platform_thread_func_t func, void * arg, int * status ROCKETNET_STATUS_NOT_ASKED );
 
 // call once, from another thread
 void rocketnet_platform_thread_join( struct rocketnet_platform_thread_t * thread );
 
 void rocketnet_platform_thread_destroy( struct rocketnet_platform_thread_t * thread );
 
-// returns after time, or once thread_wake has been called for this thread; Windows sleeps and its wake is a no-op
-void rocketnet_platform_thread_wait( double time );
+// called on the thread that thread_create started, with that thread's own
+// record: returns after time, or once thread_wake has been called for it.
+// Windows sleeps and its wake is a no-op.
+void rocketnet_platform_thread_wait( struct rocketnet_platform_thread_t * thread, double time );
+
+// called on the thread that thread_create started, with that thread's own
+// record: rocketnet_platform_sleep on the thread's own timer (Windows)
+void rocketnet_platform_thread_sleep( struct rocketnet_platform_thread_t * thread, double time );
 
 // store the quit flag first, then wake, then join
 void rocketnet_platform_thread_wake( struct rocketnet_platform_thread_t * thread );
@@ -728,8 +746,10 @@ struct rocketnet_platform_thread_t
 {
     void * context;
     HANDLE handle;
+    HANDLE sleep_timer;             // thread_sleep blocks on it; NULL where the timer cannot be created
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
     uint64_t lifecycle_generation;
+    uint64_t sleep_timer_generation;
 #endif // #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
 };
 
