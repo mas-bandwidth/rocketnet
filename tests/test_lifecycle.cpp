@@ -805,29 +805,31 @@ static void check_client_memory_budget( allocator_state & state )
 // still allocate through the pair it replaced: the replaced pair holding a
 // block, or allocating, once install returned OK is the race
 // InstallOnlyWhenIdle forbids, and a block released through a pair that did
-// not allocate it is the race ReleasedThroughItsPair forbids. In a
-// development build install's hook sleeps between its count read and its
-// publish, so a call that slips into that window is likely, not a matter of
-// luck. Run per commit under tsan (ci.yml, the tsan leg runs this harness).
+// not allocate it is the race ReleasedThroughItsPair forbids.
 //
-// The run is bounded by time, not by a count of operations, so a loaded
-// runner with few cores cannot stretch it: it ends once both targets are
-// met or after INSTALL_RACE_BUDGET_SECONDS, whichever is first, and then
-// requires the minimums, so a run too starved to cover the window fails
-// rather than passes quietly. Workers and the installer sleep rather than
-// yield where they wait on each other: a yield to a thread spinning on the
-// sentinel can hand the core straight back, a sleep cannot. There are at
-// most as many workers as cores beside the installer's.
+// Every step is driven by a handshake, never by a clock or a count of what
+// fits in a time window. check_allocator_install_waits_out_a_call puts a call
+// on the installing sentinel: install's hook (between its zero count read and
+// its publish) starts a call on another thread and returns only once the
+// call reports it met the sentinel and uncounted itself, so install publishes
+// with the call waiting and the call allocates through the new pair. The
+// install refusals against a counted call are driven on one thread in
+// tests/test_unit_allocator_install_steps.cpp. check_allocator_install_race
+// then runs the workers free against installs in rounds: each round waits for
+// the workers to do a fixed number of calls, tries an install while they run
+// (OK or LIVE_ALLOCATIONS, whichever the interleaving gives), then parks the
+// workers between calls and installs, which must be OK. The installs and calls
+// it covers are fixed by the rounds, however the machine schedules them. Run
+// per commit under tsan (ci.yml, the tsan leg runs this harness).
 
-#define INSTALL_RACE_BUDGET_SECONDS 2.0
-#define INSTALL_RACE_TARGET_INSTALLS 1000
-#define INSTALL_RACE_TARGET_OPERATIONS 100000
-#define INSTALL_RACE_MIN_INSTALLS 20
-#define INSTALL_RACE_MIN_OPERATIONS 10000
+#define INSTALL_RACE_ROUNDS 64
+#define INSTALL_RACE_OPERATIONS_PER_ROUND 512
+#define INSTALL_WINDOW_YIELDS 64
 
 struct install_pair_state
 {
     std::atomic<int> live{ 0 };
+    std::atomic<int> allocates{ 0 };
     std::atomic<bool> retired{ false };     // replaced by an install that returned OK
     std::atomic<int> allocated_after_retired{ 0 };
     std::atomic<int> foreign_releases{ 0 };
@@ -841,6 +843,7 @@ static void * install_pair_allocate( install_pair_state & pair, size_t bytes )
 {
     if ( pair.retired.load( std::memory_order_acquire ) )
         ++pair.allocated_after_retired;
+    ++pair.allocates;
 
     uint8_t * base = (uint8_t *) malloc( bytes + 16 );
     if ( !base )
@@ -862,27 +865,122 @@ static void install_pair_release( install_pair_state & pair, void * pointer )
     free( base );
 }
 
-#if ROCKETNET_DEV
-static void install_window_sleep()
-{
-    std::this_thread::sleep_for( std::chrono::microseconds( 20 ) );
-}
-#endif // #if ROCKETNET_DEV
-
 static void * install_allocate_a( void *, size_t bytes ) { return install_pair_allocate( install_pairs[0], bytes ); }
 static void install_release_a( void *, void * pointer ) { install_pair_release( install_pairs[0], pointer ); }
 static void * install_allocate_b( void *, size_t bytes ) { return install_pair_allocate( install_pairs[1], bytes ); }
 static void install_release_b( void *, void * pointer ) { install_pair_release( install_pairs[1], pointer ); }
 
+static int install_pair( int index )
+{
+    return index == 0 ? rocketnet_allocator_ex( install_allocate_a, install_release_a ) : rocketnet_allocator_ex( install_allocate_b, install_release_b );
+}
+
+static void install_pairs_reset()
+{
+    for ( install_pair_state & pair : install_pairs )
+    {
+        pair.live = 0;
+        pair.allocates = 0;
+        pair.retired = false;
+        pair.allocated_after_retired = 0;
+        pair.foreign_releases = 0;
+        pair.live_at_replace = 0;
+    }
+    install_pairs[0].tag = 0xA110CA7EA11CEAAAULL;
+    install_pairs[1].tag = 0xA110CA7EB0B0BBBBULL;
+}
+
+static void install_pairs_check_clean()
+{
+    for ( install_pair_state & pair : install_pairs )
+    {
+        check( pair.live == 0 );
+        check( pair.live_at_replace == 0 );
+        check( pair.allocated_after_retired == 0 );
+        check( pair.foreign_releases == 0 );
+    }
+}
+
+#if ROCKETNET_DEV
+
+// the call on the sentinel: started by install's hook, reported by
+// rocketnet_malloc's call seam
+
+static std::atomic<bool> sentinel_call_start{ false };
+static std::atomic<int> sentinel_call_waits{ 0 };
+
+static void sentinel_call_step( int step )
+{
+    if ( step == ROCKETNET_ALLOCATOR_STEP_WAITED )
+        ++sentinel_call_waits;
+}
+
+static void sentinel_call( void ** block )
+{
+    while ( !sentinel_call_start.load( std::memory_order_acquire ) )
+        std::this_thread::yield();
+    *block = rocketnet_malloc( NULL, 64 );
+}
+
+// install's window, sentinel published: start the call and wait until it
+// meets the sentinel. A call that allocates through the old pair instead (an
+// install with no sentinel) ends the wait too, and the checks after see it.
+static void sentinel_install_window()
+{
+    sentinel_call_start.store( true, std::memory_order_release );
+    while ( sentinel_call_waits.load() == 0 && install_pairs[0].allocates.load() == 0 )
+        std::this_thread::yield();
+}
+
+static void check_allocator_install_waits_out_a_call()
+{
+    install_pairs_reset();
+    check( install_pair( 0 ) == ROCKETNET_STATUS_OK );
+    sentinel_call_start = false;
+    sentinel_call_waits = 0;
+
+    rocketnet_allocator_set_call_hook_for_test( sentinel_call_step );
+    rocketnet_allocator_set_install_hook_for_test( sentinel_install_window );
+
+    void * block = NULL;
+    std::thread caller( sentinel_call, &block );
+    const int status = install_pair( 1 );
+    caller.join();
+
+    rocketnet_allocator_set_install_hook_for_test( NULL );
+    rocketnet_allocator_set_call_hook_for_test( NULL );
+
+    // install published with the call waiting uncounted on the sentinel, and
+    // the call allocated through the pair install published, never the old one
+    check( status == ROCKETNET_STATUS_OK );
+    check( sentinel_call_waits.load() >= 1 );
+    check( block != NULL );
+    check( install_pairs[0].allocates == 0 );
+    check( install_pairs[1].allocates == 1 && install_pairs[1].live == 1 );
+    rocketnet_free( NULL, block );
+    install_pairs_check_clean();
+
+    check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
+    printf( "allocator install waits out a call: %d sentinel waits\n", sentinel_call_waits.load() );
+}
+
+// install's window in the free-running rounds, widened without a clock
+static void install_window_yield()
+{
+    for ( int i = 0; i < INSTALL_WINDOW_YIELDS; ++i )
+        std::this_thread::yield();
+}
+#endif // #if ROCKETNET_DEV
+
 // one worker: allocate and free through whatever pair is installed until
-// told to stop, resting every 256 calls so the count reaches zero and an
-// install can land (a sleep is a millisecond or more on Windows, so the
-// rest is rare enough that the workers still reach their minimum there)
+// told to stop, parking between calls while the installer holds
 
 struct install_race_worker_args
 {
     std::atomic<bool> * go;
     std::atomic<bool> * stop;
+    std::atomic<bool> * hold;
+    std::atomic<int> * parked;
     std::atomic<int> * operations;
     int worker;
 };
@@ -890,10 +988,19 @@ struct install_race_worker_args
 static void install_race_worker( install_race_worker_args * args )
 {
     while ( !args->go->load( std::memory_order_acquire ) )
-        std::this_thread::sleep_for( std::chrono::microseconds( 50 ) );
+        std::this_thread::yield();
 
     for ( int i = 0; !args->stop->load( std::memory_order_acquire ); ++i )
     {
+        if ( args->hold->load( std::memory_order_acquire ) )
+        {
+            args->parked->fetch_add( 1 );
+            while ( args->hold->load( std::memory_order_acquire ) && !args->stop->load( std::memory_order_acquire ) )
+                std::this_thread::yield();
+            args->parked->fetch_sub( 1 );
+            continue;
+        }
+
         const size_t bytes = (size_t) ( 1 + ( i * 7 + args->worker * 131 ) % 512 );
         uint8_t * p = (uint8_t *) rocketnet_malloc( NULL, bytes );
         check( p );
@@ -901,8 +1008,6 @@ static void install_race_worker( install_race_worker_args * args )
         p[bytes - 1] = (uint8_t) args->worker;
         rocketnet_free( NULL, p );
         args->operations->fetch_add( 1, std::memory_order_relaxed );
-        if ( i % 256 == 255 )
-            std::this_thread::sleep_for( std::chrono::microseconds( 1 ) );
     }
 }
 
@@ -911,42 +1016,38 @@ static void check_allocator_install_race()
     const unsigned cores = std::thread::hardware_concurrency();
     const int workers = cores >= 3 ? 2 : 1;
 
-    install_pairs[0].tag = 0xA110CA7EA11CEAAAULL;
-    install_pairs[1].tag = 0xA110CA7EB0B0BBBBULL;
-    check( rocketnet_allocator_ex( install_allocate_a, install_release_a ) == ROCKETNET_STATUS_OK );
+    install_pairs_reset();
+    check( install_pair( 0 ) == ROCKETNET_STATUS_OK );
 
-    rocketnet_quiet( true );
 #if ROCKETNET_DEV
-    rocketnet_allocator_set_install_hook_for_test( install_window_sleep );
+    rocketnet_allocator_set_install_hook_for_test( install_window_yield );
 #endif // #if ROCKETNET_DEV
 
     std::atomic<bool> go{ false };
     std::atomic<bool> stop{ false };
+    std::atomic<bool> hold{ false };
+    std::atomic<int> parked{ 0 };
     std::atomic<int> operations{ 0 };
     install_race_worker_args workers_args[2];
     std::vector<std::thread> threads;
     for ( int w = 0; w < workers; ++w )
     {
-        workers_args[w] = { &go, &stop, &operations, w };
+        workers_args[w] = { &go, &stop, &hold, &parked, &operations, w };
         threads.emplace_back( install_race_worker, &workers_args[w] );
     }
 
     // the installer: alternate the pairs, each install refused while a call
-    // is counted, OK once none is, resting between attempts so the
-    // sentinel is down and the workers run
+    // is counted, OK once none is
 
     int installed = 0;
     int installs = 0;
     int refusals = 0;
-    const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    const std::chrono::duration<double> budget( INSTALL_RACE_BUDGET_SECONDS );
-    go.store( true, std::memory_order_release );
-    while ( std::chrono::steady_clock::now() - start < budget &&
-            ( installs < INSTALL_RACE_TARGET_INSTALLS || operations.load( std::memory_order_relaxed ) < INSTALL_RACE_TARGET_OPERATIONS ) )
+    int parked_installs = 0;
+    auto attempt = [&]() -> int
     {
         const int next = 1 - installed;
         install_pairs[next].retired.store( false, std::memory_order_release );
-        const int status = next == 0 ? rocketnet_allocator_ex( install_allocate_a, install_release_a ) : rocketnet_allocator_ex( install_allocate_b, install_release_b );
+        const int status = install_pair( next );
         if ( status == ROCKETNET_STATUS_OK )
         {
             if ( install_pairs[installed].live.load() != 0 )
@@ -960,11 +1061,29 @@ static void check_allocator_install_race()
             check( status == ROCKETNET_STATUS_LIVE_ALLOCATIONS );
             ++refusals;
         }
+        return status;
+    };
 
-        std::this_thread::sleep_for( std::chrono::microseconds( 20 ) );
+    rocketnet_quiet( true );
+    go.store( true, std::memory_order_release );
+    for ( int round = 0; round < INSTALL_RACE_ROUNDS; ++round )
+    {
+        // workers running: an install lands or is refused as the interleaving falls
+
+        while ( operations.load( std::memory_order_relaxed ) < ( round + 1 ) * INSTALL_RACE_OPERATIONS_PER_ROUND )
+            std::this_thread::yield();
+        attempt();
+
+        // workers parked between calls: nothing is counted, so install lands
+
+        hold.store( true, std::memory_order_release );
+        while ( parked.load() < workers )
+            std::this_thread::yield();
+        check( attempt() == ROCKETNET_STATUS_OK );
+        ++parked_installs;
+        hold.store( false, std::memory_order_release );
     }
 
-    const double seconds = std::chrono::duration<double>( std::chrono::steady_clock::now() - start ).count();
     stop.store( true, std::memory_order_release );
     for ( std::thread & thread : threads )
         thread.join();
@@ -974,18 +1093,11 @@ static void check_allocator_install_race()
 #endif // #if ROCKETNET_DEV
     rocketnet_quiet( false );
 
-    printf( "allocator install race: %d workers, %d installs, %d refusals, %d allocations in %.3f s\n", workers, installs, refusals, operations.load(), seconds );
+    printf( "allocator install race: %d workers, %d rounds, %d installs (%d parked), %d refusals, %d allocations\n", workers, INSTALL_RACE_ROUNDS, installs, parked_installs, refusals, operations.load() );
 
-    for ( install_pair_state & pair : install_pairs )
-    {
-        check( pair.live == 0 );
-        check( pair.live_at_replace == 0 );
-        check( pair.allocated_after_retired == 0 );
-        check( pair.foreign_releases == 0 );
-    }
-
-    check( installs >= INSTALL_RACE_MIN_INSTALLS );
-    check( operations.load() >= INSTALL_RACE_MIN_OPERATIONS );
+    install_pairs_check_clean();
+    check( parked_installs == INSTALL_RACE_ROUNDS );
+    check( operations.load() >= INSTALL_RACE_ROUNDS * INSTALL_RACE_OPERATIONS_PER_ROUND );
 
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 }
@@ -1101,6 +1213,9 @@ int main()
     check( rocketnet_init( &state, allocate, release ) == ROCKETNET_STATUS_OK );
     rocketnet_term();
     check( state.live == 0 );
+#if ROCKETNET_DEV
+    check_allocator_install_waits_out_a_call();
+#endif // #if ROCKETNET_DEV
     check_allocator_install_race();
     printf( "lifecycle OK: aligned allocator, component create sweeps, thread refusal and init/term\n" );
 

@@ -255,6 +255,13 @@ uint64_t rocketnet_lifecycle_locks_for_test( void );
 // a function install calls between reading a zero live count and publishing
 // the new pair (sdk/rocketnet.cpp); NULL for none
 void rocketnet_allocator_set_install_hook_for_test( void ( *hook )( void ) );
+
+// a function rocketnet_malloc calls at each step of its wait for a pair
+// (sdk/rocketnet.cpp): counted, before the pair read, and after meeting the
+// installing sentinel and uncounting; NULL for none
+#define ROCKETNET_ALLOCATOR_STEP_COUNTED 1
+#define ROCKETNET_ALLOCATOR_STEP_WAITED 2
+void rocketnet_allocator_set_call_hook_for_test( void ( *hook )( int step ) );
 #endif // #if ROCKETNET_DEV
 
 void rocketnet_api_misuse_record( void );
