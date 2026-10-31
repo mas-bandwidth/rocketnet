@@ -1,135 +1,80 @@
 # RNClientReceiveQuit
 
-**Shutdown scope:** This model retains its earlier synchronous shutdown
-abstraction and exact historical evidence. The approved request/completion API
-is separately modeled in [RNClientIoShutdown](README-RNClientIoShutdown.md).
-That additive ownership model is not a proved refinement of this one; existing
-data-path/session checks do not establish the new shutdown implementation.
+**Shutdown scope:** The request/completion API is modeled in
+[RNClientIoShutdown](README-RNClientIoShutdown.md). That ownership model is not
+a proved refinement of this one.
 
-The client receive thread's quit-and-wake handshake with destroy, as
-rocketnet-client-destroy-joins-receive-thread built it (the fix for a macOS
-hang in destroy: the receive thread's 1 ms wait sometimes never timed out,
-so the join never returned). This is the thread `create` starts when the
-granted transport has no wait and wake
-(`sdk/rocketnet_client_transport.cpp:973`); the I/O thread of the other
-branch is `RNClientIo`'s.
-
-The line numbers below are those of the code the model was written against
-(sprint/rocketnet-proof at f3160398).
+The legacy client receive thread's quit handshake with stop and destroy. This
+is the thread `create` starts when the granted transport has no wait and wake
+(custom BASE drivers, and the built-in portable client on platforms without
+`ROCKETNET_PLATFORM_HAS_WAKE`); the I/O thread of the other branch is
+`RNClientIo`'s.
 
 - **The thread** (`rocketnet_client_thread_function`,
-  `sdk/rocketnet_client_transport.cpp:2088-2100`). `Check` is the acquire
-  load of `quit` at the top of every pass (2094): true ends the loop, false
-  enters the body. The body drains the socket (2096,
-  `rocketnet_client_receive_packets`, which never blocks: it breaks when the
-  buffer is full, 2047, or the socket is empty, 2052) and then calls
-  `rocketnet_platform_thread_wait( thread, 0.001 )` with the thread's own
-  record, the function's first argument (2098): `WaitBegin`.
-- **The wait and the wake, per platform** (`sdk/rocketnet_platform.cpp`).
-  - linux: the wait locks `wake_mutex` (1124) and, while `woken` is false,
-    waits on `wake_cond` until a CLOCK_MONOTONIC deadline (1125-1128); the
-    wake sets `woken` under the same mutex and broadcasts (1136-1139). The
-    check and the block are one step under the mutex, so `WaitBegin` returns
-    at once (`th = "woken"`) when `woken` is set and blocks otherwise;
-    `WaitWoken` is the broadcast ending the wait. A spurious wakeup
-    re-checks `woken` and waits again (the `while` at 1125): `Spurious`
-    changes nothing on linux.
-  - mac and iOS: the wait returns at once when `woken` is set (acquire,
-    2785-2786), else waits on a mach semaphore until the timeout (2796); the
-    wake stores `woken` with release and then signals the semaphore
-    (2802-2803). A wake between the check and the semaphore wait is kept by
-    the semaphore's count (`sem`), so `WaitWoken` reads `sem`, not `woken`.
-    The wait ignores `semaphore_timedwait`'s result, so an aborted wait
-    returns early: `Spurious` goes back to the check.
-  - windows: the wait is `rocketnet_platform_sleep` (3284-3287), which
-    always returns; the wake is a no-op (3140-3144). `HasWake` is false.
-  - `woken` starts false at `thread_create` (1064, 2742) and is never
-    cleared, so every wait after the wake returns at once.
-- **Destroy** (`sdk/rocketnet_client_transport.cpp:1035-1068`).
-  `DestroyQuit` is the release store of `quit` (1041), `DestroyWake` the
-  `rocketnet_platform_thread_wake` (1042), `JoinBegin` and `JoinReturns` the
-  `rocketnet_platform_thread_join` (1043; `pthread_join` at 1087 and 2764,
-  `WaitForSingleObject` at 3128), which returns only once the thread
-  function has returned, and `DestroyFree` the `thread_destroy` that frees
-  the handle (1044; 1093-1095, 2770-2771, 3134-3135) and the frees of the
-  transport the thread reads that follow (1047-1068). `DestroyQuitLate`
-  exists only for the defect `WakeBeforeQuit`.
+  `sdk/rocketnet_client_transport.cpp`). `Check` is the acquire load of
+  `quit` at the top of every pass: true ends the loop, false enters the
+  body. The body drains the socket (`rocketnet_client_receive_packets`,
+  which never blocks) and then calls
+  `rocketnet_platform_thread_wait( thread, 0.001 )`: `WaitBegin`.
+  `WaitTimesOut` is that wait returning on its timeout.
+- **The wait, per platform** (`sdk/rocketnet_platform.cpp`). linux waits on
+  a condition variable until a CLOCK_MONOTONIC deadline and re-waits after a
+  spurious wakeup (`Spurious` changes nothing); mac waits on a mach semaphore
+  until the timeout and ignores the result, so an aborted wait returns early
+  (`Spurious` goes back to the check); windows sleeps, which always returns.
+- **Stop and destroy.** `StopQuit` is the release store of `quit` in the
+  legacy branch of `rocketnet_client_transport_stop`. Stop makes no wake:
+  nothing on this path calls `rocketnet_platform_thread_wake`, so the thread
+  leaves its wait only when the wait returns by itself. `JoinBegin` and
+  `JoinReturns` are `rocketnet_platform_thread_join` in
+  `rocketnet_client_thread_release`, which returns only once the thread
+  function has returned, and `DestroyFree` the `thread_destroy` and the frees
+  of the transport that follow.
 
 `WaitTimeout` says what the model may assume of the wait's timeout: `"fair"`
-(it always fires: Windows' sleep), `"unreliable"` (it may never fire, the
-macOS hang, so linux and mac must finish destroy on the wake alone; no
-fairness on `WaitTimesOut`), or `"none"`. A lost wake is a timeout that never
-fires; a spurious wake is `Spurious`.
+(it always fires) or `"unreliable"` (it may never fire; no fairness on
+`WaitTimesOut`). The code relies on `"fair"`.
 
-## Invariants and properties
+## Properties
 
-- **`NoJoinBeforeExit`**: the join has returned, and the handle and the
-  transport are freed, only once the thread has exited.
-- **`NoUseAfterJoin`** (action property): once the join has returned the
-  thread takes no step and no wake writes `woken` or the semaphore of the
-  handle `thread_destroy` frees.
-- **`WokenSeesQuit`**: a wait the wake ended is followed by a quit check that
-  ends the loop; the wake is never spent on a pass that still reads `quit`
-  false. This is the ordering rule of `rocketnet_platform_thread_wake`'s
-  contract (`sdk/rocketnet_platform.h:582-584`: store the flag, then wake,
-  then join).
-- **`DestroyCompletes`**: once destroy has begun it completes, under weak
-  fairness of the thread's `Check`, `WaitBegin` and `WaitWoken`, of
-  destroy's steps after its first, and of `WaitTimesOut` only when
-  `WaitTimeout = "fair"` (`SpecFair`). Destroy's first step has no
+- **`DestroyCompletes`**: once stop has run, destroy completes, under weak
+  fairness of the thread's `Check` and `WaitBegin`, of destroy's steps, and of
+  `WaitTimesOut` only when `WaitTimeout = "fair"` (`SpecFair`). Stop has no
   fairness: the game need never call it.
 - **`TypeOK`**: every variable has its declared type.
 
-## Runs
+That the join returns only after the thread has exited, and that the thread
+takes no step after it, is the platform join's contract (`JoinReturns` is
+enabled only at `th = "exited"`), so the module states no invariant for it.
 
-The model is finite as written (one thread, one destroy, one wake), so there
-are no size constants. Raw TLC 2.19 output, one worker, on a Linux bench:
+## Cases
 
-| Configuration | Platform | Timeout | Result |
+The model is finite as written (one thread, one stop, one destroy), so there
+are no size constants. The measured records are in `proofs/tla/RUNS.tsv`
+(group `rnclientreceivequit`).
+
+| Configuration | Platform | Timeout | Expected |
 |---|---|---|---|
-| `MCRNClientReceiveQuit.cfg` | linux | unreliable | No error; 34 generated, 19 distinct |
-| `MCRNClientReceiveQuitMac.cfg` | mac | unreliable | No error; 43 generated, 25 distinct |
-| `MCRNClientReceiveQuitWindows.cfg` | windows | fair | No error; 27 generated, 17 distinct |
-| `MCRNClientReceiveQuitBrokenWakeBeforeQuit.cfg` | linux | unreliable | exit 12, `Invariant WokenSeesQuit is violated` (4 states) |
-| `MCRNClientReceiveQuitBrokenNoWakeNoTimeout.cfg` | linux | none | exit 13, `Temporal properties were violated` (`DestroyCompletes`, 6 states then stuttering) |
+| `MCRNClientReceiveQuit.cfg` | linux | fair | pass |
+| `MCRNClientReceiveQuitMac.cfg` | mac | fair | pass |
+| `MCRNClientReceiveQuitWindows.cfg` | windows | fair | pass |
+| `MCRNClientReceiveQuitBrokenTimeoutNeverFires.cfg` | mac | unreliable | fails `DestroyCompletes` |
 
-The measured records are in `proofs/tla/RUNS.tsv` (group `rnclientreceivequit`).
+## The witness, checked against the code by hand
 
-Unrecorded mutations, run once to see that the controls do not pass for the
-wrong reason: linux and mac with the wake made a no-op but the timeout
-`"unreliable"` fail `DestroyCompletes` (so the POSIX controls finish on the
-wake, not on the timeout), Windows with the timeout `"unreliable"` fails it
-(so the Windows control finishes on the sleep), and linux with no wake and a
-`"fair"` timeout passes (the pre-fix base design on a platform whose timeout
-fires).
-
-## The witnesses, checked against the code by hand
-
-**`WakeBeforeQuit` (WokenSeesQuit).** TLC's trace: (1) the thread at the
-check; (2) `Check` reads `quit` false and enters the drain (2094, 2096);
-(3) the defect's destroy wakes first: `woken` set (1137), `quit` still false;
-(4) `WaitBegin`: the wait finds `woken` set under the mutex (1125) and
-returns at once, with `quit` false. The thread goes round again on a spent
-wake. In the code `quit.store` (1041) precedes `thread_wake` (1042) on the
-same thread and the wake's mutex (or, on mac, its release store paired with
-the wait's acquire load) orders the two, so a wait the wake ends is followed
-by a check that reads `quit` true. With `woken` sticky the defect costs
-passes, not a hang; on a wake consumed by the wait it would be a lost wake
-and the thread would sleep until a timeout that, on macOS, may not come.
-
-**`NoWake` with `WaitTimeout = "none"` (DestroyCompletes).** TLC's trace:
-the thread checks `quit` false and blocks in its wait (2094, 2098); destroy
-stores `quit` (1041), its wake does nothing, and it enters the join (1043);
-then stuttering: the thread never leaves its wait, so the join never
-returns. This is the macOS hang the fix removed: a wait whose timeout did
-not fire and no wake to end it. The code has the wake on linux
-(1133-1140) and mac (2799-2804), and on Windows a sleep that returns
-(3284-3287).
+**`WaitTimeout = "unreliable"` (DestroyCompletes).** TLC's trace: the thread
+checks `quit` false, drains and blocks in its 1 ms wait; stop stores `quit`
+with release and makes no wake; destroy enters the join; then a lasso in
+which the wait never returns. In the code, `rocketnet_client_transport_stop`'s
+legacy branch stores `quit` and returns, and `rocketnet_client_thread_release`
+calls `rocketnet_platform_thread_join`, which waits for a thread that is
+inside `rocketnet_platform_thread_wait` and comes out only on the timeout. On
+a platform whose timed wait always returns (Windows' sleep, and the POSIX
+waits when their timeout fires) destroy completes within one wait; nothing
+else bounds it.
 
 ## Not modelled
 
-The I/O thread branch of destroy (992-1034, `RNClientIo`); create's failure
-path (974-981, no thread to join); a wait without the thread's record, which
-never happens: the record exists before the thread starts and the shim passes
-it to the thread function; and the contents of the drain, which `RNClientIo`
-and the receive tests cover.
+The I/O thread branch (`RNClientIo`); create's failure path (no thread to
+join); and the contents of the drain, which `RNClientIo` and the receive tests
+cover.
