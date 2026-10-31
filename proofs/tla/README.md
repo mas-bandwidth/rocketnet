@@ -181,6 +181,12 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 
 The case plan in `CASES.tsv` covers every root configuration: 572 cases
 in 89 groups, 556 required and 16 bench cases whose `debt` column names
+| `rnbankfifolayout` | 13 | The hand-written bank queues of the portable, gso, xdp, iocp and rio server transports, the buffer handoff and the iocp client at their layout (README-RNBankFifoLayout.md): seven controls (the FIFO shapes with the literal and loop initializers, max_ready 1 and N, the free stacks with one bank and with exposed lists, and the posted ready ring) and six reversed witnesses, the empty test one late, the literal at four banks and a stack pushed but popped as a FIFO (all `ExactlyOnePlace`), the tail without its modulo (`InBounds`), and the tail at the wrong modulus and the iocp client's tail at the array's size (both `ReadyMatches`) |
+| `rnriosendslotlayout` | 2 | The RIO send slots, reservation counter and send_ready FIFO of phases at their layout (README-RNRioSendSlotLayout.md): the control with a counter that does not wrap and the reversed witness, a signed counter that wraps back to a staged slot (`NoReissue`) |
+| `rnclientiocompactlayout` | 3 | The client I/O batch receive's in-place compaction at its layout (README-RNClientIoCompactLayout.md): the control and two reversed witnesses, the record at the source slot and the move dropped (both `RecordsExact`) |
+
+The case plan in `CASES.tsv` covers every root configuration: 562 cases
+in 85 groups, 546 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
