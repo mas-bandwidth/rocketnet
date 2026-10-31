@@ -505,3 +505,11 @@ MCRNResendFifoLayout.cfg	MCRNResendFifoLayout.tla	pass	-	check	rnresendfifolayou
 MCRNResendFifoLayoutBrokenNoSelfTailFix.cfg	MCRNResendFifoLayout.tla	invariant	ListsMatch	check	rnresendfifolayout	required	-
 MCRNResendFifoLayoutBrokenNoTailOnEnd.cfg	MCRNResendFifoLayout.tla	invariant	ListsMatch	check	rnresendfifolayout	required	-
 MCRNResendFifoLayoutBrokenStaleClassBit.cfg	MCRNResendFifoLayout.tla	invariant	ListsMatch	check	rnresendfifolayout	required	-
+MCRNSentRingLayout.cfg	MCRNSentRingLayout.tla	pass	-	check	rnsentringlayout	required	-
+MCRNSentRingLayoutCodeRatio.cfg	MCRNSentRingLayout.tla	pass	-	check	rnsentringlayout	required	-
+MCRNSentRingLayoutReceipts.cfg	MCRNSentRingLayout.tla	pass	-	check	rnsentringlayout	required	-
+MCRNSentRingLayoutBrokenEvictPastP.cfg	MCRNSentRingLayout.tla	invariant	SlotsIntact	check	rnsentringlayout	required	-
+MCRNSentRingLayoutBrokenRefTestOffByOne.cfg	MCRNSentRingLayout.tla	invariant	RefsIntact	check	rnsentringlayout	required	-
+MCRNSentRingLayoutBrokenResetNonEmpty.cfg	MCRNSentRingLayout.tla	invariant	RefsIntact	check	rnsentringlayout	required	-
+MCRNSentRingLayoutBrokenNoReceiptClamp.cfg	MCRNSentRingLayout.tla	invariant	ReadExact	check	rnsentringlayout	required	-
+MCRNSentRingLayoutBrokenSerialZero.cfg	MCRNSentRingLayout.tla	invariant	SerialNeverZero	check	rnsentringlayout	required	-

@@ -460,6 +460,7 @@ bool rn_endpoint_send_room( const struct rn_endpoint_t * endpoint, int channel, 
     return rn_region_send_fit( endpoint->region, bytes ) == RN_SEND_FIT_OK;
 }
 
+// proofs/tla/RNSentRingLayout.tla IssueSerial: the serial steps to 1, never 0.
 uint32_t rn_endpoint_finish( struct rn_endpoint_t * endpoint, int bytes, uint32_t serial )
 {
     // proofs/tla/RNEndpoint.tla Send, its second half: the
