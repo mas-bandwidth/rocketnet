@@ -15,7 +15,7 @@ connect tokens use only the published development keys from
 | `rocketnet_fuzz_message` | the message record decoder, with oracles on the layer's promises | `corpus_message/` | `dict/rocketnet_fuzz_message.dict` |
 | `rocketnet_fuzz_connect_token` | the server's token ladder and the client's connect parse, raw and structured halves | `corpus_connect_token/` | `dict/rocketnet_fuzz_connect_token.dict` |
 | `rocketnet_fuzz_token_private` | the token layouts behind the signature and the sealed block, reached directly | `corpus_token_private/` | `dict/rocketnet_fuzz_token_private.dict` |
-| `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream | `corpus_receive_structured/` | `dict/rocketnet_fuzz_receive_structured.dict` |
+| `rocketnet_fuzz_receive_structured` | a real client and server through the handshake into the session, input as a decision stream, with oracles on refusal immutability, the counter ledgers and one live connection per token | `corpus_receive_structured/` | `dict/rocketnet_fuzz_receive_structured.dict` |
 | `rocketnet_fuzz_round_trip` | every wire form encoded then decoded; the values read must equal the values written | `corpus_round_trip/` | `dict/rocketnet_fuzz_round_trip.dict` |
 | `rocketnet_fuzz_config` | `rocketnet_config_apply_env` over every env-backed config field | `corpus_config/` | `dict/rocketnet_fuzz_config.dict` |
 | `rocketnet_fuzz_server_transport` | the server's real receive loop (`rocketnet_server_transport_update`) and the message server above it | `corpus_server_transport/` | `dict/rocketnet_fuzz_server_transport.dict` |
@@ -239,7 +239,8 @@ pre-send checks take (raw and structured halves, the signature verdicts, the
 client's flags, window, version, expiry and address-family refusals), and
 `rocketnet_fuzz_receive_structured` writes one seed per packet type the stateful
 receive path dispatches on, from a completed handshake and the real send
-paths. Each seed is replayed through the target before it is written. The
+paths, and one `seed_oracle_*` seed per oracle, which it requires to reach
+that oracle. Each seed is replayed through the target before it is written. The
 generator exits 1 and prints `INCOMPLETE` unless every packet type the
 target's receive loop reads has a seed that raises that type's counter (or,
 for the session target, unless every reliability type is delivered in both
