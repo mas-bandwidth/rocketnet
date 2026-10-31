@@ -2620,6 +2620,9 @@ void rocketnet_server_transport_update( struct rocketnet_server_transport_t * se
     struct rocketnet_server_acks_t * acks = server_transport->protocol.acks;
 
     const int max_clients = rocketnet_client_slots_max_clients( server_transport->protocol.client_slots );
+    // proofs/tla/RNServerMaintenanceSweep.tla BeginSweep: the sweep starts at
+    // the cursor; SweepDone: it ends when every slot has had its visit
+
     const int first_client = server_transport->maintenance_next_client;
 
     for ( int offset = 0; offset < max_clients; offset++ )
