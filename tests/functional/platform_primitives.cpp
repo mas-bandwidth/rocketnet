@@ -348,7 +348,7 @@ void rocketnet_test_bundled_rng_closes_and_reopens_on_mac()
     const long baseline = rng_lifecycle_fd_count();
     rocketnet_check( baseline >= 0 );
 
-    // Each init opens the RNG descriptor once (rocketnet_crypto_open_source), and
+    // Each init opens the RNG descriptor once (rocketnet_crypto_open_source, under the crypto mutex), and
     // each term closes it and retains no other descriptor.
 
     for ( int cycle = 0; cycle < 3; ++cycle )

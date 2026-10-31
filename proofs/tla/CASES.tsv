@@ -578,6 +578,6 @@ MCRNClientLadderBrokenOomFalls.cfg	MCRNClientLadder.tla	invariant	NoTryAfterOom	
 MCRNClientLadderBrokenIgnoresToken.cfg	MCRNClientLadder.tla	invariant	TriedInToken	check	rnclientladder	required	-
 MCRNCryptoSource.cfg	MCRNCryptoSource.tla	pass	-	check	cryptosource	required	-
 MCRNCryptoSourceBrokenNoLock.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
-MCRNCryptoSourceBrokenNoShared.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
+MCRNCryptoSourceBrokenNoHold.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
 MCRNCryptoSourceBrokenNoClear.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
 MCRNCryptoSourceBrokenNoStir.cfg	MCRNCryptoSource.tla	invariant	AtMostOneSource	check	cryptosource	required	-
