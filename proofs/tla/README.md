@@ -164,9 +164,10 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnpacketlease` | 13 | The packet lease table (README-RNPacketLease.md): four passing cases (the code's rule without `retired`, with `retired` validated, `insert` wait-free, and `resolve` completing with one thread scheduled) and nine failing: six reversed witnesses (no compare-and-swap on insert or on take, a read of an entry being written, no epoch bump, an unlimited epoch, a used limit one too high), the wait for a paused writer that `resolve` had before it skipped writing entries (`ResolveCompletes`), and `retired` without the reread of the state (`NoRacyRead`, `NoWrongSuccess`) |
 | `rnwindowlayout` | 4 | The receive window's bitmap words and descriptor slots at the code's layout, W = 4 and a wire modulus of 16 (README-RNWindowLayout.md): the control and three reversed witnesses, an advance that does not clear the floor bit (`NoSilentLoss`), a reconstruction without the half-range sign (`HonestReadExactly`) and the live-descriptor test dropped (`NoLiveOverwrite`) |
 | `rnsequencedholdpool` | 3 | The code-1 hold pool at the code's layout, two holds and two channels, the free stack and the delivered list as one array (README-RNSequencedHoldPool.md): the control and two reversed witnesses, a delivery that leaves `held_sequenced` naming the delivered slot (`StackInBounds`) and a delivered slot returned at once (`NoPayloadOverwrite`) |
+| `rnmessageviews` | 4 | The message object's receive views at the code's layout, a table of three and a batch of two (README-RNMessageViews.md): the control and three reversed witnesses, the release search starting at the cursor (`ReleaseFindsHeld`), the batch release without the `HELD` test (`HeldCountExact`) and the views cleared by the count read after the table was emptied (`NoLostView`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 509 cases
-in 74 groups, 493 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 513 cases
+in 75 groups, 497 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.

@@ -600,6 +600,7 @@ static rn_message_connection_t * rn_message_admit( rn_message_object_t * object,
 
 static void rn_message_object_release_batch( struct rn_message_object_t * object );
 
+// proofs/tla/RNMessageViews.tla Update: the batch released, the last update's views cleared by its delivery count, cursor and held reset
 int rn_message_object_update( struct rn_message_object_t * object, double time )
 {
     int result = ROCKETNET_UPDATE_OK;
@@ -1410,6 +1411,7 @@ static const rn_delivery_t * rn_message_object_next( struct rn_message_object_t 
     return NULL;
 }
 
+// proofs/tla/RNMessageViews.tla Receive: the first WAITING entry at or past the cursor is held
 int rn_message_object_receive( struct rn_message_object_t * object, int * index, int * channel, const uint8_t ** data, int * bytes )
 {
     // one delivery from the queue, valid until the next update and held until the caller lets it go
@@ -1464,6 +1466,7 @@ static bool rn_message_connection_release_view( rn_message_connection_t * connec
     return false;
 }
 
+// proofs/tla/RNMessageViews.tla Release: the backward search from cursor - 1 for the held view of that pointer
 void rn_message_object_release( struct rn_message_object_t * object, const uint8_t * data )
 {
     // proofs/tla/RNSlots.tla Release: a held view returns, and the region's charge for that message returns with it.
@@ -1509,6 +1512,7 @@ static void rn_message_object_release_batch( struct rn_message_object_t * object
     object->batch_count = 0;
 }
 
+// proofs/tla/RNMessageViews.tla ReceiveBatch: the last batch released, then up to the batch size received
 int rn_message_object_receive_messages( struct rn_message_object_t * object, struct rocketnet_message_batch_t * out )
 {
     // the pumped receive of the one queue (flow's batch handoff to the game):
