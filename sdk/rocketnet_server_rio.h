@@ -88,7 +88,7 @@ enum rocketnet_server_rio_counter_t
     ROCKETNET_RIO_COUNTER_PACKETS_SENT,             // send completions with a good status
     ROCKETNET_RIO_COUNTER_PACKETS_RECEIVED,         // datagrams copied into a receive bank
     ROCKETNET_RIO_COUNTER_SEND_FULL,                // start_packet found the fill phase full
-    ROCKETNET_RIO_COUNTER_SEND_FAILED,              // a refused post or a failed send completion
+    ROCKETNET_RIO_COUNTER_SEND_FAILED,              // a refused start, finish or post, or a failed send completion
     ROCKETNET_RIO_COUNTER_SEND_WAITS,               // flushes that kept the fill phase open: the next phase not yet idle
     ROCKETNET_RIO_COUNTER_RECEIVE_FAILED,           // receive completions with a failed status
     ROCKETNET_RIO_COUNTER_RECEIVE_DROPPED_SIZE,     // datagrams outside the wire's size bounds

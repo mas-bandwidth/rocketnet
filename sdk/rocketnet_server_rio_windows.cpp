@@ -131,7 +131,6 @@ struct rocketnet_server_rio_t
 
     // send, worker only: deferred sends posted and not yet committed
     bool uncommitted = false;
-    uint64_t uncommitted_packets = 0;
 
     // receive, under the mutex: the model's free and ready
     int free_banks[ROCKETNET_RIO_RECEIVE_BANKS];
@@ -304,7 +303,8 @@ static const SOCKADDR_INET * rocketnet_rio_receive_address( rocketnet_server_rio
 }
 
 // one RIO_MSG_COMMIT_ONLY when deferred sends are uncommitted; a refused
-// commit leaves them uncommitted for the next try
+// commit leaves them uncommitted for the next try and counts nothing: each
+// deferred send still completes once, as PACKETS_SENT or SEND_FAILED
 static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
 {
     if ( !rio->uncommitted )
@@ -313,13 +313,11 @@ static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, &injected ) ||
          !rocketnet_rio_send_call( rio, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
     {
-        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED, rio->uncommitted_packets );
         rocketnet_warn( "rio transport: send commit refused (Winsock %d); retried", WSAGetLastError() );
         return;
     }
 
     rio->uncommitted = false;
-    rio->uncommitted_packets = 0;
     rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_COMMITS );
 }
 
@@ -1007,9 +1005,14 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t 
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
     (void) packet_id;
 
+    // a refused finish loses the packet: the slot keeps zero bytes and the
+    // post phase skips it, so the loss is counted here
     const int index = rocketnet_rio_frame_index( rio, frame );
     if ( index < 0 || packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
         return;
+    }
     rio->slot_bytes[index] = packet_bytes;
 }
 
@@ -1116,10 +1119,7 @@ static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, i
     rio->outstanding[phase].fetch_add( posted, std::memory_order_relaxed );
 
     if ( posted > 0 )
-    {
         rio->uncommitted = true;
-        rio->uncommitted_packets += (uint64_t) posted;
-    }
 
     rocketnet_rio_commit( rio );
 }
