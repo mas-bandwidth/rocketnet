@@ -171,15 +171,8 @@ failed records unless they are explicit `bench` debt with actual exit 124.
 | `rnchannelqueueslayout` | 4 | The channel FIFOs and the ready list at the code's links, three descriptors and two channels (README-RNChannelQueuesLayout.md): the control and three reversed witnesses, a pop of the last entry that keeps the tail (`NoForeignLink`), a push to the front of an empty FIFO that leaves the tail unset (`QueueIsList`) and a ready removal that leaves the ends naming the channel (`ReadyIsList`) |
 | `rnorderingwrap` | 2 | The 24-bit ordering against the 32-bit read index, W = 2, wire modulo 8, counter modulo 32 and a table of two (README-RNOrderingWrap.md): the control and the reversed witness, the reservation's unmasked compare that 4ec79571 fixed (`NoExhaust`) |
 
-The case plan in `CASES.tsv` covers every root configuration: 519 cases
-in 77 groups, 503 required and 16 bench cases whose `debt` column names
-The case plan in `CASES.tsv` covers every root configuration: 506 cases
-in 73 groups, 490 required and 16 bench cases whose `debt` column names
-The case plan in `CASES.tsv` covers every root configuration: 514 cases
-in 74 groups, 498 required and 16 bench cases whose `debt` column names
-in 75 groups, 503 required and 16 bench cases whose `debt` column names
-The case plan in `CASES.tsv` covers every root configuration: 536 cases
-in 80 groups, 520 required and 16 bench cases whose `debt` column names
+The case plan in `CASES.tsv` covers every root configuration: 540 cases
+in 81 groups, 524 required and 16 bench cases whose `debt` column names
 an explicit over-budget reason. Other experiments described in the model
 READMEs remain historical; this plan does not claim fresh measurements
 for uncommitted variants or change their model semantics.
