@@ -967,7 +967,7 @@ static inline int rocketnet_dst_draw_size( struct rocketnet_dst_substream_t * tr
     else
     {
         lo = 4001;
-        hi = 16384;
+        hi = ROCKETNET_DST_CHECK_MAX_MESSAGE_BYTES;
     }
 
     if ( type == 0 || type == 1 || type == 5 )
@@ -1112,7 +1112,7 @@ static inline void rocketnet_dst_send_one( rocketnet_dst_world_t * w, int index,
     }
 
     const int reliable = ( type == 2 || type == 3 || type == 4 || type == 6 || type == 7 );
-    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session ) > 65536 )
+    if ( reliable && rocketnet_dst_check_outstanding( &w->check, session ) > ROCKETNET_DST_CHECK_OUTSTANDING_CAP )
         return;
 
     uint32_t epoch = 0;
