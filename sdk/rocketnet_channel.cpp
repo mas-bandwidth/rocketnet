@@ -1650,12 +1650,13 @@ int rn_ordered_write( struct rn_ordered_t * ordered, double now, uint8_t ** payl
     plan.room = room;
     plan.capacity = capacity;
 
-    // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at
-    // min( resend_delay, resend_interval ), then the chunks of blocks at the resend delay alone
+    // 1. The two resend FIFOs (6.4 "Resend"): single-packet records at the
+    // resend delay (rn_window_ack_resend_delay), then the chunks of blocks at
+    // the resend delay capped at reliable_timeout / 4
     // (rn_window_ack_chunk_resend_delay), retransmits first (R6). Each walk
-    // stops at its own first number not yet due, so a chunk that is not due
-    // never holds back a small record that is (RNResendTiming!
-    // SmallNeverHeldByChunk) and the work is O(due).
+    // stops at its own first number not yet due, so a record that is not due
+    // never holds back one of the other class that is (RNResendTiming!
+    // NoDueRecordHeld) and the work is O(due).
 
     ack->walk_visits = 0;
 

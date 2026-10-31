@@ -412,7 +412,7 @@ void resend_timing_table_over_lossy_links()
     messages beside the block are all delivered and never held behind its
     chunks: after every update's packets are written, the oldest unacked
     number of the client's small-record FIFO is not due
-    (RNResendTiming!SmallNeverHeldByChunk on the product's walk; "small_held"
+    (RNResendTiming!NoDueRecordHeld on the product's walk, the small class; "small_held"
     counts the updates where it was). Their p99 is printed and not asserted:
     with a few dozen messages a run it is the slowest one, set by how many of
     its sends were lost.
@@ -436,7 +436,7 @@ struct block_cost_row_t
     int small_held;
 };
 
-// RNResendTiming!SmallNeverHeldByChunk on the product's walk: after an
+// RNResendTiming!NoDueRecordHeld on the product's walk, the small class: after an
 // update's packets are written, the oldest unacked number in the client's
 // small-record FIFO is not due (a due one would have been written). Returns 1
 // when it is due, that is, when the update held it.

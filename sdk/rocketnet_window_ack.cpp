@@ -482,7 +482,7 @@ void rn_window_ack_init( rn_window_ack_t * ack, rn_window_send_t * send, rn_regi
     ack->resend_delay_max = (double) config->message_resend_delay_max_ms / 1000.0;
     ack->reliable_timeout = (double) config->reliable_message_timeout_ms / 1000.0;
 
-    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: resend_delay = ResendDelayInitial
+    ack->resend_delay = ack->resend_delay_initial;                // proofs/tla/RNResendTiming.tla Init: rto = RtoInitial
 
     ack->resend_head = RN_RESEND_NONE;
     ack->resend_tail = RN_RESEND_NONE;

@@ -99,7 +99,7 @@ struct rn_window_ack_t
 
     // Two resend sequences over the one flat array region->resend_fifo, one per
     // delay class (standard/MESSAGES.md m9.3; proofs/tla/RNResendTiming.tla
-    // SmallNeverHeldByChunk): single-packet records, and the chunks of a
+    // NoDueRecordHeld): single-packet records, and the chunks of a
     // block (a record whose send descriptor has more than one fragment). Each
     // is ordered by its entries' sequence keys and walked from its head while due.
     uint32_t resend_head;           // oldest slot in the small-record sequence (0..W-1), or RN_RESEND_NONE
