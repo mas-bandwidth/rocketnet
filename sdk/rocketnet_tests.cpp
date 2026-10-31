@@ -16043,6 +16043,9 @@ static const struct rocketnet_unit_test_t rocketnet_unit_tests[] = {
 };
 
 #if ROCKETNET_DEV
+// the suite's environment lives in static storage and is never destroyed, so
+// the variables it cleared stay cleared for the life of the process
+alignas( rocketnet_test_environment_t ) static unsigned char rocketnet_unit_environment_storage[sizeof( rocketnet_test_environment_t )];
 static rocketnet_test_environment_t * rocketnet_unit_environment = NULL;
 #endif // #if ROCKETNET_DEV
 
@@ -16073,7 +16076,7 @@ void rocketnet_unit_prepare()
     rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
 
     if ( rocketnet_unit_environment == NULL )
-        rocketnet_unit_environment = new rocketnet_test_environment_t();
+        rocketnet_unit_environment = new ( rocketnet_unit_environment_storage ) rocketnet_test_environment_t();
 #endif // #if ROCKETNET_DEV
 }
 
