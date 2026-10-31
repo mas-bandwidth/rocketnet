@@ -21,7 +21,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <thread>
-#include <chrono>
 #include <string>
 
 #if defined( __APPLE__ ) && !defined( ROCKETNET_USE_SYSTEM_SODIUM )
@@ -562,106 +561,135 @@ void rocketnet_test_frame_sync_high_resolution_timer_required()
 #endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
+
+// The drops a wake at woke_ns owes against a deadline: a wake more than one
+// whole period late drops lateness / period frames, as sdk/rocketnet_frame_sync.h
+// documents rocketnet_frame_sync_advance. Written here from the contract, not
+// by calling the library, so the case checks the library against it.
+
+static uint64_t rocketnet_frame_sync_expected_drops( uint64_t deadline_ns, uint64_t period_ns, uint64_t woke_ns )
+{
+    const uint64_t lateness = woke_ns > deadline_ns ? woke_ns - deadline_ns : 0;
+    return lateness > period_ns ? lateness / period_ns : 0;
+}
+
+// One real wait, bracketed by reads of the clock the frame sync runs on.
+// The library reads its wake time between before_ns and after_ns, so its
+// drop count, lateness and next deadline are pinned by those two reads
+// whatever the operating system's scheduler did inside the wait. Nothing is
+// asserted about how late the wake was. Returns the drops this wait added.
+
+static uint64_t rocketnet_frame_sync_bracketed_wait( struct rocketnet_frame_sync_t * frame_sync )
+{
+    const uint64_t period_ns = frame_sync->period_ns;
+    const uint64_t frame_before = frame_sync->frame;
+    const uint64_t dropped_before = frame_sync->dropped_frames;
+    const int first = !frame_sync->first_wait_done;
+    const uint64_t deadline_before = frame_sync->deadline_ns;
+
+    const uint64_t before_ns = rocketnet_frame_sync_now_ns();
+    rocketnet_frame_sync_wait( frame_sync );
+    const uint64_t after_ns = rocketnet_frame_sync_now_ns();
+
+    rocketnet_check( frame_sync->first_wait_done );
+    rocketnet_check( frame_sync->frame == frame_before + 1 );
+    rocketnet_check( frame_sync->dropped_frames >= dropped_before );
+
+    const uint64_t drops = frame_sync->dropped_frames - dropped_before;
+
+    // the deadline this wait ran against: the one held before it, or on the
+    // first wait the anchor one period after the wait's own entry
+
+    const uint64_t deadline_min = first ? before_ns + period_ns : deadline_before;
+    const uint64_t deadline_max = first ? after_ns + period_ns : deadline_before;
+
+    rocketnet_check( drops >= rocketnet_frame_sync_expected_drops( deadline_max, period_ns, before_ns ) );
+    rocketnet_check( drops <= rocketnet_frame_sync_expected_drops( deadline_min, period_ns, after_ns ) );
+
+    const uint64_t lateness_min = before_ns > deadline_max ? before_ns - deadline_max : 0;
+    const uint64_t lateness_max = after_ns > deadline_min ? after_ns - deadline_min : 0;
+    rocketnet_check( frame_sync->wakeup_error_ns >= lateness_min );
+    rocketnet_check( frame_sync->wakeup_error_ns <= lateness_max );
+
+    // the next deadline steps past the drops to the boundary after them,
+    // never back and never chasing the backlog
+
+    if ( !first )
+    {
+        rocketnet_check( frame_sync->deadline_ns == deadline_before + ( drops + 1 ) * period_ns );
+    }
+    rocketnet_check( frame_sync->deadline_ns > deadline_min );
+
+    struct rocketnet_frame_sync_stats_t stats;
+    rocketnet_frame_sync_stats( frame_sync, &stats );
+    rocketnet_check( stats.frame == frame_sync->frame );
+    rocketnet_check( stats.dropped_frames == frame_sync->dropped_frames );
+    rocketnet_check( stats.wakeup_error_seconds == (double) frame_sync->wakeup_error_ns / 1000000000.0 );
+
+    return drops;
+}
+
 void rocketnet_test_frame_sync_dropped_stats()
 {
-    // The dropped-frame observability case: the real public path
-    // (create/wait/stats/destroy) must make missed server frame intervals
-    // visible in dropped_frames. A baseline normal cadence stays clean
-    // within its documented bound, a bounded expensive frame workload
-    // spanning several configured periods must raise the public count
-    // inside bounds derived from independently measured elapsed time, and
-    // recovery at normal cadence must leave the total cumulative. No
-    // exact OS schedule is asserted anywhere: the workload is
-    // predicate-driven (busy work until the target elapsed time is
-    // measured on the steady clock), never a fixed sleep treated as proof.
+    // The dropped-frame accounting on the real public path (create, wait,
+    // stats, destroy): missed frame intervals show in dropped_frames, the
+    // count is exactly what the measured lateness owes, and the total is
+    // cumulative across recovery. Every wait is bracketed by reads of the
+    // frame sync's own clock, so each count is checked against the time the
+    // library saw, never against how promptly the operating system woke the
+    // thread: a host that wakes late gets more drops, and the case checks
+    // that they were counted right.
 
     const double frame_rate = 250.0;
     const uint64_t period_ns = (uint64_t) ( 1000000000.0 / frame_rate );   // 4ms
     struct rocketnet_frame_sync_t * frame_sync = rocketnet_frame_sync_create( NULL, frame_rate );
     rocketnet_check( frame_sync );
+    rocketnet_check( frame_sync->period_ns == period_ns );
 
-    // Phase A: baseline normal cadence, 12 frames (~48ms of wall time)
+    // Phase A: normal cadence, 12 frames
 
     for ( int i = 0; i < 12; i++ )
     {
-        rocketnet_frame_sync_wait( frame_sync );
+        rocketnet_frame_sync_bracketed_wait( frame_sync );
+    }
+
+    const uint64_t baseline_drops = frame_sync->dropped_frames;
+
+    // Phase B: frame work spanning at least 10 periods past the deadline the
+    // next wait runs against, busy on the frame sync's clock. The wait after
+    // it must count at least the whole periods the work overran by.
+
+    const uint64_t work_deadline_ns = frame_sync->deadline_ns;
+    const uint64_t work_target_ns = work_deadline_ns + 10 * period_ns;
+
+    while ( rocketnet_frame_sync_now_ns() < work_target_ns )
+    {
+    }
+
+    const uint64_t work_drops = rocketnet_frame_sync_bracketed_wait( frame_sync );
+    const uint64_t after_work_drops = frame_sync->dropped_frames;
+
+    rocketnet_check( work_drops >= 10 );                                    // at least the ten whole periods overrun
+    rocketnet_check( frame_sync->deadline_ns > work_target_ns );             // resynchronized ahead, not chasing the backlog
+
+    // Phase C: recovery at normal cadence. The total stays cumulative
+    // (a reset would clear it) and the frame count advances by exactly the
+    // waits run.
+
+    for ( int i = 0; i < 12; i++ )
+    {
+        rocketnet_frame_sync_bracketed_wait( frame_sync );
     }
 
     struct rocketnet_frame_sync_stats_t stats;
     rocketnet_frame_sync_stats( frame_sync, &stats );
-    rocketnet_check( stats.frame == 12 );
-
-    const uint64_t baseline_drops = stats.dropped_frames;
-
-    // documented bound: a clean cadence on a noisy host may still lose a
-    // couple of frames to scheduler latency; more than that is a defect
-
-    rocketnet_check( baseline_drops <= 2 );
-
-    // Phase B: bounded expensive frame work spanning several periods.
-    // Busy work until at least 10 periods have elapsed, measured
-    // independently with the steady clock; the work itself is the frame
-    // load, and its elapsed time is the evidence the bounds derive from.
-
-    const uint64_t target_work_ns = 10 * period_ns;
-    volatile uint64_t sink = 0;
-    const auto work_start = std::chrono::steady_clock::now();
-
-    for ( ;; )
-    {
-        sink += 1;
-        if ( std::chrono::duration<double, std::nano>(
-                 std::chrono::steady_clock::now() - work_start )
-                 .count() >= (double) target_work_ns )
-            break;
-    }
-
-    const uint64_t work_elapsed_ns = (uint64_t) std::chrono::duration<double, std::nano>(
-                                         std::chrono::steady_clock::now() - work_start )
-                                         .count();
-    rocketnet_check( work_elapsed_ns >= target_work_ns );
-
-    // the wait that observes the miss, as a real frame loop would call it
-    // after expensive work
-
-    rocketnet_frame_sync_wait( frame_sync );
-
-    rocketnet_frame_sync_stats( frame_sync, &stats );
-
-    const uint64_t after_work_drops = stats.dropped_frames;
-    const uint64_t work_drops = after_work_drops - baseline_drops;
-
-    // Bounds from the measured elapsed time and the configured period,
-    // tolerant of scheduler noise on both sides. The work spans at least
-    // 10 periods, so the accounting must be multiple intervals high.
-
-    const double periods_of_work = (double) work_elapsed_ns / (double) period_ns;
-
-    rocketnet_check( work_drops >= 3 );                                     // nonzero, multiple missed intervals
-    rocketnet_check( (double) work_drops > periods_of_work - 3.0 );         // not undercounting
-    rocketnet_check( (double) work_drops < periods_of_work + 3.0 );         // not overcounting
-
-    // Phase C: recovery at normal cadence. The total stays cumulative
-    // (a reset would clear it), the frame count advances by exactly the
-    // waits run, and lateness stays coherent.
-
-    for ( int i = 0; i < 12; i++ )
-    {
-        rocketnet_frame_sync_wait( frame_sync );
-    }
-
-    rocketnet_frame_sync_stats( frame_sync, &stats );
     rocketnet_check( stats.frame == 25 );                                   // 12 + 1 + 12 waits
     rocketnet_check( stats.dropped_frames >= after_work_drops );             // cumulative, never reset
-    rocketnet_check( stats.dropped_frames <= after_work_drops + 2 );         // recovery adds at most noise
-    rocketnet_check( stats.wakeup_error_seconds >= 0.0 );                   // lateness coherent
 
-    printf( "    frame sync dropped stats: period_ns %llu, work_elapsed_ns %llu, baseline %llu, work_drops %llu, final %llu\n",
-            (unsigned long long) period_ns, (unsigned long long) work_elapsed_ns,
-            (unsigned long long) baseline_drops, (unsigned long long) work_drops,
-            (unsigned long long) stats.dropped_frames );
+    printf( "    frame sync dropped stats: period_ns %llu, baseline %llu, work_drops %llu, final %llu\n",
+            (unsigned long long) period_ns, (unsigned long long) baseline_drops,
+            (unsigned long long) work_drops, (unsigned long long) stats.dropped_frames );
     fflush( stdout );
-    (void) sink;
 
     rocketnet_frame_sync_destroy( frame_sync );
 }
@@ -1308,6 +1336,127 @@ static void rocketnet_platform_primitives_priority_thread( rocketnet_platform_th
     state->signaled = rocketnet_platform_wake_wait( state->wake, false, 30.0 );
 }
 
+#if ROCKETNET_DEV
+
+// The library's priority request on a real running thread, recorded on its
+// way to the real operating-system call. What the case checks is the
+// library's side: which call it made, with which values, on which thread,
+// and that it counted exactly the refusals the real call returned. Whether
+// the operating system grants the priority is its own business and is never
+// asserted: either answer passes, and either answer must be handled.
+
+struct rocketnet_platform_primitives_priority_record_t
+{
+    int calls;
+    int refused;
+    rocketnet_platform_thread_t * thread[4];
+    int policy[4];
+    int priority[4];
+};
+
+static rocketnet_platform_primitives_priority_record_t rocketnet_platform_primitives_priority_record;
+
+static void rocketnet_platform_primitives_priority_note( rocketnet_platform_thread_t * thread, int policy, int priority, bool refused )
+{
+    rocketnet_platform_primitives_priority_record_t * record = &rocketnet_platform_primitives_priority_record;
+    if ( record->calls < 4 )
+    {
+        record->thread[record->calls] = thread;
+        record->policy[record->calls] = policy;
+        record->priority[record->calls] = priority;
+    }
+    record->calls++;
+    if ( refused )
+        record->refused++;
+}
+
+static int rocketnet_platform_primitives_record_set_sched( rocketnet_platform_thread_t * thread, int policy, int priority )
+{
+    const int result = rocketnet_platform_priority_calls_real()->set_sched( thread, policy, priority );
+    rocketnet_platform_primitives_priority_note( thread, policy, priority, result != 0 );
+    return result;
+}
+
+static int rocketnet_platform_primitives_record_set_thread_priority( rocketnet_platform_thread_t * thread, int priority )
+{
+    const int result = rocketnet_platform_priority_calls_real()->set_thread_priority( thread, priority );
+    rocketnet_platform_primitives_priority_note( thread, 0, priority, result == 0 );
+    return result;
+}
+
+static void rocketnet_platform_primitives_priority()
+{
+    rocketnet_platform_primitives_priority_thread_t state = { rocketnet_platform_wake_create( NULL, NULL ), false };
+    rocketnet_check( state.wake );
+
+    rocketnet_platform_thread_t * thread = rocketnet_platform_thread_create( NULL, rocketnet_platform_primitives_priority_thread, &state );
+    rocketnet_check( thread );
+
+    struct rocketnet_platform_priority_calls_t recording = *rocketnet_platform_priority_calls_real();
+    recording.set_sched = rocketnet_platform_primitives_record_set_sched;
+    recording.set_thread_priority = rocketnet_platform_primitives_record_set_thread_priority;
+    rocketnet_platform_set_priority_calls_for_testing( &recording );
+
+    // on: one request per call, on the thread given, with the library's values
+
+    memset( &rocketnet_platform_primitives_priority_record, 0, sizeof( rocketnet_platform_primitives_priority_record ) );
+    const bool enabled = rocketnet_platform_thread_priority_enabled();
+    rocketnet_platform_set_thread_priority_enabled( true );
+
+    const uint64_t refusals = rocketnet_platform_thread_priority_refusals();
+
+    rocketnet_platform_client_thread_priority( thread );
+    rocketnet_platform_server_thread_priority( thread );
+
+    const rocketnet_platform_primitives_priority_record_t * record = &rocketnet_platform_primitives_priority_record;
+    rocketnet_check( record->calls == 2 );
+    for ( int i = 0; i < 2; i++ )
+    {
+        rocketnet_check( record->thread[i] == thread );
+#if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        rocketnet_check( record->priority[i] == THREAD_PRIORITY_TIME_CRITICAL );
+#else // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+        rocketnet_check( record->policy[i] == SCHED_RR );
+        rocketnet_check( record->priority[i] == rocketnet_platform_network_thread_rr_priority() );
+#endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
+    }
+
+    // every refusal the real call returned is counted, and nothing else is
+
+    rocketnet_check( rocketnet_platform_thread_priority_refusals() - refusals == (uint64_t) record->refused );
+
+    // off: no request and nothing counted
+
+    memset( &rocketnet_platform_primitives_priority_record, 0, sizeof( rocketnet_platform_primitives_priority_record ) );
+    rocketnet_platform_set_thread_priority_enabled( false );
+
+    const uint64_t refusals_off = rocketnet_platform_thread_priority_refusals();
+
+    rocketnet_platform_client_thread_priority( thread );
+    rocketnet_platform_server_thread_priority( thread );
+
+    rocketnet_check( record->calls == 0 );
+    rocketnet_check( rocketnet_platform_thread_priority_refusals() == refusals_off );
+
+    rocketnet_platform_set_thread_priority_enabled( enabled );
+    rocketnet_platform_set_priority_calls_for_testing( NULL );
+
+    // granted or refused, the thread carries on and is woken as before
+
+    rocketnet_platform_wake_set( state.wake );
+    rocketnet_platform_thread_join( thread );
+    rocketnet_platform_thread_destroy( thread );
+    rocketnet_platform_wake_destroy( state.wake );
+    rocketnet_check( state.signaled );
+}
+
+#else // #if ROCKETNET_DEV
+
+// A production build has no call table to record through: the case makes the
+// library's real requests and checks that a refusal is counted at most once
+// per request and that the thread carries on either way. The operating
+// system's answer is never asserted.
+
 static void rocketnet_platform_primitives_priority()
 {
     rocketnet_platform_primitives_priority_thread_t state = { rocketnet_platform_wake_create( NULL, NULL ), false };
@@ -1329,6 +1478,8 @@ static void rocketnet_platform_primitives_priority()
     rocketnet_platform_wake_destroy( state.wake );
     rocketnet_check( state.signaled );
 }
+
+#endif // #if ROCKETNET_DEV
 
 int main()
 {
