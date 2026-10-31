@@ -13,11 +13,21 @@
 //   * the pre-init refusal -> NOT_INITIALIZED
 //   * C2 (config env apply failure) -> CONFIG_ENV_INVALID
 //   * C3 (config validation failure) -> CONFIG_OUT_OF_RANGE
+//   * the published test packet filter in a production build ->
+//     TEST_PACKET_FILTER_IN_PRODUCTION
 //   * C5 (transport ladder parse failure) -> INVALID_TRANSPORT_LIST
 //   * C6 (transport block malloc refusal) -> OUT_OF_MEMORY
 //   * C7 (fragmentation storage malloc refusal) -> OUT_OF_MEMORY
 //   * C8 (invalid connect token) -> INVALID_CONNECT_TOKEN
 //   * C9 (expired connect token) -> CONNECT_TOKEN_EXPIRED
+//   * a token sealed to the development server key in a production build ->
+//     DEV_CONNECT_TOKEN_IN_PRODUCTION
+//
+// The case is registered in both the development and the production
+// (ROCKETNET_DEV=0) unit suites. C2 sets an environment variable through the
+// development test environment table, so it runs in the development suite;
+// the two production refusals run in the production suite. Every other step
+// runs in both, over a config carrying its own packet filter.
 //
 // Not reachable without a socket or real time:
 //   * C4 (reassembly memory budget), whose maximum valid geometry (256 slots x
@@ -39,33 +49,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-// the cases test struct transport lists, so the test sets the caller's env pin aside
-// for its duration and puts it back after: the env pin wins over the struct
-// by design, so a CI leg pinned by ROCKETNET_CLIENT_TRANSPORT would otherwise
-// never reach the struct's list
-
-#if ROCKETNET_DEV
-struct env_pin_saved
-{
-    bool was_set;
-    char value[256];
-};
-
-static void env_pin_set_aside( env_pin_saved * saved )
-{
-    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-}
-
-static void env_pin_put_back( const env_pin_saved * saved )
-{
-    if ( saved->was_set )
-    {
-        rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
-    }
-}
-
-#endif // #if ROCKETNET_DEV
+// The unit runner (tests/test.cpp) clears ROCKETNET_CLIENT_TRANSPORT for the
+// whole run, so each create reads the struct's transport list.
 
 #define check rocketnet_unit_check
 
@@ -112,6 +97,14 @@ static void check_create_status( int expected, const uint8_t * token, const stru
     check( state->live == 0 );
 }
 
+// the default config with a packet filter of the caller's own: a production
+// build refuses the published test filter the default config carries
+static void own_filter_config( struct rocketnet_client_transport_config_t * config )
+{
+    rocketnet_client_transport_default_config( config );
+    memset( config->packet_filter, 0x5A, sizeof( config->packet_filter ) );
+}
+
 #if ROCKETNET_ASSERTS
 // the NULL argument below is the documented counted no-op, which fires
 // rocketnet_assert in a build with asserts on: count it instead of breaking
@@ -125,11 +118,6 @@ static void client_create_ex_expected_null_assert( const char *, const char *, c
 
 static void test_client_transport_create_ex_reports_every_status()
 {
-#if ROCKETNET_DEV
-    env_pin_saved pin;
-    env_pin_set_aside( &pin );
-#endif // #if ROCKETNET_DEV
-
     allocator_state state = { 0, 0, 0 };
     int status = -1;
 
@@ -173,18 +161,28 @@ static void test_client_transport_create_ex_reports_every_status()
         rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
 
 #endif // #if ROCKETNET_DEV
+
+    struct rocketnet_client_transport_config_t production;
+    own_filter_config( &production );
+
     // C3: a config field out of range refuses at validation
     {
         struct rocketnet_client_transport_config_t config;
-        rocketnet_client_transport_default_config( &config );
+        own_filter_config( &config );
         config.max_fragmented_messages = 2000000000;
         check_create_status( ROCKETNET_STATUS_CONFIG_OUT_OF_RANGE, token, &config, &state, &status );
     }
 
+#if !ROCKETNET_DEV
+    // the default config carries the published test packet filter, which a
+    // production build refuses
+    check_create_status( ROCKETNET_STATUS_TEST_PACKET_FILTER_IN_PRODUCTION, token, NULL, &state, &status );
+#endif // #if !ROCKETNET_DEV
+
     // C5: an unparseable transport candidate list refuses at the ladder parse
     {
         struct rocketnet_client_transport_config_t config;
-        rocketnet_client_transport_default_config( &config );
+        own_filter_config( &config );
         snprintf( config.transport, sizeof( config.transport ), "%s", "no-such-transport" );
         check_create_status( ROCKETNET_STATUS_INVALID_TRANSPORT_LIST, token, &config, &state, &status );
     }
@@ -192,19 +190,19 @@ static void test_client_transport_create_ex_reports_every_status()
     // C6: the transport block malloc refuses
 
     state.fail_at = state.calls + 1;
-    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
+    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, &production, &state, &status );
     state.fail_at = 0;
 
     // C7: the send arena malloc refuses (the second allocation)
 
-    state.fail_at = state.calls + 1;
-    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
+    state.fail_at = state.calls + 2;
+    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, &production, &state, &status );
     state.fail_at = 0;
 
     // C7: the reassembly set malloc refuses (the third allocation)
 
-    state.fail_at = state.calls + 1;
-    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, NULL, &state, &status );
+    state.fail_at = state.calls + 3;
+    check_create_status( ROCKETNET_STATUS_OUT_OF_MEMORY, token, &production, &state, &status );
     state.fail_at = 0;
 
     // a valid token for the connect-refusal cases. the client reads the
@@ -241,7 +239,7 @@ static void test_client_transport_create_ex_reports_every_status()
         uint8_t bad[ROCKETNET_CONNECT_TOKEN_BYTES];
         memset( bad, 0, sizeof( bad ) );
         rocketnet_write_signed_connect_data( &signed_fields, bad );
-        check_create_status( ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, bad, NULL, &state, &status );
+        check_create_status( ROCKETNET_STATUS_INVALID_CONNECT_TOKEN, bad, &production, &state, &status );
         signed_fields.address_flags = ROCKETNET_ADDRESS_FLAG_IPV4;
     }
 
@@ -254,10 +252,16 @@ static void test_client_transport_create_ex_reports_every_status()
         uint8_t expired[ROCKETNET_CONNECT_TOKEN_BYTES];
         memset( expired, 0, sizeof( expired ) );
         rocketnet_write_signed_connect_data( &signed_fields, expired );
-        check_create_status( ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED, expired, NULL, &state, &status );
+        check_create_status( ROCKETNET_STATUS_CONNECT_TOKEN_EXPIRED, expired, &production, &state, &status );
         signed_fields.create_timestamp = 1;
         signed_fields.expire_timestamp = 1ULL << 40;
     }
+
+#if !ROCKETNET_DEV
+    // a valid token sealed to the published development server key is
+    // refused in a production build, before any socket opens
+    check_create_status( ROCKETNET_STATUS_DEV_CONNECT_TOKEN_IN_PRODUCTION, token, &production, &state, &status );
+#endif // #if !ROCKETNET_DEV
 
     // a clean term, then restore the default allocator for the worker's term
 
@@ -265,9 +269,6 @@ static void test_client_transport_create_ex_reports_every_status()
     check( state.live == 0 );
     check( rocketnet_allocator_ex( rocketnet_default_malloc_function, rocketnet_default_free_function ) == ROCKETNET_STATUS_OK );
 
-#if ROCKETNET_DEV
-    env_pin_put_back( &pin );
-#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_client_transport_create_ex_reports_every_status );
