@@ -35,7 +35,9 @@ static void test_linux_staged_transports_declare_reflush()
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_XDP ) == 2 );
 #endif // #if ROCKETNET_XDP
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_GSO ) == 2 );
+#if ROCKETNET_IO_URING
     rocketnet_unit_check( rocketnet_server_transport_test_reflush( ROCKETNET_TRANSPORT_IO_URING ) == 2 );
+#endif // #if ROCKETNET_IO_URING
 }
 
 REGISTER_UNIT_TEST( test_linux_staged_transports_declare_reflush );
