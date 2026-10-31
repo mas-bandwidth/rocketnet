@@ -131,7 +131,6 @@ struct rocketnet_server_rio_t
 
     // send, worker only: deferred sends posted and not yet committed
     bool uncommitted = false;
-    uint64_t uncommitted_packets = 0;
 
     // receive, under the mutex: the model's free and ready
     int free_banks[ROCKETNET_RIO_RECEIVE_BANKS];
@@ -316,7 +315,8 @@ static const SOCKADDR_INET * rocketnet_rio_receive_address( rocketnet_server_rio
 }
 
 // one RIO_MSG_COMMIT_ONLY when deferred sends are uncommitted; a refused
-// commit leaves them uncommitted for the next try
+// commit leaves them uncommitted for the next try and counts nothing: each
+// deferred send still completes once, as PACKETS_SENT or SEND_FAILED
 static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
 {
     if ( !rio->uncommitted )
@@ -325,13 +325,11 @@ static void rocketnet_rio_commit( rocketnet_server_rio_t * rio )
     if ( ROCKETNET_RIO_TEST_FAULT( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, &injected ) ||
          !rocketnet_rio_send_call( rio, NULL, NULL, RIO_MSG_COMMIT_ONLY, NULL ) )
     {
-        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED, rio->uncommitted_packets );
         rocketnet_warn( "rio transport: send commit refused (Winsock %d); retried", WSAGetLastError() );
         return;
     }
 
     rio->uncommitted = false;
-    rio->uncommitted_packets = 0;
     rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_COMMITS );
 }
 
@@ -1043,9 +1041,14 @@ void rocketnet_server_rio_finish_packet( rocketnet_server_rio_t * rio, uint64_t 
     rocketnet_assert( packet_bytes > 0 && packet_bytes <= ROCKETNET_RECEIVE_CEILING );
     (void) packet_id;
 
+    // a refused finish loses the packet: the slot keeps zero bytes and the
+    // post phase skips it, so the loss is counted here
     const int index = rocketnet_rio_frame_index( rio, frame );
     if ( index < 0 || packet_bytes <= 0 || packet_bytes > ROCKETNET_RECEIVE_CEILING )
+    {
+        rocketnet_rio_count( rio, ROCKETNET_RIO_COUNTER_SEND_FAILED );
         return;
+    }
     rio->slot_bytes[index] = packet_bytes;
 }
 
@@ -1152,10 +1155,7 @@ static void rocketnet_rio_post_phase( rocketnet_server_rio_t * rio, int phase, i
     rio->outstanding[phase].fetch_add( posted, std::memory_order_relaxed );
 
     if ( posted > 0 )
-    {
         rio->uncommitted = true;
-        rio->uncommitted_packets += (uint64_t) posted;
-    }
 
     rocketnet_rio_commit( rio );
 }
@@ -1978,6 +1978,92 @@ bool rocketnet_server_rio_test_stop_drains_sends()
 
     rio->have_table = false;
     rocketnet_rio_stop_test_state = NULL;
+    rocketnet_rio_test_fixture_free( rio );
+
+    return valid;
+}
+
+static int rocketnet_rio_accounting_test_asserts = 0;
+
+static void rocketnet_rio_accounting_test_assert( const char *, const char *, const char *, int )
+{
+    rocketnet_rio_accounting_test_asserts++;
+}
+
+// Send accounting on one thread with a fake kernel: each lost packet counts
+// SEND_FAILED once and each sent packet PACKETS_SENT once. A finish with a
+// length out of range loses its packet and counts it; refused commits count
+// nothing, since the deferred sends they leave complete later.
+bool rocketnet_server_rio_test_send_accounting()
+{
+    rocketnet_server_rio_t * rio = rocketnet_rio_test_fixture();
+    if ( !rio )
+        return false;
+    static rocketnet_rio_handoff_test_state_t state;
+    memset( &state, 0, sizeof( state ) );
+
+    const rocketnet_rio_test_function_table_t functions = {
+        rocketnet_rio_handoff_test_dequeue,
+        rocketnet_rio_handoff_test_receive,
+        rocketnet_rio_handoff_test_send,
+        NULL
+    };
+    rocketnet_rio_handoff_test_state = &state;
+    rocketnet_rio_test_functions = &functions;
+    state.receive_paused = true;
+
+    bool valid = true;
+
+    rocketnet_address_t to;
+    memset( &to, 0, sizeof( to ) );
+    to.type = ROCKETNET_ADDRESS_IPV4;
+    to.data.ipv4[0] = 127;
+    to.data.ipv4[3] = 1;
+    to.port = 40001;
+
+    // Two finishes out of range, below one byte and past the ceiling: each
+    // packet is lost and counted, and the post phase skips its slot.
+
+    rocketnet_assert_function_t saved_assert = rn_assert_function;
+    rn_assert_function = rocketnet_rio_accounting_test_assert;
+    const int lengths[2] = { 0, ROCKETNET_RECEIVE_CEILING + 1 };
+    for ( int i = 0; i < 2; ++i )
+    {
+        uint64_t id = 0;
+        uint8_t * frame = rocketnet_server_rio_start_packet( rio, &to, &id );
+        valid &= frame != NULL;
+        if ( frame )
+            rocketnet_server_rio_finish_packet( rio, id, frame, lengths[i] );
+        valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == (uint64_t) ( i + 1 );
+    }
+    rn_assert_function = saved_assert;
+
+    // Three good packets beside them, and a commit refused on the next four
+    // tries. The phase posts three sends and the worker retries the commit
+    // until it is taken; nothing is counted until the sends complete.
+
+    valid &= rocketnet_rio_test_stage( rio, 3 );
+    rocketnet_server_rio_test_fail_next( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT, 4, WSAENOBUFS );
+    rocketnet_server_rio_send_packets( rio );
+
+    for ( int pass = 0; pass < 8 && rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) > 0; ++pass )
+    {
+        rocketnet_rio_worker_pass( rio );
+        valid &= rio->uncommitted && state.commits == 0;
+        valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 2;
+    }
+
+    valid &= rocketnet_server_rio_test_faults_left( rio, ROCKETNET_RIO_TEST_FAULT_COMMIT ) == 0;
+    for ( int pass = 0; pass < 4 && rocketnet_rio_outstanding_sends( rio ) > 0; ++pass )
+        rocketnet_rio_worker_pass( rio );
+
+    valid &= state.commits == 1 && !rio->uncommitted && rocketnet_rio_outstanding_sends( rio ) == 0;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_COMMITS].load() == 1;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_PACKETS_SENT].load() == 3;
+    valid &= rio->counters[ROCKETNET_RIO_COUNTER_SEND_FAILED].load() == 2;
+    valid &= rocketnet_rio_accounting_test_asserts == 2;
+
+    rocketnet_rio_handoff_test_state = NULL;
     rocketnet_rio_test_fixture_free( rio );
 
     return valid;
