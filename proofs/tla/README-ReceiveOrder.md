@@ -89,3 +89,35 @@ the following response writes the binding but retains that claim, violating
 `rocketnet_server_process_connection_response`, pinned by
 `test_claim_released_when_response_binds_token`: a second address passes the
 claim check after the response but remains refused by the token binding.
+
+## Half-open replacement
+
+`MCReceiveOrder.NewRequest` starts a ladder run for a free address, or for an
+address whose half-open mapping holds another token (a mapping whose token is
+bound, a connected one, is never replaced). Such a request passes the capacity
+rung with a full table, since it reuses its address's mapping, and only
+`AcceptStep`, past every rung including the signature, replaces the mapping:
+it installs the new token and releases the replaced token's claim
+(`ReplaceReleasesClaim`). This is the code's `replace_index` path in
+`rocketnet_server_protocol_process_connection_request`: a request with another
+salt and another token is not answered with the stored challenge, and the
+replacement runs just before `rocketnet_encryption_map_add`, after
+`rocketnet_server_release_mapping_claim` and
+`rocketnet_encryption_map_remove_current` on the replaced mapping. The
+instance explores only unbound tokens; the code also refuses a replacing
+request whose token is bound to any address.
+
+`RefusalKeepsHalfOpen` holds the address's half-open mapping fixed across a
+refused request, through the ghost `held` (the mapping the address held as
+the request began). Two reversed witnesses:
+
+| Witness | Change | Code replay |
+|---|---|---|
+| ReplaceKeepsClaim | `ReplaceReleasesClaim <- FALSE` | the replacement without `rocketnet_server_release_mapping_claim`: address A replaces its mapping for t1 with t2, and t1's claim stays with no mapping holding t1. ClaimHasMapping fails |
+| ReplaceBeforeVerify | `ReplaceAtRequest <- TRUE` | the replacement at the top of the request path, before any check: a request for t2 with a wrong version evicts A's mapping for t1 and is then refused, leaving A with no mapping. RefusalKeepsHalfOpen fails |
+
+Both counterexamples were replayed against the code by hand as above.
+test_new_token_replaces_stale_half_open_mapping pins the code: a forged
+request and a bound token leave the stale mapping in place, and a new token
+under a new salt gets a cookie, then a fresh challenge from the replacing
+mapping, with the stale token's claim released.

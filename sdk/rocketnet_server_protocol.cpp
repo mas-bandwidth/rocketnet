@@ -307,8 +307,12 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     int32_t timeout_seconds,
                                                     double current_time,
                                                     int fail_denied_writer,
+                                                    int replace_index,
                                                     uint8_t * response_packet,
                                                     int * response_bytes );
+
+static void rocketnet_server_release_mapping_claim( struct rocketnet_server_protocol_t * server,
+                                                    int mapping_index );
 
 // proofs/tla/ReceiveOrder.tla Next
 // proofs/tla/ReceiveOrder.tla RefuseStep: a rung the request fails returns its
@@ -360,8 +364,15 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     // one lookup serves the next two rungs: a mapping with a slot is a
     // connected client, whose address never provokes anything from this
     // path; a mapping without one is a handshake in flight, answered with
-    // its stored challenge byte-identical for as long as it lives -- a
-    // mapping is created once and replaced never.
+    // its stored challenge byte-identical for as long as it lives -- unless
+    // the request carries another salt and another token. That is a new
+    // attempt from this address (the client reconnecting with a fresh token
+    // while a stale half-open mapping, perhaps planted by a replay, holds
+    // its address): it goes down the whole ladder and replaces the half-open
+    // mapping only if it passes every check, its signature verified and its
+    // token bound to no address (proofs/tla/MCReceiveOrder.tla NewRequest).
+
+    int replace_index = -1;
 
     {
         int existing = rocketnet_encryption_map_find( server->encryption_map, from );
@@ -375,16 +386,32 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
                 return ROCKETNET_SERVER_PROCESS_IGNORED;
             }
 
-            // standard/TRANSPORT.md t12 rule 3: a mapping answers every request from its address with its stored challenge, whatever the request's salt.
+            // standard/TRANSPORT.md t12 rule 3: a mapping answers a request from its address with its stored
+            // challenge when the request carries the mapping's salt or the mapping's token.
             // t12 rule 3 and t17 rule 4: only a request whose salt matches the mapping's refreshes the half-open idle deadline.
 
-            if ( sodium_memcmp( connection_salt, mapping->connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0 )
-                mapping->control->last_receive_time = current_time;
-            memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
-            *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
-            rocketnet_debug( "server resent stored connection challenge" );
-            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT]++;
-            return ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE;
+            const bool same_salt = sodium_memcmp( connection_salt, mapping->connection_salt, ROCKETNET_CONNECTION_SALT_BYTES ) == 0;
+
+            bool same_token = same_salt;
+            if ( !same_salt )
+            {
+                uint8_t request_token[ROCKETNET_TOKEN_IDENTIFIER_BYTES];
+                rocketnet_connect_token_identifier( request_token, connection_salt + ROCKETNET_CONNECTION_SALT_BYTES + ROCKETNET_KEY_BYTES );
+                same_token = sodium_memcmp( request_token, mapping->token_identifier, ROCKETNET_TOKEN_IDENTIFIER_BYTES ) == 0;
+            }
+
+            if ( same_token )
+            {
+                if ( same_salt )
+                    mapping->control->last_receive_time = current_time;
+                memcpy( response_packet, mapping->challenge_packet, ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES );
+                *response_bytes = ROCKETNET_CONNECTION_CHALLENGE_WIRE_BYTES;
+                rocketnet_debug( "server resent stored connection challenge" );
+                counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_CHALLENGE_RESENT]++;
+                return ROCKETNET_SERVER_PROCESS_SEND_CHALLENGE;
+            }
+
+            replace_index = existing;
         }
     }
 
@@ -585,6 +612,24 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
+    // a request that would replace a half-open mapping must carry a token
+    // bound to no address, its own included: a replay of a token that has
+    // already connected never displaces a handshake in flight. The history
+    // refuses a bound token from an address that holds no binding, and the
+    // zero address holds none.
+
+    if ( replace_index != -1 )
+    {
+        struct rocketnet_address_t unbound;
+        memset( &unbound, 0, sizeof( unbound ) );
+        if ( !rocketnet_used_token_history_check( server->used_token_history, token_identifier, &unbound, current_timestamp ) )
+        {
+            rocketnet_debug( "server ignored connection request. a used connect token cannot replace a half-open mapping" );
+            counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_TOKEN_ALREADY_USED]++;
+            return ROCKETNET_SERVER_PROCESS_IGNORED;
+        }
+    }
+
     // the authenticity check: the signature, and only the signature. the
     // per-source failed-verify budget gates it, so one valid cookie cannot
     // buy unlimited Ed25519 verifies from one address.
@@ -615,7 +660,9 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
         return ROCKETNET_SERVER_PROCESS_IGNORED;
     }
 
-    if ( rocketnet_encryption_map_full( server->encryption_map ) )
+    // a replacement reuses its address's mapping, so it needs no free one
+
+    if ( replace_index == -1 && rocketnet_encryption_map_full( server->encryption_map ) )
     {
         rocketnet_debug( "server ignored connection request. could not add encryption mapping" );
         counters[ROCKETNET_COUNTER_CONNECTION_REQUEST_COULD_NOT_ADD_MAPPING]++;
@@ -695,7 +742,7 @@ int rocketnet_server_protocol_process_connection_request( struct rocketnet_serve
     int result = rocketnet_server_process_opened_request( server, from, connection_salt, client_ephemeral_public_key,
                                                           signed_connect_data, &private_data, token_identifier,
                                                           token_expire_timestamp, timeout_seconds,
-                                                          current_time, fail_denied_writer, response_packet, response_bytes );
+                                                          current_time, fail_denied_writer, replace_index, response_packet, response_bytes );
 
     sodium_memzero( &private_data, sizeof( private_data ) );
 
@@ -724,6 +771,7 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
                                                     int32_t timeout_seconds,
                                                     double current_time,
                                                     int fail_denied_writer,
+                                                    int replace_index,
                                                     uint8_t * response_packet,
                                                     int * response_bytes )
 {
@@ -831,6 +879,17 @@ static int rocketnet_server_process_opened_request( struct rocketnet_server_prot
         }
 
         sodium_memzero( server_ephemeral_secret_key, sizeof( server_ephemeral_secret_key ) );
+
+        // every check has passed: a replaced half-open mapping leaves now,
+        // releasing its own token's claim, and the new one takes its place
+        // (proofs/tla/ReceiveOrder.tla AcceptStep)
+
+        if ( replace_index != -1 )
+        {
+            rocketnet_debug( "server replaced half-open encryption mapping" );
+            rocketnet_server_release_mapping_claim( server, replace_index );
+            rocketnet_encryption_map_remove_current( server->encryption_map, replace_index );
+        }
 
         int index = rocketnet_encryption_map_add( server->encryption_map, from, current_time + server->handshake_deadline_seconds );
         if ( index == -1 )

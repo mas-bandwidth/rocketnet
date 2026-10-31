@@ -35,6 +35,13 @@
 (* with the mapping on the Deadline step.  The witness ClaimBeforeSignature*)
 (* writes at the check rung, the code before the split, and breaks         *)
 (* ClaimOnlyAfterSignature.                                                *)
+(*                                                                         *)
+(* A request from an address holding a half-open mapping for another      *)
+(* token replaces that mapping once it is accepted: the capacity rung      *)
+(* does not refuse it, since it reuses the address's mapping, and          *)
+(* AcceptStep releases the replaced mapping's claim as it installs the new *)
+(* one (ReplaceReleasesClaim; MCReceiveOrder says which requests may       *)
+(* replace).                                                               *)
 (***************************************************************************)
 EXTENDS Integers, FiniteSets
 
@@ -115,6 +122,11 @@ ClaimAtRequest == TRUE
 \* rocketnet_verify_signed_connect_data)
 ClaimWriteRung == "signature"
 
+\* a replacement releases the replaced half-open mapping's claim
+\* (sdk/rocketnet_server_protocol.cpp, rocketnet_server_release_mapping_claim
+\* before the replaced mapping's removal); the witness overrides it with <-
+ReplaceReleasesClaim == TRUE
+
 VARIABLES pos, fault, spent, spentKp, outcome, refusedRung,
           spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims, maps,
           claimWritten, verified
@@ -132,7 +144,7 @@ Refuses(r, f) ==
     \/ (r = "timestamps" /\ f = "expired")
     \/ (r = "verifybudget" /\ f = "budget")
     \/ (r = "claim" /\ (f = "claimed" \/ (ClaimAtRequest /\ ClaimOther)))
-    \/ (r = "capacity" /\ (f = "mapfull" \/ MapFull))
+    \/ (r = "capacity" /\ (f = "mapfull" \/ (MapFull /\ maps[reqAddr] = None)))
     \/ (r = "claimfull" /\ f = "claimfull")
     \/ (r = "slots" /\ f = "full")
     \/ (r = "admitted" /\ f = "admitted")
@@ -205,13 +217,19 @@ AdvanceStep ==
     /\ UNCHANGED <<fault, outcome, refusedRung, spentAtRefusal,
                    spentKpAtRefusal, reqAddr, reqToken, maps>>
 
+\* past the last rung the address gets its mapping; a half-open mapping it
+\* held for another token is replaced, and that token's claim is released
 AcceptStep ==
     /\ outcome = "pending"
     /\ pos = MaxPos
     /\ outcome' = "accepted"
     /\ maps' = [a \in Addrs |-> IF a = reqAddr THEN reqToken ELSE maps[a]]
+    /\ claims' = IF /\ ReplaceReleasesClaim
+                    /\ maps[reqAddr] /= None /\ maps[reqAddr] /= reqToken
+                    /\ claims[maps[reqAddr]] = reqAddr
+                  THEN [claims EXCEPT ![maps[reqAddr]] = None] ELSE claims
     /\ UNCHANGED <<pos, fault, spent, spentKp, refusedRung,
-                   spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken, claims,
+                   spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
                    claimWritten, verified>>
 
 Next == RefuseStep \/ AdvanceStep \/ AcceptStep

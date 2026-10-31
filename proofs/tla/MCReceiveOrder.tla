@@ -8,13 +8,22 @@
 (* witnesses are the same module under the Broken cfgs, each moving one    *)
 (* cheap rung behind a crypto rung, removing the token claim, writing the  *)
 (* claim at its check rung before the signature, charging the work budget  *)
-(* at the cookie gate, or leaving a claim behind on mapping removal or     *)
-(* response binding; TLC must reject them.                                 *)
+(* at the cookie gate, leaving a claim behind on mapping removal, response *)
+(* binding or replacement, or replacing a half-open mapping before any     *)
+(* check has run; TLC must reject them.                                    *)
 (***************************************************************************)
 EXTENDS ReceiveOrder
 
-VARIABLE bound
-MCVars == <<vars, bound>>
+VARIABLES bound, held
+MCVars == <<vars, bound, held>>
+
+\* a replacement only past every rung: the witness evicts the address's
+\* half-open mapping as the request starts, before any check has run
+ReplaceAtRequest == FALSE
+MCReplaceAtRequest == TRUE
+
+\* the witness that keeps the replaced mapping's claim
+MCReplaceKeepsClaim == FALSE
 
 ResponseBindReleasesClaim == TRUE
 MCResponseBindLeavesClaim == FALSE
@@ -45,13 +54,20 @@ NewRequest ==
     /\ fault' \in Faults
     /\ reqAddr' \in Addrs
     /\ reqToken' \in Tokens
-    \* the code answers a request from an address that already has a
-    \* mapping with its stored challenge and never reaches the claim or
-    \* accept rungs; a new ladder run starts only for a free address
-    /\ maps[reqAddr'] = None
-    \* Explore fresh unbound-token requests between response bindings.
+    \* the code answers a request from a connected address with nothing,
+    \* and one for the token its half-open mapping holds with the stored
+    \* challenge, and neither reaches the claim or accept rungs; a new
+    \* ladder run starts for a free address, or for an address whose
+    \* half-open mapping holds another token, which it replaces once
+    \* accepted (sdk/rocketnet_server_protocol.cpp, replace_index)
+    /\ \/ maps[reqAddr'] = None
+       \/ maps[reqAddr'] /= None /\ maps[reqAddr'] /= reqToken' /\ bound[maps[reqAddr']] = None
+    \* Explore fresh unbound-token requests between response bindings: the
+    \* code refuses a bound token at the used rung, and one that would
+    \* replace a half-open mapping when it is bound to any address.
     \* Binding expiry, eviction and reconnect are outside this instance.
     /\ bound[reqToken'] = None
+    /\ held' = maps[reqAddr']
     /\ spent' = FALSE
     /\ spentKp' = FALSE
     /\ outcome' = "pending"
@@ -60,7 +76,10 @@ NewRequest ==
     /\ spentKpAtRefusal' = FALSE
     /\ claimWritten' = FALSE
     /\ verified' = FALSE
-    /\ UNCHANGED <<claims, maps>>
+    /\ IF ReplaceAtRequest /\ maps[reqAddr'] /= None
+         THEN /\ maps' = [maps EXCEPT ![reqAddr'] = None]
+              /\ claims' = [u \in Tokens |-> IF u = maps[reqAddr'] THEN None ELSE claims[u]]
+         ELSE UNCHANGED <<claims, maps>>
 
 \* the handshake deadline: one token's claim and its mapping leave together
 Deadline ==
@@ -103,13 +122,21 @@ ResponseBind ==
                        spentAtRefusal, spentKpAtRefusal, reqAddr, reqToken,
                        maps, claimWritten, verified>>
 
-MCNext == ((Next \/ NewRequest \/ Deadline \/ IdleRemove \/ Terminating)
-           /\ UNCHANGED bound) \/ ResponseBind
+\* held is the half-open mapping the current request's address held as it
+\* began; a step that moves the table on for other reasons ends that view
+MCNext == ((Next \/ Terminating) /\ UNCHANGED <<bound, held>>)
+          \/ (NewRequest /\ UNCHANGED bound)
+          \/ ((Deadline \/ IdleRemove) /\ UNCHANGED bound /\ held' = None)
+          \/ (ResponseBind /\ held' = None)
 
-MCInit == Init /\ bound = [t \in Tokens |-> None]
+MCInit == Init /\ bound = [t \in Tokens |-> None] /\ held = None
 MCSpec == MCInit /\ [][MCNext]_MCVars
 
-BoundTypeOK == bound \in [Tokens -> Addrs \cup {None}]
+BoundTypeOK == bound \in [Tokens -> Addrs \cup {None}] /\ held \in Tokens \cup {None}
+
+\* a refused request leaves its address's half-open mapping as it was: only
+\* a request that passed every check, its signature included, replaces one
+RefusalKeepsHalfOpen == (outcome = "refused" /\ held /= None) => maps[reqAddr] = held
 BoundHasNoClaim == Done => \A t \in Tokens : bound[t] /= None => claims[t] = None
 
 \* a claim that is live once a request is done names a token some address's
