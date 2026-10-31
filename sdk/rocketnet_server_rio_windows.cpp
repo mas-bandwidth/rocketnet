@@ -746,20 +746,24 @@ bool rocketnet_server_rio_available()
     return available;
 }
 
-static void rocketnet_rio_worker( void * argument );
+static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument );
 
 rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_address_t * bind_address
 #if ROCKETNET_DEV
                                                       ,
                                                       int fail_stage
 #endif // #if ROCKETNET_DEV
-)
+                                                      ,
+                                                      int * status )
 {
     if ( !bind_address || ( bind_address->type != ROCKETNET_ADDRESS_IPV4 && bind_address->type != ROCKETNET_ADDRESS_IPV6 ) )
         return NULL;
     void * storage = rocketnet_malloc( context, sizeof( rocketnet_server_rio_t ) );
     if ( !storage )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
     rocketnet_server_rio_t * rio = new ( storage ) rocketnet_server_rio_t();
     rio->context = context;
     rio->ipv6 = bind_address->type == ROCKETNET_ADDRESS_IPV6;
@@ -774,11 +778,17 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     rio->slot_bytes = (int *) rocketnet_malloc( context, sizeof( int ) * ROCKETNET_RIO_SEND_FRAMES );
     if ( !rio->slot_bytes )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         goto failed;
+    }
     memset( rio->slot_bytes, 0, sizeof( int ) * ROCKETNET_RIO_SEND_FRAMES );
     rio->banks = (rocketnet_rio_bank_t *) rocketnet_malloc( context, ROCKETNET_RIO_RECEIVE_BANKS * sizeof( rocketnet_rio_bank_t ) );
     if ( !rio->banks )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         goto failed;
+    }
     // RNRioWorker Init: bank 0 fills, every other bank is free
 
     for ( int i = 0; i < ROCKETNET_RIO_RECEIVE_BANKS; ++i )
@@ -864,7 +874,10 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     rio->region = (uint8_t *) rocketnet_malloc( context, (size_t) rio->layout.total_bytes );
     if ( !rio->region )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         goto failed;
+    }
     memset( rio->region, 0, (size_t) rio->layout.total_bytes );
     rio->buffer_id = rio->rio.RIORegisterBuffer( (PCHAR) rio->region, (DWORD) rio->layout.total_bytes );
 #if ROCKETNET_DEV && ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_WINDOWS
@@ -931,7 +944,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     // the worker starts last: from here every RIO call is its own
 
-    rio->thread = rocketnet_platform_thread_create( context, rocketnet_rio_worker, rio );
+    rio->thread = rocketnet_platform_thread_create( context, rocketnet_rio_worker, rio, status );
     if ( !rio->thread )
         goto failed;
     rocketnet_platform_server_thread_priority( rio->thread );
@@ -1327,7 +1340,7 @@ static void rocketnet_rio_idle_wait( rocketnet_server_rio_t * rio )
 
 // proofs/tla/RNRioWorker.tla WTop: the loop reads stopping at the top of every pass
 // and turns to the stop pass once it is set.
-static void rocketnet_rio_worker( void * argument )
+static void rocketnet_rio_worker( rocketnet_platform_thread_t *, void * argument )
 {
     rocketnet_server_rio_t * rio = (rocketnet_server_rio_t *) argument;
 

@@ -12,10 +12,10 @@
 //     fails rocketnet_frame_sync_create_ex;
 //   * ROCKETNET_STATUS_MUTEX_CREATE_FAILED: a refused mutex create fails
 //     rocketnet_client_connect;
-//   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect under a
-//     fault-injecting allocator fails when allocating the worker thread's
-//     record, before the OS thread create; the sweep stops at that first
-//     refusal, so no attempt reaches the OS create and no thread starts;
+//   * ROCKETNET_STATUS_THREAD_CREATE_FAILED: a threaded client connect whose
+//     OS thread start the platform seam refuses; no thread starts. Under a
+//     fault-injecting allocator every refused allocation of that connect, the
+//     worker thread's record included, is OUT_OF_MEMORY instead;
 //   * ROCKETNET_CLIENT_STATE_CONNECTION_REQUEST_TIMED_OUT and
 //     ROCKETNET_CLIENT_STATE_CONNECTION_RESPONSE_TIMED_OUT: a step-driven
 //     loopback client on a test clock starting at 1000.0 reaches handshake
@@ -213,7 +213,6 @@ static void test_client_mutex_create_failed_reached()
 }
 
 REGISTER_UNIT_TEST( test_client_mutex_create_failed_reached );
-#endif // #if ROCKETNET_DEV
 
 // the fault-injecting allocator: fails exactly the fail_at-th call
 struct reached_allocator_t
@@ -248,6 +247,11 @@ static void reached_release( void * context, void * pointer )
     free( pointer );
 }
 
+static int refuse_thread_start( struct rocketnet_platform_thread_t *, void * )
+{
+    return 1;
+}
+
 static void test_client_connect_thread_create_failed_reached()
 {
     reached_allocator_t state = { 0, 0, 0 };
@@ -276,35 +280,48 @@ static void test_client_connect_thread_create_failed_reached()
     check( client != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
+    // the OS refuses the worker thread: THREAD_CREATE_FAILED, and no thread starts
+
+    const struct rocketnet_platform_priority_calls_t * saved = rocketnet_platform_priority_calls_current();
+    struct rocketnet_platform_priority_calls_t fake;
+    fake = *saved;
+    fake.thread_start = refuse_thread_start;
+    rocketnet_platform_set_priority_calls_for_testing( &fake );
+
+    const int live_before = state.live;
+    check( rocketnet_client_connect( client, token ) == ROCKETNET_STATUS_THREAD_CREATE_FAILED );
+    check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+    check( state.live == live_before );
+
+    // every allocation that same connect makes, refused in turn up to the
+    // worker thread's record: OUT_OF_MEMORY with nothing left allocated. The
+    // thread start stays refused, so the walk ends at THREAD_CREATE_FAILED
+    // once every allocation was reached, and no thread starts
+
     int out_of_memory = 0;
-    int thread_create_failed = 0;
-    enum rocketnet_status_t thread_create_status = ROCKETNET_STATUS_OK;
-    for ( int k = 1; k <= 256 && !thread_create_failed; k++ )
+    for ( int k = 1;; k++ )
     {
-        state.fail_at = state.calls + k;
+        check( k <= 256 );
+        const int armed = state.calls + k;
+        state.fail_at = armed;
 
         const enum rocketnet_status_t status = rocketnet_client_connect( client, token );
-        check( status != ROCKETNET_STATUS_OK );
         if ( status == ROCKETNET_STATUS_THREAD_CREATE_FAILED )
         {
-            thread_create_failed = 1;
-            thread_create_status = status;
-        }
-        else
-        {
-            check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
-
-            out_of_memory++;
+            check( state.calls < armed );
+            break;
         }
 
+        check( status == ROCKETNET_STATUS_OUT_OF_MEMORY );
         check( rocketnet_client_state( client ) == ROCKETNET_CLIENT_STATE_DISCONNECTED );
+        check( state.live == live_before );
+        out_of_memory++;
     }
 
     state.fail_at = 0;
+    rocketnet_platform_set_priority_calls_for_testing( saved );
 
     check( out_of_memory > 0 );
-    check( thread_create_failed == 1 );
-    check( thread_create_status == ROCKETNET_STATUS_THREAD_CREATE_FAILED );
 
     rn_test_client_stop_and_destroy( client );
     rn_test_server_stop_and_destroy( server );
@@ -316,6 +333,7 @@ static void test_client_connect_thread_create_failed_reached()
 }
 
 REGISTER_UNIT_TEST( test_client_connect_thread_create_failed_reached );
+#endif // #if ROCKETNET_DEV
 
 #if ROCKETNET_DEV
 static double reached_now = 1000.0;

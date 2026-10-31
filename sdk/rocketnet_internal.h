@@ -643,4 +643,14 @@ int rocketnet_platform_socket_receive_buffer_bytes( struct rocketnet_platform_so
 void rocketnet_server_transport_disconnect_client_shutdown( struct rocketnet_server_transport_t * transport, int client_index );
 void rocketnet_server_transport_send_packets_shutdown( struct rocketnet_server_transport_t * transport );
 
+// A create's reason for failing, written through its caller's status (NULL:
+// not asked). OUT_OF_MEMORY, once written, is never replaced: a create that
+// was refused an allocation anywhere fails for want of memory, and the
+// transport ladder ends there instead of falling to the next candidate.
+static inline void rocketnet_create_status( int * status, int value )
+{
+    if ( status && *status != ROCKETNET_STATUS_OUT_OF_MEMORY )
+        *status = value;
+}
+
 #endif // ROCKETNET_SDK_ROCKETNET_INTERNAL_H

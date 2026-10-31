@@ -467,7 +467,7 @@ static void rocketnet_client_transport_abort_create( rocketnet_client_transport_
     rocketnet_client_transport_destroy( transport );
 }
 
-static void rocketnet_client_thread_function( void * data );
+static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thread, void * data );
 static void rocketnet_client_receive_packets( rocketnet_client_transport_t * client_transport, const double * synthetic_time = NULL );
 
 // The transport-owned part of ClientSession End. The protocol overload has
@@ -1087,16 +1087,12 @@ struct rocketnet_client_iocp_io_layout_t
 // The memory plan seam allocates this mirror of the platform thread_record_t
 // (the thread and its shim, one allocation, sdk/rocketnet_platform.cpp) that
 // rocketnet_platform_thread_create allocates, so the seam allocates the bytes
-// rocketnet_platform_thread_allocation_bytes counts. The Windows shim carries
-// no thread pointer; the POSIX shims do.
+// rocketnet_platform_thread_allocation_bytes counts.
 struct rocketnet_thread_shim_layout_t
 {
     void * context;
     void * real_thread_data;
     void * real_thread_function;
-#if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
-    void * thread;
-#endif // #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 };
 struct rocketnet_thread_record_layout_t
 {
@@ -1116,14 +1112,19 @@ void rocketnet_client_transport_set_memory_plan_seam_for_test( bool enable )
 // The client network thread's create and release. The memory plan seam stands in
 // a bare allocation of the thread record for the thread, so it opens no thread.
 
-static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * context, rocketnet_platform_thread_func_t function, void * argument )
+static rocketnet_platform_thread_t * rocketnet_client_thread_create( void * context, rocketnet_platform_thread_func_t function, void * argument, int * status )
 {
 #if ROCKETNET_DEV
     if ( rocketnet_client_memory_plan_seam_enabled )
-        return (rocketnet_platform_thread_t *) rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
+    {
+        void * record = rocketnet_malloc( context, sizeof( rocketnet_thread_record_layout_t ) );
+        if ( !record )
+            rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
+        return (rocketnet_platform_thread_t *) record;
+    }
 #endif // #if ROCKETNET_DEV
 
-    return rocketnet_platform_thread_create( context, function, argument );
+    return rocketnet_platform_thread_create( context, function, argument, status );
 }
 
 static void rocketnet_client_thread_release( void * context, rocketnet_platform_thread_t * thread )
@@ -2362,7 +2363,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
             return client_transport;
 #endif // #if ROCKETNET_DEV
 
-        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io );
+        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_io_thread_function, &client_transport->client_io, status );
     }
 #if ROCKETNET_DEV
     else if ( client_transport->step_driven )
@@ -2370,7 +2371,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 #endif // #if ROCKETNET_DEV
     else
     {
-        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_thread_function, client_transport );
+        client_transport->thread = rocketnet_client_thread_create( context, rocketnet_client_thread_function, client_transport, status );
     }
 
     if ( !client_transport->thread )
@@ -2379,8 +2380,7 @@ static rocketnet_client_transport_t * rocketnet_client_transport_create_internal
 
         rocketnet_client_transport_abort_create( client_transport );
 
-        if ( status )
-            *status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+        rocketnet_create_status( status, ROCKETNET_STATUS_THREAD_CREATE_FAILED );
 
         return NULL;
     }
@@ -4084,7 +4084,7 @@ void rocketnet_client_transport_legacy_receive_state_for_test(
 // proofs/tla/RNClientIoShutdown.tla WorkerExit: the legacy worker returns after its
 // stop is complete.
 
-static void rocketnet_client_thread_function( void * data )
+static void rocketnet_client_thread_function( rocketnet_platform_thread_t * thread, void * data )
 {
     rocketnet_client_transport_t * client_transport = (rocketnet_client_transport_t *) data;
 
@@ -4096,7 +4096,7 @@ static void rocketnet_client_thread_function( void * data )
 
         rocketnet_client_receive_packets( client_transport );
 
-        rocketnet_platform_thread_wait( 0.001 );
+        rocketnet_platform_thread_wait( thread, 0.001 );
     }
 
     rocketnet_client_transport_finish_stop( client_transport );

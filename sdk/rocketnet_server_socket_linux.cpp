@@ -495,7 +495,7 @@ static void free_send_frame( rocketnet_server_xdp_socket_t * socket, uint64_t fr
     }
 }
 
-static void rocketnet_server_socket_xdp_thread_function( void * data );
+static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thread_t *, void * data );
 
 // the public address as the 16 network-order bytes the XDP config carries
 // (the rocketnet address stores IPv6 as host-order 16-bit groups)
@@ -1391,7 +1391,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
     rocketnet_server_socket_t * server_socket = (rocketnet_server_socket_t *) rocketnet_malloc( context, sizeof( rocketnet_server_socket_t ) );
     if ( !server_socket )
+    {
+        rocketnet_create_status( create_status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     new ( server_socket ) rocketnet_server_socket_t();
 
@@ -1400,6 +1403,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->replay_marks = (struct rocketnet_xdp_replay_marks_t *) rocketnet_malloc( context, sizeof( struct rocketnet_xdp_replay_marks_t ) );
     if ( !server_socket->replay_marks )
     {
+        rocketnet_create_status( create_status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         rocketnet_error( "server could not allocate the replay marks buffer" );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
@@ -1820,6 +1824,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     server_socket->socket = (rocketnet_server_xdp_socket_t *) rocketnet_malloc( server_socket->context, (size_t) num_queues * sizeof( rocketnet_server_xdp_socket_t ) );
     if ( server_socket->socket == NULL )
     {
+        rocketnet_create_status( create_status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         rocketnet_error( "server could not allocate sockets" );
         rocketnet_server_socket_abort_create( server_socket );
         return NULL;
@@ -1864,7 +1869,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         if ( posix_memalign( &socket->buffer, (size_t) getpagesize(), (size_t) buffer_size ) )
         {
             socket->buffer = NULL;              // destroy removes the count only for a granted block
-            rocketnet_allocation_refused();
+            rocketnet_create_status( create_status, ROCKETNET_STATUS_OUT_OF_MEMORY );
             rocketnet_error( "server could not allocate buffer" );
             rocketnet_server_socket_abort_create( server_socket );
             return NULL;
@@ -2023,7 +2028,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
 
         rocketnet_info( "starting xdp thread for socket queue %d", socket->queue );
 
-        socket->xdp_thread = rocketnet_platform_thread_create( server_socket->context, rocketnet_server_socket_xdp_thread_function, socket );
+        socket->xdp_thread = rocketnet_platform_thread_create( server_socket->context, rocketnet_server_socket_xdp_thread_function, socket, create_status );
         if ( !socket->xdp_thread )
         {
             rocketnet_error( "server could not create xdp thread %d", queue );
@@ -3233,7 +3238,7 @@ void rocketnet_server_socket_receive_packets( rocketnet_server_socket_t * server
     }
 }
 
-static void rocketnet_server_socket_xdp_thread_function( void * data )
+static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thread_t *, void * data )
 {
     rocketnet_server_xdp_socket_t * socket = (rocketnet_server_xdp_socket_t *) data;
 

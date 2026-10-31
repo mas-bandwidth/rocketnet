@@ -122,7 +122,7 @@ ROCKETNET_STATIC_ASSERT( ROCKETNET_GSO_MAX_QUEUES * ROCKETNET_GSO_SEND_QUEUE_SIZ
 // num_queues <= 0 selects the default. flags is the DISABLE set above, zero
 // for production.
 
-struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags );
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status = NULL );
 
 void rocketnet_server_gso_stop( struct rocketnet_server_gso_t * gso );
 bool rocketnet_server_gso_stopped( struct rocketnet_server_gso_t * gso );

@@ -47,7 +47,7 @@ do                                                                              
 
 static bool threads_work = false;
 
-static void test_thread_function( void * )
+static void test_thread_function( rocketnet_platform_thread_t *, void * )
 {
     threads_work = true;
 }
@@ -1301,7 +1301,7 @@ struct rocketnet_platform_primitives_priority_thread_t
     bool signaled;
 };
 
-static void rocketnet_platform_primitives_priority_thread( void * context )
+static void rocketnet_platform_primitives_priority_thread( rocketnet_platform_thread_t *, void * context )
 {
     rocketnet_platform_primitives_priority_thread_t * state =
         (rocketnet_platform_primitives_priority_thread_t *) context;

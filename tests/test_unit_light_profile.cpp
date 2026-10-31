@@ -49,12 +49,16 @@
 // the DEV ON client, which was 22971807 and is now 22971871; the contract
 // audit adds 64 more, 22971935 by the same legs. The DEV OFF leg
 // stayed within its figure.
+// The thread record holds its sleep timer: 8 bytes per thread, and 8 more
+// for the timers ledger generation in a development build. The clients one
+// network thread makes the DEV ON client 22971951 (the windows Release (a)
+// and (c) legs) and the DEV OFF client at most 22182891.
 #if ROCKETNET_DEV
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1607280656 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971935 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22971951 )
 #else
 #define LIGHT_SERVER_1000_MAX_BYTES ( (size_t) 1596899594 )
-#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182883 )
+#define LIGHT_CLIENT_MAX_BYTES ( (size_t) 22182891 )
 #endif // #if ROCKETNET_DEV
 #elif defined( __APPLE__ )
 // macOS adds, over the figures before them: per socket, the send failure

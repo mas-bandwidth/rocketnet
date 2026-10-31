@@ -379,21 +379,6 @@ static const rocketnet_allocator_pair_t rocketnet_allocator_installing = { NULL,
 
 static std::atomic<const rocketnet_allocator_pair_t *> rocketnet_allocator_pair{ &rocketnet_allocator_pairs[0] };
 
-// the allocations refused on this thread, so a failed create can report OUT_OF_MEMORY
-static thread_local uint64_t rocketnet_allocation_refusals_on_this_thread = 0;
-
-uint64_t rocketnet_allocation_refusals()
-{
-    return rocketnet_allocation_refusals_on_this_thread;
-}
-
-// counts an allocation that failed outside rocketnet_malloc
-
-void rocketnet_allocation_refused()
-{
-    ++rocketnet_allocation_refusals_on_this_thread;
-}
-
 static std::mutex rocketnet_lifecycle_mutex;
 
 #if ROCKETNET_DEV
@@ -559,10 +544,7 @@ void * rocketnet_malloc( void * context, size_t bytes )
     const size_t alignment = ROCKETNET_ALLOCATION_ALIGNMENT;
     const size_t overhead = (size_t) rocketnet_allocation_overhead();
     if ( bytes > SIZE_MAX - overhead )
-    {
-        ++rocketnet_allocation_refusals_on_this_thread;
         return NULL;
-    }
 
     // counted first, so install and term see the call in flight, then the
     // pair read and copied whole, with no lock; an install in progress is
@@ -587,8 +569,6 @@ void * rocketnet_malloc( void * context, size_t bytes )
     void * base = installed.allocate( context, bytes + overhead );
     if ( !base )
     {
-        ++rocketnet_allocation_refusals_on_this_thread;
-
         rocketnet_allocations.fetch_sub( 1, std::memory_order_release );
         return NULL;
     }

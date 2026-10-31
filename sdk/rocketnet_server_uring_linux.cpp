@@ -1275,12 +1275,12 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_test_create( void * con
 
 #endif // #if ROCKETNET_DEV
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int * status )
 {
-    return rocketnet_server_uring_create_flags( context, bind_address, num_queues, 0 );
+    return rocketnet_server_uring_create_flags( context, bind_address, num_queues, 0, status );
 }
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status )
 {
     rocketnet_assert( bind_address );
     rocketnet_assert( bind_address->type == ROCKETNET_ADDRESS_IPV4 || bind_address->type == ROCKETNET_ADDRESS_IPV6 );
@@ -1305,7 +1305,10 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
 
     struct rocketnet_server_uring_t * uring = (struct rocketnet_server_uring_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_t ) );
     if ( !uring )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     new ( uring ) rocketnet_server_uring_t();
 
@@ -1317,6 +1320,7 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * co
     uring->queues = (struct rocketnet_server_uring_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_uring_queue_t ) * (size_t) num_queues );
     if ( !uring->queues )
     {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         uring->~rocketnet_server_uring_t();
         rocketnet_free( context, uring );
         return NULL;
@@ -1975,8 +1979,9 @@ uint64_t rocketnet_server_uring_mapped_bytes( int queues )
     return 0;
 }
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int * status )
 {
+    (void) status;
     (void) context;
     (void) bind_address;
     (void) num_queues;
@@ -1984,10 +1989,10 @@ struct rocketnet_server_uring_t * rocketnet_server_uring_create( void * context,
     return NULL;
 }
 
-struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
+struct rocketnet_server_uring_t * rocketnet_server_uring_create_flags( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status )
 {
     (void) flags;
-    return rocketnet_server_uring_create( context, bind_address, num_queues );
+    return rocketnet_server_uring_create( context, bind_address, num_queues, status );
 }
 
 int rocketnet_server_uring_features( struct rocketnet_server_uring_t * uring )

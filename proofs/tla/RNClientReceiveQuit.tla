@@ -10,7 +10,8 @@
 (* with acquire at the top of every pass, drains the socket        *)
 (* (rocketnet_client_receive_packets, which never blocks: it breaks *)
 (* when the buffer is full or the socket is empty), then     *)
-(* waits up to 1 ms in rocketnet_platform_thread_wait (2098).  destroy    *)
+(* waits up to 1 ms in rocketnet_platform_thread_wait, on its own record *)
+(* (2098).  destroy                                                        *)
 (* (1041-1044) stores quit with release, wakes the thread, joins it and   *)
 (* frees its handle, then frees the transport the thread reads (1047 on). *)
 (*                                                                         *)
@@ -97,7 +98,7 @@ Check ==
     /\ UNCHANGED <<quit, woken, sem, dst>>
 
 \* rocketnet_client_thread_function: the drain returns and
-\* rocketnet_platform_thread_wait(0.001) begins.  linux: under wake_mutex, woken
+\* rocketnet_platform_thread_wait(thread, 0.001) begins.  linux: under wake_mutex, woken
 \* already set skips the cond wait and returns.  mac: woken set
 \* returns at once.  windows: the sleep starts.
 WaitBegin ==

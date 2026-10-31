@@ -77,8 +77,10 @@
 
 extern uint64_t rocketnet_server_cookie_mac_count();
 
+#if ROCKETNET_DEV
 // visit counter for testing: defined in rocketnet_ack.cpp
 extern thread_local unsigned long long g_ack_visit_count;
+#endif // #if ROCKETNET_DEV
 
 // Sockets, select, and the raw chaff injector live in tests/functional/.
 

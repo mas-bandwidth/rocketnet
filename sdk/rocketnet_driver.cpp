@@ -160,15 +160,6 @@ const int * rocketnet_client_transport_io_availability( int * count )
     return rocketnet_transport_lists().clients;
 }
 
-static void rocketnet_transport_report_out_of_memory( int * status, uint64_t refusals_before )
-{
-    // a create that returned NULL after an allocation on this thread was refused
-    // failed for want of memory: report OUT_OF_MEMORY through the config's status
-
-    if ( status && rocketnet_allocation_refusals() != refusals_before )
-        *status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-}
-
 bool rocketnet_server_transport_io_open( const rocketnet_server_transport_io_operations_t * ops,
                                          void * context, const rocketnet_server_transport_io_config_t * config,
                                          rocketnet_address_t * bind, rocketnet_server_transport_io_t * transport )
@@ -188,13 +179,9 @@ bool rocketnet_server_transport_io_open( const rocketnet_server_transport_io_ope
     // refused attempts must not constrain the next candidate's port
 
     rocketnet_address_t attempt = *bind;
-    const uint64_t refusals = rocketnet_allocation_refusals();
     void * instance = ops->create( context, config, &attempt );
     if ( !instance )
-    {
-        rocketnet_transport_report_out_of_memory( config->status, refusals );
         return false;
-    }
 
     transport->operations = ops;
     transport->instance = instance;
@@ -244,13 +231,9 @@ bool rocketnet_client_transport_io_open( const rocketnet_client_transport_io_ope
         return false;
 
     rocketnet_address_t attempt = *bind;
-    const uint64_t refusals = rocketnet_allocation_refusals();
     void * instance = ops->create( context, config, &attempt );
     if ( !instance )
-    {
-        rocketnet_transport_report_out_of_memory( config->status, refusals );
         return false;
-    }
 
     transport->operations = ops;
     transport->instance = instance;

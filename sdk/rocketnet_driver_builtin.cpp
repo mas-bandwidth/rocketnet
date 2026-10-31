@@ -7,7 +7,7 @@
 #include <atomic>
 #include <string.h>
 
-static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes )
+static void * portable_socket_create( void * context, const char * name, rocketnet_address_t * bind, int receive_buffer_bytes, int * status )
 {
     // adapters preserve the existing native backend entry points. New backends
     // can define their operations directly in their own implementation file.
@@ -16,7 +16,7 @@ static void * portable_socket_create( void * context, const char * name, rocketn
 
     return rocketnet_platform_socket_create_with_pump( context, bind,
                                                        ROCKETNET_PLATFORM_SOCKET_NON_BLOCKING, 0.0f, ROCKETNET_SOCKET_SEND_BUFFER_SIZE,
-                                                       receive_buffer_bytes, name );
+                                                       receive_buffer_bytes, name, status );
 }
 
 // the buffered interface borrows caller packets for the duration of send_batch.
@@ -150,7 +150,7 @@ struct portable_server_t
     portable_rx_bank_t rx_bank[PORTABLE_RX_BANKS];
 };
 
-static bool portable_rx_storage_create( portable_server_t * server, int capacity )
+static bool portable_rx_storage_create( portable_server_t * server, int capacity, int * status = NULL )
 {
     // points the three banks into one allocation of capacity datagrams each:
     // the data arrays first (aligned as the allocation is), then the addresses,
@@ -162,7 +162,10 @@ static bool portable_rx_storage_create( portable_server_t * server, int capacity
 
     server->rx_storage = (uint8_t *) rocketnet_malloc( server->context, (size_t) bytes );
     if ( !server->rx_storage )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return false;
+    }
 
     server->rx_capacity = capacity;
 
@@ -188,7 +191,7 @@ static bool portable_rx_storage_create( portable_server_t * server, int capacity
     return true;
 }
 
-static bool portable_tx_storage_create( portable_server_t * server, int capacity )
+static bool portable_tx_storage_create( portable_server_t * server, int capacity, int * status = NULL )
 {
     // points the three TX banks into one allocation of capacity packets each: the
     // worker's send descriptors first (pointer aligned, as the allocation is),
@@ -200,7 +203,10 @@ static bool portable_tx_storage_create( portable_server_t * server, int capacity
 
     server->tx_storage = (uint8_t *) rocketnet_malloc( server->context, (size_t) bytes );
     if ( !server->tx_storage )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return false;
+    }
 
     server->tx_capacity = capacity;
 
@@ -305,7 +311,7 @@ static bool portable_tx_publish( portable_server_t * server )
 }
 
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-static void portable_tx_worker( void * arg )
+static void portable_tx_worker( rocketnet_platform_thread_t *, void * arg )
 {
     portable_server_t * server = (portable_server_t *) arg;
     for ( ;; )
@@ -498,7 +504,7 @@ static portable_rx_step_t portable_rx_step( portable_server_t * server )
 }
 
 #if defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
-static void portable_rx_worker( void * arg )
+static void portable_rx_worker( rocketnet_platform_thread_t *, void * arg )
 {
     // proofs/tla/RNPortableRx.tla WWaitFull and WWaitIdle: the worker waits on its wake
     // alone when every bank is full, and on the wake or socket readability
@@ -623,13 +629,16 @@ static void * portable_create( void * context, const rocketnet_server_transport_
 
     portable_server_t * server = (portable_server_t *) rocketnet_malloc( context, sizeof( portable_server_t ) );
     if ( !server )
+    {
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     new ( server ) portable_server_t();
     server->context = context;
 
-    if ( !portable_rx_storage_create( server, portable_rx_capacity( config->transport ) ) ||
-         !portable_tx_storage_create( server, portable_tx_capacity( config->transport ) ) )
+    if ( !portable_rx_storage_create( server, portable_rx_capacity( config->transport ), config->status ) ||
+         !portable_tx_storage_create( server, portable_tx_capacity( config->transport ), config->status ) )
     {
         portable_server_cleanup( server );
         return NULL;
@@ -641,7 +650,7 @@ static void * portable_create( void * context, const rocketnet_server_transport_
 
     const int max_clients = config->transport && config->transport->max_clients > 0 ? config->transport->max_clients : ROCKETNET_DEFAULT_MAX_CLIENTS;
     const int receive_buffer_bytes = rocketnet_server_receive_buffer_request( max_clients );
-    server->socket = (rocketnet_platform_socket_t *) portable_socket_create( context, config->name, bind, receive_buffer_bytes );
+    server->socket = (rocketnet_platform_socket_t *) portable_socket_create( context, config->name, bind, receive_buffer_bytes, config->status );
     if ( !server->socket )
     {
         portable_server_cleanup( server );
@@ -654,18 +663,17 @@ static void * portable_create( void * context, const rocketnet_server_transport_
     if ( !rocketnet_platform_mutex_create( &server->mutex ) ||
          !rocketnet_platform_mutex_create( &server->rx_mutex ) )
     {
-        if ( config->status )
-            *config->status = ROCKETNET_STATUS_MUTEX_CREATE_FAILED;
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_MUTEX_CREATE_FAILED );
 
         portable_server_cleanup( server );
         return NULL;
     }
 
-    server->wake = rocketnet_platform_wake_create( context, NULL );
+    server->wake = rocketnet_platform_wake_create( context, NULL, config->status );
 #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
-    server->rx_wake = rocketnet_platform_wake_create( context, server->socket );
+    server->rx_wake = rocketnet_platform_wake_create( context, server->socket, config->status );
 #else
-    server->rx_wake = rocketnet_platform_wake_create( context, NULL );
+    server->rx_wake = rocketnet_platform_wake_create( context, NULL, config->status );
 #endif // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 
     if ( !server->wake || !server->rx_wake )
@@ -674,21 +682,19 @@ static void * portable_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    server->thread = rocketnet_platform_thread_create( context, portable_tx_worker, server );
+    server->thread = rocketnet_platform_thread_create( context, portable_tx_worker, server, config->status );
     if ( !server->thread )
     {
-        if ( config->status )
-            *config->status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_THREAD_CREATE_FAILED );
 
         portable_server_cleanup( server );
         return NULL;
     }
 
-    server->rx_thread = rocketnet_platform_thread_create( context, portable_rx_worker, server );
+    server->rx_thread = rocketnet_platform_thread_create( context, portable_rx_worker, server, config->status );
     if ( !server->rx_thread )
     {
-        if ( config->status )
-            *config->status = ROCKETNET_STATUS_THREAD_CREATE_FAILED;
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_THREAD_CREATE_FAILED );
 
         portable_server_cleanup( server );
         return NULL;
@@ -1418,16 +1424,19 @@ static void * portable_io_client_create( void * context, const rocketnet_client_
 
     struct portable_io_client_t * client = (struct portable_io_client_t *) rocketnet_malloc( context, sizeof( *client ) );
     if ( !client )
+    {
+        rocketnet_create_status( config->status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
-    client->socket = (rocketnet_platform_socket_t *) portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    client->socket = (rocketnet_platform_socket_t *) portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->status );
     if ( !client->socket )
     {
         rocketnet_free( context, client );
         return NULL;
     }
 
-    client->wake = rocketnet_platform_wake_create( context, client->socket );
+    client->wake = rocketnet_platform_wake_create( context, client->socket, config->status );
     if ( !client->wake )
     {
         rocketnet_platform_socket_destroy( client->socket );
@@ -1543,7 +1552,7 @@ static const rocketnet_client_transport_io_operations_t portable_client_operatio
 #else // #if defined( ROCKETNET_PLATFORM_HAS_WAKE )
 static void * portable_client_create( void * context, const rocketnet_client_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE );
+    return portable_socket_create( context, config->name, bind, ROCKETNET_SOCKET_RECEIVE_BUFFER_SIZE, config->status );
 }
 
 static void portable_client_send( void * transport, const rocketnet_address_t * to, const uint8_t * data, int bytes )
@@ -1633,7 +1642,7 @@ static void * gso_create( void * context, const rocketnet_server_transport_io_co
         return NULL;
     }
 
-    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, 0 );
+    return rocketnet_server_gso_create( context, bind, config->transport->num_xdp_queues, 0, config->status );
 }
 
 static void gso_destroy( void * transport ) { rocketnet_server_gso_destroy( (rocketnet_server_gso_t *) transport ); }
@@ -1680,7 +1689,7 @@ static void * io_uring_create( void * context, const rocketnet_server_transport_
         return NULL;
     }
 
-    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues );
+    return rocketnet_server_uring_create( context, bind, config->transport->num_xdp_queues, config->status );
 }
 
 static void io_uring_destroy( void * transport ) { rocketnet_server_uring_destroy( (rocketnet_server_uring_t *) transport ); }
@@ -1820,11 +1829,15 @@ extern const rocketnet_transport_backend_t rocketnet_xdp_transport = { &xdp_oper
 #include "rocketnet_server_iocp.h"
 #include "rocketnet_client_iocp.h"
 
-static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
+static void * iocp_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
     // rn-iocp-one-completion-worker: iocp always runs one completion worker plus one send worker
 
-    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS );
+#if ROCKETNET_DEV
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, 0, 0, config->status );
+#else // #if ROCKETNET_DEV
+    return rocketnet_server_iocp_create( context, bind, ROCKETNET_IOCP_DEFAULT_WORKERS, config->status );
+#endif // #if ROCKETNET_DEV
 }
 
 static void iocp_destroy( void * transport ) { rocketnet_server_iocp_destroy( (rocketnet_server_iocp_t *) transport ); }
@@ -1872,9 +1885,13 @@ extern const rocketnet_transport_backend_t rocketnet_iocp_transport = { &iocp_op
 
 #include "rocketnet_server_rio.h"
 
-static void * rio_create( void * context, const rocketnet_server_transport_io_config_t *, rocketnet_address_t * bind )
+static void * rio_create( void * context, const rocketnet_server_transport_io_config_t * config, rocketnet_address_t * bind )
 {
-    return rocketnet_server_rio_create( context, bind );
+#if ROCKETNET_DEV
+    return rocketnet_server_rio_create( context, bind, 0, config->status );
+#else // #if ROCKETNET_DEV
+    return rocketnet_server_rio_create( context, bind, config->status );
+#endif // #if ROCKETNET_DEV
 }
 
 static void rio_destroy( void * transport ) { rocketnet_server_rio_destroy( (rocketnet_server_rio_t *) transport ); }

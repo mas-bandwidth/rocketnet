@@ -381,7 +381,7 @@ static int rocketnet_server_gso_flush( rocketnet_server_gso_t * gso,
 
 // proofs/tla/RNGsoHandoff.tla TxSend: the worker sends each taken bank outside
 // the ownership mutex; stop's final bank is sent last and ends the worker.
-static void rocketnet_server_gso_send_worker( void * context )
+static void rocketnet_server_gso_send_worker( rocketnet_platform_thread_t *, void * context )
 {
     rocketnet_server_gso_t * gso = (rocketnet_server_gso_t *) context;
 
@@ -729,7 +729,7 @@ static bool rocketnet_server_gso_publish_receive( struct rocketnet_server_gso_qu
     return published;
 }
 
-static void rocketnet_server_gso_worker( void * data )
+static void rocketnet_server_gso_worker( rocketnet_platform_thread_t *, void * data )
 {
     struct rocketnet_server_gso_queue_t * queue = (struct rocketnet_server_gso_queue_t *) data;
 
@@ -924,7 +924,7 @@ static void rocketnet_server_gso_abort_create( rocketnet_server_gso_t * gso )
     rocketnet_server_gso_destroy( gso );
 }
 
-struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags )
+struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, struct rocketnet_address_t * bind_address, int num_queues, int flags, int * status )
 {
 #if ROCKETNET_DEV
     flags |= rocketnet_server_gso_test_create_flags.load();
@@ -956,7 +956,10 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
 
     struct rocketnet_server_gso_t * gso = (struct rocketnet_server_gso_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_gso_t ) );
     if ( !gso )
+    {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         return NULL;
+    }
 
     new ( gso ) rocketnet_server_gso_t();
     gso->send_stopped.store( true, std::memory_order_relaxed );
@@ -969,6 +972,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     gso->queues = (struct rocketnet_server_gso_queue_t *) rocketnet_malloc( context, sizeof( struct rocketnet_server_gso_queue_t ) * (size_t) num_queues );
     if ( !gso->queues )
     {
+        rocketnet_create_status( status, ROCKETNET_STATUS_OUT_OF_MEMORY );
         gso->~rocketnet_server_gso_t();
         rocketnet_free( context, gso );
         return NULL;
@@ -1084,7 +1088,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         }
 
         queue->stopped.store( false, std::memory_order_relaxed );
-        queue->thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_worker, queue );
+        queue->thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_worker, queue, status );
         if ( !queue->thread )
         {
             queue->stopped.store( true, std::memory_order_relaxed );
@@ -1102,7 +1106,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
         return NULL;
     }
 
-    gso->send_wake = rocketnet_platform_wake_create( context, NULL );
+    gso->send_wake = rocketnet_platform_wake_create( context, NULL, status );
     if ( !gso->send_wake )
     {
         rocketnet_server_gso_abort_create( gso );
@@ -1110,7 +1114,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     }
 
     gso->send_stopped.store( false, std::memory_order_relaxed );
-    gso->send_thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_send_worker, gso );
+    gso->send_thread = rocketnet_platform_thread_create( context, rocketnet_server_gso_send_worker, gso, status );
     if ( !gso->send_thread )
     {
         gso->send_stopped.store( true, std::memory_order_relaxed );

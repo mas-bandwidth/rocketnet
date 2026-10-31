@@ -310,6 +310,31 @@ jobs:
           python3 tools/check_no_owned_linked_lists.py --self-test
           python3 tools/check_no_owned_linked_lists.py
 
+      # tools/check_no_thread_local.py exits 1 when a production build
+      # (ROCKETNET_DEV=0) of sdk/ defines or touches thread-local storage. On
+      # macOS a thread's first touch of any thread-local makes dyld allocate
+      # the image's whole thread-local block, so one thread-local costs every
+      # network thread an allocation. The source check reads every platform's
+      # half, Windows included, through its preprocessor conditionals; the
+      # production rows also run the compiler's own ROCKETNET_DEV=0
+      # preprocessing of every sdk unit and read the built libraries'
+      # sections and symbols. --self-test holds the red and green controls.
+      - name: Check no thread-local storage in a production build
+        if: matrix.leg == 'checks'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/check_no_thread_local.py --self-test
+          python3 tools/check_no_thread_local.py
+          if [ "${{ matrix.dev }}" = "OFF" ]; then
+            python3 tools/check_no_thread_local.py --preprocess build/compile_commands.json
+            libraries=(build/librocketnet.a)
+            for shared in bin/librocketnet.so bin/librocketnet.dylib; do
+              if [ -f "$shared" ]; then libraries+=("$shared"); fi
+            done
+            python3 tools/check_no_thread_local.py --objects "${libraries[@]}"
+          fi
+
       # Driver selection is runtime now (#106), so one build serves the whole
       # matrix. ./bin/test is the unit suite: no socket, no real driver, the
       # state machines and the in-memory simulator, parallel, 120s kill. ./bin/functional is the driver matrix. On this unprivileged
