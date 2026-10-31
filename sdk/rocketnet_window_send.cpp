@@ -81,7 +81,7 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
                                        uint32_t descriptor, uint16_t fragment,
                                        uint64_t ring_start, uint64_t bytes16 )
 {
-    rocketnet_assert( bytes16 % 16 == 0 && bytes16 / 16 <= UINT8_MAX );
+    rocketnet_assert( bytes16 % ROCKETNET_MESSAGE_RING_UNIT == 0 && bytes16 / ROCKETNET_MESSAGE_RING_UNIT <= UINT8_MAX );
 
     rn_send_number_t * entry = &send->region->send_numbers[number % send->region->window];
     entry->number = number;
@@ -93,7 +93,7 @@ static void rn_window_send_set_number( rn_window_send_t * send, uint64_t number,
     entry->last_send = RN_SEND_NUMBER_NEVER_SENT;
     entry->descriptor = descriptor;
     entry->fragment = fragment;
-    entry->ring_units = (uint8_t) ( bytes16 / 16 );
+    entry->ring_units = (uint8_t) ( bytes16 / ROCKETNET_MESSAGE_RING_UNIT );
     entry->acked = 0;
 }
 

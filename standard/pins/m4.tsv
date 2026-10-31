@@ -2,7 +2,7 @@
 # Format and rules: standard/STYLE.md section 10.
 #include "rocketnet_message.h"
 message code count	ROCKETNET_MESSAGE_NUM_CODES	5
-wide channel threshold	( 1 << 8 )	256
+wide channel threshold	ROCKETNET_MESSAGE_WIDE_CHANNEL	256
 message fragment bytes	ROCKETNET_MESSAGE_FRAGMENT_BYTES	1152
 message number modulus	( ROCKETNET_MESSAGE_U24_MASK + 1 )	16777216
 config body bytes	ROCKETNET_MESSAGE_CONFIG_BYTES	28
