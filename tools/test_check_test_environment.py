@@ -116,6 +116,14 @@ class ShapeTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             checker.check_shape(["test_a"], "suite")
 
+    def test_repeated_name_fails_once(self):
+        with self.assertRaises(SystemExit):
+            checker.check_shape(["test_a", "test_a", "test_b", "", checker.PASSED_LINE, ""], "suite", once=True)
+
+    def test_repeated_name_passes_without_once(self):
+        self.assertEqual(checker.check_shape(["test_a", "test_a", "", checker.PASSED_LINE, ""], "suite"),
+                         ["test_a", "test_a"])
+
 
 if __name__ == "__main__":
     unittest.main()

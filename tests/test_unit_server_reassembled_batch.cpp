@@ -328,8 +328,6 @@ static void test_server_reassembled_batch_holds_legitimate_load()
     rocketnet_client_slots_destroy( server.client_slots );
     rocketnet_server_acks_destroy( server.acks );
     rocketnet_reassembly_set_destroy( server.reassembly );
-
-    printf( "test_server_reassembled_batch_holds_legitimate_load\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_reassembled_batch_holds_legitimate_load );
@@ -391,8 +389,6 @@ static void test_server_reassembly_large_payload_small_geometry_fits_the_budget(
     check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_PACKET_PAYLOAD_BYTES - 1 ) == 0 );
     check( rocketnet_server_reassembly_delivered_bytes( 1, 8, ROCKETNET_MAX_FRAGMENTED_PAYLOAD_BYTES + 1 ) == 0 );
     check( rocketnet_reassembly_memory_required_delivered( 1, 8, 16384, 4, 16383 ) == 0 );
-
-    printf( "test_server_reassembly_large_payload_small_geometry_fits_the_budget\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_reassembly_large_payload_small_geometry_fits_the_budget );
@@ -479,8 +475,6 @@ static void test_server_reassembly_delivered_packs_by_bytes()
     check( set->delivered_bytes == 2 * ROCKETNET_REASSEMBLY_DELIVERED_ALIGNED( 4100 ) );
 
     rocketnet_reassembly_set_destroy( set );
-
-    printf( "test_server_reassembly_delivered_packs_by_bytes\n" );
 }
 
 REGISTER_UNIT_TEST( test_server_reassembly_delivered_packs_by_bytes );

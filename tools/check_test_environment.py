@@ -278,13 +278,19 @@ def exec_functional_names():
     return re.compile("(?:" + "|".join(patterns) + ")")
 
 
-def check_shape(lines, label):
-    # every line a test name, then a blank line, the passed line and a blank line
+def check_shape(lines, label, once=False):
+    # every line a test name, then a blank line, the passed line and a blank line;
+    # with once, each name on one line only (the unit registry prints each case once)
     if len(lines) < 4 or lines[-3:] != ["", PASSED_LINE, ""]:
         sys.exit("%s: the run does not end with a blank line, %r and a blank line" % (label, PASSED_LINE))
     bad = [line for line in lines[:-3] if not TEST_NAME_RE.fullmatch(line)]
     if bad:
         sys.exit("%s: lines that are not test_ snake_case names: %s" % (label, "; ".join(bad[:10])))
+    if once:
+        seen = set()
+        repeated = sorted({line for line in lines[:-3] if line in seen or seen.add(line)})
+        if repeated:
+            sys.exit("%s: names printed more than once: %s" % (label, ", ".join(repeated[:10])))
     return lines[:-3]
 
 
@@ -355,7 +361,7 @@ def main():
     result = run_binary(binary, env, timeout=180)
     if result.returncode:
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
-    names = check_shape(result.stdout.splitlines(), "SDK suite")
+    names = check_shape(result.stdout.splitlines(), "SDK suite", once=True)
     if not production and "test_suite_environment" not in names:
         sys.exit("SDK suite did not execute its environment restoration test")
 

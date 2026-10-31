@@ -283,8 +283,6 @@ static void test_loopback_transport_patterns_off_same_trace()
 
     loopback_check_trace( &off, &loopback_base_trace_simulator_off );
     loopback_check_trace( &on, &loopback_base_trace_simulator_on );
-
-    printf( "test_loopback_transport_patterns_off_same_trace\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_patterns_off_same_trace );
@@ -357,7 +355,6 @@ static void test_loopback_transport_drop_every_nth()
     check( cstats.packets_received == sstats.packets_sent - sstats.packets_sent / 5 );
 
     loopback_transport_pair_teardown( &pair );
-    printf( "test_loopback_transport_drop_every_nth\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_drop_every_nth );
@@ -438,7 +435,6 @@ static void test_loopback_transport_reverse_window()
     }
 
     loopback_transport_pair_teardown( &pair );
-    printf( "test_loopback_transport_reverse_window\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reverse_window );
@@ -560,8 +556,6 @@ static void test_loopback_transport_reliable_ordered_survives_loss_and_reorder()
     check( rocketnet_server_transport_stopped( pair.server ) );
     rn_message_object_destroy( client );
     rn_message_object_destroy( server );
-
-    printf( "test_loopback_transport_reliable_ordered_survives_loss_and_reorder\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_reliable_ordered_survives_loss_and_reorder );
@@ -748,8 +742,6 @@ static void test_loopback_transport_loss_reorder_production_refusal()
 
     check( loopback_error_lines >= 12 );
     loopback_error_end();
-
-    printf( "test_loopback_transport_loss_reorder_production_refusal\n" );
 }
 
 REGISTER_UNIT_TEST( test_loopback_transport_loss_reorder_production_refusal );

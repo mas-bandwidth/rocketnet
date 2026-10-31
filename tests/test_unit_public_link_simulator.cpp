@@ -519,8 +519,6 @@ static void test_public_link_simulator_production_refusal()
     check( !rocketnet_config_validate( "client", &client_config, client_table, client_fields ) );
 
     client_config.simulated_latency_ms = 0;
-
-    printf( "test_public_link_simulator_production_refusal\n" );
 }
 
 REGISTER_UNIT_TEST( test_public_link_simulator_production_refusal );
