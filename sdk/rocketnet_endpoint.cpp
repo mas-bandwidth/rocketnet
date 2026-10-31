@@ -926,6 +926,7 @@ void rn_endpoint_config_tick( struct rn_endpoint_t * endpoint, int transport_con
         endpoint->config_error = ROCKETNET_DISCONNECT_REASON_RELIABLE_TIMED_OUT;
 }
 
+// proofs/tla/RNSendRotation.tla BeginUpdate
 uint32_t rn_endpoint_begin_update( struct rn_endpoint_t * endpoint )
 {
     // RNChannel EndUpdate: the last update's deliveries expire and their
@@ -1202,6 +1203,7 @@ int rn_endpoint_next_packet_bytes( struct rn_endpoint_t * endpoint, double now )
     return 0;
 }
 
+// proofs/tla/RNSendRotation.tla BeginFlush: an ended pass stays ended until here or the next update.
 void rn_endpoint_begin_flush( struct rn_endpoint_t * endpoint )
 {
     // proofs/tla/RNOutgoingBuild.tla BeginFlush: a pass the last flush ended opens
