@@ -995,7 +995,7 @@ bool rocketnet_portable_tx_test_handoff()
              server->dropped.load() == (uint64_t) server->tx_capacity + 1;
     portable_server_cleanup( server );
 
-    // exact former race: worker observes empty, pauses after releasing the
+    // the exit race: worker observes empty, pauses after releasing the
     // handoff mutex, stop publishes the last bank and sets quit, then worker
     // resumes its exit decision. A post-unlock quit read would strand bank 0.
 
@@ -1101,8 +1101,8 @@ bool rocketnet_portable_tx_test_sizing()
     // sizing: one bank holds ROCKETNET_SEND_PACKETS_PER_CLIENT per configured
     // client, never fewer than ROCKETNET_SERVER_MAX_SEND_PACKETS, and the memory
     // plan counts the allocation. A burst of three updates of 1100 packets behind
-    // a busy worker drops at the former fixed 1000-packet banks and drops nothing
-    // at the banks sized for 1000 clients.
+    // a busy worker drops at banks of ROCKETNET_SERVER_MAX_SEND_PACKETS and drops
+    // nothing at the banks sized for 1000 clients.
 
 #if !defined( ROCKETNET_PLATFORM_HAS_EVENT_ONLY_WAKE )
     return true;

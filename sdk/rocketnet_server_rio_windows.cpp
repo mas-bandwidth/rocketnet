@@ -382,7 +382,7 @@ static bool rocketnet_rio_post_receive( rocketnet_server_rio_t * rio, int slice 
     {
         // a post refused with an ICMP report of an earlier send is counted
         // with the reset statuses; a refused re-post waits on the retry list in
-        // rocketnet_rio_complete_receive (windows-udp-connreset audit, rio post)
+        // rocketnet_rio_complete_receive
         if ( rocketnet_platform_receive_status_is_reset( WSAGetLastError() ) )
             rocketnet_platform_count_receive_reset();
         return false;
@@ -846,8 +846,8 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
 
     setsockopt( rio->socket, rio->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
                 rio->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
-    // windows-udp-connreset audit, rio socket: both ICMP reset reports off;
-    // a refusal is logged once and the receive path skips the statuses
+    // both ICMP reset reports off; a refusal is logged once and the receive
+    // path skips the statuses
 
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) rio->socket );
     if ( bind( rio->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )
@@ -873,7 +873,7 @@ rocketnet_server_rio_t * rocketnet_server_rio_create( void * context, rocketnet_
     // RIORegisterBuffer takes any committed memory and locks the pages it
     // spans, so ROCKETNET_ALLOCATION_ALIGNMENT is enough (the layout's
     // sub-regions are offsets from the region's base). It is zeroed once
-    // here, as VirtualAlloc's pages were, before any traffic.
+    // here, before any traffic.
 
     rio->region = (uint8_t *) rocketnet_malloc( context, (size_t) rio->layout.total_bytes );
     if ( !rio->region )
@@ -1150,7 +1150,7 @@ static void rocketnet_rio_complete_receive( rocketnet_server_rio_t * rio, const 
         status = (LONG) injected;
     // an ICMP report of an earlier send (port, host or network unreachable)
     // is counted with the failed receives and the slice is re-posted below,
-    // never the end of the drain (windows-udp-connreset audit, rio completion)
+    // never the end of the drain
 
     if ( rocketnet_platform_receive_status_is_reset( (int) status ) )
         rocketnet_platform_count_receive_reset();

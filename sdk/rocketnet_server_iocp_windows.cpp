@@ -667,7 +667,6 @@ static bool rocketnet_iocp_post_receive( rocketnet_server_iocp_t * iocp, rocketn
 
     // a post refused with an ICMP report of an earlier send is counted with
     // the reset statuses, then waits on the retry list like every refused post
-    // (windows-udp-connreset audit, iocp post)
 
     if ( rocketnet_platform_receive_status_is_reset( error ) )
         rocketnet_platform_count_receive_reset();
@@ -892,7 +891,7 @@ static void rocketnet_iocp_worker( rocketnet_platform_thread_t * thread, void * 
                 // a receive completed with an ICMP report of an earlier send
                 // (port, host or network unreachable): counted, dropped and
                 // reposted below like every failed receive, never the end of
-                // the worker (windows-udp-connreset audit, iocp and URO completion)
+                // the worker, on the URO path too
                 DWORD transferred = 0;
                 DWORD completion_flags = 0;
                 if ( !WSAGetOverlappedResult( iocp->socket, &op->overlapped, &transferred, FALSE, &completion_flags ) )
@@ -1221,8 +1220,8 @@ rocketnet_server_iocp_t * rocketnet_server_iocp_create( void * context, rocketne
 
     setsockopt( iocp->socket, iocp->ipv6 ? IPPROTO_IPV6 : IPPROTO_IP,
                 iocp->ipv6 ? IPV6_DONTFRAG : IP_DONTFRAGMENT, (const char *) &enabled, sizeof( enabled ) );
-    // windows-udp-connreset audit, iocp socket: both ICMP reset reports off;
-    // a refusal is logged once and the receive paths skip the statuses
+    // both ICMP reset reports off; a refusal is logged once and the receive
+    // paths skip the statuses
 
     rocketnet_platform_socket_disable_udp_resets( (uintptr_t) iocp->socket );
     if ( bind( iocp->socket, (sockaddr *) &address, address_bytes ) == SOCKET_ERROR )

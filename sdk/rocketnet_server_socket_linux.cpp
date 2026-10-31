@@ -1311,11 +1311,10 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         return NULL;
     }
 
-    // the queue and cpu counts, and since the review the public
-    // address too, arrive from the transport config table (with loud
-    // override logging and deprecated aliases handled there) -- no env is
-    // read here, so the address the pre-flight verified is the address
-    // this create binds, always
+    // the queue and cpu counts and the public address arrive from the
+    // transport config table (with loud override logging and deprecated
+    // aliases handled there) -- no env is read here, so the address the
+    // pre-flight verified is the address this create binds, always
 
     rocketnet_info( "server public address is %s", public_address_string );
 
@@ -1849,8 +1848,8 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // fails create at the top of queue n, after the earlier queues are
         // fully built (their mutexes created, their xdp threads running) and
         // before queue n creates anything, so destroy meets a queue whose
-        // mutexes were never created (test_xdp_filter.cpp:1603,
-        // xdp_create_fails_part_way_tears_down)
+        // mutexes were never created (xdp_create_fails_part_way_tears_down
+        // in tests/test_xdp_filter.cpp)
         {
             char fail_at_queue[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
             if ( rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", fail_at_queue, sizeof( fail_at_queue ) ) > 0 && atoi( fail_at_queue ) == queue )
@@ -2136,7 +2135,7 @@ void rocketnet_server_socket_destroy( rocketnet_server_socket_t * server_socket 
 
         // destroy mutexes: a create that failed part way reaches here with
         // later queues' mutexes never created, so only a created one is
-        // destroyed (the IOCP transport's guard, rocketnet_server_iocp_windows.cpp:436)
+        // destroyed, as rocketnet_server_iocp_destroy guards its mutexes
 
         if ( socket->send_mutex.ok )
             rocketnet_platform_mutex_destroy( &socket->send_mutex );
@@ -2347,9 +2346,9 @@ void rocketnet_server_socket_finish_packet( struct rocketnet_server_socket_t * s
     // authenticated packet is that case: the transport reserves it before
     // the packet opens, and the open learns the MAC before this commit.
     // Taking the learned MAC here sends it the way the same update's
-    // payloads go; through the gateway it arrived after them (the router's
-    // hairpin, ~200 us on the Linux x64 XDP bench), and the client was handed payloads before
-    // the keep-alive that connects it. The table is written only by update,
+    // payloads go; through the gateway it takes the router's hairpin and
+    // arrives after them, and the client is handed payloads before the
+    // keep-alive that connects it. The table is written only by update,
     // never during a fill.
 
     rocketnet_server_socket_send_packet_info_t * info = &send_buffer->packet_info[packet_index];
@@ -3006,17 +3005,15 @@ void rocketnet_server_socket_process_staged_packet( rocketnet_server_socket_t * 
     if ( packet_bytes < ROCKETNET_WIRE_SERVER_MIN_PACKET_BYTES )
         return;
 
-    // Bound by the ARRAY, not by the queue depth. These are different numbers:
-    // ROCKETNET_XDP_RECV_QUEUE_SIZE is 4096*4 = 16384 (how deep one queue's staging
-    // buffer is), while process_packets.from/packet_bytes/packet_data are sized
-    // ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE = ROCKETNET_RECEIVE_PACKETS_PER_CLIENT *
-    // ROCKETNET_MAX_CLIENTS = 16 * 1000 = 16000. Guarding on the larger one let 384
-    // entries write past the end of all three arrays — and since packet_data is
-    // the last member of rocketnet_server_socket_t, the tail of that overrun put
-    // attacker-timed POINTERS past the allocation, which the caller then
-    // dereferences. num_packets accumulates across every queue and both
-    // off-buffers before it is reset in receive_packets, so one flooded queue
-    // reaches it. The portable path was always bounded correctly.
+    // Bound by the array, not by the queue depth: process_packets'
+    // from/packet_bytes/packet_data arrays hold
+    // ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE entries, fewer than one
+    // queue's staging depth (ROCKETNET_XDP_RECV_QUEUE_SIZE) at the default
+    // client count. num_packets accumulates across every queue and both
+    // off-buffers before receive_packets resets it, so one flooded queue
+    // reaches the array bound. A write past it would put attacker-timed
+    // pointers past the allocation (packet_data is the last member of
+    // rocketnet_server_socket_t), which the caller dereferences.
 
     if ( server_socket->process_packets.num_packets >= ROCKETNET_SERVER_MAX_RECEIVE_PACKETS_PER_UPDATE )
         return;
@@ -3248,9 +3245,8 @@ static void rocketnet_server_socket_xdp_thread_function( rocketnet_platform_thre
 
     pin_thread_to_cpu( socket->num_os_cpus + socket->queue );
 
-    // flow_server_socket_linux.cpp:1374-1381: pin, then SCHED_RR at the
-    // minimum on itself. the priority call follows the off switch; the pin
-    // is the queue's cpu and always runs
+    // pin, then SCHED_RR at the minimum on itself. the priority call follows
+    // the off switch; the pin is the queue's cpu and always runs
 
     if ( rocketnet_platform_thread_priority_enabled() )
     {

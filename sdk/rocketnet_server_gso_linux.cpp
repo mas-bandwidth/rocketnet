@@ -1254,9 +1254,9 @@ void rocketnet_server_gso_counters( struct rocketnet_server_gso_t * gso, uint64_
     counters[ROCKETNET_SERVER_GSO_COUNTER_RECEIVE_ERRORS] = gso->counter_receive_errors;
 }
 
-// the builtin transport's receive_drops hook: the size
-// pass's drops (sdk/rocketnet_server_gso_linux.cpp:532-586), split at the receive
-// ceiling; main thread, as the fold into these totals is (:1209-1210)
+// the builtin transport's receive_drops hook: the size pass's drops
+// (rocketnet_server_gso_worker), split at the receive ceiling; main thread,
+// as the fold into these totals is (rocketnet_server_gso_receive_from_queue)
 
 void rocketnet_server_gso_receive_drops( struct rocketnet_server_gso_t * gso, uint64_t * too_short, uint64_t * too_large )
 {
