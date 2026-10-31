@@ -136,24 +136,12 @@ struct rocketnet_platform_sleep_split_t
 
 struct rocketnet_platform_sleep_split_t rocketnet_platform_sleep_split( double time );
 
-// 1 set and copied, 0 unset, -1 value too long for size; buffer is left empty unless 1
+// the process environment: 1 set and copied, 0 unset, -1 value too long for
+// size; buffer is left empty unless 1. SDK readers take an environment source
+// (sdk/rocketnet_env.h); this is the read behind rocketnet_env_process.
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size );
 
 #define ROCKETNET_PLATFORM_GETENV_MAX_BYTES 4096
-
-#if ROCKETNET_DEV
-/** Installs the unit suite's empty in-memory environment. */
-void rocketnet_platform_test_environment_install( void );
-
-/** Sets one variable in the installed in-memory environment. */
-void rocketnet_platform_test_environment_set( const char * name, const char * value );
-
-/** Removes one variable from the installed in-memory environment. */
-void rocketnet_platform_test_environment_unset( const char * name );
-
-/** Removes every variable while keeping the in-memory environment installed. */
-void rocketnet_platform_test_environment_reset( void );
-#endif // #if ROCKETNET_DEV
 
 uint16_t rocketnet_platform_ntohs( uint16_t in );
 

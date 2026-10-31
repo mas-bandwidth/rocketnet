@@ -4,9 +4,10 @@
 */
 
 // One documented environment variable per config field, and the log level
-// read before init logs. Each case sets variables through a setenv shim and
-// reads what the env passes do through the log callback; none opens a
-// socket, starts a transport or reads the clock.
+// read before init logs. Each case sets variables in a table it owns
+// (tests/test_env_source.h), passes it to the reader under test, and reads
+// what the env passes do through the log callback; none opens a socket,
+// starts a transport, reads the clock or touches the process environment.
 //
 //   - the public env pass (sdk/rocketnet_api.cpp:119)
 //     reads the message table under the endpoint's prefix and the budget under
@@ -34,7 +35,6 @@
 #include <algorithm>
 #include "test_unit_registry.h"
 #include "test_env_source.h"
-#include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_config.h"
 #include "../sdk/rocketnet_allocator.h"
@@ -43,9 +43,6 @@
 #define check rocketnet_unit_check
 
 #if ROCKETNET_DEV
-static void env_names_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
-static void env_names_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
-
 // ---------------------------------------------------------------------------
 // the log capture: every line, and the variable each override line names
 // ---------------------------------------------------------------------------
@@ -172,8 +169,10 @@ static struct rn_message_object_t * env_names_object_create( int is_server, int3
 #if ROCKETNET_DEV
 static void test_config_env_budget_is_never_a_message_field()
 {
-    env_names_setenv( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS", "123" );
-    env_names_setenv( "ROCKETNET_SERVER_SERVER_SEND_KBPS", "456" );
+    rocketnet_test_env_t env;
+
+    env.set( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS", "123" );
+    env.set( "ROCKETNET_SERVER_SERVER_SEND_KBPS", "456" );
 
     env_names_capture_t capture;
     env_names_capture_begin( &capture );
@@ -183,12 +182,9 @@ static void test_config_env_budget_is_never_a_message_field()
     struct rocketnet_message_config_t message;
     uint32_t client_kbps = 0;
     uint32_t server_kbps = 0;
-    const bool client_resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &client_kbps );
-    const bool server_resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &server_kbps );
+    const bool client_resolved = rocketnet_client_config_resolve( NULL, &env.source, &client_transport, &message, &client_kbps );
+    const bool server_resolved = rocketnet_server_config_resolve( NULL, &env.source, &server_transport, &message, &server_kbps );
     env_names_capture_end( &capture );
-
-    env_names_unsetenv( "ROCKETNET_CLIENT_CLIENT_SEND_KBPS" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SERVER_SEND_KBPS" );
 
     check( client_resolved );
     check( server_resolved );
@@ -210,18 +206,20 @@ REGISTER_UNIT_TEST( test_config_env_budget_is_never_a_message_field );
 #if ROCKETNET_DEV
 static void test_config_env_per_client_send_kbps_is_the_server_budget()
 {
-    env_names_setenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "500" );
-    env_names_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "700" );
-    env_names_setenv( "ROCKETNET_CLIENT_SEND_KBPS", "300" );
-    env_names_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "400" );
+    rocketnet_test_env_t env;
+
+    env.set( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS", "500" );
+    env.set( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "700" );
+    env.set( "ROCKETNET_CLIENT_SEND_KBPS", "300" );
+    env.set( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "400" );
 
     struct rocketnet_server_transport_config_t server_transport;
     struct rocketnet_client_transport_config_t client_transport;
     struct rocketnet_message_config_t message;
     uint32_t server_kbps = 0;
     uint32_t client_kbps = 0;
-    const bool server_resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &server_kbps );
-    const bool client_resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &client_kbps );
+    const bool server_resolved = rocketnet_server_config_resolve( NULL, &env.source, &server_transport, &message, &server_kbps );
+    const bool client_resolved = rocketnet_client_config_resolve( NULL, &env.source, &client_transport, &message, &client_kbps );
     struct rn_message_object_t * server = server_resolved ? env_names_object_create( 1, (int32_t) server_kbps ) : NULL;
     struct rn_message_object_t * client = client_resolved ? env_names_object_create( 0, (int32_t) client_kbps ) : NULL;
     const int32_t server_default = server ? server->default_kbps : 0;
@@ -234,11 +232,6 @@ static void test_config_env_per_client_send_kbps_is_the_server_budget()
     {
         rn_message_object_destroy( client );
     }
-
-    env_names_unsetenv( "ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS" );
-    env_names_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SEND_KBPS" );
-    env_names_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
 
     check( server_resolved && server_kbps == 500 );
     check( client_resolved && client_kbps == 300 );
@@ -258,6 +251,8 @@ REGISTER_UNIT_TEST( test_config_env_per_client_send_kbps_is_the_server_budget );
 #if ROCKETNET_DEV
 static void test_config_env_log_level_applies_before_init_logs()
 {
+    rocketnet_test_env_t env;
+
     // the worker ran init at error; the default level is info
 
     check( rocketnet_term() == ROCKETNET_STATUS_OK );
@@ -265,20 +260,20 @@ static void test_config_env_log_level_applies_before_init_logs()
 
     char level[8];
     snprintf( level, sizeof( level ), "%d", (int) ROCKETNET_LOG_LEVEL_ERROR );
-    env_names_setenv( "ROCKETNET_LOG_LEVEL", level );
+    env.set( "ROCKETNET_LOG_LEVEL", level );
 
     env_names_log_t log;
     rocketnet_log_function( env_names_log_capture, &log );
 
-    const rocketnet_status_t status = rocketnet_init( NULL, NULL, NULL );
+    int status = ROCKETNET_STATUS_INVALID_ARGUMENT;
+    const bool initialized = rocketnet_init_ex_with_env( NULL, NULL, NULL, &env.source, &status );
     rocketnet_log_function( NULL, NULL );
 
     const rocketnet_log_level_t after = rocketnet_log_level_current();
 
-    env_names_unsetenv( "ROCKETNET_LOG_LEVEL" );
     rocketnet_log_level( ROCKETNET_LOG_LEVEL_ERROR );
 
-    check( status == ROCKETNET_STATUS_OK );
+    check( initialized && status == ROCKETNET_STATUS_OK );
     check( after == ROCKETNET_LOG_LEVEL_ERROR );
     for ( size_t i = 0; i < log.levels.size(); i++ )
     {
@@ -295,14 +290,15 @@ REGISTER_UNIT_TEST( test_config_env_log_level_applies_before_init_logs );
 #if ROCKETNET_DEV
 static bool env_names_step_driven_valid( const char * value )
 {
+    rocketnet_test_env_t env;
+
     int num_fields = 0;
     const struct rocketnet_config_field_t * fields = rocketnet_client_transport_config_fields( &num_fields );
     struct rocketnet_client_transport_config_t config;
     rocketnet_client_transport_default_config_current( &config );
-    env_names_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", value );
+    env.set( "ROCKETNET_CLIENT_STEP_DRIVEN", value );
 
-    const bool applied = rocketnet_config_apply_env( "client", &config, fields, num_fields );
-    env_names_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" );
+    const bool applied = rocketnet_config_apply_env( &env.source, "client", &config, fields, num_fields );
     check( applied );
 
     return rocketnet_config_validate( "client", &config, fields, num_fields );
@@ -336,13 +332,14 @@ REGISTER_UNIT_TEST( test_config_env_step_driven_is_absent_in_production );
 #if ROCKETNET_DEV
 static bool env_names_disconnect_allowance_resolves( const char * value, int * resolved_value )
 {
-    env_names_setenv( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE", value );
+    rocketnet_test_env_t env;
+
+    env.set( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE", value );
 
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    const bool resolved = rocketnet_server_config_resolve( NULL, true, &transport, &message, &kbps );
-    env_names_unsetenv( "ROCKETNET_SERVER_DISCONNECT_PACKETS_PER_UPDATE" );
+    const bool resolved = rocketnet_server_config_resolve( NULL, &env.source, &transport, &message, &kbps );
     *resolved_value = transport.disconnect_packets_per_update;
 
     int num_fields = 0;
@@ -371,12 +368,13 @@ REGISTER_UNIT_TEST( test_config_env_disconnect_allowance_range );
 
 static bool env_names_handshake_budget_resolves( const char * value, int * resolved_value )
 {
-    env_names_setenv( "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE", value );
+    rocketnet_test_env_t env;
+
+    env.set( "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE", value );
     struct rocketnet_server_transport_config_t transport;
     struct rocketnet_message_config_t message;
     uint32_t kbps = 0;
-    const bool resolved = rocketnet_server_config_resolve( NULL, true, &transport, &message, &kbps );
-    env_names_unsetenv( "ROCKETNET_SERVER_HANDSHAKES_PER_UPDATE" );
+    const bool resolved = rocketnet_server_config_resolve( NULL, &env.source, &transport, &message, &kbps );
     *resolved_value = transport.handshakes_per_update;
     int num_fields = 0;
     const rocketnet_config_field_t * fields = rocketnet_server_transport_config_fields( &num_fields );
@@ -412,8 +410,10 @@ REGISTER_UNIT_TEST( test_config_env_handshake_budget_range );
 #if ROCKETNET_DEV
 static bool env_names_dev_latency_resolves( bool server, const char * value, int * latency_ms )
 {
+    rocketnet_test_env_t env;
+
     const char * name = server ? "ROCKETNET_DEV_SERVER_LATENCY_MS" : "ROCKETNET_DEV_CLIENT_LATENCY_MS";
-    env_names_setenv( name, value );
+    env.set( name, value );
 
     env_names_capture_t capture;
     env_names_capture_begin( &capture );
@@ -426,17 +426,16 @@ static bool env_names_dev_latency_resolves( bool server, const char * value, int
 
     if ( server )
     {
-        resolved = rocketnet_server_config_resolve( NULL, true, &server_transport, &message, &kbps );
+        resolved = rocketnet_server_config_resolve( NULL, &env.source, &server_transport, &message, &kbps );
         *latency_ms = server_transport.simulated_latency_ms;
     }
     else
     {
-        resolved = rocketnet_client_config_resolve( NULL, true, &client_transport, &message, &kbps );
+        resolved = rocketnet_client_config_resolve( NULL, &env.source, &client_transport, &message, &kbps );
         *latency_ms = client_transport.simulated_latency_ms;
     }
 
     env_names_capture_end( &capture );
-    env_names_unsetenv( name );
 
     return resolved;
 }
@@ -474,16 +473,18 @@ REGISTER_UNIT_TEST( test_config_env_dev_simulator_numbers_are_strict );
 #if ROCKETNET_DEV
 static void test_config_env_transport_passes_exercise_all_rows()
 {
+    rocketnet_test_env_t env;
+
     // 1. Internal & simulator rows:
 
-    env_names_setenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", "2000" );
-    env_names_setenv( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS", "3000" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "10" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "20" );
-    env_names_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "8" );
-    env_names_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "16" );
-    env_names_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "104857600" );
-    env_names_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "209715200" );
+    env.set( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS", "2000" );
+    env.set( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS", "3000" );
+    env.set( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "10" );
+    env.set( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "20" );
+    env.set( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "8" );
+    env.set( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "16" );
+    env.set( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "104857600" );
+    env.set( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "209715200" );
 
     env_names_capture_t capture;
     env_names_capture_begin( &capture );
@@ -493,30 +494,21 @@ static void test_config_env_transport_passes_exercise_all_rows()
     struct rocketnet_client_transport_config_t client_transport;
     rocketnet_client_transport_default_config_current( &client_transport );
 
-    const bool client_applied = rocketnet_config_apply_env( "client", &client_transport, client_fields, num_client_fields );
+    const bool client_applied = rocketnet_config_apply_env( &env.source, "client", &client_transport, client_fields, num_client_fields );
 
     int num_server_fields = 0;
     const struct rocketnet_config_field_t * server_fields = rocketnet_server_transport_config_fields( &num_server_fields );
     struct rocketnet_server_transport_config_t server_transport;
     rocketnet_server_transport_default_config_current( &server_transport );
 
-    const bool server_applied = rocketnet_config_apply_env( "server", &server_transport, server_fields, num_server_fields );
+    const bool server_applied = rocketnet_config_apply_env( &env.source, "server", &server_transport, server_fields, num_server_fields );
 
     uint64_t client_budget = 0;
-    const bool client_budget_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &client_budget );
+    const bool client_budget_ok = rocketnet_config_apply_env_uint64( &env.source, "client", "memory_budget_bytes", &client_budget );
     uint64_t server_budget = 0;
-    const bool server_budget_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &server_budget );
+    const bool server_budget_ok = rocketnet_config_apply_env_uint64( &env.source, "server", "memory_budget_bytes", &server_budget );
 
     env_names_capture_end( &capture );
-
-    env_names_unsetenv( "ROCKETNET_CLIENT_TOKEN_EPOCH_UNIX_SECONDS" );
-    env_names_unsetenv( "ROCKETNET_SERVER_TOKEN_EPOCH_UNIX_SECONDS" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW" );
-    env_names_unsetenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW" );
-    env_names_unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
-    env_names_unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
 
     check( client_applied );
     check( server_applied );
@@ -561,61 +553,63 @@ static int env_names_count_named( const env_names_log_t & log, const char * name
 #if ROCKETNET_DEV
 static void test_config_env_memory_budget_logs_its_override()
 {
+    rocketnet_test_env_t env;
+
     // client: a set value assigns and logs exactly one override line
 
-    env_names_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "104857600" );
+    env.set( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "104857600" );
 
     uint64_t client_budget = 111;
     env_names_capture_t client_value_capture;
     env_names_capture_begin( &client_value_capture );
 
-    const bool client_value_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &client_budget );
+    const bool client_value_ok = rocketnet_config_apply_env_uint64( &env.source, "client", "memory_budget_bytes", &client_budget );
     env_names_capture_end( &client_value_capture );
 
     // client: a set-but-empty value leaves the value and logs ignores empty
 
-    env_names_setenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "" );
+    env.set( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES", "" );
 
     uint64_t client_empty_budget = 222;
     env_names_capture_t client_empty_capture;
     env_names_capture_begin( &client_empty_capture );
 
-    const bool client_empty_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &client_empty_budget );
+    const bool client_empty_ok = rocketnet_config_apply_env_uint64( &env.source, "client", "memory_budget_bytes", &client_empty_budget );
     env_names_capture_end( &client_empty_capture );
 
     // server: a set value assigns and logs exactly one override line
 
-    env_names_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "209715200" );
+    env.set( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "209715200" );
 
     uint64_t server_budget = 333;
     env_names_capture_t server_value_capture;
     env_names_capture_begin( &server_value_capture );
 
-    const bool server_value_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &server_budget );
+    const bool server_value_ok = rocketnet_config_apply_env_uint64( &env.source, "server", "memory_budget_bytes", &server_budget );
     env_names_capture_end( &server_value_capture );
 
     // server: a set-but-empty value leaves the value and logs ignores empty
 
-    env_names_setenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "" );
+    env.set( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES", "" );
 
     uint64_t server_empty_budget = 444;
     env_names_capture_t server_empty_capture;
     env_names_capture_begin( &server_empty_capture );
 
-    const bool server_empty_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &server_empty_budget );
+    const bool server_empty_ok = rocketnet_config_apply_env_uint64( &env.source, "server", "memory_budget_bytes", &server_empty_budget );
     env_names_capture_end( &server_empty_capture );
 
     // unset: nothing is logged and the value is left alone
 
-    env_names_unsetenv( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
-    env_names_unsetenv( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
+    env.unset( "ROCKETNET_CLIENT_MEMORY_BUDGET_BYTES" );
+    env.unset( "ROCKETNET_SERVER_MEMORY_BUDGET_BYTES" );
 
     uint64_t unset_budget = 555;
     env_names_capture_t unset_capture;
     env_names_capture_begin( &unset_capture );
 
-    const bool unset_client_ok = rocketnet_config_apply_env_uint64( "client", "memory_budget_bytes", &unset_budget );
-    const bool unset_server_ok = rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &unset_budget );
+    const bool unset_client_ok = rocketnet_config_apply_env_uint64( &env.source, "client", "memory_budget_bytes", &unset_budget );
+    const bool unset_server_ok = rocketnet_config_apply_env_uint64( &env.source, "server", "memory_budget_bytes", &unset_budget );
     env_names_capture_end( &unset_capture );
 
     check( client_value_ok && client_budget == 104857600 );

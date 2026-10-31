@@ -17,6 +17,7 @@
 #include "../sdk/rocketnet_base64.h"
 
 #include "../sdk/rocketnet.h"
+#include "../sdk/rocketnet_config.h"
 
 #include "rocketnet_server_protocol.h"
 #include "rocketnet_encryption_map.h"
@@ -41,13 +42,6 @@
 #include "loopback_hub.h"
 
 #define BOTH_FAMILIES_PROTOCOL 0xB071FA11A11E5001ULL
-
-#if ROCKETNET_DEV
-static int both_families_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_DEV
-static int both_families_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif // #if ROCKETNET_DEV
 
 struct both_families_identity_t
 {
@@ -186,13 +180,13 @@ REGISTER_UNIT_TEST( test_server_refuses_an_unparseable_second_address );
 
 #if ROCKETNET_DEV
 // creates a stopped server with the IPv4 and IPv6 addresses. Nothing binds.
-static struct rocketnet_server_t * both_families_create( const both_families_identity_t * identity, const char * ipv4, const char * ipv6 )
+static struct rocketnet_server_t * both_families_create( const both_families_identity_t * identity, const struct rocketnet_env_source_t * env, const char * ipv4, const char * ipv6 )
 {
     rocketnet_server_config_t config;
     both_families_fill( &config, identity, 2 );
 
     enum rocketnet_status_t create_status = ROCKETNET_STATUS_OUT_OF_MEMORY;
-    struct rocketnet_server_t * server = rocketnet_server_create( NULL, ipv4, ipv6, &config, &create_status );
+    struct rocketnet_server_t * server = rocketnet_server_create_with_env( NULL, ipv4, ipv6, &config, env, &create_status );
     check( server != NULL );
     check( create_status == ROCKETNET_STATUS_OK );
 
@@ -225,25 +219,26 @@ static void test_server_address_environment_applies_to_every_server()
     both_families_identity( &identity );
     rocketnet_quiet( 1 );
 
-    check( both_families_setenv( "ROCKETNET_SERVER_IPV4_ADDRESS", "10.1.2.3:50123" ) == 0 );
-    check( both_families_setenv( "ROCKETNET_SERVER_IPV6_ADDRESS", "[2001:db8::7]:50123" ) == 0 );
+    rocketnet_test_env_t env;
+    env.set( "ROCKETNET_SERVER_IPV4_ADDRESS", "10.1.2.3:50123" );
+    env.set( "ROCKETNET_SERVER_IPV6_ADDRESS", "[2001:db8::7]:50123" );
 
-    // two servers created while the variables are set both take them,
+    // two servers created from a table with the variables set both take them,
     // whatever addresses their creates name
 
-    struct rocketnet_server_t * first = both_families_create( &identity, "127.0.0.1:0", NULL );
-    struct rocketnet_server_t * second = both_families_create( &identity, NULL, "[::1]:0" );
+    struct rocketnet_server_t * first = both_families_create( &identity, &env.source, "127.0.0.1:0", NULL );
+    struct rocketnet_server_t * second = both_families_create( &identity, &env.source, NULL, "[::1]:0" );
     both_families_check_served( first, "10.1.2.3:50123", "[2001:db8::7]:50123" );
     both_families_check_served( second, "10.1.2.3:50123", "[2001:db8::7]:50123" );
     rn_test_server_stop_and_destroy( first );
     rn_test_server_stop_and_destroy( second );
 
-    check( both_families_unsetenv( "ROCKETNET_SERVER_IPV4_ADDRESS" ) == 0 );
-    check( both_families_unsetenv( "ROCKETNET_SERVER_IPV6_ADDRESS" ) == 0 );
+    env.unset( "ROCKETNET_SERVER_IPV4_ADDRESS" );
+    env.unset( "ROCKETNET_SERVER_IPV6_ADDRESS" );
 
     // unset, each server serves its create arguments again
 
-    struct rocketnet_server_t * third = both_families_create( &identity, "127.0.0.1:0", NULL );
+    struct rocketnet_server_t * third = both_families_create( &identity, &env.source, "127.0.0.1:0", NULL );
     both_families_check_served( third, "127.0.0.1:0", NULL );
     rn_test_server_stop_and_destroy( third );
 }

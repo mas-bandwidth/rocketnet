@@ -89,6 +89,9 @@ static int token_time_game_client_create( uint64_t create, uint64_t expire, uint
     config.loopback_hub = rocketnet_test_loopback_hub();
     memset( config.packet_filter, 0x5A, sizeof( config.packet_filter ) );
     config.token_epoch_unix_seconds = epoch;
+#if ROCKETNET_DEV
+    config.step_driven = 1;     // a granted create starts no thread
+#endif // #if ROCKETNET_DEV
 
     int status = 0;
     struct rocketnet_client_transport_t * transport = rocketnet_client_transport_create_current_ex( NULL, token_data, &config, time, &status );

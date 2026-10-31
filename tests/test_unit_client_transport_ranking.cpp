@@ -25,10 +25,8 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "test_env_source.h"
 #if ROCKETNET_DEV
 #include "fake_client_driver.h"
-#include "portable_crt.h"
 #endif // #if ROCKETNET_DEV
 
 #include "rocketnet_internal.h"
@@ -225,27 +223,6 @@ static void ranking_token( uint8_t * token )
     rocketnet_write_signed_connect_data( &signed_fields, token );
 }
 
-// a CI leg's client pin is set aside while these cases name their own. The
-// unit suite reads the in-memory environment table, never the process one.
-struct ranking_env_t
-{
-    bool was_set;
-    char value[256];
-};
-
-static void ranking_env_set_aside( ranking_env_t * saved )
-{
-    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
-    rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-}
-
-static void ranking_env_put_back( const ranking_env_t * saved )
-{
-    if ( !saved->was_set )
-        return;
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_TRANSPORT", saved->value, 1 );
-}
-
 struct ranking_result_t
 {
     bool created;
@@ -305,9 +282,6 @@ static ranking_result_t ranking_create_client( const char * transport, const cha
 
 static void test_client_ranking_auto_picks_native_client()
 {
-    ranking_env_t env;
-    ranking_env_set_aside( &env );
-
     const char * native = ranking_native_client( ROCKETNET_PLATFORM );
     const char * expected = native ? native : "portable";
 
@@ -327,15 +301,10 @@ static void test_client_ranking_auto_picks_native_client()
         check( ranking_log_count( "refused" ) == 0 );
         check( result.destroy_calls == 1 );
     }
-
-    ranking_env_put_back( &env );
 }
 
 static void test_client_ranking_falls_back_to_portable()
 {
-    ranking_env_t env;
-    ranking_env_set_aside( &env );
-
     const char * native = ranking_native_client( ROCKETNET_PLATFORM );
     if ( native )
     {
@@ -374,15 +343,10 @@ static void test_client_ranking_falls_back_to_portable()
         }
         check( result.destroy_calls == 0 );
     }
-
-    ranking_env_put_back( &env );
 }
 
 static void test_client_ranking_pin_is_honoured()
 {
-    ranking_env_t env;
-    ranking_env_set_aside( &env );
-
     // every client this build has, pinned alone, gives that client and
     // opens nothing else
 
@@ -440,15 +404,10 @@ static void test_client_ranking_pin_is_honoured()
         check( strcmp( result.name, native ? native : "portable" ) == 0 );
         check( ranking_log_count( "names no transport for this endpoint on this platform. using auto" ) == 1 );
     }
-
-    ranking_env_put_back( &env );
 }
 
 static void test_client_ladder_parse_iocp_on_linux_takes_auto()
 {
-    ranking_env_t env;
-    ranking_env_set_aside( &env );
-
 #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
     // "iocp" is a known Windows client: on a Linux client it is skipped, the
     // list names no candidate, and the endpoint falls back to auto (gso,portable)
@@ -475,8 +434,6 @@ static void test_client_ladder_parse_iocp_on_linux_takes_auto()
         check( result.destroy_calls == 1 );
     }
 #endif // #if ROCKETNET_PLATFORM == ROCKETNET_PLATFORM_LINUX
-
-    ranking_env_put_back( &env );
 }
 
 REGISTER_UNIT_TEST( test_client_ranking_auto_picks_native_client );

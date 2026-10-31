@@ -16,7 +16,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"

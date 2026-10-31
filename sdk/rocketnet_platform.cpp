@@ -6,6 +6,7 @@
 #include "rocketnet_memory.h"
 #include "rocketnet_test_seams.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_env.h"
 #include "rocketnet_constants.h"
 #include <atomic>
 #include <limits.h>
@@ -17,10 +18,6 @@
 #include <string.h>
 #include <time.h>
 #include <atomic>
-#if ROCKETNET_DEV
-#include <map>
-#include <string>
-#endif // #if ROCKETNET_DEV
 #if ROCKETNET_PLATFORM != ROCKETNET_PLATFORM_WINDOWS
 #include <pthread.h>
 #include <sched.h>
@@ -114,70 +111,34 @@ uint64_t rocketnet_platform_token_epoch( uint64_t configured, double time )
     return wall > elapsed ? wall - elapsed : 1;
 }
 
-#if ROCKETNET_DEV
+// the process environment as an environment source (sdk/rocketnet_env.h)
 
-// The unit suite installs this table before main. Reads then stop at the
-// table, including an absent name, so ambient process values cannot enter a
-// unit case. Standard strings keep test values exact and impose no SDK limit;
-// the caller's buffer remains the only limit rocketnet_platform_getenv reports.
-static bool rocketnet_platform_test_environment_installed;
-
-static std::map<std::string, std::string> & rocketnet_platform_test_environment()
+static int rocketnet_env_process_get( void * context, const char * name, char * buffer, size_t size )
 {
-    static std::map<std::string, std::string> environment;
-    return environment;
+    (void) context;
+
+    return rocketnet_platform_getenv( name, buffer, size );
 }
 
-void rocketnet_platform_test_environment_install()
+static const struct rocketnet_env_source_t rocketnet_env_process_source = { rocketnet_env_process_get, NULL };
+
+const struct rocketnet_env_source_t * rocketnet_env_process( void )
 {
-    rocketnet_platform_test_environment_installed = true;
+    return &rocketnet_env_process_source;
 }
 
-void rocketnet_platform_test_environment_set( const char * name, const char * value )
+int rocketnet_env_get( const struct rocketnet_env_source_t * env, const char * name, char * buffer, size_t size )
 {
-    rocketnet_assert( name && value );
-    rocketnet_platform_test_environment()[name] = value;
-}
+    rocketnet_assert( env && env->get && name && buffer && size > 0 );
 
-void rocketnet_platform_test_environment_unset( const char * name )
-{
-    rocketnet_assert( name );
-    rocketnet_platform_test_environment().erase( name );
-}
-
-void rocketnet_platform_test_environment_reset()
-{
-    rocketnet_platform_test_environment().clear();
-}
-
-// Returns true when the installed table answered the read. An unset name is
-// an answer (0), distinct from no table, which leaves the real platform path.
-static bool rocketnet_platform_test_environment_getenv( const char * name, char * buffer, size_t size, int * result )
-{
-    if ( !rocketnet_platform_test_environment_installed )
-        return false;
     buffer[0] = '\0';
-    const std::map<std::string, std::string> & environment = rocketnet_platform_test_environment();
-    const std::map<std::string, std::string>::const_iterator entry = environment.find( name );
-    if ( entry == environment.end() )
-    {
-        *result = 0;
-        return true;
-    }
+    const int found = env->get( env->context, name, buffer, size );
+    rocketnet_assert( found >= -1 && found <= 1 );
+    if ( found != 1 )
+        buffer[0] = '\0';
 
-    if ( entry->second.size() >= size )
-    {
-        *result = -1;
-        return true;
-    }
-
-    memcpy( buffer, entry->second.c_str(), entry->second.size() + 1 );
-    *result = 1;
-
-    return true;
+    return found;
 }
-
-#endif // #if ROCKETNET_DEV
 
 // The Windows sleep, as a pure function of the request so it is unit-tested
 // without a clock (test_unit_platform_sleep.cpp); compiled on every platform.
@@ -1059,11 +1020,6 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if ROCKETNET_DEV
-    int test_result = 0;
-    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
-        return test_result;
-#endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
 #if defined( __GLIBC__ ) && defined( _GNU_SOURCE )
@@ -3333,11 +3289,6 @@ void rocketnet_platform_term()
 int rocketnet_platform_getenv( const char * var, char * buffer, size_t size )
 {
     rocketnet_assert( var && buffer && size > 0 );
-#if ROCKETNET_DEV
-    int test_result = 0;
-    if ( rocketnet_platform_test_environment_getenv( var, buffer, size, &test_result ) )
-        return test_result;
-#endif // #if ROCKETNET_DEV
     buffer[0] = '\0';
 
     // getenv_s with no buffer reports the bytes the value needs, terminator

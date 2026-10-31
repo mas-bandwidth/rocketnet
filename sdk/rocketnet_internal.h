@@ -73,6 +73,14 @@ extern "C"
 // returns true on success; writes the status when status is not NULL
 bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status );
 
+// init with the environment source as an argument: ROCKETNET_LOG_LEVEL, and
+// in a development library ROCKETNET_DEV_SESSION_SEQUENCE_START, are read
+// from env here and nowhere else. rocketnet_init_ex is this with
+// rocketnet_env_process; a unit case passes a table it owns. env is not kept.
+struct rocketnet_env_source_t;
+bool rocketnet_init_ex_with_env( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ),
+                                 const struct rocketnet_env_source_t * env, int * status );
+
 int rocketnet_term_ex( void );
 
 // replaces the allocator without init, for tests. both functions are required

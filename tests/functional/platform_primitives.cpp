@@ -1285,7 +1285,7 @@ static void rocketnet_platform_primitives_production_simulator_environment()
     rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH", "7" ) == 0 );
     rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_CLIENT_SIMULATED_REVERSE_WINDOW", "4" ) == 0 );
     rocketnet_client_transport_default_config_current( &client_config );
-    rocketnet_check( rocketnet_config_apply_env( "client", &client_config, client_table, client_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( rocketnet_env_process(), "client", &client_config, client_table, client_fields ) );
     rocketnet_check( client_config.simulated_drop_every_nth == 7 );
     rocketnet_check( client_config.simulated_reverse_window == 4 );
     rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_CLIENT_SIMULATED_DROP_EVERY_NTH" ) == 0 );
@@ -1294,7 +1294,7 @@ static void rocketnet_platform_primitives_production_simulator_environment()
     rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH", "5" ) == 0 );
     rocketnet_check( rocketnet_platform_primitives_setenv( "ROCKETNET_SERVER_SIMULATED_REVERSE_WINDOW", "3" ) == 0 );
     rocketnet_server_transport_default_config_current( &server_config );
-    rocketnet_check( rocketnet_config_apply_env( "server", &server_config, server_table, server_fields ) );
+    rocketnet_check( rocketnet_config_apply_env( rocketnet_env_process(), "server", &server_config, server_table, server_fields ) );
     rocketnet_check( server_config.simulated_drop_every_nth == 5 );
     rocketnet_check( server_config.simulated_reverse_window == 3 );
     rocketnet_check( rocketnet_platform_primitives_unsetenv( "ROCKETNET_SERVER_SIMULATED_DROP_EVERY_NTH" ) == 0 );

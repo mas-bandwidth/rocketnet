@@ -18,6 +18,7 @@
 #include "../sdk/rocketnet_constants.h"
 #include "../sdk/rocketnet_server_protocol.h"
 #include "rocketnet_internal.h"
+#include "rocketnet_config.h"
 #include "rocketnet_message_object.h"
 #include "rocketnet_packet_builder.h"
 #include "token_string.h"
@@ -1597,12 +1598,6 @@ REGISTER_UNIT_TEST( test_server_client_user_data_from_connect_until_release );
 
 // packets_per_update takes 1 .. 1024 and defaults to 256, client and
 // server, through the struct and through the environment.
-#if ROCKETNET_DEV
-static int lifecycle_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_DEV
-static int lifecycle_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif // #if ROCKETNET_DEV
 
 static void test_config_packets_per_update_range()
 {
@@ -1658,7 +1653,9 @@ static void test_config_packets_per_update_range()
     check( create_status != ROCKETNET_STATUS_OK && create_status != ROCKETNET_TEST_STATUS_UNSET );
 
 #if ROCKETNET_DEV
-    // the environment
+    // the environment, from a table this case owns
+
+    rocketnet_test_env_t env;
 
     rocketnet_client_default_config( &client_config );
     lifecycle_server_config( &server_config, &identity, 1 );
@@ -1666,96 +1663,72 @@ static void test_config_packets_per_update_range()
     // Old public spellings are not aliases. Values outside the valid range
     // make accidental reads visible: both creates must ignore these names.
 
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_MAX_PACKETS_"
-                             "PER_UPDATE",
-                             "1025" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_"
-                             "INITIAL_MS",
-                             "60001" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_"
-                             "MIN_MS",
-                             "-1" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_RTO_"
-                             "MAX_MS",
-                             "60001" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_MAX_PACKETS_"
-                             "PER_UPDATE",
-                             "1025" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_"
-                             "INITIAL_MS",
-                             "60001" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_"
-                             "MIN_MS",
-                             "-1" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_RTO_"
-                             "MAX_MS",
-                             "60001" ) == 0 );
-    client = rocketnet_client_create( NULL, &client_config, NULL );
+    env.set( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE", "1025" );
+    env.set( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS", "60001" );
+    env.set( "ROCKETNET_CLIENT_RTO_" "MIN_MS", "-1" );
+    env.set( "ROCKETNET_CLIENT_RTO_" "MAX_MS", "60001" );
+    env.set( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE", "1025" );
+    env.set( "ROCKETNET_SERVER_RTO_" "INITIAL_MS", "60001" );
+    env.set( "ROCKETNET_SERVER_RTO_" "MIN_MS", "-1" );
+    env.set( "ROCKETNET_SERVER_RTO_" "MAX_MS", "60001" );
+    client = rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL );
     check( client != NULL );
     if ( client )
     {
         rn_test_client_stop_and_destroy( client );
     }
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    server = rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL );
     check( server != NULL );
     if ( server )
     {
         rn_test_server_stop_and_destroy( server );
     }
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MAX_PACKETS_"
-                               "PER_UPDATE" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RTO_"
-                               "INITIAL_MS" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RTO_"
-                               "MIN_MS" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_RTO_"
-                               "MAX_MS" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MAX_PACKETS_"
-                               "PER_UPDATE" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_"
-                               "INITIAL_MS" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_"
-                               "MIN_MS" ) == 0 );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_RTO_"
-                               "MAX_MS" ) == 0 );
+    env.unset( "ROCKETNET_CLIENT_MAX_PACKETS_" "PER_UPDATE" );
+    env.unset( "ROCKETNET_CLIENT_RTO_" "INITIAL_MS" );
+    env.unset( "ROCKETNET_CLIENT_RTO_" "MIN_MS" );
+    env.unset( "ROCKETNET_CLIENT_RTO_" "MAX_MS" );
+    env.unset( "ROCKETNET_SERVER_MAX_PACKETS_" "PER_UPDATE" );
+    env.unset( "ROCKETNET_SERVER_RTO_" "INITIAL_MS" );
+    env.unset( "ROCKETNET_SERVER_RTO_" "MIN_MS" );
+    env.unset( "ROCKETNET_SERVER_RTO_" "MAX_MS" );
 
     // the new resend-delay names are read for both endpoint configs
 
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
-    check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
-    check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS", "9" ) == 0 );
-    check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS" ) == 0 );
+    env.set( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS", "9" );
+    check( rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_INITIAL_MS" );
+    env.set( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS", "2001" );
+    check( rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MIN_MS" );
+    env.set( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS", "9" );
+    check( rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_CLIENT_MESSAGE_RESEND_DELAY_MAX_MS" );
 
-    check( lifecycle_setenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS", "9" ) == 0 );
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS", "2001" ) == 0 );
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS" ) == 0 );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS", "9" ) == 0 );
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS" ) == 0 );
+    env.set( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS", "9" );
+    check( rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_INITIAL_MS" );
+    env.set( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS", "2001" );
+    check( rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MIN_MS" );
+    env.set( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS", "9" );
+    check( rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_SERVER_MESSAGE_RESEND_DELAY_MAX_MS" );
 
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1024" ) == 0 );
-    client = rocketnet_client_create( NULL, &client_config, NULL );
+    env.set( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1024" );
+    client = rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL );
     check( client != NULL );
     rn_test_client_stop_and_destroy( client );
-    check( lifecycle_setenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1025" ) == 0 );
-    check( rocketnet_client_create( NULL, &client_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE" ) == 0 );
+    env.set( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE", "1025" );
+    check( rocketnet_client_create_with_env( NULL, &client_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_CLIENT_PACKETS_PER_UPDATE" );
 
-    check( lifecycle_setenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1024" ) == 0 );
-    server = rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL );
+    env.set( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1024" );
+    server = rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL );
     check( server != NULL );
     rn_test_server_stop_and_destroy( server );
-    check( lifecycle_setenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1025" ) == 0 );
-    check( rocketnet_server_create( NULL, "127.0.0.1:0", NULL, &server_config, NULL ) == NULL );
-    check( lifecycle_unsetenv( "ROCKETNET_SERVER_PACKETS_PER_UPDATE" ) == 0 );
+    env.set( "ROCKETNET_SERVER_PACKETS_PER_UPDATE", "1025" );
+    check( rocketnet_server_create_with_env( NULL, "127.0.0.1:0", NULL, &server_config, &env.source, NULL ) == NULL );
+    env.unset( "ROCKETNET_SERVER_PACKETS_PER_UPDATE" );
 #endif // #if ROCKETNET_DEV
 }
 REGISTER_UNIT_TEST( test_config_packets_per_update_range );

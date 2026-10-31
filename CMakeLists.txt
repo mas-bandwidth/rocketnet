@@ -608,7 +608,7 @@ if(ROCKETNET_BUILD_TESTS)
 #include \"rocketnet.h\"
 int rocketnet_unit_test_count() { return 0; }
 const char * rocketnet_unit_test_name( int index ) { (void)index; return 0; }
-void rocketnet_unit_prepare() {}
+void rocketnet_unit_prepare( bool verbose ) { (void) verbose; }
 int rocketnet_unit_run_named( const char * name ) { fprintf( stderr, \"unknown unit test %s\\n\", name ); return 2; }
 int rocketnet_channels_test_count() { return 0; }
 const char * rocketnet_channels_test_name( int index ) { (void)index; return 0; }
@@ -644,7 +644,6 @@ void rocketnet_channels_prepare_log( const char * name ) { (void)name; }
             tests/test_unit_send_room_query.cpp
             tests/test_unit_server_mass_disconnect.cpp
             tests/test_unit_server_receive_work.cpp
-            tests/test_unit_transport_pins_ignored.cpp
             tests/test_unit_unreliable_send_memory_exhausted.cpp)
         list(TRANSFORM ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/")
         list(REMOVE_ITEM ROCKETNET_UNIT_TEST_SOURCES ${ROCKETNET_DEV_ONLY_CLIENT_STEP_TEST_SOURCES})

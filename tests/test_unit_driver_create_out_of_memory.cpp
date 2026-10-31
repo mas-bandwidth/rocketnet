@@ -32,10 +32,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#if ROCKETNET_DEV
-#include "test_env_source.h"
-#endif // #if ROCKETNET_DEV
-#include "portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -51,35 +47,6 @@
 #include <string.h>
 
 #define check rocketnet_unit_check
-
-// the cases set struct transport lists, so a CI leg's env pin is set aside
-// for their duration and put back after: the env pin wins over the struct
-
-#if ROCKETNET_DEV
-struct transport_oom_env_pin_t
-{
-    bool was_set;
-    char value[256];
-};
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static void transport_oom_env_set_aside( const char * name, transport_oom_env_pin_t * saved )
-{
-    saved->was_set = rocketnet_test_env_getenv( name, saved->value, sizeof( saved->value ) ) != 0;
-    rocketnet_test_env_unsetenv( name );
-}
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static void transport_oom_env_put_back( const char * name, const transport_oom_env_pin_t * saved )
-{
-    if ( saved->was_set )
-    {
-        rocketnet_test_env_setenv( name, saved->value, 1 );
-    }
-}
-#endif // #if ROCKETNET_DEV
 
 struct transport_oom_allocator_t
 {
@@ -368,11 +335,6 @@ static int transport_oom_walk_server( transport_oom_allocator_t * state, const c
 
 static void test_transport_create_server_ladder_stops_on_out_of_memory()
 {
-#if ROCKETNET_DEV
-    transport_oom_env_pin_t pin;
-    transport_oom_env_set_aside( "ROCKETNET_SERVER_TRANSPORT", &pin );
-#endif // #if ROCKETNET_DEV
-
     transport_oom_allocator_t state;
     transport_oom_begin( &state );
 
@@ -388,9 +350,6 @@ static void test_transport_create_server_ladder_stops_on_out_of_memory()
     check( transport_oom_walk_server( &state, "loopback, loopback" ) == allocations );
 
     transport_oom_end( &state );
-#if ROCKETNET_DEV
-    transport_oom_env_put_back( "ROCKETNET_SERVER_TRANSPORT", &pin );
-#endif // #if ROCKETNET_DEV
 }
 
 // ---- the client ladder ---------------------------------------------------------
@@ -439,11 +398,6 @@ static int transport_oom_walk_client( transport_oom_allocator_t * state, const u
 
 static void test_transport_create_client_ladder_stops_on_out_of_memory()
 {
-#if ROCKETNET_DEV
-    transport_oom_env_pin_t pin;
-    transport_oom_env_set_aside( "ROCKETNET_CLIENT_TRANSPORT", &pin );
-#endif // #if ROCKETNET_DEV
-
     transport_oom_allocator_t state;
     transport_oom_begin( &state );
 
@@ -467,9 +421,6 @@ static void test_transport_create_client_ladder_stops_on_out_of_memory()
     check( transport_oom_walk_client( &state, token, "loopback, loopback" ) == allocations );
 
     transport_oom_end( &state );
-#if ROCKETNET_DEV
-    transport_oom_env_put_back( "ROCKETNET_CLIENT_TRANSPORT", &pin );
-#endif // #if ROCKETNET_DEV
 }
 #endif // #if ROCKETNET_DEV
 

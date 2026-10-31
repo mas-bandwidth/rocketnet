@@ -15,8 +15,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "test_env_source.h"
-#include "portable_crt.h"
 #include "../sdk/rocketnet.h"
 #include "../sdk/rocketnet_internal.h"
 #include "../sdk/rocketnet_client_io.h"
@@ -50,57 +48,6 @@ extern const rocketnet_transport_backend_t rocketnet_loopback_transport;
 
 static const uint64_t MASS_DISCONNECT_PROTOCOL_ID = 0x4D41535344495343ULL;
 static const int MASS_DISCONNECT_CLIENTS = 1000;
-
-#if ROCKETNET_DEV
-static int mass_disconnect_setenv( const char * name, const char * value )
-{
-    return rocketnet_test_env_setenv( name, value, 1 );
-}
-
-static int mass_disconnect_unsetenv( const char * name )
-{
-    return rocketnet_test_env_unsetenv( name );
-}
-#endif // #if ROCKETNET_DEV
-
-// a ROCKETNET_SERVER_TRANSPORT or ROCKETNET_CLIENT_TRANSPORT pin would replace
-// "loopback" (sdk/rocketnet_server_transport.cpp overlays the environment), so
-// each case clears both names for its run and restores them at its end
-#if ROCKETNET_DEV
-struct mass_disconnect_env_guard_t
-{
-    static const int NUM_NAMES = 2;
-    const char * names[NUM_NAMES] = { "ROCKETNET_SERVER_TRANSPORT", "ROCKETNET_CLIENT_TRANSPORT" };
-    char saved[NUM_NAMES][256] = {};
-    bool present[NUM_NAMES] = {};
-
-    mass_disconnect_env_guard_t()
-    {
-        for ( int i = 0; i < NUM_NAMES; i++ )
-        {
-            char prior[4096];
-            present[i] = rocketnet_test_env_getenv( names[i], prior, sizeof( prior ) ) && prior[0] != '\0';
-            if ( present[i] )
-            {
-                check( strlen( prior ) < sizeof( saved[i] ) );
-                memcpy( saved[i], prior, strlen( prior ) + 1 );
-            }
-            check( mass_disconnect_unsetenv( names[i] ) == 0 );
-        }
-    }
-
-    ~mass_disconnect_env_guard_t() noexcept( false ) // check() throws under the expected-fail harness
-    {
-        for ( int i = 0; i < NUM_NAMES; i++ )
-        {
-            if ( present[i] )
-                check( mass_disconnect_setenv( names[i], saved[i] ) == 0 );
-            else
-                check( mass_disconnect_unsetenv( names[i] ) == 0 );
-        }
-    }
-};
-#endif // #if ROCKETNET_DEV
 
 struct mass_disconnect_keys_t
 {
@@ -327,9 +274,6 @@ SUITE_CASE_RSS_BOUND( test_mass_join_spreads_handshakes_across_updates, mass_dis
 // challenges is the work it did.
 static void test_mass_join_spreads_handshakes_across_updates()
 {
-#if ROCKETNET_DEV
-    mass_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
     static mass_disconnect_population_t population;
@@ -396,9 +340,6 @@ static void mass_disconnect_assert_hook( const char *, const char *, const char 
 // allowance, rather than the transport phase refilling it in the middle.
 static void test_server_disconnect_prelink_kicks_share_update_allowance()
 {
-#if ROCKETNET_DEV
-    mass_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
@@ -499,9 +440,6 @@ REGISTER_UNIT_TEST( test_server_disconnect_prelink_kicks_share_update_allowance 
 // server's disconnect and ends SERVER_DISCONNECTED, never on its timeout.
 static void test_server_disconnect_all_1000_real_time()
 {
-#if ROCKETNET_DEV
-    mass_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
@@ -578,9 +516,6 @@ REGISTER_UNIT_TEST( test_server_disconnect_all_1000_real_time );
 // client's disconnect and none on the timeout.
 static void test_clients_disconnect_together_server_count_exact()
 {
-#if ROCKETNET_DEV
-    mass_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 
@@ -642,9 +577,6 @@ static int mass_disconnect_key_nonzero( const uint8_t * key )
 // redundant wire copies while the full ring remains owned by older sessions.
 static void test_server_disconnect_full_queue_never_bypasses_budget()
 {
-#if ROCKETNET_DEV
-    mass_disconnect_env_guard_t env_guard;
-#endif // #if ROCKETNET_DEV
     msan_scale_allocator_scope_t scale_allocator; // tests/msan_scale_allocator.h
     rocketnet_quiet( 1 );
 

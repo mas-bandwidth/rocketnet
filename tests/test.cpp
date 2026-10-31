@@ -9,7 +9,6 @@
 #include "rocketnet_allocator.h"
 #include "portable_crt.h"
 #include "suite_runner.h"
-#include "test_env_source.h"
 #include "test_unit_registry.h"
 #include "loopback_hub.h"
 #include "fp_contract_canary.h"
@@ -28,7 +27,7 @@
 
 int rocketnet_unit_test_count();
 const char * rocketnet_unit_test_name( int index );
-void rocketnet_unit_prepare();
+void rocketnet_unit_prepare( bool verbose );
 int rocketnet_unit_run_named( const char * name );
 
 // the message layer's tests, in test_channels.cpp
@@ -236,20 +235,10 @@ static int rocketnet_unit_worker( const char * name )
         return 1;
     }
 
-    rocketnet_unit_prepare();
+    // the runner, not a case, reads the process environment
 
-    // the suite's config isolation clears every transport variable above. Two
-    // cases create a client transport through the public API before stepping
-    // it themselves; run those step-driven, after the isolation, so the unit
-    // suite starts no client I/O thread.
-
-    const bool step_driven_case = strcmp( name, "test_token_time_game_clock_admits_a_fixed_token" ) == 0 ||
-                                  strcmp( name, "test_public_link_simulator_revision_1_prefixes" ) == 0;
-    if ( step_driven_case )
-    {
-        if ( rocketnet_test_env_setenv( "ROCKETNET_CLIENT_STEP_DRIVEN", "1", 1 ) != 0 )
-            return 1;
-    }
+    char verbose[256];
+    rocketnet_unit_prepare( rocketnet_test_getenv( "ROCKETNET_TEST_VERBOSE", verbose, sizeof( verbose ) ) != 0 );
 
     rocketnet_channels_prepare_log( name );
 
@@ -261,10 +250,6 @@ static int rocketnet_unit_worker( const char * name )
     if ( result == 2 )
     {
         result = rocketnet_unit_run_named( name );
-    }
-    if ( step_driven_case && rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_STEP_DRIVEN" ) != 0 )
-    {
-        result = 1;
     }
     if ( !rocketnet_test_loopback_hub_release() )
     {
@@ -281,25 +266,14 @@ int main( int argc, char ** argv )
     if ( test_fp_contract_off() )
         return 1;
 
-    // The unit suite runs over the loopback transport with no sockets, so a
-    // transport pin in the environment must not reach it: both pins are
-    // cleared for the whole run and restored on exit, the way
-    // posix_pair_create lifts them around its creates
-    // (tests/functional/posix_socket_errors.cpp). Worker processes inherit the
-    // cleared environment; a case that tests pin handling itself sets and
-    // reads its own pins.
+    // No unit case reads the process environment, and the public creates a
+    // case calls read only names this clears: every name the SDK reads is
+    // cleared here, before the registry's memory bounds are planned and before
+    // any worker starts, and again in each worker (rocketnet_unit_worker).
+    // Workers inherit the cleared environment.
 
-    char saved_server_transport[256] = "";
-    char saved_client_transport[256] = "";
-    const bool server_pinned = rocketnet_test_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, sizeof( saved_server_transport ) ) != 0;
-    const bool client_pinned = rocketnet_test_getenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, sizeof( saved_client_transport ) ) != 0;
-#if defined( _WIN32 )
-    _putenv_s( "ROCKETNET_SERVER_TRANSPORT", "" );
-    _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", "" );
-#else
-    unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-    unsetenv( "ROCKETNET_CLIENT_TRANSPORT" );
-#endif // #if defined( _WIN32 )
+    if ( rocketnet_unit_clear_environment() != 0 )
+        return 1;
 
     int result;
 
@@ -320,24 +294,5 @@ int main( int argc, char ** argv )
                              NULL, 0, NULL, 120.0 * ROCKETNET_TEST_CASE_TIME_SCALE, 0, false, false );
     }
 
-#if defined( _WIN32 )
-    if ( server_pinned )
-    {
-        _putenv_s( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport );
-    }
-    if ( client_pinned )
-    {
-        _putenv_s( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport );
-    }
-#else
-    if ( server_pinned )
-    {
-        setenv( "ROCKETNET_SERVER_TRANSPORT", saved_server_transport, 1 );
-    }
-    if ( client_pinned )
-    {
-        setenv( "ROCKETNET_CLIENT_TRANSPORT", saved_client_transport, 1 );
-    }
-#endif // #if defined( _WIN32 )
     return result;
 }

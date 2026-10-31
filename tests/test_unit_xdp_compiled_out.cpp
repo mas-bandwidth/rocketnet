@@ -16,8 +16,6 @@
 // the loopback transport opens no socket, with no clock or network.
 
 #include "test_unit_registry.h"
-#include "test_env_source.h"
-#include "portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_memory.h"
@@ -33,35 +31,6 @@
 
 #define check rocketnet_unit_check
 
-// the env pin wins over the struct's list by design, so a CI leg pinned by
-// ROCKETNET_SERVER_TRANSPORT is set aside for the case and put back after
-
-#if ROCKETNET_DEV
-struct xdp_compiled_out_env_pin
-{
-    bool was_set;
-    char value[256];
-};
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static void xdp_compiled_out_pin_set_aside( xdp_compiled_out_env_pin * saved )
-{
-    saved->was_set = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, sizeof( saved->value ) ) != 0;
-    rocketnet_test_env_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-}
-#endif // #if ROCKETNET_DEV
-
-#if ROCKETNET_DEV
-static void xdp_compiled_out_pin_put_back( const xdp_compiled_out_env_pin * saved )
-{
-    if ( saved->was_set )
-    {
-        rocketnet_test_env_setenv( "ROCKETNET_SERVER_TRANSPORT", saved->value, 1 );
-    }
-}
-#endif // #if ROCKETNET_DEV
-
 // production-like keys: non-zero and not the published development keys
 static void xdp_compiled_out_config( struct rocketnet_server_transport_config_t * config, const char * transport )
 {
@@ -76,10 +45,6 @@ static void xdp_compiled_out_config( struct rocketnet_server_transport_config_t 
 
 static void test_xdp_compiled_out_pin_refuses_not_built()
 {
-#if ROCKETNET_DEV
-    xdp_compiled_out_env_pin pin;
-    xdp_compiled_out_pin_set_aside( &pin );
-#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp" );
@@ -96,19 +61,12 @@ static void test_xdp_compiled_out_pin_refuses_not_built()
     check( rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:40000", &config, 1000.0, &status ) == NULL );
     check( status == ROCKETNET_STATUS_TRANSPORT_NOT_BUILT );
 
-#if ROCKETNET_DEV
-    xdp_compiled_out_pin_put_back( &pin );
-#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_xdp_compiled_out_pin_refuses_not_built );
 
 static void test_xdp_compiled_out_list_takes_the_next_candidate()
 {
-#if ROCKETNET_DEV
-    xdp_compiled_out_env_pin pin;
-    xdp_compiled_out_pin_set_aside( &pin );
-#endif // #if ROCKETNET_DEV
 
     struct rocketnet_server_transport_config_t config;
     xdp_compiled_out_config( &config, "xdp,loopback" );
@@ -126,9 +84,6 @@ static void test_xdp_compiled_out_list_takes_the_next_candidate()
         rn_test_server_transport_stop_and_destroy( server );
     }
 
-#if ROCKETNET_DEV
-    xdp_compiled_out_pin_put_back( &pin );
-#endif // #if ROCKETNET_DEV
 }
 
 REGISTER_UNIT_TEST( test_xdp_compiled_out_list_takes_the_next_candidate );

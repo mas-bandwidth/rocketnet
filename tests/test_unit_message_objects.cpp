@@ -24,9 +24,6 @@
 #include <vector>
 
 #include "test_unit_registry.h"
-#if ROCKETNET_DEV
-#include "test_env_source.h"
-#endif // #if ROCKETNET_DEV
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
 
@@ -3686,15 +3683,12 @@ REGISTER_UNIT_TEST( test_start_finish_pointer_reaches_the_frame );
 REGISTER_UNIT_TEST( test_receive_view_is_the_record );
 REGISTER_UNIT_TEST( test_release_returns_room );
 
-// the message object reads no environment (sdk/rocketnet_message_server.cpp:146):
-// the public budget variables are
-// ROCKETNET_CLIENT_SEND_KBPS and ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by
-// the public creates (sdk/rocketnet_api.cpp:135 and :173).
-// A ROCKETNET_MESSAGE_* budget variable changes nothing and refuses nothing.
-// The helpers set and unset the unit environment table on every platform.
-
-static void mo_setenv( const char * name, const char * value ) { rocketnet_test_env_setenv( name, value, 1 ); }
-static void mo_unsetenv( const char * name ) { rocketnet_test_env_unsetenv( name ); }
+// the message object takes no environment source: its budgets are its
+// config's. The public budget variables are ROCKETNET_CLIENT_SEND_KBPS and
+// ROCKETNET_SERVER_PER_CLIENT_SEND_KBPS, read by the public creates
+// (rn_client_split and rn_server_split, sdk/rocketnet_api.cpp); that a
+// ROCKETNET_MESSAGE_* budget variable changes nothing there is
+// test_config_env_per_client_send_kbps_is_the_server_budget.
 
 static void test_send_budget_message_env_is_not_read()
 {
@@ -3702,9 +3696,6 @@ static void test_send_budget_message_env_is_not_read()
     mo_config( &config );
     config.client_send_kbps = 250;
     config.server_send_kbps = 4000;
-
-    mo_setenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS", "fast" );
-    mo_setenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS", "-1" );
 
     {
         mo_pair_t pair;
@@ -3714,9 +3705,6 @@ static void test_send_budget_message_env_is_not_read()
         check( mo_server_slot( &pair, 0 )->send_budget_enabled == 1 );
         mo_pair_teardown( &pair );
     }
-
-    mo_unsetenv( "ROCKETNET_MESSAGE_CLIENT_SEND_KBPS" );
-    mo_unsetenv( "ROCKETNET_MESSAGE_SERVER_SEND_KBPS" );
 }
 
 // ---------------------------------------------------------------------------

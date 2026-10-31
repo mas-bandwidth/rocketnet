@@ -16,10 +16,8 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "test_env_source.h"
 #include "../sdk/rocketnet_connect_token.h"
 #include "../sdk/rocketnet_base64.h"
-#include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -35,19 +33,6 @@
 #include <string.h>
 #include "rocketnet_config.h"
 #include "loopback_hub.h"
-
-// the pair is built over the in-memory loopback transport, which this test names in
-// the server transport config; the caller's ROCKETNET_SERVER_TRANSPORT pin wins
-// over the struct by design, so a CI leg pinned to a real transport would open a
-// socket the step-driven loopback client never reaches. The pin is set aside
-// for the create and put back after; the unit runner (tests/test.cpp) also clears
-// both pins for the whole run.
-#if ROCKETNET_DEV
-static int public_not_released_setenv( const char * name, const char * value ) { return rocketnet_test_env_setenv( name, value, 1 ); }
-#endif // #if ROCKETNET_DEV
-#if ROCKETNET_DEV
-static int public_not_released_unsetenv( const char * name ) { return rocketnet_test_env_unsetenv( name ); }
-#endif // #if ROCKETNET_DEV
 
 #define check rocketnet_unit_check
 
@@ -113,22 +98,10 @@ static bool public_not_released_pair_setup( struct public_not_released_pair_t * 
     snprintf( server_transport_config.transport, sizeof( server_transport_config.transport ), "%s", "loopback" );
     server_transport_config.loopback_hub = rocketnet_test_loopback_hub();
 
-#if ROCKETNET_DEV
-    char saved_pin[256];
-    const bool pinned = rocketnet_test_env_getenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin, sizeof( saved_pin ) ) != 0;
-    public_not_released_unsetenv( "ROCKETNET_SERVER_TRANSPORT" );
-#endif // #if ROCKETNET_DEV
-
     int status = -1;
     struct rocketnet_server_transport_t * server_transport =
         rocketnet_server_transport_create_current_ex( NULL, "127.0.0.1:0", &server_transport_config, pair->time, &status );
 
-#if ROCKETNET_DEV
-    if ( pinned )
-    {
-        public_not_released_setenv( "ROCKETNET_SERVER_TRANSPORT", saved_pin );
-    }
-#endif // #if ROCKETNET_DEV
     check( status == ROCKETNET_STATUS_OK );
     if ( !server_transport )
         return false;

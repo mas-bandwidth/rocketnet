@@ -947,6 +947,9 @@ static void test_public_link_simulator_revision_1_prefixes()
     rocketnet_client_transport_default_config_current( &client_current );
     snprintf( client_current.transport, sizeof( client_current.transport ), "%s", "loopback" );
     client_current.loopback_hub = rocketnet_test_loopback_hub();
+#if ROCKETNET_DEV
+    client_current.step_driven = 1;     // a create that were granted would start no thread
+#endif // #if ROCKETNET_DEV
     memcpy( client.bytes, &client_current, sizeof( client.bytes ) );
 #if ROCKETNET_DEV
     uint8_t token[ROCKETNET_CONNECT_TOKEN_BYTES];

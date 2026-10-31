@@ -28,7 +28,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -280,13 +279,13 @@ static void loopback_rtt_run( int side, struct loopback_rtt_measures_t * m )
     m->srtt = sender->connections[0].ordered.ack.srtt;
     m->resend_delay = sender->connections[0].ordered.ack.resend_delay;
 
-    char rtt_print[256];
-    if ( rocketnet_test_getenv( "ROCKETNET_LOOPBACK_RTT_PRINT", rtt_print, sizeof( rtt_print ) ) )
-        printf( "LOOPBACK_RTT %s sent=%d received=%d in_order=%d packets=%d samples=%d sample_min=%.6f sample_max=%.6f "
-                "srtt=%.6f resend_delay=%.6f resent=%llu duplicate=%llu\n",
-                side == LOOPBACK_RTT_SERVER ? "server" : "client", m->sent, m->received, m->in_order,
-                loopback_rtt_seam.packets, loopback_rtt_seam.samples, loopback_rtt_seam.sample_min, loopback_rtt_seam.sample_max,
-                m->srtt, m->resend_delay, (unsigned long long) m->resent, (unsigned long long) m->duplicate );
+#if defined( ROCKETNET_LOOPBACK_RTT_PRINT )
+    printf( "LOOPBACK_RTT %s sent=%d received=%d in_order=%d packets=%d samples=%d sample_min=%.6f sample_max=%.6f "
+            "srtt=%.6f resend_delay=%.6f resent=%llu duplicate=%llu\n",
+            side == LOOPBACK_RTT_SERVER ? "server" : "client", m->sent, m->received, m->in_order,
+            loopback_rtt_seam.packets, loopback_rtt_seam.samples, loopback_rtt_seam.sample_min, loopback_rtt_seam.sample_max,
+            m->srtt, m->resend_delay, (unsigned long long) m->resent, (unsigned long long) m->duplicate );
+#endif // #if defined( ROCKETNET_LOOPBACK_RTT_PRINT )
 
     rn_test_message_client_stop_and_destroy( pair.client );
     rn_test_message_server_stop_and_destroy( pair.server );

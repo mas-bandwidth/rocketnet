@@ -10848,6 +10848,7 @@ extern void rocketnet_test_real_environment_config_precedence_and_invalid();
 extern void rocketnet_test_real_environment_client_step_driven();
 extern void rocketnet_test_real_environment_dev_simulator_number();
 extern void rocketnet_test_real_environment_server_ipv4_address();
+extern void rocketnet_test_real_environment_changed_after_create_has_no_effect();
 
 // POSIX lifecycle stress: real sockets, counted file descriptors and threads
 // (and on Linux locked memory), in tests/functional/posix_lifecycle_stress.cpp.
@@ -13059,6 +13060,7 @@ static const struct rocketnet_functional_test_t rocketnet_functional_tests[] = {
     { "test_real_environment_client_step_driven", rocketnet_test_real_environment_client_step_driven, NULL },
     { "test_real_environment_dev_simulator_number", rocketnet_test_real_environment_dev_simulator_number, NULL },
     { "test_real_environment_server_ipv4_address", rocketnet_test_real_environment_server_ipv4_address, NULL },
+    { "test_real_environment_changed_after_create_has_no_effect", rocketnet_test_real_environment_changed_after_create_has_no_effect, NULL },
 #endif // production excludes scaffolding cases (environment/dev-token/seam/thread-count)
 #if ROCKETNET_DEV
     { "test_hostname_resolve_localhost", rocketnet_test_hostname_resolve_localhost, NULL },

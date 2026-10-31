@@ -531,8 +531,9 @@ static void rocketnet_config_field_to_string( const void * config, const struct 
     }
 }
 
-bool rocketnet_config_apply_env_uint64( const char * transport_name, const char * field_name, uint64_t * out )
+bool rocketnet_config_apply_env_uint64( const struct rocketnet_env_source_t * env, const char * transport_name, const char * field_name, uint64_t * out )
 {
+    rocketnet_assert( env );
     rocketnet_assert( transport_name );
     rocketnet_assert( field_name );
     rocketnet_assert( out );
@@ -545,7 +546,7 @@ bool rocketnet_config_apply_env_uint64( const char * transport_name, const char 
     }
 
     char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    const int found = rocketnet_platform_getenv( env_name, value, sizeof( value ) );
+    const int found = rocketnet_env_get( env, env_name, value, sizeof( value ) );
     if ( found < 0 )
     {
         rocketnet_error( "%s config could not parse %s as an unsigned 64 bit integer: longer than %d characters", transport_name, env_name, (int) sizeof( value ) - 1 );
@@ -700,8 +701,9 @@ static bool rocketnet_config_apply_env_value( const char * transport_name, void 
     return true;
 }
 
-bool rocketnet_config_apply_env( const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
+bool rocketnet_config_apply_env( const struct rocketnet_env_source_t * env, const char * transport_name, void * config, const struct rocketnet_config_field_t * fields, int num_fields )
 {
+    rocketnet_assert( env );
     rocketnet_assert( transport_name );
     rocketnet_assert( config );
     rocketnet_assert( fields );
@@ -720,7 +722,7 @@ bool rocketnet_config_apply_env( const char * transport_name, void * config, con
         }
 
         char value[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-        const int found = rocketnet_platform_getenv( env_name, value, sizeof( value ) );
+        const int found = rocketnet_env_get( env, env_name, value, sizeof( value ) );
         if ( found == 0 )
             continue;
 

@@ -26,6 +26,7 @@ void rocketnet_xdp_receive_ring_finish( uint32_t num_packets, uint32_t num_consu
 #include "rocketnet_server_socket.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_env.h"
 #include "rocketnet_wire.h"
 #include "rocketnet_xdp_frame.h"
 #include "rocketnet_driver.h"
@@ -452,7 +453,7 @@ static bool get_gateway_mac_address( const char * interface_name, int interface_
     // a value too long for the buffer is set, and refused below as no mac address
 
     char gateway_ethernet_address_env[64];
-    const int gateway_ethernet_address_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_ethernet_address_env, sizeof( gateway_ethernet_address_env ) );
+    const int gateway_ethernet_address_found = rocketnet_env_get( rocketnet_env_process(), "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_ethernet_address_env, sizeof( gateway_ethernet_address_env ) );
     if ( gateway_ethernet_address_found < 0 || ( gateway_ethernet_address_found > 0 && gateway_ethernet_address_env[0] != '\0' ) )
     {
         // the same strict parse the sysfs read uses
@@ -1641,7 +1642,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
     // ROCKETNET_GATEWAY_ETHERNET_ADDRESS names the gateway for the server's life
 
     char gateway_override[64];
-    const int gateway_override_found = rocketnet_platform_getenv( "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_override, sizeof( gateway_override ) );
+    const int gateway_override_found = rocketnet_env_get( rocketnet_env_process(), "ROCKETNET_GATEWAY_ETHERNET_ADDRESS", gateway_override, sizeof( gateway_override ) );
     server_socket->gateway_refresh.enabled = !( gateway_override_found < 0 || ( gateway_override_found > 0 && gateway_override[0] != '\0' ) );
     server_socket->gateway_refresh.serves_both = serves_both != 0;
     server_socket->gateway_refresh.address_type = public_address.type;
@@ -1933,7 +1934,7 @@ rocketnet_server_socket_t * rocketnet_server_socket_create( void * context, cons
         // xdp_create_fails_part_way_tears_down)
         {
             char fail_at_queue[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-            if ( rocketnet_platform_getenv( "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", fail_at_queue, sizeof( fail_at_queue ) ) > 0 && atoi( fail_at_queue ) == queue )
+            if ( rocketnet_env_get( rocketnet_env_process(), "ROCKETNET_TEST_XDP_FAIL_AT_QUEUE", fail_at_queue, sizeof( fail_at_queue ) ) > 0 && atoi( fail_at_queue ) == queue )
             {
                 rocketnet_error( "server xdp create failed at queue %d (injected by ROCKETNET_TEST_XDP_FAIL_AT_QUEUE)", queue );
                 rocketnet_server_socket_abort_create( server_socket );

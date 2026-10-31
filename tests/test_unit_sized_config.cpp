@@ -818,7 +818,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
         struct rocketnet_server_transport_config_t transport;
         struct rocketnet_message_config_t message;
         uint32_t kbps = 0;
-        check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+        check( rocketnet_server_config_resolve( &config, NULL, &transport, &message, &kbps ) );
         check( transport.disconnect_packets_per_update == values[i] );
         check( transport.handshakes_per_update == ROCKETNET_DEFAULT_SERVER_HANDSHAKES_PER_UPDATE );
     }
@@ -832,7 +832,7 @@ static void test_public_server_disconnect_allowance_revision_and_copy()
         struct rocketnet_server_transport_config_t transport;
         struct rocketnet_message_config_t message;
         uint32_t kbps = 0;
-        check( rocketnet_server_config_resolve( &config, false, &transport, &message, &kbps ) );
+        check( rocketnet_server_config_resolve( &config, NULL, &transport, &message, &kbps ) );
         check( transport.handshakes_per_update == budgets[i] );
     }
 }

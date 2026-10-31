@@ -37,6 +37,7 @@
 #include "rocketnet_server_gso.h"
 #include "rocketnet_constants.h"
 #include "rocketnet_platform.h"
+#include "rocketnet_env.h"
 #include "rocketnet_wire.h"
 
 #include <sys/socket.h>
@@ -1002,7 +1003,7 @@ struct rocketnet_server_gso_t * rocketnet_server_gso_create( void * context, str
     // such as load pins the gso plain cell without calling the hook above
 
     char test_plain[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( rocketnet_platform_getenv( "ROCKETNET_TEST_GSO_PLAIN", test_plain, sizeof( test_plain ) ) > 0 && strcmp( test_plain, "1" ) == 0 )
+    if ( rocketnet_env_get( rocketnet_env_process(), "ROCKETNET_TEST_GSO_PLAIN", test_plain, sizeof( test_plain ) ) > 0 && strcmp( test_plain, "1" ) == 0 )
         flags |= ROCKETNET_SERVER_GSO_DISABLE_SEGMENT | ROCKETNET_SERVER_GSO_DISABLE_GRO;
 #endif // #if ROCKETNET_DEV
 

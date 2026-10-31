@@ -11,10 +11,10 @@
 // rocketnet_reconstruct_sequence). A real connection passes 0xFFFFFFFF only
 // after 2^32 packets, days at soak rates, so this case starts both sessions
 // through the DEV-only seam ROCKETNET_DEV_SESSION_SEQUENCE_START
-// (sdk/rocketnet_test_seams.h) at 0xFFFFFFFF - 1000: read once per process,
-// at the server's encryption map create, and each side's first session packet
-// carries that sequence. The case runs in its own process (the suite runs
-// every case as `test --run <case>`), so the value reaches nothing else.
+// (sdk/rocketnet_test_seams.h) at 0xFFFFFFFF - 1000: the case re-inits the
+// library with an environment table it owns holding that value
+// (rocketnet_init_ex_with_env reads it, and nothing reads it after), and each
+// side's first session packet carries that sequence.
 //
 // A message server and client on the in-memory loopback transport, no socket,
 // time from 1000.0, both sides updated every step of SEQUENCE_WRAP_DT. Each
@@ -44,7 +44,6 @@
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
 #include "test_env_source.h"
-#include "portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
@@ -74,8 +73,22 @@
 #define SEQUENCE_WRAP_FIELD_LIMIT 0xFFFFFFFFULL
 #define SEQUENCE_WRAP_MAX_PACKETS 16384
 
-static void sequence_wrap_setenv( const char * name, const char * value ) { check( rocketnet_test_env_setenv( name, value, 1 ) == 0 ); }
-static void sequence_wrap_unsetenv( const char * name ) { check( rocketnet_test_env_unsetenv( name ) == 0 ); }
+// re-init the library from a table holding the session sequence start; the
+// value is read at init and nowhere else, so the table may change after
+
+static void sequence_wrap_init_at( rocketnet_test_env_t * env, uint64_t start )
+{
+    char start_text[32];
+    snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) start );
+    env->set( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
+
+    const enum rocketnet_log_level_t level = rocketnet_log_level_current();
+    check( rocketnet_term() == ROCKETNET_STATUS_OK );
+    int status = -1;
+    check( rocketnet_init_ex_with_env( NULL, NULL, NULL, &env->source, &status ) );
+    check( status == ROCKETNET_STATUS_OK );
+    rocketnet_log_level( level );
+}
 
 static double sequence_wrap_clock = 1000.0;
 static double sequence_wrap_time_callback( void * ) { return sequence_wrap_clock; }
@@ -360,9 +373,8 @@ static void sequence_wrap_check_counters( const char * name, const struct rocket
 
 static void test_sequence_wrap_session_both_directions( void )
 {
-    char start_text[32];
-    snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_START );
-    sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
+    rocketnet_test_env_t env;
+    sequence_wrap_init_at( &env, SEQUENCE_WRAP_START );
 
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_START );
 
@@ -370,10 +382,7 @@ static void test_sequence_wrap_session_both_directions( void )
     const bool created = sequence_wrap_pair_setup( &pair );
     check( created );
     if ( !created )
-    {
-        sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
         return;
-    }
 
     for ( int i = 0; i < 400 && !( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED &&
                                    rocketnet_message_server_client_connected( pair.server, 0 ) );
@@ -391,10 +400,9 @@ static void test_sequence_wrap_session_both_directions( void )
     check( rocketnet_message_server_client_connected( pair.server, 0 ) );
     check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
 
-    // the seam is read once per process: unsetting it now leaves the
-    // environment as the suite found it and changes nothing for this process
+    // the seam is read at init: clearing the table now changes nothing
 
-    sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
+    env.unset( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
 
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_START );
 
@@ -434,21 +442,20 @@ static void test_sequence_wrap_session_both_directions( void )
 
     const double low = SEQUENCE_WRAP_DT - 1e-9;
     const double high = 4.0 * SEQUENCE_WRAP_DT + 1e-9;
-    const char * side_names[2] = { "server", "client" };
-
     for ( int side = 0; side < 2; side++ )
     {
         const struct sequence_wrap_seam_t * seam = &sequence_wrap_seams[side];
-        char print[16];
-        if ( rocketnet_test_getenv( "ROCKETNET_SEQUENCE_WRAP_PRINT", print, sizeof( print ) ) )
-            printf( "SEQUENCE_WRAP %s packets=%d lowest=0x%llx highest=0x%llx past_wrap=%d acked=%d acked_past_wrap=%d "
-                    "samples_past_wrap=%d sample_min=%.6f sample_max=%.6f srtt=%.6f resent=%llu duplicate=%llu\n",
-                    side_names[side], seam->packets, (unsigned long long) seam->lowest_sequence,
-                    (unsigned long long) seam->highest_sequence, seam->packets_past_wrap, seam->acked,
-                    seam->acked_past_wrap, seam->samples_past_wrap, seam->sample_min, seam->sample_max,
-                    objects[side]->connections[0].ordered.ack.srtt,
-                    (unsigned long long) objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT],
-                    (unsigned long long) objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] );
+#if defined( ROCKETNET_SEQUENCE_WRAP_PRINT )
+        const char * side_names[2] = { "server", "client" };
+        printf( "SEQUENCE_WRAP %s packets=%d lowest=0x%llx highest=0x%llx past_wrap=%d acked=%d acked_past_wrap=%d "
+                "samples_past_wrap=%d sample_min=%.6f sample_max=%.6f srtt=%.6f resent=%llu duplicate=%llu\n",
+                side_names[side], seam->packets, (unsigned long long) seam->lowest_sequence,
+                (unsigned long long) seam->highest_sequence, seam->packets_past_wrap, seam->acked,
+                seam->acked_past_wrap, seam->samples_past_wrap, seam->sample_min, seam->sample_max,
+                objects[side]->connections[0].ordered.ack.srtt,
+                (unsigned long long) objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_RESENT],
+                (unsigned long long) objects[side]->counters.values[ROCKETNET_COUNTER_MESSAGE_DUPLICATE] );
+#endif // #if defined( ROCKETNET_SEQUENCE_WRAP_PRINT )
 
         // the session started at the seam's value and the field wrapped,
         // with at least SEQUENCE_WRAP_STEPS packets sent each way
@@ -506,9 +513,8 @@ static void test_sequence_wrap_session_both_directions( void )
 
 static void test_sequence_wrap_session_starts_at_wrap_edge( void )
 {
-    char start_text[32];
-    snprintf( start_text, sizeof( start_text ), "%llu", (unsigned long long) SEQUENCE_WRAP_EDGE_START );
-    sequence_wrap_setenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START", start_text );
+    rocketnet_test_env_t env;
+    sequence_wrap_init_at( &env, SEQUENCE_WRAP_EDGE_START );
 
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
 
@@ -516,10 +522,7 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     const bool created = sequence_wrap_pair_setup( &pair );
     check( created );
     if ( !created )
-    {
-        sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
         return;
-    }
 
     struct rn_message_object_t * objects[2] = { &pair.server->object, &pair.client->object };
     memset( sequence_wrap_seams, 0, sizeof( sequence_wrap_seams ) );
@@ -549,7 +552,7 @@ static void test_sequence_wrap_session_starts_at_wrap_edge( void )
     check( rocketnet_message_client_state( pair.client ) == ROCKETNET_CLIENT_TRANSPORT_STATE_CONNECTED );
     check( rocketnet_message_server_client_connected( pair.server, 0 ) );
 
-    sequence_wrap_unsetenv( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
+    env.unset( "ROCKETNET_DEV_SESSION_SEQUENCE_START" );
 
     check( rocketnet_dev_session_sequence_start() == SEQUENCE_WRAP_EDGE_START );
 

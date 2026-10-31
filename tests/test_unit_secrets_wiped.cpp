@@ -944,16 +944,6 @@ static void secrets_wiped_staging_seen( const uint8_t * staging, int bytes )
     secrets_wiped_staging_bytes = bytes;
 }
 
-static int secrets_wiped_setenv( const char * name, const char * value )
-{
-    return rocketnet_test_env_setenv( name, value, 1 );
-}
-
-static int secrets_wiped_unsetenv( const char * name )
-{
-    return rocketnet_test_env_unsetenv( name );
-}
-
 struct secrets_wiped_config_t
 {
     uint8_t secret_key[32];
@@ -970,17 +960,16 @@ static bool secrets_wiped_parse( const char * value, struct secrets_wiped_config
 {
     char env_name[128];
     check( rocketnet_config_env_var_name_for( "secretwipe", "secret_key", env_name, sizeof( env_name ) ) );
-    check( secrets_wiped_setenv( env_name, value ) == 0 );
+    rocketnet_test_env_t env;
+    env.set( env_name, value );
 
     memset( config, 0, sizeof( *config ) );
     memset( secrets_wiped_staging, 0xA5, sizeof( secrets_wiped_staging ) );
     secrets_wiped_staging_bytes = -1;
     rocketnet_config_decode_staging_hook = secrets_wiped_staging_seen;
 
-    const bool parsed = rocketnet_config_apply_env( "secretwipe", config, secrets_wiped_fields, 1 );
+    const bool parsed = rocketnet_config_apply_env( &env.source, "secretwipe", config, secrets_wiped_fields, 1 );
     rocketnet_config_decode_staging_hook = NULL;
-
-    check( secrets_wiped_unsetenv( env_name ) == 0 );
 
     return parsed;
 }

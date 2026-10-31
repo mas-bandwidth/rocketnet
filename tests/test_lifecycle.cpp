@@ -739,7 +739,7 @@ static void check_component_create_sweeps( allocator_state & state )
 // A budget below a candidate's default plan refuses the create before any
 // allocation (the counting allocator's call count is unchanged); a budget
 // above the plan lets the create succeed. The env shim is the platform's
-// real environment, read through rocketnet_platform_getenv.
+// real environment, read through rocketnet_env_process.
 
 // a valid connect token with future timestamps, minted with the production
 // test backend secret (the library's non-development build has no dev minting)

@@ -38,19 +38,19 @@
 //     fail.
 
 #include "test_unit_registry.h"
-#include "test_env_source.h"
-#include "portable_crt.h"
 
 #include "rocketnet_internal.h"
 #include "rocketnet_connect_token.h"
+#include "rocketnet_config.h"
+
+#if ROCKETNET_DEV
+#include "test_env_source.h"
+#endif // #if ROCKETNET_DEV
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-// The unit runner (tests/test.cpp) clears ROCKETNET_CLIENT_TRANSPORT for the
-// whole run, so each create reads the struct's transport list.
 
 #define check rocketnet_unit_check
 
@@ -150,15 +150,16 @@ static void test_client_transport_create_ex_reports_every_status()
     check( status == ROCKETNET_STATUS_OK );
 
 #if ROCKETNET_DEV
-    // C2: an invalid environment overlay refuses at the env apply
-    char prior[4096];
-    const bool had_prior = rocketnet_test_env_getenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, sizeof( prior ) ) != 0;
-    rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "not-a-number", 1 );
-    check_create_status( ROCKETNET_STATUS_CONFIG_ENV_INVALID, token, NULL, &state, &status );
-    if ( had_prior )
-        rocketnet_test_env_setenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", prior, 1 );
-    else
-        rocketnet_test_env_unsetenv( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES" );
+    // C2: an invalid environment overlay refuses at the env apply, read from
+    // a table this case owns
+    {
+        rocketnet_test_env_t env;
+        env.set( "ROCKETNET_CLIENT_MAX_FRAGMENTED_MESSAGES", "not-a-number" );
+        status = -1;
+        check( rocketnet_client_transport_create_current_with_env( &state, token, NULL, 1000.0, &env.source, &status ) == NULL );
+        check( status == ROCKETNET_STATUS_CONFIG_ENV_INVALID );
+        check( state.live == 0 );
+    }
 
 #endif // #if ROCKETNET_DEV
 

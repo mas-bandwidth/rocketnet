@@ -17,7 +17,6 @@
 
 #include "unit_shutdown.h"
 #include "test_unit_registry.h"
-#include "portable_crt.h"
 
 #include "../sdk/rocketnet.h"
 #include "rocketnet_internal.h"
@@ -238,15 +237,17 @@ static void loopback_run_fixed_trace( int latency_ms, struct loopback_trace_t * 
 
 static void loopback_print_trace( const char * name, const struct loopback_trace_t * t )
 {
-    char print_trace[256];
-    if ( !rocketnet_test_getenv( "ROCKETNET_LOOPBACK_PRINT_TRACE", print_trace, sizeof( print_trace ) ) )
-        return;
+#if defined( ROCKETNET_LOOPBACK_PRINT_TRACE )
     printf( "TRACE %s { %llu, %llu, %llu, %llu, %llu, %llu, %llu, %llu, UINT64_C( 0x%016llx ), UINT64_C( 0x%016llx ), %d }\n", name,
             (unsigned long long) t->client_packets_sent, (unsigned long long) t->client_packets_received,
             (unsigned long long) t->client_bytes_sent, (unsigned long long) t->client_bytes_received,
             (unsigned long long) t->server_packets_sent, (unsigned long long) t->server_packets_received,
             (unsigned long long) t->server_bytes_sent, (unsigned long long) t->server_bytes_received,
             (unsigned long long) t->client_counters_hash, (unsigned long long) t->server_counters_hash, t->connected_step );
+#else
+    (void) name;
+    (void) t;
+#endif // #if defined( ROCKETNET_LOOPBACK_PRINT_TRACE )
 }
 
 static void loopback_check_trace( const struct loopback_trace_t * got, const struct loopback_trace_t * want )

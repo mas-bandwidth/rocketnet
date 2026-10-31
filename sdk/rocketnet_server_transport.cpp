@@ -1344,7 +1344,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                          const char * public_address_string,
                                                                                          const struct rocketnet_server_transport_config_t * config,
                                                                                          double time, int * status,
-                                                                                         const uint64_t * resolved_memory_budget = NULL );
+                                                                                         const uint64_t * resolved_memory_budget, const struct rocketnet_env_source_t * env );
 
 // The config staging seam, compiled into the development library only: each
 // stack copy of a server config, which carries server_secret_key, is wiped on
@@ -1362,27 +1362,37 @@ struct rocketnet_server_transport_t * rocketnet_server_transport_create_ex( void
                                                                             const struct rocketnet_server_transport_config_t * config,
                                                                             double time, int * status )
 {
-    return rocketnet_server_transport_create_internal( context, public_address_string, config, time, status );
+    return rocketnet_server_transport_create_internal( context, public_address_string, config, time, status, NULL, rocketnet_env_process() );
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current( void * context, const char * address,
                                                                                  const struct rocketnet_server_transport_config_t * config )
 {
-    return rocketnet_server_transport_create_internal( context, address, config, 0.0, NULL );
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, NULL, NULL, rocketnet_env_process() );
 }
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_ex( void * context, const char * address,
                                                                                     const struct rocketnet_server_transport_config_t * config, double time, int * status )
 {
-    return rocketnet_server_transport_create_internal( context, address, config, time, status );
+    return rocketnet_server_transport_create_internal( context, address, config, time, status, NULL, rocketnet_env_process() );
 }
+
+#if ROCKETNET_DEV
+struct rocketnet_server_transport_t * rocketnet_server_transport_create_current_with_env( void * context, const char * address,
+                                                                                         const struct rocketnet_server_transport_config_t * config, double time,
+                                                                                         const struct rocketnet_env_source_t * env, int * status )
+{
+    rocketnet_assert( env );
+    return rocketnet_server_transport_create_internal( context, address, config, time, status, NULL, env );
+}
+#endif // #if ROCKETNET_DEV
 
 struct rocketnet_server_transport_t * rocketnet_server_transport_create_resolved( void * context, const char * address,
                                                                                   const struct rocketnet_server_transport_config_t * config,
                                                                                   uint64_t memory_budget_bytes, int * status )
 {
     rocketnet_assert( config );
-    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes );
+    return rocketnet_server_transport_create_internal( context, address, config, 0.0, status, &memory_budget_bytes, NULL );
 }
 
 // The inputs a server create starts from, resolved before anything is
@@ -1405,7 +1415,7 @@ struct rocketnet_server_transport_resolved_t
 
 static bool rocketnet_server_transport_resolve_staged( const char * public_address_string,
                                                        const struct rocketnet_server_transport_config_t * config,
-                                                       const uint64_t * resolved_memory_budget,
+                                                       const uint64_t * resolved_memory_budget, const struct rocketnet_env_source_t * env,
                                                        struct rocketnet_server_transport_resolved_t * out,
                                                        int * status,
                                                        struct rocketnet_server_transport_config_t & effective_config )
@@ -1430,7 +1440,9 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     int num_config_fields = 0;
     const struct rocketnet_config_field_t * config_fields = rocketnet_server_transport_config_fields( &num_config_fields );
 
-    if ( !resolved_memory_budget && !rocketnet_config_apply_env( "server", &effective_config, config_fields, num_config_fields ) )
+    rocketnet_assert( ( resolved_memory_budget == NULL ) == ( env != NULL ) );
+
+    if ( env && !rocketnet_config_apply_env( env, "server", &effective_config, config_fields, num_config_fields ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1610,7 +1622,7 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
     // first allocation.
 
     uint64_t memory_budget = resolved_memory_budget ? *resolved_memory_budget : 0;
-    if ( !resolved_memory_budget && !rocketnet_config_apply_env_uint64( "server", "memory_budget_bytes", &memory_budget ) )
+    if ( env && !rocketnet_config_apply_env_uint64( env, "server", "memory_budget_bytes", &memory_budget ) )
     {
         if ( status )
             *status = ROCKETNET_STATUS_CONFIG_ENV_INVALID;
@@ -1674,12 +1686,12 @@ static bool rocketnet_server_transport_resolve_staged( const char * public_addre
 
 static bool rocketnet_server_transport_resolve( const char * public_address_string,
                                                 const struct rocketnet_server_transport_config_t * config,
-                                                const uint64_t * resolved_memory_budget,
+                                                const uint64_t * resolved_memory_budget, const struct rocketnet_env_source_t * env,
                                                 struct rocketnet_server_transport_resolved_t * out,
                                                 int * status )
 {
     struct rocketnet_server_transport_config_t effective_config;
-    const bool resolved = rocketnet_server_transport_resolve_staged( public_address_string, config, resolved_memory_budget, out, status, effective_config );
+    const bool resolved = rocketnet_server_transport_resolve_staged( public_address_string, config, resolved_memory_budget, env, out, status, effective_config );
     sodium_memzero( &effective_config, sizeof( effective_config ) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( effective_config.server_secret_key, ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_RESOLVE );
     return resolved;
@@ -1914,7 +1926,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
                                                                                        const char * public_address_string,
                                                                                        const struct rocketnet_server_transport_config_t * config,
                                                                                        double time, int * status,
-                                                                                       const uint64_t * resolved_memory_budget,
+                                                                                       const uint64_t * resolved_memory_budget, const struct rocketnet_env_source_t * env,
                                                                                        struct rocketnet_server_transport_resolved_t & resolved )
 {
     // docs/ERRORS-AND-LOGGING.md 2.1 and the settled Q2: a NULL required
@@ -1942,7 +1954,7 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_s
 
     rocketnet_assert( public_address_string );
 
-    if ( !rocketnet_server_transport_resolve( public_address_string, config, resolved_memory_budget, &resolved, status ) )
+    if ( !rocketnet_server_transport_resolve( public_address_string, config, resolved_memory_budget, env, &resolved, status ) )
         return NULL;
 
     config = &resolved.config;
@@ -2214,10 +2226,10 @@ static struct rocketnet_server_transport_t * rocketnet_server_transport_create_i
                                                                                          const char * public_address_string,
                                                                                          const struct rocketnet_server_transport_config_t * config,
                                                                                          double time, int * status,
-                                                                                         const uint64_t * resolved_memory_budget )
+                                                                                         const uint64_t * resolved_memory_budget, const struct rocketnet_env_source_t * env )
 {
     struct rocketnet_server_transport_resolved_t resolved;
-    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, resolved );
+    struct rocketnet_server_transport_t * server_transport = rocketnet_server_transport_create_staged( context, public_address_string, config, time, status, resolved_memory_budget, env, resolved );
     sodium_memzero( &resolved, sizeof( resolved ) );
     ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_SEEN( resolved.config.server_secret_key, ROCKETNET_SERVER_TRANSPORT_CONFIG_STAGING_CREATE );
     return server_transport;

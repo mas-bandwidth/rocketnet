@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <inttypes.h>
+#include <errno.h>
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
@@ -852,6 +853,46 @@ void rocketnet_sodium_misuse_for_test()
 }
 #endif // #if ROCKETNET_DEV
 
+// the DEV session sequence start (sdk/rocketnet_test_seams.h), read at init;
+// the server's encryption map and the client's connect read it here
+
+#if ROCKETNET_DEV
+static uint64_t rocketnet_dev_session_sequence_start_parse( const struct rocketnet_env_source_t * env )
+{
+    char text[64];
+    const int found = rocketnet_env_get( env, "ROCKETNET_DEV_SESSION_SEQUENCE_START", text, sizeof( text ) );
+    if ( found == 0 || ( found == 1 && text[0] == '\0' ) )
+        return 1;
+
+    char * end = NULL;
+    errno = 0;
+    const unsigned long long parsed = found == 1 ? strtoull( text, &end, 0 ) : 0;
+    if ( found != 1 || end == text || *end != '\0' || errno != 0 || text[0] == '-' ||
+         parsed == 0 || parsed > ROCKETNET_DEV_SESSION_SEQUENCE_START_MAX )
+    {
+        rocketnet_error( "ROCKETNET_DEV_SESSION_SEQUENCE_START=\"%s\" refused: expected 1 .. 2^62; using 1", text );
+        return 1;
+    }
+
+    return (uint64_t) parsed;
+}
+
+// written by init, read by every create after it; relaxed, since init
+// returns before any create of its session starts
+
+static std::atomic<uint64_t> rocketnet_dev_session_sequence_start_value{ 1 };
+
+void rocketnet_dev_session_sequence_start_load( const struct rocketnet_env_source_t * env )
+{
+    rocketnet_dev_session_sequence_start_value.store( rocketnet_dev_session_sequence_start_parse( env ), std::memory_order_relaxed );
+}
+
+uint64_t rocketnet_dev_session_sequence_start( void )
+{
+    return rocketnet_dev_session_sequence_start_value.load( std::memory_order_relaxed );
+}
+#endif // #if ROCKETNET_DEV
+
 enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ) )
 {
     int status = ROCKETNET_STATUS_OK;
@@ -861,6 +902,14 @@ enum rocketnet_status_t rocketnet_init( void * context, void * ( *malloc_functio
 
 bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ), int * status )
 {
+    return rocketnet_init_ex_with_env( context, malloc_function, free_function, rocketnet_env_process(), status );
+}
+
+bool rocketnet_init_ex_with_env( void * context, void * ( *malloc_function )( void * context, size_t bytes ), void ( *free_function )( void * context, void * p ),
+                                 const struct rocketnet_env_source_t * env, int * status )
+{
+    rocketnet_assert( env );
+
     int refused = ROCKETNET_STATUS_OK;
     bool other_allocator = false;
 
@@ -939,8 +988,12 @@ bool rocketnet_init_ex( void * context, void * ( *malloc_function )( void * cont
     // the level first, so init's own lines obey it
 
     char log_level_override[ROCKETNET_PLATFORM_GETENV_MAX_BYTES];
-    if ( rocketnet_platform_getenv( "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
+    if ( rocketnet_env_get( env, "ROCKETNET_LOG_LEVEL", log_level_override, sizeof( log_level_override ) ) != 0 )
         rocketnet_log_level_override_apply( log_level_override );
+
+#if ROCKETNET_DEV
+    rocketnet_dev_session_sequence_start_load( env );
+#endif // #if ROCKETNET_DEV
 
     rocketnet_info( "rocketnet version is %s", ROCKETNET_VERSION_FULL );
     rocketnet_info( "platform is %s", rocketnet_platform_name( rocketnet_platform_id() ) );

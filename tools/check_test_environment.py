@@ -344,7 +344,7 @@ def run_binary(binary, env, timeout):
 def main():
     args = [arg for arg in sys.argv[1:] if arg != "--production"]
     # --production: the binary links the production library (ROCKETNET_DEV=OFF),
-    # which compiles no in-memory environment table and so no restoration test
+    # whose unit suite does not compile the DEV environment-table case
     production = "--production" in sys.argv[1:]
     binary = Path(args[0] if args else "bin/test").resolve()
     functional = "functional" in binary.name
@@ -369,11 +369,14 @@ def main():
     if printing:
         sys.exit("unit cases print their own name, which the registry already prints: %s" % "; ".join(printing[:10]))
 
-    # Preserve any caller's explicit ROCKETNET_SERVER_TRANSPORT and
-    # ROCKETNET_CLIENT_TRANSPORT pins. Other values exercise
-    # exact names, older aliases, an invalid key and a long value without ever
-    # printing their contents. The suite derives its cleanup list from the tables.
+    # The values exercise exact names, older aliases, an invalid key and a
+    # long value without ever printing their contents, and the transport pins
+    # name a socket transport: no unit case reads the process environment, and
+    # the runner clears every name the SDK reads before each case (its cleanup
+    # list is derived from the tables), so none of them reaches a create.
     env.update({
+        "ROCKETNET_SERVER_TRANSPORT": "io_uring",
+        "ROCKETNET_CLIENT_TRANSPORT": "io_uring",
         "ROCKETNET_LOG_LEVEL": "4",
         "ROCKETNET_MAX_CLIENTS": "77",
         "ROCKETNET_NUM_REASSEMBLY_SLOTS": "3",
@@ -390,7 +393,7 @@ def main():
         sys.exit("SDK suite failed with ambient config overrides: %s" % result.returncode)
     names = check_shape(result.stdout.splitlines(), "SDK suite", once=True)
     if not production and "test_suite_environment" not in names:
-        sys.exit("SDK suite did not execute its environment restoration test")
+        sys.exit("SDK suite did not execute its environment table test")
 
     reg_all, reg_always = registered_unit_names(production)
     assert_name_set(set(names), reg_all, reg_always, "SDK suite")

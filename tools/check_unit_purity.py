@@ -5,7 +5,10 @@ The owner's rule: unit tests use no real time, no sleep, no threads, no
 network and no resolver. This check scans the unit suite's sources and fails,
 naming file and line, on any call that would force a real platform primitive:
 a sleep, a wall-clock read, a thread start, a hostname resolution, the C
-library's time(), a std::thread, or a process-environment mutation.
+library's time(), a std::thread, or a process-environment read or change. A
+unit case that tests the SDK's environment handling passes the reader an
+in-memory table it owns (tests/test_env_source.h), so that helper is scanned
+like any other.
 
 The scanned code is every tests/test_unit_*.cpp and sdk/rocketnet_tests.cpp
 (the unit-registered cases live there); every tests/*.h helper they include,
@@ -16,10 +19,8 @@ A thread join, and a wake wait with a timeout other than 0, count as well.
 Comments are stripped before matching, and linker-wrap symbol declarations
 (__real_/__wrap_rocketnet_platform_time) are not calls.
 
-Two helpers are not unit-case code and are not scanned: tests/suite_runner.h
-is the runner that starts each case's process, and tests/test_env_source.h
-sets the real environment only in a ROCKETNET_DEV=0 build, which has no
-in-memory overlay (tests/README.md).
+One helper is not unit-case code and is not scanned: tests/suite_runner.h is
+the runner that starts each case's process.
 
 usage: python3 tools/check_unit_purity.py [dir]   (default the repository root)
        python3 tools/check_unit_purity.py --self-test
@@ -42,6 +43,13 @@ PATTERNS = [
     ("putenv", re.compile(r'(?<![A-Za-z0-9_])putenv\s*\(')),
     ("_putenv_s", re.compile(r'(?<![A-Za-z0-9_])_putenv_s\s*\(')),
     ("SetEnvironmentVariable", re.compile(r'(?<![A-Za-z0-9_])SetEnvironmentVariable(?:A|W)?\s*\(')),
+    ("getenv", re.compile(r'(?<![A-Za-z0-9_])(?:secure_)?getenv(?:_s)?\s*\(')),
+    ("_dupenv_s", re.compile(r'(?<![A-Za-z0-9_])_dupenv_s\s*\(')),
+    ("GetEnvironmentVariable", re.compile(r'(?<![A-Za-z0-9_])GetEnvironmentVariable(?:A|W)?\s*\(')),
+    ("environ", re.compile(r'(?<![A-Za-z0-9_])_?environ(?![A-Za-z0-9_])')),
+    ("rocketnet_platform_getenv", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_getenv\s*\(')),
+    ("rocketnet_test_getenv", re.compile(r'(?<![A-Za-z0-9_])rocketnet_test_getenv\s*\(')),
+    ("rocketnet_env_process", re.compile(r'(?<![A-Za-z0-9_])rocketnet_env_process\s*\(')),
     ("rocketnet_platform_thread_join", re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_thread_join\s*\(')),
 ]
 
@@ -49,7 +57,7 @@ PATTERNS = [
 WAKE_WAIT = re.compile(r'(?<![A-Za-z0-9_])rocketnet_platform_wake_wait\s*\(([^;]*)\)\s*;')
 ZERO_TIMEOUT = re.compile(r'^\s*0(?:\.0*)?(?:f)?\s*$')
 
-HELPERS_NOT_SCANNED = {"suite_runner.h", "test_env_source.h"}
+HELPERS_NOT_SCANNED = {"suite_runner.h"}
 
 
 def strip_comments(text):
@@ -176,6 +184,9 @@ def self_test():
          "static inline int helper_value() { return 1; }\n", 1),
         ("fixture timed wait", clean_fixture.replace("0.0 )", "0.1 )"), "static inline int helper_value() { return 1; }\n", 1),
         ("helper sleep", clean_fixture, "static inline int helper_value() { rocketnet_platform_sleep( 0.01 ); return 1; }\n", 1),
+        ("helper real setenv", clean_fixture, "static inline int helper_value() { return setenv( \"ROCKETNET_SERVER_MAX_CLIENTS\", \"2\", 1 ); }\n", 1),
+        ("helper real getenv", clean_fixture, "static inline int helper_value() { return getenv( \"ROCKETNET_SERVER_MAX_CLIENTS\" ) != 0; }\n", 1),
+        ("helper process source", clean_fixture, "static inline int helper_value() { return rocketnet_env_process() != 0; }\n", 1),
     ]
     for label, fixture, helper, expected in cases:
         with tempfile.TemporaryDirectory() as root:
@@ -192,7 +203,30 @@ def self_test():
             if len(found) != expected:
                 print("FAIL check_unit_purity self-test: %s: expected %d finding(s), got %r" % (label, expected, found))
                 return 1
-    print("ok check_unit_purity self-test: a thread, timed wait or sleep in a DEV fixture or helper is refused")
+    # the environment table helper is scanned by its real name: a real
+    # environment change planted in it, or in a unit case, is refused
+    for label, helper, case_line, expected in [
+        ("table helper", "static inline int helper_value() { return 1; }\n", "", 0),
+        ("table helper setenv", "static inline int helper_value() { return setenv( \"ROCKETNET_CLIENT_TRANSPORT\", \"loopback\", 1 ); }\n", "", 1),
+        ("unit case setenv", "static inline int helper_value() { return 1; }\n",
+         'static void test_planted() { setenv( "ROCKETNET_SERVER_MAX_CLIENTS", "2", 1 ); }\n', 1),
+        ("unit case _putenv_s", "static inline int helper_value() { return 1; }\n",
+         'static void test_planted() { _putenv_s( "ROCKETNET_SERVER_MAX_CLIENTS", "2" ); }\n', 1),
+    ]:
+        with tempfile.TemporaryDirectory() as root:
+            os.mkdir(os.path.join(root, "tests"))
+            os.mkdir(os.path.join(root, "sdk"))
+            with open(os.path.join(root, "tests", "test_unit_thing.cpp"), "w") as fh:
+                fh.write('#include "test_env_source.h"\n'
+                         'static void test_thing() { check( helper_value() == 1 ); }\n' + case_line)
+            with open(os.path.join(root, "tests", "test_env_source.h"), "w") as fh:
+                fh.write(helper)
+            found = check(root)
+            if len(found) != expected:
+                print("FAIL check_unit_purity self-test: %s: expected %d finding(s), got %r" % (label, expected, found))
+                return 1
+    print("ok check_unit_purity self-test: a thread, timed wait, sleep or process-environment read or change "
+          "in a unit case, a DEV fixture or a helper (test_env_source.h included) is refused")
     return 0
 
 
@@ -211,7 +245,7 @@ def main():
             print("FAIL check_unit_purity: %s:%d: %s" % (os.path.relpath(path, root), lineno, name))
         return 1
 
-    print("ok check_unit_purity: no real-time, sleep, thread, timed wait, resolver or process-environment mutation "
+    print("ok check_unit_purity: no real-time, sleep, thread, timed wait, resolver or process-environment read or change "
           "in the unit suite, its tests/*.h helpers or the sdk DEV fixtures it calls")
     return 0
 
