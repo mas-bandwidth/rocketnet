@@ -20,6 +20,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   channels-stress-linux:
     runs-on: ["self-hosted", "Linux", "X64", "fleet"]
@@ -35,7 +40,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4 --target test_channels_1024 test_channels_10k
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
         run: ./bin/test_channels_1024
@@ -57,7 +62,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --parallel 4 --target test_channels_1024 test_channels_10k
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
         run: ./bin/test_channels_1024
@@ -82,7 +87,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build
-        run: cmake --build build --config Release --parallel 4 --target test_channels_1024 test_channels_10k
+        run: cmake --build build --config Release --target test_channels_1024 test_channels_10k
 
       - name: Stress at 1024 channels
         shell: bash

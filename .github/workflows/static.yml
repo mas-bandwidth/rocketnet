@@ -46,6 +46,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
 
   static:
@@ -112,4 +117,4 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Run the clang-tidy and cppcheck gate
-        run: python3 tools/run_tidy.py --jobs 8
+        run: python3 tools/run_tidy.py --jobs "$CMAKE_BUILD_PARALLEL_LEVEL"

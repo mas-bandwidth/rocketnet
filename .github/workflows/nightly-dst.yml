@@ -38,6 +38,9 @@ on:
   workflow_dispatch:
 
 env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
   DST_REFERENCE_TRACE: 510908e5051b7f68
 
 permissions:
@@ -325,7 +328,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build (Release)
-        run: cmake --build build --config Release --target dst test --parallel
+        run: cmake --build build --config Release --target dst test
 
       - name: The fifteen test_dst_ unit cases
         shell: bash

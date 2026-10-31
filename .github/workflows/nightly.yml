@@ -73,6 +73,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
 
   # THE LINUX SECOND COMPILER: clang, which no per-commit Linux row names --
@@ -111,7 +116,7 @@ jobs:
         run: cmake -B build-clang -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 
       - name: Build static and shared libraries, unit suite and functional suite (clang)
-        run: cmake --build build-clang --parallel
+        run: cmake --build build-clang
 
       - name: Unit suite (clang)
         run: ./bin/test
@@ -145,7 +150,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, through the Makefile)
-        run: make -j8
+        run: make
 
       - name: Functional suite, nightly tier
         timeout-minutes: 20
@@ -193,7 +198,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build (Release, through the Makefile)
-        run: make -j8
+        run: make
 
       # serial: the Linux tier holds the XDP cases, which share the host's XDP
       # state and cannot run beside other cases
@@ -241,7 +246,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build (Release)
-        run: cmake --build build --config Release --target functional functional_production --parallel
+        run: cmake --build build --config Release --target functional functional_production
 
       - name: Functional suite, nightly tier
         timeout-minutes: 30
@@ -314,7 +319,7 @@ jobs:
           -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"
 
       - name: Build the suite
-        run: cmake --build build --target test functional --parallel
+        run: cmake --build build --target test functional
 
       - name: Run the unit suite under tsan
         env:
@@ -357,7 +362,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build Release
-        run: make -j4
+        run: make
 
       - name: Every Linux transport cell, fifty times in a row
         timeout-minutes: 60
@@ -407,7 +412,7 @@ jobs:
           persist-credentials: false
 
       - name: Build Release
-        run: make -j4
+        run: make
 
       - name: Every macOS transport cell, fifty times in a row
         timeout-minutes: 15
@@ -453,7 +458,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build Release
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build --config Release
 
       - name: The Windows transport cells, fifty times in a row
         timeout-minutes: 60
@@ -517,7 +522,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
-        run: cmake --build build --config Debug --parallel
+        run: cmake --build build --config Debug
 
       - name: Run tests (RSS telemetry, deterministic verdict)
         shell: bash
@@ -619,7 +624,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_DEV=OFF
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       - name: External transport backend
         run: python tools/check_driver_extension.py build --config Release
@@ -653,7 +658,7 @@ jobs:
         run: cmake -B build -A x64 -DROCKETNET_SANITIZE_ADDRESS=ON
 
       - name: Build Release
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build --config Release
 
       - name: Build Debug
         # The Debug configuration of the same AddressSanitizer build is
@@ -662,7 +667,7 @@ jobs:
         # executables). Its suites run on the Windows member with
         # ROCKETNET_TEST_MAX_CASE_RSS_MB=2048, the Debug figure the windows /
         # Debug job above uses; docs/PLATFORMS.md records those runs.
-        run: cmake --build build --config Debug --parallel 4
+        run: cmake --build build --config Debug
 
       - name: Run unit suite under ASan
         shell: bash
@@ -741,7 +746,7 @@ jobs:
         run: cmake -B build-clang -T ClangCL -A x64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-clang/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-clang/bin"
 
       - name: Build clang-cl x64
-        run: cmake --build build-clang --config Release --parallel 4
+        run: cmake --build build-clang --config Release
 
       - name: Unit suite (clang-cl)
         run: ./build-clang/bin/Release/test.exe
@@ -763,7 +768,7 @@ jobs:
         run: cmake -B build-arm64 -A ARM64 -DROCKETNET_DEV=OFF "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=$PWD/build-arm64/bin" "-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$PWD/build-arm64/bin"
 
       - name: Build the ARM64 static and shared libraries
-        run: cmake --build build-arm64 --config Release --parallel 4 --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev
+        run: cmake --build build-arm64 --config Release --target rocketnet rocketnet_shared rocketnet_dev rocketnet_shared_dev
 
       - name: rocketnet.dll is an ARM64 image with the production exports
         run: |

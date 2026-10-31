@@ -23,6 +23,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   channel-seed-sweep:
     runs-on: ["self-hosted", "Linux", "X64", "fleet", "long"]

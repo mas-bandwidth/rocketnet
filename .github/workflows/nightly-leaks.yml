@@ -25,6 +25,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   leaks:
     name: asan + ubsan + lsan (full suite)
@@ -69,7 +74,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build
 
       - name: Run unit tests under LSan
         env:

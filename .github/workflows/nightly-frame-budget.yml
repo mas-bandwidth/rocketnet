@@ -30,6 +30,11 @@ concurrency:
   group: nightly-frame-budget-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   linux-frame-budget:
     name: frame budget (${{ matrix.ref }} / linux-quiet portable)
@@ -48,7 +53,7 @@ jobs:
       - name: Configure and build client_main_thread_cost (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target client_main_thread_cost --parallel
+          cmake --build build --target client_main_thread_cost
 
       - name: Enforce P=32 frame budget (portable)
         run: |
@@ -109,7 +114,7 @@ jobs:
       - name: Configure and build client_main_thread_cost (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target client_main_thread_cost --parallel 4
+          cmake --build build --target client_main_thread_cost
 
       - name: Report P=32 frame budget (msgx, report-only)
         run: |
@@ -133,7 +138,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build client_main_thread_cost (Release)
-        run: cmake --build build --config Release --target client_main_thread_cost --parallel
+        run: cmake --build build --config Release --target client_main_thread_cost
 
       - name: Report P=32 frame budget (portable, report-only)
         run: python tools/check_frame_budget.py --bin ./bin/Release/client_main_thread_cost.exe --transport portable --report-only

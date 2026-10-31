@@ -132,6 +132,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
 
   # EVERY ROW IS FOUR PARALLEL JOBS (2026-10-29). One job per row ran its
@@ -256,7 +261,7 @@ jobs:
         if: matrix.build_type == 'Debug'
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_DEV=${{ matrix.dev }}
-          cmake --build build --parallel
+          cmake --build build
 
       # Each job's window is everything after its build, one leg of the row
       # (Glenn 2026-10-29: "Move anything that is not under 120s limit to
@@ -282,7 +287,7 @@ jobs:
           bash tools/check_fp_contract.sh
           cmake -DROCKETNET_OSS_FUZZ_BUILD_SCRIPT=tests/oss-fuzz/build.sh -P tools/check_oss_fuzz_fp_contract.cmake
 
-      - name: Check every child make has a bounded -j
+      - name: Check every build has a bounded job count
         if: matrix.leg == 'checks' && ( runner.os == 'Linux' )
         run: bash tools/check_make_jobs.sh
 
@@ -360,7 +365,7 @@ jobs:
       - name: Sodium parity against the independent system library
         if: matrix.build_type == 'Release' && matrix.leg == 'unit'
         run: |
-          cmake --build build --target rocketnet_sodium_oracle --parallel
+          cmake --build build --target rocketnet_sodium_oracle
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.${{ runner.os == 'macOS' && 'dylib' || 'so' }}
 
       - name: Replay the fuzz corpora without libFuzzer
@@ -372,7 +377,7 @@ jobs:
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
-          cmake --build build --target $targets --parallel
+          cmake --build build --target $targets
           pids=""
           for harness in $harnesses; do
             corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
@@ -681,7 +686,7 @@ jobs:
         if: runner.os == 'Linux' && matrix.build_type == 'Release' && matrix.leg == 'builds'
         run: |
           cmake -S . -B build-history -DCMAKE_BUILD_TYPE=Release -DROCKETNET_HISTORY_PACKETS=32768 -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-history/bin"
-          cmake --build build-history --target test_lifecycle --parallel
+          cmake --build build-history --target test_lifecycle
           ./build-history/bin/test_lifecycle
           if cmake -S . -B build-history-invalid -DROCKETNET_HISTORY_PACKETS=256; then
             echo "undersized history was accepted"
@@ -700,7 +705,7 @@ jobs:
           python3 tools/check_xdp_compiled_out.py --present bin/librocketnet.so build/librocketnet.a
           cmake -S . -B build-no-xdp -DCMAKE_BUILD_TYPE=Release -DROCKETNET_XDP=OFF -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-xdp/bin"
-          cmake --build build-no-xdp --target rocketnet rocketnet_shared test --parallel
+          cmake --build build-no-xdp --target rocketnet rocketnet_shared test
           python3 tools/check_xdp_compiled_out.py --absent build-no-xdp/bin/librocketnet.so build-no-xdp/librocketnet.a
           for case in test_xdp_compiled_out_pin_refuses_not_built test_xdp_compiled_out_list_takes_the_next_candidate test_xdp_compiled_out_has_no_memory_plan; do
             ./build-no-xdp/bin/test --run "$case"
@@ -723,7 +728,7 @@ jobs:
             -DROCKETNET_BUILD_EXAMPLES=OFF -DROCKETNET_BUILD_TOOLS=OFF -DROCKETNET_BUILD_TESTS=OFF \
             "-DCMAKE_IGNORE_PATH=/usr/include;/usr/lib/x86_64-linux-gnu;/usr/lib/aarch64-linux-gnu;/usr/lib" \
             -DCMAKE_RUNTIME_OUTPUT_DIRECTORY="$PWD/build-no-server-libs/bin" -DCMAKE_LIBRARY_OUTPUT_DIRECTORY="$PWD/build-no-server-libs/bin"
-          cmake --build build-no-server-libs --target rocketnet rocketnet_shared --parallel
+          cmake --build build-no-server-libs --target rocketnet rocketnet_shared
           python3 tools/check_xdp_compiled_out.py --absent build-no-server-libs/bin/librocketnet.so build-no-server-libs/librocketnet.a
           if readelf -d build-no-server-libs/bin/librocketnet.so | grep -E 'NEEDED.*lib(uring|bpf|xdp)'; then
             echo "client library links a server library (liburing, libbpf or libxdp)"
@@ -1004,7 +1009,7 @@ jobs:
         run: cmake -B build -G "Visual Studio 18 2026" -A x64 -DROCKETNET_DEV=${{ matrix.leg == 'b' && 'OFF' || 'ON' }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       - name: Start combined unit and functional timing (development legs)
         if: matrix.leg != 'b'
@@ -1026,7 +1031,7 @@ jobs:
           harnesses="rocketnet_fuzz rocketnet_fuzz_message rocketnet_fuzz_connect_token rocketnet_fuzz_receive_structured rocketnet_fuzz_token_private rocketnet_fuzz_round_trip rocketnet_fuzz_config rocketnet_fuzz_server_transport rocketnet_fuzz_client_transport rocketnet_fuzz_session"
           targets=""
           for harness in $harnesses; do targets="$targets fuzz_replay_$harness"; done
-          cmake --build build --config Release --target $targets --parallel
+          cmake --build build --config Release --target $targets
           pids=""
           for harness in $harnesses; do
             corpus="tests/fuzz/corpus${harness#rocketnet_fuzz}"
@@ -1315,7 +1320,7 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       # the two C programs share this directory with the Go tool, so name the
       # tool's .go file rather than the directory
@@ -1482,11 +1487,11 @@ jobs:
 
       - name: Build the sanitized unit suite
         if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
-        run: cmake --build build --target test --parallel
+        run: cmake --build build --target test
 
       - name: Build the sanitized functional suite and the lifecycle binaries
         if: matrix.leg == 'functional suite'
-        run: cmake --build build --target functional test_lifecycle test_transport test_sodium --parallel
+        run: cmake --build build --target functional test_lifecycle test_transport test_sodium
 
       - name: Start combined unit and functional timing (unit rows)
         if: matrix.leg == 'unit suite' || matrix.leg == 'unit suite portable'
@@ -1632,7 +1637,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet --parallel
+        run: cmake --build build-fuzz --target rocketnet
 
       - name: Build the harness
         run: |
@@ -1763,7 +1768,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev
 
       - name: Build every fuzzer with NDEBUG
         run: |
@@ -1939,7 +1944,7 @@ jobs:
       # ran (__builtin_bswap64 handed a pointer does not compile).
 
       - name: Build the library and the suite for s390x
-        run: cmake --build build --target rocketnet test test_sodium --parallel
+        run: cmake --build build --target rocketnet test test_sodium
 
       - name: Build the big-endian wire check
         run: |
@@ -2129,7 +2134,7 @@ jobs:
 
       - name: Build the soak and the lifecycle harness
         if: matrix.leg == 'loopback soak'
-        run: cmake --build build --target soak test_lifecycle --parallel
+        run: cmake --build build --target soak test_lifecycle
 
       - name: Start combined unit and functional timing
         if: matrix.leg == 'loopback soak'
@@ -2211,7 +2216,7 @@ jobs:
           tar xzf sodium.tar.gz -C sodium-src --strip-components=1
           cd sodium-src
           ./configure --prefix="${SODIUM_PREFIX}" --disable-dependency-tracking
-          make -j"$(nproc)"
+          make -j"$CMAKE_BUILD_PARALLEL_LEVEL"
           make install
 
       # PROVE THE PREMISE: pkg-config, restricted to the pinned prefix, must
@@ -2232,7 +2237,7 @@ jobs:
         run: cmake -B build -DCMAKE_BUILD_TYPE=Debug -DROCKETNET_USE_SYSTEM_SODIUM=ON
 
       - name: Build the suite
-        run: cmake --build build --target test --parallel
+        run: cmake --build build --target test
 
       - name: Start combined unit and functional timing
         shell: bash
@@ -2243,7 +2248,7 @@ jobs:
 
       - name: Vendor parity against the pinned backend
         run: |
-          cmake --build build --target rocketnet_sodium_oracle --parallel
+          cmake --build build --target rocketnet_sodium_oracle
           python3 tools/check_sodium.py bin/librocketnet_sodium_oracle.so --reference "${SODIUM_PREFIX}/lib/libsodium.so"
 
       - name: Enforce combined unit and functional timing
@@ -2353,7 +2358,7 @@ jobs:
       - name: Build soak_sim and soak (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target soak_sim soak --parallel
+          cmake --build build --target soak_sim soak
 
       # soak_sim's instruments, each driven against its own negative control
       # (#99). The audit legs corrupt the simulator's index on purpose and
@@ -2433,7 +2438,7 @@ jobs:
       - name: Build instruction_count (Release)
         run: |
           cmake -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --target instruction_count --parallel
+          cmake --build build --target instruction_count
 
       - name: Run the cachegrind instruction gate
         run: python3 tools/check_instructions.py --bin ./build/instruction_count

@@ -1,5 +1,7 @@
-# the child make's job count, the processors capped at 8, overridden by `make JOBS=<n>` or by the caller's own -j.
-JOBS ?= $(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$$n" -gt 8 ] && n=8; echo $$n)
+# the child make's job count: CMAKE_BUILD_PARALLEL_LEVEL when it is set (CI sets it on
+# every fleet runner), else the processors capped at 8; overridden by `make JOBS=<n>` or by
+# the caller's own -j.
+JOBS ?= $(if $(CMAKE_BUILD_PARALLEL_LEVEL),$(CMAKE_BUILD_PARALLEL_LEVEL),$(shell n=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4); [ "$$n" -gt 8 ] && n=8; echo $$n))
 
 # make builds the default development library (ROCKETNET_DEV=ON); make
 # ROCKETNET_DEV=OFF builds the production library (BUILDING.md, "Production builds").

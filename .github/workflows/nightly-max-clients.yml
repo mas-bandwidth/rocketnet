@@ -28,6 +28,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   max-clients:
     name: max-clients 10000 (${{ matrix.compiler }}, DEV ${{ matrix.dev }})
@@ -71,7 +76,7 @@ jobs:
           rm -rf build-max-clients
           cmake -S . -B build-max-clients -DCMAKE_BUILD_TYPE=Release \
             -DROCKETNET_MAX_CLIENTS=10000 -DROCKETNET_DEV=${{ matrix.dev }}
-          cmake --build build-max-clients --parallel 4 2>&1 | tee build-max-clients.log
+          cmake --build build-max-clients 2>&1 | tee build-max-clients.log
           if grep -q "warning:" build-max-clients.log; then
             echo "BUILD warnings in the 10000 build:"
             grep "warning:" build-max-clients.log

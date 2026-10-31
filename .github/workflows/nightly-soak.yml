@@ -21,6 +21,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   soak:
     strategy:
@@ -67,7 +72,7 @@ jobs:
 
       - name: Build (Windows)
         if: runner.os == 'Windows'
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       - name: Tests
         if: runner.os != 'Windows'
@@ -252,7 +257,7 @@ jobs:
           ref: ${{ matrix.ref }}
 
       - name: Build the named low-tick load case
-        run: make -j4
+        run: make
 
       - name: Run the enabled low-tick load case on an idle host
         shell: bash
@@ -478,7 +483,7 @@ jobs:
         run: cmake -B build -A x64
 
       - name: Build (Windows)
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release
 
       - name: Tests (Windows)
         shell: bash
@@ -665,7 +670,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build soak_sim
-        run: cmake --build build --target soak_sim --parallel
+        run: cmake --build build --target soak_sim
 
       # bounded, seed-pinned. the sim's own iteration bound is the clock, not
       # wall time, so the run tries the same inputs on a slow morning as on a

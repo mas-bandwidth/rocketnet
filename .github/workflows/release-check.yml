@@ -1,7 +1,6 @@
 # rocketnet release checks (#111, serialize's release-check.yml pattern).
 #
-# WHO READS THIS, per job, because the three have different readers and
-# saying "the pull request" for all of them would be wrong.
+# WHO READS THIS, per job, because the two have different readers.
 # version-consistency is a per-commit gate read by the pull request, same as
 # every job in ci.yml, and it is in this file rather than that one only
 # because it is about the RELEASE rather than the build, exactly as serialize
@@ -9,33 +8,19 @@
 # -- it is a push-to-main job, for the reason given above it -- so its reader
 # is whoever watches main's runs, which today is the estate's notification
 # email, and its failure is a statement about main rather than about any one
-# PR. space-vendors-the-release is a release gate too: it runs on a v* tag
-# push and on a manual dispatch, so its reader is whoever cuts the release.
+# PR.
 #
-# Three failures are guarded here, and they are different failures:
+# Two failures are guarded here, and they are different failures:
 #
 #   version-consistency     the version sites in the tree disagree with each
 #                           other, or with the tag being built
 #   unreleased-wire-changes main has drifted past the newest release with
 #                           wire-affecting changes aboard and nothing says a
 #                           release is owed
-#   space-vendors-the-release
-#                           the integrating application vendors another
-#                           commit than the one being released, or vendors it
-#                           with different bytes
-#   space-builds-and-soaks-on-the-release
-#                           the integrating application, built against the
-#                           release, drops a frame, hitches, loses its server
-#                           or its bots under a bounded real-time swarm
 #
-# The second is DORMANT TODAY and says so in its own output: rocketnet has no
-# v* tags yet, so there is no newest release to compare against and the job
-# exits green having reported exactly that. It is here rather than in the
-# follow-up because the failure it catches happened in serialize -- four
-# merged PRs including a wire change, every version check green because the
-# version numbers still agreed with each other -- and the day rocketnet tags
-# its first release (v1.0.0-preview-1) is the day this needs to already exist. A dormant job that announces
-# its own dormancy is not a vacuous pass; a silent one would be.
+# The second compares main against the newest v* tag. It came from serialize,
+# where four merged PRs including a wire change shipped with every version
+# check green because the version numbers still agreed with each other.
 
 name: Release Check
 

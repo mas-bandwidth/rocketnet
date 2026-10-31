@@ -36,6 +36,11 @@ on:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   fuzz:
     name: nightly fuzz (${{ fromJSON(matrix.leg).target }})
@@ -113,7 +118,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev
 
       - name: Check out the pinned netcode reference
         if: contains(fromJSON(matrix.leg).target, 'differential')
@@ -343,7 +348,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-fsanitize=fuzzer-no-link,address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz --target rocketnet_dev
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |
@@ -508,7 +513,7 @@ jobs:
           "-DCMAKE_CXX_FLAGS=-DWIN32 -D_WINDOWS -D_DISABLE_STRING_ANNOTATION -D_DISABLE_VECTOR_ANNOTATION -EHsc -fsanitize=address -fsanitize=fuzzer-no-link"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz --config Debug --target rocketnet_dev --parallel 4
+        run: cmake --build build-fuzz --config Debug --target rocketnet_dev
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |
@@ -704,7 +709,7 @@ jobs:
           -DCMAKE_CXX_FLAGS="-O1 -fsanitize=fuzzer-no-link,memory -fsanitize-memory-track-origins=2 -fno-omit-frame-pointer -nostdinc++ -isystem ${{ env.MSAN_LIBCXX }}/include/c++/v1"
 
       - name: Build the instrumented library
-        run: cmake --build build-fuzz-msan --target rocketnet_dev --parallel
+        run: cmake --build build-fuzz-msan --target rocketnet_dev
 
       - name: Build ${{ fromJSON(matrix.leg).target }}
         run: |

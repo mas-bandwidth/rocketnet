@@ -17,6 +17,11 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  # the build cap on a shared fleet runner: cmake --build reads it, and the
+  # Makefile defaults its JOBS to it (tools/check_make_jobs.sh)
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+
 jobs:
   examples:
     name: ${{ matrix.os }}
@@ -52,7 +57,7 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build --config Release
 
       - name: Check the examples against the house rules
         if: runner.os != 'Windows'
@@ -114,7 +119,7 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build --config Release
 
       - name: Check the examples against the house rules
         run: python3 tools/check_examples.py
@@ -129,7 +134,7 @@ jobs:
           cmake -S . -B build-universal \
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_BUILD_TYPE=Release -DROCKETNET_DEV=OFF
-          cmake --build build-universal --config Release --clean-first --parallel 4
+          cmake --build build-universal --config Release --clean-first
           lipo -info build-universal/librocketnet.a bin/librocketnet.dylib
           for arch in arm64 x86_64; do
             lipo -archs build-universal/librocketnet.a | tr ' ' '\n' | grep -qx "$arch"
@@ -168,7 +173,7 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
-        run: cmake --build build --config Release --parallel 4
+        run: cmake --build build --config Release
 
       - name: Run the examples (Windows)
         run: python tools/run_examples.py --build build --config Release
