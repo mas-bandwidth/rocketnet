@@ -7,7 +7,8 @@ covers the receive half. The modelled functions are:
 
 - `portable_send`, the copy of each packet into the producer bank;
 - `portable_tx_publish`, the only ownership transition;
-- `portable_tx_worker`, the thread that sends the ready banks;
+- `portable_tx_step`, one pass of the worker that sends the ready banks, and
+  `portable_tx_worker`, the thread that runs it and waits between passes;
 - the publish retry at the top of `portable_receive`;
 - the TX half of `portable_stop` and `portable_stopped`.
 
@@ -128,7 +129,7 @@ Each reversed witness was read against the code by hand (2026-10-29):
     so bank 0 is in the free queue twice and bank 1 is nowhere after the
     second return.
   - In the code, the tail is `( free_head + free_count ) % PORTABLE_TX_BANKS`
-    in `portable_tx_worker`, and the ready tail the same in
+    in `portable_tx_step`, and the ready tail the same in
     `portable_tx_publish`.
 - **NoWrap.**
   - In the trace, the second return computes position `2 + 1 = 3` in a

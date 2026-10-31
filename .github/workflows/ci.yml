@@ -424,12 +424,16 @@ jobs:
           bash tools/test_check_unit_no_sockets.sh
           bash tools/check_unit_no_sockets.sh ./bin/test
 
-      # The unit suite reads no real time, sleep, thread or resolver: the
-      # check fails, naming file and line, on any such call in the unit
-      # sources (tools/check_unit_purity.py).
+      # The unit suite reads no real time, sleep, thread, timed wait or
+      # resolver: the check fails, naming file and line, on any such call in
+      # the unit sources, the tests/*.h helpers they include and the sdk DEV
+      # fixtures they call (tools/check_unit_purity.py); its self-test plants
+      # each in a fixture tree.
       - name: Unit suite uses no real time, sleep, thread or resolver
         if: matrix.leg == 'unit'
-        run: python3 tools/check_unit_purity.py .
+        run: |
+          python3 tools/check_unit_purity.py --self-test
+          python3 tools/check_unit_purity.py .
 
       - name: Ambient config isolation and passing output
         if: matrix.leg == 'unit'
