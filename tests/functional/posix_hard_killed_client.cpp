@@ -1204,6 +1204,20 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
         posix_hk_sleep_rest_of_tick( tick_start );
     }
 
+    // receive progress on every flow, both ways, during the closed-port
+    // datagrams and in the ticks after them: what the ICMP errors must not
+    // stop. Exact counts are not required: loopback UDP on a loaded host
+    // drops datagrams below the transports, and posix_hk_require_accounted
+    // holds the transports to every datagram that did arrive.
+
+    std::vector<uint64_t> up_during( 3 ), down_during( 3 );
+    for ( size_t i = 0; i < 3; i++ )
+    {
+        up_during[i] = live[i].received_up;
+        down_during[i] = live[i].received_down;
+        posix_hard_killed_require( up_during[i] > 0 && down_during[i] > 0 );
+    }
+
     for ( int t = 0; t < 30; t++ )
     {
         const double tick_start = rocketnet_platform_time();
@@ -1243,6 +1257,11 @@ static void posix_send_to_closed_port( const posix_hk_cell_t & cell )
     }
 
     posix_hk_require_accounted( server, live );
+
+    for ( size_t i = 0; i < 3; i++ )
+    {
+        posix_hard_killed_require( live[i].received_up > up_during[i] && live[i].received_down > down_during[i] );
+    }
 
     posix_hard_killed_require( rocketnet_server_transport_num_connected_clients( server ) == 3 );
     posix_hk_require_server_io( server, cell );
