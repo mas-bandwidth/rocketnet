@@ -1000,10 +1000,25 @@ bool rocketnet_portable_tx_test_handoff()
     portable_send( server, &send, 1 ); // full producer and no free bank: one drop
     valid &= server->bank[2].count == server->tx_capacity && server->dropped.load() == 1;
 
+    // no free bank: stop keeps the full producer and holds quit back; the
+    // poll after the worker returns a bank publishes it, then sets quit
+
     portable_stop( server );
-    valid &= !server->stop_publish_saw_quit && server->quit.load() &&
-             server->ready_count == 2 && server->bank[2].count == 0 &&
-             server->dropped.load() == (uint64_t) server->tx_capacity + 1;
+    valid &= server->stop_publish_owed && !server->quit.load() &&
+             server->ready_count == 2 && server->bank[2].count == server->tx_capacity &&
+             server->dropped.load() == 1;
+
+    const int returned = server->ready_index[server->ready_head];
+    server->ready_head = ( server->ready_head + 1 ) % PORTABLE_TX_BANKS;
+    server->ready_count--;
+    server->bank[returned].count = 0;
+    server->free_index[( server->free_head + server->free_count ) % PORTABLE_TX_BANKS] = returned;
+    server->free_count++;
+
+    (void) portable_stopped( server );
+    valid &= !server->stop_publish_owed && !server->stop_publish_saw_quit && server->quit.load() &&
+             server->ready_count == 2 && server->producer == returned &&
+             server->dropped.load() == 1;
     portable_server_cleanup( server );
 
     // exact former race: worker observes empty, pauses after releasing the
