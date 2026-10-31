@@ -9,8 +9,9 @@ On Linux with xxd and a clang that has the BPF target this checks that
     umasks give the same object bytes (the object is reproducible);
   - the generated header's array holds exactly the object it was made from;
   - a build tree's embedded object equals a fresh compile of the current
-    sources with the tree's own BPF clang, ROCKETNET_HISTORY_PACKETS and
-    ROCKETNET_MAX_CLIENTS (generated/xdp-build-settings.txt), so a stale
+    sources with the tree's own BPF clang, multiarch triple,
+    ROCKETNET_HISTORY_PACKETS and ROCKETNET_MAX_CLIENTS
+    (generated/xdp-build-settings.txt), so a stale
     object fails and a current one at non-default settings passes (pass the
     build tree, default ./build);
   - a changed source gives a different object, so the stale check can fail;
@@ -92,31 +93,34 @@ DEFAULT_MAX_CLIENTS = 1000
 
 
 def build_settings(build, clang):
-    """The BPF clang, ROCKETNET_HISTORY_PACKETS and ROCKETNET_MAX_CLIENTS a
-    build tree embedded its object with: lines 1, 3 and 4 of
-    generated/xdp-build-settings.txt (CMakeLists.txt). With no build tree it
-    is the given clang, no history (the SDK default) and the default client
-    count."""
+    """The BPF clang, multiarch triple, ROCKETNET_HISTORY_PACKETS and
+    ROCKETNET_MAX_CLIENTS a build tree embedded its object with: the four
+    lines of generated/xdp-build-settings.txt (CMakeLists.txt). With no build
+    tree it is the given clang, this compiler's triple, no history (the SDK
+    default) and the default client count."""
     if build is None:
-        return clang, None, DEFAULT_MAX_CLIENTS
+        return clang, multiarch(), None, DEFAULT_MAX_CLIENTS
     settings = build / "generated/xdp-build-settings.txt"
     if not settings.exists():
-        return clang, None, DEFAULT_MAX_CLIENTS
+        return clang, multiarch(), None, DEFAULT_MAX_CLIENTS
     lines = [line.strip() for line in settings.read_text(encoding="utf-8").splitlines()]
     if len(lines) < 4 or not lines[2].isdigit() or not lines[3].isdigit():
         raise RuntimeError(f"{settings} names no ROCKETNET_HISTORY_PACKETS and ROCKETNET_MAX_CLIENTS")
     if not Path(lines[0]).is_file():
         raise RuntimeError(f"{settings} names a BPF clang that is not there: {lines[0]}")
-    return lines[0], int(lines[2]), int(lines[3])
+    if not lines[1]:
+        raise RuntimeError(f"{settings} names no multiarch triple")
+    return lines[0], lines[1], int(lines[2]), int(lines[3])
 
 
-def embed(root, output, xxd, clang, max_clients, history=None):
+def embed(root, output, xxd, clang, max_clients, history=None, arch=None):
     """Runs cmake/EmbedXdp.cmake; max_clients or history None passes no
-    MAX_CLIENTS or HISTORY_PACKETS, so the program takes the SDK default."""
+    MAX_CLIENTS or HISTORY_PACKETS, so the program takes the SDK default;
+    arch None is this compiler's multiarch triple."""
     limits = [] if max_clients is None else [f"-DMAX_CLIENTS={max_clients}"]
     limits += [] if history is None else [f"-DHISTORY_PACKETS={history}"]
     subprocess.run(["cmake", f"-DSOURCE_DIR={str(root)}", f"-DOUTPUT_DIR={str(output)}",
-                    f"-DXXD={str(xxd)}", f"-DCLANG={str(clang)}", f"-DMULTIARCH={multiarch()}",
+                    f"-DXXD={str(xxd)}", f"-DCLANG={str(clang)}", f"-DMULTIARCH={arch or multiarch()}",
                     *limits,
                     "-P", str(root / "cmake/EmbedXdp.cmake")],
                    check=True, encoding="utf-8", env=utf8_env())
@@ -191,8 +195,8 @@ def check_build_settings(source, directory, inputs, xxd, clang):
         (probe / "generated/xdp-build-settings.txt").write_text(
             f"{clang}\n{multiarch()}\n8192\n{DEFAULT_MAX_CLIENTS}\n", encoding="utf-8")
         embed(root, probe / "generated", xxd, clang, DEFAULT_MAX_CLIENTS, embedded_history)
-        tree_clang, history, max_clients = build_settings(probe, None)
-        fresh = embed(root, directory / f"fresh {name}", xxd, tree_clang, max_clients, history)
+        tree_clang, arch, history, max_clients = build_settings(probe, None)
+        fresh = embed(root, directory / f"fresh {name}", xxd, tree_clang, max_clients, history, arch)
         try:
             check_fresh(probe, fresh)
         except RuntimeError:
@@ -242,7 +246,7 @@ def main():
             return
         xxd, clang = shutil.which("xxd"), shutil.which("clang")
         build = args.build or (work if (work / "generated/rocketnet_server_xdp.h").exists() else None)
-        clang, history, max_clients = build_settings(build.resolve() if build is not None else None, clang)
+        clang, arch, history, max_clients = build_settings(build.resolve() if build is not None else None, clang)
         if not xxd or not clang:
             raise SystemExit("xxd and clang with the BPF target are required for the object checks")
 
@@ -256,7 +260,7 @@ def main():
                 time.sleep(1.1)
             previous_umask = os.umask(umask)
             try:
-                objects.append(embed(root, directory / f"generated {index}", xxd, clang, max_clients, history))
+                objects.append(embed(root, directory / f"generated {index}", xxd, clang, max_clients, history, arch))
             finally:
                 os.umask(previous_umask)
         if objects[0] != objects[1]:
@@ -272,7 +276,7 @@ def main():
         filter_source.write_text(filter_source.read_text(encoding="utf-8")
                                  + "\nchar rocketnet_xdp_stale_probe[] SEC(\".rodata\") = \"stale\";\n",
                                  encoding="utf-8")
-        stale = embed(changed, directory / "generated changed", xxd, clang, max_clients, history)
+        stale = embed(changed, directory / "generated changed", xxd, clang, max_clients, history, arch)
         probe = directory / "probe build"
         (probe / "generated").mkdir(parents=True)
         shutil.copyfile(directory / "generated changed/rocketnet_server_xdp.h", probe / "generated/rocketnet_server_xdp.h")
